@@ -1,4 +1,6 @@
 use super::*;
+#[path = "viewport_benchmark.rs"]
+mod viewport_benchmark;
 use quantick_chart::viewport::Viewport;
 use quantick_engine::{Side, Trade};
 use quantick_orderflow::projection::{
@@ -46,6 +48,79 @@ fn history() -> egui::Rect {
     egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(200.0, 120.0))
 }
 
+/// #10: tick spheres stand on their own executions, at the chart's factual
+/// place for them: no uniform offset, and no peak relocation, so a sphere
+/// never moves when another arrives beside it.
+#[test]
+fn tick_spheres_stand_on_their_executions() {
+    let trades = [1_000, 2_500].map(|timestamp_ms| Trade {
+        agg_id: 42,
+        timestamp_ms,
+        price: 100.into(),
+        quantity: 4500.into(),
+        side: Side::Buy,
+    });
+    // Two regions a second apart, at one price, a pixel or two apart.
+    let frame = Arc::new(project_flow_tape(
+        trades
+            .iter()
+            .enumerate()
+            .map(|(ordinal, trade)| FlowExecution {
+                ordinal,
+                slot: 0,
+                accepted_ordinal: ordinal,
+                ticks_per_bar: 50.into(),
+                trade,
+                opening: false,
+            }),
+        7,
+        2,
+        2,
+        FlowTapeView {
+            first_slot: 0,
+            end_slot: 1,
+            clip_left: 0.into(),
+            clip_right: 1.into(),
+            width_px: 200.0,
+            height_px: 120.0,
+            prices: PriceWindow::new(90.into(), 110.into()).unwrap(),
+            reference: FlowReference::Typed(4500.into()),
+            radius_limit: 12.0,
+            merge_support_radius: 6.0,
+            exclude_opening: false,
+        },
+    ));
+    assert_eq!(frame.dots.len(), 2);
+    let tick = quantick_orderflow::TickBubbleStyle {
+        viewport_scale: None,
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+        reference_quantity: 4500.0,
+        max_radius: 12.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut drawn = None;
+    let _ = egui::Context::default().run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        drawn = Some(cached_flow(
+            &painter,
+            history(),
+            &frame,
+            geometry(),
+            crate::theme::CANVAS,
+            None,
+            Some((tick, quantick_orderflow::HeatmapTheme::default())),
+        ));
+    });
+    let drawing = drawn.unwrap();
+    assert_eq!(drawing.plan.regions.len(), 2);
+    for region in &drawing.plan.regions {
+        let (x, y) = geometry().point(&frame.dots[region.dot_index]).unwrap();
+        assert_eq!(region.source_disc.center, [x, y], "no offset");
+        assert_eq!(region.disc, region.source_disc, "no relocation");
+    }
+}
+
 fn geometry() -> FlowExecutionGeometry {
     let mut viewport = Viewport::new();
     viewport.set_px_per_bar(64.0);
@@ -66,7 +141,9 @@ fn key(frame: &Arc<FlowTapeFrame>) -> Key<'_> {
         geometry: geometry(),
         clip: history(),
         backing: Some(egui::Color32::from_rgb(19, 23, 34)),
+        tick: None,
         background: crate::theme::CANVAS,
+        density: None,
     }
 }
 
@@ -97,6 +174,7 @@ fn paint_at_density(
             .with_clip_rect(key.clip);
         let actual = Key {
             clip: history().intersect(painter.clip_rect()),
+            density: key.tick.map(|_| pixels_per_point.to_bits()),
             ..key
         };
         assert_eq!(ctx.pixels_per_point(), pixels_per_point);
@@ -107,9 +185,10 @@ fn paint_at_density(
             key.geometry,
             key.background,
             key.backing,
+            key.tick,
         );
-        drawing.paint(&painter, history(), false);
-        drawing.paint(&painter, history(), true);
+        drawing.paint(&painter, false);
+        drawing.paint(&painter, true);
         entry = Some(ctx.memory_mut(|memory| memory.caches.cache::<Cache>().get(actual)));
     });
     let entry = entry.unwrap();
@@ -133,10 +212,182 @@ fn warm_paint_reuses_the_same_geometry_and_exact_mesh_output() {
         cold.mesh
             .get()
             .unwrap()
-            .meshes
+            .meshes()
             .iter()
             .all(egui::Mesh::is_valid)
     );
+}
+
+#[test]
+fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let (flat, _) = paint(&ctx, key(&frame));
+    let mut styled = key(&frame);
+    styled.tick = Some((
+        quantick_orderflow::TickBubbleStyle {
+            viewport_scale: None,
+            reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+            reference_quantity: 10.0,
+            max_radius: 36.0,
+            label_min_radius: 8.0,
+            opacity: 0.9,
+        },
+        quantick_orderflow::HeatmapTheme::default(),
+    ));
+    let (sphere, shapes) = paint(&ctx, styled);
+    let (warm, repeated) = paint(&ctx, styled);
+    assert!(!Arc::ptr_eq(&flat, &sphere));
+    assert!(Arc::ptr_eq(&sphere, &warm));
+    assert_eq!(shapes, repeated);
+    // The same facts and radii: tick spheres stand on their executions,
+    // regional FLOW at its uniform offset from them.
+    let (flat_plan, sphere_plan) = (
+        &flat.mesh.get().unwrap().plan,
+        &sphere.mesh.get().unwrap().plan,
+    );
+    assert_eq!(flat_plan.regions.len(), sphere_plan.regions.len());
+    let offset = quantick_chart::flow_execution::FLOW_EXECUTION_OFFSET;
+    for (flat, sphere) in flat_plan.regions.iter().zip(&sphere_plan.regions) {
+        assert_eq!(flat.dot_index, sphere.dot_index);
+        assert_eq!(flat.disc.radius, sphere.disc.radius);
+        let at = sphere.source_disc.center;
+        assert_eq!(
+            [at[0] + offset[0], at[1] + offset[1]],
+            flat.source_disc.center
+        );
+    }
+    let mut changed = styled;
+    changed.tick.as_mut().unwrap().0.opacity = 0.5;
+    let (faded, _) = paint(&ctx, changed);
+    assert!(!Arc::ptr_eq(&sphere, &faded));
+}
+
+#[test]
+fn viewport_tick_mesh_and_readback_follow_the_current_camera_before_worker_publication() {
+    let frame = frame();
+    let original = (*frame).clone();
+    let ctx = egui::Context::default();
+    let style = quantick_orderflow::TickBubbleStyle {
+        viewport_scale: Some(quantick_orderflow::ViewportBubbleScale {
+            x_units_per_pixel: 1.0 / 22.0,
+            price_units_per_pixel: 1.0,
+        }),
+        reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+        reference_quantity: 9_000.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut a = key(&frame);
+    a.tick = Some((style, quantick_orderflow::HeatmapTheme::default()));
+    let (first, first_shapes) = paint(&ctx, a);
+    let first_draw = first.mesh.get().unwrap();
+    let first_frame = first_draw.viewport_frame.as_ref().unwrap();
+    assert_eq!(first_frame.effective_reference, Some(4500.into()));
+    let first_radius = first_frame.dots[0].radius;
+    assert_eq!(first_draw.plan.regions[0].disc.radius, first_radius);
+    let center = egui::Pos2::from(first_draw.plan.regions[0].disc.center);
+    let painted_radius = first_draw
+        .meshes()
+        .iter()
+        .flat_map(|mesh| &mesh.vertices)
+        .filter_map(|vertex| {
+            // The sphere's light core is offset. Measure its colored outer
+            // boundary, excluding the separately tessellated black separator.
+            let [r, g, b, _] = vertex.color.to_array();
+            (r != 0 || g != 0 || b != 0).then_some(vertex.pos.distance(center))
+        })
+        .fold(0.0_f32, f32::max);
+    assert!(
+        (painted_radius - first_radius).abs() < 0.00002,
+        "the mesh uses the reported radius"
+    );
+    let snapshot = quantick_control_schema::orderflow::FlowExecutionSnapshot::from((
+        first_frame.as_ref(),
+        quantick_orderflow::projection::flow_tape::FlowProgress::default(),
+    ));
+    let wire = serde_json::to_value(snapshot).unwrap();
+    assert_eq!(wire["effective_reference"], "4500");
+    let reported: f32 = wire["marks"][0]["radius_px"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(reported, first_radius);
+    let mut b = a;
+    let mut viewport = Viewport::new();
+    viewport.set_px_per_bar(64.0);
+    b.geometry = FlowExecutionGeometry::new(
+        viewport,
+        1,
+        0,
+        (60.0, 140.0),
+        [0.0, 0.0, 200.0, 120.0],
+        false,
+    )
+    .unwrap();
+    let (compressed, _) = paint(&ctx, b);
+    assert!(
+        compressed
+            .mesh
+            .get()
+            .unwrap()
+            .viewport_frame
+            .as_ref()
+            .unwrap()
+            .dots[0]
+            .radius
+            < first_radius
+    );
+    let (_, returned_shapes) = paint(&ctx, a);
+    assert_eq!(
+        first_shapes, returned_shapes,
+        "same published frame, reversible camera only"
+    );
+    assert_eq!(*frame, original);
+    a.tick.as_mut().unwrap().0.viewport_scale = None;
+    let (legacy, _) = paint(&ctx, a);
+    assert!(legacy.mesh.get().unwrap().viewport_frame.is_none());
+    assert_eq!(
+        legacy.mesh.get().unwrap().plan.regions[0].disc.radius,
+        frame.dots[0].radius
+    );
+}
+
+/// Review #12: tick spheres wear the pane's theme, never the default one,
+/// and a theme change rebuilds the cached mesh.
+#[test]
+fn tick_spheres_follow_the_pane_theme() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let mut bookmap = key(&frame);
+    bookmap.tick = Some((
+        quantick_orderflow::TickBubbleStyle {
+            viewport_scale: None,
+            reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+            reference_quantity: 10.0,
+            max_radius: 36.0,
+            label_min_radius: 8.0,
+            opacity: 1.0,
+        },
+        quantick_orderflow::HeatmapTheme::default(),
+    ));
+    let blind = Key {
+        tick: bookmap
+            .tick
+            .map(|(style, _)| (style, quantick_orderflow::HeatmapTheme::ColorBlind)),
+        ..bookmap
+    };
+    let (default_entry, default_shapes) = paint(&ctx, bookmap);
+    let (blind_entry, blind_shapes) = paint(&ctx, blind);
+    assert!(!Arc::ptr_eq(&default_entry, &blind_entry));
+    assert_ne!(
+        default_shapes, blind_shapes,
+        "the sphere fills follow the theme"
+    );
+    let (warm, _) = paint(&ctx, blind);
+    assert!(Arc::ptr_eq(&blind_entry, &warm));
 }
 
 #[test]
@@ -256,9 +507,14 @@ fn sector_mesh_uses_only_white_uv_and_survives_font_atlas_growth() {
     let frame = frame();
     let ctx = egui::Context::default();
     let (entry, before_shapes) = paint(&ctx, key(&frame));
-    let mesh = &entry.mesh.get().unwrap().meshes[1];
+    let meshes = entry.mesh.get().unwrap().meshes();
+    let mesh = &meshes[1];
     assert!(!mesh.vertices.is_empty());
-    assert_eq!(mesh.texture_id, egui::TextureId::default());
+    let texels = super::super::flow_execution::flow_texels(&ctx);
+    assert!(before_shapes.iter().all(|clipped| matches!(
+        &clipped.shape,
+        egui::Shape::Mesh(painted) if texels.contains(&painted.texture_id)
+    )));
     assert!(
         mesh.vertices
             .iter()
@@ -372,6 +628,11 @@ fn direct_mesh_separates_peaks_without_changing_sector_geometry_or_colours() {
                 78.0,
             ))
         });
+        // FLOW's own white texel stands where the font atlas's stood.
+        let expected = egui::Mesh {
+            texture_id: actual.texture_id,
+            ..expected
+        };
         assert_eq!(actual, expected, "backing={backing:?}");
     }
 }
@@ -425,4 +686,69 @@ fn precomposed_colours_match_gamma_premultiplied_gpu_blending_over_footprint() {
             "the oversized opening retains its translucent drawing"
         );
     }
+}
+
+#[cfg(test)]
+mod display_scale_cache {
+    use super::*;
+
+    #[test]
+    fn manual_candle_scale_rebuilds_eof_cache_and_restores_legacy_mesh_exactly() {
+        let source = frame();
+        let original = (*source).clone();
+        let ctx = egui::Context::default();
+        let baseline = key(&source);
+        assert_eq!(baseline.tick, None);
+        let (base, base_shapes) = paint(&ctx, baseline);
+        let mut changed = baseline;
+        changed.geometry = changed.geometry.with_display_scale(0.5);
+        let (scaled, scaled_shapes) = paint(&ctx, changed);
+        assert!(!Arc::ptr_eq(&base, &scaled));
+        assert_ne!(base_shapes, scaled_shapes);
+        let drawing = scaled.mesh.get().unwrap();
+        let displayed = drawing.viewport_frame.as_ref().unwrap();
+        assert_eq!(displayed.effective_reference, source.effective_reference);
+        assert_eq!(displayed.view.reference, source.view.reference);
+        assert_eq!(displayed.dots[0].radius, source.dots[0].radius * 0.5);
+        for (before, after) in base
+            .mesh
+            .get()
+            .unwrap()
+            .plan
+            .regions
+            .iter()
+            .zip(&drawing.plan.regions)
+        {
+            assert_eq!(before.disc.center, after.disc.center);
+            assert_eq!(before.source_disc.center, after.source_disc.center);
+            assert_eq!(after.disc.radius, before.disc.radius * 0.5);
+        }
+        let (warm, _) = paint(&ctx, changed);
+        assert!(Arc::ptr_eq(&scaled, &warm));
+        let (_, restored_shapes) = paint(&ctx, baseline);
+        assert_eq!(base_shapes, restored_shapes);
+        assert_eq!(*source, original);
+    }
+}
+
+/// Dragging a divider gives every frame a new clip, so a new look: the
+/// drawing each look last painted must not stay in egui's temp data once
+/// nothing paints that look, or a resize grows it by one entry a frame.
+#[test]
+fn a_resize_leaves_no_last_painted_slot_per_frame_behind() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let mut slots = Vec::new();
+    for shrink in 0..24_u8 {
+        let clip = history().with_max_x(200.0 - f32::from(shrink));
+        paint(
+            &ctx,
+            Key {
+                clip,
+                ..key(&frame)
+            },
+        );
+        slots.push(ctx.data(|data| data.len()));
+    }
+    assert_eq!(slots[4], slots[23], "temp data per frame: {slots:?}");
 }

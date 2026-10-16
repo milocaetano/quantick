@@ -256,6 +256,7 @@ pub trait KlineSource {
 pub struct BinanceKlineHttp {
     base_url: String,
     client: reqwest::Client,
+    market: crate::BinanceMarket,
 }
 
 impl BinanceKlineHttp {
@@ -268,9 +269,22 @@ impl BinanceKlineHttp {
     /// A source pointing at a custom base URL (for a proxy or a test server).
     #[must_use]
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
+        Self::with_market_base(crate::BinanceMarket::Spot, base_url)
+    }
+
+    /// Public candle source for this market.
+    #[must_use]
+    pub fn for_market(market: crate::BinanceMarket) -> Self {
+        Self::with_market_base(market, market.rest_base())
+    }
+
+    /// Market routing with a custom origin for transport fixtures.
+    #[must_use]
+    pub fn with_market_base(market: crate::BinanceMarket, base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             client: reqwest::Client::new(),
+            market,
         }
     }
 }
@@ -295,9 +309,9 @@ impl KlineSource for BinanceKlineHttp {
         limit: u32,
     ) -> Result<Vec<Kline>, FeedError> {
         let limit = limit.min(MAX_PAGE_LIMIT);
-        let url = format!("{}/api/v3/klines", self.base_url);
+        let url = format!("{}{}/klines", self.base_url, self.market.rest_prefix());
         let query: Vec<(&str, String)> = vec![
-            ("symbol", symbol.to_string()),
+            ("symbol", self.market.wire_symbol(symbol)),
             ("interval", interval.to_string()),
             ("startTime", start_ms.to_string()),
             ("endTime", end_ms.to_string()),

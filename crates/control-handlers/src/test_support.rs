@@ -256,6 +256,16 @@ impl FakeWindow {
             requested_at_unix_ms: 0,
         }
     }
+
+    /// The trader's own hand on the same door: a call the window makes for a
+    /// human gesture.
+    pub fn trader() -> ActorContext {
+        ActorContext {
+            actor_kind: ActorKind::HumanUi,
+            client_name: "fake trader".to_owned(),
+            ..Self::assistant()
+        }
+    }
 }
 
 impl TabDirectory for FakeWindow {

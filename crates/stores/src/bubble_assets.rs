@@ -89,6 +89,15 @@ impl AssetBubbles {
 pub struct AssetBubblesFile {
     #[serde(default = "format_version")]
     pub version: u32,
+    /// The keys config asset modes (`symbol_asset_modes`) moved settings
+    /// to, each move settled once: carried over, or left to what the key
+    /// already held. A look the trader later clears under such a key stays
+    /// cleared. Absent, and not written, before any. A record beside
+    /// [`FORMAT_VERSION`] rather than a new version, because a build that
+    /// reads only version 1 (main) blanks a file of any other: such a build
+    /// ignores the record, and drops it when it rewrites the file.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub moved_keys: BTreeSet<String>,
     /// The assets whose "Save changes for this asset" is off: a change made
     /// while one is on screen stays on that screen for the session and is
     /// never stored. Saving is on for every asset not listed.
@@ -103,6 +112,7 @@ impl Default for AssetBubblesFile {
     fn default() -> Self {
         Self {
             version: FORMAT_VERSION,
+            moved_keys: BTreeSet::new(),
             save_changes_off: BTreeSet::new(),
             assets: BTreeMap::new(),
         }

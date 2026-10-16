@@ -14,6 +14,8 @@ use std::sync::Arc;
 use crate::viewport::Viewport;
 
 use super::OrderflowRenderStyle;
+pub(super) use quantick_orderflow::projection::EventBand;
+use quantick_orderflow::projection::finite_unit_f64;
 
 /// Screen x where the history pane ends and the live lane begins.
 ///
@@ -50,6 +52,9 @@ pub(crate) struct ProjectedLayout<'a> {
     pub(crate) inverted: bool,
     /// Every position is on the tape, its opening too: a held tape's book.
     pub(crate) lane_only: bool,
+    /// Native tape time inset the lane's depth, reductions and picking share
+    /// with the dots; `None` keeps them linear (see `from_style`).
+    pub(crate) tape_geometry: Option<quantick_orderflow::projection::TapeHorizontalGeometry>,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -75,6 +80,7 @@ impl<'a> ProjectedLayout<'a> {
             },
             inverted: false,
             lane_only: false,
+            tape_geometry: None,
         }
     }
 
@@ -104,7 +110,11 @@ impl<'a> ProjectedLayout<'a> {
         let boundary = regions - 1.0;
         match self.lane_left_x() {
             Some(divider) if regions >= 1.0 && (self.lane_only || region_pos > boundary) => {
-                divider + (region_pos - boundary).max(0.0) * self.lane_width_px
+                divider
+                    + self.tape_geometry.map_or_else(
+                        || (region_pos - boundary).max(0.0) * self.lane_width_px,
+                        |geometry| geometry.x(f64::from((region_pos - boundary).max(0.0))),
+                    )
             }
             _ => self.x_at_ext(region_pos),
         }
@@ -244,8 +254,17 @@ impl<'a> ProjectedLayout<'a> {
 
     #[must_use]
     pub(super) fn band(self, x0: f64, x1: f64, y0: f64, y1: f64, min_height: f32) -> egui::Rect {
-        let left = self.x(x0);
-        let right = self.x(x1);
+        // A lane cell can begin exactly at the shared slot boundary. Its
+        // opening belongs to the padded tape, while a historical cell ending
+        // there still belongs to the candles' viewport.
+        let lane_start = 1.0 - 1.0 / self.slot_count.max(1) as f64;
+        let time = if self.lane_left_x().is_some() && x0 >= lane_start && x1 > lane_start {
+            self.with_lane_only()
+        } else {
+            self
+        };
+        let left = time.x(x0);
+        let right = time.x(x1);
         let top = self.y(y0);
         let bottom = self.y(y1);
         readable_band(
@@ -276,11 +295,26 @@ impl<'a> ProjectedLayout<'a> {
         self.band(x0, x1, y0, y1, min_height)
     }
 
+    /// Snapshot preview in the blank forward space, without stretching any
+    /// historical interval or borrowing the tape's oldest timestamp.
+    pub(crate) fn current_book_preview_rect(self, y0: f64, y1: f64) -> egui::Rect {
+        let (top, bottom) = (self.y(y0).min(self.y(y1)), self.y(y0).max(self.y(y1)));
+        egui::Rect::from_min_max(
+            egui::pos2(self.x_at_ext(self.slot_count.saturating_sub(1) as f32), top),
+            egui::pos2(self.history_right(), bottom),
+        )
+        .intersect(self.history_rect())
+    }
+
     #[must_use]
     pub(super) fn event_band(self, x: f64, y0: f64, y1: f64, min_height: f32) -> EventBand {
         let row = self.band(x, x, y0, y1, min_height);
         EventBand {
-            x: self.x(x),
+            x: if self.tape_geometry.is_some() && x >= 1.0 - 1.0 / self.slot_count.max(1) as f64 {
+                self.with_lane_only().x(x)
+            } else {
+                self.x(x)
+            },
             top: row.top(),
             bottom: row.bottom(),
         }
@@ -303,6 +337,8 @@ pub(crate) struct RenderContext<'a> {
     )>,
     pub(super) past_tape: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
     pub(super) tape_overlay: Option<&'a Arc<quantick_orderflow::projection::TapeOverlay>>,
+    /// The frame's verdict on its current book (`VisibleOrderflow::current_book_live`).
+    pub(super) current_book_live: bool,
 }
 
 impl<'a> RenderContext<'a> {
@@ -314,7 +350,14 @@ impl<'a> RenderContext<'a> {
     ) -> Self {
         Self {
             projection,
-            layout,
+            layout: ProjectedLayout {
+                tape_geometry: quantick_orderflow::projection::TapeHorizontalGeometry::from_style(
+                    style,
+                    layout.lane_width_px,
+                    layout.chart_rect.height(),
+                ),
+                ..layout
+            },
             style,
             tape_time: None,
             tape_prices: None,
@@ -322,6 +365,7 @@ impl<'a> RenderContext<'a> {
             tape_rebuilds: None,
             past_tape: None,
             tape_overlay: None,
+            current_book_live: true,
         }
     }
 
@@ -331,6 +375,12 @@ impl<'a> RenderContext<'a> {
         past: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
     ) -> Self {
         self.past_tape = past;
+        self
+    }
+
+    /// Preview the frame's current book only while the pane holds it current.
+    pub(crate) fn with_current_book_live(mut self, live: bool) -> Self {
+        self.current_book_live = live;
         self
     }
 
@@ -391,23 +441,6 @@ impl<'a> RenderContext<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct EventBand {
-    pub(super) x: f32,
-    pub(super) top: f32,
-    pub(super) bottom: f32,
-}
-
-impl EventBand {
-    pub(super) fn height(self) -> f32 {
-        (self.bottom - self.top).max(0.0)
-    }
-
-    pub(super) fn center_y(self) -> f32 {
-        (self.top + self.bottom) / 2.0
-    }
-}
-
 fn readable_band(rect: egui::Rect, minimum_height: f32, clip: egui::Rect) -> egui::Rect {
     if !rect.is_finite() {
         return egui::Rect::NOTHING;
@@ -422,12 +455,4 @@ fn readable_band(rect: egui::Rect, minimum_height: f32, clip: egui::Rect) -> egu
         rect
     };
     readable.intersect(clip)
-}
-
-fn finite_unit_f64(value: f64) -> f64 {
-    if value.is_finite() {
-        value.clamp(0.0, 1.0)
-    } else {
-        0.0
-    }
 }

@@ -91,6 +91,29 @@ fn project(session: &mut FlowSession<Runner>, request: FlowRequest) {
     let epoch = request.epoch;
     session.project(request, |range| chunk(epoch, range));
 }
+/// The coverage that runs to the end of a request starts where its last gap
+/// ends: a carried History frame keeps exactly the spheres older than it.
+#[test]
+fn the_tail_coverage_starts_after_the_last_gap() {
+    let mut coverage = FlowCoverage::default();
+    assert_eq!(coverage.tail_start(0..200), 200, "nothing at the tail");
+    coverage.insert(150..200);
+    assert_eq!(coverage.tail_start(0..200), 150);
+    coverage.insert(20..60);
+    assert_eq!(
+        coverage.tail_start(0..200),
+        150,
+        "an older run is not the tail"
+    );
+    assert_eq!(
+        coverage.tail_start(0..120),
+        120,
+        "the tail of 0..120 is a gap"
+    );
+    coverage.insert(0..20);
+    coverage.insert(60..150);
+    assert_eq!(coverage.tail_start(0..200), 0, "all of it");
+}
 #[test]
 fn queue_full_keeps_one_bounded_packet_and_copies_only_new_ordinals() {
     let mut session = FlowSession::<Runner>::default();
@@ -102,7 +125,8 @@ fn queue_full_keeps_one_bounded_packet_and_copies_only_new_ordinals() {
             chunk(1, range)
         });
     }
-    assert_eq!(copied, [0..2048, 2048..4096, 4096..8192]);
+    // Newest first: the live edge's candles fill before older ones.
+    assert_eq!(copied, [7952..10000, 5904..7952, 1808..5904]);
     assert_eq!(session.submitted.count(0..10000), 4096);
     assert_eq!(session.unsent.as_ref().unwrap().executions.len(), 4096);
     while session.progress().pending {
@@ -141,10 +165,13 @@ fn cold_admission_grows_after_the_first_partial_and_preserves_the_complete_frame
         !session.progress().pending,
         "cold fill completes within sixteen frames"
     );
-    assert_eq!(copied[..4], [0..2048, 2048..4096, 4096..8192, 8192..16384]);
+    assert_eq!(
+        copied[..4],
+        [63488..65536, 61440..63488, 57344..61440, 49152..57344]
+    );
     assert!(copied.iter().all(|range| range.len() <= MAX_SOURCE_CHUNK));
-    assert_eq!(copied.last().unwrap().end, request.requested.end);
-    assert!(copied.windows(2).all(|pair| pair[0].end == pair[1].start));
+    assert_eq!(copied.last().unwrap().start, request.requested.start);
+    assert!(copied.windows(2).all(|pair| pair[1].end == pair[0].start));
 
     let mut complete = FlowWorkerCache::default();
     complete.select_request(&request);
@@ -168,7 +195,7 @@ fn changing_epoch_discards_a_grown_refused_packet_before_new_admission() {
         cold_chunk(2, range)
     });
     assert_eq!(copied.len(), 1);
-    assert_eq!(copied[0], 0..SOURCE_CHUNK);
+    assert_eq!(copied[0], 65_536 - SOURCE_CHUNK..65_536);
     assert_eq!(session.unsent.as_ref().unwrap().epoch, 2);
     session.runner.pump();
     session.project(replacement, |range| cold_chunk(2, range));
@@ -384,7 +411,9 @@ fn publication_large_cold_fill_projects_geometric_partials_and_exact_completion(
     let mut cache = FlowWorkerCache::default();
     let mut request = cold_request(0, 1_048_576);
     let mut published = Vec::new();
-    for start in (0..request.requested.end).step_by(2048) {
+    let end = request.requested.end;
+    // Newest first, as the session captures: each packet is older history.
+    for start in (0..end).step_by(2048).rev() {
         // Live view revisions must not restart the cold-fill publication milestone.
         request.layout_revision += 1;
         cache.select_request(&request);
@@ -396,7 +425,7 @@ fn publication_large_cold_fill_projects_geometric_partials_and_exact_completion(
                     .iter()
                     .map(|dot| dot.mark.trade_count)
                     .sum::<usize>(),
-                start + 2048
+                end - start
             );
             published.push(frame.loaded_executions);
         }
@@ -433,9 +462,9 @@ fn publication_quiet_partial_flushes_once_and_empty_request_publishes() {
     let mut cache = FlowWorkerCache::default();
     let request = cold_request(0, 20_000);
     cache.select_request(&request);
-    cache.append(&cold_chunk(1, 0..2048));
+    cache.append(&cold_chunk(1, 17_952..20_000));
     assert!(cache.project_if_due(&request, false).is_some());
-    cache.append(&cold_chunk(1, 2048..3000));
+    cache.append(&cold_chunk(1, 17_000..17_952));
     assert!(cache.project_if_due(&request, false).is_none());
     let partial = cache.project_if_due(&request, true).unwrap();
     assert_eq!(partial.loaded_executions, 3000);
@@ -488,14 +517,143 @@ fn publication_rebases_after_eviction_and_a_b_a_or_epoch_changes() {
     }
 }
 
+/// #10: a cold fill captures the newest prints first, so the candles at the
+/// live edge get their spheres before the older ones, and keeps going back
+/// in contiguous packets.
+#[test]
+fn a_cold_fill_captures_the_newest_prints_first() {
+    let request = cold_request(0, 65_536);
+    let mut session = FlowSession::<Runner>::default();
+    let mut copied = Vec::new();
+    for _ in 0..16 {
+        session.project(request.clone(), |range| {
+            copied.push(range.clone());
+            cold_chunk(1, range)
+        });
+        if !session.progress().pending {
+            break;
+        }
+        session.runner.pump();
+    }
+    assert!(!session.progress().pending, "the fill completes");
+    assert_eq!(copied[0], 65_536 - SOURCE_CHUNK..65_536);
+    assert!(copied.windows(2).all(|pair| pair[1].end == pair[0].start));
+    assert_eq!(copied.last().unwrap().start, 0);
+}
+
+/// #10: no publication milestone delays a new print. While a cold fill is
+/// still between milestones, a print at the live edge is published at once.
+#[test]
+fn publication_a_new_print_publishes_at_once_during_a_cold_fill() {
+    let mut cache = FlowWorkerCache::default();
+    let request = cold_request(0, 20_000);
+    cache.select_request(&request);
+    cache.append(&cold_chunk(1, 17_952..20_000));
+    assert!(cache.project_if_due(&request, false).is_some());
+    cache.append(&cold_chunk(1, 16_952..17_952));
+    assert!(
+        cache.project_if_due(&request, false).is_none(),
+        "older history still waits for its milestone"
+    );
+    let live = cold_request(0, 20_001);
+    cache.select_request(&live);
+    cache.append(&cold_chunk(1, 20_000..20_001));
+    let frame = cache
+        .project_if_due(&live, false)
+        .expect("the new print is drawn now");
+    assert!(
+        frame
+            .dots
+            .iter()
+            .flat_map(|dot| dot.members.iter())
+            .any(|member| member.ordinal == 20_000)
+    );
+}
+
 #[test]
 fn publication_terminal_cache_limit_flushes_below_the_next_milestone_once() {
     let request = cold_request(0, MAX_FLOW_EXECUTIONS + 2048);
+    // Older history only: the newest print is the same throughout.
+    let held = |loaded| Coverage {
+        loaded,
+        newest: request.requested.end,
+    };
     let mut publication = FlowPublication::default();
-    publication.record(&request, 1_048_576, false);
-    assert!(!publication.due(&request, MAX_FLOW_EXECUTIONS, false, false));
-    assert!(publication.due(&request, MAX_FLOW_EXECUTIONS, true, false));
-    publication.record(&request, MAX_FLOW_EXECUTIONS, true);
+    publication.record(&request, held(1_048_576), false);
+    assert!(!publication.due(&request, held(MAX_FLOW_EXECUTIONS), false, false));
+    assert!(publication.due(&request, held(MAX_FLOW_EXECUTIONS), true, false));
+    publication.record(&request, held(MAX_FLOW_EXECUTIONS), true);
     assert!(!publication.dirty(&request, MAX_FLOW_EXECUTIONS, true));
-    assert!(!publication.due(&request, MAX_FLOW_EXECUTIONS, true, true));
+    assert!(!publication.due(&request, held(MAX_FLOW_EXECUTIONS), true, true));
+}
+
+#[test]
+fn tick_spheres_keep_closed_and_forming_slot_facts_inside_a_long_tape_window() {
+    let mut config = HeatmapConfig {
+        show_aggressions: true,
+        ..HeatmapConfig::default()
+    };
+    config.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
+        viewport_scale: None,
+        reference_mode: crate::TickReferenceMode::Fixed,
+        reference_quantity: 10.0,
+        max_radius: 36.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    });
+    config.live_lane.window = crate::LaneWindow::Fixed { ms: 900_000 };
+    assert!(FlowSession::<Runner>::active(&config));
+    let mut cache = FlowWorkerCache::default();
+    // Every print occurs at the same instant, inside the long tape window.
+    // Candle membership still comes from accepted source slots, not lane time.
+    let original = request(1, 0..4);
+    cache.select_request(&original);
+    cache.append(&chunk(1, 0..7));
+    let full = cache.project(&original);
+    assert_eq!(
+        full.dots
+            .iter()
+            .map(|dot| dot.mark.trade_count)
+            .sum::<usize>(),
+        7
+    );
+    for slot in 0..4 {
+        assert!(
+            full.dots
+                .iter()
+                .flat_map(|dot| dot.members.iter())
+                .any(|member| member.candle_slot == slot)
+        );
+    }
+    let panned = request(1, 1..4);
+    cache.select_request(&panned);
+    let frame = cache.project(&panned);
+    assert_eq!(
+        frame
+            .dots
+            .iter()
+            .map(|dot| dot.mark.trade_count)
+            .sum::<usize>(),
+        5
+    );
+    assert_eq!(
+        frame.omitted_executions, 1,
+        "the requested eighth print is not yet in the forming slot"
+    );
+    for dot in &frame.dots {
+        assert_eq!(dot.mark.quantity, Decimal::from(dot.mark.trade_count));
+        assert_eq!(dot.mark.side, Side::Buy);
+    }
+    // Complete the asynchronous forming-slot request, then require all facts.
+    cache.append(&chunk(1, 7..8));
+    let complete = cache.project(&panned);
+    assert_eq!(complete.omitted_executions, 0);
+    assert_eq!(
+        complete
+            .dots
+            .iter()
+            .map(|dot| dot.mark.trade_count)
+            .sum::<usize>(),
+        6
+    );
 }

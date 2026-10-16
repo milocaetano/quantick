@@ -94,6 +94,7 @@ use quantick_feed::FeedHandle;
 use quantick_feed::history_reach;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_orderflow::LaneWindow;
+use quantick_stores::bubble_asset_store::open_asset_bubbles;
 
 // Names the window's own code no longer reads: the nine modules above took the
 // last production read of each with them -- `launch_hooks` and `paper_wiring`
@@ -669,7 +670,7 @@ impl QuantickApp {
         let config = app.config.clone();
         app.active_tab_mut().refresh_chip_label(&config);
         app.active_tab_mut().ensure_book_capture(&config);
-        let assets = app.workspace.bubble_assets().clone();
+        let assets = open_asset_bubbles(app.workspace.bubble_assets(), &config);
         app.active_tab_mut().bind_asset_bubbles(&config, &assets);
         // A feed read by timeframe can open straight on the timeframe chart.
         app.active_tab_mut().apply_feed_declared_layout(&config);

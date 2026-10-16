@@ -1,0 +1,44 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "feed_id": {
+      "type": "string"
+    },
+    "from_feed_id": {
+      "description": "The pair the tab showed before the call; the same pair when nothing\nchanged.",
+      "type": "string"
+    },
+    "from_symbol": {
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "timeline_kept": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "tab_id",
+    "feed_id",
+    "symbol",
+    "from_feed_id",
+    "from_symbol",
+    "changed",
+    "timeline_kept"
+  ],
+  "title": "FeedSourceResult",
+  "type": "object"
+}

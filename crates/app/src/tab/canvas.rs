@@ -472,6 +472,7 @@ impl Tab {
             chrome.paper_hud_here = side == focused;
             chrome.shared_pick = picks.for_pane(side);
             chrome.shared = SharedInteraction::default();
+            crate::pane::bubble_scale_controls(pane, ui, rect, &chrome);
             pane.handle_navigation(ui, rect, &mut chrome);
             pane.draw_chart(ui.painter(), rect, &mut chrome);
             // Whatever this pane did to the other's marks travels out of the

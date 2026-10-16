@@ -137,3 +137,88 @@ fn setup_prints_the_registration_command_with_the_binary_path_and_no_secret() {
     assert!(stdout.contains("--profile observer"));
     assert!(!stdout.contains("bearer"));
 }
+
+#[test]
+fn recovery_setup_keeps_the_explicit_flag_and_wrong_profiles_fail_before_serving() {
+    for client in ["claude", "codex"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_quantick-mcp"))
+            .args([
+                "setup",
+                "--client",
+                client,
+                "--profile",
+                "cockpit",
+                "--allow-recovery",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("--profile cockpit --allow-recovery"));
+        assert!(stdout.contains("grant cockpit.recover"));
+        assert!(stdout.contains("paper-position closure"));
+    }
+    for profile in ["observer", "analyst", "annotator"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_quantick-mcp"))
+            .args(["--profile", profile, "--allow-recovery"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("requires --profile cockpit"));
+    }
+}
+
+#[test]
+fn the_cli_advertises_recovery_effects_only_for_the_explicit_ceiling() {
+    let mut names = Vec::new();
+    for recovery in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quantick-mcp"));
+        command.args(["--profile", "cockpit"]);
+        if recovery {
+            command.arg("--allow-recovery");
+        }
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        for request in [
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}),
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+        ] {
+            writeln!(stdin, "{request}").unwrap();
+        }
+        drop(stdin);
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        let frames = frames(&output.stdout);
+        let instructions = frames[0]["result"]["instructions"].as_str().unwrap();
+        assert!(instructions.contains(if recovery {
+            "Recovery is requested"
+        } else {
+            "Recovery is excluded by default"
+        }));
+        assert!(instructions.contains("Order placement is unavailable"));
+        let listed = frames[1]["result"]["tools"].as_array().unwrap();
+        let invoke = listed
+            .iter()
+            .find(|tool| tool["name"] == "quantick_invoke")
+            .unwrap();
+        assert_eq!(invoke["annotations"]["destructiveHint"], recovery);
+        assert_eq!(invoke["annotations"]["readOnlyHint"], false);
+        names.push(
+            listed
+                .iter()
+                .map(|tool| tool["name"].clone())
+                .collect::<Vec<_>>(),
+        );
+    }
+    assert_eq!(
+        names[0], names[1],
+        "recovery exposes no additional trading tools"
+    );
+}

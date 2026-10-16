@@ -284,6 +284,7 @@ fn session_capabilities(
         // guessing from the provider name would offer the trader a button that
         // silently returns nothing.
         history_paging,
+        history_boundary: None,
         traded_volume: tape == TapeKind::Trades,
         // Whether this session's bridge stamps its live ticks with the
         // venue's deal counter — the only count a deal bar can be cut from.

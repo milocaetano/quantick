@@ -22,13 +22,13 @@ pub(super) use quantick_orderflow::config::dressing::{
     halo_alpha, hollow_ring_width, impact_ring_alpha, separator_ring_width, sphere_segments,
     trail_half_height,
 };
-pub(super) use quantick_orderflow::config::labels::format_quantity;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, INV_PHI,
     bubble_halo_padding, bubble_impact_ring_padding,
 };
 pub(super) use quantick_orderflow::{bubble_radius, side_offset_y};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive as _;
 
 use super::layout::RenderContext;
 use super::{Palette, add_gradient_rect, finite_unit, mix_rgb};
@@ -44,7 +44,7 @@ pub(super) struct BubbleColors {
     pub(super) sell: egui::Color32,
     front: egui::Color32,
     pub(super) trail: egui::Color32,
-    text: egui::Color32,
+    pub(super) text: egui::Color32,
     /// The crown's colour per side. Derived from the side colour rather than
     /// from [`front`](Self::front), so consumption reads as the same event
     /// hotter instead of introducing a third hue — unless the panel explicitly
@@ -209,7 +209,7 @@ impl SphereShading {
     }
 
     /// A side colour lit from the upper left.
-    fn sphere(color: egui::Color32, bubbles: &BubbleStyle) -> Self {
+    pub(super) fn sphere(color: egui::Color32, bubbles: &BubbleStyle) -> Self {
         Self {
             core: sphere_core_color(color, bubbles.sphere_highlight),
             body: color,
@@ -218,7 +218,7 @@ impl SphereShading {
     }
 
     /// The same shading behind the bubble's configured fill alpha.
-    fn faded(self, opacity: f32) -> Self {
+    pub(super) fn faded(self, opacity: f32) -> Self {
         Self {
             core: self.core.gamma_multiply(opacity),
             body: self.body.gamma_multiply(opacity),
@@ -557,7 +557,12 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         tape_rect.height(),
         &style.bubbles,
     );
-    if factual_tape {
+    let fixed_tape_size = style.dot_sizing.is_some_and(|sizing| {
+        sizing
+            .tape_display_full_quantity(&style.bubbles, &style.live_lane)
+            .is_some()
+    });
+    if factual_tape && !fixed_tape_size && style.bubbles.viewport_scale.is_none() {
         style.bubbles.max_radius = tape_geometry.max_radius;
     }
     let merged = factual_tape
@@ -638,18 +643,30 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     // whole reason it gets a radius range of its own (volume dots excepted).
     let (lane_min, lane_max) = style.live_lane.pane_radii(bubbles, true, dots);
     let (candle_min, candle_max) = style.live_lane.pane_radii(bubbles, false, dots);
-    let lane_start = 1.0 - 1.0 / context.layout.slot_count.max(1) as f64;
-    let center_at = |trade: &AggressionPrimitive| {
-        let x = if factual_tape && trade.live {
-            let fraction = (trade.x - lane_start) / (1.0 - lane_start);
-            tape_rect.left() + tape_geometry.x(fraction)
-        } else {
-            context.layout.x(trade.x)
-        };
-        egui::pos2(x, context.layout.y_unclamped(trade.y))
+    // Factual dots keep the native inset whatever the book shares
+    // (`TapeHorizontalGeometry::from_style`).
+    let dot_layout = super::layout::ProjectedLayout {
+        tape_geometry: Some(tape_geometry),
+        ..context.layout
     };
-    let on_screen =
-        |trade: &&AggressionPrimitive| context.layout.pane(trade.x).contains(center_at(trade));
+    let center_at = |trade: &AggressionPrimitive| {
+        egui::pos2(
+            if factual_tape && trade.live {
+                dot_layout.with_lane_only().x(trade.x)
+            } else {
+                context.layout.x(trade.x)
+            },
+            context.layout.y_unclamped(trade.y),
+        )
+    };
+    let pane_at = |trade: &AggressionPrimitive| {
+        if factual_tape && trade.live {
+            context.layout.lane_rect()
+        } else {
+            context.layout.pane(trade.x)
+        }
+    };
+    let on_screen = |trade: &&AggressionPrimitive| pane_at(trade).contains(center_at(trade));
     let marks = || {
         merged.iter().flat_map(|frame| &frame.marks).chain(
             context
@@ -663,15 +680,45 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         if let Some(frame) = &merged {
             fulls.0 = frame.full_quantity;
         }
-        (sizing, fulls)
+        let display = factual_tape
+            .then(|| {
+                quantick_orderflow::projection::TapeBubbleDisplay::resolve(
+                    bubbles,
+                    shown.iter().copied(),
+                    context.tape_time.map_or(f64::NAN, |(edge, _)| {
+                        f64::from(tape_geometry.span_px) / edge.window_ms as f64
+                    }),
+                    context.tape_prices.map_or(f64::NAN, |prices| {
+                        f64::from(context.layout.chart_rect.height())
+                            / (prices.high - prices.low).to_f64().unwrap_or(0.0)
+                    }),
+                    tape_geometry.max_radius,
+                )
+            })
+            .flatten();
+        (sizing, fulls, display)
     });
-    let drawn = |trade: &AggressionPrimitive| match dot_sizing {
-        Some((sizing, fulls)) => sizing.draw(bubbles, &style.live_lane, trade, fulls),
+    let base_drawn = |trade: &AggressionPrimitive| match dot_sizing {
+        Some((_, _, Some(display))) if trade.live => display.draw(trade.quantity),
+        Some((sizing, fulls, _)) => sizing.draw(bubbles, &style.live_lane, trade, fulls),
         None if trade.live => (trade.size, bubble_radius(trade.size, lane_min, lane_max)),
         None => (
             trade.size,
             bubble_radius(trade.size, candle_min, candle_max),
         ),
+    };
+    let display_scale = bubbles.display_scale.sanitized();
+    let drawn = |trade: &AggressionPrimitive| {
+        let (size, radius) = base_drawn(trade);
+        // The factual tape magnifies only as far as its NOW inset holds.
+        let gain = if factual_tape && trade.live {
+            tape_geometry.display_gain
+        } else if trade.live {
+            display_scale.tape
+        } else {
+            display_scale.candle
+        };
+        (size, radius * gain)
     };
     let radius_of = |trade: &AggressionPrimitive| drawn(trade).1;
     // Legacy dots keep their edge clamp. Factual tape dots use the common
@@ -680,12 +727,12 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let center_of = |trade: &AggressionPrimitive| {
         let mut center = center_at(trade);
         let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
-        let pane = context.layout.pane(trade.x);
+        let pane = pane_at(trade);
         if !pane.contains(center) {
             return None;
         }
         if dots && !factual_tape {
-            center.x = inside_right_edge(center.x, radius_of(trade), pane.right());
+            center.x = inside_right_edge(center.x, base_drawn(trade).1, pane.right());
         }
         Some(center + egui::vec2(0.0, lean_sign * lean * side_offset))
     };
@@ -701,7 +748,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         history_clip.clone()
     };
     let clip_for = |trade: &AggressionPrimitive| {
-        if context.layout.in_lane(trade.x) {
+        if (factual_tape && trade.live) || context.layout.in_lane(trade.x) {
             &lane_clip
         } else {
             &history_clip
@@ -725,7 +772,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             let Some(center) = center_of(trade) else {
                 continue;
             };
-            let pane = context.layout.pane(trade.x);
+            let pane = pane_at(trade);
             let half_height = trail_half_height(radius_of(trade));
             add_gradient_rect(
                 &mut trail_mesh,
@@ -779,7 +826,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 && galley.size().y <= radius * LABEL_MAX_HEIGHT_SCALE
             {
                 let pos = center - galley.size() / 2.0;
-                clip.galley(
+                clip.galley_with_override_text_color(
                     pos + LABEL_SHADOW_OFFSET_PX,
                     galley.clone(),
                     egui::Color32::from_black_alpha(LABEL_SHADOW_ALPHA),
@@ -790,16 +837,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
 }
 
-/// The text inside a bubble: what traded, and how many prints it stands for.
-///
-/// `folded` is what the frame's budget merged into this mark, and it changes
-/// the *separator* rather than adding a second number. `×4` is a cluster — four
-/// prints that happened together at one price, which is a fact about the
-/// market. `⊕4` is a fold — four marks the frame put together to fit, which is
-/// a fact about the canvas. A trader sizing a position off the first would be
-/// right and off the second would be wrong, so they may not share a glyph. The
-/// ring around a folded disc says the same thing again, further out, for the
-/// dots too small to carry text.
+/// Supply the painter's font glyph to the headless label formatter.
 pub(super) fn bubble_label(
     quantity: Decimal,
     trade_count: usize,
@@ -807,15 +845,12 @@ pub(super) fn bubble_label(
     show_quantity: bool,
     show_count: bool,
 ) -> Option<String> {
-    // Phosphor's circled plus: the text font has no U+2295 and drew a box.
-    let mark = ["×", egui_phosphor::regular::PLUS_CIRCLE][usize::from(folded > 1)];
-    match (show_quantity, show_count && trade_count > 1) {
-        (false, false) => None,
-        (true, false) => Some(format_quantity(quantity)),
-        (false, true) => Some(format!("{mark}{trade_count}")),
-        (true, true) => Some(format!(
-            "{} · {mark}{trade_count}",
-            format_quantity(quantity)
-        )),
-    }
+    quantick_orderflow::config::labels::bubble_label(
+        quantity,
+        trade_count,
+        folded,
+        show_quantity,
+        show_count,
+        egui_phosphor::regular::PLUS_CIRCLE,
+    )
 }

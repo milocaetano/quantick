@@ -49,6 +49,7 @@ pub(super) struct FlowFrame<'a> {
     lane_width: f32,
     inverted: bool,
     price_range: (f64, f64),
+    tick_chart: bool,
     projection: Option<Arc<VisibleOrderflow>>,
     regional: Option<(
         Arc<quantick_orderflow::projection::flow_tape::FlowTapeFrame>,
@@ -75,6 +76,7 @@ impl<'a> FlowFrame<'a> {
             lane_width,
             inverted,
             price_range: frame.scale.range(),
+            tick_chart: false,
             projection: None,
             regional: None,
         }
@@ -111,6 +113,7 @@ impl<'a> FlowFrame<'a> {
             frame.visible_state,
             frame.partial_visible,
         );
+        self.tick_chart = state.tick_membership().is_some();
         self.projection = orderflow.and_then(|orderflow| {
             let slots = frame.start.saturating_sub(frame.prefix.len())
                 ..frame.end.saturating_sub(frame.prefix.len());
@@ -185,6 +188,7 @@ impl<'a> FlowFrame<'a> {
             lane_width: self.lane_width,
             inverted: self.inverted,
             price_range: self.price_range,
+            tick_chart: self.tick_chart,
         }
     }
 
@@ -230,38 +234,37 @@ impl<'a> FlowFrame<'a> {
                 self.painter,
                 self.rect.with_max_x(self.rect.right() - self.lane_width),
                 frame,
-                geometry,
+                geometry.with_display_scale(owner.cached_config().bubbles.display_scale.candle),
                 self.background,
                 backing,
+                owner.cached_config().tick_look(),
             );
-            drawing.paint(
-                self.painter,
-                self.rect.with_max_x(self.rect.right() - self.lane_width),
-                false,
-            );
-            self.regional = Some((Arc::clone(frame), drawing));
+            drawing.paint(self.painter, false);
+            owner.note_flow_paint(frame, drawing.viewport_frame.as_ref());
+            self.regional = Some((
+                Arc::clone(drawing.viewport_frame.as_ref().unwrap_or(frame)),
+                drawing,
+            ));
         }
     }
 
     pub(super) fn regional_aggressions(&self) {
         if let Some((_, drawing)) = &self.regional {
-            drawing.paint(
-                self.painter,
-                self.rect.with_max_x(self.rect.right() - self.lane_width),
-                true,
-            );
+            drawing.paint(self.painter, true);
         }
     }
 
     /// Only the earned inner circumference crosses the configured candles.
     pub(super) fn regional_perimeters(&self) {
         if let Some((frame, drawing)) = &self.regional {
+            let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
             crate::orderflow_render::draw_flow_perimeters(
                 self.painter,
-                self.rect.with_max_x(self.rect.right() - self.lane_width),
+                history,
                 frame,
                 &drawing.plan,
             );
+            drawing.paint_labels(self.painter);
         }
     }
 
@@ -284,6 +287,16 @@ impl<'a> FlowFrame<'a> {
         header: Option<egui::Rect>,
     ) -> Option<egui::Rect> {
         let mut bounds = None;
+        let tick_regions = owner
+            .filter(|owner| {
+                owner.flow_execution_replaces_history()
+                    && owner.cached_config().volume_dots.tick_bubbles.is_some()
+            })
+            .map(|_| {
+                self.regional
+                    .as_ref()
+                    .map_or(&[][..], |(_, drawing)| drawing.plan.regions.as_slice())
+            });
         if let Some(owner) = owner
             && let Some(projection) = self.projection.as_deref()
         {
@@ -297,21 +310,35 @@ impl<'a> FlowFrame<'a> {
                 background: self.background,
                 lane_width: self.lane_width,
                 legend_inset,
+                tick_regions,
                 bounds: &mut bounds,
             });
         }
         if let Some(owner) = owner.filter(|owner| owner.flow_execution_replaces_history()) {
             let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
-            let top = bounds.map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
-                rect.bottom() + FLOW_CAPTION_GAP_PX
+            let local_bounds = bounds.filter(|rect| {
+                tick_regions.is_none()
+                    || (rect.left() < history.right() && rect.right() > history.left())
             });
+            let top = local_bounds
+                .map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
+                    rect.bottom() + FLOW_CAPTION_GAP_PX
+                });
             if let Some(caption) = crate::orderflow_render::flow_caption(
                 self.painter,
                 history,
                 top,
-                owner.flow_execution_frame(),
+                self.regional
+                    .as_ref()
+                    .map(|(frame, _)| frame.as_ref())
+                    .or_else(|| owner.flow_execution_frame()),
                 owner.flow_execution_progress(),
                 owner.legend_visible(),
+                tick_regions.map(|regions| quantick_chart::flow_execution::SphereChrome {
+                    regions,
+                    theme: owner.cached_config().theme,
+                    unit: owner.asset().and_then(|asset| asset.quantity_unit()),
+                }),
             ) {
                 bounds = Some(bounds.map_or(caption, |rect| rect.union(caption)));
             }

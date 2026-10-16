@@ -9,13 +9,16 @@
 
 pub mod analysis;
 pub mod attention;
+pub mod bubble_preset;
 pub mod bubble_save;
+pub mod bubble_scale;
 pub mod chart;
 pub mod chart_settings;
 pub mod deal_recording;
 pub mod drawing_magnet;
 pub mod evidence;
 pub mod feed;
+pub mod feed_source;
 pub mod health;
 pub mod history;
 pub mod indicator_guide;
@@ -36,6 +39,7 @@ pub mod scene;
 pub mod script;
 pub mod session;
 pub mod tape_view;
+pub mod tick_bubbles;
 pub mod time_axis;
 pub mod trace_replay;
 pub mod trade;

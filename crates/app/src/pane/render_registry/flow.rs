@@ -37,6 +37,8 @@ pub(in crate::pane) struct FlowPass<'a> {
     pub lane_width: f32,
     pub inverted: bool,
     pub price_range: (f64, f64),
+    /// The candles are tick bars: the candle gain paints only there.
+    pub tick_chart: bool,
 }
 pub(in crate::pane) struct LegendPass<'a> {
     pub owner: &'a OrderflowView,
@@ -48,6 +50,7 @@ pub(in crate::pane) struct LegendPass<'a> {
     pub background: egui::Color32,
     pub lane_width: f32,
     pub legend_inset: f32,
+    pub tick_regions: Option<&'a [quantick_chart::flow_execution::FlowRegionVisual]>,
     pub bounds: &'a mut Option<egui::Rect>,
 }
 pub(in crate::pane) struct StripPass<'a> {
@@ -94,6 +97,7 @@ fn aggressions(p: &mut FlowPass<'_>) {
         p.lane_width,
         p.inverted,
         p.price_range,
+        p.tick_chart,
     );
 }
 fn legend(p: &mut LegendPass<'_>) {
@@ -106,6 +110,7 @@ fn legend(p: &mut LegendPass<'_>) {
         p.background,
         p.lane_width,
         p.legend_inset,
+        p.tick_regions,
     );
 }
 fn strip(p: &mut StripPass<'_>) {

@@ -1,0 +1,18 @@
+{
+  "market": "perpetual",
+  "symbol": "BTCUSDT",
+  "start_ms": 1791828960000,
+  "end_ms": 1791829019999,
+  "captured_utc": "2026-10-13T02:16:01.634233+00:00",
+  "source": [
+    "https://fapi.binance.com/fapi/v1/aggTrades?symbol=BTCUSDT&startTime=1791828960000&endTime=1791829019999&limit=1000"
+  ],
+  "selection": "20% minute-volume rank over last 12h",
+  "trades": 362,
+  "total_btc": "30.446",
+  "candle_volume_btc": "30.446",
+  "q50": "0.003",
+  "q90": "0.094",
+  "q99": "2.011",
+  "max_btc": "4.313"
+}

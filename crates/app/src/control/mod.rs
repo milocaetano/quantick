@@ -25,13 +25,16 @@ mod price_axis;
 mod time_axis;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
+mod bubble_preset;
 mod bubble_save;
+mod bubble_scale;
 mod layers;
 mod layout;
 mod notify;
 mod opening_scale;
 mod orderflow;
 mod ports;
+mod tick_bubbles;
 pub(crate) use interaction::drawing_band_name;
 #[cfg(test)]
 pub(crate) use interaction::flow_cell_snapshot;

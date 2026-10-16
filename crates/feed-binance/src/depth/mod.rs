@@ -6,6 +6,7 @@
 //! and book events, while the deterministic order-book state lives in
 //! `quantick-orderbook`.
 
+mod metadata;
 pub mod reconnect;
 pub mod snapshot;
 pub mod stream;

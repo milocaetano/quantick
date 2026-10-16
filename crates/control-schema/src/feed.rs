@@ -17,6 +17,9 @@ pub const SCHEMA_VERSION: u32 = 1;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FeedSnapshot {
     pub tabs: Vec<FeedTabSnapshot>,
+    /// Configured source pairs available to feed.source.set and the selectors.
+    #[serde(default)]
+    pub sources: Vec<crate::feed_source::FeedSourceChoice>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -84,6 +87,7 @@ pub struct FeedTabSnapshot {
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
     pub latest_trade_unix_ms: Option<i64>,
     #[schemars(extend("x-unit" = "milliseconds"))]
+    /// Signed local receipt stamp minus venue stamp; includes clock disagreement.
     pub latest_arrival_latency_ms: Option<i64>,
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub tape_age_ms: Option<i64>,
@@ -149,12 +153,33 @@ pub struct FeedGapSnapshot {
 pub struct FeedCapabilitiesSnapshot {
     pub book_capture: bool,
     pub history_paging: bool,
+    /// Why `history_paging` is off when the feed knows: `venue_retention`
+    /// means the venue keeps nothing older. Absent while paging is on, and
+    /// on a provider that never pages; optional, so additive to v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_boundary: Option<HistoryBoundarySnapshot>,
     pub traded_volume: bool,
     /// Defaults off for snapshots produced before deal counters existed.
     #[serde(default)]
     pub deal_counter: bool,
     pub venue_ohlcv_history: bool,
     pub venue_ohlcv_generation: WireU64,
+}
+
+/// Where a feed's pageable trade history ends.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryBoundarySnapshot {
+    /// The venue retains no executions older than the chart holds.
+    VenueRetention,
+}
+
+impl From<quantick_stores::config::HistoryBoundary> for HistoryBoundarySnapshot {
+    fn from(boundary: quantick_stores::config::HistoryBoundary) -> Self {
+        match boundary {
+            quantick_stores::config::HistoryBoundary::VenueRetention => Self::VenueRetention,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -190,6 +215,17 @@ pub const FEED_GENERATION_TEST: &str =
 /// here, beside the capability it reconciles.
 pub const READBACKS: &[Readback] = &[
     snapshot(
+        crate::feed_source::FEED_SOURCE_CAPABILITY_ID,
+        Optional,
+        SCOPE_ID,
+        "tabs[].active_symbol",
+        "the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the pair changed and not otherwise",
+        &[
+            "configured_feed_selection_is_validated_retry_safe_and_reads_back",
+            "a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position",
+        ],
+    ),
+    snapshot(
         "feed.reconnect",
         Optional,
         SCOPE_ID,
@@ -214,3 +250,35 @@ pub const READBACKS: &[Readback] = &[
         &[EVERY_OPTIONAL_TEST],
     ),
 ];
+
+/// Shared factual provenance vocabulary for feed and chart snapshots.
+pub fn market_data_provenance(
+    replay: bool,
+    traded_volume: bool,
+    inferred_side: bool,
+) -> MarketDataProvenance {
+    MarketDataProvenance {
+        price: if replay {
+            "recorded_trade".to_owned()
+        } else {
+            "venue_or_broker_trade".to_owned()
+        },
+        volume: if traded_volume {
+            if replay {
+                "recorded".to_owned()
+            } else {
+                "venue_reported".to_owned()
+            }
+        } else {
+            "synthetic_unit_per_quote".to_owned()
+        },
+        aggressor_side: if replay {
+            "recording_declared".to_owned()
+        } else if inferred_side {
+            "inferred_or_derived".to_owned()
+        } else {
+            "venue_reported".to_owned()
+        },
+        replay,
+    }
+}

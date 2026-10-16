@@ -54,6 +54,7 @@ capability that cannot change application state.
 | `feed.history.load` | 1 | `feed` | no | `cockpit` |
 | `feed.reconnect` | 1 | `feed` | no | `cockpit` |
 | `feed.reload` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
+| `feed.source.set` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `health.diagnostics.read` | 1 | `health` | yes | `observe`, `observe.health`, `observe.indicators`, `observe.orderflow` |
 | `indicator.mouse_vertical_line.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout` |
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
@@ -86,7 +87,11 @@ capability that cannot change application state.
 | `notify.popup` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `notify.sound` | 1 | `notify` | no | `annotate`, `annotate.sound` |
 | `notify.toast` | 1 | `notify` | no | `annotate`, `annotate.notification` |
+| `orderflow.bubbles.preset.apply` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
+| `orderflow.bubbles.presets.list` | 1 | `orderflow` | yes | `observe`, `observe.orderflow` |
 | `orderflow.bubbles.save_changes.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
+| `orderflow.bubbles.size.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
+| `orderflow.bubbles.tick.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.tape.opening_scale.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `scene.read` | 1 | `scene` | yes | `observe`, `observe.attention`, `observe.market`, `observe.workspace` |
 | `session.journal.delete` | 1 | `session` | no | `cockpit`, `cockpit.journal.delete` |
@@ -101,4 +106,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-76 capabilities registered.
+81 capabilities registered.

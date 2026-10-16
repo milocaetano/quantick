@@ -80,8 +80,12 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::price_axis::register(&mut registry)?;
     super::time_axis::register(&mut registry)?;
     super::opening_scale::register(&mut registry)?;
+    quantick_control_handlers::bubble_preset::register_tick(&mut registry)?;
+    quantick_control_handlers::bubble_preset::register(&mut registry)?;
     super::bubble_save::register(&mut registry)?;
+    quantick_control_handlers::bubble_scale::register(&mut registry)?;
     quantick_control_handlers::recovery::register(&mut registry)?;
+    quantick_control_handlers::feed_source::register(&mut registry)?;
     quantick_control_handlers::history::register(&mut registry)?;
     quantick_control_handlers::journal_sessions::register(&mut registry)?;
     quantick_control_handlers::pnl_display::register(&mut registry)?;

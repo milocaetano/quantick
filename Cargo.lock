@@ -3136,6 +3136,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3145,6 +3146,7 @@ dependencies = [
  "futures-util",
  "quantick-engine",
  "quantick-orderbook",
+ "quantick-sources",
  "reqwest",
  "rust_decimal",
  "serde",
@@ -3316,6 +3318,7 @@ dependencies = [
  "quantick-chart",
  "quantick-engine",
  "quantick-indicators",
+ "quantick-orderbook",
  "quantick-orderflow",
  "quantick-sources",
  "quantick-workspace",
@@ -3323,6 +3326,7 @@ dependencies = [
  "serde",
  "toml 0.8.20",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

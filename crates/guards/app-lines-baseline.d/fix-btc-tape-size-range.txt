@@ -1,0 +1,9 @@
+# Two pane-owned egui size controls, the pane's port read and its control adapter.
+# The rule for where a size may be set and the size capability's handler live in
+# control-handlers; the gains and their admission in orderflow; frame scaling in chart.
+# The controls dock before navigation to own their input without expanding the app root.
+# One hover declaration keeps rounded slider bounds from registering an ID twice.
+# The review fixes on #706 (tick-only candle gain through the paint pass, the NOW
+# inset callers, one pruned temp slot for FLOW's last-painted drawings) add 18.
+crates/app +277
+!budget +277

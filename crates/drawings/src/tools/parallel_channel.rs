@@ -14,7 +14,7 @@ use std::any::Any;
 use crate::icons;
 
 use super::line_core::{Extend, line_ends};
-use super::{DrawContext, DrawingPayload, DrawingStyle, MarkTool, Handles, Constrain, ToolShortcut, dashed_segment, distance_to_segment, drawing_fill, drawing_stroke, level_with, off_line_by, unit_normal};
+use super::{DrawContext, DrawingPayload, DrawingStyle, MarkTool, Handles, Constrain, ToolShortcut, dashed_segment_within, distance_to_segment, drawing_fill, drawing_stroke, level_with, off_line_by, unit_normal};
 
 pub(super) static TOOL: ParallelChannel = ParallelChannel;
 
@@ -477,7 +477,15 @@ impl MarkTool for ParallelChannel {
         // widened underneath itself reads as a smear, so the midline is
         // geometry-only.
         if let Some((from, to)) = channel.midline.filter(|_| !ctxt.halo) {
-            dashed_segment(painter, from, to, stroke, MIDLINE_DASH_PX, MIDLINE_GAP_PX);
+            dashed_segment_within(
+                painter,
+                chart_rect,
+                from,
+                to,
+                stroke,
+                MIDLINE_DASH_PX,
+                MIDLINE_GAP_PX,
+            );
         }
     }
     fn hit_test(
@@ -600,6 +608,44 @@ mod tests {
             }
             .extend(),
             Some(Extend::Both)
+        );
+    }
+
+    /// A channel anchored far past the chart (a point kept in bar space
+    /// across a bar-size change can sit a hundred thousand bars out) costs
+    /// the dashes across the chart, not along its length: two rails plus at
+    /// most one dash per stride across the chart, whichever build paints it.
+    #[test]
+    fn a_channel_far_past_the_chart_paints_only_the_midline_it_can_see() {
+        let chart = PxRect::from_min_size(Px::ZERO, vec2(800.0, 600.0));
+        let points = [
+            pos2(-1.0e6, 100.0),
+            pos2(1.0e6, 100.0),
+            pos2(-1.0e6, 160.0),
+        ];
+        let scale = quantick_chart::geometry::PriceScale::from_range(0.0, 600.0, 0.0, 600.0);
+        let ctxt = DrawContext {
+            payload: &ChannelPayload::default(),
+            anchors: &[],
+            scale: &scale,
+            px_per_bar: 1.0,
+            unit: super::super::ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected: false,
+            halo: false,
+            content_editing: false,
+            text: &crate::UNMEASURED,
+        };
+        let mut scene = MarkScene::default();
+        TOOL.paint(&mut scene, chart, DrawingStyle::default(), &points, &ctxt);
+        let rails = 2;
+        let strides = (chart.width() / (MIDLINE_DASH_PX + MIDLINE_GAP_PX)).ceil() as usize;
+        assert!(
+            scene.shapes.len() > rails && scene.shapes.len() <= rails + strides + 3,
+            "{} shapes for an {} px chart",
+            scene.shapes.len(),
+            chart.width()
         );
     }
 

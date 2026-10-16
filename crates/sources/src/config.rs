@@ -18,6 +18,9 @@ use serde::Deserialize;
 pub enum ProviderKind {
     /// Binance public aggTrades (REST backfill + live WebSocket).
     Binance,
+    /// Binance USD-M perpetual public market data, independent of Spot.
+    #[serde(rename = "binance-futures")]
+    BinanceFutures,
     /// Hyperliquid public perpetual trades and complete L2 images.
     Hyperliquid,
     /// MetaTrader 5 via the local QuantickBridge EA (see `bridge/mt5/`).
@@ -33,7 +36,9 @@ impl ProviderKind {
         let ceiling = crate::history_reach::CAMPAIGN_PAGE_PRINTS;
         match self {
             Self::MetaTrader => ceiling,
-            Self::Binance | Self::Hyperliquid => configured.clamp(1, ceiling),
+            Self::Binance | Self::BinanceFutures | Self::Hyperliquid => {
+                configured.clamp(1, ceiling)
+            }
         }
     }
 
@@ -46,8 +51,30 @@ impl ProviderKind {
     #[must_use]
     pub fn may_count_deals(self) -> bool {
         match self {
-            ProviderKind::Binance | ProviderKind::Hyperliquid => false,
+            ProviderKind::Binance | ProviderKind::BinanceFutures | ProviderKind::Hyperliquid => {
+                false
+            }
             ProviderKind::MetaTrader => true,
+        }
+    }
+
+    /// Whether `symbol` follows this provider's symbol grammar. USD-M
+    /// perpetuals carry the canonical `.p` display suffix (`BTCUSDT.p`);
+    /// every other provider takes the venue's own name as written.
+    #[must_use]
+    pub fn canonical_symbol(self, symbol: &str) -> bool {
+        match self {
+            Self::BinanceFutures => crate::perpetual::is_canonical(symbol),
+            Self::Binance | Self::Hyperliquid | Self::MetaTrader => true,
+        }
+    }
+
+    /// What [`Self::canonical_symbol`] asks for, in a config refusal.
+    #[must_use]
+    pub const fn symbol_grammar(self) -> &'static str {
+        match self {
+            Self::BinanceFutures => "canonical USD-M symbols such as BTCUSDT.p",
+            Self::Binance | Self::Hyperliquid | Self::MetaTrader => "the venue's own symbol names",
         }
     }
 
@@ -57,7 +84,10 @@ impl ProviderKind {
     pub fn is_implemented(self) -> bool {
         matches!(
             self,
-            ProviderKind::Binance | ProviderKind::Hyperliquid | ProviderKind::MetaTrader
+            ProviderKind::Binance
+                | ProviderKind::BinanceFutures
+                | ProviderKind::Hyperliquid
+                | ProviderKind::MetaTrader
         )
     }
 
@@ -73,9 +103,10 @@ impl ProviderKind {
     #[must_use]
     pub fn capabilities(self) -> FeedCapabilities {
         match self {
-            ProviderKind::Binance => FeedCapabilities {
+            ProviderKind::Binance | ProviderKind::BinanceFutures => FeedCapabilities {
                 book_capture: true,
                 history_paging: true,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,
@@ -94,6 +125,7 @@ impl ProviderKind {
             ProviderKind::Hyperliquid => FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,
@@ -116,6 +148,7 @@ impl ProviderKind {
             ProviderKind::MetaTrader => FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: false,
@@ -142,7 +175,7 @@ impl ProviderKind {
     #[must_use]
     pub fn recovery_hint(self) -> &'static str {
         match self {
-            ProviderKind::Binance | ProviderKind::Hyperliquid => {
+            ProviderKind::Binance | ProviderKind::BinanceFutures | ProviderKind::Hyperliquid => {
                 "Check this machine's internet connection, then reconnect."
             }
             // The one provider whose data path runs through another
@@ -163,6 +196,11 @@ pub struct FeedCapabilities {
     pub book_capture: bool,
     /// Can fetch trades older than what is loaded, on demand.
     pub history_paging: bool,
+    /// Why [`history_paging`](Self::history_paging) went off on a running
+    /// feed, when the feed knows: `false` alone cannot tell "the venue keeps
+    /// nothing older" from "this provider never pages". `None` while the feed
+    /// pages, and on a provider that never did.
+    pub history_boundary: Option<HistoryBoundary>,
     /// Its prints carry a volume the venue really traded.
     ///
     /// False on a broker-quoted instrument — an index CFD prints nothing, so
@@ -224,6 +262,15 @@ pub struct FeedCapabilities {
     pub ohlcv_aggressor_split: bool,
 }
 
+/// Where a feed's pageable trade history ends, labelled rather than left
+/// for a reader to infer from paging being off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryBoundary {
+    /// The venue retains no executions older than the chart holds: USD-M
+    /// keeps the recent 48 hours.
+    VenueRetention,
+}
+
 impl FeedCapabilities {
     /// Nothing is available — the honest answer for a feed that does not
     /// resolve to a provider.
@@ -232,6 +279,7 @@ impl FeedCapabilities {
         Self {
             book_capture: false,
             history_paging: false,
+            history_boundary: None,
             traded_volume: false,
             deal_counter: false,
             ohlcv_history: false,
@@ -490,6 +538,23 @@ mod tests {
             ProviderKind::Binance.campaign_page_size(usize::MAX),
             100_000
         );
+    }
+
+    /// Only USD-M holds its symbols to a grammar; the rest take any name.
+    #[test]
+    fn only_futures_symbols_must_carry_the_canonical_perpetual_suffix() {
+        use super::ProviderKind;
+        assert!(ProviderKind::BinanceFutures.canonical_symbol("BTCUSDT.p"));
+        for symbol in ["BTCUSDT", "btcusdt.p", "BTCUSDT.P"] {
+            assert!(!ProviderKind::BinanceFutures.canonical_symbol(symbol));
+            for other in [
+                ProviderKind::Binance,
+                ProviderKind::Hyperliquid,
+                ProviderKind::MetaTrader,
+            ] {
+                assert!(other.canonical_symbol(symbol), "{other:?} {symbol}");
+            }
+        }
     }
     use super::*;
 

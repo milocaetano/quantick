@@ -6,8 +6,83 @@ mod hull;
 mod opening_anchor;
 #[path = "tests/reading.rs"]
 mod reading;
+#[path = "tests/reference_modes.rs"]
+mod reference_modes;
 #[path = "tests/time_regions.rs"]
 mod time_regions;
+
+/// A worker's cached projection is the projection: through packets in any
+/// order, live prints into one region window, oversized cells, an opening
+/// anchor, a view change and an eviction, `project_cached` builds exactly
+/// the frame `project` builds.
+#[test]
+fn the_cached_projection_is_the_projection() {
+    for reference in [
+        FlowReference::Typed(900.into()),
+        FlowReference::VisibleRegionsAtLeast(900.into()),
+    ] {
+        check_cached_projection(reference);
+    }
+}
+
+fn check_cached_projection(reference: FlowReference) {
+    let trades: Vec<Trade> = (0..400_i64)
+        .map(|n| {
+            let side = if n % 3 == 0 { Side::Sell } else { Side::Buy };
+            trade(1_000 + n * 37, 95 + n / 5 % 11, 1 + n * 13 % 17, side)
+        })
+        .collect();
+    let execution = |ordinal: usize| FlowExecution {
+        ordinal,
+        slot: ordinal / 4,
+        accepted_ordinal: ordinal % 4,
+        ticks_per_bar: 4.into(),
+        trade: &trades[ordinal],
+        opening: false,
+    };
+    let windows = [1_000_i64];
+    let ordinals = [0_usize];
+    let openings = FlowOpeningSelection {
+        windows: &windows,
+        ordinals: &ordinals,
+    };
+    let mut view = FlowTapeView {
+        first_slot: 0,
+        end_slot: 100,
+        clip_left: 0.into(),
+        clip_right: 100.into(),
+        width_px: 20_000.0,
+        reference,
+        ..view(20_000.0)
+    };
+    let mut source = FlowTapeSource::default();
+    let check = |source: &mut FlowTapeSource, view: FlowTapeView, at: &str| {
+        let cached = source.project_cached(1, 0, 400, 0..400, view, openings);
+        let whole = source.project(1, 0, 400, 0..400, view, openings);
+        assert!(!whole.dots.is_empty(), "{at}");
+        assert_eq!(cached, whole, "{at}");
+    };
+    for packet in [300..400, 0..100, 100..300] {
+        source.append(packet.clone().map(execution));
+        check(&mut source, view, &format!("packet {packet:?}"));
+    }
+    let mut live = FlowTapeSource::default();
+    for ordinal in 0..400 {
+        live.append(std::iter::once(execution(ordinal)));
+        if ordinal % 7 == 0 || ordinal > 380 {
+            check(&mut live, view, &format!("live {ordinal}"));
+        }
+    }
+    view.first_slot = 20;
+    view.clip_left = 20.into();
+    check(&mut source, view, "pan");
+    source.retain(&FlowKeep {
+        slots: 30..100,
+        ordinals: 120..400,
+    });
+    check(&mut source, view, "eviction");
+}
+
 fn trade(time: i64, price: i64, quantity: i64, side: Side) -> Trade {
     Trade {
         agg_id: 1,
@@ -123,12 +198,14 @@ fn opening_earned_oversize_changes_no_source_facts() {
     );
     assert_eq!(f.effective_reference, Some(Decimal::from(900)));
     assert!(f.dots[0].opening_oversized);
-    assert!((f.dots[0].radius.powi(2) / 49.0 - 10.0).abs() < 0.00001);
+    assert_eq!(f.dots[0].radius, 7.0, "a typed reference caps the opening");
     assert_eq!(f.dots[0].mark.quantity, Decimal::from(9000));
     assert_eq!(f.dots[0].opening_quantity, Decimal::from(9000));
 }
+/// Over a typed reference a region caps at the radius limit; the reference
+/// does not grow to it, so nothing else on screen shrinks.
 #[test]
-fn ordinary_overflow_shrinks_the_common_frame_without_flattening_ratios() {
+fn ordinary_overflow_caps_at_the_typed_reference() {
     let f = frame(
         &[
             trade(1000, 95, 1800, Side::Buy),
@@ -136,10 +213,126 @@ fn ordinary_overflow_shrinks_the_common_frame_without_flattening_ratios() {
         ],
         200.0,
     );
+    assert_eq!(f.effective_reference, Some(Decimal::from(900)));
+    assert!(f.dots.iter().all(|dot| dot.radius == 7.0));
+}
+
+/// Without a typed reference the visible regions set the scale: an
+/// overflow shrinks the common frame without flattening ratios.
+#[test]
+fn visible_regions_shrink_the_common_frame_without_flattening_ratios() {
+    let trades = [
+        trade(1000, 95, 1800, Side::Buy),
+        trade(1100, 105, 900, Side::Sell),
+    ];
+    let f = project_flow_tape(
+        trades
+            .iter()
+            .enumerate()
+            .map(|(ordinal, trade)| FlowExecution {
+                ordinal,
+                slot: ordinal / 2,
+                accepted_ordinal: ordinal % 2,
+                ticks_per_bar: 2.into(),
+                trade,
+                opening: false,
+            }),
+        1,
+        2,
+        2,
+        FlowTapeView {
+            reference: FlowReference::VisibleRegions,
+            ..view(200.0)
+        },
+    );
     assert_eq!(f.effective_reference, Some(Decimal::from(1800)));
     let a = f.dots[0].radius;
     let b = f.dots[1].radius;
     assert!((a * a / (b * b) - 2.0).abs() < 0.0001);
+}
+
+/// #9: a typed reference is the pane's one sphere scale. A print larger than
+/// it arriving, or coming into view, caps at the radius limit; every other
+/// sphere keeps its radius, and the frame keeps its reference.
+#[test]
+fn a_typed_reference_holds_every_radius_when_a_larger_print_arrives() {
+    let ordinary = [
+        trade(1000, 95, 90, Side::Buy),
+        trade(1100, 105, 900, Side::Sell),
+    ];
+    let before = frame(&ordinary, 200.0);
+    let mut with_whale = ordinary.to_vec();
+    with_whale.push(trade(2_500, 100, 9_000, Side::Buy));
+    let after = frame(&with_whale, 200.0);
+    for frame in [&before, &after] {
+        assert_eq!(frame.effective_reference, Some(Decimal::from(900)));
+        assert_eq!(frame.scale_basis, FlowScaleBasis::TypedReference);
+    }
+    let radius = |frame: &FlowTapeFrame, quantity: i64| {
+        frame
+            .dots
+            .iter()
+            .find(|dot| dot.mark.quantity == Decimal::from(quantity))
+            .unwrap()
+            .radius
+    };
+    for quantity in [90, 900] {
+        assert_eq!(radius(&before, quantity), radius(&after, quantity));
+    }
+    assert_eq!(radius(&after, 9_000), 7.0, "an outsized print is capped");
+}
+
+/// Review round 1 #3: a typed reference is the pane's one scale, so an
+/// opening burst far past it caps at the radius limit like any region (40
+/// at a reference of 1 no longer draws six limits wide). Visible regions
+/// still draw the opening's earned area beside a scale that leaves it out.
+#[test]
+fn a_typed_reference_caps_an_opening_burst_at_the_radius_limit() {
+    let trades = [
+        trade(1000, 95, 40, Side::Buy),
+        trade(1100, 105, 1, Side::Sell),
+    ];
+    let project = |reference| {
+        project_flow_tape(
+            trades
+                .iter()
+                .enumerate()
+                .map(|(ordinal, trade)| FlowExecution {
+                    ordinal,
+                    slot: ordinal,
+                    accepted_ordinal: 0,
+                    ticks_per_bar: 2.into(),
+                    trade,
+                    opening: ordinal == 0,
+                }),
+            1,
+            2,
+            2,
+            FlowTapeView {
+                reference,
+                radius_limit: 32.0,
+                ..view(200.0)
+            },
+        )
+    };
+    let opening = |frame: &FlowTapeFrame| {
+        frame
+            .dots
+            .iter()
+            .find(|dot| dot.opening_anchor)
+            .map(|dot| (dot.opening_oversized, dot.radius))
+            .unwrap()
+    };
+
+    let typed = project(FlowReference::Typed(Decimal::ONE));
+    assert_eq!(opening(&typed), (true, 32.0));
+    assert!(typed.dots.iter().all(|dot| dot.radius <= 32.0));
+
+    let regions = project(FlowReference::VisibleRegions);
+    assert_eq!(regions.effective_reference, Some(Decimal::ONE));
+    let (oversized, radius) = opening(&regions);
+    assert!(oversized);
+    assert!((radius / 32.0 - 40.0_f32.sqrt()).abs() < 0.0001, "{radius}");
 }
 
 #[test]
@@ -163,7 +356,10 @@ fn mixed_opening_group_keeps_ordinary_quantity_in_the_common_reference() {
         1,
         2,
         2,
-        view(10.0),
+        FlowTapeView {
+            reference: FlowReference::VisibleRegions,
+            ..view(10.0)
+        },
     );
     assert_eq!(f.effective_reference, Some(Decimal::from(1800)));
     assert_eq!(f.dots[0].mark.quantity, Decimal::from(1900));
@@ -578,4 +774,55 @@ fn side_radii_keep_a_positive_decimal_minority_when_the_cached_share_is_zero() {
     assert!(buy > 0.0 && sell > 0.0);
     assert!((f64::from(buy) / (f64::from(dot.radius) * 1e-20) - 1.0).abs() < 0.000001);
     assert_eq!(sell, dot.radius);
+}
+
+/// A print at the live edge of a zoomed-out view merges its own region
+/// window again and walks only the cells from that window's first slot, not
+/// every cell on screen, while the frame stays the one `project` builds.
+#[test]
+fn a_live_print_walks_only_its_windows_cells() {
+    use std::sync::atomic::Ordering;
+    const SLOTS: usize = 2_000;
+    let trades: Vec<Trade> = (0..=4 * SLOTS as i64)
+        .map(|n| {
+            let side = if n % 3 == 0 { Side::Sell } else { Side::Buy };
+            trade(1_000 + n * 37, 95 + n / 5 % 11, 1 + n * 13 % 17, side)
+        })
+        .collect();
+    let execution = |ordinal: usize| FlowExecution {
+        ordinal,
+        slot: ordinal / 4,
+        accepted_ordinal: ordinal % 4,
+        ticks_per_bar: 4.into(),
+        trade: &trades[ordinal],
+        opening: false,
+    };
+    let view = FlowTapeView {
+        first_slot: 0,
+        end_slot: SLOTS + 1,
+        clip_left: 0.into(),
+        clip_right: (SLOTS + 1).into(),
+        width_px: 4_000.0,
+        ..view(4_000.0)
+    };
+    let openings = FlowOpeningSelection::default();
+    let count = trades.len();
+    let mut source = FlowTapeSource::default();
+    source.append((0..count - 1).map(execution));
+    source.project_cached(1, 0, count, 0..count, view, openings);
+    let on_screen = source.cells_walked.swap(0, Ordering::Relaxed);
+    assert!(on_screen > 2 * SLOTS, "{on_screen} cells on screen");
+    source.append(std::iter::once(execution(count - 1)));
+    let cached = source.project_cached(1, 0, count, 0..count, view, openings);
+    let walked = source.cells_walked.load(Ordering::Relaxed);
+    // A region window spans 1 s; at 37 ms a print and four prints a slot,
+    // that is at most eight slots of four cells each.
+    assert!(
+        (1..=32).contains(&walked),
+        "{walked} of {on_screen} cells walked"
+    );
+    assert_eq!(
+        cached,
+        source.project(1, 0, count, 0..count, view, openings)
+    );
 }

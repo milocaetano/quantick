@@ -407,6 +407,19 @@ pub struct LiveLaneStyle {
     /// with volume dots on: [`HeatmapConfig::native_tape`](crate::HeatmapConfig::native_tape)
     /// is the question every processing site asks.
     pub native_tape: bool,
+    /// Reduce dense historical depth into labelled duration-weighted cells.
+    /// Current constant intervals remain exact. Off preserves legacy display.
+    pub depth_time_averaging: bool,
+    /// The strip between the last candle and the tape previews the current
+    /// book, read exactly from the synchronized book while it is current.
+    /// Its own switch. A look that never set it follows
+    /// [`depth_time_averaging`](Self::depth_time_averaging), as every look did
+    /// before the switch existed, so a saved averaging look keeps its strip
+    /// and a pane without averaging (the approved WIN tape) keeps it empty.
+    pub forward_book_preview: bool,
+    /// Keep the configured native radius instead of resizing settled marks
+    /// for new collisions. Use with a pinned volume reference.
+    pub stable_size: bool,
     /// The pane shows the tape alone, Bookmap style: the lane takes the
     /// whole canvas and no candle and no candle mark is drawn. Presentation
     /// only, and always on the native tape. Off by default, so every other
@@ -426,6 +439,9 @@ impl Default for LiveLaneStyle {
             show_depth: true,
             show_aggressions: true,
             native_tape: false,
+            depth_time_averaging: false,
+            forward_book_preview: false,
+            stable_size: false,
             tape_only: false,
         }
     }
@@ -465,6 +481,14 @@ struct LiveLaneStyleRepr {
     /// Written only when on, so a pane that never asked keeps its file.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     native_tape: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    depth_time_averaging: bool,
+    /// Absent follows `depth_time_averaging`, and is written only when it
+    /// differs from that, so a look saved before the switch keeps its file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    forward_book_preview: Option<bool>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stable_size: bool,
     /// Written only when on, like `native_tape`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     tape_only: bool,
@@ -497,6 +521,11 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             show_depth: repr.show_depth.unwrap_or(true),
             show_aggressions: repr.show_aggressions.unwrap_or(true),
             native_tape: repr.native_tape,
+            depth_time_averaging: repr.depth_time_averaging,
+            forward_book_preview: repr
+                .forward_book_preview
+                .unwrap_or(repr.depth_time_averaging),
+            stable_size: repr.stable_size,
             tape_only: repr.tape_only,
         }
     }
@@ -522,6 +551,10 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             show_depth: Some(style.show_depth),
             show_aggressions: Some(style.show_aggressions),
             native_tape: style.native_tape,
+            depth_time_averaging: style.depth_time_averaging,
+            forward_book_preview: (style.forward_book_preview != style.depth_time_averaging)
+                .then_some(style.forward_book_preview),
+            stable_size: style.stable_size,
             tape_only: style.tape_only,
         }
     }
@@ -1267,5 +1300,34 @@ mod tests {
         // Nothing to label.
         assert!(lane_time_ticks(100_000, 0, 4).is_empty());
         assert!(lane_time_ticks(100_000, 15_000, 0).is_empty());
+    }
+
+    /// A look saved before the strip preview had its own switch: depth
+    /// averaging on meant the strip showed the current book, and it still
+    /// does. Averaging off and no switch keeps the strip empty (WIN), an
+    /// explicit switch wins either way, and an absent switch stays absent.
+    #[test]
+    fn an_absent_forward_preview_follows_depth_averaging() {
+        let old: LiveLaneStyle = toml::from_str("depth_time_averaging = true\n").unwrap();
+        assert!(old.forward_book_preview, "the trader's saved BTC look");
+        let quiet: LiveLaneStyle = toml::from_str("native_tape = true\n").unwrap();
+        assert!(
+            !quiet.forward_book_preview,
+            "a WIN look keeps the strip empty"
+        );
+        for averaging in [false, true] {
+            for explicit in [false, true] {
+                let text = format!(
+                    "depth_time_averaging = {averaging}\nforward_book_preview = {explicit}\n"
+                );
+                let style: LiveLaneStyle = toml::from_str(&text).unwrap();
+                assert_eq!(style.forward_book_preview, explicit, "{text}");
+                let again = toml::to_string(&style).unwrap();
+                assert_eq!(toml::from_str::<LiveLaneStyle>(&again).unwrap(), style);
+            }
+        }
+        let rewritten = toml::to_string(&old).unwrap();
+        assert!(!rewritten.contains("forward_book_preview"), "{rewritten}");
+        assert_eq!(toml::from_str::<LiveLaneStyle>(&rewritten).unwrap(), old);
     }
 }

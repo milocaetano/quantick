@@ -67,7 +67,7 @@ fn a_quiet_tape_reads_as_stale_while_arrival_stays_frozen() {
     assert!(age < metrics::STALE_TAPE_MS);
     assert_eq!(
         statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age), None),
-        "arrival 42 ms"
+        "clock 42 ms"
     );
 
     // A minute of silence on the same open socket.

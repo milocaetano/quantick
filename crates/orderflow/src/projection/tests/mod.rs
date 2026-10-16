@@ -1326,10 +1326,12 @@ fn projection_uses_live_end_of_partial_timeline() {
     // confirmation at 750 sits 50 ms short of the edge.
     let window = crate::constants::MIN_LANE_SPAN_MS as f64;
     let book_x = (2.0 + (window - 50.0) / window) / 3.0;
+    // The current book's rows stand at the edge for the strip's preview
+    // and claim no lane time.
     let observed: Vec<_> = projection
         .cells
         .iter()
-        .filter(|cell| !cell.carried && cell.x0 >= 2.0 / 3.0)
+        .filter(|cell| !cell.carried && !cell.current_book && cell.x0 >= 2.0 / 3.0)
         .collect();
     let carried: Vec<_> = projection
         .cells

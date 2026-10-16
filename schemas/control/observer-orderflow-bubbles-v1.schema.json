@@ -59,6 +59,21 @@
       ],
       "type": "object"
     },
+    "BubbleDisplayScaleSnapshot": {
+      "properties": {
+        "candle": {
+          "type": "string"
+        },
+        "tape": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tape",
+        "candle"
+      ],
+      "type": "object"
+    },
     "BubblesStateSnapshot": {
       "properties": {
         "aggression_provenance": {
@@ -75,7 +90,20 @@
             }
           ],
           "default": null,
-          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
+          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, `orderflow.tape.opening_scale.set`, and\n`orderflow.bubbles.size.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
+        },
+        "depth_time_averaging": {
+          "default": false,
+          "description": "Dense historical tape depth uses labelled duration-weighted averages;\ncurrent constant intervals remain exact.",
+          "type": "boolean"
+        },
+        "display_scale": {
+          "$ref": "#/$defs/BubbleDisplayScaleSnapshot",
+          "default": {
+            "candle": "1",
+            "tape": "1"
+          },
+          "description": "Independent final-radius gains; 1 preserves the selected preset's sizes."
         },
         "enabled": {
           "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
@@ -84,6 +112,11 @@
         "floored_quantity": {
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
+        },
+        "forward_book_preview": {
+          "default": false,
+          "description": "The strip between the last candle and the tape previews the current\nbook, read exactly while it is current. The lane setting\n`forward_book_preview`, one of the asset's bubble settings.",
+          "type": "boolean"
         },
         "ignore_opening_burst_in_scale": {
           "default": false,
@@ -101,8 +134,13 @@
         },
         "overlap_merge": {
           "default": false,
-          "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+          "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Grouping changes start a\nnew grouping; final-radius gains preserve it. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
           "type": "boolean"
+        },
+        "preset": {
+          "default": "",
+          "description": "Whole-look selection, including unbound views; empty after defaults.",
+          "type": "string"
         },
         "recorded_opening_windows_ms": {
           "default": [],
@@ -113,10 +151,58 @@
           },
           "type": "array"
         },
+        "stable_size": {
+          "default": false,
+          "description": "Native dots retain their factual groups. An optional viewport scale\nchanges their common presentation reference and radius after grouping.",
+          "type": "boolean"
+        },
+        "tape_display_full_quantity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The quantity drawn at the configured maximum radius for stable native\nTape with a fixed display reference. Its minimum radius remains visible;\narea above that minimum grows with quantity up to this amount. Separate\nfrom `volume_dots.volume_dot_full_quantity`, which still governs grouping.\nAbsent for automatic sizing and legacy native Tape looks."
+        },
         "tape_only": {
           "default": false,
           "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
           "type": "boolean"
+        },
+        "tape_viewport_scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Visible-relative native Tape presentation, independent of grouping."
+        },
+        "tick_bubbles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TickBubblesSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tick_presets": {
+          "default": [],
+          "description": "Chart-only presets available for this asset.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "volume_dots": {
           "anyOf": [
@@ -201,7 +287,7 @@
           "type": "boolean"
         },
         "opening_capped": {
-          "description": "Compatibility field: FLOW no longer caps opening regions; always false.",
+          "description": "Legacy compatibility field, always false; radius_px reports actual area.",
           "type": "boolean"
         },
         "opening_oversized": {
@@ -594,6 +680,70 @@
       ],
       "type": "object"
     },
+    "TickBubbleReferenceMode": {
+      "enum": [
+        "fixed",
+        "visible_max"
+      ],
+      "type": "string"
+    },
+    "TickBubblesSnapshot": {
+      "properties": {
+        "label_min_radius": {
+          "type": "string"
+        },
+        "max_radius": {
+          "type": "string"
+        },
+        "opacity": {
+          "type": "string"
+        },
+        "reference_mode": {
+          "$ref": "#/$defs/TickBubbleReferenceMode",
+          "default": "fixed"
+        },
+        "reference_quantity": {
+          "description": "Full-radius quantity in fixed mode; configured floor in visible-max mode.",
+          "type": "string"
+        },
+        "viewport_scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Present when final visible quantities and the current camera size the spheres."
+        }
+      },
+      "required": [
+        "reference_quantity",
+        "max_radius",
+        "label_min_radius",
+        "opacity"
+      ],
+      "type": "object"
+    },
+    "ViewportBubbleScaleSnapshot": {
+      "description": "Optional drawing calibration; factual grouping uses its existing settings.",
+      "properties": {
+        "price_units_per_pixel": {
+          "type": "string"
+        },
+        "x_units_per_pixel": {
+          "description": "Bars on candles; milliseconds on native Tape.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "x_units_per_pixel",
+        "price_units_per_pixel"
+      ],
+      "type": "object"
+    },
     "VolumeDotsSnapshot": {
       "description": "What a volume-dots frame was keyed and sized on.",
       "properties": {
@@ -615,7 +765,7 @@
         },
         "volume_dot_full_quantity": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "description": "Contracts a dot holds at the largest radius when the size is typed:\narea is proportional to quantity against it. The bubble setting\n`volume_dot_full_quantity`."
+          "description": "The typed volume-dot reference (`volume_dot_full_quantity`). Native\nTape uses it to group recent prints; stable native Tape with a fixed\ndisplay reference draws against `tape_display_full_quantity` instead.\nOther volume dots draw at the largest radius at this amount."
         }
       },
       "required": [

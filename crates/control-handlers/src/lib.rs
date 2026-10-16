@@ -18,8 +18,11 @@
 //! handed the time, or asks its port to stamp it.
 
 pub mod annotate;
+pub mod bubble_preset;
+pub mod bubble_scale;
 pub mod chart;
 pub mod dock;
+pub mod feed_source;
 pub mod history;
 pub mod journal_sessions;
 pub mod notify;

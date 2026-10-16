@@ -22,6 +22,15 @@ use crate::grouping::EffectiveGrouping;
 use crate::history::{AggressorSide, RestingSide};
 use crate::interaction::{LiquidityEvent, LiquidityEvidence};
 
+/// Identity of the exact book read when a projection was built, retained with
+/// cached frames rather than borrowed from newer independently published health.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BookSource {
+    pub update_id: Option<u64>,
+    /// Source update time or snapshot effective coverage start, not arrival time.
+    pub event_ms: i64,
+}
+
 /// A displayed resting-liquidity cell resolved under the pointer.
 /// Consumers can map this renderer-independent value into their own wire DTO.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +47,55 @@ pub struct FlowCellHit {
     pub held_tape_end_ms: Option<i64>,
     /// The live book carried past its last confirmation, not observed there.
     pub carried: bool,
+    /// Quantity is a duration-weighted mean over this displayed interval.
+    pub time_averaged: bool,
+    /// Current snapshot displayed in chart forward space, with no time claim.
+    pub current_book_preview: bool,
+    pub current_book_source: Option<BookSource>,
+}
+
+/// Timeline and presentation provenance for a semantic cell hit.
+pub struct CellHitContext {
+    pub first_bar_index: usize,
+    pub slot_count: usize,
+    pub has_lane: bool,
+    pub held_tape_end_ms: Option<i64>,
+    pub held: bool,
+    pub current_book_preview: bool,
+    /// The book the frame's current rows were read from
+    /// ([`HeatmapProjection::current_book`]).
+    pub current_book_source: Option<BookSource>,
+}
+
+impl FlowCellHit {
+    /// Keep semantic slots and exact source facts with the painted cell.
+    pub fn from_cell(
+        cell: &HeatmapCell,
+        price_span: Decimal,
+        context: CellHitContext,
+    ) -> Option<Self> {
+        let regions = context.slot_count.max(1);
+        if regions.saturating_sub(usize::from(context.has_lane)) == 0 {
+            return None;
+        }
+        let (first, after, touches_lane) =
+            super::depth_cell_slots(cell.x0, cell.x1, regions, context.has_lane);
+        Some(Self {
+            generation: cell.generation,
+            side: cell.side,
+            price_bucket: cell.price_bucket,
+            price_span,
+            quantity: cell.quantity,
+            start_slot: context.first_bar_index + first,
+            end_slot_exclusive: context.first_bar_index + after,
+            live_lane: touches_lane && !context.held,
+            held_tape_end_ms: context.held_tape_end_ms,
+            carried: cell.carried,
+            time_averaged: cell.time_averaged,
+            current_book_preview: context.current_book_preview,
+            current_book_source: context.current_book_source.filter(|_| cell.current_book),
+        })
+    }
 }
 
 /// Exact visible price interval. `high` maps to y=0 and `low` to y=1.
@@ -112,6 +170,12 @@ pub struct HeatmapCell {
     /// ([`CARRIED_BOOK_ALPHA`](super::CARRIED_BOOK_ALPHA)) so it never passes
     /// for observed depth.
     pub carried: bool,
+    /// Quantity is a duration-weighted mean over this displayed interval.
+    pub time_averaged: bool,
+    /// Exact current-book row, read from [`HeatmapProjection::current_book`];
+    /// zero-width at the confirmation instant, and at the live edge when the
+    /// lane's own runs carry the book there (depth averaging off).
+    pub current_book: bool,
 }
 
 /// One aggressive execution ready for circles, footprint cells or tooltips.
@@ -300,6 +364,10 @@ pub struct HeatmapProjection {
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Visible continuity gaps. Shared for the reason [`cells`](Self::cells) is.
     pub gaps: Arc<Vec<GapPrimitive>>,
+    /// The one book every current row ([`HeatmapCell::current_book`]) was
+    /// read from, so a reader checks their freshness once, in O(1)
+    /// ([`super::book_is_current`]); `None` when the frame read none.
+    pub current_book: Option<BookSource>,
     /// Normalized x the live edge has reached inside the lane, and the signal
     /// that this frame has a lane at all. `None` when it follows no live edge.
     ///
@@ -365,6 +433,7 @@ impl HeatmapProjection {
             volume_dots: false,
             liquidity_events: Vec::new(),
             gaps: Arc::new(Vec::new()),
+            current_book: None,
             live_now_x: None,
             effective_grouping,
             liquidity_reference: Decimal::ZERO,
@@ -461,6 +530,8 @@ pub struct LiveMarks {
     pub cells: Vec<HeatmapCell>,
     /// Tape bands the visible-cell cap left out.
     pub dropped_cells: usize,
+    /// The book the current rows among [`cells`](Self::cells) were read from.
+    pub current_book: Option<BookSource>,
 }
 
 impl SettledProjection {
@@ -555,6 +626,7 @@ impl SettledProjection {
             volume_dots: self.volume_dots,
             liquidity_events,
             gaps: Arc::clone(&self.gaps),
+            current_book: live.current_book,
             live_now_x: live.live_now_x,
             effective_grouping: self.effective_grouping,
             liquidity_reference: self.liquidity_reference,

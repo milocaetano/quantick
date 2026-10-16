@@ -53,6 +53,38 @@ impl FlowCoverage {
         }
         (start < requested.end).then_some(start..requested.end)
     }
+    /// The newest gap of `requested`: what a newest-first fill loads next.
+    pub fn last_gap(&self, requested: Range<usize>) -> Option<Range<usize>> {
+        let mut end = requested.end;
+        for held in self.ranges.iter().rev() {
+            if held.start >= end {
+                continue;
+            }
+            if held.end <= requested.start {
+                break;
+            }
+            if held.end < end {
+                return Some(held.end.max(requested.start)..end);
+            }
+            end = end.min(held.start);
+        }
+        (requested.start < end).then_some(requested.start..end)
+    }
+    /// Start of the coverage that runs to the end of `requested`: where its
+    /// last gap ends (its end when the newest ordinal is not covered), its
+    /// start when it has no gap.
+    pub fn tail_start(&self, requested: Range<usize>) -> usize {
+        self.last_gap(requested.clone())
+            .map_or(requested.start, |gap| gap.end)
+    }
+    /// One past the newest ordinal of `requested` held; zero when none is.
+    pub fn newest(&self, requested: Range<usize>) -> usize {
+        self.ranges
+            .iter()
+            .rev()
+            .find(|held| held.start < requested.end && held.end > requested.start)
+            .map_or(0, |held| held.end.min(requested.end))
+    }
     pub fn count(&self, requested: Range<usize>) -> usize {
         self.ranges
             .iter()
@@ -79,7 +111,19 @@ pub struct FlowTapeSource {
     coverage: FlowCoverage,
     ineligible: FlowCoverage,
     count: usize,
+    /// Region windows a print joined since the last cached projection.
+    dirty: std::collections::BTreeSet<i64>,
+    /// The lowest slot a print joined since the last cached projection.
+    dirty_from: Option<usize>,
+    /// The cells cached projections have walked, for tests to count.
+    #[cfg(test)]
+    pub(super) cells_walked: std::sync::atomic::AtomicUsize,
+    /// The spheres of the last cached projection, per region window.
+    memo: Option<incremental::FlowMemo>,
 }
+
+#[path = "incremental.rs"]
+mod incremental;
 
 /// Both classifications are supplied by the complete canonical source owner.
 /// Missing retained or visible executions never nominate replacement anchors.
@@ -97,6 +141,11 @@ impl FlowTapeSource {
         let inside = self
             .cells
             .split_off(&(keep.slots.start, i64::MIN, Decimal::MIN));
+        // Evicted cells leave their windows: every cached sphere is reread.
+        // A keep that only grew with the live edge evicts nothing.
+        if !beyond.is_empty() || !self.cells.is_empty() {
+            self.memo = None;
+        }
         self.cells = inside;
         drop(beyond);
         self.coverage.retain(keep.ordinals.clone());
@@ -135,6 +184,9 @@ impl FlowTapeSource {
                 self.ineligible.insert(ordinal..ordinal + 1);
                 continue;
             }
+            self.dirty
+                .insert(trade.timestamp_ms.div_euclid(FLOW_REGION_WINDOW_MS));
+            self.dirty_from = Some(self.dirty_from.map_or(slot, |from| from.min(slot)));
             let position = Decimal::from(slot)
                 + (Decimal::from(accepted_ordinal) + Decimal::new(5, 1)) / ticks_per_bar;
             let mark = fact(trade);
@@ -182,85 +234,13 @@ impl FlowTapeSource {
         view: FlowTapeView,
         openings: FlowOpeningSelection<'_>,
     ) -> FlowTapeFrame {
-        let loaded_executions = self.coverage.count(requested.clone());
-        let mut frame = FlowTapeFrame {
-            source_revision: epoch,
-            source_count,
-            layout_revision,
-            omitted_executions: requested.len().saturating_sub(loaded_executions),
-            computed_through_ordinal: self
-                .coverage
-                .first_gap(requested.clone())
-                .map_or(requested.end, |gap| gap.start),
-            ineligible_executions: self.ineligible.count(requested.clone()),
-            requested_ordinals: requested,
-            loaded_executions,
-            cache_limit_reached: self.count == MAX_FLOW_EXECUTIONS,
-            off_axis_executions: 0,
-            offscreen_executions: 0,
-            view,
-            effective_reference: None,
-            scale_basis: FlowScaleBasis::Empty,
-            opening_exclusion_effective: false,
-            dots: Vec::new(),
-            paint_order: Vec::new(),
-        };
+        let mut frame = self.frame_shell(epoch, layout_revision, source_count, requested, view);
         if !valid(view) {
             return frame;
         }
-        let slots = Decimal::from(view.end_slot - view.first_slot);
-        // width_px covers the admission span, so padding cancels just as it does
-        // in the collision geometry; no viewport-width reinterpretation is made.
-        let pixels_per_slot = f64::from(view.width_px) / (view.end_slot - view.first_slot) as f64;
-        let position_px = |position: Decimal| {
-            (position - Decimal::from(view.first_slot))
-                .to_f64()
-                .unwrap_or_default()
-                * pixels_per_slot
-        };
         let groups = self
-            .cells
-            .range(
-                (view.first_slot, i64::MIN, Decimal::MIN)..(view.end_slot, i64::MIN, Decimal::MIN),
-            )
-            .map(|(&(slot, window, _), cell)| {
-                let mut mark = cell.mark.clone(); // compact facts: identities live in shared member buffers
-                let position = cell.position_quantity / mark.quantity;
-                mark.x = ((position - Decimal::from(view.first_slot)) / slots)
-                    .to_f64()
-                    .unwrap_or_default();
-                mark.y = view.prices.y_unclamped(mark.price).unwrap_or_default();
-                let hull = FlowHull {
-                    left: position_px(cell.positions[0]),
-                    right: position_px(cell.positions[1]),
-                    top: mark.y * f64::from(view.height_px),
-                    bottom: mark.y * f64::from(view.height_px),
-                };
-                let opening = if openings.windows.contains(&window) {
-                    mark.quantity
-                } else {
-                    Decimal::ZERO
-                };
-                Group {
-                    first_ordinal: cell.first_ordinal,
-                    moment: TapeMoment::new(mark, f64::INFINITY),
-                    hull,
-                    members: FlowMembers {
-                        parts: vec![Arc::clone(&cell.members)],
-                        count: cell.members.len(),
-                    },
-                    position_quantity: cell.position_quantity,
-                    first_slot: slot,
-                    end_slot: slot + 1,
-                    opening,
-                    opening_anchor: openings.ordinals.iter().any(|ordinal| {
-                        cell.members
-                            .binary_search_by_key(ordinal, |member| member.ordinal)
-                            .is_ok()
-                    }),
-                    cells: 1,
-                }
-            })
+            .cells_in(view)
+            .map(|(&(slot, window, _), cell)| cell_group(slot, window, cell, view, openings))
             .collect();
         (
             frame.dots,
@@ -274,6 +254,109 @@ impl FlowTapeSource {
         frame
     }
 }
+impl FlowTapeSource {
+    /// A frame of `requested` with its coverage and no sphere yet.
+    fn frame_shell(
+        &self,
+        epoch: u64,
+        layout_revision: u64,
+        source_count: usize,
+        requested: Range<usize>,
+        view: FlowTapeView,
+    ) -> FlowTapeFrame {
+        let loaded_executions = self.coverage.count(requested.clone());
+        FlowTapeFrame {
+            source_revision: epoch,
+            source_count,
+            layout_revision,
+            omitted_executions: requested.len().saturating_sub(loaded_executions),
+            computed_through_ordinal: self
+                .coverage
+                .first_gap(requested.clone())
+                .map_or(requested.end, |gap| gap.start),
+            covered_from_ordinal: self.coverage.tail_start(requested.clone()),
+            ineligible_executions: self.ineligible.count(requested.clone()),
+            requested_ordinals: requested,
+            loaded_executions,
+            cache_limit_reached: self.count == MAX_FLOW_EXECUTIONS,
+            off_axis_executions: 0,
+            offscreen_executions: 0,
+            view,
+            effective_reference: None,
+            scale_basis: FlowScaleBasis::Empty,
+            opening_exclusion_effective: false,
+            dots: Vec::new(),
+            paint_order: Vec::new(),
+        }
+    }
+
+    /// The cells of the view's admission slots, in key order.
+    fn cells_in(
+        &self,
+        view: FlowTapeView,
+    ) -> std::collections::btree_map::Range<'_, (usize, i64, Decimal), NativeCell> {
+        self.cells.range(
+            (view.first_slot, i64::MIN, Decimal::MIN)..(view.end_slot, i64::MIN, Decimal::MIN),
+        )
+    }
+}
+
+/// One native cell as a group of `view`, before merging.
+fn cell_group(
+    slot: usize,
+    window: i64,
+    cell: &NativeCell,
+    view: FlowTapeView,
+    openings: FlowOpeningSelection<'_>,
+) -> Group {
+    let slots = Decimal::from(view.end_slot - view.first_slot);
+    // width_px covers the admission span, so padding cancels just as it does
+    // in the collision geometry; no viewport-width reinterpretation is made.
+    let pixels_per_slot = f64::from(view.width_px) / (view.end_slot - view.first_slot) as f64;
+    let position_px = |position: Decimal| {
+        (position - Decimal::from(view.first_slot))
+            .to_f64()
+            .unwrap_or_default()
+            * pixels_per_slot
+    };
+    let mut mark = cell.mark.clone(); // compact facts: identities live in shared member buffers
+    let position = cell.position_quantity / mark.quantity;
+    mark.x = ((position - Decimal::from(view.first_slot)) / slots)
+        .to_f64()
+        .unwrap_or_default();
+    mark.y = view.prices.y_unclamped(mark.price).unwrap_or_default();
+    let hull = FlowHull {
+        left: position_px(cell.positions[0]),
+        right: position_px(cell.positions[1]),
+        top: mark.y * f64::from(view.height_px),
+        bottom: mark.y * f64::from(view.height_px),
+    };
+    let opening = if openings.windows.contains(&window) {
+        mark.quantity
+    } else {
+        Decimal::ZERO
+    };
+    Group {
+        first_ordinal: cell.first_ordinal,
+        moment: TapeMoment::new(mark, f64::INFINITY),
+        hull,
+        members: FlowMembers {
+            parts: vec![Arc::clone(&cell.members)],
+            count: cell.members.len(),
+        },
+        position_quantity: cell.position_quantity,
+        first_slot: slot,
+        end_slot: slot + 1,
+        opening,
+        opening_anchor: openings.ordinals.iter().any(|ordinal| {
+            cell.members
+                .binary_search_by_key(ordinal, |member| member.ordinal)
+                .is_ok()
+        }),
+        cells: 1,
+    }
+}
+
 fn valid(view: FlowTapeView) -> bool {
     view.reference
         .typed()

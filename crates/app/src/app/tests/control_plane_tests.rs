@@ -718,6 +718,7 @@ fn a_capability_that_rises_later_is_asked_again() {
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
         book_capture: false,
         history_paging: true,
+        history_boundary: None,
         traded_volume: true,
         deal_counter: false,
         ohlcv_history: false,
@@ -803,6 +804,7 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
         book_capture: false,
         history_paging: true,
+        history_boundary: None,
         traded_volume: true,
         deal_counter: false,
         ohlcv_history: true,
@@ -5512,7 +5514,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 76);
+    assert_eq!(documents.len(), 86);
     for file_name in [
         "session-journal-delete-input-v1.schema.json",
         "session-journal-input-v1.schema.json",
@@ -5531,6 +5533,8 @@ fn observer_schemas(update: bool) {
         "chart-time-axis-reset-result-v1.schema.json",
         "orderflow-opening-scale-input-v1.schema.json",
         "orderflow-opening-scale-result-v1.schema.json",
+        "orderflow-bubble-scale-input-v1.schema.json",
+        "orderflow-bubble-scale-result-v1.schema.json",
         "orderflow-bubbles-save-changes-input-v1.schema.json",
         "orderflow-bubbles-save-changes-result-v1.schema.json",
     ] {
@@ -5920,7 +5924,7 @@ fn incremental_lane_dense_frame_benchmark() {
         assert!(
             app.active_tab_mut()
                 .tape_mut()
-                .apply_preset("dense tape btc")
+                .apply_preset("dense tape btc", false)
         );
         app.active_tab_mut().flow_pane.add_indicator(
             crate::indicator_worker::IndicatorSource::Native {

@@ -246,10 +246,12 @@ impl MarkScene {
     }
 }
 
-/// Paint `from`–`to` as `dash_px` dashes separated by `gap_px` gaps, starting
-/// on a dash. A drawing repaints every frame, so this walks the segment
-/// itself and emits plain line segments.
-pub fn dashed_segment(
+/// Paint the whole of `from`–`to` as `dash_px` dashes separated by `gap_px`
+/// gaps, starting on a dash: the reference the clipped walk is checked
+/// against. Its cost follows the segment's length, not the screen, so tools
+/// dash with [`dashed_segment_within`] and this stays test-only.
+#[cfg(test)]
+pub(crate) fn dashed_segment(
     scene: &mut MarkScene,
     from: Px,
     to: Px,
@@ -257,20 +259,114 @@ pub fn dashed_segment(
     dash_px: f32,
     gap_px: f32,
 ) {
-    let span = to - from;
-    let length = span.length();
-    let step = dash_px + gap_px;
-    if !(length > f32::EPSILON && length.is_finite() && step > 0.0 && step.is_finite()) {
+    let Some(walk) = DashWalk::along(from, to, dash_px, gap_px) else {
         return;
+    };
+    walk.paint(scene, (0, walk.length), stroke);
+}
+
+/// Paint `from`–`to` as `dash_px` dashes separated by `gap_px` gaps,
+/// starting on a dash, for the part that can reach `clip`, in the phase the
+/// whole segment has: a line that runs far past the chart
+/// costs the dashes across the chart, not the dashes along its length, and
+/// the ones on screen land where the whole walk would put them.
+pub fn dashed_segment_within(
+    scene: &mut MarkScene,
+    clip: PxRect,
+    from: Px,
+    to: Px,
+    stroke: Stroke,
+    dash_px: f32,
+    gap_px: f32,
+) {
+    let Some(walk) = DashWalk::along(from, to, dash_px, gap_px) else {
+        return;
+    };
+    let Some((near, far)) = span_within(clip, from, to - from) else {
+        return;
+    };
+    // Whole strides only: the dash crossing each edge of the clip is the
+    // whole walk's dash, never one cut at the clip.
+    let (length, step) = (walk.length, walk.step);
+    let first = (near * length / step).floor() as u64;
+    let last = ((far * length / step).ceil() * step).min(length);
+    walk.paint(scene, (first, last), stroke);
+}
+
+/// A segment as dashes walk it: its direction, its length and the stride
+/// from one dash to the next. `None` where there is nothing to walk.
+struct DashWalk {
+    from: Px,
+    direction: Px,
+    length: f32,
+    dash_px: f32,
+    step: f32,
+}
+
+impl DashWalk {
+    fn along(from: Px, to: Px, dash_px: f32, gap_px: f32) -> Option<Self> {
+        let span = to - from;
+        let length = span.length();
+        let step = dash_px + gap_px;
+        (length > f32::EPSILON && length.is_finite() && step > 0.0 && step.is_finite()).then(|| {
+            Self {
+                from,
+                direction: span / length,
+                length,
+                dash_px,
+                step,
+            }
+        })
     }
-    let direction = span / length;
-    let mut travelled = 0.0_f32;
-    while travelled < length {
-        let dash_end = (travelled + dash_px).min(length);
-        scene.line_segment(
-            [from + direction * travelled, from + direction * dash_end],
-            stroke,
-        );
-        travelled += step;
+
+    /// The dashes from stride `first` to `end` pixels along the walk, each
+    /// starting on a stride of the whole walk. The stride is counted, not
+    /// accumulated: far enough out, adding a step to an `f32` changes
+    /// nothing, and a sum that stops moving never reaches `end`.
+    fn paint(&self, scene: &mut MarkScene, (first, end): (u64, f32), stroke: Stroke) {
+        for stride in first.. {
+            let travelled = stride as f32 * self.step;
+            if travelled >= end {
+                break;
+            }
+            let dash_end = (travelled + self.dash_px).min(end);
+            scene.line_segment(
+                [
+                    self.from + self.direction * travelled,
+                    self.from + self.direction * dash_end,
+                ],
+                stroke,
+            );
+        }
     }
 }
+
+/// The parameter range of `from + t * span`, `t` in `0..=1`, inside
+/// `clip` (Liang–Barsky), or `None` when the segment misses it.
+fn span_within(clip: PxRect, from: Px, span: Px) -> Option<(f32, f32)> {
+    let (mut enter, mut leave) = (0.0_f32, 1.0_f32);
+    for (delta, start, low, high) in [
+        (span.x, from.x, clip.min.x, clip.max.x),
+        (span.y, from.y, clip.min.y, clip.max.y),
+    ] {
+        for (p, q) in [(-delta, start - low), (delta, high - start)] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    return None;
+                }
+            } else {
+                let t = q / p;
+                if p < 0.0 {
+                    enter = enter.max(t);
+                } else {
+                    leave = leave.min(t);
+                }
+            }
+        }
+    }
+    (enter <= leave).then_some((enter, leave))
+}
+
+#[cfg(test)]
+#[path = "scene_tests.rs"]
+mod scene_tests;

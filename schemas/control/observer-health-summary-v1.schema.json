@@ -416,7 +416,7 @@
       "description": "Where a tab's tape delay is being spent.\n\nThe whole point of the breakdown is that \"the chart is eighteen seconds\nbehind\" is not actionable on its own: it reads the same whether the venue's\nadapter was late, the wire was late, or this process drained late, and those\nhave different fixes. An investigation that starts here can name the hop\nwithout a screenshot and without a person watching the corner of a window.",
       "properties": {
         "arrival_latency_ms": {
-          "description": "Newest print: venue stamp to this chart drawing it. The end-to-end\nfigure the status bar shows.",
+          "description": "Signed local receipt stamp minus venue stamp, including clock disagreement.\nWithout a provider breakdown this is not transport latency. Local worker\nresidence and processing are measured separately on a monotonic clock.",
           "format": "int64",
           "type": [
             "integer",
@@ -432,7 +432,7 @@
           ]
         },
         "feed_arrival_latency_ms": {
-          "description": "The same measurement taken where the feed read the print off the wire,\none hop earlier.\n\nThe gap between this and `arrival_latency_ms` is what quantick's own\nqueue and frame drain cost. It is a *derived* reading, not a measured\none — the two are sampled at different instants — but a gap of seconds\nbetween them is unambiguous, and it is the only way to see that hop at\nall. `None` on a provider that cannot cut its own chain.",
+          "description": "Provider receipt stamp minus venue stamp, one hop before chart drain.\nDifferent clock domains may produce signed offsets; separately sampled\nchart/provider values do not establish precise local queue residence.",
           "format": "int64",
           "type": [
             "integer",

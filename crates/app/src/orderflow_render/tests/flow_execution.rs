@@ -1,4 +1,7 @@
 use super::*;
+use quantick_chart::flow_execution::FlowRegionRole;
+#[path = "flow_live_bench.rs"]
+mod live_bench;
 #[path = "flow_stage_profile.rs"]
 mod profile;
 use quantick_engine::{Side, Trade};
@@ -282,6 +285,9 @@ fn common_offset_preserves_vectors_and_radii() {
 #[test]
 fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
     let (mut frame, _) = painted_region(100, 0);
+    // Regional FLOW (WIN) draws the first daily region uncapped; over a typed
+    // reference its note says the area is capped at the radius limit.
+    frame.view.reference = FlowReference::VisibleRegions;
     frame.dots[0].opening_anchor = true;
     frame.dots[0].opening_oversized = true;
     frame.dots[0].opening_quantity = 90.into();
@@ -294,6 +300,7 @@ fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
             Some(&frame),
             FlowProgress::default(),
             false,
+            None,
         );
     });
     let texts = output
@@ -586,6 +593,389 @@ fn dense_production_flow_cache_benchmark() {
                 paint_total / samples.len() as f64,
                 tessellation_total / samples.len() as f64,
             );
+        }
+    }
+}
+
+/// The tick spheres the dense fixture is drawn with: rims from 3.5 px,
+/// labels from 8 px.
+const DENSE_TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubbleStyle {
+    viewport_scale: None,
+    reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+    reference_quantity: 2964.0,
+    max_radius: 32.0,
+    label_min_radius: 8.0,
+    opacity: 0.9,
+};
+
+/// The dense fixture at sphere size: radii up to 30 px, so most spheres
+/// carry a rim and a label and many labels collide.
+fn dense_tick_frame() -> FlowTapeFrame {
+    let mut frame = dense_flow_fixture(400);
+    for dot in &mut frame.dots {
+        dot.radius *= 2.5;
+    }
+    frame
+}
+
+/// A tick drawing of `frame` ([`dense_tick_frame`]): spheres with rims and
+/// labels, many of them overlapping.
+fn dense_tick_drawing(
+    frame: &FlowTapeFrame,
+    painter: &egui::Painter,
+    history: egui::Rect,
+) -> FlowDrawing {
+    dense_tick_drawing_after(frame, painter, history, None)
+}
+
+/// [`dense_tick_drawing`], built after `previous`.
+fn dense_tick_drawing_after(
+    frame: &FlowTapeFrame,
+    painter: &egui::Painter,
+    history: egui::Rect,
+    previous: Option<&FlowDrawing>,
+) -> FlowDrawing {
+    use rust_decimal::prelude::ToPrimitive as _;
+    let plan = FlowPresentation::styled(
+        frame,
+        [history.min.into(), history.max.into()],
+        Some(DENSE_TICK),
+        |dot| {
+            let y = dot.candle_position.to_f32().unwrap_or(0.5);
+            Some([dot.first_slot as f32 * 120.0 + 60.0, y * history.height()])
+        },
+    );
+    let look = (
+        DENSE_TICK,
+        quantick_orderflow::config::HeatmapTheme::default(),
+    );
+    let background = crate::theme::CANVAS;
+    let built = (frame, plan);
+    FlowDrawing::styled(
+        built,
+        (background, None),
+        Some(look),
+        (painter, history),
+        previous,
+    )
+}
+
+/// A new print must not rebuild every sphere. A drawing built after the one
+/// before it keeps the runs whose keys held — a poisoned run shows through,
+/// shared, not copied — and builds the rest; after the true one it paints
+/// exactly what a drawing built from nothing paints, labels included.
+#[test]
+fn a_drawing_after_the_one_before_copies_what_held_and_paints_the_same() {
+    let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 795.0));
+    let before = dense_tick_frame();
+    let mut after = before.clone();
+    after.dots[3].radius *= 1.25;
+    let ctx = egui::Context::default();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let first = dense_tick_drawing(&before, &painter, history);
+        let fresh = dense_tick_drawing(&after, &painter, history);
+        let kept = dense_tick_drawing_after(&after, &painter, history, Some(&first));
+        assert_eq!(
+            kept.meshes(),
+            fresh.meshes(),
+            "the same triangles in the same order"
+        );
+        assert_eq!(kept.labels, fresh.labels);
+        assert_eq!(kept.plan, fresh.plan);
+        let held = |run: &Arc<_>| {
+            first
+                .runs
+                .runs()
+                .iter()
+                .any(|(_, old)| Arc::ptr_eq(run, old))
+        };
+        let shared = kept.runs.runs().iter().filter(|(_, run)| held(run)).count();
+        assert!(
+            shared > 0 && shared < kept.runs.runs().len(),
+            "{shared} runs kept"
+        );
+        let mut poisoned = dense_tick_drawing(&before, &painter, history);
+        for run in poisoned.runs.payloads_mut() {
+            for vertex in Arc::make_mut(run)
+                .iter_mut()
+                .flat_map(|mesh| &mut mesh.vertices)
+            {
+                vertex.color = egui::Color32::RED;
+            }
+        }
+        let copied = dense_tick_drawing_after(&after, &painter, history, Some(&poisoned));
+        let red = |drawing: &FlowDrawing| {
+            let meshes = drawing.meshes();
+            let vertices = meshes.iter().flat_map(|mesh| &mesh.vertices);
+            vertices
+                .filter(|vertex| vertex.color == egui::Color32::RED)
+                .count()
+        };
+        let all: usize = fresh.meshes().iter().map(|mesh| mesh.vertices.len()).sum();
+        assert!(red(&copied) > 0, "the runs that held are kept");
+        assert!(red(&copied) < all, "the grown region's run is built again");
+        assert_eq!(red(&fresh), 0);
+    });
+}
+
+/// Review round 1 #10: a cached tick drawing paints each pass as its runs'
+/// meshes with their rims tessellated in, so a frame neither copies rim
+/// shapes nor tessellates them again.
+#[test]
+fn a_tick_drawing_paints_each_pass_as_cached_meshes() {
+    let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 795.0));
+    let frame = dense_tick_frame();
+    let ctx = egui::Context::default();
+    let mut runs = 0;
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let drawing = dense_tick_drawing(&frame, &painter, history);
+        drawing.paint(&painter, false);
+        drawing.paint(&painter, true);
+        runs = drawing
+            .runs
+            .runs()
+            .iter()
+            .flat_map(|(_, run)| run.iter())
+            .filter(|mesh| !mesh.is_empty())
+            .count();
+    });
+    let shapes: Vec<_> = output.shapes.iter().map(|clipped| &clipped.shape).collect();
+    assert!(!shapes.is_empty());
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| matches!(shape, egui::Shape::Mesh(_))),
+        "rims ride in the cached meshes: {} shapes",
+        shapes.len()
+    );
+    assert_eq!(
+        shapes.len(),
+        runs,
+        "one mesh per run's sectors and per run's rims"
+    );
+}
+
+/// A frame copies no FLOW triangle into the candles' mesh, nor one run's into
+/// another's. egui folds consecutive meshes of one texture and clip into one
+/// buffer, copying each every frame; on FLOW's two texels in turn, each run
+/// tessellates into a primitive of its own between the candles', moved
+/// whole, and the pass's primitives hold its triangles in paint order. Each
+/// texel is one white texel, like the font atlas's under `WHITE_UV`, so every
+/// triangle still paints its vertex colour.
+#[test]
+fn flow_passes_tessellate_apart_from_the_candles() {
+    let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 795.0));
+    let frame = dense_tick_frame();
+    let ctx = egui::Context::default();
+    let mut passes = Vec::new();
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let candles = painter.with_clip_rect(history);
+        let drawing = dense_tick_drawing(&frame, &painter, history);
+        for foreground in [false, true] {
+            candles.rect_filled(history.shrink(10.0), 0.0, egui::Color32::GRAY);
+            drawing.paint(&painter, foreground);
+            passes.push(drawing.meshes()[usize::from(foreground)].clone());
+        }
+        candles.rect_filled(history.shrink(20.0), 0.0, egui::Color32::GRAY);
+    });
+    assert!(
+        passes.iter().all(|pass| !pass.is_empty()),
+        "both passes paint"
+    );
+    let texels = super::flow_texels(&ctx);
+    assert!(!texels.contains(&egui::TextureId::default()));
+    for texel in texels {
+        let white = output
+            .textures_delta
+            .set
+            .iter()
+            .find(|(id, _)| *id == texel);
+        let Some((
+            _,
+            egui::epaint::ImageDelta {
+                image: egui::ImageData::Color(white),
+                ..
+            },
+        )) = white
+        else {
+            panic!("FLOW's texel is uploaded as a colour image");
+        };
+        assert_eq!(
+            (white.size, white.pixels.as_slice()),
+            ([1, 1], &[egui::Color32::WHITE][..])
+        );
+    }
+    let primitives: Vec<_> = ctx
+        .tessellate(output.shapes, 1.0)
+        .into_iter()
+        .map(|primitive| match primitive.primitive {
+            egui::epaint::Primitive::Mesh(mesh) => mesh,
+            egui::epaint::Primitive::Callback(_) => unreachable!("FLOW paints meshes"),
+        })
+        .collect();
+    let candles: Vec<_> = (0..primitives.len())
+        .filter(|&index| primitives[index].texture_id == egui::TextureId::default())
+        .collect();
+    assert_eq!(
+        candles,
+        [0, candles[1], primitives.len() - 1],
+        "candles, context, candles, peaks, candles"
+    );
+    for &index in &candles {
+        assert_eq!(
+            primitives[index].vertices.len(),
+            8,
+            "a candle mesh holds its feathered rectangle and no FLOW vertex"
+        );
+    }
+    let triangles = |mesh: &egui::Mesh| {
+        let triangles = mesh.indices.as_chunks::<3>().0.iter();
+        triangles
+            .map(|triangle| triangle.map(|index| mesh.vertices[index as usize]))
+            .collect::<Vec<_>>()
+    };
+    for (pass, range) in [candles[0] + 1..candles[1], candles[1] + 1..candles[2]]
+        .into_iter()
+        .enumerate()
+    {
+        let runs = &primitives[range];
+        assert!(runs.len() > 1, "the dense fixture cuts each pass into runs");
+        assert!(
+            runs.windows(2)
+                .all(|pair| pair[0].texture_id != pair[1].texture_id),
+            "texels alternate"
+        );
+        assert!(runs.iter().all(|run| texels.contains(&run.texture_id)));
+        let painted: Vec<_> = runs.iter().flat_map(&triangles).collect();
+        assert_eq!(
+            painted,
+            triangles(&passes[pass]),
+            "the pass's triangles in paint order"
+        );
+    }
+}
+/// Review round 1 #10: the cached drawing paints what the per-frame path
+/// painted. The rims tessellated into the mesh give the triangles the old
+/// circle strokes gave after the sectors, and the labels laid out once are
+/// the labels the old per-frame loop placed.
+#[test]
+fn the_cached_drawing_paints_what_the_per_frame_path_painted() {
+    let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 795.0));
+    let frame = dense_tick_frame();
+    let ctx = egui::Context::default();
+    let (mut old, mut new) = (Vec::new(), Vec::new());
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let drawing = dense_tick_drawing(&frame, &painter, history);
+        // The same drawing with every rim culled: the sectors alone.
+        let culled = painter.with_clip_rect(egui::Rect::NOTHING);
+        let sectors = dense_tick_drawing(&frame, &culled, history);
+        let detail = DENSE_TICK.bubbles().detail_min_radius;
+        let clipped = |shape| egui::epaint::ClippedShape {
+            clip_rect: history,
+            shape,
+        };
+        for pass in [false, true] {
+            let index = usize::from(pass);
+            old.push(clipped(egui::Shape::mesh(sectors.meshes()[index].clone())));
+            for region in &drawing.plan.regions {
+                let disc = region.disc;
+                if (region.role == FlowRegionRole::Peak) == pass && disc.radius >= detail {
+                    let hair = super::super::bubbles::separator_ring_width(disc.radius);
+                    let alpha = super::super::bubbles::SEPARATOR_RING_ALPHA;
+                    old.push(clipped(egui::Shape::circle_stroke(
+                        disc.center.into(),
+                        disc.radius + hair / 2.0,
+                        egui::Stroke::new(hair, egui::Color32::from_black_alpha(alpha)),
+                    )));
+                }
+            }
+            new.push(clipped(egui::Shape::mesh(drawing.meshes()[index].clone())));
+        }
+    });
+    let rims = old.len() - 2;
+    // Every triangle in paint order, whichever primitive egui put it in.
+    let triangles = |shapes: Vec<egui::epaint::ClippedShape>| {
+        ctx.tessellate(shapes, 1.0)
+            .into_iter()
+            .flat_map(|primitive| match primitive.primitive {
+                egui::epaint::Primitive::Mesh(mesh) => mesh
+                    .indices
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|triangle| triangle.map(|index| mesh.vertices[index as usize]))
+                    .collect::<Vec<_>>(),
+                egui::epaint::Primitive::Callback(_) => unreachable!("FLOW paints meshes"),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(rims > 0, "the fixture draws rims");
+    assert_eq!(triangles(old), triangles(new), "the same triangles");
+
+    let labels = |cached: bool| {
+        ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let drawing = dense_tick_drawing(&frame, &painter, history);
+            if cached {
+                drawing.paint_labels(&painter);
+            } else {
+                let mut quantities = drawing.plan.quantity_labels(&frame, Some(DENSE_TICK));
+                quantities.sort_by(|a, b| b.radius.total_cmp(&a.radius));
+                per_frame_labels(&painter, history, &quantities);
+            }
+        })
+        .shapes
+    };
+    let (old_labels, new_labels) = (labels(false), labels(true));
+    assert!(!new_labels.is_empty(), "the fixture places labels");
+    assert_eq!(old_labels, new_labels, "the same labels in the same places");
+}
+
+/// The quantity labels as every frame used to place and paint them, kept as
+/// the reference the cached layout must match.
+fn per_frame_labels(
+    painter: &egui::Painter,
+    history: egui::Rect,
+    labels: &[quantick_chart::flow_execution::FlowQuantityLabel],
+) {
+    use super::super::constants::{
+        LABEL_FONT_SCALE, LABEL_MAX_FONT_PX, LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE,
+        LABEL_MIN_FONT_PX, LABEL_SHADOW_ALPHA, LABEL_SHADOW_OFFSET_PX,
+    };
+    // The clear margin the placement keeps around every label.
+    const LABEL_CLEARANCE_PX: f32 = 2.0;
+    let clip = painter.with_clip_rect(history);
+    let mut occupied = Vec::<egui::Rect>::new();
+    for label in labels {
+        let radius = label.radius;
+        let galley = clip.layout_no_wrap(
+            label.text.clone(),
+            egui::FontId::proportional(
+                (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
+            ),
+            crate::theme::TEXT_PRIMARY,
+        );
+        if galley.size().x <= radius * LABEL_MAX_WIDTH_SCALE
+            && galley.size().y <= radius * LABEL_MAX_HEIGHT_SCALE
+        {
+            let pos = egui::Pos2::from(label.center) - galley.size() / 2.0;
+            let bounds = egui::Rect::from_min_size(pos, galley.size()).expand(LABEL_CLEARANCE_PX);
+            if !history.contains_rect(bounds)
+                || occupied.iter().any(|other| other.intersects(bounds))
+            {
+                continue;
+            }
+            occupied.push(bounds);
+            clip.galley_with_override_text_color(
+                pos + LABEL_SHADOW_OFFSET_PX,
+                galley.clone(),
+                egui::Color32::from_black_alpha(LABEL_SHADOW_ALPHA),
+            );
+            clip.galley(pos, galley, crate::theme::TEXT_PRIMARY);
         }
     }
 }

@@ -49,6 +49,8 @@ const ANNOTATOR_SCOPES: &[&str] = &[
 /// buys is the *ceiling*: without it the gateway refuses every `layout.*` call
 /// however the trader ticked their panel.
 const COCKPIT_SCOPES: &[&str] = &["cockpit", "cockpit.layout"];
+/// Requested only by the explicit cockpit recovery opt-in.
+const COCKPIT_RECOVERY_SCOPES: &[&str] = &["cockpit.recover"];
 
 /// The scopes an observer connection asks for. The gateway intersects them
 /// with the user's grant; asking for a scope never grants it.
@@ -83,16 +85,21 @@ const ANALYST_SCOPES: &[&str] = &[
 ];
 
 const USAGE: &str = "usage:
-  quantick-mcp [serve] [--profile <observer|analyst|annotator|cockpit>] [--instance <instance_id>] [--instances-dir <path>]
-  quantick-mcp setup --client <codex|claude> [--profile <observer|analyst|annotator|cockpit>]
+  quantick-mcp [serve] [--profile <observer|analyst|annotator|cockpit>] [--allow-recovery] [--instance <instance_id>] [--instances-dir <path>]
+  quantick-mcp setup --client <codex|claude> [--profile <observer|analyst|annotator|cockpit>] [--allow-recovery]
   quantick-mcp --help
 
 serve (default)  run the MCP server over standard input/output; stdout carries
                  MCP frames only, diagnostics go to stderr.
   --profile      the authority ceiling to request: `observer` reads the charts,
                  `analyst` also reads private session data without writing
-                 anything, `annotator` also answers on the chart. The window
-                 grants it or it does not.
+                 anything, `annotator` also answers on the chart, and `cockpit`
+                 also manages layout and feed connections. The window grants
+                 each requested scope or it does not.
+  --allow-recovery
+                 opt in to requesting cockpit.recover (cockpit profile only).
+                 The window must grant it separately. Feed reload/source changes
+                 rebuild the timeline, close paper positions and disarm strategies.
   --instance     pin every call to one running instance by its instance_id.
   --instances-dir
                  read descriptors from this directory instead of the platform's
@@ -102,12 +109,14 @@ setup            print the command that registers this binary with a client.";
 enum Command {
     Serve {
         profile: String,
+        allow_recovery: bool,
         instance: Option<InstanceId>,
         instances_dir: Option<PathBuf>,
     },
     Setup {
         client: SetupClient,
         profile: String,
+        allow_recovery: bool,
     },
     Help,
 }
@@ -130,6 +139,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     let mut instance = None;
     let mut instances_dir = None;
     let mut client = None;
+    let mut allow_recovery = false;
     while let Some(flag) = rest.next() {
         let value = |rest: &mut std::iter::Peekable<_>| -> Result<String, String> {
             rest.next()
@@ -138,6 +148,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
         };
         match flag {
             "--profile" => profile = value(&mut rest)?,
+            "--allow-recovery" => allow_recovery = true,
             "--instance" => {
                 let raw = value(&mut rest)?;
                 instance = Some(
@@ -160,7 +171,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     // A flag of the other mode is a mistake worth naming, not ignoring.
     match mode {
         "setup" if instance.is_some() || instances_dir.is_some() => {
-            return Err("setup takes --client and --profile only".to_owned());
+            return Err("setup takes --client, --profile and --allow-recovery only".to_owned());
         }
         "serve" if client.is_some() => {
             return Err("--client belongs to `setup`".to_owned());
@@ -173,13 +184,18 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             AVAILABLE_PROFILES.join(", ")
         ));
     }
+    if allow_recovery && profile != quantick_control_local::client::COCKPIT_PROFILE_ID {
+        return Err("--allow-recovery requires --profile cockpit".to_owned());
+    }
     match mode {
         "setup" => Ok(Command::Setup {
             client: client.ok_or_else(|| "setup needs --client codex|claude".to_owned())?,
             profile,
+            allow_recovery,
         }),
         _ => Ok(Command::Serve {
             profile,
+            allow_recovery,
             instance,
             instances_dir,
         }),
@@ -209,21 +225,29 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             ExitCode::SUCCESS
         }
-        Command::Setup { client, profile } => {
+        Command::Setup {
+            client,
+            profile,
+            allow_recovery,
+        } => {
             let executable =
                 std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quantick-mcp"));
-            print!("{}", walkthrough(client, &executable, &profile));
+            print!(
+                "{}",
+                walkthrough(client, &executable, &profile, allow_recovery)
+            );
             ExitCode::SUCCESS
         }
         Command::Serve {
             profile,
+            allow_recovery,
             instance,
             instances_dir,
-        } => serve(&profile, instance, instances_dir),
+        } => serve(&profile, allow_recovery, instance, instances_dir),
     }
 }
 
-fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<PathBuf>) -> ExitCode {
+fn connect_options(profile: &str, allow_recovery: bool) -> ConnectOptions {
     // The profiles are a chain, so each ceiling asks for the scopes of the one
     // below it as well. Asking is not granting: the instance intersects this
     // with what the trader ticked, so a client that asks for everything and
@@ -236,16 +260,30 @@ fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<Path
         .chain(if analyst { ANALYST_SCOPES } else { &[] })
         .chain(if annotator { ANNOTATOR_SCOPES } else { &[] })
         .chain(if cockpit { COCKPIT_SCOPES } else { &[] })
+        .chain(if cockpit && allow_recovery {
+            COCKPIT_RECOVERY_SCOPES
+        } else {
+            &[]
+        })
         .map(|id| PermissionId::new(*id).expect("static scope IDs are valid"))
         .collect();
-    let options = ConnectOptions::for_profile(
+    ConnectOptions::for_profile(
         profile,
         format!("quantick-mcp {}", env!("CARGO_PKG_VERSION")),
         env!("CARGO_PKG_VERSION"),
         scopes,
-    );
+    )
+}
+
+fn serve(
+    profile: &str,
+    allow_recovery: bool,
+    instance: Option<InstanceId>,
+    instances_dir: Option<PathBuf>,
+) -> ExitCode {
+    let options = connect_options(profile, allow_recovery);
     let link = LocalLink::new(options, instances_dir, instance);
-    let mut server = McpServer::new(Box::new(link), profile);
+    let mut server = McpServer::new_with_recovery(Box::new(link), profile, allow_recovery);
     eprintln!(
         "quantick-mcp {} serving over stdio (profile {profile}); it never starts Quantick",
         env!("CARGO_PKG_VERSION")
@@ -264,11 +302,15 @@ fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<Path
 }
 
 #[cfg(test)]
+#[path = "authority_tests.rs"]
+mod authority_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{ANALYST_SCOPES, AVAILABLE_PROFILES, OBSERVER_SCOPES};
 
     /// The committed capability catalog, as the application publishes it.
-    const CATALOG: &str =
+    pub(super) const CATALOG: &str =
         include_str!("../../../schemas/control/observer-capability-catalog-v1.json");
 
     /// The ceilings this adapter offers are the ceilings the instance

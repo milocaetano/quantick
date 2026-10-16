@@ -92,7 +92,7 @@ pub fn project_tape_frame_with_overlay<'a>(
     }
     // Offscreen price vertices remain available for clipping the connecting
     // path; only on-screen discs participate in merging and volume sizing.
-    marks.retain(|trade| trade.x > geometry.left_x && trade.x <= 1.0);
+    marks.retain(|trade| (geometry.left_x..=geometry.right_x).contains(&trade.x));
     let marks = merge_tape_dots(&marks, sizing, &style.bubbles, &style.live_lane, geometry);
     Some(TapeDotFrame {
         full_quantity: sizing

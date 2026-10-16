@@ -17,6 +17,9 @@ use quantick_orderflow::{HeatmapConfig, LaneWindow};
 use crate::bubble_asset_store::{Adoption, AssetBinding, RunHold, SaveSwitch};
 use crate::bubble_assets::AssetBubbles;
 use crate::bubble_presets::{BubblePreset, BubblePresetFile, PresetSource};
+mod preset;
+mod tick;
+pub use preset::PRESET_PAGE_MAX;
 
 /// The presets file as a loader reads it: the document, where it came from
 /// and why it could not be read, if it could not.
@@ -314,16 +317,19 @@ impl BubbleLook {
     }
 
     /// Apply the stored preset called `name` to `config`, reporting whether
-    /// it exists.
+    /// it exists. `spheres` is the tick sphere rule's verdict for the pane
+    /// (`TickSpherePane::may_choose` in control-handlers, which every door
+    /// asks): the preset's spheres come along only where it admits them, and
+    /// where it does not the look keeps the spheres it wears.
     ///
     /// The choice is the asset's own: it is filed for the asset on screen.
     /// An unknown name changes nothing and returns `false`; the caller
     /// decides how loudly to say so.
-    pub fn apply_preset(&mut self, name: &str, config: &mut HeatmapConfig) -> bool {
+    pub fn apply_preset(&mut self, name: &str, config: &mut HeatmapConfig, spheres: bool) -> bool {
         let Some(preset) = self.presets.get(name).cloned() else {
             return false;
         };
-        preset.apply_to(config);
+        dress(&preset, config, spheres);
         self.look_name = preset.name.clone();
         self.name_draft = preset.name.clone();
         self.status = Some(format!("'{}' applied", preset.name));
@@ -389,7 +395,8 @@ impl BubbleLook {
                 if active.is_empty() || self.presets.get(&active).is_none() {
                     self.status = Some("presets reloaded".to_owned());
                 } else {
-                    self.apply_preset(&active, config);
+                    // A view with no asset has no mode to wear spheres by.
+                    self.apply_preset(&active, config, false);
                     self.status = Some(format!("reloaded · '{active}' applied"));
                 }
             }
@@ -437,6 +444,18 @@ impl BubbleLook {
                 self.status = Some(format!("not saved — {message}"));
             }
         }
+    }
+}
+
+/// `config` in `preset` as a whole-preset pick wears it, the one place that
+/// says so: its spheres only where the tick sphere rule admits them. Where it
+/// does not, the look keeps the spheres it wears, none added and none taken:
+/// the look is the asset's, and the asset's tick chart wears it too.
+fn dress(preset: &BubblePreset, config: &mut HeatmapConfig, spheres: bool) {
+    let worn = config.volume_dots.tick_bubbles;
+    preset.apply_to(config);
+    if !spheres {
+        config.volume_dots.tick_bubbles = worn;
     }
 }
 

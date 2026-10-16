@@ -6,23 +6,34 @@
 //! pass, whatever the book is doing.
 
 use crate::orderflow_render::constants::{
-    GAP_EDGE_EPSILON, GAP_LABEL_INSET_PX, LANE_DIVIDER_DASH_PX, LANE_DIVIDER_GAP_PX,
-    LANE_MARK_WIDTH_PX, LANE_NOW_DASH_PX, LANE_NOW_GAP_PX,
+    GAP_LABEL_INSET_PX, LANE_DIVIDER_DASH_PX, LANE_DIVIDER_GAP_PX, LANE_MARK_WIDTH_PX,
+    LANE_NOW_DASH_PX, LANE_NOW_GAP_PX,
 };
 use eframe::egui;
+use quantick_orderflow::LiquidityEvidence;
 use quantick_orderflow::config::theme::{heat_fill_parts, quantize_heat};
-use quantick_orderflow::{BEFORE_CAPTURE, BOOK_PENDING, LiquidityEvidence};
+use quantick_orderflow::projection::gap_label;
 
 use super::bubbles::{bubble_radius, side_offset_y};
 use super::layout::{EventBand, RenderContext};
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit, rgba,
 };
+use quantick_orderflow::projection::marker_band;
+
+/// The lane depth caption's offset from the lane's left edge and chart top.
+const DEPTH_CAPTION_OFFSET: egui::Vec2 = egui::vec2(8.0, 30.0);
+/// The small print the depth caption and the gap labels share.
+const SMALL_PRINT_FONT_PX: f32 = 10.0;
 
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
     let style = context.style.sanitized();
     let palette = super::palette_for_theme(style.theme);
+    let previews = quantick_orderflow::projection::forward_book_preview(
+        &style.live_lane,
+        context.current_book_live,
+    );
     // Each pane answers for its own canvas, and a run that crosses the divider
     // is cut at it rather than dropped.
     let Some(region) = context
@@ -42,7 +53,9 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         let rect = context
             .layout
             .band(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height);
-        if !rect.is_positive() {
+        // A current row with no time span only previews the book.
+        let in_lane = rect.is_positive() && (cell.x1 > cell.x0 || !cell.current_book);
+        if !in_lane && !cell.current_book {
             continue;
         }
 
@@ -52,7 +65,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         };
         let fill = rgba(rgb, alpha);
 
-        if style.edge_glow > 0.0 {
+        if in_lane && style.edge_glow > 0.0 {
             let spread = 0.55 + quantize_heat(finite_unit(cell.intensity)) * 0.85;
             let glow_rect = egui::Rect::from_min_max(
                 egui::pos2(rect.left(), rect.top() - spread),
@@ -64,11 +77,41 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         }
         // Solid fill (no horizontal gradient), so a short run is a clean block
         // rather than a bright-headed streak.
-        add_gradient_rect(&mut mesh, rect, fill, fill);
+        if in_lane {
+            add_gradient_rect(&mut mesh, rect, fill, fill);
+        }
+        if quantick_orderflow::projection::current_book_preview(cell, previews) {
+            let preview = context.layout.current_book_preview_rect(cell.y0, cell.y1);
+            if preview.is_positive() && style.depth_layer {
+                add_gradient_rect(&mut mesh, preview, fill, fill);
+            }
+        }
     }
 
     if !mesh.is_empty() {
         clip.add(egui::Shape::mesh(mesh));
+    }
+
+    if style.lane_depth_layer
+        && let Some(caption) = quantick_orderflow::projection::depth_caption(
+            &context.projection.cells,
+            style.depth_layer
+                && previews
+                && context
+                    .layout
+                    .current_book_preview_rect(0.0, 1.0)
+                    .is_positive(),
+        )
+        && let Some(left) = context.layout.lane_left_x()
+    {
+        draw_text_with_shadow(
+            &clip,
+            egui::pos2(left, context.layout.chart_rect.top()) + DEPTH_CAPTION_OFFSET,
+            egui::Align2::LEFT_TOP,
+            caption,
+            egui::FontId::proportional(SMALL_PRINT_FONT_PX),
+            palette.muted_text,
+        );
     }
 
     for gap in context.projection.gaps.iter() {
@@ -130,7 +173,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 anchor,
                 align,
                 label,
-                egui::FontId::proportional(10.0),
+                egui::FontId::proportional(SMALL_PRINT_FONT_PX),
                 palette.muted_text,
             );
         }
@@ -320,16 +363,18 @@ impl<'c, 'a> EventPass<'c, 'a> {
             // continuous, hiding that it was consumed. The marker colour drawn on
             // the hole's left edge tells aggression-aligned from unattributed apart.
             let hole_w = if full { 14.0 } else { 6.0 + 8.0 * reduction };
-            add_gradient_rect(
-                hole_mesh,
-                egui::Rect::from_min_max(
-                    egui::pos2(band.x, band.top),
-                    egui::pos2((band.x + hole_w).min(pane.right()), band.bottom),
-                )
-                .intersect(pane),
-                super::premultiplied(style.canvas_background),
-                super::premultiplied(style.canvas_background),
-            );
+            if !(on_tape && style.live_lane.depth_time_averaging) {
+                add_gradient_rect(
+                    hole_mesh,
+                    egui::Rect::from_min_max(
+                        egui::pos2(band.x, band.top),
+                        egui::pos2((band.x + hole_w).min(pane.right()), band.bottom),
+                    )
+                    .intersect(pane),
+                    super::premultiplied(style.canvas_background),
+                    super::premultiplied(style.canvas_background),
+                );
+            }
 
             match event.evidence {
                 LiquidityEvidence::AggressionAligned => fronts.push(EventFront::Aligned {
@@ -356,6 +401,9 @@ impl<'c, 'a> EventPass<'c, 'a> {
         let bubbles = &self.style.bubbles;
         let dots = self.context.projection.volume_dots;
         for trade in self.context.bubbles() {
+            if layout.in_lane(trade.x) && self.style.live_lane.depth_time_averaging {
+                continue;
+            }
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
@@ -510,62 +558,16 @@ fn add_vline(
     );
 }
 
-pub(super) fn marker_band(band: EventBand, reduction: f32, full: bool) -> EventBand {
-    if full {
-        return band;
-    }
-    let fraction = finite_unit(reduction);
-    let height = (band.height() * (0.30 + 0.70 * fraction)).max(1.5);
-    let center = band.center_y();
-    EventBand {
-        x: band.x,
-        top: center - height / 2.0,
-        bottom: center + height / 2.0,
-    }
-}
+pub(super) use quantick_orderflow::projection::GapMarks;
 
-/// Which marks one coverage gap gets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct GapMarks {
-    pub(super) fill: bool,
-    pub(super) left_boundary: bool,
-    pub(super) right_boundary: bool,
-}
-
-/// Decide how to mark a coverage gap.
-///
-/// The leading span — everything older than the first snapshot this session
-/// captured — routinely covers a third of the chart. Tinting it would bury the
-/// candles, bubbles and strip that are perfectly real there, so one boundary
-/// carries the whole message: where the book begins. Its left side is not a
-/// boundary at all, whether it lands on the viewport edge or on the oldest bar
-/// the chart holds — there is nothing on the far side of it to separate from.
-///
-/// An interior gap is different on both counts. It is narrow, so it keeps a
-/// faint fill (an untinted sliver reads as "no resting liquidity" rather than
-/// "no data"), and both its ends are real transitions. A boundary landing on
-/// the chart edge is still dropped: that marks the viewport, not a change in
-/// coverage, and drawing it would just frame the chart.
 pub(super) fn gap_marks(rect: egui::Rect, chart_rect: egui::Rect, leading: bool) -> GapMarks {
-    let on_chart_edge = |x: f32| {
-        (x - chart_rect.left()).abs() < GAP_EDGE_EPSILON
-            || (x - chart_rect.right()).abs() < GAP_EDGE_EPSILON
-    };
-    GapMarks {
-        fill: !leading,
-        left_boundary: !leading && !on_chart_edge(rect.left()),
-        right_boundary: !on_chart_edge(rect.right()),
-    }
-}
-
-fn gap_label(reason: &str) -> &'static str {
-    match reason {
-        BEFORE_CAPTURE => "L2 unavailable before capture",
-        BOOK_PENDING => "L2 loading for this stretch",
-        "capture_disabled" => "L2 capture disabled",
-        "sequence_gap" => "L2 sequence gap · resynchronizing",
-        _ => "L2 continuity unavailable",
-    }
+    quantick_orderflow::projection::gap_marks_bounds(
+        rect.left(),
+        rect.right(),
+        chart_rect.left(),
+        chart_rect.right(),
+        leading,
+    )
 }
 
 fn draw_text_with_shadow(

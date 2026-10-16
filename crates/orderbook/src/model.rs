@@ -129,6 +129,7 @@ impl BookSnapshot {
 pub struct BookDelta {
     first_update_id: u64,
     final_update_id: u64,
+    previous_update_id: Option<u64>,
     bids: Vec<BookLevel>,
     asks: Vec<BookLevel>,
 }
@@ -148,6 +149,7 @@ impl BookDelta {
         Self {
             first_update_id,
             final_update_id,
+            previous_update_id: None,
             bids,
             asks,
         }
@@ -163,6 +165,20 @@ impl BookDelta {
     #[must_use]
     pub fn final_update_id(&self) -> u64 {
         self.final_update_id
+    }
+
+    /// Attach the venue's explicit link to its previous event. Chained
+    /// venues may skip unrelated update IDs while still proving continuity.
+    #[must_use]
+    pub fn with_previous_update_id(mut self, previous: u64) -> Self {
+        self.previous_update_id = Some(previous);
+        self
+    }
+
+    /// Explicit predecessor, when the venue sequences by linked events.
+    #[must_use]
+    pub fn previous_update_id(&self) -> Option<u64> {
+        self.previous_update_id
     }
 
     /// Absolute bid updates.

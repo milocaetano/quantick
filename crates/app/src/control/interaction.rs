@@ -8,13 +8,12 @@ use quantick_control::{
 };
 
 pub(crate) use quantick_control_schema::interaction::{
-    CursorSnapshot, DrawingHitSnapshot, DrawingSelectionSnapshot, FlowCellSnapshot,
-    PaperTradeSelectionSnapshot, PointerSnapshot, SelectionSnapshot,
+    CursorSnapshot, DrawingHitSnapshot, DrawingSelectionSnapshot, PaperTradeSelectionSnapshot,
+    PointerSnapshot, SelectionSnapshot,
 };
 
 use crate::{
     drawings::{Drawing, DrawingBand, DrawingScope},
-    orderflow_view::FlowCellHit,
     pane::{ChartPane, ControlDrawingHit, ControlPointerHit, PaneSide},
     tab::Tab,
 };
@@ -24,8 +23,8 @@ use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
     scene,
     types::{
-        SCREEN_DECIMAL_PLACES, available, canonical_decimal, canonical_f32, canonical_f64,
-        unavailable, visible_panes, wire_usize,
+        SCREEN_DECIMAL_PLACES, available, canonical_f32, canonical_f64, unavailable, visible_panes,
+        wire_usize,
     },
 };
 
@@ -290,20 +289,7 @@ fn drawing_hit_snapshot(
     }
 }
 
-pub(crate) fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
-    FlowCellSnapshot {
-        generation: WireU64::new(cell.generation),
-        side: cell.side.to_string(),
-        price_bucket: canonical_decimal(cell.price_bucket),
-        price_span: canonical_decimal(cell.price_span),
-        quantity: canonical_decimal(cell.quantity),
-        start_slot: wire_usize(cell.start_slot),
-        end_slot_exclusive: wire_usize(cell.end_slot_exclusive),
-        live_lane: cell.live_lane,
-        held_tape_end_unix_ms: cell.held_tape_end_ms,
-        carried: cell.carried,
-    }
-}
+pub(crate) use quantick_control_schema::interaction::flow_cell_snapshot;
 
 /// The one wire name of a drawing band, used by the pointer hit in the pane
 /// and by the selection scope alike.

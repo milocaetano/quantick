@@ -308,7 +308,7 @@ impl WorkspaceBundleAdapter<'_> {
             .workspace
             .bubble_assets()
             .borrow_mut()
-            .reload();
+            .reload(self.arrangement.config);
         self.arrangement
             .tabs
             .iter_mut()

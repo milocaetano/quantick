@@ -1,7 +1,7 @@
 //! "Save changes for this asset": the asset's own switch. Off, what the
 //! trader changes stays on the screen it was made on, for the session only;
 //! on again, that screen is filed.
-use super::bubble_asset_store_tests::bind;
+use super::bubble_asset_store_tests::{bind, shipped_config};
 use super::*;
 use crate::bubble_assets::{ASSETS_FILE, AssetBubblesFile, save_to};
 use crate::bubble_presets;
@@ -159,7 +159,7 @@ fn switching_saving_on_behind_the_store_wears_the_store_and_files_nothing() {
     file.save_changes_off.insert("WIN*".to_owned());
     file.assets.insert("WIN*".to_owned(), imported.clone());
     save_to(&path, &file).expect("an imported store");
-    store.borrow_mut().reload();
+    store.borrow_mut().reload(&shipped_config());
     assert_eq!(win.set_save_changes(true), SaveSwitch::StoredTaken);
     win.note_edit();
     assert!(!win.file(stale), "the import is the newer word");

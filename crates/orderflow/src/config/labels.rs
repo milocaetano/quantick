@@ -87,10 +87,22 @@ pub const fn consumption_mark_label(mark: ConsumptionMark) -> &'static str {
     }
 }
 
+/// Significant figures a quantity label keeps at most.
+const LABEL_SIGNIFICANT_FIGURES: u32 = 3;
+
 /// A quantity as a bubble labels it: three significant figures at most,
-/// thousands as `K`, millions as `M`, billions as `B`.
+/// thousands as `K`, millions as `M`, billions as `B`. Below one unit the
+/// figures are counted from the first nonzero digit, exactly, so a positive
+/// fraction of a coin never reads as `0`.
 #[must_use]
 pub fn format_quantity(quantity: Decimal) -> String {
+    if !quantity.is_zero() && quantity.abs() < Decimal::ONE {
+        return quantity
+            .round_sf(LABEL_SIGNIFICANT_FIGURES)
+            .unwrap_or(quantity)
+            .normalize()
+            .to_string();
+    }
     let value = quantity.to_f64().unwrap_or(0.0);
     let absolute = value.abs();
     let (scaled, suffix) = if absolute >= 1_000_000_000.0 {
@@ -118,5 +130,102 @@ fn trim_decimal_zeros(value: &str) -> &str {
         value.trim_end_matches('0').trim_end_matches('.')
     } else {
         value
+    }
+}
+
+/// Quantity and execution count inside a bubble. A cluster uses `×`; a
+/// canvas-budget fold uses the renderer's supplied circled-plus glyph, so
+/// visual aggregation cannot masquerade as executions at one price.
+#[must_use]
+pub fn bubble_label(
+    quantity: Decimal,
+    trade_count: usize,
+    folded: u32,
+    show_quantity: bool,
+    show_count: bool,
+    folded_glyph: &str,
+) -> Option<String> {
+    let mark = if folded > 1 { folded_glyph } else { "×" };
+    match (show_quantity, show_count && trade_count > 1) {
+        (false, false) => None,
+        (true, false) => Some(format_quantity(quantity)),
+        (false, true) => Some(format!("{mark}{trade_count}")),
+        (true, true) => Some(format!(
+            "{} · {mark}{trade_count}",
+            format_quantity(quantity)
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn labels_are_honest_and_compact() {
+        assert_eq!(
+            bubble_label(Decimal::from(1_250), 4, 0, true, true, "⊕"),
+            Some("1.25K · ×4".to_owned())
+        );
+        assert_eq!(format_quantity(Decimal::from(100)), "100");
+        assert_eq!(format_quantity(Decimal::ZERO), "0");
+        assert_eq!(bubble_label(Decimal::ONE, 1, 0, false, true, "⊕"), None);
+    }
+
+    fn quantity(text: &str) -> String {
+        format_quantity(text.parse().unwrap())
+    }
+
+    #[test]
+    fn a_positive_sub_unit_quantity_keeps_three_significant_figures() {
+        for (exact, label) in [
+            ("0.004", "0.004"),
+            ("0.0004", "0.0004"),
+            ("0.006", "0.006"),
+            ("0.05", "0.05"),
+            ("0.5", "0.5"),
+            ("0.00123456", "0.00123"),
+            ("0.1234", "0.123"),
+            ("0.000000001", "0.000000001"),
+            ("0.99999", "1"),
+            ("-0.004", "-0.004"),
+        ] {
+            assert_eq!(quantity(exact), label, "{exact}");
+        }
+    }
+
+    #[test]
+    fn unit_and_larger_quantities_keep_their_spelling() {
+        for (exact, label) in [
+            ("0", "0"),
+            ("1", "1"),
+            ("5", "5"),
+            ("120", "120"),
+            ("999", "999"),
+            ("1.234", "1.23"),
+            ("12.5", "12.5"),
+            ("1500", "1.5K"),
+            ("1000", "1K"),
+            ("12345", "12.3K"),
+            ("999000", "999K"),
+            ("1000000", "1M"),
+            ("2500000", "2.5M"),
+            ("1000000000", "1B"),
+            ("1250000000", "1.25B"),
+        ] {
+            assert_eq!(quantity(exact), label, "{exact}");
+        }
+    }
+
+    #[test]
+    fn a_fold_and_a_cluster_do_not_share_a_glyph() {
+        assert_eq!(
+            bubble_label(Decimal::from(20), 4, 0, true, true, "⊕"),
+            Some("20 · ×4".to_owned())
+        );
+        assert_eq!(
+            bubble_label(Decimal::from(20), 4, 4, true, true, "⊕"),
+            Some("20 · ⊕4".to_owned())
+        );
     }
 }

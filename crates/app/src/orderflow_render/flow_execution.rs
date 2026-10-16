@@ -1,20 +1,22 @@
 //! Compact history execution groups on the FLOW candle coordinate system.
-use super::bubbles::{SphereShading, add_sector};
+use super::bubbles::{BubbleColors, SPHERE_LIGHT_OFFSET, SphereShading, add_sector};
+use super::{bubbles, constants, palette_for_theme, premultiplied};
 use crate::orderflow_render::constants::{
     FLOW_BUY, FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX, FLOW_SELL,
-    PIE_START_ANGLE,
+    LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, PIE_START_ANGLE,
 };
 use eframe::egui;
 #[cfg(test)]
 pub(super) use quantick_chart::flow_execution::FlowDisc;
-use quantick_chart::flow_execution::{FlowPresentation, FlowRegionRole};
+use quantick_chart::flow_execution::{self as flow, FlowPresentation, FlowQuantityLabel};
 #[cfg(test)]
 use quantick_orderflow::HeatmapConfig;
 #[cfg(test)]
 use quantick_orderflow::projection::flow_tape::FlowTapeDot;
-use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeFrame};
+use quantick_orderflow::projection::flow_tape::{CaptionInk, FlowProgress, FlowTapeFrame};
 #[cfg(test)]
 use rust_decimal::Decimal;
+use std::sync::Arc;
 
 // Regional volume controls emphasis while candle contours stay in front.
 #[cfg(test)]
@@ -59,79 +61,98 @@ pub(super) fn flow_mesh(
     let plan = FlowPresentation::new(frame, [history.min.into(), history.max.into()], |dot| {
         center(dot).map(Into::into)
     });
-    let drawing = FlowDrawing::new(
-        frame,
-        plan,
-        backing.unwrap_or(crate::theme::CANVAS),
-        backing,
-    );
-    let mut mesh = drawing.meshes[0].clone();
-    mesh.append(drawing.meshes[1].clone());
+    let ctx = egui::Context::default();
+    let painter = ctx.layer_painter(egui::LayerId::background());
+    let background = backing.unwrap_or(crate::theme::CANVAS);
+    let look = (background, backing);
+    let drawing = FlowDrawing::styled((frame, plan), look, None, (&painter, history), None);
+    let [mut mesh, peaks] = drawing.meshes();
+    mesh.append(peaks);
     mesh
 }
 
+/// One FLOW frame as every frame paints it, built once per cached drawing: each pass's
+/// runs, their sectors then their rims as egui would tessellate them, and placed labels.
 pub(crate) struct FlowDrawing {
     pub plan: FlowPresentation,
-    pub(super) meshes: [egui::Mesh; 2],
+    /// The area painted in, which clips every pass and holds the labels.
+    pub history: egui::Rect,
+    /// Each run's pass, then its sectors and rims, keyed for the next drawing to keep.
+    runs: flow::FlowRunCache<Arc<[egui::Mesh; 2]>>,
+    /// Exact presentation frame when the current camera resizes tick spheres.
+    pub viewport_frame: Option<Arc<FlowTapeFrame>>,
+    labels: Vec<flow_labels::PlacedLabel>,
 }
 impl FlowDrawing {
-    pub fn new(
-        frame: &FlowTapeFrame,
-        plan: FlowPresentation,
-        background: egui::Color32,
-        backing: Option<egui::Color32>,
+    /// `painter` lends tessellation and fonts; `history` is the area painted in. Runs
+    /// whose keys held since `previous`, this look's drawing before, are kept from it.
+    pub fn styled(
+        (frame, plan): (&FlowTapeFrame, FlowPresentation),
+        look: (egui::Color32, Option<egui::Color32>),
+        tick_look: Option<quantick_orderflow::TickLook>,
+        (painter, history): (&egui::Painter, egui::Rect),
+        previous: Option<&Self>,
     ) -> Self {
-        use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
-        let mut meshes = [egui::Mesh::default(), egui::Mesh::default()];
-        let colors = [
-            colors(None, true, false),
-            colors(Some(background.to_array()), false, true),
-        ]
-        .map(|palette| palette.map(super::premultiplied));
-        for region in &plan.regions {
-            let dot = &frame.dots[region.dot_index];
-            let disc = region.disc;
-            let mesh = &mut meshes[usize::from(region.role == FlowRegionRole::Peak)];
-            let [buy_color, sell_color] = if region.role == FlowRegionRole::Peak {
-                ordinary_colors(
-                    backing.unwrap_or(background).to_array(),
-                    frame.ordinary_region_opacity(dot),
-                )
-                .map(super::premultiplied)
-            } else {
-                colors[region.role as usize]
-            };
-            let (buy, sell) = dot.side_shares();
-            let mut angle = f64::from(PIE_START_ANGLE);
-            for (share, color) in [(buy, buy_color), (sell, sell_color)] {
-                if share <= 0.0 {
-                    continue;
-                }
-                // Exact sides reach geometry directly; no cached share or readability cutoff.
-                let sweep = share * std::f64::consts::TAU;
-                add_sector(
-                    mesh,
-                    disc.center.into(),
-                    disc.radius,
-                    angle as f32,
-                    sweep as f32,
-                    SphereShading::flat(color),
-                    0.0,
-                );
-                angle += sweep;
-            }
+        let (made, held) = ((frame, &plan), previous.map(|previous| &previous.runs));
+        let runs = flow_runs::flow_runs(made, look, tick_look, (painter, history), held);
+        Self {
+            runs,
+            labels: flow_labels::placed_labels(made, tick_look, (painter, history)),
+            history,
+            viewport_frame: None,
+            plan,
         }
-        Self { plan, meshes }
     }
 
-    pub fn paint(&self, painter: &egui::Painter, history: egui::Rect, foreground: bool) {
-        let mesh = &self.meshes[usize::from(foreground)];
-        if !mesh.is_empty() {
-            painter
-                .with_clip_rect(history)
-                .add(egui::Shape::mesh(mesh.clone()));
+    /// The pass's runs, sectors then rims, on FLOW's two white texels in
+    /// turn, so egui moves each whole into a primitive of its own.
+    pub fn paint(&self, painter: &egui::Painter, foreground: bool) {
+        let clip = painter.with_clip_rect(self.history);
+        let texels = flow_texels(painter.ctx());
+        let pass = self
+            .runs
+            .runs()
+            .iter()
+            .filter(|run| run.0 == usize::from(foreground));
+        let sectors = pass.clone().map(|run| &run.1[0]);
+        let meshes = sectors.chain(pass.map(|run| &run.1[1]));
+        for (index, mesh) in meshes.filter(|mesh| !mesh.is_empty()).enumerate() {
+            let mut mesh = mesh.clone();
+            mesh.texture_id = texels[index % 2];
+            clip.add(egui::Shape::mesh(mesh));
         }
     }
+}
+
+#[cfg(test)]
+impl FlowDrawing {
+    /// Each pass's runs joined into one mesh, sectors then rims, as painted.
+    pub(super) fn meshes(&self) -> [egui::Mesh; 2] {
+        std::array::from_fn(|pass| {
+            let mut mesh = egui::Mesh::default();
+            for part in [0, 1] {
+                for (_, run) in self.runs.runs().iter().filter(|(at, _)| *at == pass) {
+                    mesh.append_ref(&run[part]);
+                }
+            }
+            mesh
+        })
+    }
+}
+
+/// FLOW's two white texels: egui copies consecutive meshes of one texture and clip
+/// into one buffer each frame, but moves runs drawn on the two in turn. White under
+/// `WHITE_UV`, like the font atlas's texel, so every triangle paints its vertex colour.
+pub(crate) fn flow_texels(ctx: &egui::Context) -> [egui::TextureId; 2] {
+    let id = egui::Id::new("flow white texels");
+    if let Some(held) = ctx.data(|data| data.get_temp::<[egui::TextureHandle; 2]>(id)) {
+        return held.each_ref().map(egui::TextureHandle::id);
+    }
+    let white = || egui::ColorImage::new([1, 1], egui::Color32::WHITE);
+    let options = egui::TextureOptions::LINEAR;
+    let held = ["flow texel", "flow texel 2"].map(|name| ctx.load_texture(name, white(), options));
+    ctx.data_mut(|data| data.insert_temp(id, held.clone()));
+    held.each_ref().map(egui::TextureHandle::id)
 }
 
 /// Compose neutral isolation into the earned sectors, without extra circle geometry.
@@ -154,46 +175,57 @@ pub(crate) fn flow_caption(
     frame: Option<&FlowTapeFrame>,
     progress: FlowProgress,
     legend_visible: bool,
+    spheres: Option<flow::SphereChrome<'_>>,
 ) -> Option<egui::Rect> {
-    let detail =
-        quantick_orderflow::projection::flow_tape::caption_text(frame, progress, legend_visible);
-    let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_width = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
-    let mut append = |text: &str, color| {
-        job.append(
-            text,
-            0.0,
-            egui::TextFormat::simple(egui::FontId::proportional(FLOW_CAPTION_FONT_PX), color),
-        )
-    };
-    append("FLOW", crate::theme::TEXT_MUTED);
-    if legend_visible {
-        append(" \u{00b7} ", crate::theme::TEXT_MUTED);
-        append("Buy", FLOW_BUY);
-        append(" / ", crate::theme::TEXT_MUTED);
-        append("Sell", FLOW_SELL);
+    use quantick_orderflow::projection::flow_tape::{caption_segments, notes_segments};
+    let segments = caption_segments(frame, progress, legend_visible, spheres.map(|s| s.unit));
+    let at = egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top);
+    let mut galley = caption_galley(painter, history, &segments, spheres);
+    if let Some(chrome) = spheres {
+        let rect = egui::Rect::from_min_size(at, galley.size());
+        let area = [history.min.into(), history.max.into()];
+        let panel = [rect.min.into(), rect.max.into()];
+        // A caption that cannot be placed stands down, but its honesty notes
+        // never vanish with it: they take its place, over a sphere if they must.
+        if flow::place_flow_chrome(area, panel, chrome.regions).is_none() {
+            galley = caption_galley(painter, history, &notes_segments(frame, progress)?, spheres);
+        }
     }
-    append(" \u{00b7} offset \u{2196}", crate::theme::TEXT_MUTED);
-    if let Some(detail) = detail {
-        job.append(
-            &format!(" | {detail}"),
-            0.0,
-            egui::TextFormat::simple(
-                egui::FontId::proportional(FLOW_CAPTION_FONT_PX),
-                crate::theme::TEXT_MUTED,
-            ),
-        );
-    }
-    let galley = painter.layout_job(job);
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top),
-        galley.size(),
-    );
+    let rect = egui::Rect::from_min_size(at, galley.size());
     painter
         .with_clip_rect(history)
-        .galley(rect.min, galley, crate::theme::TEXT_MUTED);
+        .galley(at, galley, crate::theme::TEXT_MUTED);
     Some(rect)
 }
+
+/// Lay caption `segments` out at the caption font and wrap; tick spheres key
+/// their Buy / Sell in the pane theme, regional FLOW in its own colours.
+fn caption_galley(
+    painter: &egui::Painter,
+    history: egui::Rect,
+    segments: &[(String, CaptionInk)],
+    spheres: Option<flow::SphereChrome<'_>>,
+) -> Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::default();
+    let wrap = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
+    let chrome = flow::FLOW_CHROME_MAX_WIDTH_PX;
+    job.wrap.max_width = spheres.map_or(wrap, |_| wrap.min(chrome));
+    let palette = spheres.map(|spheres| super::palette_for_theme(spheres.theme));
+    for (text, ink) in segments {
+        let color = match (ink, &palette) {
+            (CaptionInk::Buy, Some(palette)) => palette.buy,
+            (CaptionInk::Sell, Some(palette)) => palette.sell,
+            (CaptionInk::Buy, None) => FLOW_BUY,
+            (CaptionInk::Sell, None) => FLOW_SELL,
+            (CaptionInk::Muted, _) => crate::theme::TEXT_MUTED,
+        };
+        let font = egui::FontId::proportional(FLOW_CAPTION_FONT_PX);
+        job.append(text, 0.0, egui::TextFormat::simple(font, color));
+    }
+    painter.layout_job(job)
+}
+mod flow_labels;
+mod flow_runs;
 #[cfg(test)]
 #[path = "tests/flow_execution.rs"]
 mod tests;

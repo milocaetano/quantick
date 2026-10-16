@@ -62,9 +62,20 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
         ],
         mapping: excluded!(
             PendingCapability,
-            "no capability opens a market; the source picker is the only door. Tracked in \
-             issue 401"
+            "no capability opens a second market tab. `feed.source.set` switches the feed and \
+             symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401"
         ),
+    },
+    UiBehaviour {
+        id: "tab.market.source.set",
+        title: "Switch the active tab to another configured feed and symbol",
+        reach: "the toolbar's SOURCE feed and symbol combos",
+        keys: &[(
+            Source::Authored,
+            "the SOURCE combos are toolbar widgets writing the tab's selection, not entries in \
+             its action enum",
+        )],
+        mapping: capability!("feed.source.set"),
     },
 ];
 

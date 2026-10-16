@@ -21,13 +21,16 @@ use quantick_control::{
     schema::generated_schema,
     wire::{ActorContext, WireU64},
 };
+use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::recovery::{
-    RECONNECT_CAPABILITY_ID, RELOAD_CAPABILITY_ID, RecoveryInput, RecoveryResult, descriptor,
+    RECONNECT_CAPABILITY_ID, RECOVERY_MODULE_ID, RELOAD_CAPABILITY_ID, RELOAD_EVENT_KIND,
+    RecoveryInput, RecoveryResult, descriptor,
 };
 use quantick_sources::recovery::Recovery;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::dock::ActionDock;
+use crate::notify::NotifyAccess;
 use crate::tabs::{TabDirectory, tab_closed, tab_index};
 
 /// What the window did when asked to recover a tab's feed.
@@ -62,11 +65,13 @@ pub const fn capability_id(recovery: Recovery) -> &'static str {
     }
 }
 
-/// Dock both recovery capabilities.
+/// Dock both recovery capabilities. A reload that rebuilt a timeline
+/// journals through the access the notify handlers journal through.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
     H: FeedRecoveryPort + ?Sized,
+    A: NotifyAccess,
 {
     registry.register(
         descriptor(
@@ -82,7 +87,7 @@ where
         descriptor(
             capability_id(Recovery::Reload),
             "Reload a chart from a new feed session",
-            "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes.",
+            "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes. A reload that respawned journals `feed.timeline.rebuilt` naming who threw the timeline away, with the call's result under `feed_reload`.",
             true,
             generated_schema::<RecoveryInput>(),
         ),
@@ -97,16 +102,36 @@ fn reconnect<H: FeedRecoveryPort + ?Sized, A>(
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    recover(app, input, true)
+    encode(&recover(app, input, true)?)
 }
 
-fn reload<H: FeedRecoveryPort + ?Sized, A>(
+/// A reload that respawned threw the tab's timeline away, its paper position
+/// and armed strategies with it, so who did it goes on the record. One with
+/// nothing to respawn changed nothing and records nothing.
+fn reload<H: FeedRecoveryPort + ?Sized, A: NotifyAccess>(
     app: &mut H,
-    _access: &mut A,
-    _actor: &ActorContext,
+    access: &mut A,
+    actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    recover(app, input, false)
+    let recovered = recover(app, input, false)?;
+    let result = encode(&recovered)?;
+    if recovered.respawned {
+        let payload = json!({ "feed_reload": result.clone() });
+        access.record_event(NewEvent::by(
+            RECOVERY_MODULE_ID,
+            RELOAD_EVENT_KIND,
+            actor,
+            payload,
+        ));
+    }
+    Ok(result)
+}
+
+fn encode(result: &RecoveryResult) -> Result<Value, ControlError> {
+    serde_json::to_value(result).map_err(|error| {
+        ControlError::invalid_request(format!("the recovery result could not be encoded: {error}"))
+    })
 }
 
 /// The shared body. `keep_timeline` picks which of the tab's two methods runs;
@@ -116,7 +141,7 @@ fn recover<H: FeedRecoveryPort + ?Sized>(
     app: &mut H,
     input: &Value,
     keep_timeline: bool,
-) -> Result<Value, ControlError> {
+) -> Result<RecoveryResult, ControlError> {
     let input: RecoveryInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
@@ -129,14 +154,11 @@ fn recover<H: FeedRecoveryPort + ?Sized>(
     let recovered = app
         .recover_feed(index, keep_timeline)
         .ok_or_else(tab_closed)?;
-    let result = RecoveryResult {
+    Ok(RecoveryResult {
         tab_id: WireU64::new(tab_id),
         symbol: recovered.symbol,
         respawned: recovered.respawned,
         timeline_kept: keep_timeline || !recovered.respawned,
-    };
-    serde_json::to_value(result).map_err(|error| {
-        ControlError::invalid_request(format!("the recovery result could not be encoded: {error}"))
     })
 }
 

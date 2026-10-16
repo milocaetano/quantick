@@ -42,8 +42,20 @@ use crate::bubble_assets::{self, AssetBubbles, AssetBubblesFile, AssetSource};
 use crate::bubble_presets::{BubblePreset, BubblePresetFile};
 use crate::config::{AppConfig, BubbleAsset};
 
+#[cfg(test)]
+#[path = "asset_mode_tests.rs"]
+mod asset_mode_tests;
+
 /// The store every view of one app shares.
 pub type SharedAssetBubbles = Rc<RefCell<AssetBubblesStore>>;
+
+/// `store` as an app opens it: migrated for `config` where it was read,
+/// before any view binds ([`AssetBubblesStore::migrate_identities`]).
+#[must_use]
+pub fn open_asset_bubbles(store: &SharedAssetBubbles, config: &AppConfig) -> SharedAssetBubbles {
+    store.borrow_mut().migrate_identities(config);
+    Rc::clone(store)
+}
 
 /// The most flush opportunities — frames — a failing disk waits between two
 /// write attempts. The wait doubles from one up to this.
@@ -81,6 +93,54 @@ pub struct AssetBubblesStore {
 }
 
 impl AssetBubblesStore {
+    /// Carry each look a config asset mode re-keyed
+    /// ([`AppConfig::moved_asset_keys`]) to its new key, once per move: run
+    /// where the store is read, before any view binds. A saved look and a
+    /// save-off switch are copied only where the new key holds neither; each
+    /// copy is logged and asks for a write. Every move is settled the first
+    /// time it is read ([`AssetBubblesFile::moved_keys`], written with the
+    /// next write): a mode the config adds later still moves, and a look the
+    /// trader clears under a moved key is never brought back. A build that
+    /// rewrites the file without the record (main) sends it through here
+    /// again, which overwrites nothing it kept.
+    pub fn migrate_identities(&mut self, config: &AppConfig) {
+        // Snapshot all old keys before writing any destination: migrating a
+        // family to one venue must not become another venue's legacy input.
+        let migrations: Vec<_> = config
+            .moved_asset_keys()
+            .into_iter()
+            .filter(|(key, _)| !self.file.moved_keys.contains(key))
+            .map(|(key, legacy)| {
+                let look = self.file.get(&legacy).cloned();
+                let saving_off = !self.file.saves_changes(&legacy);
+                (key, legacy, look, saving_off)
+            })
+            .collect();
+        for (key, legacy, look, saving_off) in migrations {
+            // Settled now, carried or not: the old key may stay another
+            // asset's, and what it holds later is that asset's alone.
+            self.file.moved_keys.insert(key.clone());
+            // Either a saved look or a scoped save-off switch is an explicit
+            // destination choice. Neither may be overwritten by migration.
+            let kept = self.file.get(&key).is_some() || !self.file.saves_changes(&key);
+            if kept || (look.is_none() && !saving_off) {
+                continue;
+            }
+            tracing::info!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "ASSET_BUBBLES_KEY_MOVED", asset = key.as_str(),
+                from = legacy.as_str(), look = look.is_some(), save_changes_off = saving_off,
+                action = "copy_settings_to_the_mode_key",
+                "a config asset mode moved the asset's bubble settings to a new key; copied once per move");
+            if let Some(settings) = look {
+                self.file.assets.insert(key.clone(), settings);
+            }
+            if saving_off {
+                self.file.save_changes_off.insert(key.clone());
+            }
+            self.unwritten.insert(key);
+            self.pending = true;
+        }
+    }
     /// Read the store at `path`; a missing file is an empty store.
     #[must_use]
     pub fn load(path: PathBuf) -> Self {
@@ -98,12 +158,13 @@ impl AssetBubblesStore {
         Rc::new(RefCell::new(self))
     }
 
-    /// Read the file again — a workspace import wrote it — and make every
-    /// view adopt its asset's settings from it at its next
-    /// [`AssetBinding::adoption`]. What memory held unsaved gives way: the
-    /// file is the newer word.
-    pub fn reload(&mut self) {
+    /// Read the file again — a workspace import wrote it — migrate it like a
+    /// loaded one ([`Self::migrate_identities`]) and make every view adopt
+    /// its asset's settings from it at its next [`AssetBinding::adoption`].
+    /// What memory held unsaved gives way: the file is the newer word.
+    pub fn reload(&mut self, config: &AppConfig) {
         self.read();
+        self.migrate_identities(config);
         self.changes += 1;
         self.reloaded_at = self.changes;
     }
@@ -493,6 +554,18 @@ impl AssetBinding {
         &self.asset.key
     }
 
+    /// The mode the config switches on for the asset, if any.
+    #[must_use]
+    pub fn mode(&self) -> Option<&crate::config::AssetMode> {
+        self.asset.mode.as_ref()
+    }
+
+    /// What a quantity on the asset counts, when its mode names it.
+    #[must_use]
+    pub fn quantity_unit(&self) -> Option<&str> {
+        self.mode().map(|mode| mode.quantity_unit.as_str())
+    }
+
     /// The store this binding files into, which the asset a switch arrives
     /// at binds to as well.
     #[must_use]
@@ -768,7 +841,13 @@ fn declared(
                 .unwrap_or_else(|| BubblePreset::capture(String::new(), &HeatmapConfig::default())),
         ),
     };
-    (source, AssetBubbles::declared(&preset, candle_default))
+    let mut settings = AssetBubbles::declared(&preset, candle_default);
+    if asset.mode.is_none() {
+        // A preset's tick spheres come along only where the config switches
+        // the asset's mode on (review #18).
+        settings.look.tick_bubbles = None;
+    }
+    (source, settings)
 }
 
 #[cfg(test)]

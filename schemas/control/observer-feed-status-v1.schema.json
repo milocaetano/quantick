@@ -100,6 +100,17 @@
           "description": "Defaults off for snapshots produced before deal counters existed.",
           "type": "boolean"
         },
+        "history_boundary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HistoryBoundarySnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why `history_paging` is off when the feed knows: `venue_retention`\nmeans the venue keeps nothing older. Absent while paging is on, and\non a provider that never pages; optional, so additive to v1."
+        },
         "history_paging": {
           "type": "boolean"
         },
@@ -171,6 +182,28 @@
         "headline_present",
         "next_step_present",
         "text_availability"
+      ],
+      "type": "object"
+    },
+    "FeedSourceChoice": {
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "feed_id": {
+          "type": "string"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "feed_id",
+        "display_name",
+        "symbols"
       ],
       "type": "object"
     },
@@ -257,6 +290,7 @@
           "$ref": "#/$defs/WireU64"
         },
         "latest_arrival_latency_ms": {
+          "description": "Signed local receipt stamp minus venue stamp; includes clock disagreement.",
           "format": "int64",
           "type": [
             "integer",
@@ -347,6 +381,16 @@
         "live_trade_count"
       ],
       "type": "object"
+    },
+    "HistoryBoundarySnapshot": {
+      "description": "Where a feed's pageable trade history ends.",
+      "oneOf": [
+        {
+          "const": "venue_retention",
+          "description": "The venue retains no executions older than the chart holds.",
+          "type": "string"
+        }
+      ]
     },
     "HistoryLoadSnapshot": {
       "description": "One tab's history run, as the History button draws it.",
@@ -486,6 +530,14 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "sources": {
+      "default": [],
+      "description": "Configured source pairs available to feed.source.set and the selectors.",
+      "items": {
+        "$ref": "#/$defs/FeedSourceChoice"
+      },
+      "type": "array"
+    },
     "tabs": {
       "items": {
         "$ref": "#/$defs/FeedTabSnapshot"

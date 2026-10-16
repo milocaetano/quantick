@@ -999,6 +999,7 @@ pub fn split_listen_addr(addr: &str) -> (Option<u16>, bool) {
 pub const fn provider_id(provider: ProviderKind) -> &'static str {
     match provider {
         ProviderKind::Binance => "binance",
+        ProviderKind::BinanceFutures => "binance-futures",
         ProviderKind::Hyperliquid => "hyperliquid",
         ProviderKind::MetaTrader => "metatrader",
     }

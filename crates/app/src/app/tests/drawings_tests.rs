@@ -955,6 +955,7 @@ fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
             capabilities: feed::fixed_capabilities(FeedCapabilities {
                 book_capture: false,
                 history_paging: false,
+                history_boundary: None,
                 traded_volume: false,
                 deal_counter: false,
                 ohlcv_history: false,

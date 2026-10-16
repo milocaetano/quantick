@@ -502,3 +502,20 @@ fn decluttering_near_an_edge_never_clips_a_previously_complete_circle() {
         assert!(coordinate + moved.disc.radius <= HISTORY[1][axis]);
     }
 }
+
+/// A region's pie starts at the given angle and sweeps buy, then sell, by
+/// their exact shares; a side without volume draws no sector.
+#[test]
+fn a_regions_sectors_sweep_its_exact_sides_in_turn() {
+    let mut frame = frame(&[8, 5]);
+    let plan = plan(&frame, &[[40.0, 40.0], [200.0, 40.0]]);
+    let region = |dot| plan.regions.iter().find(|region| region.dot_index == dot);
+    frame.dots[0].mark.buy_quantity = 2.into();
+    let tau = std::f64::consts::TAU;
+    let mixed: Vec<_> = region(0).unwrap().sectors(&frame, 1.0).collect();
+    let buy = (0, 1.0, (0.25 * tau) as f32);
+    let sell = (1, (1.0 + 0.25 * tau) as f32, (0.75 * tau) as f32);
+    assert_eq!(mixed, [buy, sell]);
+    let sold: Vec<_> = region(1).unwrap().sectors(&frame, 1.0).collect();
+    assert_eq!(sold, [(1, 1.0, tau as f32)], "the buy side draws nothing");
+}

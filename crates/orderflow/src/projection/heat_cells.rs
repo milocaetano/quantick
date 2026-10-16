@@ -2,6 +2,8 @@
 //! rule the live frame and a tape held in the past both cut their bands and
 //! gaps by, so the two cannot drift apart.
 
+use std::collections::BTreeMap;
+
 use rust_decimal::Decimal;
 
 use super::model::{BEFORE_CAPTURE, GapPrimitive, HeatmapCell, PriceWindow};
@@ -22,6 +24,9 @@ pub(super) struct DraftCell {
     pub(super) y1: f64,
     /// Past the last confirmation, carried to the live edge.
     pub(super) carried: bool,
+    pub(super) time_averaged: bool,
+    /// Read from the current book ([`super::lane_heat::book_is_current`]).
+    pub(super) current_book: bool,
 }
 
 /// The `(y0, y1)` rows of the bucket at `price_bucket`, clipped to `prices`;
@@ -35,6 +40,31 @@ pub(super) fn bucket_rows(
     let high = (price_bucket + grouping.bucket_width).min(prices.high);
     let (y0, y1) = (prices.y(high)?, prices.y(low)?);
     (y1 > y0).then_some((y0, y1))
+}
+
+/// A price row is identical for every interval at that level in this projection.
+/// Keep its exact Decimal conversion once, including an off-screen result.
+pub(super) struct PriceRows {
+    grouping: EffectiveGrouping,
+    prices: PriceWindow,
+    rows: BTreeMap<Decimal, Option<(f64, f64)>>,
+}
+
+impl PriceRows {
+    pub(super) fn new(grouping: EffectiveGrouping, prices: PriceWindow) -> Self {
+        Self {
+            grouping,
+            prices,
+            rows: BTreeMap::new(),
+        }
+    }
+
+    pub(super) fn get(&mut self, bucket: Decimal) -> Option<(f64, f64)> {
+        *self
+            .rows
+            .entry(bucket)
+            .or_insert_with(|| bucket_rows(bucket, self.grouping, self.prices))
+    }
 }
 
 /// The quantity a band reads full against: the drawn runs' 99th percentile,
@@ -56,32 +86,61 @@ pub(super) fn percentile_99(values: impl Iterator<Item = Decimal>) -> Decimal {
     if positive.is_empty() {
         return Decimal::ZERO;
     }
-    positive.sort_unstable();
     let rank = (99 * positive.len()).div_ceil(100);
-    positive[rank.saturating_sub(1)]
+    *positive.select_nth_unstable(rank.saturating_sub(1)).1
 }
 
 /// Colour `drafts` against `reference`, keeping the strongest walls when
 /// there are more than the cap allows. Returns the bands and how many the
 /// cap dropped. Hidden heat drops nothing: the trader chose to hide it.
 pub(super) fn finish_cells(
+    drafts: Vec<DraftCell>,
+    reference: Decimal,
+    config: &HeatmapConfig,
+) -> (Vec<HeatmapCell>, usize) {
+    finish_with_priority(drafts, reference, config, false)
+}
+
+/// [`finish_cells`] for the live lane: an averaged lane, where only the
+/// current book and the newest stretch are exact, keeps the current book's
+/// rows first and the newest bands next (`current_first`). Without averaging
+/// the current rows compete with the lane's runs like any band.
+pub(super) fn finish_with_priority(
     mut drafts: Vec<DraftCell>,
     reference: Decimal,
     config: &HeatmapConfig,
+    current_first: bool,
 ) -> (Vec<HeatmapCell>, usize) {
     if !config.show_liquidity {
         drafts.clear();
     }
     let dropped = drafts.len().saturating_sub(config.max_visible_cells);
     if dropped > 0 {
-        drafts.sort_by(|a, b| {
-            b.quantity
-                .cmp(&a.quantity)
-                .then_with(|| a.generation.cmp(&b.generation))
-                .then_with(|| a.price_bucket.cmp(&b.price_bucket))
-                .then_with(|| a.x0.total_cmp(&b.x0))
-        });
-        drafts.truncate(config.max_visible_cells);
+        // Select the retained prefix before sorting it. The original position
+        // breaks equal ranks exactly as the stable full sort did, so ties at
+        // the cap preserve side, geometry and carried/observed provenance.
+        let mut ranked: Vec<_> = drafts.into_iter().enumerate().collect();
+        let rank = |a: &(usize, DraftCell), b: &(usize, DraftCell)| {
+            (current_first && !a.1.current_book)
+                .cmp(&(current_first && !b.1.current_book))
+                .then_with(|| a.1.time_averaged.cmp(&b.1.time_averaged))
+                .then_with(|| {
+                    if current_first {
+                        b.1.x1.total_cmp(&a.1.x1)
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+                .then_with(|| b.1.quantity.cmp(&a.1.quantity))
+                .then_with(|| a.1.generation.cmp(&b.1.generation))
+                .then_with(|| a.1.price_bucket.cmp(&b.1.price_bucket))
+                .then_with(|| a.1.x0.total_cmp(&b.1.x0))
+                .then_with(|| a.0.cmp(&b.0))
+        };
+        ranked.select_nth_unstable_by(config.max_visible_cells, rank);
+        ranked.truncate(config.max_visible_cells);
+        ranked.sort_unstable_by(rank);
+        drafts = ranked.into_iter().map(|(_, draft)| draft).collect();
     }
     let cells = drafts
         .into_iter()
@@ -106,6 +165,8 @@ pub(super) fn finish_cells(
                         1.0
                     },
                 carried: draft.carried,
+                time_averaged: draft.time_averaged,
+                current_book: draft.current_book,
             }
         })
         .collect();
@@ -161,3 +222,6 @@ pub(super) fn book_gaps(
     gaps.sort_by(|a, b| a.x0.total_cmp(&b.x0).then_with(|| a.x1.total_cmp(&b.x1)));
     gaps
 }
+
+#[cfg(test)]
+mod tests;

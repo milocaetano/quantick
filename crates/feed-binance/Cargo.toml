@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-orderbook = { path = "../orderbook" }
+# The perpetual symbol rule the config document validates with.
+quantick-sources = { path = "../sources" }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

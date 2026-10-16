@@ -6,6 +6,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::chart::BarSnapshot;
+use quantick_control_host::wire::{canonical_decimal, wire_usize};
+use quantick_orderflow::FlowCellHit;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CursorSnapshot {
@@ -73,6 +75,20 @@ pub struct FlowCellSnapshot {
     /// when false, so v1 readers remain compatible.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub carried: bool,
+    /// Quantity is a duration-weighted mean, rather than instantaneous depth.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub time_averaged: bool,
+    /// Current book snapshot in chart forward space; no historical time claim.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub current_book_preview: bool,
+    /// Update ID of the exact current book used to build this painted frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_book_update_id: Option<WireU64>,
+    /// Book timeline timestamp, preserved with cached frames: source event time
+    /// for updates, effective coverage start for snapshots (not local arrival).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub source_book_unix_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -119,4 +135,26 @@ pub struct DrawingSelectionSnapshot {
 pub struct PaperTradeSelectionSnapshot {
     pub row_index: WireU64,
     pub provenance: String,
+}
+
+pub fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
+    FlowCellSnapshot {
+        generation: WireU64::new(cell.generation),
+        side: cell.side.to_string(),
+        price_bucket: canonical_decimal(cell.price_bucket),
+        price_span: canonical_decimal(cell.price_span),
+        quantity: canonical_decimal(cell.quantity),
+        start_slot: wire_usize(cell.start_slot),
+        end_slot_exclusive: wire_usize(cell.end_slot_exclusive),
+        live_lane: cell.live_lane,
+        held_tape_end_unix_ms: cell.held_tape_end_ms,
+        carried: cell.carried,
+        time_averaged: cell.time_averaged,
+        current_book_preview: cell.current_book_preview,
+        source_book_update_id: cell
+            .current_book_source
+            .and_then(|source| source.update_id)
+            .map(WireU64::new),
+        source_book_unix_ms: cell.current_book_source.map(|source| source.event_ms),
+    }
 }

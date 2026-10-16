@@ -127,6 +127,7 @@ impl VisibleOrderflow {
                     live_edge: Some(place.edge),
                     volume_dots: Some(place.dots.scale(config, request.price_range)),
                     tape_overlay: Some(Arc::new(overlay)),
+                    current_book_live: frame.current_book_live,
                 });
             }
         }
@@ -170,6 +171,7 @@ impl VisibleOrderflow {
             live_edge: Some(place.edge),
             volume_dots: Some(place.dots.scale(config, request.price_range)),
             tape_overlay: None,
+            current_book_live: published.is_none_or(|frame| frame.current_book_live),
         }
     }
 

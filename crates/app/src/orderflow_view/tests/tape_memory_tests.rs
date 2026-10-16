@@ -53,6 +53,7 @@ fn paint(
             rect.width(),
             false,
             prices,
+            true,
         );
     });
     let mut discs: Vec<_> = output
@@ -248,6 +249,31 @@ fn tape_history_is_cleared_by_source_replay_mode_and_explicit_visual_changes() {
     }
 }
 
+/// #11: the lane's width is a view parameter, like the window it shows: a
+/// width change keeps the painted past as it was, while an explicit zoom of
+/// the tape's window starts a fresh display epoch.
+#[test]
+fn a_lane_width_change_keeps_tape_history_and_a_zoom_starts_it_over() {
+    for (change, kept) in [("width", true), ("zoom", false)] {
+        let (mut view, hold) = memory_view();
+        let _ = seed_closed_history(&mut view);
+        let groups = view.tape_dots.borrow().retained_group_count();
+        match change {
+            "width" => {
+                let before = view.config.clone();
+                view.config.live_lane.width_share = 0.45;
+                view.commit_config_changes(before);
+            }
+            "zoom" => view.zoom_live_lane(2.0),
+            _ => unreachable!(),
+        }
+        let after = view.tape_dots.borrow().retained_group_count();
+        hold.release();
+        assert!(groups > 0, "fixture has painted history before {change}");
+        assert_eq!(after, if kept { groups } else { 0 }, "{change}");
+    }
+}
+
 #[test]
 fn retained_weighted_prices_participate_in_fit_after_an_old_member_expires() {
     let (mut view, hold) = memory_view();
@@ -344,4 +370,32 @@ fn a_visit_to_the_past_leaves_the_live_tape_exactly_as_it_was() {
     control_hold.release();
     assert!(!expected.is_empty());
     assert_eq!(live, expected);
+}
+
+#[test]
+fn stable_native_navigation_moves_one_group_memory_through_zoom_and_back_to_live() {
+    use quantick_orderflow::tape_view::TapeEnd;
+    let (mut view, hold) = memory_view();
+    view.edit_config(|config| {
+        config.live_lane.stable_size = true;
+        config.volume_dots.auto_full = false;
+        config.volume_dots.full_quantity = 100.0;
+    });
+    let shown = seed_closed_history(&mut view);
+    let before = retained(&view, &shown, WIN_PRICES);
+    let groups = view.tape_dots.borrow().retained_group_count();
+    assert!(groups > 0);
+    view.set_tape_end(TapeEnd::Past {
+        end_ms: WIN_TIME_MS + 900,
+    });
+    assert_eq!(view.tape_dots.borrow().retained_group_count(), 0);
+    assert!(view.past_dots.borrow().cached_block_count() > 0);
+    view.zoom_live_lane(2.0);
+    assert!(view.past_dots.borrow().cached_block_count() > 0);
+    view.set_tape_end(TapeEnd::Live);
+    let after = retained(&view, &shown, WIN_PRICES);
+    hold.release();
+    assert_eq!(view.tape_dots.borrow().retained_group_count(), groups);
+    assert_eq!(after.marks, before.marks);
+    assert_eq!(after.max_radius, before.max_radius);
 }

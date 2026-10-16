@@ -3,6 +3,7 @@
 
 use eframe::egui;
 
+use quantick_control_handlers::bubble_scale::BubbleScalePane;
 use quantick_layers::ChartLayer;
 
 use crate::bands;
@@ -139,6 +140,19 @@ impl ChartPane {
         self.orderflow.as_ref().map_or((false, false), |view| {
             let config = view.cached_config();
             (config.tape_only(), config.native_tape())
+        })
+    }
+
+    /// What the bubble size rule reads about this pane, the facts its size
+    /// sliders and `orderflow.bubbles.size.set` both judge; `None` without
+    /// an order-flow view.
+    pub(crate) fn bubble_scale_facts(&self) -> Option<BubbleScalePane> {
+        let config = self.orderflow.as_ref()?.cached_config();
+        Some(BubbleScalePane {
+            tick_chart: self.state.tick_membership().is_some(),
+            candle_bubbles: config.show_aggressions,
+            tape_only: config.tape_only(),
+            tape_bubbles: config.lane_aggressions_drawn(),
         })
     }
 

@@ -8,6 +8,7 @@ pub(super) type FlowExecutionView = FlowSession<runner::FlowThread>;
 impl OrderflowView {
     pub(crate) fn reset_flow_executions(&mut self) {
         self.flow_execution.clear();
+        self.flow_paint.get_mut().clear();
     }
     pub(crate) fn flow_execution_active(&self) -> bool {
         FlowExecutionView::active(&self.config)
@@ -20,6 +21,25 @@ impl OrderflowView {
     }
     pub(crate) fn flow_execution_handle(&self) -> Option<&std::sync::Arc<FlowTapeFrame>> {
         self.flow_execution.frame_handle()
+    }
+    pub(crate) fn flow_execution_snapshot_frame(&self) -> Option<std::sync::Arc<FlowTapeFrame>> {
+        self.flow_paint.borrow().frame_for(
+            self.flow_execution_handle()?,
+            self.config.tick_look(),
+            self.config.bubbles.display_scale.candle,
+        )
+    }
+    pub(crate) fn note_flow_paint(
+        &self,
+        source: &std::sync::Arc<FlowTapeFrame>,
+        frame: Option<&std::sync::Arc<FlowTapeFrame>>,
+    ) {
+        self.flow_paint.borrow_mut().record(
+            source,
+            frame,
+            self.config.tick_look(),
+            self.config.bubbles.display_scale.candle,
+        );
     }
     pub(crate) fn flow_execution_progress(&self) -> FlowProgress {
         self.flow_execution.progress()
@@ -42,14 +62,17 @@ impl OrderflowView {
         range: (f64, f64),
         clip: (f64, f64),
     ) {
-        quantick_chart::flow_execution::project_flow_executions(
+        quantick_chart::flow_execution::project_styled_flow_executions(
             self.flow_execution_active(),
             state,
             &mut self.flow_execution,
-            slots,
-            (pixels.x, pixels.y),
-            range,
-            clip,
+            quantick_chart::flow_execution::FlowChartView {
+                slots,
+                pixels: (pixels.x, pixels.y),
+                range,
+                clip,
+                tick_bubbles: self.config.volume_dots.tick_bubbles,
+            },
         );
     }
 }

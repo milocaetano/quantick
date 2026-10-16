@@ -20,8 +20,12 @@ toml = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# The approved WIN tape's depth golden feeds the engine an MT5-shaped book.
+quantick-orderbook = { path = "../orderbook" }
 # The per-thread store-write refusal the saves-off export test holds (DS7).
 quantick-workspace = { path = "../workspace", features = ["test-support"] }
+# The asset-key move's log line, read back by its test.
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

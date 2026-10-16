@@ -15,6 +15,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+mod asset_modes;
+pub use asset_modes::AssetMode;
+
 use crate::symbols_file::AddedSymbols;
 use quantick_sources::history_reach;
 
@@ -26,7 +29,8 @@ use quantick_sources::history_reach;
 // produced and consumed entirely inside the feed host — and a re-export no
 // caller reads is a dead import the workspace lints reject.
 pub use quantick_sources::config::{
-    FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind, split_host_port,
+    FeedCapabilities, HistoryBoundary, MetaTraderSettings, Mt5SideSource, ProviderKind,
+    split_host_port,
 };
 
 /// The built-in default configuration, compiled into the binary so the app runs
@@ -37,6 +41,17 @@ pub const EMBEDDED_DEFAULT: &str = include_str!("../../app/config/feeds.toml");
 
 /// Conventional config file name looked up in the working directory.
 pub const CONFIG_FILENAME: &str = "quantick.toml";
+
+/// The tick size a flow pane opens on when neither the saved workspace nor
+/// the feed's `default_bars` names a spec. The type and its parameter are
+/// tunable live from the controls bar.
+pub const FACTORY_TICK_SIZE: u64 = 50;
+
+/// The factory flow spec, [`FACTORY_TICK_SIZE`] ticks.
+#[must_use]
+pub fn factory_flow_spec() -> quantick_chart::state::BarConfiguration {
+    quantick_chart::state::BarSpec::Tick(FACTORY_TICK_SIZE).into()
+}
 
 pub use quantick_workspace::arrangement_document::DeclaredLayout;
 
@@ -78,6 +93,11 @@ pub struct FeedConfig {
     /// stays the presets file's business, reported when it is applied.
     #[serde(default)]
     pub symbol_bubble_presets: BTreeMap<String, String>,
+    /// Per-asset modes, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets):
+    /// what an asset gets only because the config switches it on
+    /// ([`AssetMode`]). Keys must match a symbol this feed offers.
+    #[serde(default)]
+    pub symbol_asset_modes: BTreeMap<String, AssetMode>,
     /// The canvas layout a tab on this feed opens showing.
     ///
     /// Startup-scoped, like `default_feed`: it decides what a *new* tab looks
@@ -120,6 +140,8 @@ pub struct BubbleAsset {
     pub key: String,
     /// The preset declared for it, if any.
     pub preset: Option<String>,
+    /// The mode the config switches on for it, if any.
+    pub mode: Option<AssetMode>,
 }
 
 /// Whether `key` (an exact symbol or a `PREFIX*` family) names `symbol`.
@@ -130,34 +152,45 @@ fn key_matches(key: &str, symbol: &str) -> bool {
     }
 }
 
+/// The entry of a per-symbol table naming `symbol`: the exact key, else the
+/// longest family pattern.
+fn declared<'a, V>(table: &'a BTreeMap<String, V>, symbol: &str) -> Option<(&'a String, &'a V)> {
+    table.get_key_value(symbol).or_else(|| {
+        table
+            .iter()
+            .filter(|(key, _)| key_matches(key, symbol))
+            .max_by_key(|(key, _)| key.len())
+    })
+}
+
 impl FeedConfig {
-    /// The asset `symbol` belongs to on this feed: the exact key naming it,
-    /// else the longest family pattern matching it, else the symbol alone on
-    /// the feed-wide declaration.
+    /// The asset `symbol` belongs to on this feed: its [mode](AssetMode)'s
+    /// when the config switches one on, else the exact key naming it, else
+    /// the longest family pattern matching it, else the symbol alone on the
+    /// feed-wide declaration.
     #[must_use]
     pub fn bubble_asset(&self, symbol: &str) -> BubbleAsset {
+        self.mode_asset(symbol)
+            .unwrap_or_else(|| self.plain_asset(symbol))
+    }
+
+    /// [`Self::bubble_asset`] as it reads with no mode switched on.
+    fn plain_asset(&self, symbol: &str) -> BubbleAsset {
         self.declared_asset(symbol).unwrap_or_else(|| BubbleAsset {
             key: symbol.to_owned(),
             preset: self.bubble_preset.clone(),
+            mode: None,
         })
     }
 
     /// The `symbol_bubble_presets` entry naming `symbol`, if any: the exact
     /// key, else the longest family pattern.
     fn declared_asset(&self, symbol: &str) -> Option<BubbleAsset> {
-        let presets = &self.symbol_bubble_presets;
-        presets
-            .get_key_value(symbol)
-            .or_else(|| {
-                presets
-                    .iter()
-                    .filter(|(key, _)| key_matches(key, symbol))
-                    .max_by_key(|(key, _)| key.len())
-            })
-            .map(|(key, preset)| BubbleAsset {
-                key: key.clone(),
-                preset: Some(preset.clone()),
-            })
+        declared(&self.symbol_bubble_presets, symbol).map(|(key, preset)| BubbleAsset {
+            key: key.clone(),
+            preset: Some(preset.clone()),
+            mode: None,
+        })
     }
 
     /// The bubble preset declared for `symbol` on this feed, if any: its
@@ -335,12 +368,21 @@ impl AppConfig {
     /// else the feed-wide preset of the first feed offering it, else the tab
     /// feed's own. A key declared on several feeds opens on the first one's
     /// preset, so one key has one declared look whichever tab shows it.
+    /// A symbol with an [asset mode](AssetMode) is decided by the feed
+    /// offering it alone, on the mode's key and that feed's declared look.
     #[must_use]
     pub fn bubble_asset(&self, feed_id: &str, symbol: &str) -> BubbleAsset {
+        self.mode_asset(feed_id, symbol)
+            .unwrap_or_else(|| self.plain_bubble_asset(feed_id, symbol))
+    }
+
+    /// [`Self::bubble_asset`] as it reads with no mode switched on: the key a
+    /// look was saved under before a mode moved it.
+    fn plain_bubble_asset(&self, feed_id: &str, symbol: &str) -> BubbleAsset {
         let tab_feed = self.feed(feed_id);
         let offers = |feed: &FeedConfig| feed.symbols.iter().any(|offered| offered == symbol);
         let asset = match tab_feed {
-            Some(feed) if offers(feed) => feed.bubble_asset(symbol),
+            Some(feed) if offers(feed) => feed.plain_asset(symbol),
             _ => tab_feed
                 .and_then(|feed| feed.declared_asset(symbol))
                 .or_else(|| {
@@ -353,11 +395,12 @@ impl AppConfig {
                 })
                 .or_else(|| {
                     let offering = self.feeds.iter().find(|feed| offers(feed));
-                    offering.map(|feed| feed.bubble_asset(symbol))
+                    offering.map(|feed| feed.plain_asset(symbol))
                 })
                 .unwrap_or_else(|| BubbleAsset {
                     key: symbol.to_owned(),
                     preset: tab_feed.and_then(|feed| feed.bubble_preset.clone()),
+                    mode: None,
                 }),
         };
         let first = self
@@ -522,6 +565,13 @@ impl AppConfig {
         }
     }
 
+    /// The bar spec a tab on feed `id` opens on: its declared `default_bars`,
+    /// else the [factory spec](factory_flow_spec).
+    #[must_use]
+    pub fn opening_spec_for(&self, id: &str) -> quantick_chart::state::BarConfiguration {
+        self.startup_spec_for(id).unwrap_or_else(factory_flow_spec)
+    }
+
     /// Data-honesty label for how feed `id` decides the aggressor side of a
     /// trade, or `None` when the venue reports true sides. Shown verbatim on
     /// the status bar; this sits next to the provider → code-path map because
@@ -529,7 +579,9 @@ impl AppConfig {
     #[must_use]
     pub fn side_note(&self, id: &str) -> Option<&'static str> {
         match self.provider_of(id)? {
-            ProviderKind::Binance | ProviderKind::Hyperliquid => None,
+            ProviderKind::Binance | ProviderKind::BinanceFutures | ProviderKind::Hyperliquid => {
+                None
+            }
             ProviderKind::MetaTrader => Some(match self.metatrader.side_source {
                 Mt5SideSource::TickRule => "side: inferred (tick rule)",
                 Mt5SideSource::Flags => "side: broker flags",
@@ -609,6 +661,13 @@ impl AppConfig {
             // for every feed, because the catalog the app runs on includes
             // whatever the added-symbols sidecar merged into it.
             for symbol in &feed.symbols {
+                if !feed.provider.canonical_symbol(symbol) {
+                    return Err(format!(
+                        "feed '{}' requires {}",
+                        feed.id,
+                        feed.provider.symbol_grammar()
+                    ));
+                }
                 if symbol.trim().is_empty() {
                     return Err(format!("feed '{}' lists an empty symbol", feed.id));
                 }
@@ -636,6 +695,7 @@ impl AppConfig {
             // of this feed would have silence as its only symptom, and an
             // empty preset name is a config typo. Whether the name resolves
             // stays the presets file's business.
+            feed.validate_asset_modes()?;
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed
                     .symbols
@@ -1250,6 +1310,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "binance",
+                "binance-futures",
                 "hyperliquid",
                 "metatrader-tickmill",
                 "metatrader-b3"
@@ -1268,6 +1329,7 @@ mod tests {
             FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,
@@ -1330,7 +1392,10 @@ mod tests {
             b3.bubble_preset_for("WDO$N").as_deref(),
             Some("live lane pie")
         );
-        assert_eq!(binance.bubble_preset_for("BTCUSDT").as_deref(), None);
+        assert_eq!(
+            binance.bubble_preset_for("BTCUSDT").as_deref(),
+            Some("Binance BTC Spot spheres")
+        );
         assert_eq!(hyperliquid.bubble_preset_for("BTC").as_deref(), None);
 
         // The default open is the split: timeframe context beside the flow
@@ -1368,6 +1433,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "binance",
+                "binance-futures",
                 "hyperliquid",
                 "metatrader-tickmill",
                 "metatrader-b3"
@@ -1392,7 +1458,7 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "QUANTICK_DEFAULT_FEED='ghost' is not a configured feed; available feeds: \
-             binance, hyperliquid, metatrader-tickmill, metatrader-b3"
+             binance, binance-futures, hyperliquid, metatrader-tickmill, metatrader-b3"
         );
     }
 

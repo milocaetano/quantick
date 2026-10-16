@@ -517,6 +517,7 @@ fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
         symbols: vec!["WINQ26".to_string()],
         bubble_preset: Some("live lane pie".to_string()),
         symbol_bubble_presets: Default::default(),
+        symbol_asset_modes: Default::default(),
         default_layout: None,
         default_bars: None,
         record_deals: false,

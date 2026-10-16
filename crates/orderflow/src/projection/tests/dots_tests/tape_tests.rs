@@ -12,6 +12,7 @@ mod opening_scale;
 mod performance;
 mod recorded_stability;
 mod stability;
+mod viewport;
 
 fn tape_config() -> HeatmapConfig {
     let mut config = dots_config();

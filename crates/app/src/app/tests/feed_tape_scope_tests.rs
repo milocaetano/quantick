@@ -24,7 +24,7 @@ fn select_market(app: &mut QuantickApp, feed: &str, symbol: &str) {
 
 fn customize_crypto(app: &mut QuantickApp) -> BubblePreset {
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.apply_preset("dense tape"));
+    assert!(tape.apply_preset("dense tape", false));
     tape.set_live_lane_window(LaneWindow::Fixed { ms: 17_000 });
     appearance(app)
 }
@@ -122,7 +122,7 @@ fn an_undeclared_custom_feed_still_keeps_the_users_manual_tape_look() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .apply_preset("mini index regions")
+            .apply_preset("mini index regions", false)
     );
     let before = appearance(&app);
     with_config(&mut app, |tab, config| {

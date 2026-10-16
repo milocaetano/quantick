@@ -58,6 +58,10 @@ pub struct OrderflowRenderStyle {
     /// How volume dots are sized on this screen: each dot's cell and its
     /// pane's full size. `None` draws the style's radii on the typed scale.
     pub dot_sizing: Option<crate::DotSizing>,
+    /// Whether the tape is native: its dots use the execution-time inset,
+    /// and its book, fronts and picking share it only with depth
+    /// time-averaging on ([`TapeHorizontalGeometry::from_style`](crate::projection::TapeHorizontalGeometry::from_style)).
+    pub native_tape: bool,
     /// Exclude known first recorded native bursts only from the tape's auto scale.
     pub ignore_opening_burst_in_scale: bool,
     pub show_gap_labels: bool,
@@ -122,6 +126,7 @@ impl Default for OrderflowRenderStyle {
             bubbles: BubbleStyle::default(),
             live_lane: LiveLaneStyle::default(),
             dot_sizing: None,
+            native_tape: false,
             ignore_opening_burst_in_scale: false,
             show_gap_labels: true,
             show_legend: true,
@@ -153,6 +158,7 @@ impl OrderflowRenderStyle {
             theme: config.theme,
             bubbles: config.bubbles.clone(),
             dot_sizing: None,
+            native_tape: config.native_tape(),
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             live_lane: config.live_lane.clone(),
             show_legend: config.show_legend,

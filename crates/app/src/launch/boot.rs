@@ -8,12 +8,7 @@ use tracing_subscriber::EnvFilter;
 
 use quantick_feed as feed;
 
-use crate::state::BarSpec;
 use crate::ui_state::WorkspaceExt;
-
-/// The bar type the chart opens on. The type and its parameter are tunable live
-/// from the controls bar; the feed and symbol come from the configuration.
-const INITIAL_TICK_SIZE: u64 = 50;
 
 /// Install the tracing subscriber. Feed and app events flow to stderr; the level
 /// is controlled by `RUST_LOG` (default `quantick=info`). Set
@@ -212,6 +207,7 @@ pub(crate) fn run() -> eframe::Result {
 
     let workspace = crate::ui_state::load(&crate::ui_state::default_path()).restore(&config);
     let env_chose_market = startup.names_market();
+    let workspace = crate::ui_state::reconcile_startup(workspace, &config, env_chose_market);
     if !env_chose_market && let Some((feed, symbol)) = workspace.first_market() {
         config.default_feed = feed.to_owned();
         config.default_symbol = symbol.to_owned();
@@ -242,14 +238,12 @@ pub(crate) fn run() -> eframe::Result {
     let spec = workspace
         .tabs
         .first()
-        .filter(|_| !env_chose_market)
         .and_then(|tab| {
             quantick_engine::bar_registry::BUILTIN_BARS
                 .parse(&tab.flow_bars)
                 .ok()
         })
-        .or_else(|| config.startup_spec_for(&feed_id))
-        .unwrap_or_else(|| BarSpec::Tick(INITIAL_TICK_SIZE).into());
+        .unwrap_or_else(|| config.opening_spec_for(&feed_id));
 
     let feed = feed::spawn_live(
         provider,

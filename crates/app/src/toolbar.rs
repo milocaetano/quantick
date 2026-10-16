@@ -1416,6 +1416,7 @@ mod tests {
                         capabilities: FeedCapabilities {
                             book_capture: !replaying,
                             history_paging: !replaying,
+                            history_boundary: None,
                             traded_volume: true,
                             deal_counter: false,
                             ohlcv_history: !replaying,
@@ -1507,6 +1508,7 @@ mod tests {
                     capabilities: FeedCapabilities {
                         book_capture: true,
                         history_paging: true,
+                        history_boundary: None,
                         traded_volume: true,
                         deal_counter: false,
                         ohlcv_history: true,
@@ -1589,6 +1591,7 @@ mod tests {
                         capabilities: FeedCapabilities {
                             book_capture: false,
                             history_paging: false,
+                            history_boundary: None,
                             traded_volume: false,
                             deal_counter: false,
                             ohlcv_history: false,
@@ -1701,6 +1704,7 @@ mod tests {
                     capabilities: FeedCapabilities {
                         book_capture: true,
                         history_paging: true,
+                        history_boundary: None,
                         traded_volume: true,
                         deal_counter: false,
                         ohlcv_history: true,

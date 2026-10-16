@@ -9,6 +9,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_control_handlers::bubble_preset::TickSpherePane;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
@@ -22,6 +23,7 @@ mod l2_sections;
 #[cfg(test)]
 #[path = "settings/tests/tape_only_controls.rs"]
 mod tape_only_controls;
+mod tick_bubbles;
 
 use bubble_sections::{
     BubbleHealthSection, ClusteringSection, ColoursSection, ConsumptionMarksSection, LabelsSection,
@@ -37,7 +39,7 @@ impl OrderflowView {
     ///
     /// Every change is kept for the asset on screen; saving names the look
     /// as a preset any asset can pick, never over a look other assets open on.
-    fn draw_bubble_presets(&mut self, ui: &mut egui::Ui) {
+    fn draw_bubble_presets(&mut self, ui: &mut egui::Ui, spheres: bool) {
         // The picker reads the stored presets while the closure below wants to
         // mutate them, so it hands back an index and the name is read after.
         // Cloning every name each frame would be the other way out, and this
@@ -99,7 +101,7 @@ impl OrderflowView {
                 .get(index)
                 .map(|preset| preset.name.clone())
         {
-            self.apply_preset(&name);
+            self.look.apply_preset(&name, &mut self.config, spheres);
         }
         ui.small(format!("presets · {}", self.look.source()));
         let mut save_switched = None;
@@ -206,7 +208,7 @@ impl OrderflowView {
     /// Everything here is independent of L2 capture — bubbles are built from
     /// the aggregate-trade stream. Same return contract as
     /// [`Self::draw_l2_tab`].
-    pub fn draw_bubbles_tab(&mut self, ui: &mut egui::Ui) -> bool {
+    pub fn draw_bubbles_tab(&mut self, ui: &mut egui::Ui, tick_chart: bool) -> bool {
         self.sync_published();
         let before = self.config.clone();
         egui::ScrollArea::vertical()
@@ -222,7 +224,9 @@ impl OrderflowView {
                 );
                 ui.separator();
 
-                self.draw_bubble_presets(ui);
+                let rule = TickSpherePane::new(tick_chart, self.look.asset_mode().is_some());
+                self.draw_bubble_presets(ui, rule.may_choose());
+                self.draw_tick_bubbles(ui, rule);
                 ui.separator();
 
                 ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")
@@ -271,10 +275,15 @@ impl OrderflowView {
         }
         .show(ui);
         let native_tape = config.native_tape() && config.volume_dots.enabled;
+        let fixed_tape_size = native_tape
+            && config.live_lane.stable_size
+            && !config.volume_dots.auto_full
+            && config.bubbles.size_reference == quantick_orderflow::BubbleSizeReference::Fixed;
         let bubbles = &mut config.bubbles;
         SizePlacementSection {
             bubbles: &mut *bubbles,
             native_tape,
+            fixed_tape_size,
         }
         .show(ui);
         ConsumptionMarksSection {
