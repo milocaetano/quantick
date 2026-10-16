@@ -87,7 +87,7 @@ where
         descriptor(
             capability_id(Recovery::Reload),
             "Reload a chart from a new feed session",
-            "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes.",
+            "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes. A reload that respawned journals `feed.timeline.rebuilt` naming who threw the timeline away, with the call's result under `feed_reload`.",
             true,
             generated_schema::<RecoveryInput>(),
         ),
