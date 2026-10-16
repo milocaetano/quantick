@@ -37,6 +37,8 @@ pub(in crate::pane) struct FlowPass<'a> {
     pub lane_width: f32,
     pub inverted: bool,
     pub price_range: (f64, f64),
+    /// The candles are tick bars: the candle gain paints only there.
+    pub tick_chart: bool,
 }
 pub(in crate::pane) struct LegendPass<'a> {
     pub owner: &'a OrderflowView,
@@ -95,6 +97,7 @@ fn aggressions(p: &mut FlowPass<'_>) {
         p.lane_width,
         p.inverted,
         p.price_range,
+        p.tick_chart,
     );
 }
 fn legend(p: &mut LegendPass<'_>) {

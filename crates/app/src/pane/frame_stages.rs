@@ -49,6 +49,7 @@ pub(super) struct FlowFrame<'a> {
     lane_width: f32,
     inverted: bool,
     price_range: (f64, f64),
+    tick_chart: bool,
     projection: Option<Arc<VisibleOrderflow>>,
     regional: Option<(
         Arc<quantick_orderflow::projection::flow_tape::FlowTapeFrame>,
@@ -75,6 +76,7 @@ impl<'a> FlowFrame<'a> {
             lane_width,
             inverted,
             price_range: frame.scale.range(),
+            tick_chart: false,
             projection: None,
             regional: None,
         }
@@ -111,6 +113,7 @@ impl<'a> FlowFrame<'a> {
             frame.visible_state,
             frame.partial_visible,
         );
+        self.tick_chart = state.tick_membership().is_some();
         self.projection = orderflow.and_then(|orderflow| {
             let slots = frame.start.saturating_sub(frame.prefix.len())
                 ..frame.end.saturating_sub(frame.prefix.len());
@@ -185,6 +188,7 @@ impl<'a> FlowFrame<'a> {
             lane_width: self.lane_width,
             inverted: self.inverted,
             price_range: self.price_range,
+            tick_chart: self.tick_chart,
         }
     }
 

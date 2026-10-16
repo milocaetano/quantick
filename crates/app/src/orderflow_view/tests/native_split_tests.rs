@@ -128,6 +128,20 @@ fn drawn_with_lane(
     px_per_bar: f32,
     lane_px: f32,
 ) -> Vec<[f32; 4]> {
+    drawn_on(view, frame, chart_px, total, px_per_bar, lane_px, true)
+}
+
+/// [`drawn_with_lane`] over candles that are tick bars only when
+/// `tick_chart` says so.
+fn drawn_on(
+    view: &OrderflowView,
+    frame: &VisibleOrderflow,
+    chart_px: f32,
+    total: usize,
+    px_per_bar: f32,
+    lane_px: f32,
+    tick_chart: bool,
+) -> Vec<[f32; 4]> {
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(chart_px, HEIGHT_PX));
     let mut viewport = Viewport::new();
     viewport.set_px_per_bar(px_per_bar);
@@ -143,6 +157,7 @@ fn drawn_with_lane(
             lane_px,
             false,
             PRICES,
+            tick_chart,
         );
     });
     let lane_left = chart_px - lane_px;
@@ -310,6 +325,42 @@ fn with_the_tape_off_the_native_switch_leaves_the_tick_chart_as_it_was() {
         &drawn_with_lane(&switched, &actual, SPLIT_CHART_PX, total, 10.0, 0.0),
         &drawn_with_lane(&ordinary, &expected, SPLIT_CHART_PX, total, 10.0, 0.0),
         "the candles with the native switch set against the candles without it",
+    );
+}
+
+/// The candle gain is a tick chart's: its slider and
+/// `orderflow.bubbles.size.set` refuse it on any other bar spec, so the
+/// candles of any other spec paint as if it were never set, while the same
+/// look on tick candles paints them bigger.
+#[test]
+fn the_candle_gain_paints_only_on_tick_candles() {
+    let tape_off = |candle_gain: f32| {
+        let mut view = win_view(false);
+        view.set_bubbles_enabled(true);
+        view.set_lane_enabled(false);
+        view.config.bubbles.display_scale.candle = candle_gain;
+        view
+    };
+    let mut plain = tape_off(1.0);
+    let mut scaled = tape_off(2.0);
+    let (closed, forming) = session(&mut plain);
+    let _ = session(&mut scaled);
+    let total = closed.len() + 1;
+    let plain_frame = frame_with_lane(&mut plain, &closed, Some(&forming), 10.0, 0.0);
+    let scaled_frame = frame_with_lane(&mut scaled, &closed, Some(&forming), 10.0, 0.0);
+    let candles = |view: &OrderflowView, frame: &VisibleOrderflow, tick_chart: bool| {
+        drawn_on(view, frame, SPLIT_CHART_PX, total, 10.0, 0.0, tick_chart)
+    };
+    assert_same_marks(
+        &candles(&scaled, &scaled_frame, false),
+        &candles(&plain, &plain_frame, false),
+        "candles that are not tick bars paint no candle gain",
+    );
+    let width = |marks: &[[f32; 4]]| marks.iter().map(|mark| mark[2] - mark[0]).sum::<f32>();
+    assert!(
+        width(&candles(&scaled, &scaled_frame, true))
+            > width(&candles(&plain, &plain_frame, true)) * 1.5,
+        "tick candles paint the gain the look carries"
     );
 }
 

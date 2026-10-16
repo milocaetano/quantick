@@ -55,6 +55,7 @@ fn zooming_the_tape_repositions_the_cached_frame_before_the_worker_answers() {
                 rect.width(),
                 false,
                 (90.0, 110.0),
+                true,
             );
         });
         output
@@ -139,6 +140,7 @@ fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
                 rect.width(),
                 false,
                 (90.0, 110.0),
+                true,
             );
         });
         format!("{:?}", output.shapes)
@@ -252,6 +254,7 @@ fn real_worker_tape_print_to_egui_latency() {
                         rect.width(),
                         false,
                         (90.0, 115.0),
+                        true,
                     );
                 });
                 let live: Vec<_> = frame

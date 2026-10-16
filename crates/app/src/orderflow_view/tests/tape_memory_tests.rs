@@ -53,6 +53,7 @@ fn paint(
             rect.width(),
             false,
             prices,
+            true,
         );
     });
     let mut discs: Vec<_> = output

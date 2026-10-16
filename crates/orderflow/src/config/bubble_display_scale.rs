@@ -49,6 +49,23 @@ impl BubbleDisplayScale {
         })
     }
 
+    /// The gains a pane paints. The candle gain belongs to a tick chart:
+    /// both of its setters (the pane's "Tick bubble size" slider and
+    /// `orderflow.bubbles.size.set`) refuse it anywhere else, so a pane on
+    /// any other bar spec paints its candle prints at the default gain even
+    /// when the look carries one a tick chart set.
+    #[must_use]
+    pub fn painted(self, tick_chart: bool) -> Self {
+        Self {
+            candle: if tick_chart {
+                self.candle
+            } else {
+                DEFAULT_BUBBLE_DISPLAY_SCALE
+            },
+            ..self
+        }
+    }
+
     pub fn set(&mut self, target: BubbleScaleTarget, scale: f32) {
         let value = sane_bubble_display_scale(scale);
         match target {
@@ -120,5 +137,21 @@ mod tests {
             .display_scale
             .set(BubbleScaleTarget::Tape, 0.5);
         assert_eq!(changed.bubbles.display_scale.candle, 3.0);
+    }
+
+    #[test]
+    fn the_candle_gain_paints_only_on_a_tick_chart() {
+        let set = BubbleDisplayScale {
+            tape: 2.0,
+            candle: 0.5,
+        };
+        assert_eq!(set.painted(true), set);
+        assert_eq!(
+            set.painted(false),
+            BubbleDisplayScale {
+                tape: 2.0,
+                candle: 1.0
+            }
+        );
     }
 }

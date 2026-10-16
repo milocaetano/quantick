@@ -192,6 +192,7 @@ impl Chart {
                     self.rect.width(),
                     false,
                     self.prices,
+                    true,
                 );
             },
         )

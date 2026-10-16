@@ -161,7 +161,8 @@ impl OrderflowView {
     /// Draw factual aggressive prints over the candles. The canvas's key is
     /// not part of this pass — see [`draw_legend`](Self::draw_legend).
     /// `inverted` is the candles' own orientation, as in
-    /// [`draw_background`](Self::draw_background).
+    /// [`draw_background`](Self::draw_background); `tick_chart` says the
+    /// candles are tick bars, the only ones the candle gain is set on.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
@@ -174,6 +175,7 @@ impl OrderflowView {
         lane_width_px: f32,
         inverted: bool,
         price_range: (f64, f64),
+        tick_chart: bool,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -188,6 +190,7 @@ impl OrderflowView {
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         // FLOW owns tick-candle executions even when the Tape lane is hidden.
         style.aggression_layer &= !self.flow_execution_replaces_history();
+        style.bubbles.display_scale = style.bubbles.display_scale.painted(tick_chart);
         style.dot_sizing = frame
             .volume_dots
             .as_ref()
