@@ -50,11 +50,12 @@ impl FlowReference {
 
     /// Whether a first daily region past the reference stops at the radius
     /// limit like any region. A typed reference is the pane's one scale, so
-    /// it does; visible regions draw such a region's earned area past the
-    /// limit. The sphere's radius and the caption's note on it both read
-    /// this, so the note never claims an area the sphere did not draw.
+    /// it does; visible regions, floored or not, draw such a region's earned
+    /// area past the limit. The sphere's radius and the caption's note on it
+    /// both read this, so the note never claims an area the sphere did not
+    /// draw.
     fn caps_oversized_opening(self) -> bool {
-        self.typed().is_some()
+        matches!(self, Self::Typed(_))
     }
 }
 impl From<crate::TickBubbleStyle> for FlowReference {
