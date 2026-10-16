@@ -775,3 +775,54 @@ fn side_radii_keep_a_positive_decimal_minority_when_the_cached_share_is_zero() {
     assert!((f64::from(buy) / (f64::from(dot.radius) * 1e-20) - 1.0).abs() < 0.000001);
     assert_eq!(sell, dot.radius);
 }
+
+/// A print at the live edge of a zoomed-out view merges its own region
+/// window again and walks only the cells from that window's first slot, not
+/// every cell on screen, while the frame stays the one `project` builds.
+#[test]
+fn a_live_print_walks_only_its_windows_cells() {
+    use std::sync::atomic::Ordering;
+    const SLOTS: usize = 2_000;
+    let trades: Vec<Trade> = (0..=4 * SLOTS as i64)
+        .map(|n| {
+            let side = if n % 3 == 0 { Side::Sell } else { Side::Buy };
+            trade(1_000 + n * 37, 95 + n / 5 % 11, 1 + n * 13 % 17, side)
+        })
+        .collect();
+    let execution = |ordinal: usize| FlowExecution {
+        ordinal,
+        slot: ordinal / 4,
+        accepted_ordinal: ordinal % 4,
+        ticks_per_bar: 4.into(),
+        trade: &trades[ordinal],
+        opening: false,
+    };
+    let view = FlowTapeView {
+        first_slot: 0,
+        end_slot: SLOTS + 1,
+        clip_left: 0.into(),
+        clip_right: (SLOTS + 1).into(),
+        width_px: 4_000.0,
+        ..view(4_000.0)
+    };
+    let openings = FlowOpeningSelection::default();
+    let count = trades.len();
+    let mut source = FlowTapeSource::default();
+    source.append((0..count - 1).map(execution));
+    source.project_cached(1, 0, count, 0..count, view, openings);
+    let on_screen = source.cells_walked.swap(0, Ordering::Relaxed);
+    assert!(on_screen > 2 * SLOTS, "{on_screen} cells on screen");
+    source.append(std::iter::once(execution(count - 1)));
+    let cached = source.project_cached(1, 0, count, 0..count, view, openings);
+    let walked = source.cells_walked.load(Ordering::Relaxed);
+    // A region window spans 1 s; at 37 ms a print and four prints a slot,
+    // that is at most eight slots of four cells each.
+    assert!(
+        (1..=32).contains(&walked),
+        "{walked} of {on_screen} cells walked"
+    );
+    assert_eq!(
+        cached,
+        source.project(1, 0, count, 0..count, view, openings)
+    );
+}

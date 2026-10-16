@@ -5,7 +5,8 @@
 //! across them. Under one view and one opening selection a new print changes
 //! only its window's groups. Fixed references retain their radii; a visible
 //! maximum with a floor resizes the cloned output at its common reference.
-//! The live edge merges one window rather than every candle on screen.
+//! The live edge merges one window rather than every candle on screen, and
+//! walks only the cells from that window's first slot.
 //! The frame is exactly the one
 //! [`FlowTapeSource::project`] builds.
 use super::super::{
@@ -23,6 +24,8 @@ type CellKey = (usize, i64, Decimal);
 /// One region window's finished spheres.
 #[derive(Default)]
 struct WindowSpheres {
+    /// The lowest slot holding one of the window's cells.
+    first_slot: usize,
     merged: Vec<FlowTapeDot>,
     /// Oversized native cells, drawn after every merged sphere in key order.
     standalone: Vec<(CellKey, FlowTapeDot)>,
@@ -53,7 +56,10 @@ fn finish_window(
     view: FlowTapeView,
     reference: Decimal,
 ) -> WindowSpheres {
-    let mut spheres = WindowSpheres::default();
+    let mut spheres = WindowSpheres {
+        first_slot: cells.first().map_or(0, |((slot, ..), _)| *slot),
+        ..WindowSpheres::default()
+    };
     let mut mergeable = Vec::new();
     let mut standalone = Vec::new();
     for (key, group) in cells {
@@ -88,21 +94,28 @@ fn finish_window(
 }
 
 impl FlowTapeSource {
-    /// The spheres of `view`'s region windows, of `only` those when given.
+    /// The spheres of `view`'s region windows, of `only` those when given,
+    /// whose cells all lie at or after its slot.
     fn window_spheres(
         &self,
         view: FlowTapeView,
         openings: FlowOpeningSelection<'_>,
         reference: Decimal,
-        only: Option<&BTreeSet<i64>>,
+        only: Option<(&BTreeSet<i64>, usize)>,
     ) -> BTreeMap<i64, WindowSpheres> {
         let mut windows: BTreeMap<i64, Vec<(CellKey, Group)>> = BTreeMap::new();
-        for (&key, cell) in self.cells_in(view) {
+        let from = only.map_or(view.first_slot, |(_, from)| from);
+        let from = from.clamp(view.first_slot, view.end_slot);
+        let cells = (from, i64::MIN, Decimal::MIN)..(view.end_slot, i64::MIN, Decimal::MIN);
+        for (&key, cell) in self.cells.range(cells) {
+            #[cfg(test)]
+            self.cells_walked
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let window = cell
                 .mark
                 .first_timestamp_ms
                 .div_euclid(FLOW_REGION_WINDOW_MS);
-            if only.is_some_and(|only| !only.contains(&window)) {
+            if only.is_some_and(|(only, _)| !only.contains(&window)) {
                 continue;
             }
             windows
@@ -132,6 +145,7 @@ impl FlowTapeSource {
         openings: FlowOpeningSelection<'_>,
     ) -> FlowTapeFrame {
         let dirty = std::mem::take(&mut self.dirty);
+        let dirty_from = self.dirty_from.take();
         let Some(reference) = view.reference.typed().filter(|_| valid(view)) else {
             self.memo = None;
             return self.project(
@@ -145,11 +159,16 @@ impl FlowTapeSource {
         };
         let memo = match self.memo.take() {
             Some(mut memo) if memo.holds(view, openings) => {
+                // A dirty window's cells start at its first slot, or at a
+                // print that joined it lower; a new window's are all new.
+                let mut from = dirty_from.unwrap_or(view.end_slot);
                 for window in &dirty {
-                    memo.windows.remove(window);
+                    let held = memo.windows.remove(window);
+                    from = held.map_or(from, |held| from.min(held.first_slot));
                 }
+                let only = Some((&dirty, from));
                 memo.windows
-                    .extend(self.window_spheres(view, openings, reference, Some(&dirty)));
+                    .extend(self.window_spheres(view, openings, reference, only));
                 memo
             }
             _ => FlowMemo {

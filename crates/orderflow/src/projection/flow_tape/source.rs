@@ -113,6 +113,11 @@ pub struct FlowTapeSource {
     count: usize,
     /// Region windows a print joined since the last cached projection.
     dirty: std::collections::BTreeSet<i64>,
+    /// The lowest slot a print joined since the last cached projection.
+    dirty_from: Option<usize>,
+    /// The cells cached projections have walked, for tests to count.
+    #[cfg(test)]
+    pub(super) cells_walked: std::sync::atomic::AtomicUsize,
     /// The spheres of the last cached projection, per region window.
     memo: Option<incremental::FlowMemo>,
 }
@@ -181,6 +186,7 @@ impl FlowTapeSource {
             }
             self.dirty
                 .insert(trade.timestamp_ms.div_euclid(FLOW_REGION_WINDOW_MS));
+            self.dirty_from = Some(self.dirty_from.map_or(slot, |from| from.min(slot)));
             let position = Decimal::from(slot)
                 + (Decimal::from(accepted_ordinal) + Decimal::new(5, 1)) / ticks_per_bar;
             let mark = fact(trade);
