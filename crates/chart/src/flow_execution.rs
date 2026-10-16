@@ -26,7 +26,7 @@ pub use disc::{FlowBounds, FlowDisc};
 mod presentation;
 pub use presentation::{FlowPresentation, FlowRegionRole, FlowRegionVisual};
 mod reuse;
-pub use reuse::{FlowRegionKey, paint_runs, reusable_regions, reusable_runs};
+pub use reuse::{FlowRegionKey, FlowRunCache};
 mod paint_state;
 pub use paint_state::FlowPaintState;
 
@@ -215,7 +215,3 @@ pub fn flow_price_y(
 #[cfg(test)]
 #[path = "flow_execution_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "flow_execution/reuse_tests.rs"]
-mod reuse_tests;

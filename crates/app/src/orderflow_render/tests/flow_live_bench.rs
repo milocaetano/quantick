@@ -456,6 +456,7 @@ fn floor_experiments(ctx: &egui::Context, drawing: &FlowDrawing, ticks: u64) {
     let whole = drawing.meshes();
     let parts: Vec<&egui::Mesh> = drawing
         .runs
+        .runs()
         .iter()
         .flat_map(|(_, run)| run.iter())
         .collect();

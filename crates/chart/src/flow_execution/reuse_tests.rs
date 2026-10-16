@@ -1,10 +1,12 @@
 use super::*;
+use crate::flow_execution::FlowBounds;
 use quantick_engine::{Side, Trade};
 use quantick_orderflow::projection::{
     PriceWindow,
     flow_tape::{FlowExecution, FlowReference, FlowTapeFrame, FlowTapeView, project_flow_tape},
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive as _};
+use std::sync::Arc;
 
 const HISTORY: FlowBounds = [[0.0, 0.0], [600.0, 400.0]];
 const TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubbleStyle {
@@ -225,4 +227,58 @@ fn a_new_print_keeps_every_run_but_its_own() {
     let panned_runs = paint_runs(&panned);
     let moved = reusable_runs((&new_keys, &new_runs), (&panned, &panned_runs));
     assert!(moved.iter().all(Option::is_none));
+}
+
+/// A cache rebuilt after a new print keeps the payload of every run whose
+/// keys held, the same allocation rather than a copy, builds the rest, and
+/// hands the runs back in paint order: joined, their keys are the new paint
+/// order, each run in its regions' pass. A moved camera shifts every circle,
+/// so every run is built again.
+#[test]
+fn a_run_cache_keeps_held_payloads_and_returns_the_paint_order() {
+    let trades = prints(401);
+    let reference = FlowReference::Typed(TICK.reference());
+    let (_, old_keys) = planned(&frame(&trades[..400], reference), 0.0, true);
+    let (_, new_keys) = planned(&frame(&trades, reference), 0.0, true);
+    let (_, panned) = planned(&frame(&trades, reference), 8.0, true);
+    let mut built = 0;
+    let mut payload = |keys: &[FlowRegionKey], cut: Range<usize>| {
+        built += 1;
+        Arc::new(keys[cut].to_vec())
+    };
+    let old = FlowRunCache::default().rebuild(old_keys.clone(), |cut| payload(&old_keys, cut));
+    let new = old.rebuild(new_keys.clone(), |cut| payload(&new_keys, cut));
+    let moved = new.rebuild(panned.clone(), |cut| payload(&panned, cut));
+    let shares = |cache: &FlowRunCache<Arc<Vec<FlowRegionKey>>>,
+                  before: &FlowRunCache<Arc<Vec<FlowRegionKey>>>| {
+        let held = |run: &Arc<_>| before.runs().iter().any(|(_, old)| Arc::ptr_eq(run, old));
+        cache.runs().iter().filter(|(_, run)| held(run)).count()
+    };
+    for (cache, keys) in [(&old, &old_keys), (&new, &new_keys), (&moved, &panned)] {
+        let joined: Vec<_> = cache
+            .runs()
+            .iter()
+            .flat_map(|(_, run)| run.iter())
+            .copied()
+            .collect();
+        assert_eq!(&joined, keys, "the runs in paint order");
+        let pass = |key: &FlowRegionKey| usize::from(key.foreground());
+        assert!(
+            cache
+                .runs()
+                .iter()
+                .all(|(at, run)| run.iter().all(|key| pass(key) == *at))
+        );
+    }
+    let (old_runs, new_runs) = (old.runs().len(), new.runs().len());
+    assert_eq!(
+        built,
+        old_runs + new_runs + moved.runs().len() - shares(&new, &old)
+    );
+    let rebuilt = new_runs - shares(&new, &old);
+    assert!(
+        (1..=2).contains(&rebuilt),
+        "{rebuilt} of {new_runs} runs built"
+    );
+    assert_eq!(shares(&moved, &new), 0, "a moved camera keeps no run");
 }

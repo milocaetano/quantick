@@ -15,7 +15,7 @@ use quantick_orderflow::projection::flow_tape::FlowTapeDot;
 use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeFrame};
 #[cfg(test)]
 use rust_decimal::Decimal;
-use std::{ops::Range, sync::Arc};
+use std::sync::Arc;
 
 // Regional volume controls emphasis while candle contours stay in front.
 #[cfg(test)]
@@ -85,13 +85,11 @@ pub(crate) struct FlowDrawing {
     pub plan: FlowPresentation,
     /// The area painted in, which clips every pass and holds the labels.
     pub history: egui::Rect,
-    /// The paint order's runs as drawn: each one's pass, then its sectors and rims.
-    runs: Vec<(usize, Arc<[egui::Mesh; 2]>)>,
+    /// Each run's pass, then its sectors and rims, keyed for the next drawing to keep.
+    runs: flow::FlowRunCache<Arc<[egui::Mesh; 2]>>,
     /// Exact presentation frame when the current camera resizes tick spheres.
     pub viewport_frame: Option<Arc<FlowTapeFrame>>,
     labels: Vec<PlacedLabel>,
-    /// Each region's key and the cuts into runs, for the next drawing to keep runs by.
-    cut: (Vec<flow::FlowRegionKey>, Vec<Range<usize>>),
 }
 impl FlowDrawing {
     /// `painter` lends tessellation and fonts; `history` is the area painted in. Runs
@@ -117,10 +115,6 @@ impl FlowDrawing {
         let canvas = background.to_array();
         let underlay = backing.as_ref().map(egui::Color32::to_array);
         let keys = plan.region_keys(frame, tick.is_some());
-        let cuts = flow::paint_runs(&keys);
-        let held = previous.map_or_else(Vec::new, |previous| {
-            flow::reusable_runs((&previous.cut.0, &previous.cut.1), (&keys, &cuts))
-        });
         let hair_color = egui::Color32::from_black_alpha(super::bubbles::SEPARATOR_RING_ALPHA);
         let light = tick_style.as_ref().map_or(0.0, |_| SPHERE_LIGHT_OFFSET);
         let shade = |color| match &tick_style {
@@ -173,25 +167,19 @@ impl FlowDrawing {
             }
             Arc::new([mesh, rim])
         };
-        let runs = cuts.iter().enumerate();
-        let runs = runs.map(|(index, cut)| {
-            let pass = usize::from(plan.regions[cut.start].role == flow::FlowRegionRole::Peak);
-            match (previous, held.get(index)) {
-                (Some(previous), Some(&Some(held))) => (pass, Arc::clone(&previous.runs[held].1)),
-                _ => (pass, build(&plan.regions[cut.clone()])),
-            }
-        });
+        let empty = flow::FlowRunCache::default();
+        let held = previous.map_or(&empty, |previous| &previous.runs);
+        let runs = held.rebuild(keys, |cut| build(&plan.regions[cut]));
         let labels = plan.quantity_labels(frame, tick);
         let fit = [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE];
         let measure = |label: &FlowQuantityLabel| quantity_galley(painter, label).size().into();
         let area = [history.min.into(), history.max.into()];
         Self {
-            runs: runs.collect(),
+            runs,
             labels: flow::place_quantity_labels(labels, area, fit, measure),
             history,
             viewport_frame: None,
             plan,
-            cut: (keys, cuts),
         }
     }
 
@@ -202,6 +190,7 @@ impl FlowDrawing {
         let texels = flow_texels(painter.ctx());
         let pass = self
             .runs
+            .runs()
             .iter()
             .filter(|run| run.0 == usize::from(foreground));
         let sectors = pass.clone().map(|run| &run.1[0]);
@@ -226,7 +215,7 @@ impl FlowDrawing {
         std::array::from_fn(|pass| {
             let mut mesh = egui::Mesh::default();
             for part in [0, 1] {
-                for (_, run) in self.runs.iter().filter(|(held, _)| *held == pass) {
+                for (_, run) in self.runs.runs().iter().filter(|(at, _)| *at == pass) {
                     mesh.append_ref(&run[part]);
                 }
             }

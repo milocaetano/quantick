@@ -89,11 +89,7 @@ impl FlowPresentation {
 /// paint orders walked together, a key found where the walk expects it or at
 /// most [`REUSE_LOOKAHEAD`] places past it. Every match is an equal key, so a
 /// region the walk misses is only built again, never drawn wrong.
-#[must_use]
-pub fn reusable_regions(
-    previous: &[FlowRegionKey],
-    current: &[FlowRegionKey],
-) -> Vec<Option<usize>> {
+fn reusable_regions(previous: &[FlowRegionKey], current: &[FlowRegionKey]) -> Vec<Option<usize>> {
     let mut next = 0;
     current
         .iter()
@@ -112,8 +108,7 @@ pub fn reusable_regions(
 /// The paint order cut into runs a drawing builds whole and a later one
 /// keeps whole: a run ends where a region's own key says so, at [`RUN_MAX`]
 /// regions, or where the pass changes, so no run spans both passes.
-#[must_use]
-pub fn paint_runs(keys: &[FlowRegionKey]) -> Vec<Range<usize>> {
+fn paint_runs(keys: &[FlowRegionKey]) -> Vec<Range<usize>> {
     let mut runs = Vec::new();
     let mut start = 0;
     for (index, key) in keys.iter().enumerate() {
@@ -132,8 +127,7 @@ pub fn paint_runs(keys: &[FlowRegionKey]) -> Vec<Range<usize>> {
 /// For each run of `current`, the index of the run of `previous` holding
 /// the same keys in the same order, found from where the walk of
 /// [`reusable_regions`] places its first region.
-#[must_use]
-pub fn reusable_runs(
+fn reusable_runs(
     (previous, previous_runs): (&[FlowRegionKey], &[Range<usize>]),
     (current, current_runs): (&[FlowRegionKey], &[Range<usize>]),
 ) -> Vec<Option<usize>> {
@@ -148,3 +142,61 @@ pub fn reusable_runs(
         })
         .collect()
 }
+
+/// The runs of one paint order and what each was built into: the keys and
+/// cuts the next order finds its runs by, and each run's pass (0 the
+/// footprint, 1 the peaks after it) and payload in paint order. The three are
+/// one value, so no consumer pairs a payload with its run by position.
+#[derive(Clone, Debug)]
+pub struct FlowRunCache<T> {
+    keys: Vec<FlowRegionKey>,
+    cuts: Vec<Range<usize>>,
+    runs: Vec<(usize, T)>,
+}
+
+impl<T> Default for FlowRunCache<T> {
+    fn default() -> Self {
+        let (keys, cuts, runs) = (Vec::new(), Vec::new(), Vec::new());
+        Self { keys, cuts, runs }
+    }
+}
+
+impl<T: Clone> FlowRunCache<T> {
+    /// The runs of `keys` in paint order: a run whose keys held since this
+    /// cache keeps its payload, every other is built from its regions' range.
+    #[must_use]
+    pub fn rebuild(
+        &self,
+        keys: Vec<FlowRegionKey>,
+        mut build: impl FnMut(Range<usize>) -> T,
+    ) -> Self {
+        let cuts = paint_runs(&keys);
+        let held = reusable_runs((&self.keys, &self.cuts), (&keys, &cuts));
+        let runs = cuts.iter().zip(held).map(|(cut, held)| {
+            let pass = usize::from(keys[cut.start].foreground());
+            match held {
+                Some(held) => (pass, self.runs[held].1.clone()),
+                None => (pass, build(cut.clone())),
+            }
+        });
+        let runs = runs.collect();
+        Self { keys, cuts, runs }
+    }
+}
+
+impl<T> FlowRunCache<T> {
+    /// Each run's pass and payload, in paint order.
+    #[must_use]
+    pub fn runs(&self) -> &[(usize, T)] {
+        &self.runs
+    }
+
+    /// Each run's payload in paint order, to change in place.
+    pub fn payloads_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.runs.iter_mut().map(|(_, payload)| payload)
+    }
+}
+
+#[cfg(test)]
+#[path = "reuse_tests.rs"]
+mod tests;

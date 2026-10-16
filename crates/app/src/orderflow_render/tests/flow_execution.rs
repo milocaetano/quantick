@@ -685,14 +685,20 @@ fn a_drawing_after_the_one_before_copies_what_held_and_paints_the_same() {
         );
         assert_eq!(kept.labels, fresh.labels);
         assert_eq!(kept.plan, fresh.plan);
-        let shared = kept
-            .runs
-            .iter()
-            .filter(|(_, run)| first.runs.iter().any(|(_, held)| Arc::ptr_eq(run, held)))
-            .count();
-        assert!(shared > 0 && shared < kept.runs.len(), "{shared} runs kept");
+        let held = |run: &Arc<_>| {
+            first
+                .runs
+                .runs()
+                .iter()
+                .any(|(_, old)| Arc::ptr_eq(run, old))
+        };
+        let shared = kept.runs.runs().iter().filter(|(_, run)| held(run)).count();
+        assert!(
+            shared > 0 && shared < kept.runs.runs().len(),
+            "{shared} runs kept"
+        );
         let mut poisoned = dense_tick_drawing(&before, &painter, history);
-        for (_, run) in &mut poisoned.runs {
+        for run in poisoned.runs.payloads_mut() {
             for vertex in Arc::make_mut(run)
                 .iter_mut()
                 .flat_map(|mesh| &mut mesh.vertices)
@@ -731,6 +737,7 @@ fn a_tick_drawing_paints_each_pass_as_cached_meshes() {
         drawing.paint(&painter, true);
         runs = drawing
             .runs
+            .runs()
             .iter()
             .flat_map(|(_, run)| run.iter())
             .filter(|mesh| !mesh.is_empty())
