@@ -118,12 +118,19 @@ fn open(path: &std::path::Path, config: &AppConfig) -> SharedAssetBubbles {
 }
 
 #[test]
-fn the_shipped_config_switches_the_mode_on_for_binance_btc_alone() {
+fn the_shipped_config_switches_the_mode_on_for_binance_btc_and_the_mini_index() {
     let config = shipped();
     let spot = config.bubble_asset("binance", "BTCUSDT");
     let perp = config.bubble_asset("binance-futures", "BTCUSDT.p");
+    let mini = config.bubble_asset("metatrader-b3", "WINV26");
     assert_eq!(spot.key, "BTCUSDT", "the key main always saved it under");
     assert_eq!(perp.key, "binance-futures:BTCUSDT.p", "feed id and symbol");
+    assert_eq!(
+        mini.key, "WIN*",
+        "the family key its saved look always used"
+    );
+    assert_eq!(mini.preset.as_deref(), Some("mini index regions"));
+    assert_eq!(mini.mode.as_ref().unwrap().quantity_unit, "contracts");
     assert_eq!(spot.preset.as_deref(), Some(SPOT_SPHERES));
     assert_eq!(
         perp.preset.as_deref(),
@@ -140,7 +147,16 @@ fn the_shipped_config_switches_the_mode_on_for_binance_btc_alone() {
             }
         }
     }
-    assert_eq!(on, ["binance/BTCUSDT", "binance-futures/BTCUSDT.p"]);
+    assert_eq!(
+        on,
+        [
+            "binance/BTCUSDT",
+            "binance-futures/BTCUSDT.p",
+            "metatrader-b3/WIN$N",
+            "metatrader-b3/WINV26",
+        ],
+        "the mini dollar beside the mini index keeps no mode"
+    );
     assert_eq!(
         config.bubble_asset("binance", "BTCUSDT.p"),
         perp,
@@ -213,7 +229,8 @@ fn tick_choices_and_the_unit_follow_the_mode() {
         ("binance", "ETHUSDT", Some("ETH")),
         ("hyperliquid", "BTC", Some("BTC")),
         ("hyperliquid", "ETH", None),
-        ("metatrader-b3", "WIN$N", None),
+        ("metatrader-b3", "WIN$N", Some("contracts")),
+        ("metatrader-b3", "WDO$N", None),
     ] {
         let (look, _) = look(&config, feed, symbol);
         assert_eq!(look.quantity_unit(), unit, "{feed}/{symbol}");

@@ -95,7 +95,8 @@ mod tests {
             ("binance", "ETHUSDT", false),
             ("hyperliquid", "BTCUSDT", false),
             ("hyperliquid", "BTC", false),
-            ("metatrader-b3", "WINV26", false),
+            ("metatrader-b3", "WINV26", true),
+            ("metatrader-b3", "WDO$N", false),
         ] {
             let presets = bubble_presets::embedded();
             let (binding, _) = crate::bubble_asset_store::AssetBinding::bind(

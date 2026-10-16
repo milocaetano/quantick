@@ -189,7 +189,8 @@ fn an_unlisted_symbol_opens_on_its_tab_feeds_preset() {
 }
 
 /// Review round 2, finding 2: one key declared on two feeds opens on one
-/// look — the first feed's — whichever tab shows it.
+/// look — the first feed's — whichever tab shows it. A feed that switches
+/// the asset's mode on decides instead: the mode's look is its own.
 #[test]
 fn a_key_two_feeds_declare_opens_on_the_first_ones_preset() {
     let mut config = shipped_config();
@@ -201,6 +202,22 @@ fn a_key_two_feeds_declare_opens_on_the_first_ones_preset() {
     tickmill
         .symbol_bubble_presets
         .insert("WIN*".to_owned(), "live lane pie".to_owned());
+    for tab_feed in ["metatrader-b3", "metatrader-tickmill", "binance"] {
+        let win = config.bubble_asset(tab_feed, "WINV26");
+        assert_eq!(win.key, "WIN*");
+        assert_eq!(
+            win.preset.as_deref(),
+            Some("mini index regions"),
+            "in a {tab_feed} tab, the mode feed's look"
+        );
+    }
+    config
+        .feeds
+        .iter_mut()
+        .find(|feed| feed.id == "metatrader-b3")
+        .expect("the B3 feed")
+        .symbol_asset_modes
+        .clear();
     for tab_feed in ["metatrader-b3", "metatrader-tickmill", "binance"] {
         let win = config.bubble_asset(tab_feed, "WINV26");
         assert_eq!(win.key, "WIN*");

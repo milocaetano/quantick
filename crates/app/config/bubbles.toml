@@ -208,6 +208,15 @@ show_quantity_labels = true
 show_trade_count = false
 label_min_radius = 12.6
 
+# The tick-chart spheres the trader approved on the mini index (2026-10-14):
+# a fixed reference, so no pan or zoom resizes a sphere. Worn only where the
+# feed switches the asset mode on (`symbol_asset_modes` in feeds.toml).
+[presets.tick_bubbles]
+reference_quantity = 20000.0
+max_radius = 18.0
+label_min_radius = 8.0
+opacity = 0.9
+
 [presets.live_lane]
 native_tape = true
 

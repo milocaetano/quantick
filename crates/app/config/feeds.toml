@@ -167,6 +167,10 @@ bubble_preset = "live lane pie"
 # made to it. The mini dollar keeps the feed-wide look above. Every other
 # symbol is its own asset and opens on its own look.
 symbol_bubble_presets = { "WIN*" = "mini index regions" }
+# The mini index wears the tick-chart spheres its preset carries; a quantity
+# on it counts contracts. The look key stays `WIN*`, the key its saved look
+# has always used.
+symbol_asset_modes = { "WIN*" = { quantity_unit = "contracts", look_key = "WIN*" } }
 # MetaTrader folds several B3 deals into one tick and keeps no count per
 # tick, so a chart cut by deals — the Trades chart the trader reads on
 # ProfitChart — exists only for days somebody recorded the counter. Record
