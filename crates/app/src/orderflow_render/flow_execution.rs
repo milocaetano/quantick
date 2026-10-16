@@ -64,15 +64,8 @@ pub(super) fn flow_mesh(
     let ctx = egui::Context::default();
     let painter = ctx.layer_painter(egui::LayerId::background());
     let background = backing.unwrap_or(crate::theme::CANVAS);
-    let drawing = FlowDrawing::styled(
-        (frame, plan),
-        background,
-        backing,
-        None,
-        &painter,
-        history,
-        None,
-    );
+    let look = (background, backing);
+    let drawing = FlowDrawing::styled((frame, plan), look, None, (&painter, history), None);
     let [mut mesh, peaks] = drawing.meshes();
     mesh.append(peaks);
     mesh
@@ -85,7 +78,7 @@ pub(crate) struct FlowDrawing {
     /// The area painted in, which clips every pass and holds the labels.
     pub history: egui::Rect,
     /// Each run's pass, then its sectors and rims, keyed for the next drawing to keep.
-    runs: flow_runs::FlowRuns,
+    runs: flow::FlowRunCache<Arc<[egui::Mesh; 2]>>,
     /// Exact presentation frame when the current camera resizes tick spheres.
     pub viewport_frame: Option<Arc<FlowTapeFrame>>,
     labels: Vec<flow_labels::PlacedLabel>,
@@ -95,20 +88,16 @@ impl FlowDrawing {
     /// whose keys held since `previous`, this look's drawing before, are kept from it.
     pub fn styled(
         (frame, plan): (&FlowTapeFrame, FlowPresentation),
-        background: egui::Color32,
-        backing: Option<egui::Color32>,
+        look: (egui::Color32, Option<egui::Color32>),
         tick_look: Option<quantick_orderflow::TickLook>,
-        painter: &egui::Painter,
-        history: egui::Rect,
+        (painter, history): (&egui::Painter, egui::Rect),
         previous: Option<&Self>,
     ) -> Self {
-        let held = previous.map(|previous| &previous.runs);
-        let (made, look) = ((frame, &plan), (background, backing));
+        let (made, held) = ((frame, &plan), previous.map(|previous| &previous.runs));
         let runs = flow_runs::flow_runs(made, look, tick_look, (painter, history), held);
-        let tick = tick_look.map(|(tick, _)| tick);
         Self {
             runs,
-            labels: flow_labels::placed_labels(made, tick, (painter, history)),
+            labels: flow_labels::placed_labels(made, tick_look, (painter, history)),
             history,
             viewport_frame: None,
             plan,

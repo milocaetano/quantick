@@ -653,11 +653,9 @@ fn dense_tick_drawing_after(
     let built = (frame, plan);
     FlowDrawing::styled(
         built,
-        background,
-        None,
+        (background, None),
         Some(look),
-        painter,
-        history,
+        (painter, history),
         previous,
     )
 }

@@ -101,7 +101,7 @@ pub(crate) fn cached_flow(
         let displayed = viewport_frame.as_deref().unwrap_or(frame);
         let (made, held) = ((displayed, plan), previous.as_deref());
         let mut drawing =
-            FlowDrawing::styled(made, background, backing, tick, painter, history, held);
+            FlowDrawing::styled(made, (background, backing), tick, (painter, history), held);
         drawing.viewport_frame = viewport_frame;
         let drawing = Arc::new(drawing);
         ctx.data_mut(|data| {

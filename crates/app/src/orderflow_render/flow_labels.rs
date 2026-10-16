@@ -4,14 +4,13 @@ use super::*;
 /// A placed quantity label: where its galley goes, and the label.
 pub(super) type PlacedLabel = ([f32; 2], FlowQuantityLabel);
 
-/// `plan`'s quantity labels as `tick` sizes them, each fitted to its sphere by
-/// its galley and placed in `history` apart from the others.
+/// `plan`'s quantity labels, fitted to their spheres and placed in `history` apart.
 pub(super) fn placed_labels(
     (frame, plan): (&FlowTapeFrame, &FlowPresentation),
-    tick: Option<quantick_orderflow::TickBubbleStyle>,
+    tick_look: Option<quantick_orderflow::TickLook>,
     (painter, history): (&egui::Painter, egui::Rect),
 ) -> Vec<PlacedLabel> {
-    let labels = plan.quantity_labels(frame, tick);
+    let labels = plan.quantity_labels(frame, tick_look.map(|(tick, _)| tick));
     let fit = [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE];
     let measure = |label: &FlowQuantityLabel| quantity_galley(painter, label).size().into();
     let area = [history.min.into(), history.max.into()];

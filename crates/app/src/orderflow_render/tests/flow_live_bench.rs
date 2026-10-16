@@ -545,11 +545,9 @@ fn stage_breakdown(
                 let build = |plan, previous| {
                     FlowDrawing::styled(
                         (frame.as_ref(), plan),
-                        canvas,
-                        None,
+                        (canvas, None),
                         look,
-                        &painter,
-                        HISTORY,
+                        (&painter, HISTORY),
                         previous,
                     )
                 };
@@ -561,11 +559,7 @@ fn stage_breakdown(
                 assert!(kept.meshes() == built.meshes());
                 let started = Instant::now();
                 let made = (frame.as_ref(), &built.plan);
-                std::hint::black_box(flow_labels::placed_labels(
-                    made,
-                    Some(TICK),
-                    (&painter, HISTORY),
-                ));
+                std::hint::black_box(flow_labels::placed_labels(made, look, (&painter, HISTORY)));
                 labels_time += started.elapsed();
             },
         );

@@ -1,19 +1,14 @@
-//! FLOW's runs as a drawing builds them: each run's sectors, then the rims
-//! egui would tessellate, kept from the drawing before where their keys held.
+//! FLOW's runs as a drawing builds them, kept from the one before where their keys held.
 use super::*;
 
-/// Each run's pass, then its sectors and rims, keyed for the next drawing to keep.
-pub(super) type FlowRuns = flow::FlowRunCache<Arc<[egui::Mesh; 2]>>;
-
-/// `plan`'s runs in `tick_look` over `background` and `backing`; `painter` lends
-/// tessellation, `history` clips it. Runs whose keys held since `previous` are kept.
+/// `plan`'s runs, sectors then rims, kept from `previous` where their keys held.
 pub(super) fn flow_runs(
     (frame, plan): (&FlowTapeFrame, &FlowPresentation),
     (background, backing): (egui::Color32, Option<egui::Color32>),
     tick_look: Option<quantick_orderflow::TickLook>,
     (painter, history): (&egui::Painter, egui::Rect),
-    previous: Option<&FlowRuns>,
-) -> FlowRuns {
+    previous: Option<&flow::FlowRunCache<Arc<[egui::Mesh; 2]>>>,
+) -> flow::FlowRunCache<Arc<[egui::Mesh; 2]>> {
     let ppp = painter.ctx().pixels_per_point();
     let options = painter.ctx().options(|o| o.tessellation_options);
     let mut tessellator = egui::epaint::Tessellator::new(ppp, options, [1, 1], Vec::new());
