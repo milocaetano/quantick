@@ -246,10 +246,12 @@ impl MarkScene {
     }
 }
 
-/// Paint `from`–`to` as `dash_px` dashes separated by `gap_px` gaps, starting
-/// on a dash. A drawing repaints every frame, so this walks the segment
-/// itself and emits plain line segments.
-pub fn dashed_segment(
+/// Paint the whole of `from`–`to` as `dash_px` dashes separated by `gap_px`
+/// gaps, starting on a dash: the reference the clipped walk is checked
+/// against. Its cost follows the segment's length, not the screen, so tools
+/// dash with [`dashed_segment_within`] and this stays test-only.
+#[cfg(test)]
+pub(crate) fn dashed_segment(
     scene: &mut MarkScene,
     from: Px,
     to: Px,
@@ -263,8 +265,9 @@ pub fn dashed_segment(
     walk.paint(scene, (0, walk.length), stroke);
 }
 
-/// [`dashed_segment`] for the part of `from`–`to` that can reach `clip`,
-/// in the phase the whole segment has: a line that runs far past the chart
+/// Paint `from`–`to` as `dash_px` dashes separated by `gap_px` gaps,
+/// starting on a dash, for the part that can reach `clip`, in the phase the
+/// whole segment has: a line that runs far past the chart
 /// costs the dashes across the chart, not the dashes along its length, and
 /// the ones on screen land where the whole walk would put them.
 pub fn dashed_segment_within(

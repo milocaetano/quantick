@@ -386,7 +386,7 @@ pub(super) fn hit_measure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dashed_segment;
+    use crate::scene::dashed_segment;
     use crate::test_prelude::*;
 
     fn anchors(from: (f32, f64, i64), to: (f32, f64, i64)) -> Vec<ChartPoint> {

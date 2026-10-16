@@ -65,7 +65,7 @@ pub use placement::reanchor_points;
 pub use rect::{Align, Align2, PxRange, PxRect};
 pub use scene::{
     FontFamily, FontSpec, MarkScene, MarkShape, Stroke, TextMetrics, UNMEASURED, Unmeasured,
-    dashed_segment, dashed_segment_within,
+    dashed_segment_within,
 };
 pub use store::{Drawings, PlacementBatch, UNDO_HISTORY_LIMIT, UndoEntry};
 pub use style::{
