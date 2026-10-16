@@ -13483,7 +13483,16 @@
         "type": "object"
       },
       "persistence": "durable",
-      "preconditions": [],
+      "preconditions": [
+        {
+          "description": "Candle bubble size needs a pane that draws tick bars.",
+          "id": "orderflow.bubbles.tick_chart"
+        },
+        {
+          "description": "The target's bubbles are drawing: the tape's bubbles for tape, candle bubbles beside the candles (not Tape alone) for candle.",
+          "id": "orderflow.bubbles.display_active"
+        }
+      ],
       "read_only": false,
       "required_permissions": [
         "cockpit",
@@ -13648,7 +13657,16 @@
         "type": "object"
       },
       "persistence": "durable",
-      "preconditions": [],
+      "preconditions": [
+        {
+          "description": "A named preset needs a pane that draws tick bars; null needs nothing.",
+          "id": "orderflow.bubbles.tick_chart"
+        },
+        {
+          "description": "A named preset needs the feed config to switch an asset mode on for the pane's asset (symbol_asset_modes); null needs nothing.",
+          "id": "orderflow.bubbles.asset_mode"
+        }
+      ],
       "read_only": false,
       "required_permissions": [
         "cockpit",

@@ -155,6 +155,8 @@ fn a_whole_preset_and_tick_set_agree_on_spheres() {
             tick_chart,
             "{spec:?}: tick.set"
         );
+        let refused = (!tick_chart).then_some("orderflow.bubbles.tick_chart");
+        assert_eq!(violated_precondition(&tick), refused, "{spec:?}");
     }
     disable_test_gateway(&mut app, &ctx);
 }

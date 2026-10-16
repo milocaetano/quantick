@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 
 pub const TICK_BUBBLES_CAPABILITY_ID: &str = "orderflow.bubbles.tick.set";
 
+/// The feed config switches an asset mode on for the pane's asset
+/// (`symbol_asset_modes`). Fixed in config, never by retrying.
+pub const ASSET_MODE_PRECONDITION: &str = "orderflow.bubbles.asset_mode";
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TickBubblesInput {
@@ -98,6 +102,16 @@ pub fn descriptor() -> quantick_control::registry::CapabilityDescriptor {
         "Stable tab and pane IDs and preset names are validated, and one rule shared with the settings picker (a tick chart and the asset's config mode) is asked, before any edit. Repeating a selection is a no-op.",
     );
     descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;
+    descriptor.preconditions = vec![
+        crate::bubble_scale::precondition(
+            crate::bubble_scale::TICK_CHART_PRECONDITION,
+            "A named preset needs a pane that draws tick bars; null needs nothing.",
+        ),
+        crate::bubble_scale::precondition(
+            ASSET_MODE_PRECONDITION,
+            "A named preset needs the feed config to switch an asset mode on for the pane's asset (symbol_asset_modes); null needs nothing.",
+        ),
+    ];
     descriptor
 }
 

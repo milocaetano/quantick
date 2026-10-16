@@ -99,15 +99,41 @@ impl TickSpherePane {
     ///
     /// # Errors
     ///
-    /// Says which half of the rule a named preset fails.
-    pub fn admit(self, preset: Option<&str>) -> Result<(), &'static str> {
+    /// Names which half of the rule a named preset fails.
+    pub fn admit(self, preset: Option<&str>) -> Result<(), SphereRefusal> {
         match preset {
             None => Ok(()),
-            Some(_) if !self.tick_chart => Err("Tick sphere presets require a tick chart"),
-            Some(_) if !self.asset_mode => {
-                Err("Tick sphere presets require an asset whose config asset mode is on")
-            }
+            Some(_) if !self.tick_chart => Err(SphereRefusal::NotTickChart),
+            Some(_) if !self.asset_mode => Err(SphereRefusal::AssetModeOff),
             Some(_) => Ok(()),
+        }
+    }
+}
+
+/// Which half of the tick sphere rule a named preset fails, so a caller
+/// branches on the reason instead of parsing a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SphereRefusal {
+    /// The pane does not draw tick bars.
+    NotTickChart,
+    /// The feed config switches no asset mode on for the pane's asset.
+    AssetModeOff,
+}
+
+impl From<SphereRefusal> for ControlError {
+    fn from(refusal: SphereRefusal) -> Self {
+        use quantick_control_schema::{bubble_scale, tick_bubbles};
+        match refusal {
+            SphereRefusal::NotTickChart => crate::bubble_scale::refused_precondition(
+                bubble_scale::TICK_CHART_PRECONDITION,
+                "Tick sphere presets require a tick chart",
+                "switch the pane to a tick chart, or send a null preset",
+            ),
+            SphereRefusal::AssetModeOff => crate::bubble_scale::refused_precondition(
+                tick_bubbles::ASSET_MODE_PRECONDITION,
+                "Tick sphere presets require an asset whose config asset mode is on",
+                "switch an asset mode on for this asset in the feed config (symbol_asset_modes)",
+            ),
         }
     }
 }
@@ -153,9 +179,7 @@ fn tick<H: TickBubblePort + ?Sized, A>(
         input.pane_id.get(),
         input.preset.as_deref(),
     );
-    host.tick_sphere_pane(tab, pane)?
-        .admit(preset)
-        .map_err(invalid)?;
+    host.tick_sphere_pane(tab, pane)?.admit(preset)?;
     let (changed, tick_bubbles) = host.wear_tick_spheres(tab, pane, preset)?;
     serde_json::to_value(quantick_control_schema::tick_bubbles::TickBubblesResult {
         tab_id: input.tab_id,
@@ -246,8 +270,36 @@ mod tick_rule_tests {
             &actor,
             &input(json!("Binance BTC Spot spheres")),
         );
-        assert!(refused.is_err());
+        let violated = |error: ControlError| {
+            assert_eq!(error.context.next_steps.len(), 1, "{error:?}");
+            error
+                .context
+                .violated_precondition
+                .map(|id| id.as_str().to_owned())
+        };
+        assert_eq!(
+            violated(refused.unwrap_err()).as_deref(),
+            Some(quantick_control_schema::bubble_scale::TICK_CHART_PRECONDITION)
+        );
         assert_eq!(volume_chart.worn, None, "refused before any edit");
+        let mut no_mode = Pane {
+            facts: TickSpherePane {
+                tick_chart: true,
+                asset_mode: false,
+            },
+            worn: None,
+        };
+        let refused = tick(
+            &mut no_mode,
+            &mut (),
+            &actor,
+            &input(json!("Binance BTC Spot spheres")),
+        );
+        assert_eq!(
+            violated(refused.unwrap_err()).as_deref(),
+            Some(quantick_control_schema::tick_bubbles::ASSET_MODE_PRECONDITION)
+        );
+        assert_eq!(no_mode.worn, None, "refused before any edit");
         let mut plain_asset = Pane {
             facts: TickSpherePane {
                 tick_chart: true,

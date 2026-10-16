@@ -218,6 +218,18 @@ fn error_code(response: &ResponseEnvelope) -> Option<&str> {
     }
 }
 
+/// The declared precondition a refusal names, if any.
+fn violated_precondition(response: &ResponseEnvelope) -> Option<&str> {
+    match &response.outcome {
+        ResponseOutcome::Success { .. } => None,
+        ResponseOutcome::Failure { error } => error
+            .context
+            .violated_precondition
+            .as_ref()
+            .map(|id| id.as_str()),
+    }
+}
+
 /// Every value at a matrix field path: dotted properties, `[]` stepping into
 /// an array. The same grammar `retry_matrix::schema_has_path` checks against
 /// the published schema, walked here over a real answer.

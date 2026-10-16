@@ -182,7 +182,27 @@ fn bubble_size_refuses_invalid_values_stale_targets_and_inactive_context() {
         let payload = input(&app, target, 2.0);
         let (response, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, payload);
         assert_eq!(error_code(&response), Some(codes::INVALID_REQUEST));
+        assert_eq!(
+            violated_precondition(&response),
+            Some("orderflow.bubbles.display_active"),
+            "{target}: switching the bubbles on meets it"
+        );
         assert_eq!(*app.active_tab().tape().cached_config(), disabled);
     }
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .set(crate::state::BarSpec::Volume(Decimal::from(5)));
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    let membership = app.active_tab().flow_pane.state.tick_membership();
+    assert!(membership.is_none(), "the pane now draws volume bars");
+    let candle = input(&app, "candle", 2.0);
+    let (response, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, candle);
+    assert_eq!(
+        violated_precondition(&response),
+        Some("orderflow.bubbles.tick_chart"),
+        "a volume chart fails the tick-chart precondition before the display one"
+    );
     disable_test_gateway(&mut app, &ctx);
 }

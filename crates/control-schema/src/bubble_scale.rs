@@ -1,7 +1,8 @@
 //! Independent bubble magnification, applied after factual grouping and sizing.
 use quantick_control::{
     error::ControlError,
-    registry::{CapabilityDescriptor, IdempotencyPolicy},
+    id::PreconditionId,
+    registry::{CapabilityDescriptor, IdempotencyPolicy, PreconditionDescriptor},
     wire::{CanonicalDecimal, WireU64},
 };
 use quantick_orderflow::{MAX_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_DISPLAY_SCALE};
@@ -9,6 +10,25 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const BUBBLE_SCALE_CAPABILITY_ID: &str = "orderflow.bubbles.size.set";
+
+/// The addressed pane draws tick bars. Candle bubble size and tick spheres
+/// need it; a refusal naming it is fixed by switching the pane to a tick
+/// chart, never by retrying.
+pub const TICK_CHART_PRECONDITION: &str = "orderflow.bubbles.tick_chart";
+/// The addressed bubble display is drawing: the tape's bubbles for `tape`,
+/// candle bubbles beside the candles for `candle`. Fixed by switching that
+/// display on.
+pub const DISPLAY_ACTIVE_PRECONDITION: &str = "orderflow.bubbles.display_active";
+
+/// A declared precondition, for a descriptor's `preconditions` and the
+/// `violated_precondition` of the refusal that names it.
+#[must_use]
+pub fn precondition(id: &'static str, description: &str) -> PreconditionDescriptor {
+    PreconditionDescriptor {
+        id: PreconditionId::new(id).expect("bubble precondition IDs are valid registry IDs"),
+        description: description.to_owned(),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -81,6 +101,16 @@ pub fn descriptor() -> CapabilityDescriptor {
         "Stable tab and pane IDs select the display owner. The result and orderflow.bubbles report the actual multiplier; repeating a value has no further effect.",
     );
     descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;
+    descriptor.preconditions = vec![
+        precondition(
+            TICK_CHART_PRECONDITION,
+            "Candle bubble size needs a pane that draws tick bars.",
+        ),
+        precondition(
+            DISPLAY_ACTIVE_PRECONDITION,
+            "The target's bubbles are drawing: the tape's bubbles for tape, candle bubbles beside the candles (not Tape alone) for candle.",
+        ),
+    ];
     descriptor
 }
 

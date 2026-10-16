@@ -44,7 +44,69 @@ fn candle_size_needs_a_tick_chart_drawing_candle_bubbles_and_tape_size_needs_tap
     };
     assert_eq!(
         volume_chart.admit(BubbleScaleTarget::Candle),
-        Err("candle bubble size requires a tick chart")
+        Err(ScaleRefusal::NotTickChart)
+    );
+}
+
+/// Each refusal names the precondition it fails and the step that meets it,
+/// so an agent branches on `violated_precondition`, never on the message.
+#[test]
+fn size_set_refusals_name_the_precondition_and_the_step_that_meets_it() {
+    let all = BubbleScalePane {
+        tick_chart: true,
+        candle_bubbles: true,
+        tape_only: false,
+        tape_bubbles: true,
+    };
+    for (facts, target, precondition) in [
+        (
+            BubbleScalePane {
+                tick_chart: false,
+                ..all
+            },
+            "candle",
+            TICK_CHART_PRECONDITION,
+        ),
+        (
+            BubbleScalePane {
+                candle_bubbles: false,
+                ..all
+            },
+            "candle",
+            DISPLAY_ACTIVE_PRECONDITION,
+        ),
+        (
+            BubbleScalePane {
+                tape_bubbles: false,
+                ..all
+            },
+            "tape",
+            DISPLAY_ACTIVE_PRECONDITION,
+        ),
+    ] {
+        let mut pane = Pane::with(facts);
+        let error = call(&mut pane, target, json!("2")).unwrap_err();
+        assert_eq!(
+            error
+                .context
+                .violated_precondition
+                .as_ref()
+                .map(|id| id.as_str()),
+            Some(precondition),
+            "{facts:?} {target}"
+        );
+        assert!(!error.retryable, "{facts:?} {target}");
+        assert_eq!(error.context.next_steps.len(), 1, "{facts:?} {target}");
+    }
+    let declared: Vec<String> = descriptor()
+        .preconditions
+        .iter()
+        .map(|declared| declared.id.as_str().to_owned())
+        .collect();
+    assert_eq!(
+        declared,
+        [TICK_CHART_PRECONDITION, DISPLAY_ACTIVE_PRECONDITION],
+        "the descriptor declares every precondition a refusal names"
     );
 }
 

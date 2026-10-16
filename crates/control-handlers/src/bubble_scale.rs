@@ -2,8 +2,13 @@
 //! which bubbles a pane may size; the pane's size sliders and
 //! `orderflow.bubbles.size.set` both ask it, so they cannot disagree.
 use crate::dock::ActionDock;
-use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::bubble_scale::{BubbleScaleInput, BubbleScaleTarget, descriptor};
+use quantick_control::{
+    error::ControlError, id::PreconditionId, registry::RegistryError, wire::ActorContext,
+};
+use quantick_control_schema::bubble_scale::{
+    BubbleScaleInput, BubbleScaleTarget, DISPLAY_ACTIVE_PRECONDITION, TICK_CHART_PRECONDITION,
+    descriptor,
+};
 use serde_json::Value;
 
 /// What the bubble size rule reads about a pane.
@@ -35,16 +40,58 @@ impl BubbleScalePane {
     ///
     /// # Errors
     ///
-    /// Says which part of the rule `target` fails.
-    pub fn admit(self, target: BubbleScaleTarget) -> Result<(), &'static str> {
+    /// Names which part of the rule `target` fails.
+    pub fn admit(self, target: BubbleScaleTarget) -> Result<(), ScaleRefusal> {
         if target == BubbleScaleTarget::Candle && !self.tick_chart {
-            Err("candle bubble size requires a tick chart")
+            Err(ScaleRefusal::NotTickChart)
         } else if self.may_scale(target) {
             Ok(())
         } else {
-            Err("the requested bubble display is not active")
+            Err(ScaleRefusal::DisplayInactive)
         }
     }
+}
+
+/// Which part of the size rule a target fails, so a caller branches on the
+/// reason instead of parsing a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleRefusal {
+    /// Candle bubble size on a pane that does not draw tick bars.
+    NotTickChart,
+    /// The target's bubbles are not drawing on the pane.
+    DisplayInactive,
+}
+
+impl From<ScaleRefusal> for ControlError {
+    fn from(refusal: ScaleRefusal) -> Self {
+        match refusal {
+            ScaleRefusal::NotTickChart => refused_precondition(
+                TICK_CHART_PRECONDITION,
+                "candle bubble size requires a tick chart",
+                "switch the pane to a tick chart, or size the tape target",
+            ),
+            ScaleRefusal::DisplayInactive => refused_precondition(
+                DISPLAY_ACTIVE_PRECONDITION,
+                "the requested bubble display is not active",
+                "switch the target's bubbles on (orderflow.bubbles reports them), then call again",
+            ),
+        }
+    }
+}
+
+/// A refusal of a declared precondition: not retryable as sent, it names the
+/// precondition and the step that meets it.
+pub(crate) fn refused_precondition(
+    precondition: &'static str,
+    message: &str,
+    next_step: &str,
+) -> ControlError {
+    let mut error = ControlError::invalid_request(message);
+    error.context.violated_precondition = Some(
+        PreconditionId::new(precondition).expect("bubble precondition IDs are valid registry IDs"),
+    );
+    error.context.next_steps = vec![next_step.to_owned()];
+    error
 }
 
 /// The size capability's narrow port: the facts the rule reads, and setting
@@ -83,9 +130,7 @@ fn set<H: BubbleScalePort + ?Sized, A>(
     let input: BubbleScaleInput = serde_json::from_value(input.clone()).map_err(invalid)?;
     let scale = input.validated_scale()?;
     let (tab, pane) = (input.tab_id.get(), input.pane_id.get());
-    host.bubble_scale_pane(tab, pane)?
-        .admit(input.target)
-        .map_err(invalid)?;
+    host.bubble_scale_pane(tab, pane)?.admit(input.target)?;
     let (changed, kept) = host.set_bubble_scale(tab, pane, input.target, scale)?;
     serde_json::to_value(input.result(kept, changed)?).map_err(invalid)
 }
