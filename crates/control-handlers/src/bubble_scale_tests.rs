@@ -4,37 +4,49 @@
 use super::*;
 use serde_json::json;
 
-const TARGETS: [BubbleScaleTarget; 2] = [BubbleScaleTarget::Candle, BubbleScaleTarget::Tape];
+const T: bool = true;
+const F: bool = false;
 
-/// Every combination of the four facts: candle bubbles need a tick chart
-/// drawing them beside its candles, Tape bubbles need the tape drawing them,
-/// and neither target reads the other's facts.
+/// Every combination of the four facts, with the answers written from the
+/// product rule rather than computed: candle bubbles may be sized on a tick
+/// chart that draws them beside its candles (not Tape alone); Tape bubbles
+/// wherever the tape draws them; neither target reads the other's facts.
+/// Columns: tick chart, candle bubbles on, Tape alone, tape bubbles drawn
+/// => (candle sizable, tape sizable).
+const RULE: [([bool; 4], (bool, bool)); 16] = [
+    ([F, F, F, F], (F, F)),
+    ([T, F, F, F], (F, F)),
+    ([F, T, F, F], (F, F)),
+    ([T, T, F, F], (T, F)),
+    ([F, F, T, F], (F, F)),
+    ([T, F, T, F], (F, F)),
+    ([F, T, T, F], (F, F)),
+    ([T, T, T, F], (F, F)),
+    ([F, F, F, T], (F, T)),
+    ([T, F, F, T], (F, T)),
+    ([F, T, F, T], (F, T)),
+    ([T, T, F, T], (T, T)),
+    ([F, F, T, T], (F, T)),
+    ([T, F, T, T], (F, T)),
+    ([F, T, T, T], (F, T)),
+    ([T, T, T, T], (F, T)),
+];
+
 #[test]
 fn candle_size_needs_a_tick_chart_drawing_candle_bubbles_and_tape_size_needs_tape_bubbles() {
-    for facts in 0..16_u8 {
+    for ([tick_chart, candle_bubbles, tape_only, tape_bubbles], (candle, tape)) in RULE {
         let pane = BubbleScalePane {
-            tick_chart: facts & 1 != 0,
-            candle_bubbles: facts & 2 != 0,
-            tape_only: facts & 4 != 0,
-            tape_bubbles: facts & 8 != 0,
+            tick_chart,
+            candle_bubbles,
+            tape_only,
+            tape_bubbles,
         };
-        let candle = pane.tick_chart && pane.candle_bubbles && !pane.tape_only;
-        assert_eq!(
-            pane.may_scale(BubbleScaleTarget::Candle),
-            candle,
-            "{pane:?}"
-        );
-        assert_eq!(
-            pane.may_scale(BubbleScaleTarget::Tape),
-            pane.tape_bubbles,
-            "{pane:?}"
-        );
-        for target in TARGETS {
-            assert_eq!(
-                pane.admit(target).is_ok(),
-                pane.may_scale(target),
-                "{pane:?}"
-            );
+        for (target, expected) in [
+            (BubbleScaleTarget::Candle, candle),
+            (BubbleScaleTarget::Tape, tape),
+        ] {
+            assert_eq!(pane.may_scale(target), expected, "{pane:?} {target:?}");
+            assert_eq!(pane.admit(target).is_ok(), expected, "{pane:?} {target:?}");
         }
     }
     let volume_chart = BubbleScalePane {
