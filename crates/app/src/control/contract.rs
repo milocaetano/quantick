@@ -561,10 +561,12 @@ mod tests {
                 "{}: only read-only capabilities sit inside the observer ceiling",
                 capability.id
             );
-            // The rebuilds under `cockpit.recover` are destructive and sit
-            // behind a permission of their own. The assertion that matters is
-            // that nothing which could end a trade is reachable from the
-            // observer ceiling.
+            // No capability in this contract is destructive, and the reason
+            // is documented on `super::recovery`'s descriptor: the flag is
+            // coupled to an expected-revision check this host refuses, so
+            // claiming it would advertise a guarantee nothing delivers. The
+            // assertion that matters either way is that nothing which could
+            // end a trade is reachable from the observer ceiling.
             assert!(
                 !(capability.destructive && reachable),
                 "{}: a destructive capability is inside the observer ceiling",
@@ -576,6 +578,54 @@ mod tests {
                 .iter()
                 .any(|capability| capability.id.as_str()
                     == super::super::actions::MARK_CAPABILITY_ID)
+        );
+    }
+
+    /// A `Required` revision policy is a promise the tier has to keep. Asked
+    /// of `prepare` itself rather than of a constant, so the probe measures
+    /// the tier every connection is really admitted under: when it refuses a
+    /// supplied revision, no registered capability may require one, or a
+    /// client following the descriptor could never call it while one
+    /// omitting the protection would act unchecked.
+    #[test]
+    fn observer_tier_admits_every_required_revision() {
+        use quantick_control::registry::RevisionPolicy;
+        const PROBE: &str = "feed.reload";
+        let contract = contract();
+        let probe = contract
+            .registry()
+            .capabilities()
+            .find(|capability| capability.id.as_str() == PROBE)
+            .expect("the probe capability is registered");
+        assert_ne!(
+            probe.revision_policy,
+            RevisionPolicy::Forbidden,
+            "the probe must be one whose own policy accepts a revision"
+        );
+        let grant = contract
+            .contract
+            .permissions()
+            .iter()
+            .map(|descriptor| descriptor.id.clone())
+            .collect::<BTreeSet<_>>();
+        contract
+            .prepare(request(PROBE, json!({})), &grant)
+            .expect("the probe is admitted without a revision");
+        let mut revised = request(PROBE, json!({}));
+        revised.expected_revisions.push(ModuleRevision {
+            module_id: module("feed"),
+            revision: WireU64::new(1),
+        });
+        let tier_admits_revisions = contract.prepare(revised, &grant).is_ok();
+        let required = contract
+            .registry()
+            .capabilities()
+            .filter(|capability| capability.revision_policy == RevisionPolicy::Required)
+            .map(|capability| capability.id.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            tier_admits_revisions || required.is_empty(),
+            "{required:?} require an expected revision the observer tier refuses to receive"
         );
     }
 

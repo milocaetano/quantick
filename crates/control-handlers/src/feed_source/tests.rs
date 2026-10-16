@@ -93,11 +93,14 @@ fn source_selection_validates_before_mutation_and_retries_without_another_switch
 }
 
 /// Both acts that throw a timeline away say so in the descriptor a client
-/// reads before calling: destructive, irreversible, behind `cockpit.recover`,
-/// carrying `timeline_rebuilt`. The reconnect beside them keeps the trader's
-/// work and stays the one that is not.
+/// reads before calling: irreversible, behind `cockpit.recover`, carrying
+/// `timeline_rebuilt`, with a stale-input text that names the journal event.
+/// Neither claims `destructive`: the registry couples it to a `Required`
+/// revision this host's strict tier refuses to receive, so the claim would be
+/// a guarantee nothing delivers. The reconnect beside them keeps the trader's
+/// work and stays reversible.
 #[test]
-fn source_selection_and_reload_declare_themselves_destructive() {
+fn source_selection_and_reload_declare_their_rebuild_without_a_revision_promise() {
     let mut sources = ActionRegistry::<Window, FakeAccess>::new();
     register(&mut sources).expect("the source descriptor is valid");
     let mut recoveries = ActionRegistry::<FakeWindow, FakeAccess>::new();
@@ -118,10 +121,20 @@ fn source_selection_and_reload_declare_themselves_destructive() {
     let reload = named("feed.reload");
     for descriptor in [&source, &reload] {
         let id = descriptor.id.as_str();
-        assert!(descriptor.destructive, "{id} is destructive");
+        assert!(!descriptor.destructive, "{id} promises no revision check");
         assert!(!descriptor.reversible, "{id} cannot be undone");
-        assert_eq!(descriptor.revision_policy, RevisionPolicy::Required, "{id}");
-        assert!(descriptor.stale_input_safety.is_none(), "{id}");
+        assert_eq!(
+            descriptor.revision_policy,
+            RevisionPolicy::OptionalForAdditive,
+            "{id}"
+        );
+        let safety = descriptor
+            .stale_input_safety
+            .as_deref()
+            .unwrap_or_else(|| panic!("{id} states why a stale caller is bounded"));
+        for event in ["feed.timeline.rebuilt", "feed.source.changed"] {
+            assert!(safety.contains(event), "{id} names {event}");
+        }
         assert!(
             descriptor
                 .risk_flags

@@ -643,12 +643,13 @@ pub fn effects() -> Vec<EffectPolicy> {
             risk_reducing_confirmation_class: None,
             mcp_hint_floor: McpHintFloor {
                 read_only: false,
-                // A rebuild throws the timeline away, closes the paper
-                // position and disarms strategies: the capabilities under this
-                // effect that rebuild declare `destructive`, and the floor
-                // admits them. The irreversibility is also declared through the
-                // required risk flag below and each `reversible: false`.
-                destructive: true,
+                // Follows the capabilities under it, which cannot claim
+                // `destructive` while this host refuses the expected-revision
+                // check the registry couples to it — see the note on the
+                // descriptor in `super::recovery`. The irreversibility is
+                // declared through the required risk flag below and through
+                // each capability's `reversible: false`.
+                destructive: false,
                 // Rebuilding twice rebuilds twice. Each call really does throw
                 // a timeline away, so a client must not be told a retry is
                 // free.
@@ -686,9 +687,10 @@ pub fn effects() -> Vec<EffectPolicy> {
             risk_reducing_confirmation_class: None,
             mcp_hint_floor: McpHintFloor {
                 read_only: false,
-                // Not yet re-decided as `cockpit.recover` was: the loss is
-                // declared by the required risk flag, the sensitive
-                // permission and `reversible: false`.
+                // As under `cockpit.recover`: the registry couples
+                // `destructive` to an expected-revision check this host
+                // refuses. The loss is declared by the required risk flag,
+                // the sensitive permission and `reversible: false`.
                 destructive: false,
                 // A repeated delete finds the session gone and removes
                 // nothing more, so a dropped call may be retried.

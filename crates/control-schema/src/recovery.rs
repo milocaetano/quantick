@@ -120,17 +120,16 @@ pub fn descriptor(
         // does make the second call cost nothing, within one connection;
         // `gateway/idempotency.rs` states where that stops.
         idempotency: IdempotencyPolicy::Optional,
-        // The registry couples `destructive` to `Required`. The strict tier
-        // every connection uses checks no revision and so asks for none
-        // (`control_host::admission`): a client calls a rebuild without one,
-        // and what guards a stale caller is what the call answers, the tab
-        // and the market it acted on and whether it really respawned.
-        revision_policy: if destructive {
-            RevisionPolicy::Required
+        // `OptionalForAdditive` even for the rebuilds, for the reason given on
+        // `destructive` below: the strict tier every connection is prepared
+        // under refuses any supplied revision, so a `Required` policy would
+        // be one no conforming client could satisfy, while an omitted one
+        // would sail through unchecked. What guards a stale caller is what
+        // the text below says, and what the call answers.
+        revision_policy: RevisionPolicy::OptionalForAdditive,
+        stale_input_safety: Some(if destructive {
+            "No expected revision is checked. A stale caller can only rebuild a chart that had already come back, or switch a tab to the pair it already shows, which changes nothing; otherwise it costs the history refetch, any open paper position — journaled, with its reason — and the tab's armed strategies. The call names the tab and the market it acted on and whether it really respawned or changed, and journals who did it (`feed.timeline.rebuilt` for a reload, `feed.source.changed` for a switch), so a caller that guessed wrong can see it did.".to_owned()
         } else {
-            RevisionPolicy::OptionalForAdditive
-        },
-        stale_input_safety: (!destructive).then(|| {
             "A stale caller can only reconnect a transport that had already reconnected, which costs it the overlap window it would otherwise have dropped. The call names the tab and the market it acted on, so a caller that guessed wrong can see it did.".to_owned()
         }),
         dry_run_supported: false,
@@ -140,12 +139,26 @@ pub fn descriptor(
         // reopens it either, and a client reading this field before calling is
         // exactly who needs to know that.
         reversible: !destructive,
-        // A rebuild closes the paper position and disarms every strategy, and
-        // the flag says so to every client that reads it before calling, along
-        // with the `timeline_rebuilt` risk flag, `reversible: false` and a
-        // `cockpit.recover` permission of its own that is off until the
-        // trader ticks it. Who rebuilt is journaled by the handler.
-        destructive,
+        // Deliberately `false` even for the rebuilds (`feed.reload` and
+        // `feed.source.set`), and the reason is a contract one rather than a
+        // claim about the act. `registry.rs` forces a `destructive`
+        // capability to `RevisionPolicy::Required`, while this host's
+        // `ObserverContract::prepare` admits under `TierPolicy::STRICT`, which
+        // refuses any envelope carrying `expected_revisions` and lets an
+        // omitted one through — so a capability marked destructive here is one
+        // no conforming client can invoke, and the staleness guarantee the
+        // flag advertises is one this host cannot honour. Claiming it would
+        // be the worse lie. What is enforced carries the truth instead: the
+        // `timeline_rebuilt` risk flag, `reversible: false`, a
+        // `cockpit.recover` permission of its own that is marked sensitive and
+        // off until the trader ticks it, a description naming what it closes,
+        // and the journal event naming who did it. Lifting this needs the
+        // revision check the reference host in `control::fake` already models
+        // and this one has never implemented: a revision that tracks the
+        // tab's feed session rather than the `feed` module's, which moves
+        // with every trade. `observer_tier_admits_every_required_revision` in
+        // the app's contract tests fails the day this is flipped without it.
+        destructive: false,
         risk_reducing: false,
         required_permissions: permissions
             .into_iter()
