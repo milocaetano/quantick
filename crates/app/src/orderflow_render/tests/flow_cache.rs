@@ -730,3 +730,25 @@ mod display_scale_cache {
         assert_eq!(*source, original);
     }
 }
+
+/// Dragging a divider gives every frame a new clip, so a new look: the
+/// drawing each look last painted must not stay in egui's temp data once
+/// nothing paints that look, or a resize grows it by one entry a frame.
+#[test]
+fn a_resize_leaves_no_last_painted_slot_per_frame_behind() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let mut slots = Vec::new();
+    for shrink in 0..24_u8 {
+        let clip = history().with_max_x(200.0 - f32::from(shrink));
+        paint(
+            &ctx,
+            Key {
+                clip,
+                ..key(&frame)
+            },
+        );
+        slots.push(ctx.data(|data| data.len()));
+    }
+    assert_eq!(slots[4], slots[23], "temp data per frame: {slots:?}");
+}

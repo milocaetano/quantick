@@ -7,9 +7,17 @@ use eframe::egui::{
 use quantick_chart::flow_execution::FlowExecutionGeometry;
 use quantick_orderflow::projection::flow_tape::FlowTapeFrame;
 use std::{
+    collections::BTreeMap,
     hash::{Hash, Hasher},
     sync::{Arc, OnceLock, Weak},
 };
+
+/// The drawing each look last painted, by the look's hash, in one temp slot.
+/// A look nobody paints any more leaves with its drawing: egui collects only
+/// persisted temp values, so a slot per look would grow by one entry every
+/// frame a divider drag or a resize changes the clip.
+#[derive(Clone, Default)]
+struct LastPainted(BTreeMap<u64, Weak<FlowDrawing>>);
 
 struct Entry {
     // Keep the allocation identity alive without retaining its source members.
@@ -76,7 +84,8 @@ pub(crate) fn cached_flow(
     };
     let ctx = painter.ctx();
     let entry = ctx.memory_mut(|memory| memory.caches.cache::<Cache>().get(key));
-    let last_painted = egui::Id::new(key.look());
+    let slot = egui::Id::new("quantick_flow_last_painted");
+    let look = egui::Id::new(key.look()).value();
     // Build outside the Context memory lock. Logical sector vertices use only
     // WHITE_UV, independent of pixel density and the growing font atlas.
     Arc::clone(entry.mesh.get_or_init(|| {
@@ -85,15 +94,21 @@ pub(crate) fn cached_flow(
             tick.map(|(style, _)| style),
             [clip.min.into(), clip.max.into()],
         );
-        let previous = ctx.data(|data| data.get_temp::<Weak<FlowDrawing>>(last_painted));
-        let previous = previous.and_then(|drawing| drawing.upgrade());
+        let previous = ctx.data(|data| {
+            let painted = data.get_temp::<LastPainted>(slot)?;
+            painted.0.get(&look).and_then(Weak::upgrade)
+        });
         let displayed = viewport_frame.as_deref().unwrap_or(frame);
         let (made, held) = ((displayed, plan), previous.as_deref());
         let mut drawing =
             FlowDrawing::styled(made, background, backing, tick, painter, history, held);
         drawing.viewport_frame = viewport_frame;
         let drawing = Arc::new(drawing);
-        ctx.data_mut(|data| data.insert_temp(last_painted, Arc::downgrade(&drawing)));
+        ctx.data_mut(|data| {
+            let painted = &mut data.get_temp_mut_or_default::<LastPainted>(slot).0;
+            painted.retain(|_, drawing| drawing.strong_count() > 0);
+            painted.insert(look, Arc::downgrade(&drawing));
+        });
         drawing
     }))
 }
