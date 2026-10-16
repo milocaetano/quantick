@@ -10,8 +10,18 @@ pub const TICK_BUBBLES_CAPABILITY_ID: &str = "orderflow.bubbles.tick.set";
 pub struct TickBubblesInput {
     pub tab_id: WireU64,
     pub pane_id: WireU64,
-    /// A name in orderflow.bubbles.tick_presets; null restores regional FLOW.
+    /// A name in orderflow.bubbles.tick_presets; null restores regional FLOW; never omitted.
+    // Refused when omitted rather than read as null: null strips the pane's
+    // tick spheres and, with the asset's save switch on, the saved look too.
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(schema_with = "nullable_string")]
     pub preset: Option<String>,
+}
+
+/// A string or null that has to be present: `Option<String>` alone reads
+/// as optional to both serde and schemars.
+fn nullable_string(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type": ["string", "null"]})
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -102,3 +112,40 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
         crate::readback::EVERY_OPTIONAL_TEST,
     ],
 )];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn preset_is_required_and_nullable() {
+        let base = json!({"tab_id": "1", "pane_id": "2"});
+        let error = serde_json::from_value::<TickBubblesInput>(base.clone())
+            .expect_err("an omitted preset must not read as a strip");
+        assert!(error.to_string().contains("preset"), "{error}");
+        let mut strip = base.clone();
+        strip["preset"] = serde_json::Value::Null;
+        assert_eq!(
+            serde_json::from_value::<TickBubblesInput>(strip)
+                .unwrap()
+                .preset,
+            None
+        );
+        let mut named = base;
+        named["preset"] = json!("Binance BTC Spot spheres");
+        assert_eq!(
+            serde_json::from_value::<TickBubblesInput>(named)
+                .unwrap()
+                .preset
+                .as_deref(),
+            Some("Binance BTC Spot spheres")
+        );
+        let schema = quantick_control::schema::generated_schema::<TickBubblesInput>();
+        assert_eq!(schema["required"], json!(["tab_id", "pane_id", "preset"]));
+        assert_eq!(
+            schema["properties"]["preset"]["type"],
+            json!(["string", "null"])
+        );
+    }
+}

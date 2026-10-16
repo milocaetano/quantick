@@ -13527,7 +13527,7 @@
             "$ref": "#/$defs/WireU64"
           },
           "preset": {
-            "description": "A name in orderflow.bubbles.tick_presets; null restores regional FLOW.",
+            "description": "A name in orderflow.bubbles.tick_presets; null restores regional FLOW; never omitted.",
             "type": [
               "string",
               "null"
@@ -13539,7 +13539,8 @@
         },
         "required": [
           "tab_id",
-          "pane_id"
+          "pane_id",
+          "preset"
         ],
         "title": "TickBubblesInput",
         "type": "object"
