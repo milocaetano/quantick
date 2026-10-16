@@ -560,12 +560,12 @@ fn stage_breakdown(
                 kept_time += started.elapsed();
                 assert!(kept.meshes() == built.meshes());
                 let started = Instant::now();
-                let labels = built.plan.quantity_labels(frame, Some(TICK));
-                let fit = [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE];
-                let measure =
-                    |label: &FlowQuantityLabel| quantity_galley(&painter, label).size().into();
-                let area = [HISTORY.min.into(), HISTORY.max.into()];
-                std::hint::black_box(flow::place_quantity_labels(labels, area, fit, measure));
+                let made = (frame.as_ref(), &built.plan);
+                std::hint::black_box(flow_labels::placed_labels(
+                    made,
+                    Some(TICK),
+                    (&painter, HISTORY),
+                ));
                 labels_time += started.elapsed();
             },
         );
