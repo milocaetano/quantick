@@ -373,3 +373,62 @@ mod display_scale_tests {
         }
     }
 }
+
+#[test]
+fn a_sub_cent_btc_region_drawn_at_the_current_camera_never_reads_zero() {
+    let trade = Trade {
+        agg_id: 1,
+        timestamp_ms: 1_000,
+        price: 100.into(),
+        quantity: Decimal::new(4, 3),
+        side: Side::Sell,
+    };
+    let source = project_flow_tape(
+        [FlowExecution {
+            ordinal: 0,
+            slot: 1,
+            accepted_ordinal: 0,
+            ticks_per_bar: 1.into(),
+            trade: &trade,
+            opening: false,
+        }],
+        1,
+        1,
+        3,
+        FlowTapeView {
+            first_slot: 0,
+            end_slot: 3,
+            clip_left: 0.into(),
+            clip_right: 3.into(),
+            width_px: 300.0,
+            height_px: 200.0,
+            prices: PriceWindow::new(90.into(), 110.into()).unwrap(),
+            reference: FlowReference::VisibleRegionsAtLeast(900.into()),
+            radius_limit: 32.0,
+            merge_support_radius: 6.0,
+            exclude_opening: false,
+        },
+    );
+    let original = source.clone();
+    let style = viewport_style();
+    let clip = [[0.0, 0.0], [300.0, 200.0]];
+    for gain in [1.0, 2.0] {
+        let camera = viewport_camera(64.0, (90.0, 110.0)).with_display_scale(gain);
+        let (plan, displayed) = camera.presentation(&source, Some(style), clip);
+        let displayed = displayed.expect("the visible-relative camera draws its own frame");
+        let labels = plan.quantity_labels(&displayed, Some(style));
+        assert_eq!(labels.len(), 1, "the lone region is a full, legible sphere");
+        assert_eq!(labels[0].text, "0.004", "a positive quantity never reads 0");
+        let region = &plan.regions[0];
+        let (raw, drawn) = (&source.dots[0], &displayed.dots[region.dot_index]);
+        assert_eq!(drawn.mark.quantity, Decimal::new(4, 3));
+        assert_eq!(drawn.mark.quantity, raw.mark.quantity);
+        assert_eq!(drawn.mark.side, raw.mark.side);
+        assert_eq!(drawn.mark.agg_ids, raw.mark.agg_ids);
+        assert_eq!(drawn.members, raw.members);
+    }
+    assert_eq!(
+        source, original,
+        "labelling never edits the published frame"
+    );
+}

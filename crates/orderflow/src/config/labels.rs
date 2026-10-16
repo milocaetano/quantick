@@ -160,6 +160,51 @@ mod tests {
         assert_eq!(bubble_label(Decimal::ONE, 1, 0, false, true, "⊕"), None);
     }
 
+    fn quantity(text: &str) -> String {
+        format_quantity(text.parse().unwrap())
+    }
+
+    #[test]
+    fn a_positive_sub_unit_quantity_keeps_three_significant_figures() {
+        for (exact, label) in [
+            ("0.004", "0.004"),
+            ("0.0004", "0.0004"),
+            ("0.006", "0.006"),
+            ("0.05", "0.05"),
+            ("0.5", "0.5"),
+            ("0.00123456", "0.00123"),
+            ("0.1234", "0.123"),
+            ("0.000000001", "0.000000001"),
+            ("0.99999", "1"),
+            ("-0.004", "-0.004"),
+        ] {
+            assert_eq!(quantity(exact), label, "{exact}");
+        }
+    }
+
+    #[test]
+    fn unit_and_larger_quantities_keep_their_spelling() {
+        for (exact, label) in [
+            ("0", "0"),
+            ("1", "1"),
+            ("5", "5"),
+            ("120", "120"),
+            ("999", "999"),
+            ("1.234", "1.23"),
+            ("12.5", "12.5"),
+            ("1500", "1.5K"),
+            ("1000", "1K"),
+            ("12345", "12.3K"),
+            ("999000", "999K"),
+            ("1000000", "1M"),
+            ("2500000", "2.5M"),
+            ("1000000000", "1B"),
+            ("1250000000", "1.25B"),
+        ] {
+            assert_eq!(quantity(exact), label, "{exact}");
+        }
+    }
+
     #[test]
     fn a_fold_and_a_cluster_do_not_share_a_glyph() {
         assert_eq!(
