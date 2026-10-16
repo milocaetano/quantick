@@ -2,9 +2,9 @@
 use super::constants::{TAPE_SWITCH_GAP_PX, TAPE_SWITCH_INSET, TAPE_SWITCH_SIZE};
 use super::{ChartPane, PaneChrome};
 use eframe::egui;
+use quantick_control_schema::bubble_scale::BubbleScaleTarget;
 use quantick_orderflow::{
-    BubbleScaleTarget, DEFAULT_BUBBLE_DISPLAY_SCALE, MAX_BUBBLE_DISPLAY_SCALE,
-    MIN_BUBBLE_DISPLAY_SCALE,
+    DEFAULT_BUBBLE_DISPLAY_SCALE, MAX_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_DISPLAY_SCALE,
 };
 
 const INSET: f32 = 8.0;
@@ -45,40 +45,32 @@ pub(crate) fn show(
         if let Some(value) = changed
             && let Some(owner) = pane.orderflow.as_mut()
         {
-            owner.set_bubble_display_scale(control.target, value);
+            owner.set_bubble_display_scale(control.target.into(), value);
         }
     }
     controls
 }
 
 fn layout(pane: &ChartPane, chart: egui::Rect) -> [Option<ScaleControl>; 2] {
-    let Some(owner) = pane.orderflow.as_ref() else {
+    let (Some(owner), Some(facts)) = (pane.orderflow.as_ref(), pane.bubble_scale_facts()) else {
         return [None, None];
     };
-    let tape_only = pane.tape_modes().0;
-    let width = if tape_only {
+    let width = if facts.tape_only {
         chart.width()
     } else {
         owner.lane_width_px(chart.width())
     };
     let divider = chart.right() - width;
-    let history = chart.with_max_x(divider);
-    let tape = chart.with_min_x(divider);
-    let candle_visible =
-        owner.bubbles_enabled() && !tape_only && pane.state.tick_membership().is_some();
-    let tape_visible = owner.lane_enabled() && owner.lane_bubbles_enabled();
     [
-        (BubbleScaleTarget::Candle, history, candle_visible),
-        (BubbleScaleTarget::Tape, tape, tape_visible),
+        (BubbleScaleTarget::Candle, chart.with_max_x(divider)),
+        (BubbleScaleTarget::Tape, chart.with_min_x(divider)),
     ]
-    .map(|(target, region, visible)| {
-        if !visible {
-            return None;
-        }
+    .map(|(target, region)| {
+        facts.may_scale(target).then_some(())?;
         Some(ScaleControl {
             target,
             rect: control_rect(region)?,
-            value: owner.bubble_display_scale(target)?,
+            value: owner.bubble_display_scale(target.into()),
         })
     })
 }

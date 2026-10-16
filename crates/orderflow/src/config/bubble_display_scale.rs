@@ -73,6 +73,18 @@ impl BubbleDisplayScale {
             BubbleScaleTarget::Candle => self.candle = value,
         }
     }
+
+    /// Set `target` to `scale` only when [`admitted_bubble_display_scale`]
+    /// admits it; a refused gain leaves the pair as it was. Answers whether
+    /// it was admitted. Every setter a person or a caller drives goes here,
+    /// never through the clamping [`Self::set`].
+    pub fn try_set(&mut self, target: BubbleScaleTarget, scale: f32) -> bool {
+        let admitted = admitted_bubble_display_scale(f64::from(scale));
+        if let Some(value) = admitted {
+            self.set(target, value);
+        }
+        admitted.is_some()
+    }
 }
 
 #[must_use]
@@ -84,10 +96,59 @@ pub fn sane_bubble_display_scale(scale: f32) -> f32 {
     }
 }
 
+/// The gain `scale` as the display keeps it, or `None` when it is not
+/// finite or falls outside [`MIN_BUBBLE_DISPLAY_SCALE`] through
+/// [`MAX_BUBBLE_DISPLAY_SCALE`]. Checked in `f64`, so a requested value just
+/// outside the range never rounds into it.
+#[must_use]
+pub fn admitted_bubble_display_scale(scale: f64) -> Option<f32> {
+    let range = f64::from(MIN_BUBBLE_DISPLAY_SCALE)..=f64::from(MAX_BUBBLE_DISPLAY_SCALE);
+    (scale.is_finite() && range.contains(&scale)).then_some(scale as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{BubbleStyle, HeatmapConfig};
+
+    /// The slider and `orderflow.bubbles.size.set` both set through
+    /// `try_set`: a refused gain changes nothing, an admitted one moves only
+    /// its own target.
+    #[test]
+    fn try_set_admits_only_finite_in_range_gains_and_moves_one_target() {
+        for refused in [
+            f64::NAN,
+            f64::INFINITY,
+            0.0,
+            -1.0,
+            0.249_999_999_9,
+            3.000_000_1,
+        ] {
+            assert_eq!(admitted_bubble_display_scale(refused), None, "{refused}");
+        }
+        for admitted in [0.25, 1.0, 3.0] {
+            assert_eq!(
+                admitted_bubble_display_scale(admitted),
+                Some(admitted as f32)
+            );
+        }
+        let mut scale = BubbleDisplayScale::default();
+        for target in [BubbleScaleTarget::Tape, BubbleScaleTarget::Candle] {
+            for refused in [f32::NAN, f32::INFINITY, 0.0, 4.0] {
+                assert!(!scale.try_set(target, refused));
+                assert_eq!(scale, BubbleDisplayScale::default());
+            }
+        }
+        assert!(scale.try_set(BubbleScaleTarget::Tape, 2.0));
+        assert!(scale.try_set(BubbleScaleTarget::Candle, 0.5));
+        assert_eq!(
+            scale,
+            BubbleDisplayScale {
+                tape: 2.0,
+                candle: 0.5
+            }
+        );
+    }
 
     #[test]
     fn omitted_identity_preserves_legacy_presets_and_partial_pairs_default() {

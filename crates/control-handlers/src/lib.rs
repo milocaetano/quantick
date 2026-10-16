@@ -19,6 +19,7 @@
 
 pub mod annotate;
 pub mod bubble_preset;
+pub mod bubble_scale;
 pub mod chart;
 pub mod dock;
 pub mod feed_source;

@@ -1,4 +1,0 @@
-# Host-only binding of the named size capability and shared live-pane appearance setter.
-# The serialized gains and rendering policy are owned by orderflow/chart, not app.
-crates/app +6
-!budget +6

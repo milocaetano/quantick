@@ -1,6 +1,7 @@
-# Two pane-owned egui size controls and their existing-owner/control adapters.
-# Domain gains, validation contracts and frame scaling remain below app.
+# Two pane-owned egui size controls, the pane's port read and its control adapter.
+# The rule for where a size may be set and the size capability's handler live in
+# control-handlers; the gains and their admission in orderflow; frame scaling in chart.
 # The controls dock before navigation to own their input without expanding the app root.
 # One hover declaration keeps rounded slider bounds from registering an ID twice.
-crates/app +271
-!budget +271
+crates/app +259
+!budget +259

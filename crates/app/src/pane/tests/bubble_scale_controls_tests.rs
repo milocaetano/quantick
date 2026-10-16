@@ -36,7 +36,7 @@ fn enabled_empty_tick_and_tape_have_independent_default_controls() {
         owner.cached_config().volume_dots.tick_bubbles.is_none(),
         "legacy WIN-style regions are eligible too"
     );
-    owner.set_bubble_display_scale(BubbleScaleTarget::Candle, 2.0);
+    owner.set_bubble_display_scale(BubbleScaleTarget::Candle.into(), 2.0);
     let [candle, tape] = layout(&pane, chart);
     assert_eq!(candle.unwrap().value, 2.0);
     assert_eq!(tape.unwrap().value, 1.0);
@@ -369,12 +369,12 @@ fn dragging_a_size_slider_cannot_pan_or_zoom_the_chart_beneath_it() {
     drive(&mut pane, &ctx, area, vec![button(end, false)]);
     let owner = pane.orderflow.as_ref().unwrap();
     assert_ne!(
-        owner.bubble_display_scale(BubbleScaleTarget::Candle),
-        Some(1.0)
+        owner.bubble_display_scale(BubbleScaleTarget::Candle.into()),
+        1.0
     );
     assert_eq!(
-        owner.bubble_display_scale(BubbleScaleTarget::Tape),
-        Some(1.0)
+        owner.bubble_display_scale(BubbleScaleTarget::Tape.into()),
+        1.0
     );
     assert_eq!(
         (

@@ -17,6 +17,15 @@ pub enum BubbleScaleTarget {
     Candle,
 }
 
+impl From<BubbleScaleTarget> for quantick_orderflow::BubbleScaleTarget {
+    fn from(target: BubbleScaleTarget) -> Self {
+        match target {
+            BubbleScaleTarget::Tape => Self::Tape,
+            BubbleScaleTarget::Candle => Self::Candle,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BubbleScaleInput {
@@ -47,13 +56,7 @@ impl BubbleScaleInput {
             ))
         };
         let value = self.scale.as_str().parse::<f64>().map_err(|_| invalid())?;
-        if !value.is_finite()
-            || !(f64::from(MIN_BUBBLE_DISPLAY_SCALE)..=f64::from(MAX_BUBBLE_DISPLAY_SCALE))
-                .contains(&value)
-        {
-            return Err(invalid());
-        }
-        Ok(value as f32)
+        quantick_orderflow::admitted_bubble_display_scale(value).ok_or_else(invalid)
     }
 
     pub fn result(self, scale: f32, changed: bool) -> Result<BubbleScaleResult, ControlError> {

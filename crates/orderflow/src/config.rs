@@ -6,7 +6,7 @@ mod bubble_display_scale;
 mod bubbles;
 pub use bubble_display_scale::{
     BubbleDisplayScale, BubbleScaleTarget, DEFAULT_BUBBLE_DISPLAY_SCALE, MAX_BUBBLE_DISPLAY_SCALE,
-    MIN_BUBBLE_DISPLAY_SCALE, sane_bubble_display_scale,
+    MIN_BUBBLE_DISPLAY_SCALE, admitted_bubble_display_scale, sane_bubble_display_scale,
 };
 pub mod crown;
 pub mod dressing;
