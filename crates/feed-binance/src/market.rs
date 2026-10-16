@@ -66,6 +66,17 @@ impl BinanceMarket {
         }
     }
 
+    /// The error code this market answers an `aggTrades` page with once the
+    /// IDs asked for are older than its retention: history ends there,
+    /// nothing failed. `None` where the market keeps its whole history.
+    #[must_use]
+    pub const fn history_expired_code(self) -> Option<i64> {
+        match self {
+            Self::Spot => None,
+            Self::UsdM => Some(-4166),
+        }
+    }
+
     /// Maximum depth snapshot supported by this market.
     #[must_use]
     pub const fn max_depth(self) -> u16 {
@@ -91,5 +102,7 @@ mod tests {
             BinanceMarket::UsdM.depth_ws_base()
         );
         assert_eq!(BinanceMarket::UsdM.max_depth(), 1_000);
+        assert_eq!(BinanceMarket::UsdM.history_expired_code(), Some(-4166));
+        assert_eq!(BinanceMarket::Spot.history_expired_code(), None);
     }
 }

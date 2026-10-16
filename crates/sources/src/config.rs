@@ -58,6 +58,26 @@ impl ProviderKind {
         }
     }
 
+    /// Whether `symbol` follows this provider's symbol grammar. USD-M
+    /// perpetuals carry the canonical `.p` display suffix (`BTCUSDT.p`);
+    /// every other provider takes the venue's own name as written.
+    #[must_use]
+    pub fn canonical_symbol(self, symbol: &str) -> bool {
+        match self {
+            Self::BinanceFutures => crate::perpetual::is_canonical(symbol),
+            Self::Binance | Self::Hyperliquid | Self::MetaTrader => true,
+        }
+    }
+
+    /// What [`Self::canonical_symbol`] asks for, in a config refusal.
+    #[must_use]
+    pub const fn symbol_grammar(self) -> &'static str {
+        match self {
+            Self::BinanceFutures => "canonical USD-M symbols such as BTCUSDT.p",
+            Self::Binance | Self::Hyperliquid | Self::MetaTrader => "the venue's own symbol names",
+        }
+    }
+
     /// Whether this provider actually streams data today. Future providers
     /// land as config-visible placeholders first, labelled "(soon)" in the UI.
     #[must_use]
@@ -500,6 +520,23 @@ mod tests {
             ProviderKind::Binance.campaign_page_size(usize::MAX),
             100_000
         );
+    }
+
+    /// Only USD-M holds its symbols to a grammar; the rest take any name.
+    #[test]
+    fn only_futures_symbols_must_carry_the_canonical_perpetual_suffix() {
+        use super::ProviderKind;
+        assert!(ProviderKind::BinanceFutures.canonical_symbol("BTCUSDT.p"));
+        for symbol in ["BTCUSDT", "btcusdt.p", "BTCUSDT.P"] {
+            assert!(!ProviderKind::BinanceFutures.canonical_symbol(symbol));
+            for other in [
+                ProviderKind::Binance,
+                ProviderKind::Hyperliquid,
+                ProviderKind::MetaTrader,
+            ] {
+                assert!(other.canonical_symbol(symbol), "{other:?} {symbol}");
+            }
+        }
     }
     use super::*;
 

@@ -660,12 +660,11 @@ impl AppConfig {
             // for every feed, because the catalog the app runs on includes
             // whatever the added-symbols sidecar merged into it.
             for symbol in &feed.symbols {
-                if feed.provider == ProviderKind::BinanceFutures
-                    && !quantick_sources::perpetual::is_canonical(symbol)
-                {
+                if !feed.provider.canonical_symbol(symbol) {
                     return Err(format!(
-                        "feed '{}' requires canonical USD-M symbols such as BTCUSDT.p",
-                        feed.id
+                        "feed '{}' requires {}",
+                        feed.id,
+                        feed.provider.symbol_grammar()
                     ));
                 }
                 if symbol.trim().is_empty() {

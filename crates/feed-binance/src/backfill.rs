@@ -23,10 +23,6 @@ pub const BINANCE_REST_BASE: &str = "https://api.binance.com";
 /// Binance caps `limit` on `aggTrades` at 1000.
 pub const MAX_PAGE_LIMIT: u32 = 1000;
 
-/// The error code USD-M answers an `aggTrades` page with once the IDs asked
-/// for are older than its retention: history ends there, nothing failed.
-const USDM_HISTORY_EXPIRED_CODE: i64 = -4166;
-
 /// Something went wrong fetching or decoding feed data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FeedError {
@@ -181,11 +177,15 @@ impl AggTradeSource for BinanceHttp {
             .map_err(|e| FeedError::Http(e.to_string()))?;
         if !status.is_success() {
             warn!(target: "quantick::feed", %status, symbol, "aggTrades request returned non-success");
-            if self.market == BinanceMarket::UsdM
-                && serde_json::from_str::<serde_json::Value>(&body)
+            let code = || {
+                serde_json::from_str::<serde_json::Value>(&body)
                     .ok()
                     .and_then(|error| error.get("code").and_then(serde_json::Value::as_i64))
-                    == Some(USDM_HISTORY_EXPIRED_CODE)
+            };
+            if self
+                .market
+                .history_expired_code()
+                .is_some_and(|expired| code() == Some(expired))
             {
                 return Err(FeedError::HistoryExpired);
             }
