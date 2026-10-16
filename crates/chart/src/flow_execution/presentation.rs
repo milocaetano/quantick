@@ -53,6 +53,26 @@ impl FlowRegionVisual {
             ),
         }
     }
+
+    /// The region's pie from `start` radians: each side with volume, buy (0)
+    /// then sell (1), with its start angle and sweep. Exact sides reach the
+    /// geometry directly; no cached share or readability cutoff.
+    pub fn sectors(
+        &self,
+        frame: &FlowTapeFrame,
+        start: f32,
+    ) -> impl Iterator<Item = (usize, f32, f32)> {
+        let (buy, sell) = frame.dots[self.dot_index].side_shares();
+        let mut angle = f64::from(start);
+        let sides = [buy, sell].into_iter().enumerate();
+        sides
+            .filter(|(_, share)| *share > 0.0)
+            .map(move |(side, share)| {
+                let (at, sweep) = (angle, share * std::f64::consts::TAU);
+                angle += sweep;
+                (side, at as f32, sweep as f32)
+            })
+    }
 }
 
 /// One backend-independent plan for drawing.
