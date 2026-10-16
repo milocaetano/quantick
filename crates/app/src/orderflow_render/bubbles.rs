@@ -710,7 +710,10 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let display_scale = bubbles.display_scale.sanitized();
     let drawn = |trade: &AggressionPrimitive| {
         let (size, radius) = base_drawn(trade);
-        let gain = if trade.live {
+        // The factual tape magnifies only as far as its NOW inset holds.
+        let gain = if factual_tape && trade.live {
+            tape_geometry.display_gain
+        } else if trade.live {
             display_scale.tape
         } else {
             display_scale.candle

@@ -1,6 +1,19 @@
 use super::*;
 use quantick_orderflow::BubbleDisplayScale;
 
+/// The viewport camera's radius gain over the tape `native_painted_radii`
+/// paints: its time span is the one the Tape gain's NOW inset leaves.
+fn camera_gain(style: &OrderflowRenderStyle) -> f32 {
+    style.bubbles.viewport_scale.map_or(1.0, |camera| {
+        let geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+            300.0,
+            400.0,
+            &style.bubbles,
+        );
+        camera.radius_gain(f64::from(geometry.span_px) / 6_000.0, 400.0 / 100.0)
+    })
+}
+
 #[test]
 fn manual_native_gains_scale_actual_meshes_and_circles_independently() {
     for spheres in [false, true] {
@@ -14,6 +27,7 @@ fn manual_native_gains_scale_actual_meshes_and_circles_independently() {
             }
             let original = style.bubbles.clone();
             let (base_tape, base_candles) = native_painted_radii(&style);
+            let base_camera = camera_gain(&style);
             for gain in [0.25, 3.0] {
                 style.bubbles.display_scale = BubbleDisplayScale {
                     tape: gain,
@@ -21,8 +35,12 @@ fn manual_native_gains_scale_actual_meshes_and_circles_independently() {
                 };
                 let (tape, candles) = native_painted_radii(&style);
                 assert_eq!(candles, base_candles);
+                // The gain widens the NOW inset, and a viewport camera reads
+                // its density on the span that leaves: that is its only
+                // other effect on the Tape's radii.
+                let camera = camera_gain(&style) / base_camera;
                 for (scaled, base) in tape.iter().zip(&base_tape) {
-                    assert!((scaled - base * gain).abs() < 0.001);
+                    assert!((scaled - base * gain * camera).abs() < 0.001);
                 }
                 style.bubbles.display_scale = BubbleDisplayScale {
                     tape: 1.0,
@@ -100,4 +118,85 @@ fn manual_legacy_gain_does_not_move_edge_clamped_centers_or_require_volume_dots(
         }
     }
     assert_eq!(projection.aggressions, original);
+}
+
+/// The Tape gain magnifies the disc after sizing, so the inset at NOW has to
+/// hold the magnified disc: the newest, biggest print stays whole against the
+/// lane's right edge at the shipped BTC gain and at the slider's top, its
+/// centre stepping left to make the room.
+#[test]
+fn the_newest_dot_stays_whole_at_now_under_the_tape_gain() {
+    use quantick_orderflow::projection::TapeDotMemory;
+    use std::cell::RefCell;
+
+    let viewport = Viewport::new();
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 400.0));
+    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+    let mut newest = dot(true, 8, 1.0, 0.5);
+    newest.price = Decimal::from(50);
+    newest.price_bucket = newest.price;
+    newest.first_timestamp_ms = 6_000;
+    newest.last_timestamp_ms = 6_000;
+    newest.timestamp_quantity = Decimal::from(6_000) * newest.quantity;
+    let projection = dots_frame(vec![newest]);
+    let edge = quantick_orderflow::LiveEdge {
+        now_ms: 6_000,
+        window_ms: 6_000,
+        reference_ms: 6_000,
+        on_newest_bar: true,
+    };
+    let painted_dot = |gain: f32| {
+        let mut style = stable_native_style(false);
+        style.bubbles.display_scale = BubbleDisplayScale {
+            tape: gain,
+            candle: 1.0,
+        };
+        let memory = RefCell::new(TapeDotMemory::default());
+        let context = RenderContext::new(&projection, layout, &style)
+            .with_tape_price_range((0.0, 100.0))
+            .with_tape_time(edge, 100)
+            .with_tape_memory(&memory, None);
+        let shapes = egui::Context::default()
+            .run(
+                egui::RawInput {
+                    screen_rect: Some(rect),
+                    ..egui::RawInput::default()
+                },
+                |ctx| {
+                    draw_aggression_bubbles(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &context,
+                    );
+                },
+            )
+            .shapes;
+        let lane = layout.lane_rect();
+        let mut bounds = egui::Rect::NOTHING;
+        for clipped in shapes {
+            let drawn = clipped.shape.visual_bounding_rect();
+            if drawn.is_positive() && clipped.clip_rect == lane {
+                bounds = bounds.union(drawn);
+            }
+        }
+        assert!(bounds.is_positive(), "a dot at NOW under gain {gain}");
+        bounds
+    };
+    let plain = painted_dot(1.0);
+    let lane_right = layout.lane_rect().right();
+    for gain in [1.37, 3.0] {
+        let dot = painted_dot(gain);
+        assert!(
+            dot.right() <= lane_right + 0.001,
+            "gain {gain}: the dot at NOW ends at {} past the lane's {lane_right}",
+            dot.right()
+        );
+        assert!(
+            dot.height() > plain.height() * gain * 0.9,
+            "gain {gain} magnifies the disc: {dot:?} against {plain:?}"
+        );
+        assert!(
+            dot.center().x < plain.center().x,
+            "gain {gain} widens the inset"
+        );
+    }
 }

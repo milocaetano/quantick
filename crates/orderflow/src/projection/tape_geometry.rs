@@ -1,7 +1,7 @@
 //! Shared tape radius limits and insets for dots, clock labels and price fit.
 
 use crate::HeatmapConfig;
-use crate::config::{BubbleStyle, bubble_halo_padding};
+use crate::config::{BubbleScaleTarget, BubbleStyle, bubble_halo_padding};
 
 use super::constants::{MAX_DECORATED_INSET_SHARE, MAX_VERTICAL_RADIUS_SHARE};
 
@@ -16,6 +16,11 @@ pub struct TapeHorizontalGeometry {
     pub inset_px: f32,
     /// Distance in pixels from the oldest visible timestamp to NOW.
     pub span_px: f32,
+    /// The Tape display gain these insets hold: the configured
+    /// `display_scale.tape`, lowered only where the pane cannot fit the
+    /// magnified largest disc. The painter magnifies by this, never by the
+    /// raw gain, so the newest dot stays whole at NOW.
+    pub display_gain: f32,
 }
 
 impl TapeHorizontalGeometry {
@@ -50,22 +55,33 @@ impl TapeHorizontalGeometry {
             }
         };
         let (width, height) = (extent(width_px), extent(height_px));
-        let max_radius = bubbles
-            .max_radius
-            .max(0.0)
-            .min(width / 2.0)
-            .min(height * MAX_VERTICAL_RADIUS_SHARE);
-        let decorated = max_radius + bubble_halo_padding(max_radius) + bubbles.outline_width;
+        let fit = |radius: f32| {
+            radius
+                .max(0.0)
+                .min(width / 2.0)
+                .min(height * MAX_VERTICAL_RADIUS_SHARE)
+        };
+        let max_radius = fit(bubbles.max_radius);
+        // The Tape gain magnifies every drawn disc after sizing, so the
+        // insets pad for the magnified largest disc, never the sized one.
+        let gain = bubbles.display_scale.get(BubbleScaleTarget::Tape);
+        let drawn_radius = fit(max_radius * gain);
+        let decorated = drawn_radius + bubble_halo_padding(drawn_radius) + bubbles.outline_width;
         let inset_px = decorated
             .min(width * MAX_DECORATED_INSET_SHARE)
-            .max(max_radius);
+            .max(drawn_radius);
         Self {
             max_radius,
             price_inset_px: decorated
                 .min(height * MAX_DECORATED_INSET_SHARE)
-                .max(max_radius),
+                .max(drawn_radius),
             inset_px,
             span_px: (width - 2.0 * inset_px).max(0.0),
+            display_gain: if max_radius > 0.0 {
+                drawn_radius / max_radius
+            } else {
+                gain
+            },
         }
     }
 

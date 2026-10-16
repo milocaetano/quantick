@@ -192,3 +192,32 @@ fn visible_tape_reference_ignores_hidden_whales_and_other_panes() {
     assert_eq!(scale.full_quantity, dec("1000"));
     assert!(scale.draw(dec("4")).1 < scale.draw(dec("1000")).1);
 }
+
+/// The Tape gain magnifies the drawn disc, so the time and price insets pad
+/// for the magnified disc; where the pane cannot fit it the held gain is
+/// lowered instead, and gain 1 resolves exactly what it always did.
+#[test]
+fn the_tape_insets_hold_the_magnified_largest_disc() {
+    let mut config = style();
+    config.bubbles.max_radius = 15.0;
+    config.bubbles.outline_width = 0.0;
+    let at = |gain: f32, width: f32| {
+        let mut bubbles = config.bubbles.clone();
+        bubbles.display_scale.tape = gain;
+        crate::projection::TapeHorizontalGeometry::resolve(width, 600.0, &bubbles)
+    };
+    let plain = at(1.0, 300.0);
+    assert_eq!(plain.display_gain, 1.0);
+    for gain in [1.37, 3.0] {
+        let geometry = at(gain, 300.0);
+        assert_eq!(geometry.max_radius, plain.max_radius, "sizing is untouched");
+        assert_eq!(geometry.display_gain, gain);
+        let drawn = geometry.max_radius * geometry.display_gain;
+        assert!(geometry.inset_px >= drawn && geometry.price_inset_px >= drawn);
+        assert!(geometry.inset_px > plain.inset_px);
+    }
+    let narrow = at(3.0, 60.0);
+    assert!(narrow.display_gain < 3.0, "a narrow pane holds less gain");
+    assert!(narrow.inset_px >= narrow.max_radius * narrow.display_gain);
+    assert_eq!(at(0.5, 300.0).display_gain, 0.5);
+}
