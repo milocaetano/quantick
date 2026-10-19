@@ -15,6 +15,13 @@ use crate::engine::{ProjectionRequest, VisibleOrderflow};
 use crate::projection::PendingTape;
 use crate::tape_clock::TapeClock;
 
+#[path = "pane_depth.rs"]
+mod depth;
+
+#[cfg(test)]
+#[path = "pane_depth_tests.rs"]
+mod depth_tests;
+
 /// What recording one print asks of the worker that publishes the tape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingPrint {
@@ -29,9 +36,12 @@ pub struct PendingPrint {
 #[derive(Default)]
 pub struct PaneTape {
     clock: TapeClock,
+    /// Preview freshness follows source time independently of lane geometry.
+    depth_clock: TapeClock,
     pending: PendingTape,
     /// The overlay frame last completed, while unpublished prints are drawn.
     frame: Option<Arc<VisibleOrderflow>>,
+    depth: depth::CachedDepthPreview,
 }
 
 impl PaneTape {
@@ -50,6 +60,7 @@ impl PaneTape {
     /// Advance a live tape by the host's monotonic instant; a pane without
     /// a native tape keeps no clock.
     pub fn follow_live(&mut self, native_tape: bool, applied_ms: Option<i64>, monotonic_ms: u64) {
+        self.depth_clock.live_at(applied_ms, monotonic_ms);
         if native_tape {
             self.clock.live_at(applied_ms, monotonic_ms);
         } else {
@@ -67,6 +78,8 @@ impl PaneTape {
         applied_ms: Option<i64>,
         next_unapplied_ms: Option<i64>,
     ) {
+        self.depth_clock
+            .replay_at(position_ms, applied_ms, next_unapplied_ms);
         if native_tape {
             self.clock
                 .replay_at(position_ms, applied_ms, next_unapplied_ms);
@@ -78,6 +91,7 @@ impl PaneTape {
     /// Another market: the clock starts over without an old anchor.
     pub fn reset_clock(&mut self) {
         self.clock.reset();
+        self.depth_clock.reset();
     }
 
     /// The prints the worker has not published yet.
@@ -95,6 +109,24 @@ impl PaneTape {
     #[must_use]
     pub fn frame(&self) -> Option<&Arc<VisibleOrderflow>> {
         self.frame.as_ref()
+    }
+
+    /// The frame this pane last drew for `published`
+    /// ([`complete_frame`](Self::complete_frame)): the overlay while
+    /// unpublished prints are drawn, else `published` with the verdict on its
+    /// current book the painter used. The cursor reads this one, so it never
+    /// reports a strip the painter no longer draws.
+    #[must_use]
+    pub fn drawn<'a>(
+        &'a self,
+        published: Option<&'a Arc<VisibleOrderflow>>,
+    ) -> Option<&'a Arc<VisibleOrderflow>> {
+        let published = published?;
+        Some(
+            self.frame
+                .as_ref()
+                .unwrap_or_else(|| self.depth.drawn(published)),
+        )
     }
 
     /// Every opening burst the source recorded, with those `published`
@@ -119,6 +151,7 @@ impl PaneTape {
     pub fn reset(&mut self) -> u64 {
         let epoch = self.pending.reset();
         self.frame = None;
+        self.depth = depth::CachedDepthPreview::default();
         epoch
     }
 
@@ -131,15 +164,19 @@ impl PaneTape {
         request: &ProjectionRequest,
         published: Option<&Arc<VisibleOrderflow>>,
     ) -> Option<Arc<VisibleOrderflow>> {
+        let published = self.depth.consume(
+            published,
+            request.lane_now_ms.or_else(|| self.depth_clock.now_ms()),
+        );
         if !config.immediate_tape() || self.pending.is_empty() {
             self.frame = None;
-            return published.cloned();
+            return published;
         }
         let frame = Arc::new(VisibleOrderflow::with_pending_overlay(
             &self.pending,
             config,
             request,
-            published.map(Arc::as_ref),
+            published.as_deref(),
         )?);
         self.frame = Some(Arc::clone(&frame));
         Some(frame)

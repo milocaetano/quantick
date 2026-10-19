@@ -30,8 +30,8 @@ pub async fn run_depth_with_reconnect<S: DepthSnapshotSource>(
     config: DepthSessionConfig,
     mut backoff: Backoff,
 ) {
-    let symbol = symbol.to_uppercase();
-    let url = depth_stream_url(ws_base_url, &symbol);
+    let symbol = config.market.display_symbol(symbol);
+    let url = depth_stream_url(ws_base_url, &config.market.wire_symbol(&symbol));
     let mut generation = config.initial_generation;
 
     loop {

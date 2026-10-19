@@ -6,11 +6,18 @@ use crate::{BubbleStyle, LiveLaneStyle};
 use quantick_engine::Trade;
 use rust_decimal::Decimal;
 use std::sync::Arc;
+mod carry;
+pub use carry::FlowTail;
 mod constants;
 use constants::{FLOW_MERGE_HEIGHT_PX, FLOW_MERGE_WIDTH_PX};
-pub use constants::{FLOW_REGION_WINDOW_MS, LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS};
+pub use constants::{
+    FLOW_REGION_WINDOW_MS, FLOW_SCALE_HOLD, LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS,
+};
 mod reading;
-pub use reading::caption_text;
+pub use reading::{
+    CaptionInk, caption_qualifications, caption_segments, caption_text, notes_segments,
+    placement_note, styled_caption_text,
+};
 mod source;
 pub use source::{FlowCoverage, FlowOpeningSelection, FlowTapeSource};
 mod stream;
@@ -19,19 +26,43 @@ pub use stream::{
     OwnedFlowExecution,
 };
 
-/// Production uses one common reference from the final visible regional groups.
+/// The quantity a FLOW sphere is sized against.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum FlowReference {
+    /// One common reference from the final visible regional groups.
     #[default]
     VisibleRegions,
-    /// Explicit fixture calibration; ordinary overflow still shrinks uniformly.
+    /// The pane's fixed reference (the tick spheres' preset value): no pan,
+    /// zoom or new print resizes a sphere, and a larger region caps at the
+    /// radius limit.
     Typed(Decimal),
+    /// Visible ordinary region maximum with a configured floor. This keeps
+    /// ordinary areas proportional when regions exceed the preset quantity.
+    VisibleRegionsAtLeast(Decimal),
 }
 impl FlowReference {
     pub fn typed(self) -> Option<Decimal> {
         match self {
             Self::VisibleRegions => None,
-            Self::Typed(value) => Some(value),
+            Self::Typed(value) | Self::VisibleRegionsAtLeast(value) => Some(value),
+        }
+    }
+
+    /// Whether a first daily region past the reference stops at the radius
+    /// limit like any region. A typed reference is the pane's one scale, so
+    /// it does; visible regions, floored or not, draw such a region's earned
+    /// area past the limit. The sphere's radius and the caption's note on it
+    /// both read this, so the note never claims an area the sphere did not
+    /// draw.
+    fn caps_oversized_opening(self) -> bool {
+        matches!(self, Self::Typed(_))
+    }
+}
+impl From<crate::TickBubbleStyle> for FlowReference {
+    fn from(style: crate::TickBubbleStyle) -> Self {
+        match style.reference_mode {
+            crate::TickReferenceMode::Fixed => Self::Typed(style.reference()),
+            crate::TickReferenceMode::VisibleMax => Self::VisibleRegionsAtLeast(style.reference()),
         }
     }
 }
@@ -42,6 +73,7 @@ pub enum FlowScaleBasis {
     VisibleOrdinaryRegionMax,
     OpeningOnlyFallback,
     TypedReference,
+    VisibleRegionMaxWithFloor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -152,9 +184,14 @@ pub struct FlowTapeFrame {
     pub loaded_executions: usize,
     /// Exclusive end of contiguous loaded coverage from requested_ordinals.start.
     pub computed_through_ordinal: usize,
+    /// Start of the loaded coverage that runs to `requested_ordinals.end`:
+    /// a newest-first fill has computed everything from here on.
+    pub covered_from_ordinal: usize,
     pub cache_limit_reached: bool,
     pub omitted_executions: usize,
+    /// Worker exclusions plus any additional current-camera presentation exclusions.
     pub off_axis_executions: usize,
+    /// Worker exclusions plus any additional current-camera presentation exclusions.
     pub offscreen_executions: usize,
     /// Admitted records with nonpositive quantity or an invalid tick denominator.
     pub ineligible_executions: usize,
@@ -300,6 +337,232 @@ pub fn project_flow_tape<'a>(
     )
 }
 
+/// The merge frame of a view: every group a disc of the fixed support
+/// radius, in the view's pixels.
+fn merge_frame(view: FlowTapeView) -> (BubbleStyle, DotSizing, TapeDotGeometry) {
+    (
+        BubbleStyle {
+            max_radius: view.merge_support_radius,
+            ..BubbleStyle::default()
+        },
+        DotSizing {
+            native_tape: true,
+            tape_column_px: 0.0,
+            candle_column_px: 0.0,
+            px_per_price: 0.0,
+            typed_full: view.reference.typed(),
+        },
+        TapeDotGeometry {
+            left_x: 0.0,
+            right_x: 1.0,
+            width_px: view.width_px,
+            height_px: view.height_px,
+        },
+    )
+}
+
+/// Where one group stands in a view before merging.
+enum Admission {
+    /// Off the price axis, with its executions.
+    OffAxis(usize),
+    /// Outside the painted clip, with its executions.
+    Offscreen(usize),
+    /// Merged with its region window's neighbours.
+    Mergeable,
+    /// An oversized native cell: it cannot merge, and stays out of the
+    /// neighbour index, where near-identical centroids would cause
+    /// quadratic rejection.
+    Standalone,
+}
+
+fn admit(group: &Group, view: FlowTapeView) -> Admission {
+    if !(0.0..=1.0).contains(&group.y()) {
+        return Admission::OffAxis(group.members.len());
+    }
+    let position = group.position_quantity / group.quantity();
+    if position < view.clip_left || position > view.clip_right {
+        Admission::Offscreen(group.members.len())
+    } else if group.hull.within_merge_limits() {
+        Admission::Mergeable
+    } else {
+        Admission::Standalone
+    }
+}
+
+/// The region window a group merges in.
+fn region_window(group: &Group) -> i64 {
+    group.first_timestamp_ms().div_euclid(FLOW_REGION_WINDOW_MS)
+}
+
+/// One region window's mergeable groups, merged.
+fn merge_window(window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
+    let (bubbles, sizing, geometry) = merge_frame(view);
+    collide(
+        window,
+        sizing,
+        &bubbles,
+        &LiveLaneStyle::default(),
+        geometry,
+        Decimal::ZERO,
+        false,
+    )
+    .0
+}
+
+/// A merged group as the sphere drawn against `effective_reference`;
+/// `exclusion` says whether opening regions are kept out of the scale. An
+/// oversized opening draws its earned area past the radius limit only over
+/// visible regions: a typed reference caps it like any region
+/// ([`FlowReference::caps_oversized_opening`]), and the caption says which.
+fn finish_group(
+    mut group: Group,
+    view: FlowTapeView,
+    effective_reference: Decimal,
+    exclusion: bool,
+) -> FlowTapeDot {
+    let quantity = group.quantity();
+    group.members.parts.sort_by_key(|part| part[0].ordinal);
+    let mut mark = group.moment.finish(effective_reference);
+    mark.folded_marks = if group.cells > 1 {
+        group.cells as u32
+    } else {
+        0
+    };
+    let mut dot = FlowTapeDot {
+        radius: 0.0,
+        opening_anchor: group.opening_anchor,
+        opening_oversized: false,
+        candle_position: group.position_quantity / quantity,
+        mark,
+        members: group.members,
+        first_slot: group.first_slot,
+        end_slot: group.end_slot,
+        opening_quantity: group.opening,
+        native_cells: group.cells,
+    };
+    resize_dot(&mut dot, view, effective_reference, exclusion);
+    dot
+}
+
+/// Paint an already consolidated region at the frame's common reference.
+/// The factual group, its membership and its center never change here.
+fn resize_dot(dot: &mut FlowTapeDot, view: FlowTapeView, reference: Decimal, exclusion: bool) {
+    dot.mark.size = super::normalized_area_size(dot.mark.quantity, reference);
+    dot.opening_oversized = exclusion && dot.opening_anchor && dot.mark.quantity > reference;
+    dot.radius = view.radius_limit
+        * if dot.opening_oversized && !view.reference.caps_oversized_opening() {
+            use rust_decimal::prelude::ToPrimitive as _;
+            (dot.mark.quantity.to_f64().unwrap_or_default() / reference.to_f64().unwrap_or(1.0))
+                .sqrt() as f32
+        } else {
+            dot.mark.size
+        };
+}
+
+impl FlowTapeFrame {
+    /// Repaint retained factual groups on a current camera. Selection happens
+    /// after grouping; the caller supplies only groups whose centers are visible.
+    /// This presentation copy never becomes input to merging or source retention.
+    #[must_use]
+    pub fn viewport_relative(
+        &self,
+        radius_limit: f32,
+        visible: impl FnMut(&FlowTapeDot) -> bool,
+    ) -> Self {
+        let mut frame = self.clone();
+        frame.dots.retain(visible);
+        frame.view.reference = FlowReference::VisibleRegions;
+        frame.view.radius_limit = radius_limit;
+        let full = frame.dots.iter().map(|dot| dot.mark.quantity).max();
+        let ordinary = frame
+            .dots
+            .iter()
+            .map(|dot| {
+                dot.mark.quantity
+                    - if frame.view.exclude_opening && dot.opening_anchor {
+                        dot.opening_quantity
+                    } else {
+                        Decimal::ZERO
+                    }
+            })
+            .max()
+            .unwrap_or_default();
+        let has_opening = frame.dots.iter().any(|dot| dot.opening_anchor);
+        frame.opening_exclusion_effective =
+            frame.view.exclude_opening && has_opening && ordinary > Decimal::ZERO;
+        frame.effective_reference = full.map(|full| {
+            if ordinary > Decimal::ZERO {
+                ordinary
+            } else {
+                full
+            }
+        });
+        frame.scale_basis = match frame.effective_reference {
+            None => FlowScaleBasis::Empty,
+            Some(_) if ordinary <= Decimal::ZERO => FlowScaleBasis::OpeningOnlyFallback,
+            Some(_) if frame.opening_exclusion_effective => {
+                FlowScaleBasis::VisibleOrdinaryRegionMax
+            }
+            Some(_) => FlowScaleBasis::VisibleRegionMax,
+        };
+        if let Some(reference) = frame.effective_reference {
+            for dot in &mut frame.dots {
+                resize_dot(
+                    dot,
+                    frame.view,
+                    reference,
+                    frame.opening_exclusion_effective,
+                );
+            }
+        }
+        frame.order_for_paint();
+        frame
+    }
+
+    /// Cached windows and carried history retain factual groups. A visible
+    /// floor mode sizes their complete publication against one common scale.
+    fn rescale_visible_floor(&mut self) {
+        let FlowReference::VisibleRegionsAtLeast(floor) = self.view.reference else {
+            return;
+        };
+        if self.dots.is_empty() {
+            return;
+        }
+        let visible = |dot: &&FlowTapeDot| {
+            dot.candle_position >= self.view.clip_left
+                && dot.candle_position <= self.view.clip_right
+                && dot.mark.price >= self.view.prices.low
+                && dot.mark.price <= self.view.prices.high
+        };
+        let reference = self
+            .dots
+            .iter()
+            .filter(visible)
+            .map(|dot| {
+                dot.mark.quantity
+                    - if self.view.exclude_opening && dot.opening_anchor {
+                        dot.opening_quantity
+                    } else {
+                        Decimal::ZERO
+                    }
+            })
+            .max()
+            .unwrap_or_default()
+            .max(floor);
+        self.effective_reference = Some(reference);
+        self.scale_basis = FlowScaleBasis::VisibleRegionMaxWithFloor;
+        self.opening_exclusion_effective = self.view.exclude_opening
+            && self
+                .dots
+                .iter()
+                .filter(visible)
+                .any(|dot| dot.opening_anchor);
+        for dot in &mut self.dots {
+            resize_dot(dot, self.view, reference, self.opening_exclusion_effective);
+        }
+    }
+}
+
 fn finish_groups(
     groups: Vec<Group>,
     view: FlowTapeView,
@@ -311,64 +574,27 @@ fn finish_groups(
     FlowScaleBasis,
     bool,
 ) {
-    let bubbles = BubbleStyle {
-        max_radius: view.merge_support_radius,
-        ..BubbleStyle::default()
-    };
-    let sizing = DotSizing {
-        native_tape: true,
-        tape_column_px: 0.0,
-        candle_column_px: 0.0,
-        px_per_price: 0.0,
-        typed_full: view.reference.typed(),
-    };
-    let geometry = TapeDotGeometry {
-        left_x: 0.0,
-        right_x: 1.0,
-        width_px: view.width_px,
-        height_px: view.height_px,
-    };
     let mut off_axis_executions = 0;
     let mut offscreen_executions = 0;
-    let (groups, mut standalone): (Vec<_>, Vec<_>) = groups
-        .into_iter()
-        .filter(|group| {
-            if !(0.0..=1.0).contains(&group.y()) {
-                off_axis_executions += group.members.len();
-                return false;
-            }
-            let position = group.position_quantity / group.quantity();
-            if position < view.clip_left || position > view.clip_right {
-                offscreen_executions += group.members.len();
-                return false;
-            }
-            true
-        })
-        // Oversized native cells cannot merge. Keep them out of the neighbour
-        // index, where near-identical centroids would cause quadratic rejection.
-        .partition(|group| group.hull.within_merge_limits());
     // Separate indexes bound neighbour work even when thousands of distant
     // time intervals occupy the same pixels. Rejecting only in permits_merge
     // would leave all those impossible neighbours in one growing index.
     let mut windows = std::collections::BTreeMap::<i64, Vec<Group>>::new();
+    let mut standalone = Vec::new();
     for group in groups {
-        windows
-            .entry(group.first_timestamp_ms().div_euclid(FLOW_REGION_WINDOW_MS))
-            .or_default()
-            .push(group);
+        match admit(&group, view) {
+            Admission::OffAxis(executions) => off_axis_executions += executions,
+            Admission::Offscreen(executions) => offscreen_executions += executions,
+            Admission::Mergeable => windows
+                .entry(region_window(&group))
+                .or_default()
+                .push(group),
+            Admission::Standalone => standalone.push(group),
+        }
     }
     let mut groups = Vec::new();
     for window in windows.into_values() {
-        let (merged, _) = collide(
-            window,
-            sizing,
-            &bubbles,
-            &LiveLaneStyle::default(),
-            geometry,
-            Decimal::ZERO,
-            false,
-        );
-        groups.extend(merged);
+        groups.extend(merge_window(window, view));
     }
     groups.append(&mut standalone);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
@@ -395,9 +621,17 @@ fn finish_groups(
         .unwrap_or_default();
     let has_opening = groups.iter().any(|group| group.opening_anchor);
     let (effective_reference, scale_basis, opening_exclusion_effective) = match view.reference {
+        // The pane's one scale: nothing on screen moves it. A region larger
+        // than the reference caps at the radius limit instead of shrinking
+        // every other sphere (`normalized_area_size` clamps the ratio).
         FlowReference::Typed(reference) => (
-            reference.max(ordinary_max),
+            reference,
             FlowScaleBasis::TypedReference,
+            view.exclude_opening && has_opening,
+        ),
+        FlowReference::VisibleRegionsAtLeast(reference) => (
+            reference.max(ordinary_max),
+            FlowScaleBasis::VisibleRegionMaxWithFloor,
             view.exclude_opening && has_opening,
         ),
         FlowReference::VisibleRegions if ordinary_max > Decimal::ZERO => {
@@ -416,38 +650,13 @@ fn finish_groups(
     };
     let dots = groups
         .into_iter()
-        .map(|mut group| {
-            let quantity = group.quantity();
-            let opening_oversized = opening_exclusion_effective
-                && group.opening_anchor
-                && quantity > effective_reference;
-            group.members.parts.sort_by_key(|part| part[0].ordinal);
-            let mut mark = group.moment.finish(effective_reference);
-            mark.folded_marks = if group.cells > 1 {
-                group.cells as u32
-            } else {
-                0
-            };
-            FlowTapeDot {
-                radius: view.radius_limit
-                    * if opening_oversized {
-                        use rust_decimal::prelude::ToPrimitive as _;
-                        (quantity.to_f64().unwrap_or_default()
-                            / effective_reference.to_f64().unwrap_or(1.0))
-                        .sqrt() as f32
-                    } else {
-                        super::normalized_area_size(quantity, effective_reference)
-                    },
-                opening_anchor: group.opening_anchor,
-                opening_oversized,
-                candle_position: group.position_quantity / quantity,
-                mark,
-                members: group.members,
-                first_slot: group.first_slot,
-                end_slot: group.end_slot,
-                opening_quantity: group.opening,
-                native_cells: group.cells,
-            }
+        .map(|group| {
+            finish_group(
+                group,
+                view,
+                effective_reference,
+                opening_exclusion_effective,
+            )
         })
         .collect();
     (

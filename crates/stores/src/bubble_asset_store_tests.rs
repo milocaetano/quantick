@@ -70,10 +70,10 @@ fn a_win_edit_is_filed_for_win_alone_and_survives_a_restart() {
 
     // BTC never saw any of it.
     let (btc, settings) = bind(&reread, "BTCUSDT");
-    assert_eq!(btc.source(), AssetSource::Default);
-    assert_eq!(settings.look.name, bubble_presets::embedded().active);
+    assert_eq!(btc.source(), AssetSource::Declared);
+    assert_eq!(settings.look.name, "Binance BTC Spot spheres");
     assert!(!settings.candle_aggression && !settings.flow_ignore_opening);
-    assert!(!settings.look.live_lane.tape_only && !settings.look.live_lane.native_tape);
+    assert!(!settings.look.live_lane.tape_only && settings.look.live_lane.native_tape);
 }
 
 /// Review round 1, finding 7: when the file cannot be read or written the
@@ -207,7 +207,7 @@ fn a_presets_reload_in_one_view_refreshes_every_view() {
     assert_eq!(there.take_reloaded_presets(), None, "nothing reloaded yet");
 
     let mut reloaded = presets.clone();
-    let active = reloaded.active.clone();
+    let active = opened.look.name.clone();
     let look = reloaded
         .presets
         .iter_mut()
@@ -285,7 +285,7 @@ fn the_later_filing_wins_and_an_import_wins_over_an_unfiled_edit() {
     let mut file = AssetBubblesFile::default();
     file.assets.insert("WIN*".to_owned(), opened.clone());
     save_to(&path, &file).expect("an imported store");
-    store.borrow_mut().reload();
+    store.borrow_mut().reload(&shipped_config());
     let mut late = second;
     late.look.bubbles.max_radius = 26.0;
     b.note_edit();
@@ -311,7 +311,7 @@ fn a_reloaded_store_reaches_every_bound_view() {
     file.assets.insert("WIN*".to_owned(), imported.clone());
     save_to(&path, &file).expect("an imported store");
 
-    store.borrow_mut().reload();
+    store.borrow_mut().reload(&shipped_config());
     let adopted = win
         .adoption()
         .expect("the import reaches the view")

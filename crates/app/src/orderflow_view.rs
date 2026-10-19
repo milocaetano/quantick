@@ -20,13 +20,14 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
-use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout};
+use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout, RenderContext};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
 #[cfg(test)]
 #[path = "orderflow_view/tests/asset_look_tests.rs"]
 mod asset_look_tests;
+mod bubble_scale;
 mod constants;
 pub(crate) mod flow_execution;
 mod frame;
@@ -82,6 +83,7 @@ pub struct LiveLane {
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
     flow_execution: flow_execution::FlowExecutionView,
+    flow_paint: std::cell::RefCell<quantick_chart::flow_execution::FlowPaintState>,
     symbol: String,
     /// UI mirror of the engine configuration. The engine owns
     /// `price_grouping` (auto-base can rewrite it); the mirror adopts engine
@@ -133,6 +135,7 @@ impl OrderflowView {
         let base_grouping = config.price_grouping;
         Self {
             flow_execution: Default::default(),
+            flow_paint: Default::default(),
             worker: BookWorker::spawn(&symbol),
             symbol,
             config,
@@ -186,17 +189,12 @@ impl OrderflowView {
     pub(crate) fn bubbles_snapshot(
         &self,
     ) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
-        quantick_control_schema::orderflow::BubblesStateSnapshot::from_config(
+        quantick_control_schema::bubble_preset::snapshot(
             self.cached_config(),
             self.cached_health().floored_quantity,
             self.dot_scale(),
             &self.recorded_opening_bursts(),
-            self.look.asset().map(|binding| {
-                quantick_control_schema::orderflow::BubbleAssetSnapshot::of(
-                    binding,
-                    self.look.look_name(),
-                )
-            }),
+            &self.look,
         )
     }
 
@@ -251,9 +249,9 @@ impl OrderflowView {
         &self.config
     }
 
-    /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart most
-    /// recently painted. Projection and hit testing share [`ProjectedLayout`]; the lookup is
-    /// O(visible cells) and runs only for an explicit cursor snapshot.
+    /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart
+    /// most recently painted ([`PaneTape::drawn`]). Projection and hit testing share
+    /// [`ProjectedLayout`]; the lookup is O(visible cells), only for a cursor snapshot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_flow_cell_at(
         &self,
@@ -264,7 +262,7 @@ impl OrderflowView {
         inverted: bool,
         position: egui::Pos2,
     ) -> Option<FlowCellHit> {
-        let frame = self.published.frame.as_deref()?;
+        let frame = &**self.pane_tape.drawn(self.published.frame.as_ref())?;
         let layout = ProjectedLayout::new(
             chart_rect,
             viewport,
@@ -294,47 +292,38 @@ impl OrderflowView {
             Some(heat) => (heat, layout.with_lane_only()),
             None => (&frame.projection, layout),
         };
+        let layout = RenderContext::new(projection, layout, &style).layout;
+        let preview = |cell: &quantick_orderflow::HeatmapCell| {
+            quantick_orderflow::projection::current_book_preview(
+                cell,
+                quantick_orderflow::projection::forward_book_preview(
+                    &self.config.live_lane,
+                    frame.current_book_live,
+                ),
+            ) && layout
+                .current_book_preview_rect(cell.y0, cell.y1)
+                .contains(position)
+        };
         let cell = projection.cells.iter().rev().find(|cell| {
             layout
                 .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
                 .contains(position)
+                || preview(cell)
         })?;
 
-        let regions = frame.slot_count.max(1);
-        let has_lane = frame.projection.live_now_x.is_some();
-        let bar_regions = regions.saturating_sub(usize::from(has_lane));
-        if bar_regions == 0 {
-            return None;
-        }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let first_region = (cell.x0.clamp(0.0, 1.0) * regions as f64).floor() as usize;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let after_region = (cell.x1.clamp(0.0, 1.0) * regions as f64).ceil() as usize;
-        let touches_lane = has_lane && after_region > bar_regions;
-        // A cell that lies wholly in the live lane has no closed bar under it;
-        // an empty range at the lane boundary says so, instead of borrowing
-        // the last bar's slot and calling it the cell's.
-        let (first_bar_region, after_bar_region) = if first_region >= bar_regions {
-            (bar_regions, bar_regions)
-        } else {
-            (
-                first_region,
-                after_region.max(first_region + 1).min(bar_regions),
-            )
-        };
-
-        Some(FlowCellHit {
-            generation: cell.generation,
-            side: cell.side,
-            price_bucket: cell.price_bucket,
-            price_span: projection.effective_grouping.bucket_width,
-            quantity: cell.quantity,
-            start_slot: frame.first_bar_index + first_bar_region,
-            end_slot_exclusive: frame.first_bar_index + after_bar_region,
-            live_lane: touches_lane && held.is_none(),
-            held_tape_end_ms: held.as_ref().and(self.tape_end.past_ms()),
-            carried: cell.carried,
-        })
+        FlowCellHit::from_cell(
+            cell,
+            projection.effective_grouping.bucket_width,
+            quantick_orderflow::projection::CellHitContext {
+                first_bar_index: frame.first_bar_index,
+                slot_count: frame.slot_count,
+                has_lane: frame.projection.live_now_x.is_some(),
+                held_tape_end_ms: held.as_ref().and(self.tape_end.past_ms()),
+                held: held.is_some(),
+                current_book_preview: preview(cell),
+                current_book_source: projection.current_book,
+            },
+        )
     }
 
     /// Pull the newest worker snapshot into this frame's mirror. Cheap: one
@@ -998,11 +987,14 @@ impl OrderflowView {
             return false;
         }
         // Explicit display changes begin a new epoch; advancing the clock,
-        // changing book generations or following prices never clears it.
-        self.tape_rebuilds
-            .get_mut()
-            .start_over(self.tape_dots.get_mut());
-        self.past_dots.get_mut().clear();
+        // changing book generations, following prices or resizing the lane
+        // never clears it.
+        if !self.config.same_tape_grouping(&before) {
+            self.tape_rebuilds
+                .get_mut()
+                .start_over(self.tape_dots.get_mut());
+            self.past_dots.get_mut().clear();
+        }
         if self.config.native_tape() != before.native_tape()
             || self.config.volume_dots.enabled != before.volume_dots.enabled
         {
@@ -1106,10 +1098,22 @@ impl OrderflowView {
         self.worker.send(BookCommand::TapeEpoch(epoch));
     }
 
-    /// Apply the stored preset called `name`, reporting whether it exists
-    /// ([`BubbleLook::apply_preset`]).
-    pub(crate) fn apply_preset(&mut self, name: &str) -> bool {
-        self.look.apply_preset(name, &mut self.config)
+    pub(crate) fn apply_named_preset(&mut self, name: &str, spheres: bool) -> Result<bool, String> {
+        let before = self.config.clone();
+        let changed = self
+            .look
+            .apply_named_preset(name, &mut self.config, spheres)?;
+        if changed {
+            self.commit_config_changes(before);
+        }
+        Ok(changed)
+    }
+
+    pub(crate) fn bubble_presets_page(
+        &self,
+        input: &quantick_control_schema::bubble_preset::ListInput,
+    ) -> Result<quantick_control_schema::bubble_preset::ListResult, String> {
+        quantick_control_schema::bubble_preset::page(input, &self.look)
     }
 
     /// Put `settings` on screen as the asset `binding` names. The flow
@@ -1158,6 +1162,15 @@ impl OrderflowView {
         self.flow_execution
             .set_ignore_opening(settings.flow_ignore_opening);
         self.apply_config(before);
+    }
+}
+
+#[cfg(test)]
+/// The whole-look pick as the settings picker makes it
+/// ([`BubbleLook::apply_preset`]), for tests.
+impl OrderflowView {
+    pub(crate) fn apply_preset(&mut self, name: &str, spheres: bool) -> bool {
+        self.look.apply_preset(name, &mut self.config, spheres)
     }
 }
 
@@ -1373,7 +1386,7 @@ mod tests {
         let frame = |view: &mut OrderflowView| {
             ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_bubbles_tab(ui);
+                    view.draw_bubbles_tab(ui, true);
                     view.draw_l2_tab(ui);
                 });
             })
@@ -1442,7 +1455,7 @@ mod tests {
             };
             ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_bubbles_tab(ui);
+                    view.draw_bubbles_tab(ui, true);
                 });
             })
         };
@@ -1503,6 +1516,7 @@ mod tests {
         let mut presets = embedded();
         presets.upsert(BubblePreset {
             name: "wide".to_owned(),
+            tick_bubbles: None,
             cluster_ms: 100,
             dust_merge_ms: 3_000,
             candle_summary: true,
@@ -1527,6 +1541,9 @@ mod tests {
                 show_depth: true,
                 show_aggressions: true,
                 native_tape: false,
+                depth_time_averaging: false,
+                forward_book_preview: false,
+                stable_size: false,
                 tape_only: false,
             },
         });
@@ -1534,7 +1551,7 @@ mod tests {
             (presets, PresetSource::Embedded, None),
             &mut HeatmapConfig::default(),
         );
-        assert!(view.apply_preset("wide"), "a stored name applies");
+        assert!(view.apply_preset("wide", false), "a stored name applies");
         assert_eq!(view.config.bubbles.max_radius, 42.0);
         assert_eq!(view.config.bubble_cluster_ms, 100);
         assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
@@ -1553,7 +1570,7 @@ mod tests {
 
         // An unknown name changes nothing at all, and says so.
         let after = view.config.clone();
-        assert!(!view.apply_preset("nope"));
+        assert!(!view.apply_preset("nope", false));
         assert_eq!(view.config, after);
         assert_eq!(view.look.look_name(), "wide");
     }
@@ -1727,6 +1744,150 @@ mod tests {
         assert_eq!(hit.start_slot, 0);
         assert_eq!(hit.end_slot_exclusive, 1);
         assert!(!hit.live_lane);
+    }
+
+    #[test]
+    fn forward_current_book_preview_pointer_keeps_exact_quantity_and_orientation() {
+        // A lane that asks for it previews the current book in the strip,
+        // with depth averaging on or off.
+        for (native, averaging) in [(false, true), (true, true), (false, false), (true, false)] {
+            let mut view = OrderflowView::new("BTCUSDT");
+            view.edit_config(|config| {
+                config.live_lane.depth_time_averaging = averaging;
+                config.live_lane.forward_book_preview = true;
+                config.live_lane.native_tape = native;
+            });
+
+            view.set_enabled(true, 10);
+            view.handle_depth_event(snapshot_event(10));
+            view.set_replay_clock_at(1_100, Some(1_100), None);
+            let bars = [bar(900, 1_100)];
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None,
+            );
+            view.flush_for_test();
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None,
+            );
+            let frame = view.published.frame.as_ref().unwrap();
+            let cell = frame
+                .projection
+                .cells
+                .iter()
+                .find(|cell| cell.current_book && cell.side == quantick_orderflow::RestingSide::Bid)
+                .unwrap();
+            let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
+            let mut viewport = Viewport::new();
+            viewport.pan_pixels(-160.0, 1);
+            for inverted in [false, true] {
+                let layout = ProjectedLayout::new(
+                    chart,
+                    &viewport,
+                    1,
+                    frame.first_bar_index,
+                    frame.slot_count,
+                    300.0,
+                )
+                .with_inverted(inverted);
+                let position = layout.current_book_preview_rect(cell.y0, cell.y1).center();
+                let hit = view
+                    .control_flow_cell_at(chart, &viewport, 1, 300.0, inverted, position)
+                    .unwrap();
+                assert!(hit.current_book_preview, "averaging {averaging}");
+                assert!(!hit.time_averaged);
+                assert!(!hit.carried, "a current book is never a carry");
+                assert_eq!(hit.quantity, Decimal::from(5));
+                assert_eq!(hit.generation, 10);
+                assert_eq!(hit.side, cell.side);
+                assert_eq!(hit.current_book_source, frame.projection.current_book);
+            }
+        }
+    }
+
+    /// The cursor reads the strip the painter drew: once the pane's clock is
+    /// past the current book's carry, neither the paint nor the readback
+    /// shows the preview, before the worker republishes anything.
+    #[test]
+    fn the_pointer_and_the_paint_agree_on_a_current_book_gone_stale() {
+        for averaging in [false, true] {
+            let mut view = OrderflowView::new("BTCUSDT");
+            view.edit_config(|config| {
+                config.live_lane.depth_time_averaging = averaging;
+                config.live_lane.forward_book_preview = true;
+            });
+            view.set_enabled(true, 10);
+            view.handle_depth_event(snapshot_event(10));
+            view.set_replay_clock_at(1_100, Some(1_100), None);
+            let bars = [bar(900, 1_100)];
+            let project = |view: &mut OrderflowView| {
+                let timeline = visible_timeline(&bars);
+                view.project_visible(timeline, true, true, None, (98.0, 102.0), None)
+            };
+            project(&mut view);
+            view.flush_for_test();
+            let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
+            let mut viewport = Viewport::new();
+            viewport.pan_pixels(-160.0, 1);
+            // Whether the painter previewed the book in the strip, read from
+            // its caption (the fill and the caption follow the same verdict;
+            // this one-level book is too thin to tint), and whether the cursor
+            // over a current row's strip reads a preview.
+            let strip =
+                |view: &OrderflowView, frame: &quantick_orderflow::engine::VisibleOrderflow| {
+                    let cell = frame
+                        .projection
+                        .cells
+                        .iter()
+                        .find(|cell| cell.current_book)
+                        .expect("a current row");
+                    let layout = ProjectedLayout::new(
+                        chart,
+                        &viewport,
+                        1,
+                        frame.first_bar_index,
+                        frame.slot_count,
+                        300.0,
+                    );
+                    let preview = layout.current_book_preview_rect(cell.y0, cell.y1);
+                    assert!(preview.is_positive());
+                    let output = egui::Context::default().run(egui::RawInput::default(), |ctx| {
+                        let painter = ctx.layer_painter(egui::LayerId::background());
+                        let background = egui::Color32::BLACK;
+                        view.draw_background(
+                            &painter, chart, &viewport, 1, frame, background, 300.0, false,
+                        );
+                    });
+                    let painted = format!("{:?}", output.shapes).contains("Current book preview");
+                    let read = view
+                        .control_flow_cell_at(chart, &viewport, 1, 300.0, false, preview.center())
+                        .is_some_and(|hit| hit.current_book_preview);
+                    (painted, read)
+                };
+
+            let live = project(&mut view).expect("published frame");
+            assert!(live.current_book_live);
+            assert_eq!(strip(&view, &live), (true, true), "averaging {averaging}");
+
+            let stale_ms = 1_100 + quantick_orderflow::projection::BOOK_CARRY_MAX_MS + 1_000;
+            view.set_replay_clock_at(stale_ms, Some(1_100), None);
+            let stale = project(&mut view).expect("the same publication, drawn stale");
+            assert!(!stale.current_book_live);
+            assert_eq!(
+                strip(&view, &stale),
+                (false, false),
+                "averaging {averaging}: the cursor reads the strip the painter drew"
+            );
+        }
     }
 
     /// Dragging the divider is the width slider by another route, and it stops
@@ -2214,6 +2375,7 @@ mod tests {
                             egui::Color32::BLACK,
                             0.0,
                             crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
+                            None,
                         );
                     } else {
                         view.draw_aggressions(
@@ -2226,6 +2388,7 @@ mod tests {
                             0.0,
                             false,
                             (90.0, 110.0),
+                            true,
                         );
                     }
                 });

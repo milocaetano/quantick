@@ -38,11 +38,81 @@ impl FlowTapeFrame {
     }
 }
 
+/// How a caption segment is inked; the painter maps it to its colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptionInk {
+    Muted,
+    Buy,
+    Sell,
+}
+
+/// The FLOW caption as inked segments: its name, the Buy / Sell key while
+/// the legend shows, where its discs are drawn, then the detail. `spheres`
+/// is `Some` when tick spheres are drawn, holding the quantity unit the
+/// asset's config mode names, if it names one.
+#[must_use]
+pub fn caption_segments(
+    frame: Option<&FlowTapeFrame>,
+    progress: super::FlowProgress,
+    legend_visible: bool,
+    spheres: Option<Option<&str>>,
+) -> Vec<(String, CaptionInk)> {
+    let mut segments = vec![("FLOW".to_owned(), CaptionInk::Muted)];
+    if legend_visible {
+        segments.extend([
+            (" \u{00b7} ".to_owned(), CaptionInk::Muted),
+            ("Buy".to_owned(), CaptionInk::Buy),
+            (" / ".to_owned(), CaptionInk::Muted),
+            ("Sell".to_owned(), CaptionInk::Sell),
+        ]);
+    }
+    let tick = spheres.is_some();
+    segments.push((placement_note(tick).to_owned(), CaptionInk::Muted));
+    let detail = styled_caption_text(frame, progress, legend_visible, tick, spheres.flatten());
+    segments.extend(detail.map(|detail| (format!(" | {detail}"), CaptionInk::Muted)));
+    segments
+}
+
+/// What stands in for a caption that cannot be placed: its name and the
+/// notes it may never drop ([`caption_qualifications`]); none without notes.
+#[must_use]
+pub fn notes_segments(
+    frame: Option<&FlowTapeFrame>,
+    progress: super::FlowProgress,
+) -> Option<Vec<(String, CaptionInk)>> {
+    let notes = caption_qualifications(frame, progress)?;
+    Some(vec![(format!("FLOW | {notes}"), CaptionInk::Muted)])
+}
+
+/// Where the caption's discs are drawn, after the Buy / Sell key: regional
+/// FLOW sits at a fixed offset up and left of its execution so candles stay
+/// readable; tick spheres stand on their executions.
+#[must_use]
+pub fn placement_note(tick_spheres: bool) -> &'static str {
+    if tick_spheres {
+        " \u{00b7} spheres at executions"
+    } else {
+        " \u{00b7} offset \u{2196}"
+    }
+}
+
 /// Current viewport calibration and honest progress/opening qualifications.
 pub fn caption_text(
     frame: Option<&FlowTapeFrame>,
     progress: super::FlowProgress,
     legend_visible: bool,
+) -> Option<String> {
+    styled_caption_text(frame, progress, legend_visible, false, None)
+}
+
+/// [`caption_text`] for the look drawn: tick spheres count in `unit`, the
+/// quantity unit the asset's config mode names, and claim none without one.
+pub fn styled_caption_text(
+    frame: Option<&FlowTapeFrame>,
+    progress: super::FlowProgress,
+    legend_visible: bool,
+    tick_spheres: bool,
+    unit: Option<&str>,
 ) -> Option<String> {
     let mut hints = Vec::new();
     if legend_visible {
@@ -63,8 +133,30 @@ pub fn caption_text(
                     },
                 ),
         );
-        hints.push("brightness rises with regional volume".to_owned());
+        hints.push(match (tick_spheres, unit) {
+            (true, Some(unit)) => format!("quantity in {unit}; sphere area follows gross volume"),
+            (true, None) => "sphere area follows gross volume".to_owned(),
+            (false, _) => "brightness rises with regional volume".to_owned(),
+        });
     }
+    hints.extend(qualifications(frame, progress));
+    (!hints.is_empty()).then(|| hints.join(" | "))
+}
+
+/// The notes a FLOW caption may never drop, without its key: volume still
+/// updating or partial, records left out, and how the opening is scaled. A
+/// caption that cannot be placed still shows these.
+#[must_use]
+pub fn caption_qualifications(
+    frame: Option<&FlowTapeFrame>,
+    progress: super::FlowProgress,
+) -> Option<String> {
+    let notes = qualifications(frame, progress);
+    (!notes.is_empty()).then(|| notes.join(" | "))
+}
+
+fn qualifications(frame: Option<&FlowTapeFrame>, progress: super::FlowProgress) -> Vec<String> {
+    let mut hints = Vec::new();
     if progress.pending {
         hints.push(
             if frame.is_some_and(|f| f.cache_limit_reached) {
@@ -90,11 +182,19 @@ pub fn caption_text(
             },
         );
         if count > 0 {
+            // What the spheres drew: the earned area over visible regions,
+            // the radius limit's over a typed reference.
+            let area = if frame.view.reference.caps_oversized_opening() {
+                "capped at the radius limit"
+            } else {
+                "proportional"
+            };
             hints.push(format!(
-                "{} first daily regions: total {}, recorded opening {} (faint area proportional)",
+                "{} first daily regions: total {}, recorded opening {} (faint area {})",
                 count,
                 quantick_engine::display::display_decimal(total),
-                quantick_engine::display::display_decimal(opening)
+                quantick_engine::display::display_decimal(opening),
+                area
             ));
         }
         if frame.opening_exclusion_effective {
@@ -103,5 +203,5 @@ pub fn caption_text(
             hints.push("Opening-only scale fallback".to_owned());
         }
     }
-    (!hints.is_empty()).then(|| hints.join(" | "))
+    hints
 }

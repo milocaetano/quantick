@@ -58,7 +58,15 @@ impl ClusteringSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let config = self.config;
         let native_tape = config.native_tape() && config.volume_dots.enabled;
-        if native_tape {
+        let viewport_scale = native_tape && config.bubbles.viewport_scale.is_some();
+        let fixed_tape = native_tape
+            && config.live_lane.stable_size
+            && config.bubbles.size_reference == BubbleSizeReference::Fixed;
+        if viewport_scale {
+            ui.small("Tape bubble areas follow the largest visible group. Zoom scales every bubble smoothly together; quantities and buy/sell proportions stay exact.");
+        } else if fixed_tape && !config.volume_dots.auto_full {
+            ui.small("Tape sizes grow with quantity up to the full-size amount below. Small prints keep a visible minimum size. Closed groups keep their sizes as trades arrive or the view changes.");
+        } else if native_tape {
             ui.small("Native tape: 100 ms and one price tick before nearby dots join at their quantity-weighted time and price. Automatic sizing uses the largest visible dot; area follows volume. Candle aggression has its own scale.");
         } else {
             ui.horizontal(|ui| {
@@ -99,16 +107,23 @@ impl ClusteringSection<'_> {
             "fold same-side bubbles landing in a price region this many rows tall into one bubble at their volume-weighted price — aggression read per zone, the Bookmap way, instead of one mark per row. Quantities, ids and matched evidence are summed exactly; buy and sell regions stay separate marks",
         );
         }
-        if config.volume_dots.enabled {
+        if config.volume_dots.enabled && !viewport_scale {
             ui.horizontal(|ui| {
+                let quantity = if fixed_tape {
+                    &mut config.bubbles.size_reference_quantity
+                } else {
+                    &mut config.volume_dots.full_quantity
+                };
                 let typed = ui
                     .add(
-                        egui::DragValue::new(&mut config.volume_dots.full_quantity)
+                        egui::DragValue::new(quantity)
                             .range(DOT_FULL_QUANTITY_RANGE)
                             .speed(DOT_FULL_QUANTITY_DRAG_SPEED)
-                            .prefix("dot full size qty "),
+                            .prefix(if fixed_tape { "Tape full size qty " } else { "dot full size qty " }),
                     )
-                    .on_hover_text(if native_tape {
+                    .on_hover_text(if fixed_tape {
+                        "quantity drawn at the largest Tape radius, in the symbol's units. Larger quantities share that radius. Typing a value turns auto off. The fixed scale keeps closed group sizes through arrivals, zoom and pan."
+                    } else if native_tape {
                         "contracts a tape dot holds at the largest radius; area follows quantity below it. Typing a value turns auto off. Candle aggression keeps its own scale."
                     } else {
                         "contracts a volume dot holds at the largest radius; area follows quantity below it, on both panes. Typing a value turns auto off"
@@ -321,6 +336,7 @@ fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) -
 pub(super) struct SizePlacementSection<'a> {
     pub(super) bubbles: &'a mut BubbleStyle,
     pub(super) native_tape: bool,
+    pub(super) fixed_tape_size: bool,
 }
 
 impl SizePlacementSection<'_> {
@@ -331,7 +347,7 @@ impl SizePlacementSection<'_> {
             .default_open(true)
             .show(ui, |ui| {
                 render_style_rows(ui, bubbles);
-                size_rows(ui, bubbles, self.native_tape);
+                size_rows(ui, bubbles, self.native_tape, self.fixed_tape_size);
                 finish_rows(ui, bubbles, self.native_tape);
             });
     }
@@ -378,12 +394,23 @@ fn render_style_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle) {
 }
 
 /// The radius range, what quantity fills it, and the display floor.
-fn size_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle, native_tape: bool) {
-    if !native_tape {
+fn size_rows(
+    ui: &mut egui::Ui,
+    bubbles: &mut BubbleStyle,
+    native_tape: bool,
+    fixed_tape_size: bool,
+) {
+    let viewport_scale = native_tape && bubbles.viewport_scale.is_some();
+    let fixed_tape_size = fixed_tape_size && !viewport_scale;
+    if !native_tape || fixed_tape_size {
         ui.add(
             egui::Slider::new(&mut bubbles.min_radius, MIN_RADIUS_RANGE).text("smallest print px"),
         )
-        .on_hover_text("floor radius, so the quietest print is still a visible dot");
+        .on_hover_text(if fixed_tape_size {
+            "minimum visible radius; bubble size continues increasing with quantity up to the full-size amount"
+        } else {
+            "floor radius, so the quietest print is still a visible dot"
+        });
     }
     ui.add(
         egui::Slider::new(
@@ -392,7 +419,11 @@ fn size_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle, native_tape: bool) {
         )
         .text("biggest print px"),
     )
-    .on_hover_text(if native_tape {
+    .on_hover_text(if viewport_scale {
+        "largest visible group's radius envelope; zoom adjusts every radius smoothly together and areas remain proportional to visible volume"
+    } else if fixed_tape_size {
+        "radius at the Tape full-size quantity; larger quantities share this maximum. The fixed quantity scale keeps closed group sizes through arrivals, zoom and pan."
+    } else if native_tape {
         "maximum dot radius; dots may shrink together to leave room between neighbours. Their areas stay proportional to volume."
     } else {
         "radius of a full-size print; bubble *area* stays proportional to \

@@ -20,6 +20,12 @@ pub(crate) const FLOW_MERGE_HEIGHT_PX: f64 = 32.0;
 /// of the native 100 ms cell keeps facts whole.
 pub const FLOW_REGION_WINDOW_MS: i64 = 1_000;
 
+/// Tick spheres merge at a held price scale (pixels per price unit): the
+/// held scale is kept while the live one stays within this factor of it, so
+/// a pan or an axis fit never regroups a sphere; leaving the band is a zoom
+/// step, which does.
+pub const FLOW_SCALE_HOLD: f64 = 1.5;
+
 /// Start ordinary-region placement and gradual emphasis at a quarter of the
 /// reference: the reference quantity is divided by this.
 pub const LARGE_REGION_REFERENCE_DIVISOR: u32 = 4;
@@ -28,20 +34,28 @@ pub const LARGE_REGION_REFERENCE_DIVISOR: u32 = 4;
 /// candles while the retained source stays bounded.
 pub(crate) const KEEP_MARGIN_SLOTS: usize = 32;
 
-/// Executions in the first source packet, and the least
-/// growth a cold fill waits for before its first partial publication.
+/// Executions in the first source packet, captured newest first, and the
+/// least growth of older history a cold fill waits for before its next
+/// partial publication.
 pub(crate) const SOURCE_CHUNK: usize = 2048;
 
 /// Cold admission grows after its first useful partial, capped at eight base
 /// packets per frame. Source capture stays bounded even for a whole-day view.
 pub(crate) const MAX_SOURCE_CHUNK: usize = 8 * SOURCE_CHUNK;
 
+/// Source packets captured a frame: the newest gap — on a busy tape the
+/// prints since the last frame — and the next one back, so a print before
+/// every frame never starves the history behind it. With packets growing to
+/// [`MAX_SOURCE_CHUNK`], history of `n` executions is captured within about
+/// `n / MAX_SOURCE_CHUNK + 4` frames however busy the tape stays.
+pub(crate) const CAPTURES_PER_FRAME: usize = 2;
+
 /// A fresh partial publication starts once the loaded source falls under
 /// the last publication's count divided by this: substantial eviction, not
 /// a small live pan.
 pub(crate) const EVICTION_RESET_DIVISOR: usize = 2;
 
-/// Cold-fill publications happen at geometric milestones: the loaded source
-/// must reach the last published count times this. Bounds total cold-fill
-/// projection work.
+/// Older history a cold fill adds is published at geometric milestones: the
+/// loaded source must reach the last published count times this. Bounds
+/// total cold-fill projection work; a newer print never waits for one.
 pub(crate) const PUBLICATION_GROWTH_FACTOR: usize = 2;

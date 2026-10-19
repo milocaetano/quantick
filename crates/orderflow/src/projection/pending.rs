@@ -430,6 +430,7 @@ fn without_live_aggressions(frame: &HeatmapProjection) -> HeatmapProjection {
         floored_quantity: frame.floored_quantity,
         summarized: frame.summarized,
         cells: Arc::clone(&frame.cells),
+        current_book: frame.current_book,
         aggressions: frame
             .aggressions
             .iter()

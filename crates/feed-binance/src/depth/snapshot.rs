@@ -10,6 +10,10 @@ use super::wire::{DepthSnapshot, DepthWireError, parse_snapshot};
 /// Binance's public REST base URL for current Spot depth.
 pub const BINANCE_DEPTH_REST_BASE: &str = "https://api.binance.com";
 
+/// How long one snapshot request may take before the depth socket gives up
+/// on it; each depth (re)connect waits on one.
+const SNAPSHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Maximum number of levels Binance returns per side.
 pub const MAX_DEPTH_LIMIT: u16 = 5_000;
 
@@ -27,6 +31,8 @@ pub enum DepthSnapshotError {
     },
     /// Successful response with an invalid depth payload.
     Decode(DepthWireError),
+    /// Invalid or absent instrument price-step metadata.
+    Metadata(String),
 }
 
 impl std::fmt::Display for DepthSnapshotError {
@@ -37,6 +43,7 @@ impl std::fmt::Display for DepthSnapshotError {
                 write!(f, "depth snapshot HTTP {status}: {body}")
             }
             Self::Decode(error) => write!(f, "depth snapshot decode error: {error}"),
+            Self::Metadata(error) => write!(f, "depth metadata error: {error}"),
         }
     }
 }
@@ -46,6 +53,18 @@ impl std::error::Error for DepthSnapshotError {}
 /// A source of current Binance-style depth snapshots.
 #[allow(async_fn_in_trait)]
 pub trait DepthSnapshotSource {
+    /// Optional exact venue price step, fetched once per socket generation.
+    /// Sources without instrument metadata retain their existing behavior.
+    ///
+    /// # Errors
+    /// Returns transport, HTTP-status or invalid metadata errors.
+    async fn fetch_price_step(
+        &self,
+        _symbol: &str,
+    ) -> Result<Option<rust_decimal::Decimal>, DepthSnapshotError> {
+        Ok(None)
+    }
+
     /// Fetch up to `limit` current levels per side for `symbol`.
     ///
     /// # Errors
@@ -63,6 +82,7 @@ pub trait DepthSnapshotSource {
 pub struct BinanceDepthHttp {
     base_url: String,
     client: reqwest::Client,
+    market: crate::BinanceMarket,
 }
 
 impl BinanceDepthHttp {
@@ -75,9 +95,22 @@ impl BinanceDepthHttp {
     /// Source pointing at a custom base URL.
     #[must_use]
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
+        Self::with_market_base(crate::BinanceMarket::Spot, base_url)
+    }
+
+    /// Public depth source for this market.
+    #[must_use]
+    pub fn for_market(market: crate::BinanceMarket) -> Self {
+        Self::with_market_base(market, market.rest_base())
+    }
+
+    /// Market routing with a custom origin for transport fixtures.
+    #[must_use]
+    pub fn with_market_base(market: crate::BinanceMarket, base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             client: reqwest::Client::new(),
+            market,
         }
     }
 }
@@ -89,13 +122,48 @@ impl Default for BinanceDepthHttp {
 }
 
 impl DepthSnapshotSource for BinanceDepthHttp {
+    async fn fetch_price_step(
+        &self,
+        symbol: &str,
+    ) -> Result<Option<rust_decimal::Decimal>, DepthSnapshotError> {
+        let wire_symbol = self.market.wire_symbol(symbol);
+        let url = format!(
+            "{}{}/exchangeInfo",
+            self.base_url,
+            self.market.rest_prefix()
+        );
+        let response = self
+            .client
+            .get(url)
+            .query(&[("symbol", wire_symbol.as_str())])
+            .timeout(SNAPSHOT_TIMEOUT)
+            .send()
+            .await
+            .map_err(|error| DepthSnapshotError::Transport(error.to_string()))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| DepthSnapshotError::Transport(error.to_string()))?;
+        if !status.is_success() {
+            return Err(DepthSnapshotError::HttpStatus {
+                status: status.as_u16(),
+                body,
+            });
+        }
+        super::metadata::price_step(&body, &wire_symbol)
+            .map(Some)
+            .map_err(DepthSnapshotError::Metadata)
+    }
+
     async fn fetch_depth(
         &self,
         symbol: &str,
         limit: u16,
     ) -> Result<DepthSnapshot, DepthSnapshotError> {
-        let limit = limit.clamp(1, MAX_DEPTH_LIMIT);
-        let url = format!("{}/api/v3/depth", self.base_url);
+        let limit = limit.clamp(1, self.market.max_depth());
+        let url = format!("{}{}/depth", self.base_url, self.market.rest_prefix());
+        let wire_symbol = self.market.wire_symbol(symbol);
         debug!(
             target: "quantick::depth",
             schema_version = 1_u8,
@@ -108,7 +176,10 @@ impl DepthSnapshotSource for BinanceDepthHttp {
         let response = self
             .client
             .get(url)
-            .query(&[("symbol", symbol), ("limit", &limit.to_string())])
+            .query(&[
+                ("symbol", wire_symbol.as_str()),
+                ("limit", &limit.to_string()),
+            ])
             .send()
             .await
             .map_err(|error| DepthSnapshotError::Transport(error.to_string()))?;

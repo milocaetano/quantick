@@ -53,12 +53,18 @@ const CLIENT_NAME: &str = "quantick integration test";
 
 #[path = "asset_bubbles_save_tests.rs"]
 mod asset_bubbles_save_tests;
+#[path = "bubble_preset_control_tests.rs"]
+mod bubble_preset_control;
+#[path = "bubble_scale_control_tests.rs"]
+mod bubble_scale_control;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
 #[path = "chart_settings_control_tests.rs"]
 mod chart_settings_control;
 #[path = "drawing_magnet_control_tests.rs"]
 mod drawing_magnet_control;
+#[path = "feed_source_control_tests.rs"]
+mod feed_source_control;
 #[path = "history_control_tests.rs"]
 mod history_control_tests;
 #[path = "journal_sessions_control_tests.rs"]
@@ -73,6 +79,8 @@ mod opening_scale_control;
 mod price_axis_control;
 #[path = "tape_navigation_tests.rs"]
 mod tape_navigation;
+#[path = "tick_bubbles_control_tests.rs"]
+mod tick_bubbles_control;
 #[path = "mutation_uncertainty_tests.rs"]
 mod uncertainty;
 
@@ -207,6 +215,18 @@ fn error_code(response: &ResponseEnvelope) -> Option<&str> {
     match &response.outcome {
         ResponseOutcome::Success { .. } => None,
         ResponseOutcome::Failure { error } => Some(error.code.as_str()),
+    }
+}
+
+/// The declared precondition a refusal names, if any.
+fn violated_precondition(response: &ResponseEnvelope) -> Option<&str> {
+    match &response.outcome {
+        ResponseOutcome::Success { .. } => None,
+        ResponseOutcome::Failure { error } => error
+            .context
+            .violated_precondition
+            .as_ref()
+            .map(|id| id.as_str()),
     }
 }
 
@@ -646,6 +666,24 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         (
+            "orderflow.bubbles.size.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
+        (
+            "orderflow.bubbles.preset.apply",
+            1,
+            Value::Null,
+            Readback::Stays,
+        ),
+        (
+            "orderflow.bubbles.tick.set",
+            1,
+            Value::Null,
+            Readback::Stays,
+        ),
+        (
             "layout.preset.apply",
             LAYOUT_V2,
             json!({ "preset_id": "time+time+flow" }),
@@ -717,6 +755,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         // `respawned: false`, and the generation says so by not moving.
         ("feed.reconnect", 1, json!({}), Readback::Stays),
         ("feed.reload", 1, json!({}), Readback::Stays),
+        ("feed.source.set", 1, Value::Null, Readback::Stays),
         // A tab whose feed declares no deal counter and has no recorded day:
         // stopping a recorder that is not running acts on nothing, and the
         // scope lists no recorder either side of the call.
@@ -838,6 +877,31 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "orderflow.bubbles.tick.set" | "orderflow.bubbles.preset.apply" => {
+                let config: crate::config::AppConfig =
+                    toml::from_str(quantick_stores::config::EMBEDDED_DEFAULT).unwrap();
+                let presets = quantick_stores::bubble_presets::embedded();
+                let (binding, settings) = quantick_stores::bubble_asset_store::AssetBinding::bind(
+                    quantick_stores::bubble_asset_store::AssetBubblesStore::default().shared(),
+                    &config,
+                    ("binance", "BTCUSDT"),
+                    &presets,
+                    false,
+                );
+                app.active_tab_mut()
+                    .tape_mut()
+                    .bind_asset(binding, &settings);
+                json!({
+                    "tab_id": app.tabs.active_id().to_string(),
+                    "pane_id": app.active_tab().flow_pane.id.to_string(),
+                    "preset": "Binance BTC Spot spheres",
+                })
+            }
+            "feed.source.set" => json!({
+                "tab_id": app.tabs.active_id().to_string(),
+                "feed_id": app.active_tab().active.0,
+                "symbol": app.active_tab().active.1,
+            }),
             "chart.price_axis.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
@@ -846,7 +910,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "chart.tape_view.set" => {
                 // The call moves a native tape: give the flow pane one.
                 let tape = app.active_tab_mut().tape_mut();
-                assert!(tape.apply_preset("mini index regions"));
+                assert!(tape.apply_preset("mini index regions", false));
                 json!({
                     "tab_id": app.tabs.active_id().to_string(),
                     "pane_id": app.active_tab().flow_pane.id.to_string(),
@@ -874,6 +938,17 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "save_changes": false,
             }),
+            "orderflow.bubbles.size.set" => {
+                let tape = app.active_tab_mut().tape_mut();
+                assert!(tape.apply_preset("mini index regions", false));
+                tape.set_bubbles_enabled(true);
+                json!({
+                    "tab_id": app.tabs.active_id().to_string(),
+                    "pane_id": app.active_tab().flow_pane.id.to_string(),
+                    "target": "tape",
+                    "scale": "2",
+                })
+            }
             "layers.visibility.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),

@@ -33,21 +33,41 @@ impl SetupClient {
 }
 
 /// The one-line registration command for a client.
-pub fn registration_command(client: SetupClient, executable: &Path, profile: &str) -> String {
+pub fn registration_command(
+    client: SetupClient,
+    executable: &Path,
+    profile: &str,
+    allow_recovery: bool,
+) -> String {
     let executable = executable.display();
+    let recovery = if allow_recovery {
+        " --allow-recovery"
+    } else {
+        ""
+    };
     match client {
         SetupClient::Codex => {
-            format!("codex mcp add quantick -- \"{executable}\" --profile {profile}")
+            format!("codex mcp add quantick -- \"{executable}\" --profile {profile}{recovery}")
         }
         SetupClient::Claude => format!(
-            "claude mcp add --transport stdio --scope local quantick -- \"{executable}\" --profile {profile}"
+            "claude mcp add --transport stdio --scope local quantick -- \"{executable}\" --profile {profile}{recovery}"
         ),
     }
 }
 
 /// The full walkthrough the contract documents, with the command filled in.
-pub fn walkthrough(client: SetupClient, executable: &Path, profile: &str) -> String {
-    let command = registration_command(client, executable, profile);
+pub fn walkthrough(
+    client: SetupClient,
+    executable: &Path,
+    profile: &str,
+    allow_recovery: bool,
+) -> String {
+    let command = registration_command(client, executable, profile, allow_recovery);
+    let recovery = if allow_recovery {
+        "Recovery was requested explicitly. In Local agent access, grant cockpit.recover\nonly when timeline rebuilds, paper-position closure and strategy disarming are intended.\nThe flag does not grant access; quantick_describe reports the effective scopes.\n"
+    } else {
+        ""
+    };
     let verify = match client {
         SetupClient::Codex => "codex mcp list",
         SetupClient::Claude => "claude mcp get quantick   (or: claude mcp list)",
@@ -67,7 +87,7 @@ pub fn walkthrough(client: SetupClient, executable: &Path, profile: &str) -> Str
          \n\
          The adapter never starts Quantick and never stores a token: it discovers\n\
          the instance you opened through its private descriptor and connects with\n\
-         the {profile} profile.\n",
+         the {profile} profile.\n{recovery}",
         label = client.label(),
     )
 }
@@ -79,17 +99,17 @@ mod tests {
     #[test]
     fn the_commands_match_the_contract_and_carry_no_secret() {
         let exe = Path::new("C:\\tools\\quantick-mcp.exe");
-        let codex = registration_command(SetupClient::Codex, exe, "observer");
+        let codex = registration_command(SetupClient::Codex, exe, "observer", false);
         assert_eq!(
             codex,
             "codex mcp add quantick -- \"C:\\tools\\quantick-mcp.exe\" --profile observer"
         );
-        let claude = registration_command(SetupClient::Claude, exe, "observer");
+        let claude = registration_command(SetupClient::Claude, exe, "observer", false);
         assert!(claude.starts_with("claude mcp add --transport stdio --scope local quantick -- "));
         for text in [
             codex,
             claude,
-            walkthrough(SetupClient::Claude, exe, "observer"),
+            walkthrough(SetupClient::Claude, exe, "observer", false),
         ] {
             assert!(!text.contains("bearer"));
             assert!(!text.contains("token="));

@@ -172,3 +172,139 @@ fn short_tape_axes_keep_extreme_forming_discs_whole_without_moving_their_price()
         }
     }
 }
+
+/// Without depth time-averaging a native tape keeps the legacy display: its
+/// book, reduction fronts and picking stay on the linear lane the approved
+/// WIN tape paints, while its dots keep their own inset.
+///
+/// The opening instant itself is left out: there a legacy front belongs to
+/// the candles' viewport, as on main.
+#[test]
+fn native_book_without_averaging_keeps_the_linear_lane() {
+    for width in [100.0, 600.0] {
+        for fraction in [0.01, 0.1, 0.9, 1.0] {
+            let viewport = Viewport::new();
+            let rect = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(width, 400.0));
+            let mut config = HeatmapConfig::default();
+            config.volume_dots.enabled = true;
+            config.live_lane.native_tape = true;
+            config.live_lane.depth_time_averaging = false;
+            config.show_aggressions = true;
+            config.live_lane.enabled = true;
+            config.live_lane.show_aggressions = true;
+            let mut style = style_for(&config);
+            style.bubbles.max_radius = 48.0;
+            style.bubbles.render_mode = quantick_orderflow::BubbleRenderMode::Flat;
+            let frame = projection(vec![mark(1, true, 10, fraction, 0.5)]);
+            let layout = ProjectedLayout::new(rect, &viewport, 0, 0, 1, rect.width());
+            let context = RenderContext::new(&frame, layout, &style);
+            assert_eq!(context.layout.tape_geometry, None);
+            let linear = rect.left() + fraction as f32 * width;
+            let held = RenderContext::new(&frame, layout.with_lane_only(), &style);
+            assert!((held.layout.x(fraction) - linear).abs() < 0.001);
+            let front = context.layout.event_band(fraction, 0.4, 0.6, 1.0);
+            let hit = context.layout.heat_cell_rect(fraction, 1.0, 0.4, 0.6, 1.0);
+            assert!((front.x - linear).abs() < 0.001, "the front stays linear");
+            assert!((hit.left() - linear).abs() < 0.001, "the book stays linear");
+            let inset = rect.left()
+                + quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+                    width,
+                    rect.height(),
+                    &style.sanitized().bubbles,
+                )
+                .x(fraction);
+            let ctx = egui::Context::default();
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                draw_aggression_bubbles(&ctx.layer_painter(egui::LayerId::background()), &context);
+            });
+            let centers: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Circle(circle) if circle.fill != egui::Color32::TRANSPARENT => {
+                        Some(circle.center.x)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(centers.len(), 1, "the factual dot is drawn once");
+            assert!(
+                (centers[0] - inset).abs() < 0.001,
+                "the dot keeps its inset"
+            );
+        }
+    }
+}
+
+/// A native tape with depth time-averaging uses one clock for discs, factual
+/// reduction fronts and L2 picking.
+#[test]
+fn native_book_and_reductions_share_the_bubble_time_axis() {
+    for width in [100.0, 600.0] {
+        for fraction in [0.0, 0.01, 0.1, 0.9, 1.0] {
+            let viewport = Viewport::new();
+            let rect = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(width, 400.0));
+            let mut config = HeatmapConfig::default();
+            config.volume_dots.enabled = true;
+            config.live_lane.native_tape = true;
+            config.live_lane.depth_time_averaging = true;
+            config.show_aggressions = true;
+            config.live_lane.enabled = true;
+            config.live_lane.show_aggressions = true;
+            let mut style = style_for(&config);
+            style.bubbles.max_radius = 48.0;
+            // Dressing is clamped at 32px; use a flat factual disc so the
+            // geometry assertion does not mistake a sphere mesh for no mark.
+            style.bubbles.render_mode = quantick_orderflow::BubbleRenderMode::Flat;
+            let dot = mark(1, true, 10, fraction, 0.5);
+            let frame = projection(vec![dot]);
+            let layout = ProjectedLayout::new(rect, &viewport, 0, 0, 1, rect.width());
+            let context = RenderContext::new(&frame, layout, &style);
+            let geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+                width,
+                rect.height(),
+                &style.sanitized().bubbles,
+            );
+            let expected = rect.left() + geometry.x(fraction);
+            let mut held = projection(Vec::new());
+            held.volume_dots = false;
+            let held_context = RenderContext::new(&held, layout.with_lane_only(), &style);
+            assert!(
+                (held_context.layout.x(fraction) - expected).abs() < 0.001,
+                "a held book keeps the same native inset without aggression primitives"
+            );
+            let front = context.layout.event_band(fraction, 0.4, 0.6, 1.0);
+            let hit = context.layout.heat_cell_rect(fraction, 1.0, 0.4, 0.6, 1.0);
+            assert!((front.x - expected).abs() < 0.001);
+            assert!((hit.left() - expected).abs() < 0.001);
+            let ctx = egui::Context::default();
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                draw_aggression_bubbles(&ctx.layer_painter(egui::LayerId::background()), &context);
+            });
+            let circles: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Circle(circle) if circle.fill != egui::Color32::TRANSPARENT => {
+                        Some(circle)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                circles.len(),
+                1,
+                "the factual native boundary bubble is drawn once"
+            );
+            let circle = circles[0];
+            assert!(
+                (circle.center.x - front.x).abs() < 0.001,
+                "book consumption and bubble must occupy the same instant"
+            );
+            assert!(
+                hit.contains(circle.center),
+                "the painted cell is the hovered cell"
+            );
+        }
+    }
+}

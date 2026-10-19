@@ -1,0 +1,101 @@
+{
+  "$defs": {
+    "TickBubbleReferenceMode": {
+      "enum": [
+        "fixed",
+        "visible_max"
+      ],
+      "type": "string"
+    },
+    "TickBubblesSnapshot": {
+      "properties": {
+        "label_min_radius": {
+          "type": "string"
+        },
+        "max_radius": {
+          "type": "string"
+        },
+        "opacity": {
+          "type": "string"
+        },
+        "reference_mode": {
+          "$ref": "#/$defs/TickBubbleReferenceMode",
+          "default": "fixed"
+        },
+        "reference_quantity": {
+          "description": "Full-radius quantity in fixed mode; configured floor in visible-max mode.",
+          "type": "string"
+        },
+        "viewport_scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Present when final visible quantities and the current camera size the spheres."
+        }
+      },
+      "required": [
+        "reference_quantity",
+        "max_radius",
+        "label_min_radius",
+        "opacity"
+      ],
+      "type": "object"
+    },
+    "ViewportBubbleScaleSnapshot": {
+      "description": "Optional drawing calibration; factual grouping uses its existing settings.",
+      "properties": {
+        "price_units_per_pixel": {
+          "type": "string"
+        },
+        "x_units_per_pixel": {
+          "description": "Bars on candles; milliseconds on native Tape.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "x_units_per_pixel",
+        "price_units_per_pixel"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tick_bubbles": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TickBubblesSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "changed"
+  ],
+  "title": "TickBubblesResult",
+  "type": "object"
+}

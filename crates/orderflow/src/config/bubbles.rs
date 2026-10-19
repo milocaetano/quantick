@@ -213,7 +213,7 @@ const SERIALIZED_FLOAT_PLACES: i32 = 4;
 /// Presets are tracked in git precisely so a look can be reviewed and rolled
 /// back like code, and a diff of noise defeats that — this is the write path
 /// for every visual float, so rounding here fixes the file for all of them.
-fn serialize_short_f32<S>(value: &f32, serializer: S) -> Result<S::Ok, S::Error>
+pub(super) fn serialize_short_f32<S>(value: &f32, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
@@ -289,8 +289,18 @@ pub struct BubbleStyle {
     /// How the full-size reference quantity is chosen.
     pub size_reference: BubbleSizeReference,
     /// Quantity mapped to [`max_radius`](Self::max_radius) when the reference
-    /// is [`BubbleSizeReference::Fixed`].
+    /// is [`BubbleSizeReference::Fixed`]. Stable native tapes with a typed
+    /// grouping reference use this only for drawing; their groups keep that
+    /// original reference. Their minimum radius reserves visible area for dust.
     pub size_reference_quantity: f64,
+    /// Native Tape presentation only: normalize areas to the final visible
+    /// group maximum and apply a common camera factor after grouping. Missing
+    /// settings preserve the existing fixed or automatic sizing policy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub viewport_scale: Option<super::ViewportBubbleScale>,
+    /// Independent manual radius gains applied only after grouping and layout.
+    #[serde(skip_serializing_if = "super::BubbleDisplayScale::is_identity")]
+    pub display_scale: super::BubbleDisplayScale,
     /// Prints below this exact quantity are not drawn. Zero draws everything.
     ///
     /// Display-only and applied *after* liquidity association, so hiding small
@@ -379,6 +389,8 @@ impl Default for BubbleStyle {
             sphere_highlight: DEFAULT_SPHERE_HIGHLIGHT,
             size_reference: BubbleSizeReference::VisibleP99,
             size_reference_quantity: 100.0,
+            viewport_scale: None,
+            display_scale: super::BubbleDisplayScale::default(),
             min_quantity: 0.0,
             // Wide enough that two prints on one price row visibly straddle
             // it, which is the second channel carrying side at speck size.
@@ -517,6 +529,10 @@ impl BubbleStyle {
         if !self.size_reference_quantity.is_finite() || self.size_reference_quantity <= 0.0 {
             self.size_reference_quantity = 100.0;
         }
+        self.viewport_scale = self
+            .viewport_scale
+            .and_then(super::ViewportBubbleScale::sanitized);
+        self.display_scale = self.display_scale.sanitized();
         if !self.min_quantity.is_finite() || self.min_quantity < 0.0 {
             self.min_quantity = 0.0;
         }
@@ -660,6 +676,10 @@ mod tests {
         ";
         let style: BubbleStyle = toml::from_str(legacy).expect("a legacy preset still parses");
         assert_eq!(style.max_radius, 15.0, "its own values survive");
+        assert_eq!(
+            style.viewport_scale, None,
+            "old presets retain their size policy"
+        );
         assert_eq!(style.front_width, 3.0);
         assert!(
             style.hollow_small_buys,
@@ -670,6 +690,23 @@ mod tests {
             ConsumptionMark::Crown,
             "the key it never carried takes the new default"
         );
+    }
+
+    #[test]
+    fn viewport_scale_round_trips_without_rewriting_legacy_presets() {
+        let mut style = BubbleStyle::default();
+        let old = toml::to_string(&style).unwrap();
+        assert!(!old.contains("viewport_scale"));
+        style.viewport_scale = Some(super::super::ViewportBubbleScale {
+            x_units_per_pixel: 200.0,
+            price_units_per_pixel: 1.0,
+        });
+        let encoded = toml::to_string(&style).unwrap();
+        assert_eq!(toml::from_str::<BubbleStyle>(&encoded).unwrap(), style);
+        style.viewport_scale.as_mut().unwrap().price_units_per_pixel = 0.0;
+        style.sanitize();
+        assert_eq!(style.viewport_scale, None);
+        assert_eq!(toml::to_string(&style).unwrap(), old);
     }
 
     #[test]

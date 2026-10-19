@@ -86,6 +86,7 @@ fn draw(
                 rect.width(),
                 false,
                 PRICES,
+                true,
             );
         },
     )

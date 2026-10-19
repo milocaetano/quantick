@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "BubbleScaleTarget": {
+      "enum": [
+        "tape",
+        "candle"
+      ],
+      "type": "string"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "scale": {
+      "$ref": "#/$defs/CanonicalDecimal",
+      "description": "Canonical decimal string from 0.25 through 3, inclusive. Multiplies\nfinal radii; \"1\" preserves the current appearance."
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "target": {
+      "$ref": "#/$defs/BubbleScaleTarget",
+      "description": "The Tape or tick-chart bubbles on the addressed pane."
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "target",
+    "scale"
+  ],
+  "title": "BubbleScaleInput",
+  "type": "object"
+}

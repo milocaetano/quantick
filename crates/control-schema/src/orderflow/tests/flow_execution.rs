@@ -26,6 +26,16 @@ fn source_trade(ordinal: usize, price: i64, quantity: i64) -> Trade {
 }
 
 fn projected(trades: &[Trade], ticks: usize, width: f32, height: f32) -> FlowTapeFrame {
+    projected_reference(trades, ticks, width, height, FlowReference::VisibleRegions)
+}
+
+fn projected_reference(
+    trades: &[Trade],
+    ticks: usize,
+    width: f32,
+    height: f32,
+    reference: FlowReference,
+) -> FlowTapeFrame {
     let slots = trades.len().div_ceil(ticks);
     project_flow_tape(
         trades
@@ -50,12 +60,47 @@ fn projected(trades: &[Trade], ticks: usize, width: f32, height: f32) -> FlowTap
             width_px: width,
             height_px: height,
             prices: PriceWindow::new(90.into(), 130.into()).unwrap(),
-            reference: FlowReference::VisibleRegions,
+            reference,
             radius_limit: 7.0,
             merge_support_radius: 12.0,
             exclude_opening: false,
         },
     )
+}
+
+#[test]
+fn visible_floor_readback_distinguishes_the_configured_floor_from_actual_reference() {
+    let frame = projected_reference(
+        &[source_trade(0, 100, 13), source_trade(1, 120, 4)],
+        1,
+        200.0,
+        200.0,
+        FlowReference::VisibleRegionsAtLeast(1.into()),
+    );
+    let value = wire(&frame, settled(&frame));
+    assert_eq!(value["scale_mode"], "visible_regions");
+    assert_eq!(value["scale_basis"], "visible_region_max");
+    assert_eq!(value["typed_reference"], "1");
+    assert_eq!(value["effective_reference"], "13");
+    assert_eq!(value["buy_quantity"], "13");
+    assert_eq!(value["sell_quantity"], "4");
+    let floor_bound = projected_reference(
+        &[source_trade(0, 100, 1)],
+        1,
+        200.0,
+        200.0,
+        FlowReference::VisibleRegionsAtLeast(10.into()),
+    );
+    let floor_value = wire(&floor_bound, settled(&floor_bound));
+    assert_eq!(floor_value["scale_mode"], "visible_regions");
+    assert_eq!(floor_value["scale_basis"], "typed_reference");
+    assert_eq!(floor_value["effective_reference"], "10");
+    let old = serde_json::json!({ "reference_quantity": "1", "max_radius": "32", "label_min_radius": "8", "opacity": "0.9" });
+    let snapshot: crate::tick_bubbles::TickBubblesSnapshot = serde_json::from_value(old).unwrap();
+    assert_eq!(
+        snapshot.reference_mode,
+        crate::tick_bubbles::TickBubbleReferenceMode::Fixed
+    );
 }
 
 fn settled(frame: &FlowTapeFrame) -> FlowProgress {

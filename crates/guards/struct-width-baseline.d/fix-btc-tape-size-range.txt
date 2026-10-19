@@ -1,0 +1,7 @@
+# Optional viewport calibration and an independent pair of manual display gains
+# on the existing serialized look; both are identity-compatible for old presets.
+# Keeping it beside the existing radius settings preserves old preset keys and
+# avoids an unrelated migration of the legacy BubbleStyle public configuration.
+# It does not add grouping, market data, lifecycle or UI state to this type.
+orderflow::BubbleStyle +2
+!budget +2

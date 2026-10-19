@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::*;
 use crate::test_support::{FakeAccess, FakeTab, FakeWindow};
-use quantick_control_host::actions::ActionRegistry;
+use quantick_control_host::{actions::ActionRegistry, journal::EventActor};
 
 fn window() -> FakeWindow {
     let mut window = FakeWindow::new(vec![FakeTab::new(7, "BTCUSDT"), FakeTab::new(9, "WIN")]);
@@ -83,4 +83,32 @@ fn both_capabilities_register_into_a_generic_registry() {
         .map(|descriptor| descriptor.id.as_str().to_owned())
         .collect();
     assert_eq!(ids, [RECONNECT_CAPABILITY_ID, RELOAD_CAPABILITY_ID]);
+}
+
+/// A rebuilt timeline names who rebuilt it, whoever it was. A reload with
+/// nothing to respawn rebuilt nothing and records nothing.
+#[test]
+fn a_reload_journals_who_threw_the_timeline_away() {
+    for actor in [FakeWindow::trader(), FakeWindow::assistant()] {
+        let mut window = window();
+        let mut access = FakeAccess::with_budget(0);
+        let input = json!({ "tab_id": "7" });
+        reload(&mut window, &mut access, &actor, &input).expect("reload answers");
+        window.tabs[0].respawns = false;
+        reload(&mut window, &mut access, &actor, &input).expect("reload answers");
+        assert_eq!(access.events.len(), 1, "one rebuild, one record");
+        let event = &access.events[0];
+        assert_eq!(event.module_id.as_str(), "feed");
+        assert_eq!(event.kind.as_str(), "feed.timeline.rebuilt");
+        assert_eq!(event.actor, Some(EventActor::from(&actor)));
+        assert_eq!(
+            event.payload,
+            json!({ "feed_reload": {
+                "tab_id": "7",
+                "symbol": "BTCUSDT",
+                "respawned": true,
+                "timeline_kept": false,
+            }})
+        );
+    }
 }

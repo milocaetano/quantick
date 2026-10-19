@@ -16,12 +16,106 @@ fn from_document(document: BubblePresetFile) -> OrderflowView {
         &mut HeatmapConfig::default(),
     );
     let active = view.look.presets().active.clone();
-    assert!(view.apply_preset(&active));
+    assert!(view.apply_preset(&active, false));
     view
 }
 
 fn appearance(view: &OrderflowView) -> BubblePreset {
     BubblePreset::capture(view.look.look_name(), &view.config)
+}
+
+#[test]
+fn whole_preset_api_matches_picker_navigation_visibility_and_save_scope() {
+    let store = AssetBubblesStore::default().shared();
+    let mut api = bound_to(&store, ("binance-futures", "BTCUSDT.p"));
+    let mut other = bound_to(&store, ("binance", "BTCUSDT"));
+    let unrelated = appearance(&other);
+    let mut ui = bound_to(
+        &AssetBubblesStore::default().shared(),
+        ("binance-futures", "BTCUSDT.p"),
+    );
+    let name = "mini index regions";
+    for view in [&mut api, &mut ui] {
+        view.edit_config(|config| {
+            config.live_lane.width_share = 0.4;
+            config.show_aggressions = false;
+            config.live_lane.stable_size = false;
+        });
+    }
+    api.set_save_asset_changes(false).unwrap();
+    let before = ui.config.clone();
+    assert!(ui.apply_preset(name, false));
+    ui.commit_config_changes(before);
+    assert!(api.apply_named_preset(name, false).unwrap());
+    assert_eq!(
+        api.config, ui.config,
+        "same picker operation and worker commit"
+    );
+    assert_eq!(
+        api.look.lane_window_setting(),
+        ui.look.lane_window_setting()
+    );
+    assert!(
+        !api.config.show_aggressions,
+        "a whole look preserves layer visibility"
+    );
+    let chosen = appearance(&api);
+    api.sync_asset(false);
+    assert_eq!(
+        appearance(&api),
+        chosen,
+        "save-off changes stay on this view"
+    );
+    other.sync_asset(false);
+    assert_eq!(appearance(&other), unrelated);
+    let reopened = bound_to(&store, ("binance-futures", "BTCUSDT.p"));
+    assert_ne!(
+        appearance(&reopened),
+        chosen,
+        "save-off does not replace the stored asset look"
+    );
+    api.set_save_asset_changes(true).unwrap();
+    api.sync_asset(false);
+    let restored = bound_to(&store, ("binance-futures", "BTCUSDT.p"));
+    assert_eq!(
+        appearance(&restored),
+        chosen,
+        "save-on follows the existing asset persistence path"
+    );
+    assert!(!api.apply_named_preset(name, false).unwrap());
+}
+
+#[test]
+fn whole_preset_api_commits_the_changed_configuration_to_the_actual_worker() {
+    let mut view = bound_to(
+        &AssetBubblesStore::default().shared(),
+        ("binance-futures", "BTCUSDT.p"),
+    );
+    view.edit_config(|config| config.live_lane.stable_size = false);
+    fn revision(view: &mut OrderflowView) -> u64 {
+        view.flush_for_test();
+        view.cached_health().config_revision
+    }
+    let before = revision(&mut view);
+    assert!(
+        view.apply_named_preset("Binance BTC perpetual spheres", true)
+            .unwrap()
+    );
+    assert!(
+        revision(&mut view) > before,
+        "API commit reaches the worker"
+    );
+    let after = revision(&mut view);
+    assert!(
+        !view
+            .apply_named_preset("Binance BTC perpetual spheres", true)
+            .unwrap()
+    );
+    assert_eq!(
+        revision(&mut view),
+        after,
+        "a no-op sends no repeated config effect"
+    );
 }
 
 fn ignore_opening(view: &mut OrderflowView, on: bool) -> bool {
@@ -56,7 +150,7 @@ fn a_presets_reload_in_one_tab_dresses_every_tab_on_an_untuned_asset() {
     let mut here = bound_to(&store, ("binance", "BTCUSDT"));
     let mut there = bound_to(&store, ("binance", "BTCUSDT"));
     let mut reloaded = embedded();
-    let active = reloaded.active.clone();
+    let active = "Binance BTC Spot spheres";
     let look = reloaded
         .presets
         .iter_mut()
@@ -82,7 +176,7 @@ fn a_presets_reload_in_one_tab_dresses_every_tab_on_an_untuned_asset() {
     there.sync_asset(false);
     assert_eq!(
         there.look.asset().expect("bound").source(),
-        AssetSource::Default,
+        AssetSource::Declared,
         "an edit undone on the new look pins nothing"
     );
 }
@@ -119,4 +213,47 @@ fn restored_defaults_are_kept_for_the_asset_and_say_so() {
         view.look.asset().expect("bound").source(),
         AssetSource::Stored
     );
+}
+
+/// Review #19/#29: the sphere picker asks the rule tick.set asks. A mode
+/// asset offers its spheres on a tick chart and not on a volume chart; an
+/// asset without the mode offers none, but spheres it already wears can be
+/// switched off there.
+#[test]
+fn the_sphere_picker_follows_the_tick_sphere_rule() {
+    let texts = |view: &mut OrderflowView, tick_chart: bool| -> String {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                view.draw_bubbles_tab(ui, tick_chart);
+            });
+        });
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let store = AssetBubblesStore::default().shared();
+    let mut btc = bound_to(&store, ("binance", "BTCUSDT"));
+    let spheres = btc.config.volume_dots.tick_bubbles;
+    assert!(spheres.is_some(), "the declared look wears spheres");
+    assert!(texts(&mut btc, true).contains("quantity in BTC"));
+    assert!(
+        texts(&mut btc, false).contains("Tick chart spheres"),
+        "a volume chart offers no presets (TickSpherePane::offered) but keeps \
+         the switch-off for spheres the asset wears, as tick.set(null) does"
+    );
+    let mut eth = bound_to(&store, ("binance", "ETHUSDT"));
+    assert!(!texts(&mut eth, true).contains("Tick chart spheres"));
+    eth.edit_config(|config| config.volume_dots.tick_bubbles = spheres);
+    let offered = texts(&mut eth, true);
+    assert!(offered.contains("Tick chart spheres"), "{offered}");
+    assert!(!offered.contains("quantity in"), "{offered}");
+    assert_eq!(eth.apply_tick_preset(None), Ok(true));
+    assert_eq!(eth.config.volume_dots.tick_bubbles, None);
 }

@@ -8,10 +8,7 @@ pub use quantick_stores::bubble_presets::*;
 /// Path the panel reads from and writes to.
 #[must_use]
 pub fn presets_path() -> PathBuf {
-    crate::launch::operator_paths()
-        .bubbles
-        .clone()
-        .map_or_else(|| PathBuf::from(PRESETS_PATH), PathBuf::from)
+    operator_path(crate::launch::operator_paths().bubbles.as_deref())
 }
 
 /// Where each asset's bubble settings are kept: the cockpit home.
@@ -27,12 +24,7 @@ pub fn assets_path() -> PathBuf {
 /// directory, falling back to the embedded file ([`load_from`]).
 #[must_use]
 pub fn load() -> (BubblePresetFile, PresetSource, Option<String>) {
-    load_from(
-        crate::launch::operator_paths()
-            .bubbles
-            .clone()
-            .map(PathBuf::from),
-    )
+    load_operator(crate::launch::operator_paths().bubbles.as_deref())
 }
 
 /// Write `file` to [`presets_path`], returning where it landed.

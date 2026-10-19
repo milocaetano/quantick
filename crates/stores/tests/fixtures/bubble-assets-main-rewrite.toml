@@ -1,0 +1,171 @@
+# quantick — bubble settings per asset, written by the app.
+#
+# One entry per asset whose bubble settings were changed from the look the
+# feed config declares for it (`symbol_bubble_presets` in feeds.toml). Delete
+# an entry and that asset opens on its declared look again. An asset listed
+# in `save_changes_off` keeps what is changed on screen for the session only.
+
+version = 1
+save_changes_off = ["WDO$N"]
+
+[assets.BTCUSDT]
+bubbles = true
+candle_aggression = true
+flow_ignore_opening = false
+
+[assets.BTCUSDT.look]
+name = "Binance BTC Spot spheres"
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
+overlap_merge = true
+volume_dot_full_quantity = 1.0
+volume_dot_auto_full = false
+volume_dot_ignore_opening_burst_in_scale = false
+region_rows = 1
+region_ms = 1000
+
+[assets.BTCUSDT.look.bubbles]
+min_radius = 2.1885
+max_radius = 44.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.541
+readable_min_radius = 5.7295
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 13.5
+
+[assets.BTCUSDT.look.live_lane]
+width_share = 0.3499999940395355
+time_zoom = 1.0
+radius_scale = 1.0
+show_marks = true
+enabled = true
+show_depth = true
+show_aggressions = true
+native_tape = true
+
+[assets."WIN*"]
+bubbles = true
+candle_aggression = false
+flow_ignore_opening = false
+
+[assets."WIN*".look]
+name = "mini index regions"
+cluster_ms = 300
+dust_merge_ms = 1500
+candle_summary = true
+overlap_merge = true
+volume_dot_full_quantity = 20000.0
+volume_dot_auto_full = true
+volume_dot_ignore_opening_burst_in_scale = false
+region_rows = 4
+region_ms = 1500
+
+[assets."WIN*".look.bubbles]
+min_radius = 2.6262
+max_radius = 20.0
+opacity = 0.9
+outline_width = 1.0
+halo_strength = 0.0
+detail_min_radius = 4.2492
+readable_min_radius = 6.8754
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
+size_reference = "visible_max"
+size_reference_quantity = 1500.0
+min_quantity = 0.0
+side_offset = 0.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
+show_quantity_labels = true
+show_trade_count = false
+label_min_radius = 12.6
+
+[assets."WIN*".look.live_lane]
+width_share = 0.3499999940395355
+time_zoom = 1.0
+radius_scale = 1.0
+show_marks = true
+enabled = true
+show_depth = true
+show_aggressions = true
+native_tape = true
+
+[assets."hyperliquid:BTCUSDT"]
+bubbles = true
+candle_aggression = true
+flow_ignore_opening = false
+
+[assets."hyperliquid:BTCUSDT".look]
+name = "Binance BTC Spot spheres"
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
+overlap_merge = true
+volume_dot_full_quantity = 1.0
+volume_dot_auto_full = false
+volume_dot_ignore_opening_burst_in_scale = false
+region_rows = 1
+region_ms = 1000
+
+[assets."hyperliquid:BTCUSDT".look.bubbles]
+min_radius = 2.1885
+max_radius = 44.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.541
+readable_min_radius = 5.7295
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 13.5
+
+[assets."hyperliquid:BTCUSDT".look.live_lane]
+width_share = 0.3499999940395355
+time_zoom = 1.0
+radius_scale = 1.0
+show_marks = true
+enabled = true
+show_depth = true
+show_aggressions = true
+native_tape = true

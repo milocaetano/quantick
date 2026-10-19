@@ -62,8 +62,16 @@ fn published_tools(tools: Vec<Tool>, with_output_schemas: bool) -> Vec<Tool> {
 /// beside a tool list that writes is a guardrail pointing the wrong way.
 #[must_use]
 pub fn instructions(profile_ceiling: &str) -> String {
+    instructions_with_recovery(profile_ceiling, false)
+}
+
+fn instructions_with_recovery(profile_ceiling: &str, allow_recovery: bool) -> String {
     let authority = if profile_ceiling == COCKPIT_PROFILE {
-        "Authority: this connection holds the cockpit profile - it reads, it may add labels, arrows and zones to the chart, raise a notification and attach a compiled indicator, and it may rearrange the window: which charts are on screen, where they sit and how wide they are. Nothing it does deletes the trader's own work or touches an order, and a chart put away keeps its drawings, its indicators and its bars. The window grants each scope: a capability the trader did not grant is refused."
+        if allow_recovery {
+            "Authority: cockpit profile with explicit --allow-recovery. Recovery is requested; the window must also grant cockpit.recover. Feed reload/source changes rebuild timelines, close paper positions and disarm strategies. Read, annotation, layout and feed operations remain subject to grants. Order placement is unavailable. Call quantick_describe to inspect effective scopes; ungranted capabilities are refused."
+        } else {
+            "Authority: cockpit profile. It may read, annotate, manage layout and reconnect feeds, subject to the window's grants. Recovery is excluded by default: feed reload/source changes also require --allow-recovery and the window's cockpit.recover grant; they rebuild timelines, close paper positions and disarm strategies. Order placement is unavailable. Call quantick_describe to inspect effective scopes; ungranted capabilities are refused."
+        }
     } else if profile_ceiling == ANNOTATOR_PROFILE {
         "Authority: this connection holds the annotator profile - it reads, and it may add labels, arrows and zones to the chart, raise a notification, and attach a compiled indicator. Everything it adds is visibly attributed to this client and removable in one action by the trader; nothing can delete the trader's own work, change the layout, or touch an order. The window grants each scope: a capability the trader did not grant is refused."
     } else if profile_ceiling == ANALYST_PROFILE {
@@ -85,6 +93,7 @@ pub struct McpServer {
     /// The ceiling this connection asked for, which decides both the tool
     /// list and what the instructions claim about its authority.
     profile_ceiling: &'static str,
+    allow_recovery: bool,
     tools: Vec<Tool>,
     protocol_version: Option<&'static str>,
     initialized: bool,
@@ -94,6 +103,16 @@ impl McpServer {
     /// A server over one link, advertising the tool list for one profile
     /// ceiling. The ceiling is known when the adapter starts (contract §8).
     pub fn new(link: Box<dyn ControlLink>, profile_ceiling: &str) -> Self {
+        Self::new_with_recovery(link, profile_ceiling, false)
+    }
+
+    /// Advertise the explicitly requested recovery ceiling; the gateway
+    /// still intersects every requested permission with the window grant.
+    pub fn new_with_recovery(
+        link: Box<dyn ControlLink>,
+        profile_ceiling: &str,
+        allow_recovery: bool,
+    ) -> Self {
         // The ceiling decides what the client is offered and what it is told,
         // and anything the adapter cannot request is treated as the read-only
         // floor. The tool list is built from the *same* normalized value as
@@ -114,7 +133,11 @@ impl McpServer {
         Self {
             link,
             profile_ceiling,
-            tools: published_tools(tools::tools(profile_ceiling), publish_output_schemas()),
+            allow_recovery: allow_recovery && profile_ceiling == COCKPIT_PROFILE,
+            tools: published_tools(
+                tools::tools_with_recovery(profile_ceiling, allow_recovery),
+                publish_output_schemas(),
+            ),
             protocol_version: None,
             initialized: false,
         }
@@ -219,7 +242,7 @@ impl McpServer {
                         "title": SERVER_TITLE,
                         "version": env!("CARGO_PKG_VERSION"),
                     },
-                    "instructions": instructions(self.profile_ceiling),
+                    "instructions": instructions_with_recovery(self.profile_ceiling, self.allow_recovery),
                 }))
             }
             "ping" => Ok(json!({})),
@@ -391,6 +414,19 @@ mod tests {
             );
         }
         assert!(instructions("observer").contains("read-only"));
+        let cockpit = instructions("cockpit");
+        for condition in [
+            "--allow-recovery",
+            "cockpit.recover",
+            "close paper positions",
+            "disarm strategies",
+            "effective scopes",
+        ] {
+            assert!(
+                cockpit.contains(condition),
+                "cockpit authority states {condition}"
+            );
+        }
     }
 
     #[test]

@@ -60,37 +60,17 @@ pub(crate) fn market_data_provenance(
     tab: &crate::tab::Tab,
     config: &crate::config::AppConfig,
 ) -> MarketDataProvenance {
-    let capabilities = tab.capabilities(config);
-    let replay = tab.replay.is_some();
-    MarketDataProvenance {
-        price: if replay {
-            "recorded_trade".to_owned()
-        } else {
-            "venue_or_broker_trade".to_owned()
-        },
-        volume: if capabilities.traded_volume {
-            if replay {
-                "recorded".to_owned()
-            } else {
-                "venue_reported".to_owned()
-            }
-        } else {
-            "synthetic_unit_per_quote".to_owned()
-        },
-        aggressor_side: if replay {
-            "recording_declared".to_owned()
-        } else if tab.side_note(config).is_some() {
-            "inferred_or_derived".to_owned()
-        } else {
-            "venue_reported".to_owned()
-        },
-        replay,
-    }
+    quantick_control_schema::feed::market_data_provenance(
+        tab.replay.is_some(),
+        tab.capabilities(config).traded_volume,
+        tab.side_note(config).is_some(),
+    )
 }
 
 fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot {
     let config = app.tab_reads().config();
     FeedSnapshot {
+        sources: quantick_control_schema::feed_source::choices(config),
         tabs: app
             .tab_reads()
             .tabs()
@@ -111,6 +91,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     capabilities: FeedCapabilitiesSnapshot {
                         book_capture: capabilities.book_capture,
                         history_paging: capabilities.history_paging,
+                        history_boundary: capabilities.history_boundary.map(Into::into),
                         traded_volume: capabilities.traded_volume,
                         deal_counter: capabilities.deal_counter,
                         venue_ohlcv_history: capabilities.ohlcv_history,

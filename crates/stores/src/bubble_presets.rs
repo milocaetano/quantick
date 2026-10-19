@@ -31,6 +31,20 @@ use quantick_orderflow::{
 /// what the file is, and project configuration belongs in one obvious place.
 pub const PRESETS_PATH: &str = "config/bubbles.toml";
 
+/// Resolve an operator override without duplicating the document's default.
+#[must_use]
+pub fn operator_path(override_path: Option<&std::ffi::OsStr>) -> PathBuf {
+    override_path.map_or_else(|| PathBuf::from(PRESETS_PATH), PathBuf::from)
+}
+
+/// Load the operator's optional path through the standard fallback policy.
+#[must_use]
+pub fn load_operator(
+    override_path: Option<&std::ffi::OsStr>,
+) -> (BubblePresetFile, PresetSource, Option<String>) {
+    load_from(override_path.map(PathBuf::from))
+}
+
 /// Built-in presets, compiled in so the app works with no external file.
 const EMBEDDED_DEFAULT: &str = include_str!("../../app/config/bubbles.toml");
 
@@ -111,6 +125,9 @@ pub struct BubblePreset {
     /// Every visual choice for the bubbles themselves.
     #[serde(default)]
     pub bubbles: BubbleStyle,
+    /// Optional tick-chart sphere appearance. Absent preserves regional FLOW.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
     /// The live lane's own width, window, clustering and radius scale — how
     /// the tape *looks*, never whether its layers are drawn. See
     /// [`Self::apply_to`].
@@ -136,6 +153,7 @@ impl BubblePreset {
             region_rows: config.bubble_region_rows,
             region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
+            tick_bubbles: config.volume_dots.tick_bubbles,
             live_lane: LiveLaneStyle {
                 // A preset is a look, so it records none of the tape's
                 // visibility — neither whether the tape is on the canvas nor
@@ -160,6 +178,7 @@ impl BubblePreset {
         config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubble_candle_summary = self.candle_summary;
         config.volume_dots = quantick_orderflow::VolumeDotStyle {
+            tick_bubbles: self.tick_bubbles,
             enabled: self.overlap_merge,
             full_quantity: quantick_orderflow::sane_volume_dot_full_quantity(
                 self.volume_dot_full_quantity,
@@ -202,6 +221,9 @@ impl BubblePreset {
             .region_ms
             .clamp(0, quantick_orderflow::config::MAX_BUBBLE_REGION_MS);
         self.bubbles.sanitize();
+        if let Some(tick) = &mut self.tick_bubbles {
+            tick.sanitize();
+        }
         self.live_lane.sanitize();
     }
 }
@@ -469,6 +491,58 @@ mod tests {
     }
 
     #[test]
+    fn only_btc_shipped_presets_opt_into_stable_size_and_depth_averaging() {
+        let shipped = embedded();
+        for preset in &shipped.presets {
+            let btc = preset.name.starts_with("Binance BTC");
+            assert_eq!(
+                preset.bubbles.viewport_scale.is_some(),
+                btc,
+                "{}",
+                preset.name
+            );
+            assert_eq!(preset.live_lane.stable_size, btc, "{}", preset.name);
+            assert_eq!(
+                preset.live_lane.depth_time_averaging, btc,
+                "{}",
+                preset.name
+            );
+            assert_eq!(
+                preset.live_lane.forward_book_preview, btc,
+                "{}",
+                preset.name
+            );
+            if btc {
+                assert!(preset.live_lane.native_tape);
+                assert!(preset.overlap_merge);
+                let tick = preset.tick_bubbles.unwrap();
+                assert!(tick.viewport_scale.is_some());
+                assert_eq!(
+                    tick.reference_mode,
+                    quantick_orderflow::TickReferenceMode::VisibleMax
+                );
+                assert_eq!(
+                    tick.max_radius,
+                    if preset.name.contains("Spot") {
+                        32.0
+                    } else {
+                        36.0
+                    }
+                );
+                assert_eq!(tick.label_min_radius, 8.0);
+                assert_eq!(tick.opacity, 0.9);
+            } else if let Some(tick) = preset.tick_bubbles {
+                assert!(tick.viewport_scale.is_none());
+                assert_eq!(
+                    tick.reference_mode,
+                    quantick_orderflow::TickReferenceMode::Fixed
+                );
+            }
+        }
+        assert_eq!(parse(&render(&shipped).unwrap()).unwrap(), shipped);
+    }
+
+    #[test]
     fn a_retired_key_is_named_rather_than_ignored_in_silence() {
         // The file still loads — that is the point of ignoring unknown keys —
         // but a preset that asked for the vertical front by name now draws a
@@ -620,6 +694,7 @@ mod tests {
         let mut config = HeatmapConfig {
             bubble_cluster_ms: 50,
             volume_dots: quantick_orderflow::VolumeDotStyle {
+                tick_bubbles: None,
                 enabled: true,
                 full_quantity: 2_500.0,
                 auto_full: false,
@@ -702,7 +777,10 @@ mod tests {
         assert!(!config.tape_only());
         assert!(config.volume_dots.enabled);
         for preset in &presets.presets {
-            if preset.name != "mini index regions" {
+            if !matches!(
+                preset.name.as_str(),
+                "mini index regions" | "Binance BTC Spot spheres" | "Binance BTC perpetual spheres"
+            ) {
                 assert!(!preset.live_lane.tape_only, "{} keeps candles", preset.name);
                 assert!(
                     !preset.live_lane.native_tape,
@@ -891,6 +969,7 @@ name = "old"
         let mut file = BubblePresetFile::default();
         file.upsert(BubblePreset {
             name: "default".to_owned(),
+            tick_bubbles: None,
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             candle_summary: false,

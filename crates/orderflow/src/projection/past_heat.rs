@@ -265,6 +265,8 @@ pub fn project_past_heat(
                 y0,
                 y1,
                 carried: false,
+                time_averaged: false,
+                current_book: false,
             })
         })
         .collect();

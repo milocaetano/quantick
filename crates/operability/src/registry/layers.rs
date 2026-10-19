@@ -127,4 +127,34 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         )],
         mapping: capability!("orderflow.bubbles.save_changes.set"),
     },
+    UiBehaviour {
+        id: "orderflow.bubbles.size.set",
+        title: "Adjust Tape and tick-chart bubble size independently",
+        reach: "top-right bubble size sliders on Tape and tick-chart panes",
+        keys: &[(
+            Source::Authored,
+            "independent presentation sliders appear while their bubble display is active",
+        )],
+        mapping: capability!("orderflow.bubbles.size.set"),
+    },
+    UiBehaviour {
+        id: "orderflow.bubbles.tick.set",
+        title: "Select tick-chart spheres for a config-mode asset independently of the tape",
+        reach: "Bubbles settings, Tick chart spheres preset picker",
+        keys: &[(
+            Source::Authored,
+            "chart-only preset picker under the whole-look presets",
+        )],
+        mapping: capability!("orderflow.bubbles.tick.set"),
+    },
+    UiBehaviour {
+        id: "orderflow.bubbles.preset.apply",
+        title: "Apply or reapply a named whole bubble look",
+        reach: "Bubbles settings, whole-look preset picker",
+        keys: &[(
+            Source::Authored,
+            "whole-look preset selection permits same-name reapplication",
+        )],
+        mapping: capability!("orderflow.bubbles.preset.apply"),
+    },
 ];

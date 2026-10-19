@@ -35,6 +35,8 @@ pub const DEFAULT_DEPTH_BUFFER_CAPACITY: usize = 8_192;
 /// Runtime parameters for depth sessions and reconnects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DepthSessionConfig {
+    /// Market-specific snapshot bridge and stream continuity rules.
+    pub market: crate::BinanceMarket,
     /// Requested REST levels per side, clamped to `1..=5000`.
     pub snapshot_limit: u16,
     /// Maximum diff events buffered during bootstrap.
@@ -52,6 +54,7 @@ pub struct DepthSessionConfig {
 impl Default for DepthSessionConfig {
     fn default() -> Self {
         Self {
+            market: crate::BinanceMarket::Spot,
             snapshot_limit: MAX_DEPTH_LIMIT,
             buffer_capacity: DEFAULT_DEPTH_BUFFER_CAPACITY,
             max_snapshot_attempts: 5,
@@ -63,7 +66,8 @@ impl Default for DepthSessionConfig {
 impl DepthSessionConfig {
     fn normalized(self) -> Self {
         Self {
-            snapshot_limit: self.snapshot_limit.clamp(1, MAX_DEPTH_LIMIT),
+            market: self.market,
+            snapshot_limit: self.snapshot_limit.clamp(1, self.market.max_depth()),
             buffer_capacity: self.buffer_capacity.max(1),
             max_snapshot_attempts: self.max_snapshot_attempts.max(1),
             initial_generation: self.initial_generation,
@@ -122,6 +126,9 @@ impl DepthSessionError {
             Self::Snapshot(_) => "snapshot",
             Self::Wire(_) => "wire_decode",
             Self::Apply(DepthApplyError::Gap { .. }) => "sequence_gap",
+            Self::Apply(DepthApplyError::Book(
+                quantick_orderbook::BookError::PreviousUpdateMismatch { .. },
+            )) => "sequence_gap",
             Self::Apply(_) => "book_apply",
             Self::BufferOverflow { .. } => "buffer_overflow",
             Self::SnapshotAttemptsExhausted { .. } => "snapshot_attempts_exhausted",
@@ -216,8 +223,21 @@ pub async fn run_depth_session<S: DepthSnapshotSource>(
     synchronized: &mut bool,
 ) -> Result<(), DepthSessionError> {
     let config = config.normalized();
-    let symbol = symbol.to_uppercase();
+    let symbol = config.market.display_symbol(symbol);
     send_status(events, &symbol, generation, DepthStatus::Connecting).await?;
+    // Optional metadata is resolved before opening the socket, so its latency
+    // cannot fill the bounded bootstrap buffer or interrupt depth continuity.
+    let price_step = tokio::select! {
+        () = events.closed() => return Err(DepthSessionError::ConsumerClosed),
+        result = source.fetch_price_step(&symbol) => match result {
+            Ok(step) => step,
+            Err(error) => {
+                warn!(target: "quantick::depth", event_code = "depth_metadata_unavailable", symbol, generation, %error,
+                    "instrument price step unavailable; depth remains usable without metadata");
+                None
+            }
+        },
+    };
     info!(
         target: "quantick::depth",
         schema_version = 1_u8,
@@ -255,7 +275,7 @@ pub async fn run_depth_session<S: DepthSnapshotSource>(
     .await?;
 
     let mut buffered = VecDeque::new();
-    let mut synchronizer = DepthSynchronizer::new(&symbol, generation);
+    let mut synchronizer = DepthSynchronizer::for_market(&symbol, generation, config.market);
 
     // Bootstrap may refetch a snapshot on the same already-open socket if the
     // first eligible buffered event is ahead of it.
@@ -311,6 +331,7 @@ pub async fn run_depth_session<S: DepthSnapshotSource>(
             generation,
             observed_at_ms,
             consumer_snapshot,
+            price_step,
         )
         .await?
         {
@@ -384,6 +405,7 @@ async fn bridge_snapshot(
     generation: u64,
     observed_at_ms: i64,
     consumer_snapshot: BookSnapshot,
+    price_step: Option<rust_decimal::Decimal>,
 ) -> Result<BridgeOutcome, DepthSessionError> {
     let snapshot_update_id = consumer_snapshot.last_update_id();
     let mut consumer_snapshot = Some(consumer_snapshot);
@@ -414,14 +436,12 @@ async fn bridge_snapshot(
                             observed_at_ms,
                             update.event_time_ms,
                         ),
-                        // Binance's depth stream never states a tick size;
-                        // the consumer sizes its buckets from the price.
-                        price_step: None,
+                        price_step,
                         snapshot,
                     },
                 )
                 .await?;
-                publish_update(events, symbol, generation, &update).await?;
+                publish_update(events, symbol, generation, &update, true).await?;
                 send_status(
                     events,
                     symbol,
@@ -495,7 +515,7 @@ async fn apply_live_update(
     match synchronizer.apply(update) {
         Ok(SyncApplyOutcome::Stale { .. }) => Ok(()),
         Ok(SyncApplyOutcome::Applied { .. }) => {
-            publish_update(events, symbol, generation, update).await
+            publish_update(events, symbol, generation, update, false).await
         }
         Err(
             error @ DepthApplyError::Gap {
@@ -528,8 +548,14 @@ async fn publish_update(
     symbol: &str,
     generation: u64,
     update: &DepthUpdate,
+    snapshot_bridge: bool,
 ) -> Result<(), DepthSessionError> {
-    let delta = update.to_book_delta().map_err(DepthApplyError::Book)?;
+    let delta = if snapshot_bridge {
+        update.to_snapshot_bridge_delta()
+    } else {
+        update.to_book_delta()
+    }
+    .map_err(DepthApplyError::Book)?;
     send_event(
         events,
         DepthEvent::Update {
@@ -676,7 +702,7 @@ fn snapshot_effective_at_ms(observed_at_ms: i64, bridge_event_time_ms: i64) -> i
 mod tests {
     use std::sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
     use rust_decimal::Decimal;
@@ -688,9 +714,26 @@ mod tests {
     #[derive(Clone)]
     struct FakeSnapshotSource {
         tcp_accepted: Arc<AtomicBool>,
+        metadata_calls: Arc<AtomicUsize>,
+        snapshot_calls: Arc<AtomicUsize>,
+        available: bool,
+        refetch: bool,
     }
 
     impl DepthSnapshotSource for FakeSnapshotSource {
+        async fn fetch_price_step(
+            &self,
+            symbol: &str,
+        ) -> Result<Option<Decimal>, DepthSnapshotError> {
+            assert_eq!(symbol, "BTCUSDT");
+            self.metadata_calls.fetch_add(1, Ordering::SeqCst);
+            if self.available {
+                Ok(Some(Decimal::new(1, 2)))
+            } else {
+                Err(DepthSnapshotError::Metadata("missing filter".into()))
+            }
+        }
+
         async fn fetch_depth(
             &self,
             symbol: &str,
@@ -706,7 +749,13 @@ mod tests {
             // client's bootstrap buffer before this snapshot completes.
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             Ok(DepthSnapshot {
-                last_update_id: 100,
+                last_update_id: if self.snapshot_calls.fetch_add(1, Ordering::SeqCst) > 0
+                    && self.refetch
+                {
+                    102
+                } else {
+                    100
+                },
                 bids: vec![DepthLevel {
                     price: Decimal::from(99),
                     quantity: Decimal::from(5),
@@ -730,6 +779,7 @@ mod tests {
     #[test]
     fn config_normalizes_unsafe_zero_values() {
         let config = DepthSessionConfig {
+            market: crate::BinanceMarket::Spot,
             snapshot_limit: 0,
             buffer_capacity: 0,
             max_snapshot_attempts: 0,
@@ -762,16 +812,25 @@ mod tests {
 
     #[tokio::test]
     async fn offline_session_connects_then_buffers_and_bridges_before_publish() {
+        for available in [true, false] {
+            for refetch in [true, false] {
+                offline_session(available, refetch).await;
+            }
+        }
+    }
+
+    async fn offline_session(available: bool, refetch: bool) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let tcp_accepted = Arc::new(AtomicBool::new(false));
         let accepted_for_server = tcp_accepted.clone();
+        let update_id = if refetch { 103 } else { 101 };
         let server = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
             accepted_for_server.store(true, Ordering::SeqCst);
             let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
             ws.send(Message::Text(
-                r#"{"E":900,"s":"BTCUSDT","U":101,"u":101,"b":[["99","4"]],"a":[]}"#.into(),
+                format!(r#"{{"E":900,"s":"BTCUSDT","U":{update_id},"u":{update_id},"b":[["99","4"]],"a":[]}}"#),
             ))
             .await
             .unwrap();
@@ -779,9 +838,18 @@ mod tests {
             while ws.next().await.is_some() {}
         });
 
-        let source = FakeSnapshotSource { tcp_accepted };
+        let metadata_calls = Arc::new(AtomicUsize::new(0));
+        let snapshot_calls = Arc::new(AtomicUsize::new(0));
+        let source = FakeSnapshotSource {
+            tcp_accepted,
+            metadata_calls: metadata_calls.clone(),
+            snapshot_calls: snapshot_calls.clone(),
+            available,
+            refetch,
+        };
         let (events_tx, mut events_rx) = tokio::sync::mpsc::channel(16);
         let config = DepthSessionConfig {
+            market: crate::BinanceMarket::Spot,
             snapshot_limit: 100,
             buffer_capacity: 8,
             max_snapshot_attempts: 2,
@@ -826,18 +894,43 @@ mod tests {
             })
         ));
 
+        if refetch {
+            assert!(matches!(
+                events_rx.recv().await,
+                Some(DepthEvent::Status {
+                    status: DepthStatus::Resyncing {
+                        reason: DepthResyncReason::SnapshotTooOld { .. }
+                    },
+                    ..
+                })
+            ));
+            assert!(matches!(
+                events_rx.recv().await,
+                Some(DepthEvent::Status {
+                    status: DepthStatus::SnapshotFetching { attempt: 2, .. },
+                    ..
+                })
+            ));
+        }
         match events_rx.recv().await {
             Some(DepthEvent::Snapshot {
                 generation,
                 observed_at_ms,
                 effective_at_ms,
                 snapshot,
+                price_step,
                 ..
             }) => {
                 assert_eq!(generation, 40);
                 assert!(observed_at_ms > 900);
                 assert_eq!(effective_at_ms, 899);
-                assert_eq!(snapshot.last_update_id(), 100);
+                assert_eq!(snapshot.last_update_id(), if refetch { 102 } else { 100 });
+                assert_eq!(price_step, available.then_some(Decimal::new(1, 2)));
+                assert_eq!(
+                    snapshot_calls.load(Ordering::SeqCst),
+                    if refetch { 2 } else { 1 }
+                );
+                assert_eq!(metadata_calls.load(Ordering::SeqCst), 1);
             }
             other => panic!("expected synchronized snapshot, got {other:?}"),
         }
@@ -850,8 +943,8 @@ mod tests {
             }) => {
                 assert_eq!(generation, 40);
                 assert_eq!(event_time_ms, 900);
-                assert_eq!(delta.first_update_id(), 101);
-                assert_eq!(delta.final_update_id(), 101);
+                assert_eq!(delta.first_update_id(), update_id);
+                assert_eq!(delta.final_update_id(), update_id);
             }
             other => panic!("expected bridge delta, got {other:?}"),
         }
@@ -859,12 +952,8 @@ mod tests {
             events_rx.recv().await,
             Some(DepthEvent::Status {
                 generation: 40,
-                status: DepthStatus::Synchronized {
-                    last_update_id: 101,
-                    ..
-                },
-                ..
-            })
+                status: DepthStatus::Synchronized { last_update_id, .. }, ..
+            }) if last_update_id == update_id
         ));
 
         drop(events_rx);

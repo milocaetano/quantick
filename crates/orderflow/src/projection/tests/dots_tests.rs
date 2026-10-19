@@ -1151,6 +1151,7 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
     // and a merge has room to grow.
     let config = HeatmapConfig {
         volume_dots: VolumeDotStyle {
+            tick_bubbles: None,
             enabled: true,
             full_quantity: 1_000.0,
             auto_full: false,
@@ -1213,6 +1214,7 @@ fn the_dot_scale_rescales_every_dot_alike() {
     let sizes = |full_quantity: f64, print_reference: f64| {
         let config = HeatmapConfig {
             volume_dots: VolumeDotStyle {
+                tick_bubbles: None,
                 enabled: true,
                 full_quantity,
                 auto_full: false,

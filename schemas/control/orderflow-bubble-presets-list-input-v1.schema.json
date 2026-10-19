@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "limit": {
+      "format": "uint",
+      "maximum": 64,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "offset": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "revision": {
+      "description": "Required on continuation pages; restart at offset zero after a reload.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "offset",
+    "limit"
+  ],
+  "title": "ListInput",
+  "type": "object"
+}

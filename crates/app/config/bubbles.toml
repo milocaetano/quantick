@@ -208,6 +208,15 @@ show_quantity_labels = true
 show_trade_count = false
 label_min_radius = 12.6
 
+# The tick-chart spheres the trader approved on the mini index (2026-10-14):
+# a fixed reference, so no pan or zoom resizes a sphere. Worn only where the
+# feed switches the asset mode on (`symbol_asset_modes` in feeds.toml).
+[presets.tick_bubbles]
+reference_quantity = 20000.0
+max_radius = 18.0
+label_min_radius = 8.0
+opacity = 0.9
+
 [presets.live_lane]
 native_tape = true
 
@@ -351,3 +360,112 @@ time_zoom = 1.0
 cluster_ms = 100
 radius_scale = 1.7
 show_marks = true
+
+# Scoped BTC spheres: visible-relative area and gradual camera scaling.
+[[presets]]
+name = "Binance BTC Spot spheres"
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
+overlap_merge = true
+volume_dot_auto_full = false
+volume_dot_full_quantity = 1.0
+
+[presets.bubbles]
+viewport_scale = { x_units_per_pixel = 200.0, price_units_per_pixel = 1.0 }
+# The Tape size the trader settled on after the sliders landed (2026-10-16):
+# a fresh install opens on it instead of asking for the same nudge.
+display_scale = { tape = 1.37, candle = 1.0 }
+min_radius = 2.1885
+max_radius = 15.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.541
+readable_min_radius = 5.7295
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
+size_reference = "fixed"
+size_reference_quantity = 8.0
+min_quantity = 0.0
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 13.5
+
+
+[presets.tick_bubbles]
+viewport_scale = { x_units_per_pixel = 0.045454545454545456, price_units_per_pixel = 1.0 }
+reference_mode = "visible_max"
+reference_quantity = 1.0
+max_radius = 32.0
+label_min_radius = 8.0
+opacity = 0.9
+
+# The Tape retains its own grouping and camera.
+
+[presets.live_lane]
+native_tape = true
+depth_time_averaging = true
+forward_book_preview = true
+stable_size = true
+[[presets]]
+name = "Binance BTC perpetual spheres"
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
+overlap_merge = true
+volume_dot_auto_full = false
+volume_dot_full_quantity = 10.0
+
+[presets.bubbles]
+viewport_scale = { x_units_per_pixel = 200.0, price_units_per_pixel = 1.0 }
+min_radius = 2.1885
+max_radius = 15.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.541
+readable_min_radius = 5.7295
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
+size_reference = "fixed"
+size_reference_quantity = 80.0
+min_quantity = 0.0
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 13.5
+
+
+[presets.tick_bubbles]
+viewport_scale = { x_units_per_pixel = 0.045454545454545456, price_units_per_pixel = 1.0 }
+reference_mode = "visible_max"
+reference_quantity = 10.0
+max_radius = 36.0
+label_min_radius = 8.0
+opacity = 0.9
+
+[presets.live_lane]
+native_tape = true
+depth_time_averaging = true
+forward_book_preview = true
+stable_size = true

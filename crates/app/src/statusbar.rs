@@ -206,18 +206,15 @@ pub struct DealCell {
 /// Showing one of those totals with a breakdown of the other is what this
 /// exists to prevent: three numbers that do not reconcile, on a readout whose
 /// entire selling point is that two of them sum to the third.
-#[must_use]
-pub fn tape_arrival_ms(arrival_ms: Option<i64>, latency: Option<FeedLatency>) -> Option<i64> {
-    latency.map(|split| split.arrival_lag_ms).or(arrival_ms)
-}
+pub use quantick_feed::timing::tape_arrival_ms;
 
-/// The tape cell: `arrival 123 ms` live, `stale 12 s` / `stale 14 h` when the
+/// The tape cell: `clock 123 ms` for an unsplit wall-clock difference,
+/// `arrival 123 ms` for provider breakdowns, `stale 12 s` / `stale 14 h` when the
 /// tape has gone
 /// quiet, `10× 45%` while replaying, `arrival —` before the first trade.
 ///
-/// Two different measurements, and the distinction is the point. *Arrival* is
-/// how late the newest print was when it reached the chart — an observation
-/// stored when that print arrived, which stops ageing the moment prints stop.
+/// A signed clock difference retains source/local disagreement and is not
+/// measured transport delay. Provider breakdowns retain their own provenance.
 /// *Staleness* is wall clock minus the newest event's own timestamp, computed
 /// every frame. A socket that stays open and delivers nothing keeps a healthy
 /// arrival figure forever, so the honest readout is the age of the tape.
@@ -252,92 +249,20 @@ pub fn tape_text(
             figures.progress.clamp(0.0, 1.0) * 100.0
         );
     }
-    match (tape_age_ms, tape_arrival_ms(arrival_ms, latency)) {
-        (Some(age), _) if age > metrics::STALE_TAPE_MS => {
-            // The same words the corner's popup and the chart's gap seam use.
-            // A tape fourteen hours old is the ordinary state of a chart
-            // opened before the open, and `stale 50400 s` is a true sentence
-            // nobody reads as "yesterday".
-            format!("stale {}", quantick_feed::stall::spoken_ms(age))
-        }
-        (_, Some(arrival)) => {
-            // Gated on the figure shown, which is the figure the hop was
-            // chosen from: a hop picked for one measurement and revealed by
-            // another can name a culprit for a delay it is not displaying.
-            let hop = latency
-                .filter(|_| arrival > metrics::HIGH_LAG_MS)
-                .and_then(|split| split.hop);
-            match hop {
-                Some(hop) => format!("{hop} {arrival} ms"),
-                None => format!("arrival {arrival} ms"),
-            }
-        }
-        (_, None) => "arrival —".to_owned(),
-    }
+    quantick_feed::timing::live_tape_text(
+        arrival_ms,
+        tape_age_ms,
+        latency,
+        metrics::STALE_TAPE_MS,
+        metrics::HIGH_LAG_MS,
+    )
 }
 
-/// What the tape cell always says on hover, split or no split.
-const TAPE_TOOLTIP_BASE: &str = "arrival: how late the newest print was when it \
-     reached the chart; stale: how long the tape has been silent (a socket can \
-     stay open and deliver nothing); replay shows speed and progress instead";
+#[cfg(test)]
+use quantick_feed::timing::TAPE_TOOLTIP_BASE;
 
-/// The hover text under the tape cell.
-///
-/// Always explains the two measurements the cell can show, because they are
-/// easy to conflate. When the provider has cut its own chain the split follows
-/// — the numbers behind the one word on the cell, so a trader who wants to know
-/// *how much* of the delay is theirs to fix can read it without leaving the
-/// chart.
-///
-/// Every figure says where it was taken. The feed measures at the socket and
-/// the chart measures at the frame, so the two totals are not the same number
-/// and must never be printed as though they were; their *difference* is what
-/// quantick's own queueing and drawing cost, and that is the one hop neither
-/// side can see alone.
-#[must_use]
 pub fn tape_tooltip(arrival_ms: Option<i64>, latency: Option<FeedLatency>) -> String {
-    let mut text = String::from(TAPE_TOOLTIP_BASE);
-    let Some(split) = latency else {
-        return text;
-    };
-    let ms = orderflow::format_window_ms;
-    // Both halves or neither: they come from the same pair of stamps, and one
-    // alone would invite the reader to infer the other by subtracting from a
-    // total that has a different sample behind it.
-    if let (Some(source), Some(transport)) = (split.source_lag_ms, split.transport_lag_ms) {
-        text.push_str(&format!(
-            "\n\nthe feed measured {} from the venue's stamp: {} before it was \
-             handed over, {} from there to the socket",
-            ms(split.arrival_lag_ms),
-            ms(source),
-            ms(transport),
-        ));
-        if let Some(hop) = split.hop {
-            text.push_str(&format!(" — most of it in {hop}"));
-        }
-    }
-    if let Some(peak) = split.source_lag_peak_ms {
-        text.push_str(&format!(
-            "\nslowest handover in the last {} prints: {}",
-            split.prints,
-            ms(peak),
-        ));
-    }
-    // The hop neither side can see alone. Two measurements taken at two
-    // instants, so the difference is an estimate — said out loud rather than
-    // presented as a third measured figure.
-    if let Some(drawn) = arrival_ms {
-        let queued = drawn - split.arrival_lag_ms;
-        if queued > 0 {
-            text.push_str(&format!(
-                "\nthe chart drew it {} after the venue's stamp, so roughly {} \
-                 of that was the chart's own queue and drawing",
-                ms(drawn),
-                ms(queued),
-            ));
-        }
-    }
-    text
+    quantick_feed::timing::tape_tooltip(arrival_ms, latency, orderflow::format_window_ms)
 }
 
 /// The bar-count cell, keeping the backfilled+live split: `240+61 bars`.
@@ -670,10 +595,7 @@ mod tests {
             progress: 0.45,
         });
         assert_eq!(tape_text(replay, None, None, None), "10×  45%");
-        assert_eq!(
-            tape_text(None, Some(230), Some(300), None),
-            "arrival 230 ms"
-        );
+        assert_eq!(tape_text(None, Some(230), Some(300), None), "clock 230 ms");
         // The tape has gone quiet: the stored arrival figure is stale itself.
         assert_eq!(
             tape_text(None, Some(42), Some(12_000), None),
@@ -802,7 +724,7 @@ mod tests {
     fn a_provider_that_cannot_split_says_only_what_it_measured() {
         // Data honesty: no invented zeros, and no breakdown of a chain nobody
         // cut. The hover is exactly what it always was.
-        assert_eq!(tape_tooltip(Some(120), None), TAPE_TOOLTIP_BASE);
+        assert!(tape_tooltip(Some(120), None).starts_with(TAPE_TOOLTIP_BASE));
         let unsplit = FeedLatency {
             arrival_lag_ms: 9_000,
             source_lag_ms: None,
@@ -811,10 +733,10 @@ mod tests {
             hop: None,
             prints: 3,
         };
-        assert_eq!(tape_tooltip(Some(9_000), Some(unsplit)), TAPE_TOOLTIP_BASE);
+        assert!(tape_tooltip(Some(9_000), Some(unsplit)).starts_with(TAPE_TOOLTIP_BASE));
         assert_eq!(
             tape_text(None, Some(9_000), Some(9_000), Some(unsplit)),
-            "arrival 9000 ms"
+            "clock 9000 ms"
         );
     }
 

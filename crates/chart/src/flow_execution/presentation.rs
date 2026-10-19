@@ -32,6 +32,49 @@ pub struct FlowRegionVisual {
     pub unresolved_overlap: bool,
 }
 
+impl FlowRegionVisual {
+    /// Regional FLOW's buy and sell fill for this region, premultiplied: the
+    /// opening's faint pair, context over the canvas `background`, a peak at
+    /// its emphasis over the footprint's `backing` (the canvas without one).
+    #[must_use]
+    pub fn regional_fill(
+        &self,
+        frame: &FlowTapeFrame,
+        background: [u8; 4],
+        backing: Option<[u8; 4]>,
+    ) -> [[u8; 4]; 2] {
+        use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
+        match self.role {
+            FlowRegionRole::Opening => colors(None, true, false),
+            FlowRegionRole::Context => colors(Some(background), false, true),
+            FlowRegionRole::Peak => ordinary_colors(
+                backing.unwrap_or(background),
+                frame.ordinary_region_opacity(&frame.dots[self.dot_index]),
+            ),
+        }
+    }
+
+    /// The region's pie from `start` radians: each side with volume, buy (0)
+    /// then sell (1), with its start angle and sweep. Exact sides reach the
+    /// geometry directly; no cached share or readability cutoff.
+    pub fn sectors(
+        &self,
+        frame: &FlowTapeFrame,
+        start: f32,
+    ) -> impl Iterator<Item = (usize, f32, f32)> {
+        let (buy, sell) = frame.dots[self.dot_index].side_shares();
+        let mut angle = f64::from(start);
+        let sides = [buy, sell].into_iter().enumerate();
+        sides
+            .filter(|(_, share)| *share > 0.0)
+            .map(move |(side, share)| {
+                let (at, sweep) = (angle, share * std::f64::consts::TAU);
+                angle += sweep;
+                (side, at as f32, sweep as f32)
+            })
+    }
+}
+
 /// One backend-independent plan for drawing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FlowPresentation {
@@ -39,10 +82,33 @@ pub struct FlowPresentation {
 }
 
 impl FlowPresentation {
+    /// Regional FLOW: every circle at the uniform offset, peaks relocated
+    /// off the circles they would hide.
     pub fn new(
         frame: &FlowTapeFrame,
         history: FlowBounds,
+        center: impl FnMut(&FlowTapeDot) -> Option<[f32; 2]>,
+    ) -> Self {
+        Self::build(frame, history, center, false)
+    }
+
+    /// The plan for a pane's look. Tick spheres stand on their own
+    /// executions — no uniform offset, no peak relocation — so a sphere never
+    /// moves when another arrives beside it; regional FLOW is [`Self::new`].
+    pub fn styled(
+        frame: &FlowTapeFrame,
+        history: FlowBounds,
+        tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
+        center: impl FnMut(&FlowTapeDot) -> Option<[f32; 2]>,
+    ) -> Self {
+        Self::build(frame, history, center, tick_bubbles.is_some())
+    }
+
+    fn build(
+        frame: &FlowTapeFrame,
+        history: FlowBounds,
         mut center: impl FnMut(&FlowTapeDot) -> Option<[f32; 2]>,
+        factual: bool,
     ) -> Self {
         if !history.iter().flatten().all(|value| value.is_finite())
             || history[0][0] >= history[1][0]
@@ -55,7 +121,13 @@ impl FlowPresentation {
             .iter()
             .enumerate()
             .filter_map(|(dot_index, dot)| {
-                let disc = center(dot).and_then(|at| FlowDisc::new(dot, at))?;
+                let disc = center(dot).and_then(|at| {
+                    if factual {
+                        FlowDisc::at(dot, at)
+                    } else {
+                        FlowDisc::new(dot, at)
+                    }
+                })?;
                 disc.visible(history).then_some(FlowRegionVisual {
                     dot_index,
                     source_disc: disc,
@@ -87,7 +159,9 @@ impl FlowPresentation {
                 regions[region_index].role = FlowRegionRole::Peak;
             }
         }
-        place_peaks(&mut regions, frame, history);
+        if !factual {
+            place_peaks(&mut regions, frame, history);
+        }
         regions.sort_by(|a, b| {
             a.role
                 .cmp(&b.role)

@@ -1881,6 +1881,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
             capabilities: feed::fixed_capabilities(FeedCapabilities {
                 book_capture: false,
                 history_paging: true,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,
@@ -1931,6 +1932,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         symbols: vec!["WINQ26".to_string()],
         bubble_preset: None,
         symbol_bubble_presets: Default::default(),
+        symbol_asset_modes: Default::default(),
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
         default_bars: Some("tick:7".to_string()),
         record_deals: false,
@@ -3157,6 +3159,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
             capabilities: feed::fixed_capabilities(FeedCapabilities {
                 book_capture: false,
                 history_paging: true,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,

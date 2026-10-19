@@ -712,6 +712,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 symbols: vec!["AAA".to_string()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                symbol_asset_modes: Default::default(),
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
@@ -723,6 +724,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 symbols: vec!["BBB".to_string()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                symbol_asset_modes: Default::default(),
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
@@ -775,7 +777,11 @@ fn each_symbol_of_a_feed_keeps_its_own_panel_look() {
     );
 
     // The user picks a different look by hand on this symbol...
-    assert!(app.active_tab_mut().tape_mut().apply_preset("dense tape"));
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .apply_preset("dense tape", false)
+    );
     // ...then hops to another symbol of the same feed, which is another
     // asset: it opens on the look the feed declares for it.
     app.active_tab_mut().symbol = "OTHERUSDT".to_string();
@@ -1817,6 +1823,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
         book_capture: false,
         history_paging: true,
+        history_boundary: None,
         traded_volume: true,
         deal_counter: false,
         ohlcv_history: false,
@@ -1850,7 +1857,26 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         history_reach::HistoryReach::Sessions(1),
     ));
     assert_eq!(drain_load_older(&mut cmd_rx).len(), 1);
-    caps_tx.send_modify(|caps| caps.history_paging = false);
+    let scope = observer_scope("feed.status");
+    let boundary = |app: &QuantickApp| {
+        let mut registry = crate::control::standard_registry().unwrap();
+        let capture = registry
+            .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        capture.scopes[&scope].value["tabs"][0]["capabilities"]["history_boundary"].clone()
+    };
+    assert!(boundary(&app).is_null(), "paging is still on");
+    caps_tx.send_modify(|caps| {
+        caps.history_paging = false;
+        caps.history_boundary = Some(crate::config::HistoryBoundary::VenueRetention);
+    });
+    assert_eq!(
+        boundary(&app),
+        "venue_retention",
+        "feed.status says why paging went off"
+    );
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(
             (-10..0).map(minute_trade_at).collect(),

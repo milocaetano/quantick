@@ -23,6 +23,10 @@ use super::{
     project_retained_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
 
+#[cfg(test)]
+#[path = "tape_rebuild_transfer_tests.rs"]
+mod transfer_tests;
+
 /// Where a [`TapeRebuild`] runs: somewhere no frame waits for it.
 pub trait TapeRebuildRunner {
     /// Hand a rebuild over; it comes back when the runner cannot take it.
@@ -89,6 +93,20 @@ impl<R: TapeRebuildRunner> TapeRebuilds<R> {
     #[must_use]
     pub fn last_work(&self) -> Option<TapeWork> {
         self.last_work
+    }
+
+    /// Hand navigation the history the pane actually drew. A running
+    /// rebuild loses its write authority; the drawn stand-in moves instead.
+    pub fn take_displayed(&mut self, memory: &mut TapeDotMemory) -> TapeDotMemory {
+        let owned = std::mem::take(memory);
+        let displayed = self
+            .stand_in
+            .as_deref()
+            .filter(|_| self.running.is_some())
+            .cloned()
+            .unwrap_or(owned);
+        self.discard();
+        displayed
     }
 
     /// The tape frame for `frame`: reconciled in the frame when that fits

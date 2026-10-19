@@ -1,0 +1,18 @@
+{
+  "market": "spot",
+  "symbol": "BTCUSDT",
+  "start_ms": 1791832320000,
+  "end_ms": 1791832379999,
+  "captured_utc": "2026-10-13T02:15:59.210821+00:00",
+  "source": [
+    "https://api.binance.com/api/v3/aggTrades?symbol=BTCUSDT&startTime=1791832320000&endTime=1791832379999&limit=1000"
+  ],
+  "selection": "20% minute-volume rank over last 12h",
+  "trades": 230,
+  "total_btc": "2.80847000",
+  "candle_volume_btc": "2.80847000",
+  "q50": "0.00063000",
+  "q90": "0.02928000",
+  "q99": "0.16466000",
+  "max_btc": "0.25240000"
+}

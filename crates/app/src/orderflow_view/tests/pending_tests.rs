@@ -158,6 +158,7 @@ fn an_accepted_tape_print_is_drawable_on_the_same_frame_with_the_worker_held() {
             rect.width(),
             false,
             (90.0, 110.0),
+            true,
         );
     });
     assert!(

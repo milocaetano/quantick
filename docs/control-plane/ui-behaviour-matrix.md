@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 70 |
+| Reachable by capability | 74 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **128** |
+| **Total** | **132** |
 
-83 of the 128 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 45 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+83 of the 132 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 49 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -57,7 +57,8 @@ The three exclusion classes are closed:
 | `app.exit` | Close the application | File menu, and the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the window would end every other capability's session |
 | `tab.market.activate` | Switch to another market tab | tab strip in the menu row; Ctrl+Tab and Ctrl+Shift+Tab | — | `pending_capability` — `layout.tab.switch` switches a layout tab, not a market tab; nothing reaches the strip that carries the open markets. Tracked in issue 401 |
 | `tab.market.close` | Close the active market tab | tab strip chip, File menu, Ctrl+W | — | `pending_capability` — closing a tab discards its drawings and its paper position, and the control contract admits no destructive effect yet — the same ceiling `layout.tab.delete` sits under. Tracked in issue 401 |
-| `tab.market.open` | Open a new market tab | tab strip +, File menu, Ctrl+T | — | `pending_capability` — no capability opens a market; the source picker is the only door. Tracked in issue 401 |
+| `tab.market.open` | Open a new market tab | tab strip +, File menu, Ctrl+T | — | `pending_capability` — no capability opens a second market tab. `feed.source.set` switches the feed and symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401 |
+| `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's SOURCE feed and symbol combos | `feed.source.set` | — |
 | `replay.browser.open` | Open the market replay browser | File menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `replay.close` | Leave replay and go back to the live tape | File menu, while a tab is replaying | — | `pending_capability` — no capability drives the replay transport, so an operator can neither start a session nor end one. Tracked in issue 401 |
 | `replay.format_help.open` | Read what a replay file has to look like | Help menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -92,6 +93,9 @@ The three exclusion classes are closed:
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
 | `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
+| `orderflow.bubbles.size.set` | Adjust Tape and tick-chart bubble size independently | top-right bubble size sliders on Tape and tick-chart panes | `orderflow.bubbles.size.set` | — |
+| `orderflow.bubbles.tick.set` | Select tick-chart spheres for a config-mode asset independently of the tape | Bubbles settings, Tick chart spheres preset picker | `orderflow.bubbles.tick.set` | — |
+| `orderflow.bubbles.preset.apply` | Apply or reapply a named whole bubble look | Bubbles settings, whole-look preset picker | `orderflow.bubbles.preset.apply` | — |
 | `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
 | `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
@@ -204,7 +208,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 45 |
+| `authored` | 49 |
 
 ## Appendix: rows no registry stands behind
 
@@ -216,6 +220,7 @@ declares nothing here is a guard failure.
 
 | Behaviour | Why nothing registers it |
 | --- | --- |
+| `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |
 | `chart.bars.set_spec` | the bar-kind and size controls are toolbar widgets, not entries in its action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
 | `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |
@@ -231,6 +236,9 @@ declares nothing here is a guard failure.
 | `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
 | `orderflow.tape.opening_scale.set` | opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu |
 | `orderflow.bubbles.save_changes.set` | the per-asset save switch is a checkbox under the bubble preset picker |
+| `orderflow.bubbles.size.set` | independent presentation sliders appear while their bubble display is active |
+| `orderflow.bubbles.tick.set` | chart-only preset picker under the whole-look presets |
+| `orderflow.bubbles.preset.apply` | whole-look preset selection permits same-name reapplication |
 | `appearance.candle_presets` | the Candles tab's preset row, save field and Reset are widgets, not registry entries |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |

@@ -12,7 +12,7 @@ fn recorded_native_sort_and_buffer_costs_at_40000_prints() {
     let (mut view, gate, initial) = held_view(true);
     view.reset_for_symbol(parsed.header.symbol.as_ref().unwrap());
     let before = view.config.clone();
-    assert!(view.apply_preset("mini index regions"));
+    assert!(view.apply_preset("mini index regions", false));
     view.config.price_grouping = Decimal::from(5);
     view.config.max_aggressions = 100_000;
     view.config.volume_dots.ignore_opening_burst_in_scale = true;

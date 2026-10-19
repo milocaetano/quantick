@@ -72,8 +72,9 @@ pub const BOOK_PROVENANCE: &str = "venue_published_depth";
 /// book, an empty tape or a zeroed setup.
 pub const NO_ENGINE: &str = "order_flow_engine_not_attached_to_this_pane";
 
-/// Revision rows are never serialized. The setup debug strings compare every
-/// field exactly, including floats that prevent deriving `Eq` on the configs.
+/// Revision rows are never serialized. The footprint setup's debug string and
+/// the engine's `IdenticalConfig` compare every field exactly, including
+/// floats that prevent deriving `Eq` on the configs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OrderflowRevisionKey {
     pub tab_id: u64,
@@ -99,8 +100,22 @@ pub struct EngineRevisionKey {
     lane_enabled: bool,
     status: &'static str,
     grouping: rust_decimal::Decimal,
-    config: String,
+    config: IdenticalConfig,
 }
+
+/// The whole engine config, compared by [`HeatmapConfig::identical`]: as exact
+/// as its `Debug` rendering, without formatting it at every capture.
+#[derive(Clone, Debug)]
+struct IdenticalConfig(HeatmapConfig);
+
+impl PartialEq for IdenticalConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.identical(&other.0)
+    }
+}
+
+/// `identical` is reflexive, a NaN field included.
+impl Eq for IdenticalConfig {}
 
 impl EngineRevisionKey {
     pub fn from_config(
@@ -117,7 +132,7 @@ impl EngineRevisionKey {
             lane_enabled: config.lane_enabled(),
             status: status.code(),
             grouping,
-            config: format!("{config:?}"),
+            config: IdenticalConfig(config.clone()),
         }
     }
 }
@@ -321,6 +336,17 @@ pub struct PaneBubblesSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BubblesStateSnapshot {
+    /// Independent final-radius gains; 1 preserves the selected preset's sizes.
+    #[serde(default)]
+    pub display_scale: BubbleDisplayScaleSnapshot,
+    /// Whole-look selection, including unbound views; empty after defaults.
+    #[serde(default)]
+    pub preset: String,
+    #[serde(default)]
+    pub tick_bubbles: Option<crate::tick_bubbles::TickBubblesSnapshot>,
+    /// Chart-only presets available for this asset.
+    #[serde(default)]
+    pub tick_presets: Vec<String>,
     /// Aggression bubbles are drawn over the chart. Beside the native tape,
     /// FLOW draws regional execution totals on the tick candles;
     /// `layers.visibility` names any block.
@@ -339,8 +365,8 @@ pub struct BubblesStateSnapshot {
     /// once they leave the live aggregation region, their membership stays
     /// fixed while time and price axes transform their coordinates. The
     /// default area scale follows the largest visible dot, with a common
-    /// radius cap to keep neighbours readable. Explicit display changes
-    /// start a new grouping. The bubble setting `overlap_merge` is
+    /// radius cap to keep neighbours readable. Grouping changes start a
+    /// new grouping; final-radius gains preserve it. The bubble setting `overlap_merge` is
     /// switched by `layers.visibility.set` as layer `bubble_overlap_merge`.
     #[serde(default)]
     pub overlap_merge: bool,
@@ -355,6 +381,29 @@ pub struct BubblesStateSnapshot {
     /// (see `asset`), read back by `layers.visibility` as layer `native_tape`.
     #[serde(default)]
     pub native_tape: bool,
+    /// Dense historical tape depth uses labelled duration-weighted averages;
+    /// current constant intervals remain exact.
+    #[serde(default)]
+    pub depth_time_averaging: bool,
+    /// The strip between the last candle and the tape previews the current
+    /// book, read exactly while it is current. The lane setting
+    /// `forward_book_preview`, one of the asset's bubble settings.
+    #[serde(default)]
+    pub forward_book_preview: bool,
+    /// Native dots retain their factual groups. An optional viewport scale
+    /// changes their common presentation reference and radius after grouping.
+    #[serde(default)]
+    pub stable_size: bool,
+    /// The quantity drawn at the configured maximum radius for stable native
+    /// Tape with a fixed display reference. Its minimum radius remains visible;
+    /// area above that minimum grows with quantity up to this amount. Separate
+    /// from `volume_dots.volume_dot_full_quantity`, which still governs grouping.
+    /// Absent for automatic sizing and legacy native Tape looks.
+    #[serde(default)]
+    pub tape_display_full_quantity: Option<CanonicalDecimal>,
+    /// Visible-relative native Tape presentation, independent of grouping.
+    #[serde(default)]
+    pub tape_viewport_scale: Option<crate::tick_bubbles::ViewportBubbleScaleSnapshot>,
     /// The pane shows the tape alone, Bookmap style: the native tape takes
     /// the whole canvas, no candle or candle mark is drawn and time runs
     /// across the full width on the tape's own window. The lane setting
@@ -377,7 +426,8 @@ pub struct BubblesStateSnapshot {
     /// The asset these bubble settings belong to. Every change made while
     /// it is on screen — the panel, `layers.visibility.set` on `bubbles`,
     /// `bubble_overlap_merge`, `native_tape`, `tape_only` and the flow
-    /// pane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —
+    /// pane's `candle_aggression`, `orderflow.tape.opening_scale.set`, and
+    /// `orderflow.bubbles.size.set` —
     /// belongs to this asset alone. While its `save_changes` is on it is
     /// saved, reaches every tab showing the asset and is restored whenever
     /// a tab shows it again; off, it stays on the pane it was made on for
@@ -385,6 +435,21 @@ pub struct BubblesStateSnapshot {
     /// the view only. Absent until the tab binds an asset.
     #[serde(default)]
     pub asset: Option<BubbleAssetSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BubbleDisplayScaleSnapshot {
+    pub tape: String,
+    pub candle: String,
+}
+
+impl Default for BubbleDisplayScaleSnapshot {
+    fn default() -> Self {
+        Self {
+            tape: "1".to_owned(),
+            candle: "1".to_owned(),
+        }
+    }
 }
 
 /// The asset a pane's bubble settings belong to.
@@ -450,19 +515,84 @@ impl BubblesStateSnapshot {
         dot_scale: Option<&quantick_orderflow::DotScale>,
         opening_bursts: &[i64],
         asset: Option<BubbleAssetSnapshot>,
+        tick_presets: Vec<String>,
     ) -> Self {
         Self {
+            tick_bubbles: config.volume_dots.tick_bubbles.map(Into::into),
+            display_scale: BubbleDisplayScaleSnapshot {
+                tape: config.bubbles.display_scale.tape.to_string(),
+                candle: config.bubbles.display_scale.candle.to_string(),
+            },
+            preset: String::new(),
+            tick_presets,
             enabled: config.show_aggressions,
             lane_enabled: config.lane_aggressions_visible(),
             aggression_provenance: AGGRESSION_PROVENANCE.to_owned(),
             floored_quantity: canonical_decimal(floored_quantity),
             overlap_merge: config.volume_dots.enabled,
             native_tape: config.native_tape(),
+            depth_time_averaging: config.live_lane.depth_time_averaging,
+            forward_book_preview: config.live_lane.forward_book_preview,
+            stable_size: config.live_lane.stable_size,
+            tape_display_full_quantity: (config.native_tape()
+                && config.volume_dots.enabled
+                && config.live_lane.stable_size
+                && !config.volume_dots.auto_full
+                && config.bubbles.viewport_scale.is_none()
+                && config.bubbles.size_reference == quantick_orderflow::BubbleSizeReference::Fixed)
+                .then(|| config.bubbles.fixed_reference_decimal())
+                .flatten()
+                .map(canonical_decimal),
+            tape_viewport_scale: config.bubbles.viewport_scale.map(Into::into),
             tape_only: config.live_lane.tape_only,
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
             volume_dots: dot_scale.map(Into::into),
             asset,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tape_size_tests {
+    use super::*;
+    use quantick_orderflow::BubbleSizeReference;
+    use rust_decimal::Decimal;
+
+    #[test]
+    fn fixed_native_display_reference_is_observable_without_relabeling_grouping() {
+        let mut config = HeatmapConfig::default();
+        config.live_lane.tape_only = true;
+        config.live_lane.stable_size = true;
+        config.volume_dots.enabled = true;
+        config.volume_dots.auto_full = false;
+        config.volume_dots.full_quantity = 1.0;
+        config.bubbles.size_reference = BubbleSizeReference::Fixed;
+        config.bubbles.size_reference_quantity = 8.0;
+        let snapshot = |config: &HeatmapConfig| {
+            BubblesStateSnapshot::from_config(config, Decimal::ZERO, None, &[], None, Vec::new())
+        };
+        assert_eq!(
+            snapshot(&config).tape_display_full_quantity,
+            Some(canonical_decimal(Decimal::from(8)))
+        );
+        assert_eq!(config.volume_dots.full_quantity, 1.0);
+        let fixed = config.clone();
+        for legacy in 0..5 {
+            let mut config = fixed.clone();
+            match legacy {
+                0 => config.live_lane.stable_size = false,
+                1 => config.volume_dots.auto_full = true,
+                2 => config.bubbles.size_reference = BubbleSizeReference::VisibleP99,
+                3 => config.volume_dots.enabled = false,
+                _ => {
+                    config.bubbles.viewport_scale = Some(quantick_orderflow::ViewportBubbleScale {
+                        x_units_per_pixel: 200.0,
+                        price_units_per_pixel: 1.0,
+                    })
+                }
+            }
+            assert_eq!(snapshot(&config).tape_display_full_quantity, None);
         }
     }
 }
@@ -478,9 +608,10 @@ pub struct VolumeDotsSnapshot {
     /// Native ticks per candle level, chosen from the candle price axis. A
     /// candle dot is its whole bar at one level.
     pub candle_level_ticks: WireU64,
-    /// Contracts a dot holds at the largest radius when the size is typed:
-    /// area is proportional to quantity against it. The bubble setting
-    /// `volume_dot_full_quantity`.
+    /// The typed volume-dot reference (`volume_dot_full_quantity`). Native
+    /// Tape uses it to group recent prints; stable native Tape with a fixed
+    /// display reference draws against `tape_display_full_quantity` instead.
+    /// Other volume dots draw at the largest radius at this amount.
     pub volume_dot_full_quantity: CanonicalDecimal,
     /// Each pane sizes its dots relative to its own biggest dot on screen
     /// instead of `volume_dot_full_quantity`. The bubble setting
@@ -688,3 +819,7 @@ impl BookSnapshot {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "orderflow/tests/revision_key.rs"]
+mod revision_key_tests;

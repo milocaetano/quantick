@@ -134,18 +134,14 @@ pub struct FeedIntegritySnapshot {
 /// without a screenshot and without a person watching the corner of a window.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TapeHealthSnapshot {
-    /// Newest print: venue stamp to this chart drawing it. The end-to-end
-    /// figure the status bar shows.
+    /// Signed local receipt stamp minus venue stamp, including clock disagreement.
+    /// Without a provider breakdown this is not transport latency. Local worker
+    /// residence and processing are measured separately on a monotonic clock.
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub arrival_latency_ms: Option<i64>,
-    /// The same measurement taken where the feed read the print off the wire,
-    /// one hop earlier.
-    ///
-    /// The gap between this and `arrival_latency_ms` is what quantick's own
-    /// queue and frame drain cost. It is a *derived* reading, not a measured
-    /// one — the two are sampled at different instants — but a gap of seconds
-    /// between them is unambiguous, and it is the only way to see that hop at
-    /// all. `None` on a provider that cannot cut its own chain.
+    /// Provider receipt stamp minus venue stamp, one hop before chart drain.
+    /// Different clock domains may produce signed offsets; separately sampled
+    /// chart/provider values do not establish precise local queue residence.
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub feed_arrival_latency_ms: Option<i64>,
     /// Venue stamp to the source handing the print over: everything upstream

@@ -39,7 +39,7 @@ leaves; `guards` has no edges either way.
 | `sim` | trading, engine | `TradingVenue` impl; fills only on what the tape proves, never on quotes. |
 | `trading` | engine | Venue-neutral order vocabulary and the `TradingVenue` port. |
 | `feed` | feed-*, sources, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port, its adapters, session export. Owns runtimes, threads, clock. |
-| `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook | Venue sources; produce trades. |
+| `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook, sources | Produce trades. |
 | `sources` | engine | Feed config vocabulary and the history reach, below `feed`. |
 | `orderflow` | engine, orderbook | Liquidity history, grouping, timeline, settled/live heatmap projections. Told the time. |
 | `engine` | — | Trades in, bars out. Deterministic, no clock. |

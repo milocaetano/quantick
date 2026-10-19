@@ -15,6 +15,11 @@ use super::timeline::BarTimeline;
 
 mod candle_dots;
 mod constants;
+mod depth_display;
+pub use depth_display::{
+    GapMarks, current_book_preview, depth_caption, depth_cell_slots, forward_book_preview,
+    gap_label, gap_marks_bounds,
+};
 mod dots;
 pub mod flow_tape;
 mod fold;
@@ -25,7 +30,9 @@ mod past_heat;
 mod past_tape;
 mod pending;
 mod pending_overlay;
+mod reduction_band;
 mod tape;
+mod tape_display;
 mod tape_frame;
 mod tape_geometry;
 mod tape_group;
@@ -49,21 +56,25 @@ pub use dots::{
     DotRungMemory, DotScale, DotSizing, DotZoom, PaneGeometry, VolumeDots, candle_dot_px,
     dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
 };
-pub use lane_heat::{BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, book_carry};
+pub use lane_heat::{
+    BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, LaneFold, book_carry, book_is_current,
+};
 pub use model::{
-    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, FlowCellHit, GapPrimitive, HeatmapCell,
-    HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection,
-    TapeFacts, normalized_area_size, normalized_log_intensity,
+    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, BookSource, CellHitContext, FlowCellHit,
+    GapPrimitive, HeatmapCell, HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow,
+    SettledProjection, TapeFacts, normalized_area_size, normalized_log_intensity,
 };
 pub use past_heat::{PastHeat, PlacedPastHeat, project_past_heat};
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
 pub use pending::PendingTape;
+pub use reduction_band::{EventBand, marker_band};
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
+pub use tape_display::TapeBubbleDisplay;
 pub use tape_frame::{
     TapeFrameInputs, TapeRebuild, project_past_tape_frame, project_retained_tape_frame,
     project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
-pub use tape_geometry::TapeHorizontalGeometry;
+pub use tape_geometry::{TapeHorizontalGeometry, finite_unit_f64};
 pub use tape_memory::{
     PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, TapeWork,
 };
@@ -81,7 +92,7 @@ use tiers::{TierClusters, TierCut, TierGrouping, cluster_tier, refine_tier, tier
 
 #[cfg(test)]
 use heat_cells::percentile_99;
-use heat_cells::{DraftCell, book_gaps, bucket_rows, finish_cells};
+use heat_cells::{DraftCell, PriceRows, book_gaps, finish_cells};
 
 /// One level's resting liquidity, summed over one bar and weighted by time.
 ///
@@ -227,8 +238,9 @@ pub fn project_settled(
     let mut run_quantities = Vec::with_capacity(grouped.runs.len());
     let mut summary: BTreeMap<(usize, Decimal, RestingSide), SlotHeat> = BTreeMap::new();
     let lane_view = timeline.lane_start_ms().is_some();
+    let mut rows = PriceRows::new(effective_grouping, prices);
     for run in &grouped.runs {
-        let Some((y0, y1)) = bucket_rows(run.price_bucket, effective_grouping, prices) else {
+        let Some((y0, y1)) = rows.get(run.price_bucket) else {
             continue;
         };
         let draft = |x0: f64, x1: f64, quantity: Decimal| DraftCell {
@@ -241,6 +253,8 @@ pub fn project_settled(
             y0,
             y1,
             carried: false,
+            time_averaged: false,
+            current_book: false,
         };
 
         let mut drawn = false;
@@ -303,6 +317,8 @@ pub fn project_settled(
             y0: heat.y0,
             y1: heat.y1,
             carried: false,
+            time_averaged: false,
+            current_book: false,
         });
     }
 
@@ -537,6 +553,22 @@ pub fn project_live_after(
     dots: Option<&VolumeDots>,
     reuse: Option<TapeReuse<'_>>,
 ) -> LiveMarks {
+    let mut fold = LaneFold::default();
+    project_live_folded(history, timeline, prices, settled, dots, reuse, &mut fold)
+}
+
+/// [`project_live_after`] on the lane `fold` its worker keeps between
+/// requests, so an averaged lane folds only the runs closed since the last.
+#[must_use]
+pub fn project_live_folded(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    settled: &SettledProjection,
+    dots: Option<&VolumeDots>,
+    reuse: Option<TapeReuse<'_>>,
+    fold: &mut LaneFold,
+) -> LiveMarks {
     let config = history.config();
     if !settled.enabled || !config.any_layer_enabled() {
         return LiveMarks::default();
@@ -544,12 +576,13 @@ pub fn project_live_after(
     let live_now_x = timeline
         .live_now_position()
         .map(|position| position.normalized);
-    let (cells, dropped_cells) = lane_heat::project_lane_heat(
+    let (cells, dropped_cells, current_book) = lane_heat::project_lane_heat_folded(
         history,
         timeline,
         prices,
         settled.effective_grouping,
         settled.liquidity_reference,
+        fold,
     );
     // No boundary means no bar is represented at all, so there is no live half
     // to draw — and no reason to walk the retained tape looking for one.
@@ -562,6 +595,7 @@ pub fn project_live_after(
             live_now_x,
             cells,
             dropped_cells,
+            current_book,
             ..LiveMarks::default()
         };
     };
@@ -709,6 +743,7 @@ pub fn project_live_after(
         live_now_x,
         cells,
         dropped_cells,
+        current_book,
     }
 }
 

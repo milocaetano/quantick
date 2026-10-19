@@ -3704,6 +3704,10 @@
                 "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
                 "type": "boolean"
               },
+              "current_book_preview": {
+                "description": "Current book snapshot in chart forward space; no historical time claim.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -3734,9 +3738,33 @@
               "side": {
                 "type": "string"
               },
+              "source_book_unix_ms": {
+                "description": "Book timeline timestamp, preserved with cached frames: source event time\nfor updates, effective coverage start for snapshots (not local arrival).",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "source_book_update_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Update ID of the exact current book used to build this painted frame."
+              },
               "start_slot": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane or on a held tape has none: both bounds then equal the lane\nboundary, and `live_lane` or `held_tape_end_unix_ms` says where it is."
+              },
+              "time_averaged": {
+                "description": "Quantity is a duration-weighted mean, rather than instantaneous depth.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -4158,6 +4186,10 @@
                 "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
                 "type": "boolean"
               },
+              "current_book_preview": {
+                "description": "Current book snapshot in chart forward space; no historical time claim.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -4188,9 +4220,33 @@
               "side": {
                 "type": "string"
               },
+              "source_book_unix_ms": {
+                "description": "Book timeline timestamp, preserved with cached frames: source event time\nfor updates, effective coverage start for snapshots (not local arrival).",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "source_book_update_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Update ID of the exact current book used to build this painted frame."
+              },
               "start_slot": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane or on a held tape has none: both bounds then equal the lane\nboundary, and `live_lane` or `held_tape_end_unix_ms` says where it is."
+              },
+              "time_averaged": {
+                "description": "Quantity is a duration-weighted mean, rather than instantaneous depth.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -8856,7 +8912,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes.",
+      "description": "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes. A reload that respawned journals `feed.timeline.rebuilt` naming who threw the timeline away, with the call's result under `feed_reload`.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit.recover",
@@ -8942,8 +8998,114 @@
         "timeline_rebuilt"
       ],
       "risk_reducing": false,
-      "stale_input_safety": "A stale caller can only rebuild a chart that had already come back, which costs it the history refetch and any open paper position — journaled, with its reason. The call names the tab and the market it acted on and says whether it really respawned, so a caller that guessed wrong can see it did.",
+      "stale_input_safety": "No expected revision is checked. A stale caller can only rebuild a chart that had already come back, or switch a tab to the pair it already shows, which changes nothing; otherwise it costs the history refetch, any open paper position — journaled, with its reason — and the tab's armed strategies. The call names the tab and the market it acted on and whether it really respawned or changed, and journals who did it (`feed.timeline.rebuilt` for a reload, `feed.source.changed` for a switch), so a caller that guessed wrong can see it did.",
       "title": "Reload a chart from a new feed session",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Selects a pair listed in feed.status.sources through the chart's source selectors. A changed source rebuilds all pane timelines, closes and journals any paper position, disarms strategies and applies the destination asset's saved settings. Refuses while replay owns the tab. Requires the same cockpit.recover permission as feed.reload. The tab id and the configured pair are checked before anything changes; repeating the active pair is a no-op. A changed source journals `feed.source.changed` naming who switched it, the pair it left and the pair it chose. Read active_feed_id, active_symbol and feed_generation in feed.status.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit.recover",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.source.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "feed_id": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "feed_id",
+          "symbol"
+        ],
+        "title": "FeedSourceInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "feed_id": {
+            "type": "string"
+          },
+          "from_feed_id": {
+            "description": "The pair the tab showed before the call; the same pair when nothing\nchanged.",
+            "type": "string"
+          },
+          "from_symbol": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "timeline_kept": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tab_id",
+          "feed_id",
+          "symbol",
+          "from_feed_id",
+          "from_symbol",
+          "changed",
+          "timeline_kept"
+        ],
+        "title": "FeedSourceResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.recover"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "timeline_rebuilt"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "No expected revision is checked. A stale caller can only rebuild a chart that had already come back, or switch a tab to the pair it already shows, which changes nothing; otherwise it costs the history refetch, any open paper position — journaled, with its reason — and the tab's armed strategies. The call names the tab and the market it acted on and whether it really respawned or changed, and journals who did it (`feed.timeline.rebuilt` for a reload, `feed.source.changed` for a switch), so a caller that guessed wrong can see it did.",
+      "title": "Select a configured feed and symbol",
       "version": 1
     },
     {
@@ -12730,6 +12892,371 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Applies or reapplies an exact named whole look through the Bubbles picker owner. Discover names with orderflow.bubbles.presets.list. Preset tape navigation and appearance are applied; layer visibility is preserved. Changes follow the asset save switch, including session-only changes when off. Read selection and effective policies in orderflow.bubbles; tick-only selection remains independent.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.preset.apply",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "description": "Exact name returned by orderflow.bubbles.presets.list.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "preset"
+        ],
+        "title": "ApplyInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "BubbleAssetSnapshot": {
+            "description": "The asset a pane's bubble settings belong to.",
+            "properties": {
+              "key": {
+                "description": "The asset's key: the feed config's `symbol_bubble_presets` key that\nnames the symbol (`WIN*` covers every mini index contract), or the\nsymbol itself.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
+                "type": "string"
+              },
+              "save_changes": {
+                "default": true,
+                "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset, unless\nits stored settings changed since that pane last showed them: then\nthe pane wears those instead (the action's result `screen` says\nwhich).",
+                "type": "boolean"
+              },
+              "save_error": {
+                "default": null,
+                "description": "Why they are not saved; absent when they are.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "saved": {
+                "description": "Whether the store file holds the settings this pane shows. `false`\nuntil the next frame writes a change, while the file cannot be read\nor written — they are kept in memory, retried, for this run only —\nand while saving is off and a change is on screen.",
+                "type": "boolean"
+              },
+              "source": {
+                "description": "Where the settings came from: `stored` (changed for this asset; see\n`saved`), `declared` (the preset the feed config declares) or\n`default` (the presets file's active look).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "source",
+              "preset",
+              "saved"
+            ],
+            "type": "object"
+          },
+          "TickBubbleReferenceMode": {
+            "enum": [
+              "fixed",
+              "visible_max"
+            ],
+            "type": "string"
+          },
+          "TickBubblesSnapshot": {
+            "properties": {
+              "label_min_radius": {
+                "type": "string"
+              },
+              "max_radius": {
+                "type": "string"
+              },
+              "opacity": {
+                "type": "string"
+              },
+              "reference_mode": {
+                "$ref": "#/$defs/TickBubbleReferenceMode",
+                "default": "fixed"
+              },
+              "reference_quantity": {
+                "description": "Full-radius quantity in fixed mode; configured floor in visible-max mode.",
+                "type": "string"
+              },
+              "viewport_scale": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Present when final visible quantities and the current camera size the spheres."
+              }
+            },
+            "required": [
+              "reference_quantity",
+              "max_radius",
+              "label_min_radius",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          "ViewportBubbleScaleSnapshot": {
+            "description": "Optional drawing calibration; factual grouping uses its existing settings.",
+            "properties": {
+              "price_units_per_pixel": {
+                "type": "string"
+              },
+              "x_units_per_pixel": {
+                "description": "Bars on candles; milliseconds on native Tape.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "x_units_per_pixel",
+              "price_units_per_pixel"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BubbleAssetSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "depth_time_averaging": {
+            "type": "boolean"
+          },
+          "forward_book_preview": {
+            "type": "boolean"
+          },
+          "native_tape": {
+            "type": "boolean"
+          },
+          "native_tape_requested": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "stable_size": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tick_bubbles": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TickBubblesSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "changed",
+          "preset",
+          "native_tape_requested",
+          "native_tape",
+          "stable_size",
+          "depth_time_averaging",
+          "forward_book_preview"
+        ],
+        "title": "ApplyResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab/pane IDs and exact preset names are checked before mutation. Same-name drift is corrected; identical selection and configuration are a no-op. Keyed retries replay the first answer.",
+      "title": "Apply whole bubble preset",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Lists 1..64 exact whole-look names in picker order for a pane, with selected name, total and next_offset. Offset starts at zero. Reloading presets may change the order; restart pagination after a reload. This read does not apply or save anything.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_items": 64,
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.presets.list",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint",
+            "maximum": 64,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "revision": {
+            "description": "Required on continuation pages; restart at offset zero after a reload.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "offset",
+          "limit"
+        ],
+        "title": "ListInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "total": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "preset",
+          "names",
+          "total",
+          "revision"
+        ],
+        "title": "ListResult",
+        "type": "object"
+      },
+      "pagination": "revision_locked",
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.orderflow"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "List whole bubble presets",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Switches the asset's \"Save changes for this asset\", which every tab on that asset shares; it starts on. On, a bubble setting changed on a pane is stored for the asset the pane shows and every tab on it wears it. Off, a change stays on the pane it was made on for this session: not stored, not shown in other tabs on the asset, which keep the stored settings; showing another market in that tab and back, or restarting, brings the stored settings back. Switching it on again stores what the addressed pane shows now and other tabs on the asset wear it — unless the asset's stored settings changed since that pane last showed them (another tab's change, an import): then the pane drops what it shows and wears the stored settings, and nothing of its screen is stored. The result's screen says which happened: stored, replaced_by_stored, or kept when the switch went off or did not move. The switch itself is stored. No other asset and no shared presets file is touched.",
       "destructive": false,
       "dry_run_supported": false,
@@ -12846,6 +13373,313 @@
       "risk_reducing": false,
       "stale_input_safety": "Stable tab and pane IDs are resolved before switching; a pane whose bubbles belong to no asset is refused. The result and orderflow.bubbles report the asset and its switch; the result also reports what became of the pane's screen.",
       "title": "Save bubble changes for this asset",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Sets the independent radius multiplier for Tape or tick-chart bubbles on one pane. The target must already be active. One preserves its appearance; changing size preserves execution quantities, sides, membership, grouping, source positions and the other target's scale. The existing asset save switch governs persistence: saved for the displayed asset when enabled, otherwise retained for this pane's session.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.size.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "BubbleScaleTarget": {
+            "enum": [
+              "tape",
+              "candle"
+            ],
+            "type": "string"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "scale": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "Canonical decimal string from 0.25 through 3, inclusive. Multiplies\nfinal radii; \"1\" preserves the current appearance."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/BubbleScaleTarget",
+            "description": "The Tape or tick-chart bubbles on the addressed pane."
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "target",
+          "scale"
+        ],
+        "title": "BubbleScaleInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "BubbleScaleTarget": {
+            "enum": [
+              "tape",
+              "candle"
+            ],
+            "type": "string"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "scale": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The actual multiplier retained by the addressed display owner."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/BubbleScaleTarget"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "target",
+          "scale",
+          "changed"
+        ],
+        "title": "BubbleScaleResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [
+        {
+          "description": "Candle bubble size needs a pane that draws tick bars.",
+          "id": "orderflow.bubbles.tick_chart"
+        },
+        {
+          "description": "The target's bubbles are drawing: the tape's bubbles for tape, candle bubbles beside the candles (not Tape alone) for candle.",
+          "id": "orderflow.bubbles.display_active"
+        }
+      ],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs select the display owner. The result and orderflow.bubbles report the actual multiplier; repeating a value has no further effect.",
+      "title": "Set bubble size",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.tick.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "description": "A name in orderflow.bubbles.tick_presets; null restores regional FLOW; never omitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "preset"
+        ],
+        "title": "TickBubblesInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "TickBubbleReferenceMode": {
+            "enum": [
+              "fixed",
+              "visible_max"
+            ],
+            "type": "string"
+          },
+          "TickBubblesSnapshot": {
+            "properties": {
+              "label_min_radius": {
+                "type": "string"
+              },
+              "max_radius": {
+                "type": "string"
+              },
+              "opacity": {
+                "type": "string"
+              },
+              "reference_mode": {
+                "$ref": "#/$defs/TickBubbleReferenceMode",
+                "default": "fixed"
+              },
+              "reference_quantity": {
+                "description": "Full-radius quantity in fixed mode; configured floor in visible-max mode.",
+                "type": "string"
+              },
+              "viewport_scale": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Present when final visible quantities and the current camera size the spheres."
+              }
+            },
+            "required": [
+              "reference_quantity",
+              "max_radius",
+              "label_min_radius",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          "ViewportBubbleScaleSnapshot": {
+            "description": "Optional drawing calibration; factual grouping uses its existing settings.",
+            "properties": {
+              "price_units_per_pixel": {
+                "type": "string"
+              },
+              "x_units_per_pixel": {
+                "description": "Bars on candles; milliseconds on native Tape.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "x_units_per_pixel",
+              "price_units_per_pixel"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tick_bubbles": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TickBubblesSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "changed"
+        ],
+        "title": "TickBubblesResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [
+        {
+          "description": "A named preset needs a pane that draws tick bars; null needs nothing.",
+          "id": "orderflow.bubbles.tick_chart"
+        },
+        {
+          "description": "A named preset needs the feed config to switch an asset mode on for the pane's asset (symbol_asset_modes); null needs nothing.",
+          "id": "orderflow.bubbles.asset_mode"
+        }
+      ],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs and preset names are validated, and one rule shared with the settings picker (a tick chart and the asset's config mode) is asked, before any edit. Repeating a selection is a no-op.",
+      "title": "Set tick chart sphere preset",
       "version": 1
     },
     {
@@ -16980,6 +17814,17 @@
                 "description": "Defaults off for snapshots produced before deal counters existed.",
                 "type": "boolean"
               },
+              "history_boundary": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/HistoryBoundarySnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Why `history_paging` is off when the feed knows: `venue_retention`\nmeans the venue keeps nothing older. Absent while paging is on, and\non a provider that never pages; optional, so additive to v1."
+              },
               "history_paging": {
                 "type": "boolean"
               },
@@ -17051,6 +17896,28 @@
               "headline_present",
               "next_step_present",
               "text_availability"
+            ],
+            "type": "object"
+          },
+          "FeedSourceChoice": {
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "feed_id": {
+                "type": "string"
+              },
+              "symbols": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "feed_id",
+              "display_name",
+              "symbols"
             ],
             "type": "object"
           },
@@ -17137,6 +18004,7 @@
                 "$ref": "#/$defs/WireU64"
               },
               "latest_arrival_latency_ms": {
+                "description": "Signed local receipt stamp minus venue stamp; includes clock disagreement.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -17227,6 +18095,16 @@
               "live_trade_count"
             ],
             "type": "object"
+          },
+          "HistoryBoundarySnapshot": {
+            "description": "Where a feed's pageable trade history ends.",
+            "oneOf": [
+              {
+                "const": "venue_retention",
+                "description": "The venue retains no executions older than the chart holds.",
+                "type": "string"
+              }
+            ]
           },
           "HistoryLoadSnapshot": {
             "description": "One tab's history run, as the History button draws it.",
@@ -17366,6 +18244,14 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "sources": {
+            "default": [],
+            "description": "Configured source pairs available to feed.source.set and the selectors.",
+            "items": {
+              "$ref": "#/$defs/FeedSourceChoice"
+            },
+            "type": "array"
+          },
           "tabs": {
             "items": {
               "$ref": "#/$defs/FeedTabSnapshot"
@@ -17810,7 +18696,7 @@
             "description": "Where a tab's tape delay is being spent.\n\nThe whole point of the breakdown is that \"the chart is eighteen seconds\nbehind\" is not actionable on its own: it reads the same whether the venue's\nadapter was late, the wire was late, or this process drained late, and those\nhave different fixes. An investigation that starts here can name the hop\nwithout a screenshot and without a person watching the corner of a window.",
             "properties": {
               "arrival_latency_ms": {
-                "description": "Newest print: venue stamp to this chart drawing it. The end-to-end\nfigure the status bar shows.",
+                "description": "Signed local receipt stamp minus venue stamp, including clock disagreement.\nWithout a provider breakdown this is not transport latency. Local worker\nresidence and processing are measured separately on a monotonic clock.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -17826,7 +18712,7 @@
                 ]
               },
               "feed_arrival_latency_ms": {
-                "description": "The same measurement taken where the feed read the print off the wire,\none hop earlier.\n\nThe gap between this and `arrival_latency_ms` is what quantick's own\nqueue and frame drain cost. It is a *derived* reading, not a measured\none — the two are sampled at different instants — but a gap of seconds\nbetween them is unambiguous, and it is the only way to see that hop at\nall. `None` on a provider that cannot cut its own chain.",
+                "description": "Provider receipt stamp minus venue stamp, one hop before chart drain.\nDifferent clock domains may produce signed offsets; separately sampled\nchart/provider values do not establish precise local queue residence.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -18108,6 +18994,10 @@
                 "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
                 "type": "boolean"
               },
+              "current_book_preview": {
+                "description": "Current book snapshot in chart forward space; no historical time claim.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -18138,9 +19028,33 @@
               "side": {
                 "type": "string"
               },
+              "source_book_unix_ms": {
+                "description": "Book timeline timestamp, preserved with cached frames: source event time\nfor updates, effective coverage start for snapshots (not local arrival).",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "source_book_update_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Update ID of the exact current book used to build this painted frame."
+              },
               "start_slot": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane or on a held tape has none: both bounds then equal the lane\nboundary, and `live_lane` or `held_tape_end_unix_ms` says where it is."
+              },
+              "time_averaged": {
+                "description": "Quantity is a duration-weighted mean, rather than instantaneous depth.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -18657,6 +19571,21 @@
             ],
             "type": "object"
           },
+          "BubbleDisplayScaleSnapshot": {
+            "properties": {
+              "candle": {
+                "type": "string"
+              },
+              "tape": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tape",
+              "candle"
+            ],
+            "type": "object"
+          },
           "BubblesStateSnapshot": {
             "properties": {
               "aggression_provenance": {
@@ -18673,7 +19602,20 @@
                   }
                 ],
                 "default": null,
-                "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
+                "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, `orderflow.tape.opening_scale.set`, and\n`orderflow.bubbles.size.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
+              },
+              "depth_time_averaging": {
+                "default": false,
+                "description": "Dense historical tape depth uses labelled duration-weighted averages;\ncurrent constant intervals remain exact.",
+                "type": "boolean"
+              },
+              "display_scale": {
+                "$ref": "#/$defs/BubbleDisplayScaleSnapshot",
+                "default": {
+                  "candle": "1",
+                  "tape": "1"
+                },
+                "description": "Independent final-radius gains; 1 preserves the selected preset's sizes."
               },
               "enabled": {
                 "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
@@ -18682,6 +19624,11 @@
               "floored_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
+              },
+              "forward_book_preview": {
+                "default": false,
+                "description": "The strip between the last candle and the tape previews the current\nbook, read exactly while it is current. The lane setting\n`forward_book_preview`, one of the asset's bubble settings.",
+                "type": "boolean"
               },
               "ignore_opening_burst_in_scale": {
                 "default": false,
@@ -18699,8 +19646,13 @@
               },
               "overlap_merge": {
                 "default": false,
-                "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+                "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Grouping changes start a\nnew grouping; final-radius gains preserve it. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
                 "type": "boolean"
+              },
+              "preset": {
+                "default": "",
+                "description": "Whole-look selection, including unbound views; empty after defaults.",
+                "type": "string"
               },
               "recorded_opening_windows_ms": {
                 "default": [],
@@ -18711,10 +19663,58 @@
                 },
                 "type": "array"
               },
+              "stable_size": {
+                "default": false,
+                "description": "Native dots retain their factual groups. An optional viewport scale\nchanges their common presentation reference and radius after grouping.",
+                "type": "boolean"
+              },
+              "tape_display_full_quantity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The quantity drawn at the configured maximum radius for stable native\nTape with a fixed display reference. Its minimum radius remains visible;\narea above that minimum grows with quantity up to this amount. Separate\nfrom `volume_dots.volume_dot_full_quantity`, which still governs grouping.\nAbsent for automatic sizing and legacy native Tape looks."
+              },
               "tape_only": {
                 "default": false,
                 "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
                 "type": "boolean"
+              },
+              "tape_viewport_scale": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Visible-relative native Tape presentation, independent of grouping."
+              },
+              "tick_bubbles": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TickBubblesSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tick_presets": {
+                "default": [],
+                "description": "Chart-only presets available for this asset.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               "volume_dots": {
                 "anyOf": [
@@ -18799,7 +19799,7 @@
                 "type": "boolean"
               },
               "opening_capped": {
-                "description": "Compatibility field: FLOW no longer caps opening regions; always false.",
+                "description": "Legacy compatibility field, always false; radius_px reports actual area.",
                 "type": "boolean"
               },
               "opening_oversized": {
@@ -19192,6 +20192,70 @@
             ],
             "type": "object"
           },
+          "TickBubbleReferenceMode": {
+            "enum": [
+              "fixed",
+              "visible_max"
+            ],
+            "type": "string"
+          },
+          "TickBubblesSnapshot": {
+            "properties": {
+              "label_min_radius": {
+                "type": "string"
+              },
+              "max_radius": {
+                "type": "string"
+              },
+              "opacity": {
+                "type": "string"
+              },
+              "reference_mode": {
+                "$ref": "#/$defs/TickBubbleReferenceMode",
+                "default": "fixed"
+              },
+              "reference_quantity": {
+                "description": "Full-radius quantity in fixed mode; configured floor in visible-max mode.",
+                "type": "string"
+              },
+              "viewport_scale": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Present when final visible quantities and the current camera size the spheres."
+              }
+            },
+            "required": [
+              "reference_quantity",
+              "max_radius",
+              "label_min_radius",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          "ViewportBubbleScaleSnapshot": {
+            "description": "Optional drawing calibration; factual grouping uses its existing settings.",
+            "properties": {
+              "price_units_per_pixel": {
+                "type": "string"
+              },
+              "x_units_per_pixel": {
+                "description": "Bars on candles; milliseconds on native Tape.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "x_units_per_pixel",
+              "price_units_per_pixel"
+            ],
+            "type": "object"
+          },
           "VolumeDotsSnapshot": {
             "description": "What a volume-dots frame was keyed and sized on.",
             "properties": {
@@ -19213,7 +20277,7 @@
               },
               "volume_dot_full_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "description": "Contracts a dot holds at the largest radius when the size is typed:\narea is proportional to quantity against it. The bubble setting\n`volume_dot_full_quantity`."
+                "description": "The typed volume-dot reference (`volume_dot_full_quantity`). Native\nTape uses it to group recent prints; stable native Tape with a fixed\ndisplay reference draws against `tape_display_full_quantity` instead.\nOther volume dots draw at the largest radius at this amount."
               }
             },
             "required": [

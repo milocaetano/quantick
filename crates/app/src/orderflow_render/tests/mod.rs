@@ -7,7 +7,7 @@
 // `use super::*`, the root's own. The renderer has since been split into
 // sibling modules, and an item a test names in one of them is `pub(super)`
 // so this sidecar can still reach it - `bubbles::sphere_segments`,
-// `heatmap::gap_marks`, `legend::flow_layout` and their like have no
+// `heatmap::gap_marks` and their like have no
 // production caller outside their own file and carry that visibility for
 // these tests alone. The five glob imports below are how the sidecar sees
 // them; nothing here is `pub(crate)` or wider.
@@ -16,7 +16,6 @@ use super::bubbles::*;
 use super::constants::*;
 use super::heatmap::*;
 use super::layout::*;
-use super::legend::*;
 use super::preview::*;
 use super::*;
 use crate::viewport::Viewport;
@@ -32,6 +31,7 @@ fn luminance(rgb: [u8; 3]) -> f32 {
 }
 
 mod dot_radii_tests;
+mod flow_chrome;
 mod tape_only_tests;
 mod tape_path_tests;
 mod tape_price_tests;
@@ -134,46 +134,6 @@ fn bubble_area_above_floor_tracks_normalized_quantity() {
     let quarter_area = quarter_quantity_radius.powi(2) - minimum.powi(2);
     let full_area = full_radius.powi(2) - minimum.powi(2);
     assert!((quarter_area / full_area - 0.25).abs() < 1e-5);
-}
-
-#[test]
-fn partial_marker_height_grows_with_reduction_fraction() {
-    let band = EventBand {
-        x: 50.0,
-        top: 10.0,
-        bottom: 30.0,
-    };
-    let quiet = marker_band(band, 0.1, false);
-    let strong = marker_band(band, 0.8, false);
-    assert!(quiet.height() < strong.height());
-    assert!(strong.height() < band.height());
-    assert_eq!(marker_band(band, 0.2, true).height(), band.height());
-}
-
-#[test]
-fn compact_legend_wraps_without_exceeding_width() {
-    let widths = [90.0, 90.0, 90.0];
-    let layout = flow_layout(&widths, 190.0, 17.0, 3.0);
-    assert_eq!(layout.positions[0], egui::vec2(0.0, 0.0));
-    assert_eq!(layout.positions[1], egui::vec2(93.0, 0.0));
-    assert_eq!(layout.positions[2], egui::vec2(0.0, 17.0));
-    assert!(layout.size.x <= 190.0);
-    assert_eq!(layout.size.y, 34.0);
-}
-
-#[test]
-fn labels_are_honest_and_compact() {
-    assert_eq!(
-        bubble_label(Decimal::from(1_250), 4, 0, true, true),
-        Some("1.25K · ×4".to_owned())
-    );
-    assert_eq!(format_quantity(Decimal::from(100)), "100");
-    assert_eq!(format_quantity(Decimal::ZERO), "0");
-    assert_eq!(
-        bubble_label(Decimal::ONE, 1, 0, false, true),
-        None,
-        "one trade does not need a redundant count"
-    );
 }
 
 /// The stretch older than this session's capture used to be a hatched,
@@ -1462,6 +1422,155 @@ fn panning_and_zooming_the_candles_never_move_the_lane() {
 }
 
 #[test]
+fn ordinary_lane_opening_never_stretches_old_depth_across_forward_space() {
+    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+    let mut viewport = Viewport::new();
+    viewport.pan_pixels(-160.0, 60);
+    for native in [false, true] {
+        for inverted in [false, true] {
+            let mut layout =
+                ProjectedLayout::new(rect, &viewport, 60, 56, 5, 300.0).with_inverted(inverted);
+            if native {
+                layout.tape_geometry = Some(
+                    quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+                        300.0,
+                        100.0,
+                        &quantick_orderflow::BubbleStyle::default(),
+                    ),
+                );
+            }
+            let divider = layout.lane_left_x().unwrap();
+            let band = layout.band(0.8, 0.9, 0.2, 0.3, 1.0);
+            let opening = layout.with_lane_only().x(0.8);
+            assert!((band.left() - opening).abs() < 0.01);
+            assert!(band.left() >= divider);
+            let preview = layout.current_book_preview_rect(0.2, 0.3);
+            assert!(preview.is_positive());
+            assert!((preview.right() - divider).abs() < 0.01);
+            assert!(preview.left() < divider);
+            assert!(preview.intersect(band).width() <= 0.01);
+            assert_eq!(preview.top(), layout.y(0.2).min(layout.y(0.3)));
+        }
+    }
+}
+
+/// The strip between the last candle and the tape previews the current
+/// book while the frame holds it current, on a lane that asks for it, with
+/// depth averaging on or off. A row standing at the live edge (averaging off)
+/// fills the strip and none of the lane, and an expired book leaves the
+/// strip and its caption empty.
+#[test]
+fn the_strip_previews_a_live_current_book_and_drops_an_expired_one() {
+    for averaging in [false, true] {
+        let mut style = OrderflowRenderStyle {
+            depth_layer: true,
+            lane_depth_layer: true,
+            edge_glow: 0.0,
+            ..OrderflowRenderStyle::default()
+        };
+        style.live_lane.depth_time_averaging = averaging;
+        style.live_lane.forward_book_preview = true;
+        for live in [true, false] {
+            let (filled, claims_lane, caption) = paint_one_current_row(&style, live);
+            assert_eq!(filled, live, "averaging {averaging}, live {live}");
+            assert!(
+                !claims_lane,
+                "averaging {averaging}: a row at the live edge claims no lane time"
+            );
+            assert_eq!(
+                caption, live,
+                "averaging {averaging}, live {live}: the caption follows the strip"
+            );
+        }
+    }
+}
+
+/// One current-book row standing at the live edge, painted on a pane whose
+/// strip between the last candle and the tape is open: whether the strip
+/// filled, whether anything was painted in the lane, and whether the caption
+/// names the preview.
+fn paint_one_current_row(style: &OrderflowRenderStyle, live: bool) -> (bool, bool, bool) {
+    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+    let mut viewport = Viewport::new();
+    viewport.pan_pixels(-160.0, 60);
+    let layout = ProjectedLayout::new(rect, &viewport, 60, 56, 5, 300.0);
+    let strip = layout.current_book_preview_rect(0.2, 0.3);
+    assert!(strip.is_positive());
+    let mut projection = HeatmapProjection::empty(
+        true,
+        quantick_orderflow::EffectiveGrouping::resolve(
+            quantick_orderflow::DisplayGrouping::Native,
+            Decimal::ONE,
+            Decimal::from(100),
+        ),
+    );
+    projection.cells = std::sync::Arc::new(vec![quantick_orderflow::HeatmapCell {
+        generation: 1,
+        side: quantick_orderflow::RestingSide::Bid,
+        price_bucket: Decimal::from(99),
+        quantity: Decimal::from(5),
+        x0: 1.0,
+        x1: 1.0,
+        y0: 0.2,
+        y1: 0.3,
+        intensity: 0.8,
+        alpha: 0.8,
+        carried: false,
+        time_averaged: false,
+        current_book: true,
+    }]);
+    projection.current_book = Some(quantick_orderflow::projection::BookSource {
+        update_id: Some(1),
+        event_ms: 1_000,
+    });
+    let output = egui::Context::default().run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        draw_heatmap_background(
+            &painter,
+            &RenderContext::new(&projection, layout, style).with_current_book_live(live),
+        );
+    });
+    let filled = output.shapes.iter().any(|clipped| match &clipped.shape {
+        egui::Shape::Mesh(mesh) => mesh.vertices.iter().any(|vertex| {
+            vertex.pos.x >= strip.left() - 0.01 && vertex.pos.x <= strip.right() + 0.01
+        }),
+        _ => false,
+    });
+    let divider = layout.lane_left_x().unwrap();
+    let claims_lane = output.shapes.iter().any(|clipped| match &clipped.shape {
+        egui::Shape::Mesh(mesh) => mesh
+            .vertices
+            .iter()
+            .any(|vertex| vertex.pos.x > divider + 0.01),
+        _ => false,
+    });
+    let caption = format!("{:?}", output.shapes).contains("Current book preview");
+    (filled, claims_lane, caption)
+}
+
+/// A pane whose lane does not ask for the forward preview keeps the strip
+/// between the last candle and the tape empty, caption and all, even while
+/// its frame holds a current book, with depth averaging on or off: the
+/// approved WIN tape's strip, as on main.
+#[test]
+fn a_lane_without_the_forward_preview_keeps_the_strip_empty() {
+    for averaging in [false, true] {
+        let mut style = OrderflowRenderStyle {
+            depth_layer: true,
+            lane_depth_layer: true,
+            edge_glow: 0.0,
+            ..OrderflowRenderStyle::default()
+        };
+        style.live_lane.depth_time_averaging = averaging;
+        let (filled, _, caption) = paint_one_current_row(&style, true);
+        assert!(
+            !filled && !caption,
+            "averaging {averaging}: the strip previewed a book nobody asked for"
+        );
+    }
+}
+
+#[test]
 fn the_lane_is_the_only_region_wider_than_a_candle() {
     let viewport = Viewport::new(); // candle_width 8, following
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
@@ -1547,30 +1656,6 @@ fn a_folded_bubble_wears_a_ring_a_print_does_not() {
         "a folded dot is indistinguishable from a single print"
     );
 }
-/// A fold and a cluster may not read the same.
-///
-/// `×4` says four prints happened together at one price — a fact about the
-/// market, and a size a trader may act on. `⊕4` says the frame put four
-/// marks together to fit its budget — a fact about the canvas, and a size
-/// that never crossed the tape at once. Sharing a glyph would let the
-/// second be read as the first.
-#[test]
-fn a_fold_and_a_cluster_do_not_share_a_glyph() {
-    let cluster =
-        bubble_label(rust_decimal::Decimal::from(20), 4, 0, true, true).expect("labels are on");
-    let fold =
-        bubble_label(rust_decimal::Decimal::from(20), 4, 4, true, true).expect("labels are on");
-    assert_eq!(cluster, "20 · ×4");
-    assert_eq!(
-        fold,
-        format!("20 · {}4", egui_phosphor::regular::PLUS_CIRCLE)
-    );
-    assert_ne!(
-        cluster, fold,
-        "a budget fold reads as four prints that traded"
-    );
-}
-
 /// Switching the book off clears the marks that describe it, on the pane
 /// that lost it — and switching one kind off clears that kind everywhere.
 ///

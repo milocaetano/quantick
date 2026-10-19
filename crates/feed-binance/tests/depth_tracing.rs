@@ -41,6 +41,7 @@ fn update(first: u64, final_id: u64) -> DepthUpdate {
         symbol: "BTCUSDT".to_string(),
         first_update_id: first,
         final_update_id: final_id,
+        previous_update_id: None,
         bids: Vec::new(),
         asks: Vec::new(),
     }

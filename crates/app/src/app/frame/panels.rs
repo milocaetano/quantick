@@ -90,6 +90,7 @@ pub(super) fn draw_dock(
         ctx,
         &mut DockEnv {
             orderflow,
+            tick_chart: flow_pane.state.tick_membership().is_some(),
             replay_view,
             replay: replay.as_ref(),
             paper,

@@ -96,7 +96,14 @@ impl OrderBook {
         }
 
         let expected_update_id = current_update_id.saturating_add(1);
-        if delta.first_update_id() > expected_update_id {
+        if let Some(previous) = delta.previous_update_id() {
+            if previous != current_update_id {
+                return Err(BookError::PreviousUpdateMismatch {
+                    expected: current_update_id,
+                    got: previous,
+                });
+            }
+        } else if delta.first_update_id() > expected_update_id {
             return Err(BookError::SequenceGap {
                 expected_update_id,
                 first_update_id: delta.first_update_id(),

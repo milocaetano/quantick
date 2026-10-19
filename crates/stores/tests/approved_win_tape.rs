@@ -27,6 +27,9 @@
 //! labels are measured on a fixed label slot, because the real width is a
 //! font metric.
 //!
+//! The book the tape paints under these marks is pinned beside them, in
+//! [`depth`], over the same prints.
+//!
 //! When this fails, the tape changed. Do not edit the golden to match and do
 //! not relax the comparison: the approved tape changes only with the trader's
 //! approval, and then the new golden is the file the failing run wrote, read
@@ -42,13 +45,14 @@ use quantick_chart::state::ChartState;
 use quantick_chart::viewport::Viewport;
 use quantick_engine::fixture::parse_trades;
 use quantick_engine::{Bar, BarSpec, Side, Trade};
+use quantick_orderbook::DepthEvent;
 use quantick_orderflow::config::theme::OrderflowRenderStyle;
 use quantick_orderflow::engine::{BookEngine, BookPublished, ProjectionRequest, VisibleOrderflow};
+use quantick_orderflow::pane_tape::PaneTape;
 use quantick_orderflow::projection::{
-    AggressionPrimitive, PendingTape, TapeDotFrame, TapeDotGeometry, TapeDotMemory,
-    TapeHorizontalGeometry, draws_bubble, project_tape_frame, project_tape_frame_with_overlay,
+    AggressionPrimitive, TapeDotFrame, TapeDotGeometry, TapeDotMemory, TapeHorizontalGeometry,
+    draws_bubble, project_tape_frame, project_tape_frame_with_overlay,
 };
-use quantick_orderflow::tape_clock::TapeClock;
 use quantick_orderflow::{
     DotRungMemory, HeatmapConfig, LiveEdge, PaneGeometry, PriceWindow, lane_bars, lane_time_ticks,
     reserved_span_ms,
@@ -59,6 +63,9 @@ use quantick_stores::bubble_presets;
 use quantick_stores::config::AppConfig;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
+
+#[path = "approved_win_tape/depth.rs"]
+mod depth;
 
 /// 3,267 unchanged prints of WINV26 on 2026-09-22, 09:33:20 to 09:35:00.
 const TRADES: &str = include_str!("fixtures/win_2026_09_22_approved_tape.csv");
@@ -212,12 +219,20 @@ fn switch_mode(config: &mut HeatmapConfig, mode: Mode) {
 
 /// `BookCommand`, the order-flow view's messages to its worker.
 enum Command {
+    Depth {
+        event: DepthEvent,
+        received_at_ms: i64,
+    },
     Trade(Trade),
     TapeTrade {
         ordinal: u64,
         trade: Trade,
     },
     TapeEpoch(u64),
+    SetEnabled {
+        enabled: bool,
+        generation_floor: u64,
+    },
     ApplyVisualConfig(HeatmapConfig),
     TapePriceGrid {
         step: Decimal,
@@ -262,6 +277,10 @@ impl Worker {
         let mut incoming = None;
         for command in std::mem::take(&mut self.queue) {
             match command {
+                Command::Depth {
+                    event,
+                    received_at_ms,
+                } => self.engine.handle_depth_event_at(event, received_at_ms),
                 Command::Trade(trade) => self.engine.record_trade(&trade),
                 Command::TapeTrade { ordinal, trade } => {
                     self.engine.record_trade(&trade);
@@ -274,6 +293,10 @@ impl Worker {
                     self.last_request = None;
                     incoming = None;
                 }
+                Command::SetEnabled {
+                    enabled,
+                    generation_floor,
+                } => self.engine.set_enabled(enabled, generation_floor),
                 Command::ApplyVisualConfig(config) => self.engine.apply_visual_config(config),
                 Command::TapePriceGrid {
                     step,
@@ -303,8 +326,8 @@ struct View {
     last_seen_base: Decimal,
     last_tape_price_grid: Option<(Decimal, Option<Decimal>)>,
     dot_rungs: DotRungMemory,
-    tape_clock: TapeClock,
-    pending_tape: PendingTape,
+    /// The pane's clock and the prints the worker has not published.
+    pane_tape: PaneTape,
     tape_dots: TapeDotMemory,
     worker: Worker,
 }
@@ -324,8 +347,7 @@ impl View {
             published: BookPublished::initial(),
             last_tape_price_grid: None,
             dot_rungs: DotRungMemory::default(),
-            tape_clock: TapeClock::default(),
-            pending_tape: PendingTape::default(),
+            pane_tape: PaneTape::default(),
             tape_dots: TapeDotMemory::default(),
             worker: Worker::new(),
         }
@@ -336,19 +358,36 @@ impl View {
     }
 
     fn lane_now_ms(&self) -> Option<i64> {
-        if native(&self.config) {
-            self.tape_clock.now_ms()
-        } else {
-            None
-        }
+        self.pane_tape.lane_now_ms(native(&self.config))
     }
 
     fn set_replay_clock_at(&mut self, position_ms: i64, applied: Option<i64>, next: Option<i64>) {
-        if native(&self.config) {
-            self.tape_clock.replay_at(position_ms, applied, next);
-        } else {
-            self.tape_clock.reset();
+        let native_tape = native(&self.config);
+        self.pane_tape
+            .follow_replay(native_tape, position_ms, applied, next);
+    }
+
+    /// `OrderflowView::set_enabled`: the feed accepted the capture.
+    fn set_enabled(&mut self, enabled: bool, generation_floor: u64) {
+        if self.config.enabled == enabled {
+            return;
         }
+        self.config.enabled = enabled;
+        if !enabled {
+            self.published.frame = None;
+        }
+        self.worker.send(Command::SetEnabled {
+            enabled,
+            generation_floor,
+        });
+    }
+
+    /// `OrderflowView::handle_depth_event_at`: straight to the worker.
+    fn handle_depth_event_at(&mut self, event: DepthEvent, received_at_ms: i64) {
+        self.worker.send(Command::Depth {
+            event,
+            received_at_ms,
+        });
     }
 
     fn commit_config_changes(&mut self, before: &HeatmapConfig) {
@@ -360,7 +399,7 @@ impl View {
         if native(&self.config) != native(before)
             || self.config.volume_dots.enabled != before.volume_dots.enabled
         {
-            let epoch = self.pending_tape.reset();
+            let epoch = self.pane_tape.reset();
             self.published.frame = None;
             self.worker.send(Command::TapeEpoch(epoch));
         }
@@ -382,17 +421,18 @@ impl View {
         if !self.config.any_layer_enabled() {
             return;
         }
-        self.pending_tape.observe_opening_burst(trade.timestamp_ms);
+        self.pane_tape
+            .pending_mut()
+            .observe_opening_burst(trade.timestamp_ms);
         if self.immediate_tape() {
-            if !self.pending_tape.started() {
+            let print = self.pane_tape.record(trade, &self.config);
+            if let Some(epoch) = print.opens {
                 self.worker
                     .send(Command::ApplyVisualConfig(self.config.clone()));
-                self.worker
-                    .send(Command::TapeEpoch(self.pending_tape.epoch()));
+                self.worker.send(Command::TapeEpoch(epoch));
             }
-            let ordinal = self.pending_tape.record(trade, &self.config);
             self.worker.send(Command::TapeTrade {
-                ordinal,
+                ordinal: print.ordinal,
                 trade: trade.clone(),
             });
         } else {
@@ -415,8 +455,8 @@ impl View {
     fn sync_published(&mut self) {
         let (mut book, receipt) = self.worker.mailbox.clone();
         match receipt {
-            Some((epoch, through)) if epoch == self.pending_tape.epoch() => {
-                self.pending_tape.acknowledge(through);
+            Some((epoch, through)) if epoch == self.pane_tape.pending().epoch() => {
+                self.pane_tape.pending_mut().acknowledge(through);
             }
             _ => book.frame = None,
         }
@@ -445,7 +485,8 @@ impl View {
                 .lane_now_ms()
                 .and_then(|now| self.tape_dots.price_range(now, window_ms));
             return self
-                .pending_tape
+                .pane_tape
+                .pending()
                 .price_range(
                     self.published
                         .frame
@@ -498,20 +539,22 @@ impl View {
             price_range,
             dot_zoom: Some(dot_zoom),
         };
-        let frame = if !self.immediate_tape() || self.pending_tape.is_empty() {
-            self.published.frame.clone()
-        } else {
-            let with_pending = match path {
-                Path::Overlay => VisibleOrderflow::with_pending_overlay,
-                Path::Complete => VisibleOrderflow::with_pending_tape,
-            };
-            with_pending(
-                &self.pending_tape,
+        let frame = match path {
+            // `PaneTape::complete_frame`, the app's own call.
+            Path::Overlay => {
+                self.pane_tape
+                    .complete_frame(&self.config, &request, self.published.frame.as_ref())
+            }
+            Path::Complete if !self.immediate_tape() || self.pane_tape.pending().is_empty() => {
+                self.published.frame.clone()
+            }
+            Path::Complete => VisibleOrderflow::with_pending_tape(
+                self.pane_tape.pending(),
                 &self.config,
                 &request,
                 self.published.frame.as_deref(),
             )
-            .map(Arc::new)
+            .map(Arc::new),
         };
         self.worker.send(Command::Project(request));
         frame
@@ -530,6 +573,8 @@ struct Pane {
     /// Painted frames that carried their accepted prints beside the
     /// published tape.
     overlaid: usize,
+    /// The background pass, written at the frames [`depth`] asks for.
+    depth: depth::Recorder,
 }
 
 impl Pane {
@@ -559,6 +604,7 @@ impl Pane {
             chart_width: mode.chart_width(),
             path,
             overlaid: 0,
+            depth: depth::Recorder::default(),
         }
     }
 
@@ -597,6 +643,7 @@ impl Pane {
             chart_width,
             path,
             overlaid,
+            depth,
         } = self;
         let (chart_width, chart_height) = (*chart_width, CHART_HEIGHT_PX);
         let closed = state.bars();
@@ -667,6 +714,17 @@ impl Pane {
         );
         *auto_range = Some(fitted);
         let frame = frame?;
+        depth.observe(
+            &frame,
+            &view.config,
+            depth::Canvas {
+                chart_width,
+                chart_height,
+                lane_width,
+                viewport,
+                total_bars: total,
+            },
+        );
 
         // The painter's tape frame.
         let mut style = OrderflowRenderStyle::from_config(&view.config, [0, 0, 0, 255]);

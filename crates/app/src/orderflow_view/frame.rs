@@ -26,8 +26,8 @@ use crate::chart::PriceScale;
 use crate::live_strip;
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
-    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_live_lane_marks,
-    theme_bubble_rgb,
+    draw_compact_legend, draw_compact_legend_avoiding, draw_heatmap_background,
+    draw_liquidity_events, draw_live_lane_marks, theme_bubble_rgb,
 };
 use crate::orderflow_worker::BookCommand;
 use crate::viewport::Viewport;
@@ -143,7 +143,8 @@ impl OrderflowView {
         // The frame's book is today's: a held tape draws its own beside it.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
-        let context = RenderContext::new(&frame.projection, layout, &style);
+        let context = RenderContext::new(&frame.projection, layout, &style)
+            .with_current_book_live(frame.current_book_live);
         draw_heatmap_background(&depth, &context);
         if let Some(heat) = self.held_heat(frame) {
             let mut tape = style.clone();
@@ -160,7 +161,8 @@ impl OrderflowView {
     /// Draw factual aggressive prints over the candles. The canvas's key is
     /// not part of this pass — see [`draw_legend`](Self::draw_legend).
     /// `inverted` is the candles' own orientation, as in
-    /// [`draw_background`](Self::draw_background).
+    /// [`draw_background`](Self::draw_background); `tick_chart` says the
+    /// candles are tick bars, the only ones the candle gain is set on.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
@@ -173,6 +175,7 @@ impl OrderflowView {
         lane_width_px: f32,
         inverted: bool,
         price_range: (f64, f64),
+        tick_chart: bool,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -187,6 +190,7 @@ impl OrderflowView {
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         // FLOW owns tick-candle executions even when the Tape lane is hidden.
         style.aggression_layer &= !self.flow_execution_replaces_history();
+        style.bubbles.display_scale = style.bubbles.display_scale.painted(tick_chart);
         style.dot_sizing = frame
             .volume_dots
             .as_ref()
@@ -247,6 +251,21 @@ impl OrderflowView {
             .filter(|_| self.config.native_tape());
         let (window, retained) = self.tape_bounds();
         let end = live.map_or(TapeEnd::Live, |live| end.reclamped(live, window, retained));
+        if self.config.stable_tape_groups() {
+            if self.tape_end.is_live() && !end.is_live() {
+                let memory = self
+                    .tape_rebuilds
+                    .get_mut()
+                    .take_displayed(self.tape_dots.get_mut());
+                self.past_dots.get_mut().hold_live(memory);
+            } else if !self.tape_end.is_live()
+                && end.is_live()
+                && let Some(memory) = self.past_dots.get_mut().resume_live()
+            {
+                self.tape_rebuilds.get_mut().discard();
+                *self.tape_dots.get_mut() = memory;
+            }
+        }
         if std::mem::replace(&mut self.tape_end, end) != end {
             self.worker.send(BookCommand::TapeEnd(end.past_ms()));
         }
@@ -311,8 +330,9 @@ impl OrderflowView {
         canvas_background: egui::Color32,
         lane_width_px: f32,
         top_inset_px: f32,
+        tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
     ) -> Option<egui::Rect> {
-        let layout = ProjectedLayout::new(
+        let mut layout = ProjectedLayout::new(
             chart_rect,
             viewport,
             total_bars,
@@ -351,8 +371,11 @@ impl OrderflowView {
             style.aggression_layer = false;
             style.lane_aggression_layer = false;
         }
+        if tick_regions.is_some() && !style.live_lane.tape_only {
+            layout.chart_rect = chart_rect.with_max_x(chart_rect.right() - lane_width_px);
+        }
         let context = RenderContext::new(&frame.projection, layout, &style);
-        draw_compact_legend(painter, &context)
+        draw_compact_legend_avoiding(painter, &context, tick_regions)
     }
 
     /// `right_inset_px` is the room another piece of chrome has already claimed

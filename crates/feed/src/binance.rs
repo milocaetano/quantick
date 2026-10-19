@@ -15,16 +15,18 @@ use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_binance::{
-    BINANCE_WS_BASE, Backoff, BinanceHttp, BinanceKlineHttp, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M,
-    ONE_MINUTE_MS, agg_trade_url, backfill, backfill_before,
+    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M,
+    ONE_MINUTE_MS, agg_trade_url, backfill_before_with_boundary, backfill_with_boundary,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
     },
     fetch_history, run_with_reconnect,
 };
+use quantick_sources::trade_admission::{RecentTradeIds, TradeAdmission};
 
 use super::{
-    FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice, initial_backfill_target,
+    FeedCapabilities, FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice,
+    initial_backfill_target,
 };
 use crate::config::ProviderKind;
 use crate::venue_loop::{CommandPlan, Slot, ohlcv_reply_frees_slot, plan_command, send_or_break};
@@ -46,14 +48,29 @@ pub(crate) struct BinanceSource {
 /// Start the Binance feed for `symbol` on a background thread.
 #[must_use]
 pub fn spawn(symbol: &str) -> FeedHandle {
+    spawn_market(symbol, BinanceMarket::Spot)
+}
+
+/// Start an independent Spot or USD-M market session.
+#[must_use]
+pub fn spawn_market(symbol: &str, market: BinanceMarket) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
     let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
-    let symbol = symbol.to_string();
+    // Every aggTrade is an execution carrying its real size, and the venue
+    // answers the same for every symbol it lists.
+    let (caps_tx, caps_rx) = watch::channel(
+        match market {
+            BinanceMarket::Spot => ProviderKind::Binance,
+            BinanceMarket::UsdM => ProviderKind::BinanceFutures,
+        }
+        .capabilities(),
+    );
+    let symbol = market.display_symbol(symbol);
     let source = BinanceSource {
-        http: BinanceHttp::new(),
-        url: agg_trade_url(BINANCE_WS_BASE, &symbol),
+        http: BinanceHttp::for_market(market),
+        url: agg_trade_url(market.trade_ws_base(), &market.wire_symbol(&symbol)),
         // Fixed seed keeps a single desktop client's retry reproducible.
         backoff: Backoff::for_feed(0x9E37_79B9_7F4A_7C15),
     };
@@ -65,16 +82,16 @@ pub fn spawn(symbol: &str) -> FeedHandle {
                 .enable_all()
                 .build()
                 .expect("build feed runtime");
-            runtime.block_on(feed_task(symbol, tx, book_tx, notice_tx, cmd_rx, source));
+            runtime.block_on(feed_task(
+                symbol, tx, book_tx, notice_tx, caps_tx, cmd_rx, source,
+            ));
         })
         .expect("spawn feed thread");
     FeedHandle {
         events: rx,
         book_events: book_rx,
         notices: notice_rx,
-        // Every aggTrade is an execution carrying its real size, and the venue
-        // answers the same for every symbol it lists — nothing to narrow later.
-        capabilities: super::fixed_capabilities(ProviderKind::Binance.capabilities()),
+        capabilities: caps_rx,
         // A web-socket venue stamps a trade and quantick reads it: there is no
         // hop between those two to attribute a delay to.
         latency: super::unsplit_latency(),
@@ -88,15 +105,24 @@ pub(crate) async fn feed_task(
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
+    capabilities: watch::Sender<FeedCapabilities>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
     source: BinanceSource,
 ) {
     let BinanceSource { http, url, backoff } = source;
+    let market = http.market();
     // 1. Backfill recent history so the chart opens populated. Remember the
     //    earliest agg_id so we can page further back on demand.
-    let ControlFlow::Continue(earliest_id) = initial_backfill(&http, &symbol, &tx).await else {
+    let mut continuity = crate::continuity::BinanceContinuity::default();
+    let mut admission = RecentTradeIds::default();
+    let ControlFlow::Continue((earliest_id, history_retention_limited)) =
+        initial_backfill(&http, &symbol, &tx, &mut admission, &mut continuity).await
+    else {
         return; // UI gone
     };
+    if history_retention_limited {
+        withdraw_paging(&capabilities, &symbol);
+    }
 
     // 2. Stream live trades on top, reconnecting as needed. run_with_reconnect
     //    speaks Trade; the loop below tags each as a live FeedEvent and, in the
@@ -117,18 +143,21 @@ pub(crate) async fn feed_task(
     let mut feed = BinanceLoop {
         // Candles come off a different endpoint with a different paging rule,
         // so they get their own client rather than overloading the aggTrade one.
-        klines: BinanceKlineHttp::new(),
+        klines: BinanceKlineHttp::for_market(market),
         http,
         symbol,
         tx,
         book_tx,
         notice_tx,
+        capabilities,
         earliest_id,
+        history_retention_limited,
         snapshot_limit: initial_book_depth(),
         book_capture: None,
         ohlcv_tx,
         ohlcv_task: None,
-        continuity: crate::continuity::BinanceContinuity::default(),
+        continuity,
+        admission,
         ever_connected: false,
     };
 
@@ -172,16 +201,24 @@ async fn initial_backfill(
     http: &BinanceHttp,
     symbol: &str,
     tx: &mpsc::Sender<FeedEvent>,
-) -> ControlFlow<(), Option<u64>> {
+    admission: &mut RecentTradeIds,
+    continuity: &mut crate::continuity::BinanceContinuity,
+) -> ControlFlow<(), (Option<u64>, bool)> {
     let target = initial_backfill_target();
-    match backfill(http, symbol, target).await {
-        Ok(trades) => {
+    match backfill_with_boundary(http, symbol, target).await {
+        Ok(batch) => {
+            let retention_limited = batch.retention_limited;
+            let trades = batch.trades;
             let earliest_id = trades.first().map(|t| t.agg_id);
+            for trade in &trades {
+                admission.observe(trade.agg_id);
+                continuity.observe(trade);
+            }
             info!(target: "quantick::app", symbol, count = trades.len(), target, "backfill ready");
             if tx.send(FeedEvent::Backfilled(trades)).await.is_err() {
                 return ControlFlow::Break(()); // UI gone
             }
-            ControlFlow::Continue(earliest_id)
+            ControlFlow::Continue((earliest_id, retention_limited))
         }
         Err(e) => {
             error!(target: "quantick::app", symbol, %e, "backfill failed; continuing to live only");
@@ -189,7 +226,7 @@ async fn initial_backfill(
             if tx.send(FeedEvent::Backfilled(Vec::new())).await.is_err() {
                 return ControlFlow::Break(());
             }
-            ControlFlow::Continue(None)
+            ControlFlow::Continue((None, false))
         }
     }
 }
@@ -202,15 +239,21 @@ struct BinanceLoop {
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
+    /// The session's capabilities as the tab reads them: paging is withdrawn
+    /// here once the venue retains nothing older.
+    capabilities: watch::Sender<FeedCapabilities>,
     http: BinanceHttp,
     klines: BinanceKlineHttp,
     /// Earliest agg_id held, the cursor *load older* pages back from.
     earliest_id: Option<u64>,
+    /// The venue retains nothing older than `earliest_id`.
+    history_retention_limited: bool,
     snapshot_limit: u16,
     book_capture: Option<BookCaptureTask>,
     ohlcv_tx: mpsc::Sender<OhlcvReply>,
     ohlcv_task: Option<JoinHandle<()>>,
     continuity: crate::continuity::BinanceContinuity,
+    admission: RecentTradeIds,
     ever_connected: bool,
 }
 
@@ -232,9 +275,29 @@ impl BinanceLoop {
         send_or_break(&self.tx, event).await // UI gone
     }
 
+    /// Put one live execution on the tape unless the session already holds it
+    /// or cannot tell.
+    ///
+    /// An execution a whole admission window behind the newest cannot be
+    /// checked against what the chart already counted, so it stays off the
+    /// tape: logged, and counted as a backwards id by the continuity event
+    /// that goes out before admission. It raises no [`FeedNotice`] — the
+    /// transport is up and the tape keeps moving, while every Attention is
+    /// drawn as the chart not being fed and stands stall detection down.
     async fn on_trade(&mut self, trade: Trade) -> ControlFlow<()> {
         if let Some(event) = self.continuity.observe(&trade) {
             send_or_break(&self.tx, FeedEvent::Continuity(event)).await?;
+        }
+        match self.admission.observe(trade.agg_id) {
+            TradeAdmission::Accept => {}
+            TradeAdmission::Duplicate => return ControlFlow::Continue(()),
+            TradeAdmission::TooOld => {
+                warn!(target: "quantick::app", schema_version = 1_u8,
+                    event_code = "BINANCE_TRADE_OUTSIDE_ADMISSION_WINDOW",
+                    symbol = self.symbol, agg_id = trade.agg_id, action = "exclude",
+                    "old execution not admitted: duplicate status cannot be verified");
+                return ControlFlow::Continue(());
+            }
         }
         send_or_break(&self.tx, FeedEvent::Live(trade)).await // UI gone
     }
@@ -249,8 +312,16 @@ impl BinanceLoop {
         let ohlcv = Slot::observe(self.ohlcv_task.as_ref().map(JoinHandle::is_finished));
         match plan_command(cmd, book, ohlcv) {
             CommandPlan::LoadOlder { count } => {
-                self.earliest_id =
-                    load_older(&self.http, &self.symbol, self.earliest_id, count, &self.tx).await;
+                (self.earliest_id, self.history_retention_limited) = load_older(
+                    &self.http,
+                    &self.symbol,
+                    self.earliest_id,
+                    self.history_retention_limited,
+                    count,
+                    &self.tx,
+                    &self.capabilities,
+                )
+                .await;
                 if self.tx.is_closed() {
                     return ControlFlow::Break(()); // UI gone
                 }
@@ -312,6 +383,7 @@ impl BinanceLoop {
                 stop_book_capture(&mut self.book_capture, &self.symbol, stop_reason).await;
                 self.book_capture = Some(start_book_capture(
                     &self.symbol,
+                    self.http.market(),
                     initial_generation,
                     self.snapshot_limit,
                     &self.book_tx,
@@ -346,14 +418,16 @@ struct BookCaptureTask {
 /// Start one independently cancellable depth reconnect loop.
 fn start_book_capture(
     symbol: &str,
+    market: BinanceMarket,
     initial_generation: u64,
     snapshot_limit: u16,
     events: &mpsc::Sender<DepthEvent>,
 ) -> BookCaptureTask {
     let symbol = symbol.to_string();
     let events = events.clone();
-    let source = BinanceDepthHttp::new();
+    let source = BinanceDepthHttp::for_market(market);
     let config = DepthSessionConfig {
+        market,
         snapshot_limit,
         initial_generation,
         ..DepthSessionConfig::default()
@@ -373,7 +447,15 @@ fn start_book_capture(
         "starting synchronized Binance book capture"
     );
     let handle = tokio::spawn(async move {
-        run_depth_with_reconnect(BINANCE_WS_BASE, &symbol, &source, &events, config, backoff).await;
+        run_depth_with_reconnect(
+            market.depth_ws_base(),
+            &symbol,
+            &source,
+            &events,
+            config,
+            backoff,
+        )
+        .await;
         info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -560,50 +642,122 @@ fn spawn_ohlcv(
 
 /// Fetch `count` trades older than `earliest`, send them to the UI, and return
 /// the new earliest agg_id (unchanged if nothing older was available or a fetch
-/// failed). `None` earliest means there is no history to page back from.
+/// failed) and whether the venue's retention boundary is reached. `None`
+/// earliest means there is no history to page back from.
 ///
 /// Every call answers the UI with exactly one [`FeedEvent::HistoryPrepended`] —
 /// empty when nothing older exists or the fetch failed — mirroring how a failed
 /// initial backfill still sends an empty [`FeedEvent::Backfilled`]. The UI keys
 /// its loading indicator on that reply, so a silent no-answer would leave a
 /// spinner running forever.
+///
+/// Neither the boundary nor a failed fetch is the feed going offline, so
+/// neither raises a [`FeedNotice`]: the boundary withdraws paging before the
+/// page goes out, so the run judging it ends on the venue having nothing
+/// older, and a failure is logged and answered with an empty page, as
+/// Hyperliquid answers every request.
 async fn load_older(
     http: &BinanceHttp,
     symbol: &str,
     earliest: Option<u64>,
+    retention_limited: bool,
     count: usize,
     tx: &mpsc::Sender<FeedEvent>,
-) -> Option<u64> {
+    capabilities: &watch::Sender<FeedCapabilities>,
+) -> (Option<u64>, bool) {
+    if retention_limited {
+        // Paging is already withdrawn; a request queued before that is
+        // answered without another HTTP request.
+        let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
+        return (earliest, true);
+    }
     let Some(before) = earliest else {
         warn!(target: "quantick::app", "load older ignored: no history to page back from");
         let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
-        return None;
+        return (None, false);
     };
-    match backfill_before(http, symbol, before, count).await {
-        Ok(older) if !older.is_empty() => {
-            let new_earliest = older.first().map(|t| t.agg_id);
-            info!(target: "quantick::app", symbol, count = older.len(), "older history ready");
-            if tx.send(FeedEvent::HistoryPrepended(older)).await.is_err() {
-                return earliest; // UI gone; caller notices via tx.is_closed()
+    match backfill_before_with_boundary(http, symbol, before, count).await {
+        Ok(batch) => {
+            let new_earliest = batch.trades.first().map(|trade| trade.agg_id).or(earliest);
+            if batch.retention_limited {
+                withdraw_paging(capabilities, symbol);
             }
-            new_earliest
+            info!(target: "quantick::app", symbol, count = batch.trades.len(),
+                retention_limited = batch.retention_limited, "older history ready");
+            let _ = tx.send(FeedEvent::HistoryPrepended(batch.trades)).await;
+            (new_earliest, batch.retention_limited)
         }
-        Ok(_) => {
-            info!(target: "quantick::app", symbol, "no older history available");
+        Err(error) => {
+            error!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "BINANCE_HISTORY_FETCH_FAILED", symbol, %error,
+                action = "answer_empty", "load older failed");
             let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
-            earliest
-        }
-        Err(e) => {
-            error!(target: "quantick::app", symbol, %e, "load older failed");
-            let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
-            earliest
+            (earliest, false)
         }
     }
+}
+
+/// The venue retains no executions older than the chart holds — USD-M keeps
+/// the recent 48 hours — so *load older* has nothing left to fetch. Withdrawn
+/// the way MetaTrader withdraws it at the terminal's oldest tick: never offer
+/// what nothing can back.
+fn withdraw_paging(capabilities: &watch::Sender<FeedCapabilities>, symbol: &str) {
+    info!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "BINANCE_HISTORY_RETENTION_REACHED",
+        symbol,
+        action = "withdraw_paging",
+        "the venue retains no older executions (USD-M keeps the recent 48 hours)"
+    );
+    capabilities.send_modify(|caps| {
+        caps.history_paging = false;
+        caps.history_boundary = Some(quantick_sources::config::HistoryBoundary::VenueRetention);
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_known_retention_boundary_answers_retries_without_another_http_request() {
+        let source = BinanceHttp::with_market_base(BinanceMarket::UsdM, "http://127.0.0.1:1");
+        let (tx, mut rx) = mpsc::channel(2);
+        let (capabilities, _caps) = watch::channel(ProviderKind::BinanceFutures.capabilities());
+        for _ in 0..2 {
+            assert_eq!(
+                load_older(
+                    &source,
+                    "BTCUSDT.p",
+                    Some(1_550),
+                    true,
+                    1000,
+                    &tx,
+                    &capabilities
+                )
+                .await,
+                (Some(1_550), true)
+            );
+            assert!(
+                matches!(rx.recv().await, Some(FeedEvent::HistoryPrepended(trades)) if trades.is_empty())
+            );
+        }
+    }
+
+    /// The control plane reads why paging stopped, not only that it did.
+    #[test]
+    fn the_retention_boundary_withdraws_paging_and_labels_why() {
+        let (capabilities, caps) = watch::channel(ProviderKind::BinanceFutures.capabilities());
+        assert_eq!(caps.borrow().history_boundary, None);
+        withdraw_paging(&capabilities, "BTCUSDT.p");
+        let caps = *caps.borrow();
+        assert!(!caps.history_paging);
+        assert_eq!(
+            caps.history_boundary,
+            Some(quantick_sources::config::HistoryBoundary::VenueRetention)
+        );
+    }
 
     #[test]
     fn book_depth_defaults_and_clamps_the_environment_value() {

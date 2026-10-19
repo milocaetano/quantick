@@ -1,0 +1,29 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "preset": {
+      "description": "Exact name returned by orderflow.bubbles.presets.list.",
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "preset"
+  ],
+  "title": "ApplyInput",
+  "type": "object"
+}

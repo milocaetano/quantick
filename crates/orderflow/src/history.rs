@@ -526,6 +526,21 @@ impl LiquidityHistory {
         self.archived.iter().chain(self.active.values())
     }
 
+    /// The runs finalized after the first `closed` this history finalized
+    /// ([`HistoryCounters::runs_closed`]), oldest first; `None` when one of
+    /// them is already evicted, so a reader that folds runs once refolds.
+    #[must_use]
+    pub fn runs_closed_since(&self, closed: u64) -> Option<impl Iterator<Item = &LiquidityRun>> {
+        let new = usize::try_from(self.counters.runs_closed.checked_sub(closed)?).ok()?;
+        let from = self.archived.len().checked_sub(new)?;
+        Some(self.archived.range(from..))
+    }
+
+    /// The runs still open: one per side and bucket of the current book.
+    pub fn open_runs(&self) -> impl Iterator<Item = &LiquidityRun> {
+        self.active.values()
+    }
+
     /// Runs intersecting `[start_ms, end_ms)` after applying the retention
     /// floor.
     ///
