@@ -1,9 +1,7 @@
 // Pane model integration preserves the existing chart behavior.
 use super::*;
 use quantick_chart_interaction::pane::CanvasHit;
-use quantick_chart_interaction::viewport::{
-    DEFAULT_PX_PER_BAR, MAX_CANDLE_WIDTH, OVERVIEW_BARS, OVERVIEW_MIN_PX_PER_BAR,
-};
+use quantick_chart_interaction::viewport::MAX_CANDLE_WIDTH;
 
 /// Two surfaces that must agree: the tag a trader reads off the axis and
 /// the slot a control client reads out of the cursor scope are one answer,
@@ -77,11 +75,9 @@ fn the_bare_candles_end_at_the_lane_divider() {
     let areas = lay_out_bands(&mut pane);
     let y = areas.chart.center().y;
     let hit = pane.hit_test();
-    let chart = pane.frame.chart_area.expect("laid out");
-    let history_px = divider - chart.left();
     assert_eq!(
         hit.canvas_hit(egui::pos2(divider - 20.0, y)),
-        Some(CanvasHit::Empty { history_px }),
+        Some(CanvasHit::Empty),
         "left of the divider is the candles' canvas"
     );
     assert_eq!(
@@ -108,87 +104,97 @@ fn panned_pane(ctx: &egui::Context, px_per_bar: f32) -> (ChartPane, PlotAreas) {
     (pane, areas)
 }
 
+/// Where a fixture candle sits a few bars left of the view's right edge:
+/// 1.5 is inside every fixture bar's body.
+fn on_a_candle(pane: &ChartPane) -> egui::Pos2 {
+    let (_, right, total, scale) = pane.hit_test().last_projection().expect("drawn");
+    let viewport = &pane.model.viewport;
+    let slot = viewport.right_edge_bar(total) as usize - 3;
+    egui::pos2(viewport.x_center(slot, right, total), scale.y(1.5))
+}
+
+/// The view's spacing and right edge, which a candle double click keeps.
+fn view(pane: &ChartPane) -> (f32, f32) {
+    let viewport = &pane.model.viewport;
+    (viewport.px_per_bar(), viewport.right_edge_bar(pane.slots()))
+}
+
 /// On a candle the double click asks for the chart settings and leaves the
 /// view exactly where the trader put it: no snap, no zoom.
 #[test]
 fn a_double_click_on_a_candle_opens_the_chart_settings_and_keeps_the_view() {
     let ctx = egui::Context::default();
     let (mut pane, _) = panned_pane(&ctx, 40.0);
-    let (_, right, total, scale) = pane.hit_test().last_projection().expect("drawn");
-    let before = (
-        pane.model.viewport.px_per_bar(),
-        pane.model.viewport.right_edge_bar(total),
-    );
-    let slot = pane.model.viewport.right_edge_bar(total) as usize - 3;
-    // 1.5 is inside every fixture bar's body.
-    let on_the_candle = egui::pos2(
-        pane.model.viewport.x_center(slot, right, total),
-        scale.y(1.5),
-    );
-
+    let before = view(&pane);
+    let on_the_candle = on_a_candle(&pane);
     assert_eq!(
         double_click_asking(&mut pane, &ctx, TEST_PLOT, on_the_candle),
         (None, true),
         "a candle double click opens the chart settings"
     );
-    assert_eq!(
-        (
-            pane.model.viewport.px_per_bar(),
-            pane.model.viewport.right_edge_bar(total)
-        ),
-        before,
-        "and moves nothing"
+    assert_eq!(view(&pane), before, "and moves nothing");
+    assert!(!pane.model.viewport.follows_live());
+}
+
+/// The toolkit pairs any two clicks inside its delay: a click off the
+/// canvas (the price gutter) and one on a candle right after it are no
+/// double click on the chart — no settings, the view where it was.
+#[test]
+fn a_click_off_the_canvas_then_one_on_a_candle_is_no_double_click() {
+    let ctx = egui::Context::default();
+    let (mut pane, areas) = panned_pane(&ctx, 40.0);
+    let before = view(&pane);
+    let on_the_candle = on_a_candle(&pane);
+    let off_the_canvas = egui::pos2(areas.price_gutter.center().x, on_the_candle.y);
+    let mut asked = false;
+    for (pos, pressed) in [
+        (off_the_canvas, true),
+        (off_the_canvas, false),
+        (on_the_candle, true),
+        (on_the_candle, false),
+    ] {
+        asked |= drive_navigation_asking(&mut pane, &ctx, TEST_PLOT, press_at(pos, pressed)).1;
+    }
+    assert!(
+        ctx.input(|i| i
+            .pointer
+            .button_double_clicked(egui::PointerButton::Primary)),
+        "the toolkit paired the two clicks"
     );
+    assert!(!asked, "no chart settings");
+    assert_eq!(view(&pane), before, "and the view stays");
     assert!(!pane.model.viewport.follows_live());
 }
 
 /// On empty canvas the double click opens nothing and returns to the live
-/// edge at the overview spacing — from max zoom-in as from zoom-out, and a
-/// second one changes nothing.
+/// edge at the overview spacing; panned back into history, a second one
+/// does it again at the same spacing.
 #[test]
 fn a_double_click_on_empty_canvas_returns_to_a_live_overview() {
     let ctx = egui::Context::default();
     let (mut pane, areas) = panned_pane(&ctx, MAX_CANDLE_WIDTH);
-    let chart = pane.frame.chart_area.expect("laid out");
-    let history_px = pane.frame.lane_divider_x.unwrap_or(chart.right()) - chart.left();
+    let overview = pane
+        .model
+        .viewport
+        .overview_px_per_bar(pane.model.candles_px);
+    assert!(overview < MAX_CANDLE_WIDTH, "the overview is a zoom-out");
     let (_, _, _, scale) = pane.hit_test().last_projection().expect("drawn");
     // Well above every fixture candle (1..2) on the 0..3 axis.
     let open_canvas = egui::pos2(areas.chart.center().x, scale.y(2.6));
-    let overview =
-        (history_px / OVERVIEW_BARS as f32).clamp(OVERVIEW_MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR);
-
-    assert_eq!(
-        double_click_asking(&mut pane, &ctx, TEST_PLOT, open_canvas),
-        (None, false),
-        "empty canvas opens no dialog"
-    );
-    assert!(pane.model.viewport.follows_live(), "it returns to live");
-    assert_eq!(
-        pane.model.viewport.px_per_bar(),
-        overview,
-        "at the overview cap"
-    );
-
-    // Idle frames, so the next click is not read as a third.
-    for _ in 0..30 {
-        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+    for round in ["first", "second"] {
+        assert_eq!(
+            double_click_asking(&mut pane, &ctx, TEST_PLOT, open_canvas),
+            (None, false),
+            "the {round} double click opens no dialog"
+        );
+        assert!(pane.model.viewport.follows_live(), "{round}: back to live");
+        assert_eq!(pane.model.viewport.px_per_bar(), overview, "{round}");
+        // Back into history, and a second of idle frames: past twice the
+        // double-click delay, so the toolkit reads the next pair as no triple.
+        pane.model.viewport.pan_pixels(40.0 * overview, 200);
+        assert!(!pane.model.viewport.follows_live());
+        for _ in 0..60 {
+            let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        }
     }
-    let _ = double_click_asking(&mut pane, &ctx, TEST_PLOT, open_canvas);
-    assert_eq!(
-        pane.model.viewport.px_per_bar(),
-        overview,
-        "a second one changes nothing"
-    );
-
-    // Zoomed out already, the view keeps its width: the overview never zooms in.
-    let ctx = egui::Context::default();
-    let (mut wide, areas) = panned_pane(&ctx, 2.0);
-    let (_, _, _, scale) = wide.hit_test().last_projection().expect("drawn");
-    let open_canvas = egui::pos2(areas.chart.center().x, scale.y(2.6));
-    assert_eq!(
-        double_click_asking(&mut wide, &ctx, TEST_PLOT, open_canvas),
-        (None, false)
-    );
-    assert!(wide.model.viewport.follows_live());
-    assert_eq!(wide.model.viewport.px_per_bar(), 2.0);
 }

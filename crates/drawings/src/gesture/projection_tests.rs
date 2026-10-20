@@ -597,8 +597,8 @@ fn a_mirrored_level_snaps_where_its_own_pane_does() {
 }
 
 /// The double click's target in the price band: on a candle's range it is
-/// the candle, above it open canvas as wide as the candles' area, and an
-/// indicator band is neither.
+/// the candle, above it open canvas, and an
+/// indicator band is neither; a price band with no scale yet is open canvas.
 #[test]
 fn a_canvas_double_click_names_the_candle_or_the_open_canvas() {
     with_visible_bands(|projection, bands| {
@@ -610,16 +610,10 @@ fn a_canvas_double_click_names_the_candle_or_the_open_canvas() {
         let marks = crate::Drawings::default();
         let hit = |price: f64, band: &Band| {
             let pos = crate::pos2(x, scale.y(price));
-            projection.canvas_hit(&marks, pos, band, (0.0, HISTORY_RIGHT), TAPE)
+            projection.canvas_hit(&marks, pos, band, HISTORY_RIGHT, TAPE)
         };
         assert_eq!(hit(50.0, band), Some(CanvasHit::Candle), "inside 30..70");
-        assert_eq!(
-            hit(90.0, band),
-            Some(CanvasHit::Empty {
-                history_px: HISTORY_RIGHT
-            }),
-            "above the wick"
-        );
+        assert_eq!(hit(90.0, band), Some(CanvasHit::Empty), "above the wick");
         let indicator = Band {
             key: DrawingBand::Indicator(crate::PaneKey {
                 kind: "native.cvd".into(),
@@ -631,5 +625,14 @@ fn a_canvas_double_click_names_the_candle_or_the_open_canvas() {
             refusal: None,
         };
         assert_eq!(hit(50.0, &indicator), None, "a pane band is no canvas");
+        // No price scale yet: no candle to hit, so open canvas, never dead.
+        let unscaled = Band {
+            key: DrawingBand::Price,
+            rect: band.rect,
+            scale: None,
+            label: band.label.clone(),
+            refusal: None,
+        };
+        assert_eq!(hit(50.0, &unscaled), Some(CanvasHit::Empty));
     });
 }

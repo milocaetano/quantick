@@ -232,7 +232,7 @@ impl PaneHitTest<'_> {
         let right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         let total = self.projection.series.slots();
         self.projection
-            .canvas_hit(self.drawings, px(pos), band, (chart.left(), right), total)
+            .canvas_hit(self.drawings, px(pos), band, right, total)
     }
 
     /// Which overlay indicator's plotted line a pointer at `pos` is sitting

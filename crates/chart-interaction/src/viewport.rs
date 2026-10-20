@@ -249,18 +249,26 @@ impl Viewport {
         self.right_bar = None;
     }
 
-    /// Back to the live edge at an overview spacing for a candle area
+    /// The spacing the live overview leaves this view at, for a candle area
     /// `history_px` wide: about [`OVERVIEW_BARS`] bars across, no narrower
     /// than [`OVERVIEW_MIN_PX_PER_BAR`] and no wider than the opening
     /// [`DEFAULT_PX_PER_BAR`]. It only ever narrows the candles — a view
-    /// already zoomed out keeps its width — so a second call changes nothing.
-    /// Without a usable width it is a plain [`Self::snap_to_live`].
-    pub fn snap_to_live_overview(&mut self, history_px: f32) {
-        if history_px.is_finite() && history_px > 0.0 {
-            let target = (history_px / OVERVIEW_BARS as f32)
-                .clamp(OVERVIEW_MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR);
-            self.set_px_per_bar(self.px_per_bar.min(target));
+    /// already zoomed out keeps its width. Without a usable width it is the
+    /// spacing now.
+    #[must_use]
+    pub fn overview_px_per_bar(&self, history_px: f32) -> f32 {
+        if !(history_px.is_finite() && history_px > 0.0) {
+            return self.px_per_bar;
         }
+        let target =
+            (history_px / OVERVIEW_BARS as f32).clamp(OVERVIEW_MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR);
+        self.px_per_bar.min(target)
+    }
+
+    /// Back to the live edge at [`Self::overview_px_per_bar`]; a second call
+    /// changes nothing.
+    pub fn snap_to_live_overview(&mut self, history_px: f32) {
+        self.set_px_per_bar(self.overview_px_per_bar(history_px));
         self.snap_to_live();
     }
 
@@ -1053,6 +1061,7 @@ mod tests {
         for start in [MAX_CANDLE_WIDTH, 20.0, 6.0, MIN_PX_PER_BAR] {
             let mut v = Viewport::new();
             v.set_px_per_bar(start);
+            assert_eq!(v.overview_px_per_bar(1_000.0), start.min(1_000.0 / 160.0));
             v.snap_to_live_overview(1_000.0);
             let once = (v.px_per_bar(), v.follows_live());
             v.snap_to_live_overview(1_000.0);

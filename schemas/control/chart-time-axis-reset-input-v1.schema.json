@@ -15,6 +15,21 @@
         }
       ]
     },
+    "TimeAxisTarget": {
+      "description": "Where a reset takes the axis.",
+      "oneOf": [
+        {
+          "const": "opening",
+          "description": "Back to the spacing or window the axis opened on.",
+          "type": "string"
+        },
+        {
+          "const": "live_overview",
+          "description": "The candles only: back to the live edge at the overview spacing,\nthe recent move and its context across the candles' width, never a\nzoom-in.",
+          "type": "string"
+        }
+      ]
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -31,6 +46,11 @@
     },
     "tab_id": {
       "$ref": "#/$defs/WireU64"
+    },
+    "to": {
+      "$ref": "#/$defs/TimeAxisTarget",
+      "default": "opening",
+      "description": "Where the axis goes; the opening spacing when omitted."
     }
   },
   "required": [

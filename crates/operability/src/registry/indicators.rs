@@ -10,7 +10,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.dialog.toggle",
         title: "Open the chart settings on the Candles tab — candles, canvas, grid",
-        reach: "toolbar brush button, Tools menu, a double click on the bare candles",
+        reach: "toolbar brush button, Tools menu, a double click on a candle",
         keys: &[
             (Source::ToolbarAction, "ToggleAppearance"),
             (Source::MenuEntry, "Appearance…"),

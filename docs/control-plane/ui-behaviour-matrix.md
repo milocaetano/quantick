@@ -70,7 +70,7 @@ The three exclusion classes are closed:
 | `chart.bars.set_spec` | Change what one bar is — kind and size | toolbar bar controls, typing a number over the chart | `layout.pane.set_bar_spec`, `layout.pane.set_interval` | — |
 | `chart.pan` | Drag the chart horizontally through history | horizontal primary drag on the canvas | — | `pending_capability` — `chart.window.read` reports the visible time window; no capability pans that window. Price framing has its own capability below. Tracked in issue 401 |
 | `chart.price_axis.set` | Set a pane's price range or resume automatic fitting | drag or wheel on the price axis; double-click it to reset | `chart.price_axis.set` | — |
-| `chart.time_axis.reset` | Reset a time axis to where it opened | double-click the candles' time strip, or the tape's | `chart.time_axis.reset` | — |
+| `chart.time_axis.reset` | Reset a time axis to where it opened, or the candles to a live overview | double-click the candles' time strip, or the tape's; double-click open canvas | `chart.time_axis.reset` | — |
 | `chart.tape.pan` | Drag the tape beside the candles through time and price | primary or middle drag over the native tape; double-click it to return to live | `chart.tape_view.set`, `chart.price_axis.set` | — |
 | `chart.tape.zoom` | Zoom the tape's time window in or out | wheel over the native tape; drag or wheel on its time strip; its window menu | `chart.tape_view.set` | — |
 | `chart.zoom` | Zoom the chart's time window in or out | wheel on the canvas; drag on the time axis | — | `pending_capability` — `chart.window.read` reports the time window; no capability changes its zoom. Price-axis zoom has its own capability above. Tracked in issue 401 |
@@ -101,7 +101,7 @@ The three exclusion classes are closed:
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
 | `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
-| `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Tools menu, a double click on the bare candles | `chart.settings.set` | — |
+| `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Tools menu, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
 | `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicators menu | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
 | `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, View menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |

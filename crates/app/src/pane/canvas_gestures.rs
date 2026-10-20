@@ -5,6 +5,7 @@
 //! tape its window, its time and the shared price axis, never the other side.
 //! Tape only is the tape across the whole canvas.
 use eframe::egui;
+use quantick_chart_interaction::pane::WindowClick;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::tape_view::TapeEnd;
 
@@ -92,16 +93,15 @@ impl ChartPane {
             self.pan_canvas(side(delta, tape), total, tape);
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
-        // Not with a tool armed: two placement clicks are two anchors. Over the tape a double
-        // click returns it to live; on an overlay's line it opens that line; on a candle it opens
-        // the Candles settings and keeps the view; on open canvas it returns to live at the
-        // overview spacing. Those two need both clicks on the canvas (`DoubleClickGate`); anywhere
-        // else the candles snap back to live at their zoom.
+        // Not with a tool armed: two placement clicks are two anchors. Only a pair of canvas clicks
+        // counts (`DoubleClickGate`): over the tape it returns the tape to live; on an overlay's
+        // line it opens that line; on a candle the Candles settings, the view kept; on open canvas
+        // live at the overview spacing; on the divider or a drawing live at the candles' zoom.
         let mut open_settings = false;
-        let gate = &mut self.model.double_click;
-        let paired =
-            any_click && gate.click(chart.clicked() && primary_free, chart.double_clicked());
-        if chart.double_clicked() && primary_free {
+        let on_canvas = chart.clicked() && primary_free;
+        let click = WindowClick::of(any_click, on_canvas, chart.double_clicked());
+        let pass = ui.ctx().cumulative_pass_nr();
+        if self.model.double_click.observe(pass, click) {
             let at = chart.interact_pointer_pos();
             let overlay = at
                 .and_then(|position| self.hit_test().overlay_plot_at(position))
@@ -110,7 +110,7 @@ impl ChartPane {
             // The lane divider is a handle, as it is for the drag above:
             // grabbing it twice is neither a candle nor open canvas.
             let canvas = at
-                .filter(|at| paired && !tape && overlay.is_none() && !on_divider(*at))
+                .filter(|at| !tape && overlay.is_none() && !on_divider(*at))
                 .and_then(|at| self.hit_test().canvas_hit(at));
             open_settings = canvas.is_some_and(|hit| hit.opens_chart_settings());
             navigate(

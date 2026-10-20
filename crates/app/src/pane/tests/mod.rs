@@ -1779,20 +1779,24 @@ fn double_click_asking(
 ) -> (Option<SlotId>, bool) {
     let (mut request, mut chart_settings) = (None, false);
     for pressed in [true, false, true, false] {
-        let events = vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::default(),
-            },
-        ];
-        let (asked, settings) = drive_navigation_asking(pane, ctx, area, events);
+        let (asked, settings) = drive_navigation_asking(pane, ctx, area, press_at(pos, pressed));
         request = asked.or(request);
         chart_settings |= settings;
     }
     (request, chart_settings)
+}
+
+/// One frame's primary press or release at `pos`.
+fn press_at(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        },
+    ]
 }
 
 /// Criterion 1, the pane's own targets: a double click on an open pane's
