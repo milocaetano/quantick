@@ -393,6 +393,59 @@ mod tests {
         );
         assert_eq!(model.viewport.px_per_bar(), 16.0);
     }
+    /// A double click on a candle asks for the chart settings and leaves
+    /// the view where the trader put it; on empty canvas it asks for nothing
+    /// and returns to the live edge at the overview spacing.
+    #[test]
+    fn a_canvas_double_click_splits_on_the_candle() {
+        let mut model = Model::default();
+        model.viewport.set_px_per_bar(crate::viewport::MAX_CANDLE_WIDTH);
+        model.viewport.pan_pixels(512.0, 400);
+        let before = (model.viewport.px_per_bar(), model.viewport.right_edge_bar(400));
+        assert!(CanvasHit::Candle.opens_chart_settings());
+        let candle = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: false,
+                overlay: None,
+                canvas: Some(CanvasHit::Candle),
+            },
+        );
+        assert!(candle.is_empty());
+        assert_eq!(
+            (model.viewport.px_per_bar(), model.viewport.right_edge_bar(400)),
+            before,
+            "the candle double click moves nothing"
+        );
+        assert!(!model.viewport.follows_live());
+
+        let empty = CanvasHit::Empty { history_px: 960.0 };
+        assert!(!empty.opens_chart_settings());
+        let _ = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: false,
+                overlay: None,
+                canvas: Some(empty),
+            },
+        );
+        assert!(model.viewport.follows_live());
+        assert_eq!(model.viewport.px_per_bar(), 6.0, "960 px / 160 bars");
+
+        // The live chip and every other target keep the plain snap.
+        model.viewport.set_px_per_bar(40.0);
+        model.viewport.pan_pixels(400.0, 400);
+        let _ = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: false,
+                overlay: None,
+                canvas: None,
+            },
+        );
+        assert!(model.viewport.follows_live());
+        assert_eq!(model.viewport.px_per_bar(), 40.0);
+    }
     #[test]
     fn close_commits_once_and_ignores_a_replaced_drawing() {
         let mut model = Model::default();
