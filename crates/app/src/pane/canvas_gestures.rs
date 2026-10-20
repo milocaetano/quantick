@@ -24,7 +24,7 @@ pub(super) struct CanvasInput<'r> {
 
 impl ChartPane {
     /// Pan, zoom and the double click. Answers whether a double click landed
-    /// on the bare candles, which asks the window for the chart settings.
+    /// on a candle, which asks the window for the chart settings.
     pub(super) fn handle_canvas_gestures(&mut self, ui: &egui::Ui, input: CanvasInput<'_>) -> bool {
         let CanvasInput {
             chart,
@@ -92,10 +92,12 @@ impl ChartPane {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         // Not with a tool armed: two placement clicks are two anchors. Over
-        // the tape a double click returns it to live; on an
-        // overlay's own line it opens that line; elsewhere the candles snap
-        // back to the live edge and the chart settings open on the Candles
-        // tab. Each keeps the chosen zoom and price scale.
+        // the tape a double click returns it to live; on an overlay's own
+        // line it opens that line; on a candle it opens the chart settings
+        // on the Candles tab and leaves the view alone; on open canvas it
+        // returns the candles to the live edge at the overview spacing
+        // (`Viewport::snap_to_live_overview`). Anywhere else the candles
+        // snap back to live at their zoom.
         let mut open_settings = false;
         if chart.double_clicked() && primary_free {
             let at = chart.interact_pointer_pos();
@@ -104,14 +106,18 @@ impl ChartPane {
                 .map(|slot| slot.0);
             let tape = at.is_some_and(over_tape);
             // The lane divider is a handle, as it is for the drag above:
-            // grabbing it twice is not a request for the chart settings.
-            open_settings = !tape
-                && overlay.is_none()
-                && !at.is_some_and(on_divider)
-                && at.is_some_and(|position| self.hit_test().on_bare_candles(position));
+            // grabbing it twice is neither a candle nor open canvas.
+            let canvas = at
+                .filter(|position| !tape && overlay.is_none() && !on_divider(*position))
+                .and_then(|position| self.hit_test().canvas_hit(position));
+            open_settings = canvas.is_some_and(|hit| hit.opens_chart_settings());
             navigate(
                 self,
-                quantick_chart_interaction::pane::Intent::ReturnToLive { tape, overlay },
+                quantick_chart_interaction::pane::Intent::ReturnToLive {
+                    tape,
+                    overlay,
+                    canvas,
+                },
             );
         }
         if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {

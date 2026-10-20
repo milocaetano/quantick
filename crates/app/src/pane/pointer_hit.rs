@@ -14,7 +14,7 @@
 use eframe::egui;
 
 use crate::bands;
-use crate::chart::PriceScale;
+use crate::chart::{PriceScale, to_f64};
 use crate::drawings::{self, Drawing, DrawingBand, Drawings, egui_rect, px};
 use crate::indicator_worker::SlotId;
 use crate::orderflow_view::OrderflowView;
@@ -23,6 +23,7 @@ use crate::price_view::PriceView;
 use super::SharedSource;
 use super::frame::PaneFrame;
 use super::render_registry::{TextFonts, paint_scene};
+use quantick_chart_interaction::pane::CanvasHit;
 use quantick_drawings::gesture::DrawingProjection;
 
 /// How near an overlay's plotted line a double click has to land to be read as
@@ -218,34 +219,53 @@ impl PaneHitTest<'_> {
         })
     }
 
-    /// Whether `pos` is on the candles themselves: the price band of the
-    /// chart, on the history side of the lane divider, clear of every
-    /// drawing — where a double click opens the chart settings. A drawing,
-    /// an indicator pane, a right lane (tape, book or heatmap), an axis or
-    /// the legend each keep their own meaning for the gesture. Runs on a
-    /// double click only.
-    pub(super) fn on_bare_candles(&self, pos: egui::Pos2) -> bool {
-        let Some(chart) = self.frame.chart_area.filter(|chart| chart.contains(pos)) else {
-            return false;
-        };
+    /// What a double click at `pos` lands on in the candles' canvas: the
+    /// price band of the chart, on the history side of the lane divider,
+    /// clear of every drawing — a candle there opens the chart settings,
+    /// open canvas returns to live at the overview spacing. `None` elsewhere:
+    /// a drawing, an indicator pane, a right lane (tape, book or heatmap), an
+    /// axis or the legend each keep their own meaning for the gesture. Runs on
+    /// a double click only.
+    pub(super) fn canvas_hit(&self, pos: egui::Pos2) -> Option<CanvasHit> {
+        let chart = self.frame.chart_area.filter(|chart| chart.contains(pos))?;
         if !bands::drawing_area(chart, self.frame.lane_divider_x).contains(pos) {
-            return false;
+            return None;
         }
-        let Some(band) = bands::band_at(&self.frame.bands, px(pos)) else {
-            return false;
-        };
+        let band = bands::band_at(&self.frame.bands, px(pos))?;
         if !matches!(band.key, DrawingBand::Price) {
-            return false;
+            return None;
         }
         let history_right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         let total = self.projection.series.slots();
-        self.projection
+        if self
+            .projection
             .drawing_handle_at(self.drawings, px(pos), band, history_right, total)
-            .is_none()
-            && self
+            .is_some()
+            || self
                 .projection
                 .drawing_at(self.drawings, px(pos), band, history_right, total)
-                .is_none()
+                .is_some()
+        {
+            return None;
+        }
+        let (_, _, _, scale) = self.last_projection()?;
+        let wick_y = |slot| {
+            let bar = self.projection.series.candle_at_slot(slot)?;
+            Some((scale.y(to_f64(bar.high)), scale.y(to_f64(bar.low))))
+        };
+        Some(
+            if self
+                .projection
+                .viewport
+                .on_candle([pos.x, pos.y], history_right, total, wick_y)
+            {
+                CanvasHit::Candle
+            } else {
+                CanvasHit::Empty {
+                    history_px: history_right - chart.left(),
+                }
+            },
+        )
     }
 
     /// Which overlay indicator's plotted line a pointer at `pos` is sitting

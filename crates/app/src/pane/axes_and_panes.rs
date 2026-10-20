@@ -389,6 +389,7 @@ pub(super) fn handle_axis_gestures(
                 Intent::ReturnToLive {
                     tape: false,
                     overlay: None,
+                    canvas: None,
                 },
             );
         }

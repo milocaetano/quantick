@@ -106,6 +106,25 @@ pub struct ContextPress {
     pub places: Vec<(&'static str, ChartPoint)>,
 }
 
+/// Where a double click in the candles' price band landed, clear of every
+/// drawing and overlay line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CanvasHit {
+    /// On a candle's body or wick: the chart settings open, the view stays.
+    Candle,
+    /// Open canvas in a candle area `history_px` wide: nothing opens, and the
+    /// view returns to live at the overview spacing.
+    Empty { history_px: f32 },
+}
+
+impl CanvasHit {
+    /// Whether this double click asks the window for the chart settings.
+    #[must_use]
+    pub fn opens_chart_settings(self) -> bool {
+        matches!(self, Self::Candle)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Intent {
     PriceAxisMode {
@@ -129,6 +148,9 @@ pub enum Intent {
     ReturnToLive {
         tape: bool,
         overlay: Option<u64>,
+        /// What a double click in the candles' price band landed on; `None`
+        /// for every other target and for the live chip.
+        canvas: Option<CanvasHit>,
     },
     OpenMenu(ContextPress),
     CloseMenu {
@@ -275,13 +297,25 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
                 model.viewport.zoom(factor);
             }
         }
-        Intent::ReturnToLive { tape, overlay } => {
+        Intent::ReturnToLive {
+            tape,
+            overlay,
+            canvas,
+        } => {
             if tape {
                 effects.push(Effect::TapeLive);
             } else if let Some(slot) = overlay {
                 model.pending_settings = Some(slot);
             } else {
-                model.viewport.snap_to_live();
+                match canvas {
+                    // The candle is what the trader means to change: the
+                    // settings open over a view left where it was put.
+                    Some(CanvasHit::Candle) => {}
+                    Some(CanvasHit::Empty { history_px }) => {
+                        model.viewport.snap_to_live_overview(history_px);
+                    }
+                    None => model.viewport.snap_to_live(),
+                }
             }
         }
         Intent::OpenMenu(press) => {
@@ -399,9 +433,14 @@ mod tests {
     #[test]
     fn a_canvas_double_click_splits_on_the_candle() {
         let mut model = Model::default();
-        model.viewport.set_px_per_bar(crate::viewport::MAX_CANDLE_WIDTH);
+        model
+            .viewport
+            .set_px_per_bar(crate::viewport::MAX_CANDLE_WIDTH);
         model.viewport.pan_pixels(512.0, 400);
-        let before = (model.viewport.px_per_bar(), model.viewport.right_edge_bar(400));
+        let before = (
+            model.viewport.px_per_bar(),
+            model.viewport.right_edge_bar(400),
+        );
         assert!(CanvasHit::Candle.opens_chart_settings());
         let candle = update(
             &mut model,
@@ -413,7 +452,10 @@ mod tests {
         );
         assert!(candle.is_empty());
         assert_eq!(
-            (model.viewport.px_per_bar(), model.viewport.right_edge_bar(400)),
+            (
+                model.viewport.px_per_bar(),
+                model.viewport.right_edge_bar(400)
+            ),
             before,
             "the candle double click moves nothing"
         );

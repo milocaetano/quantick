@@ -98,7 +98,10 @@ fn panned_pane(ctx: &egui::Context, px_per_bar: f32) -> (ChartPane, PlotAreas) {
     pane.model.viewport.pan_pixels(4.0 * px_per_bar, 200);
     let _ = drive_navigation(&mut pane, ctx, TEST_PLOT, Vec::new());
     let areas = lay_out_bands(&mut pane);
-    assert!(!pane.model.viewport.follows_live(), "the fixture is in history");
+    assert!(
+        !pane.model.viewport.follows_live(),
+        "the fixture is in history"
+    );
     (pane, areas)
 }
 
@@ -115,7 +118,10 @@ fn a_double_click_on_a_candle_opens_the_chart_settings_and_keeps_the_view() {
     );
     let slot = pane.model.viewport.right_edge_bar(total) as usize - 3;
     // Every fixture bar spans 1..2; 1.5 is inside its body.
-    let on_the_candle = egui::pos2(pane.model.viewport.x_center(slot, right, total), scale.y(1.5));
+    let on_the_candle = egui::pos2(
+        pane.model.viewport.x_center(slot, right, total),
+        scale.y(1.5),
+    );
 
     assert_eq!(
         double_click_asking(&mut pane, &ctx, TEST_PLOT, on_the_candle),
@@ -154,14 +160,22 @@ fn a_double_click_on_empty_canvas_returns_to_a_live_overview() {
         "empty canvas opens no dialog"
     );
     assert!(pane.model.viewport.follows_live(), "it returns to live");
-    assert_eq!(pane.model.viewport.px_per_bar(), overview, "at the overview cap");
+    assert_eq!(
+        pane.model.viewport.px_per_bar(),
+        overview,
+        "at the overview cap"
+    );
 
     // Idle frames, so the next click is not read as a third.
     for _ in 0..30 {
         let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     }
     let _ = double_click_asking(&mut pane, &ctx, TEST_PLOT, open_canvas);
-    assert_eq!(pane.model.viewport.px_per_bar(), overview, "a second one changes nothing");
+    assert_eq!(
+        pane.model.viewport.px_per_bar(),
+        overview,
+        "a second one changes nothing"
+    );
 
     // Zoomed out already, the view keeps its width: the overview never zooms in.
     let (mut wide, areas) = panned_pane(&ctx, 2.0);

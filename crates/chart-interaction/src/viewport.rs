@@ -65,6 +65,18 @@ const MAX_PROJECTION_FRACTION: f32 = 0.8;
 /// never dead.
 const MIN_PROJECTION_BARS: f32 = 8.0;
 
+/// How many bars the live overview fits across the candles' width — the
+/// zoom a double click on empty canvas returns to: the recent move and its
+/// context on one screen, never a close-up of the last few candles.
+pub const OVERVIEW_BARS: usize = 160;
+/// Narrowest spacing the live overview fits a narrow pane at, in pixels per
+/// bar: below it a candle stops reading as a body and a wick.
+pub const OVERVIEW_MIN_PX_PER_BAR: f32 = 3.0;
+/// How far from a candle's wick span and slot a double click still lands on
+/// that candle, in pixels. Forgiving, because a one-pixel wick or a doji at a
+/// narrow zoom can only be hit by luck without it.
+pub const CANDLE_PICK_TOLERANCE_PX: f32 = 4.0;
+
 /// The visible window over a bar series.
 #[derive(Debug, Clone, Copy)]
 pub struct Viewport {
@@ -235,6 +247,56 @@ impl Viewport {
     /// Pin the right edge back to the newest bar.
     pub fn snap_to_live(&mut self) {
         self.right_bar = None;
+    }
+
+    /// Back to the live edge at an overview spacing for a candle area
+    /// `history_px` wide: about [`OVERVIEW_BARS`] bars across, no narrower
+    /// than [`OVERVIEW_MIN_PX_PER_BAR`] and no wider than the opening
+    /// [`DEFAULT_PX_PER_BAR`]. It only ever narrows the candles — a view
+    /// already zoomed out keeps its width — so a second call changes nothing.
+    /// Without a usable width it is a plain [`Self::snap_to_live`].
+    pub fn snap_to_live_overview(&mut self, history_px: f32) {
+        if history_px.is_finite() && history_px > 0.0 {
+            let target = (history_px / OVERVIEW_BARS as f32)
+                .clamp(OVERVIEW_MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR);
+            self.set_px_per_bar(self.px_per_bar.min(target));
+        }
+        self.snap_to_live();
+    }
+
+    /// Whether `pointer` is on a candle: within [`CANDLE_PICK_TOLERANCE_PX`]
+    /// of the wick span `wick_y(slot)` returns for a slot whose centre is
+    /// within half a slot (or the tolerance, at a narrower zoom) of the
+    /// pointer. `wick_y` answers the screen y of a slot's high and low in
+    /// either order, or `None` where no bar is drawn.
+    ///
+    /// Cost: a double click only, over at most the slots inside that reach.
+    pub fn on_candle(
+        &self,
+        pointer: [f32; 2],
+        chart_right: f32,
+        total: usize,
+        wick_y: impl Fn(usize) -> Option<(f32, f32)>,
+    ) -> bool {
+        let [x, y] = pointer;
+        if total == 0 || self.px_per_bar <= 0.0 || !x.is_finite() || !y.is_finite() {
+            return false;
+        }
+        let reach = (0.5 * self.candle_width()).max(CANDLE_PICK_TOLERANCE_PX);
+        let first = self.bar_at_x(x - reach, chart_right, total).ceil().max(0.0);
+        let last = self
+            .bar_at_x(x + reach, chart_right, total)
+            .floor()
+            .min((total - 1) as f32);
+        if first > last {
+            return false;
+        }
+        (first as usize..=last as usize).any(|slot| {
+            wick_y(slot).is_some_and(|(a, b)| {
+                (a.min(b) - CANDLE_PICK_TOLERANCE_PX..=a.max(b) + CANDLE_PICK_TOLERANCE_PX)
+                    .contains(&y)
+            })
+        })
     }
 
     /// Bring `bar` to the middle of a window `width_px` wide — the object
@@ -1009,8 +1071,18 @@ mod tests {
         let wick = |_slot: usize| Some((300.0, 340.0));
         let x = v.x_center(45, right, total);
         assert!(v.on_candle([x, 320.0], right, total, wick));
-        assert!(v.on_candle([x + 19.0, 300.0 - CANDLE_PICK_TOLERANCE_PX], right, total, wick));
-        assert!(!v.on_candle([x, 300.0 - CANDLE_PICK_TOLERANCE_PX - 1.0], right, total, wick));
+        assert!(v.on_candle(
+            [x + 19.0, 300.0 - CANDLE_PICK_TOLERANCE_PX],
+            right,
+            total,
+            wick
+        ));
+        assert!(!v.on_candle(
+            [x, 300.0 - CANDLE_PICK_TOLERANCE_PX - 1.0],
+            right,
+            total,
+            wick
+        ));
         assert!(!v.on_candle([x, 100.0], right, total, wick), "open canvas");
         // Past the newest bar there is no candle at all.
         let future = v.x_center(49, right, total) + 2.0 * v.candle_width();
@@ -1030,6 +1102,11 @@ mod tests {
         let x = v.x_center(400, right, total);
         let wick = |slot: usize| (slot == 400).then_some((300.0, 340.0));
         assert!(v.on_candle([x + CANDLE_PICK_TOLERANCE_PX, 320.0], right, total, wick));
-        assert!(!v.on_candle([x + CANDLE_PICK_TOLERANCE_PX + 1.5, 320.0], right, total, wick));
+        assert!(!v.on_candle(
+            [x + CANDLE_PICK_TOLERANCE_PX + 1.5, 320.0],
+            right,
+            total,
+            wick
+        ));
     }
 }
