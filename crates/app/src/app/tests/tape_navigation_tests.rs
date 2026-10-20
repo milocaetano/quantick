@@ -624,7 +624,8 @@ fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live_in_tape_only() {
 }
 
 /// A literal double click returns only the clicked side to live, preserving
-/// zoom, manual prices and orientation. The next vertical gesture must still
+/// manual prices and orientation, and the tape's zoom; open canvas on the
+/// candles' side caps theirs at the live overview. The next vertical gesture must still
 /// follow the hand, including on a narrow Tape-only price window.
 #[test]
 fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
@@ -695,18 +696,24 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     click_sized(&mut app, &ctx, TEST_WINDOW, at);
                     click_sized(&mut app, &ctx, TEST_WINDOW, at);
                     run_frame(&mut app, &ctx);
-                    // Over the candles the same double click opens the chart
+                    // On a candle the same double click opens the chart
                     // settings; shut them so the drag below reaches the chart.
                     app.surfaces.chart_settings.close();
                     run_frame(&mut app, &ctx);
                     let pane = &app.active_tab().flow_pane;
+                    // Open canvas beside the tape returns to the live overview.
+                    let candles_px = if on_tape {
+                        candles_before.0
+                    } else {
+                        overview_px(pane, candles_before.0)
+                    };
                     assert_eq!(
                         pane.price_view.manual_range(),
                         Some(manual),
                         "the literal double click preserves exact price framing"
                     );
                     assert_eq!(pane.price_view.is_inverted(), inverted);
-                    assert_eq!(pane.model.viewport.px_per_bar(), candles_before.0);
+                    assert_eq!(pane.model.viewport.px_per_bar(), candles_px);
                     assert_eq!(app.active_tab().tape().live_lane_window(), window);
                     let expected_tape = if on_tape { TapeEnd::Live } else { tape_before };
                     assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
@@ -745,15 +752,26 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     );
                     assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
                     assert_eq!(app.active_tab().tape().live_lane_window(), window);
-                    assert_eq!(pane.model.viewport.px_per_bar(), candles_before.0);
+                    assert_eq!(pane.model.viewport.px_per_bar(), candles_px);
                 }
             }
         }
     }
 }
 
+/// The spacing an empty-canvas double click leaves a pane at `from` px per
+/// bar on: the live overview's cap over the candles' width.
+fn overview_px(pane: &crate::pane::ChartPane, from: f32) -> f32 {
+    use quantick_chart_interaction::viewport::{
+        DEFAULT_PX_PER_BAR, OVERVIEW_BARS, OVERVIEW_MIN_PX_PER_BAR,
+    };
+    let chart = pane.frame.chart_area.expect("laid out");
+    let history_px = pane.frame.lane_divider_x.unwrap_or(chart.right()) - chart.left();
+    from.min((history_px / OVERVIEW_BARS as f32).clamp(OVERVIEW_MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR))
+}
+
 #[test]
-fn an_ordinary_canvas_double_click_returns_to_live_at_the_existing_zoom_and_price_range() {
+fn an_empty_canvas_double_click_returns_to_live_at_the_overview_zoom_and_price_range() {
     for inverted in [false, true] {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(200);
@@ -779,7 +797,7 @@ fn an_ordinary_canvas_double_click_returns_to_live_at_the_existing_zoom_and_pric
             pane.model.viewport.right_edge_bar(pane.slots()),
             pane.slots().saturating_sub(1) as f32
         );
-        assert_eq!(pane.model.viewport.px_per_bar(), 23.0);
+        assert_eq!(pane.model.viewport.px_per_bar(), overview_px(pane, 23.0));
         assert_eq!(pane.price_view.manual_range(), Some(manual));
         assert_eq!(pane.price_view.is_inverted(), inverted);
     }

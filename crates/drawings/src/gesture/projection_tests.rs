@@ -595,3 +595,41 @@ fn a_mirrored_level_snaps_where_its_own_pane_does() {
         });
     }
 }
+
+/// The double click's target in the price band: on a candle's range it is
+/// the candle, above it open canvas as wide as the candles' area, and an
+/// indicator band is neither.
+#[test]
+fn a_canvas_double_click_names_the_candle_or_the_open_canvas() {
+    with_visible_bands(|projection, bands| {
+        let band = &bands[0];
+        let scale = band.scale.as_ref().unwrap();
+        let x = projection
+            .viewport
+            .x_center(DISTANT_BAR, HISTORY_RIGHT, TAPE);
+        let marks = crate::Drawings::default();
+        let hit = |price: f64, band: &Band| {
+            let pos = crate::pos2(x, scale.y(price));
+            projection.canvas_hit(&marks, pos, band, (0.0, HISTORY_RIGHT), TAPE)
+        };
+        assert_eq!(hit(50.0, band), Some(CanvasHit::Candle), "inside 30..70");
+        assert_eq!(
+            hit(90.0, band),
+            Some(CanvasHit::Empty {
+                history_px: HISTORY_RIGHT
+            }),
+            "above the wick"
+        );
+        let indicator = Band {
+            key: DrawingBand::Indicator(crate::PaneKey {
+                kind: "native.cvd".into(),
+                ordinal: 0,
+            }),
+            rect: band.rect,
+            scale: band.scale,
+            label: "CVD".into(),
+            refusal: None,
+        };
+        assert_eq!(hit(50.0, &indicator), None, "a pane band is no canvas");
+    });
+}

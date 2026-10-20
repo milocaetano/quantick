@@ -42,7 +42,7 @@ impl ChartPane {
         let over_tape = |position: egui::Pos2| {
             native_tape && (tape_only || divider.is_some_and(|x| position.x > x))
         };
-        let (press, pressed_at, travel, middle_down, delta, scroll) = ui.input(|i| {
+        let (press, pressed_at, travel, middle_down, delta, scroll, any_click) = ui.input(|i| {
             let p = &i.pointer;
             let travel = p.latest_pos().zip(p.press_origin());
             (
@@ -52,6 +52,7 @@ impl ChartPane {
                 p.middle_down(),
                 p.delta(),
                 i.raw_scroll_delta.y,
+                p.any_click(),
             )
         });
         // Over the tape the sideways part of a drag is its time, and only a
@@ -91,14 +92,15 @@ impl ChartPane {
             self.pan_canvas(side(delta, tape), total, tape);
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
-        // Not with a tool armed: two placement clicks are two anchors. Over
-        // the tape a double click returns it to live; on an overlay's own
-        // line it opens that line; on a candle it opens the chart settings
-        // on the Candles tab and leaves the view alone; on open canvas it
-        // returns the candles to the live edge at the overview spacing
-        // (`Viewport::snap_to_live_overview`). Anywhere else the candles
-        // snap back to live at their zoom.
+        // Not with a tool armed: two placement clicks are two anchors. Over the tape a double
+        // click returns it to live; on an overlay's line it opens that line; on a candle it opens
+        // the Candles settings and keeps the view; on open canvas it returns to live at the
+        // overview spacing. Those two need both clicks on the canvas (`DoubleClickGate`); anywhere
+        // else the candles snap back to live at their zoom.
         let mut open_settings = false;
+        let gate = &mut self.model.double_click;
+        let paired =
+            any_click && gate.click(chart.clicked() && primary_free, chart.double_clicked());
         if chart.double_clicked() && primary_free {
             let at = chart.interact_pointer_pos();
             let overlay = at
@@ -108,8 +110,8 @@ impl ChartPane {
             // The lane divider is a handle, as it is for the drag above:
             // grabbing it twice is neither a candle nor open canvas.
             let canvas = at
-                .filter(|position| !tape && overlay.is_none() && !on_divider(*position))
-                .and_then(|position| self.hit_test().canvas_hit(position));
+                .filter(|at| paired && !tape && overlay.is_none() && !on_divider(*at))
+                .and_then(|at| self.hit_test().canvas_hit(at));
             open_settings = canvas.is_some_and(|hit| hit.opens_chart_settings());
             navigate(
                 self,

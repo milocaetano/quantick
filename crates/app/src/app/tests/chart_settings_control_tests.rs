@@ -186,7 +186,7 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
     std::fs::remove_dir_all(directory).ok();
 }
 
-/// The double click on the bare candles opens the window on the Candles tab;
+/// The double click on a candle opens the window on the Candles tab;
 /// the same gesture on an axis does not.
 #[test]
 fn a_double_click_on_the_candles_opens_the_candles_tab() {
@@ -194,14 +194,30 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let chart = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_area
-        .expect("the canvas laid out");
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_area.expect("the canvas laid out");
     assert!(!app.surfaces.chart_settings.is_open());
-    let at = chart.center() - egui::vec2(chart.width() / 4.0, 0.0);
+    // On a candle's body, through the geometry the frame painted.
+    let (right, total) = (
+        pane.frame.lane_divider_x.unwrap_or(chart.right()),
+        pane.slots(),
+    );
+    let slot = total - 20;
+    let bar = pane.closed_bar(slot).expect("a closed bar");
+    let scale = pane.price_view.scale(
+        pane.frame.auto_range.expect("a price range"),
+        pane.frame.chart_top,
+        pane.frame.chart_top + pane.frame.chart_height,
+    );
+    let mid = crate::chart::to_f64(bar.high + bar.low) / 2.0;
+    let at = egui::pos2(
+        pane.model.viewport.x_center(slot, right, total),
+        scale.y(mid),
+    );
+    let before = (
+        pane.model.viewport.px_per_bar(),
+        pane.model.viewport.follows_live(),
+    );
     click_chart(&mut app, &ctx, at);
     click_chart(&mut app, &ctx, at);
     run_frame(&mut app, &ctx);
@@ -210,6 +226,12 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
             .chart_settings
             .is_open_on(ChartSettingsTab::Candles),
         "the double click at {at:?} opened the chart settings"
+    );
+    let viewport = &app.active_tab().flow_pane.model.viewport;
+    assert_eq!(
+        (viewport.px_per_bar(), viewport.follows_live()),
+        before,
+        "and left the view alone"
     );
 }
 

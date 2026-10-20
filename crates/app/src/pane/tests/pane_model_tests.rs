@@ -77,7 +77,8 @@ fn the_bare_candles_end_at_the_lane_divider() {
     let areas = lay_out_bands(&mut pane);
     let y = areas.chart.center().y;
     let hit = pane.hit_test();
-    let history_px = divider - TEST_PLOT.left();
+    let chart = pane.frame.chart_area.expect("laid out");
+    let history_px = divider - chart.left();
     assert_eq!(
         hit.canvas_hit(egui::pos2(divider - 20.0, y)),
         Some(CanvasHit::Empty { history_px }),
@@ -94,6 +95,8 @@ fn the_bare_candles_end_at_the_lane_divider() {
 /// the projection its hit tests read through.
 fn panned_pane(ctx: &egui::Context, px_per_bar: f32) -> (ChartPane, PlotAreas) {
     let mut pane = pane_with_timed_bars(200);
+    // Every fixture bar spans 1..2: on a 0..3 axis it sits mid-band.
+    pane.frame.auto_range = Some((0.0, 3.0));
     pane.model.viewport.set_px_per_bar(px_per_bar);
     pane.model.viewport.pan_pixels(4.0 * px_per_bar, 200);
     let _ = drive_navigation(&mut pane, ctx, TEST_PLOT, Vec::new());
@@ -117,7 +120,7 @@ fn a_double_click_on_a_candle_opens_the_chart_settings_and_keeps_the_view() {
         pane.model.viewport.right_edge_bar(total),
     );
     let slot = pane.model.viewport.right_edge_bar(total) as usize - 3;
-    // Every fixture bar spans 1..2; 1.5 is inside its body.
+    // 1.5 is inside every fixture bar's body.
     let on_the_candle = egui::pos2(
         pane.model.viewport.x_center(slot, right, total),
         scale.y(1.5),
@@ -149,8 +152,8 @@ fn a_double_click_on_empty_canvas_returns_to_a_live_overview() {
     let chart = pane.frame.chart_area.expect("laid out");
     let history_px = pane.frame.lane_divider_x.unwrap_or(chart.right()) - chart.left();
     let (_, _, _, scale) = pane.hit_test().last_projection().expect("drawn");
-    // Far above every fixture candle (1..2) on a 0..100 axis.
-    let open_canvas = egui::pos2(areas.chart.center().x, scale.y(80.0));
+    // Well above every fixture candle (1..2) on the 0..3 axis.
+    let open_canvas = egui::pos2(areas.chart.center().x, scale.y(2.6));
     let overview =
         (history_px / OVERVIEW_BARS as f32).clamp(OVERVIEW_MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR);
 
@@ -178,9 +181,10 @@ fn a_double_click_on_empty_canvas_returns_to_a_live_overview() {
     );
 
     // Zoomed out already, the view keeps its width: the overview never zooms in.
+    let ctx = egui::Context::default();
     let (mut wide, areas) = panned_pane(&ctx, 2.0);
     let (_, _, _, scale) = wide.hit_test().last_projection().expect("drawn");
-    let open_canvas = egui::pos2(areas.chart.center().x, scale.y(80.0));
+    let open_canvas = egui::pos2(areas.chart.center().x, scale.y(2.6));
     assert_eq!(
         double_click_asking(&mut wide, &ctx, TEST_PLOT, open_canvas),
         (None, false)

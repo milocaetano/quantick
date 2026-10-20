@@ -89,6 +89,7 @@ pub struct Model {
     pub selection: Selection,
     pub menu: MenuState,
     pub tape_drag: crate::tape_drag::TapeDrag,
+    pub double_click: DoubleClickGate,
 }
 
 /// Fresh facts are supplied at admission time, including when a command is replayed.
@@ -122,6 +123,30 @@ impl CanvasHit {
     #[must_use]
     pub fn opens_chart_settings(self) -> bool {
         matches!(self, Self::Candle)
+    }
+}
+
+/// Whether a double click is two clicks on the canvas itself.
+///
+/// The toolkit pairs any two clicks inside its delay, wherever they land: a
+/// click on the drawing rail and the placement click that follows it, or the
+/// two anchors of a quickly placed line, would otherwise read as a double
+/// click on the chart once the tool disarms — and open the settings or move
+/// the view the trader just drew on.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DoubleClickGate {
+    previous_on_canvas: bool,
+}
+
+impl DoubleClickGate {
+    /// Feed each frame in which a click completed anywhere in the window:
+    /// `on_canvas` when this canvas took it with the primary button free,
+    /// `double` when the toolkit reported it as a double click. Answers
+    /// whether that double click counts — both of its clicks on the canvas.
+    pub fn click(&mut self, on_canvas: bool, double: bool) -> bool {
+        let counts = double && on_canvas && self.previous_on_canvas;
+        self.previous_on_canvas = on_canvas;
+        counts
     }
 }
 
@@ -487,6 +512,20 @@ mod tests {
         );
         assert!(model.viewport.follows_live());
         assert_eq!(model.viewport.px_per_bar(), 40.0);
+    }
+    /// A rail click followed by a placement click, or two quick anchors, is
+    /// not the canvas's double click; two clicks on the free canvas are.
+    #[test]
+    fn a_double_click_counts_only_when_both_clicks_were_the_canvas() {
+        let mut gate = DoubleClickGate::default();
+        assert!(!gate.click(false, false), "a click on the drawing rail");
+        assert!(!gate.click(true, true), "the placement click after it");
+        let mut anchors = DoubleClickGate::default();
+        assert!(!anchors.click(false, false), "the first anchor, tool armed");
+        assert!(!anchors.click(true, true), "the second, tool disarmed");
+        let mut canvas = DoubleClickGate::default();
+        assert!(!canvas.click(true, false));
+        assert!(canvas.click(true, true), "two clicks on the canvas");
     }
     #[test]
     fn close_commits_once_and_ignores_a_replaced_drawing() {

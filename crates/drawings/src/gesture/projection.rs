@@ -3,6 +3,7 @@
 //! The composed series borrows its prefix and engine state. Neither view owns
 //! a drawing store, a gesture, or the pane that supplies these disjoint fields.
 use quantick_chart::indicator_views::IndicatorViews;
+use quantick_chart_interaction::pane::CanvasHit;
 use quantick_chart_interaction::viewport::Viewport;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
@@ -13,7 +14,7 @@ use super::{
     CANDLE_MAGNET_REACH_PX, DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, MAGNET_REACH_PX,
     MAGNET_REACH_UNLIMITED_PX, Mark, Marks,
 };
-use crate::chart::PriceScale;
+use crate::chart::{self, PriceScale};
 use crate::{
     AnchorSnap, BodySnap, ChartPoint, Constrain, DrawContext, DrawingBand, DrawingId,
     DrawingPayload, PointerHint, Px, PxRect, UNMEASURED,
@@ -409,6 +410,51 @@ impl DrawingProjection<'_> {
             .iter()
             .map(|point| self.drawing_screen_point(*point, history_right, total, scale))
             .collect()
+    }
+
+    /// What a double click at `pos` lands on in the candles' price `band`,
+    /// between the `history` edges (left, right) the candles are drawn in:
+    /// a candle's body or wick opens the chart settings, open canvas returns
+    /// to live at the overview spacing. `None` on a drawing or its handle, and
+    /// in any other band — each keeps its own meaning for the gesture.
+    #[must_use]
+    pub fn canvas_hit(
+        &self,
+        drawings: &Marks,
+        pos: Px,
+        band: &Band,
+        history: (f32, f32),
+        total: usize,
+    ) -> Option<CanvasHit> {
+        let (left, right) = history;
+        let price = matches!(band.key, DrawingBand::Price);
+        let scale = band.scale.as_ref().filter(|_| price)?;
+        if self
+            .drawing_handle_at(drawings, pos, band, right, total)
+            .is_some()
+            || self.drawing_at(drawings, pos, band, right, total).is_some()
+        {
+            return None;
+        }
+        let wick_y = |slot| {
+            let bar = self.series.candle_at_slot(slot)?;
+            Some((
+                scale.y(chart::to_f64(bar.high)),
+                scale.y(chart::to_f64(bar.low)),
+            ))
+        };
+        Some(
+            if self
+                .viewport
+                .on_candle([pos.x, pos.y], right, total, wick_y)
+            {
+                CanvasHit::Candle
+            } else {
+                CanvasHit::Empty {
+                    history_px: right - left,
+                }
+            },
+        )
     }
 
     /// The topmost object of `band` under the pointer. Objects of the other
