@@ -19,15 +19,17 @@
 //! is the order the queue fetches in. Ordered collections only, as everywhere
 //! a set can reach what is drawn.
 //!
-//! # A day on disk is a whole day
+//! # A day on disk is never fetched again
 //!
 //! The exporter writes each file beside its destination (`.csv.part`) and
 //! moves it into place only once whole, and the library never lists a `.part`
-//! file. So a tape in the folder is never a truncated one. What a refused or
-//! cancelled day *can* leave is a whole tape without the run-up written after
-//! it. So a day is already here only when the scanned folder holds both its
-//! tape and its run-up file — read from disk on every scan, never remembered —
-//! and a several-day download fetches any other day again.
+//! file. So a tape in the folder is never a truncated one, and a several-day
+//! download skips every day whose tape is there: re-exporting it would
+//! overwrite a recording the trader may have imported or corrected by hand.
+//! A tape can still stand without its run-up file — a day before fetched with
+//! none, a broker that served none, a refusal or cancel after the tape
+//! landed — so a skipped day says so on its row and in the summary, read from
+//! the folder on every scan rather than remembered.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -64,7 +66,8 @@ impl DaySelection {
     ///
     /// A plain click toggles the day. A Shift+click adds every day `offered`
     /// holds between the anchor and `day`, both included, and never takes one
-    /// out. A day the provider does not hold is never picked: it has no tape.
+    /// out; un-picking a day leaves no anchor behind. A day the provider does
+    /// not hold is never picked: it has no tape.
     pub fn click(&mut self, day: &str, offered: &BTreeSet<String>, extend: bool) {
         if !offered.contains(day) {
             return;
@@ -83,9 +86,12 @@ impl DaySelection {
                 );
             }
             None => {
-                if !self.days.remove(day) {
-                    self.days.insert(day.to_owned());
+                if self.days.remove(day) {
+                    // A range from a day just taken out would put it back.
+                    self.anchor = None;
+                    return;
                 }
+                self.days.insert(day.to_owned());
             }
         }
         self.anchor = Some(day.to_owned());
@@ -133,14 +139,13 @@ impl DaySelection {
     }
 }
 
-/// The days of `symbol` the scanned folder holds whole — tape and run-up
-/// both — `YYYY-MM-DD`.
+/// The days of `symbol` whose tape the scanned folder holds, `YYYY-MM-DD`.
 ///
 /// Another contract's tape of the same date is not this one's, so the symbol
 /// is matched exactly.
 #[must_use]
 pub fn held_days(library: &Library, symbol: &str) -> BTreeSet<String> {
-    days_of(library, symbol, true)
+    days_of(library, symbol, false)
 }
 
 fn days_of(library: &Library, symbol: &str, whole: bool) -> BTreeSet<String> {
@@ -181,18 +186,18 @@ impl HeldDays {
         self.symbol = Some(symbol.to_owned());
     }
 
-    /// Whether the folder holds the whole of `day`, tape and run-up: the
-    /// only day a several-day download skips as already here.
+    /// Whether the folder holds `day`'s tape, run-up or not: such a day is
+    /// already here, and is never downloaded over.
     #[must_use]
     pub fn contains(&self, day: &str) -> bool {
-        self.whole.contains(day)
+        self.tapes.contains(day)
     }
 
-    /// Whether the folder holds `day`'s tape, run-up or not — all the day
-    /// before a picked day needs, since it joins the chart as prints only.
+    /// Whether `day`'s run-up file sits beside its tape — said beside a
+    /// skipped day, never a reason to fetch it again.
     #[must_use]
-    pub fn has_tape(&self, day: &str) -> bool {
-        self.tapes.contains(day)
+    pub fn has_run_up(&self, day: &str) -> bool {
+        self.whole.contains(day)
     }
 }
 
@@ -232,7 +237,10 @@ pub enum DayStatus {
     },
     /// Already in the folder, so skipped: re-exporting it would cost minutes
     /// and overwrite a recording the trader may have corrected by hand.
-    AlreadyHere,
+    AlreadyHere {
+        /// Whether its run-up file sits beside it.
+        run_up: bool,
+    },
     /// The provider refused it.
     Refused {
         /// What the provider said.
@@ -275,7 +283,10 @@ impl BatchRow {
             DayStatus::Fetched { ticks, .. } => {
                 format!("{day} — {} prints downloaded", prints(*ticks))
             }
-            DayStatus::AlreadyHere => format!("{day} — already here, skipped"),
+            DayStatus::AlreadyHere { run_up: true } => format!("{day} — already here, skipped"),
+            DayStatus::AlreadyHere { run_up: false } => {
+                format!("{day} — already here, skipped (no run-up beside it)")
+            }
             DayStatus::Refused { headline, fix } => match fix {
                 Some(fix) => format!("{day} — refused: {headline}\n{fix}"),
                 None => format!("{day} — refused: {headline}"),
@@ -297,6 +308,8 @@ pub struct BatchSummary {
     pub short_run_up: usize,
     /// Days skipped because the folder held them.
     pub already_here: usize,
+    /// Of those, days with no run-up file beside the tape.
+    pub without_run_up: usize,
     /// Days the provider refused.
     pub refused: usize,
     /// Days never asked for after a refusal every day would repeat.
@@ -316,8 +329,12 @@ impl BatchSummary {
             0 => String::new(),
             n => format!(", {n} with a short run-up"),
         };
+        let bare = match self.without_run_up {
+            0 => String::new(),
+            n => format!(" ({n} without run-up)"),
+        };
         let mut line = format!(
-            "{} fetched ({} prints{short}) · {} already here · {} refused",
+            "{} fetched ({} prints{short}) · {} already here{bare} · {} refused",
             self.fetched,
             prints(self.ticks),
             self.already_here,
@@ -343,22 +360,22 @@ pub struct DayBatch {
 }
 
 impl DayBatch {
-    /// The queue for `selection`, oldest first, with held days skipped.
+    /// The queue for `selection`, oldest first, with held days skipped:
+    /// `held` answers `Some(run-up beside it?)` for a day whose tape is on
+    /// disk, `None` for one to fetch.
     #[must_use]
     pub fn plan(
         selection: &DaySelection,
-        held: impl Fn(&str) -> bool,
+        held: impl Fn(&str) -> Option<bool>,
         template: DayTemplate,
     ) -> Self {
         let rows = selection
             .iter()
             .map(|day| BatchRow {
                 day: day.to_owned(),
-                status: if held(day) {
-                    DayStatus::AlreadyHere
-                } else {
-                    DayStatus::Waiting
-                },
+                status: held(day).map_or(DayStatus::Waiting, |run_up| DayStatus::AlreadyHere {
+                    run_up,
+                }),
             })
             .collect();
         Self { rows, template }
@@ -460,7 +477,10 @@ impl DayBatch {
                     summary.short_run_up += usize::from(run_up < self.template.context_sessions);
                     summary.ticks += ticks;
                 }
-                DayStatus::AlreadyHere => summary.already_here += 1,
+                DayStatus::AlreadyHere { run_up } => {
+                    summary.already_here += 1;
+                    summary.without_run_up += usize::from(!run_up);
+                }
                 DayStatus::Refused { .. } => summary.refused += 1,
                 DayStatus::NotTried => summary.not_tried += 1,
                 DayStatus::Cancelled => summary.cancelled += 1,
@@ -569,7 +589,7 @@ impl DownloadDays {
         let held = &self.held;
         self.batch = Some(DayBatch::plan(
             &self.selection,
-            |d| held.contains(d),
+            |d| held.contains(d).then(|| held.has_run_up(d)),
             template,
         ));
     }
@@ -650,7 +670,7 @@ impl DownloadDays {
         let earlier = day_before(offered?, self.selection.only()?)?;
         Some(DayBeforeTarget {
             day: earlier.to_owned(),
-            on_disk: self.held.has_tape(earlier),
+            on_disk: self.held.contains(earlier),
         })
     }
 
@@ -962,7 +982,11 @@ mod tests {
     /// A queue for `selection` with `held` already on disk.
     fn plan(selection: &DaySelection, held: &[&str]) -> DayBatch {
         let held = set(held);
-        DayBatch::plan(selection, |d| held.contains(d), DayTemplate::default())
+        DayBatch::plan(
+            selection,
+            |d| held.contains(d).then_some(true),
+            DayTemplate::default(),
+        )
     }
 
     /// The tab's days for WINV26, with `selection` picked over `library`.
@@ -1009,7 +1033,7 @@ mod tests {
             rows,
             [
                 ("2026-07-30", &DayStatus::Waiting),
-                ("2026-08-03", &DayStatus::AlreadyHere),
+                ("2026-08-03", &DayStatus::AlreadyHere { run_up: true }),
                 ("2026-08-05", &DayStatus::Waiting),
             ]
         );
@@ -1060,6 +1084,7 @@ mod tests {
                 fetched: 1,
                 short_run_up: 0,
                 already_here: 1,
+                without_run_up: 0,
                 refused: 1,
                 not_tried: 0,
                 cancelled: 0,
@@ -1178,35 +1203,57 @@ mod tests {
         assert!(held.contains("2026-07-30"), "so is another symbol");
     }
 
-    /// A refused or cancelled day can leave its whole tape without the run-up
-    /// behind it. Held is read from the folder: a tape alone is not already
-    /// here, a tape with its run-up is, and a fresh scan answers again with
-    /// nothing remembered from the last one.
+    /// A tape is already here with or without its run-up — a day before, a
+    /// broker that served none, a hand-corrected file — and is never fetched
+    /// over; one without says so. Each scan answers afresh.
     #[test]
-    fn only_a_tape_with_its_run_up_beside_it_is_already_here() {
+    fn a_tape_is_held_with_or_without_its_run_up_and_says_which() {
         let mut held = HeldDays::default();
         held.refresh(Some(&tapes_only(&[("WINV26", "2026-07-29")])), "WINV26");
-        assert!(!held.contains("2026-07-29"), "a tape alone is not held");
-        assert!(
-            held.has_tape("2026-07-29"),
-            "though it can join as a day before"
-        );
+        assert!(held.contains("2026-07-29"), "a tape alone is held");
+        assert!(!held.has_run_up("2026-07-29"));
 
         held.rescanned();
         held.refresh(Some(&library_of(&[("WINV26", "2026-07-29")])), "WINV26");
-        assert!(held.contains("2026-07-29"), "with its run-up it is");
+        assert!(held.contains("2026-07-29") && held.has_run_up("2026-07-29"));
 
         held.rescanned();
         held.refresh(Some(&tapes_only(&[("WINV26", "2026-07-29")])), "WINV26");
-        assert!(!held.contains("2026-07-29"), "and each scan answers afresh");
+        assert!(
+            held.contains("2026-07-29") && !held.has_run_up("2026-07-29"),
+            "and each scan answers afresh"
+        );
 
-        let selection = selection_of(&["2026-07-29", "2026-07-30"]);
-        let mut days = days_over(selection, &tapes_only(&[("WINV26", "2026-07-29")]));
+        let mut folder = tapes_only(&[("WINV26", "2026-07-29")]);
+        folder
+            .sessions
+            .extend(library_of(&[("WINV26", "2026-07-30")]).sessions);
+        let mut days = days_over(
+            selection_of(&["2026-07-29", "2026-07-30", "2026-07-31"]),
+            &folder,
+        );
         days.begin(template("WINV26"));
+        let batch = days.batch().expect("a batch");
+        assert_eq!(batch.to_fetch(), 1, "neither tape is fetched over");
+        let line = batch.rows()[0].line(5);
+        assert!(line.contains("no run-up beside it"), "{line}");
+        assert!(!batch.rows()[1].line(5).contains("no run-up"));
+        let summary = batch.summary().line();
+        assert!(
+            summary.contains("2 already here (1 without run-up)"),
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn un_picking_a_day_leaves_no_anchor_to_range_from() {
+        let mut selection = selection_of(&["2026-07-29", "2026-08-04"]);
+        selection.click("2026-08-04", &offered(), false);
+        selection.click("2026-07-31", &offered(), true);
         assert_eq!(
-            days.batch().map(DayBatch::to_fetch),
-            Some(2),
-            "fetched again"
+            picked(&selection),
+            ["2026-07-29", "2026-07-31"],
+            "the day just taken out is not put back by a range"
         );
     }
 

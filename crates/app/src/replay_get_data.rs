@@ -490,7 +490,7 @@ impl GetDataPanel {
                 Some(GetDataAction::Downloaded(tape))
             }
             DownloadEvent::Failed { headline, fix } => {
-                let fix = self.answer_clock(&headline, fix);
+                let fix = self.answer_clock(&headline, fix, "look up the days again");
                 self.phase = Phase::Failed { headline, fix };
                 None
             }
@@ -559,7 +559,8 @@ impl GetDataPanel {
                 return Some(GetDataAction::Fetched);
             }
             DownloadEvent::Failed { headline, fix } => {
-                let fix = self.answer_clock(&headline, fix);
+                // A look-up clears the picks; Download asks again for them.
+                let fix = self.answer_clock(&headline, fix, "press Download again");
                 self.days.refuse(headline, fix, every_day);
             }
             DownloadEvent::ContextWritten { sessions, .. } => self.days.run_up(sessions),
@@ -571,13 +572,13 @@ impl GetDataPanel {
     /// The one failure the trader can answer here rather than in a terminal:
     /// an unknown broker clock raises the control, and the fix points at it
     /// instead of at a command-line flag they have nowhere to type.
-    fn answer_clock(&mut self, headline: &str, fix: Option<String>) -> Option<String> {
+    fn answer_clock(&mut self, headline: &str, fix: Option<String>, then: &str) -> Option<String> {
         if !headline.contains("clock offset") {
             return fix;
         }
         self.clock_needed = true;
         self.declared_clock = self.declared_clock.or(Some(BROKER_CLOCKS[0].0));
-        Some("Pick the broker clock above, then look up the days again.".to_string())
+        Some(format!("Pick the broker clock above, then {then}."))
     }
 
     /// Start the oldest waiting day of a several-day download, once no job
@@ -1276,7 +1277,7 @@ impl GetDataPanel {
                             continue;
                         }
                         DayStatus::Refused { .. } => WARN,
-                        DayStatus::Fetched { .. } | DayStatus::AlreadyHere => AMBER,
+                        DayStatus::Fetched { .. } | DayStatus::AlreadyHere { .. } => AMBER,
                         DayStatus::Waiting | DayStatus::NotTried | DayStatus::Cancelled => {
                             TEXT_MUTED
                         }
@@ -1333,7 +1334,7 @@ fn draw_day_cell(
             egui::RichText::new(format!("{day:2}")).color(colour),
         )
         .on_hover_text(if on_disk {
-            format!("{iso} — already on disk; alone it is downloaded again, with others skipped")
+            format!("{iso} — already on disk; downloading it alone replaces it")
         } else {
             iso.to_string()
         });
@@ -2013,7 +2014,7 @@ mod tests {
                     headline: "WINV26 has no trades on 2026-08-25".to_string(),
                     fix: Some("Pick another day.".to_string()),
                 },
-                DayStatus::AlreadyHere,
+                DayStatus::AlreadyHere { run_up: true },
                 DayStatus::Fetched {
                     ticks: 10,
                     run_up: 0
@@ -2142,26 +2143,32 @@ mod tests {
         );
     }
 
-    /// A tape whose run-up never landed — refused, cancelled, or a late
-    /// Done after a cancel — is not already here: the folder, read afresh,
-    /// is what says so, not anything this panel remembers.
+    /// A tape is never downloaded over, run-up or not — a day before, a
+    /// broker that served none, a hand-corrected file. One without its run-up
+    /// is skipped all the same, and its row says so.
     #[test]
-    fn a_tape_without_its_run_up_is_fetched_again() {
-        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+    fn a_tape_without_its_run_up_is_skipped_and_labelled() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28", "2026-08-31"], false);
         panel.folder_rescanned();
         let mut folder = tapes_only(&["2026-08-27"]);
         folder
             .sessions
             .extend(library_holding(&["2026-08-28"]).sessions);
         panel.pump(Some(&folder), true);
-        assert!(!panel.days.held.contains("2026-08-27"), "a tape alone");
-        assert!(panel.days.held.contains("2026-08-28"), "tape and run-up");
+        assert!(
+            panel.days.held.contains("2026-08-27"),
+            "a tape alone is held"
+        );
+        assert!(panel.days.held.contains("2026-08-28"));
 
         panel.download("replay");
+        assert_eq!(asked(&log), ["2026-08-31"], "neither tape is fetched over");
         assert_eq!(
-            asked(&log),
-            ["2026-08-27"],
-            "fetched again, the whole day skipped"
+            statuses(&panel)[..2],
+            [
+                DayStatus::AlreadyHere { run_up: false },
+                DayStatus::AlreadyHere { run_up: true },
+            ]
         );
     }
 
@@ -2208,9 +2215,23 @@ mod tests {
             panic!("refused with a fix: {:?}", statuses(&panel));
         };
         assert!(fix.contains("broker clock above"), "{fix}");
+        assert!(
+            fix.contains("press Download again"),
+            "a look-up would clear the picks: {fix}"
+        );
         assert!(!fix.contains("--utc-offset-s"), "{fix}");
         assert_eq!(statuses(&panel)[1], DayStatus::NotTried);
         assert_eq!(asked(&log), ["2026-08-27"]);
+
+        // The clock picked, Download again asks for every day, not-tried ones
+        // included, in that clock.
+        panel.declared_clock = Some(0);
+        panel.download("replay");
+        assert_eq!(asked(&log), ["2026-08-27", "2026-08-27"]);
+        land(&mut panel, vec![done("20260827")]);
+        assert_eq!(asked(&log), ["2026-08-27", "2026-08-27", "2026-08-28"]);
+        let requests = log.lock().expect("one test thread").clone();
+        assert!(requests[1..].iter().all(|r| r.utc_offset_s == Some(0)));
     }
 
     #[test]
