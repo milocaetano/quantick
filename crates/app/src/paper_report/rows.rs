@@ -6,11 +6,13 @@
 //! what the pointer did leaves as a return value.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
 use quantick_paper::pnl::SymbolPnl;
+use quantick_paper::report::fit::{count_and_net, fit_head, fit_line};
 use quantick_paper::report::sessions::{
     SessionKey, SessionLabel, SessionRow, TradeRef, group_by_day_and_session, place_session_rows,
     source_word,
@@ -245,23 +247,26 @@ pub(super) fn draw_day_header(
         egui::FontId::proportional(10.0),
         theme::TEXT_FAINT,
     );
-    painter.text(
-        egui::pos2(rect.left() + DAY_HEADER_TEXT_X_PX, band.center().y),
-        egui::Align2::LEFT_CENTER,
-        date.long(),
+    // A narrow panel shortens the date first, then drops the points
+    // qualifier; the count and the money net always stay whole.
+    let rights = count_and_net(count, &net.1);
+    let date_color = if folded {
+        theme::TEXT_FAINT
+    } else {
+        theme::TEXT_MUTED
+    };
+    let ends = [
+        rect.left() + DAY_HEADER_TEXT_X_PX,
+        rect.right() - 6.0,
+        band.center().y,
+    ];
+    paint_fitted(
+        painter,
         egui::FontId::monospace(10.0),
-        if folded {
-            theme::TEXT_FAINT
-        } else {
-            theme::TEXT_MUTED
-        },
-    );
-    painter.text(
-        egui::pos2(rect.right() - 6.0, band.center().y),
-        egui::Align2::RIGHT_CENTER,
-        format!("{count} · {}", net.1),
-        egui::FontId::monospace(10.0),
-        points_color(net.0),
+        ends,
+        &[&date.long(), &date.short()],
+        &[&rights[0], &rights[1]],
+        [date_color, points_color(net.0)],
     );
     response
         .on_hover_text(format!(
@@ -392,91 +397,94 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     let y2 = rect.top() + 24.0;
     let color = theme::side_color(lines.side);
     let head = painter.layout_no_wrap(lines.head, font.clone(), color);
-    let head_w = head.size().x;
+    let route_x = x + head.size().x + 8.0;
     painter.galley(egui::pos2(x, y1 - head.size().y / 2.0), head, color);
+    // The right end is laid out first, right to left - P&L, tag, source
+    // marker - each with the gap to its left. Only the tag may drop; the
+    // route gets what is left.
+    let piece = |text, font, color, gap| (painter.layout_no_wrap(text, font, color), color, gap);
+    let points = (lines.points)
+        .map(|(points, text)| piece(text, font.clone(), points_color(points), DETAIL_GAP_PX));
+    let tag = (lines.tag).map(|tag| piece(tag, font.clone(), theme::TEXT_FAINT, 4.0));
+    let glyph_font = egui::FontId::proportional(10.0);
+    let marker = (lines.marker)
+        .map(|(glyph, color)| piece(glyph.to_owned(), glyph_font, color, DETAIL_GAP_PX));
+    let span = |piece: &Option<(Arc<egui::Galley>, _, f32)>| {
+        piece
+            .as_ref()
+            .map_or(0.0, |(galley, _, gap)| galley.size().x + gap)
+    };
+    let mut right = rect.right() - DETAIL_RIGHT_PAD_PX;
+    let fixed = span(&points) + span(&marker);
+    let fit = fit_head(right - route_x, fixed, span(&tag), &lines.route, |text| {
+        text_width(painter, text, &font)
+    });
+    let route_pos = egui::pos2(route_x, y1);
     painter.text(
-        egui::pos2(x + head_w + 8.0, y1),
+        route_pos,
         egui::Align2::LEFT_CENTER,
-        lines.route,
-        font.clone(),
+        fit.route,
+        font,
         theme::TEXT_MUTED,
     );
-    let mut head_right = rect.right() - DETAIL_RIGHT_PAD_PX;
-    if let Some((points, text)) = lines.points {
-        let galley = painter.layout_no_wrap(text, font.clone(), points_color(points));
-        let width = galley.size().x;
-        painter.galley(
-            egui::pos2(head_right - width, y1 - galley.size().y / 2.0),
-            galley,
-            points_color(points),
-        );
-        head_right -= width + DETAIL_GAP_PX;
-    }
-    if let Some(tag) = lines.tag {
-        let galley = painter.layout_no_wrap(tag, font.clone(), theme::TEXT_FAINT);
-        let tag_w = galley.size().x;
-        painter.galley(
-            egui::pos2(head_right - tag_w, y1 - galley.size().y / 2.0),
-            galley,
-            theme::TEXT_FAINT,
-        );
-        head_right -= tag_w + 4.0;
-    }
-    if let Some((glyph, color)) = lines.marker {
-        painter.text(
-            egui::pos2(head_right, y1),
-            egui::Align2::RIGHT_CENTER,
-            glyph,
-            egui::FontId::proportional(10.0),
-            color,
-        );
+    for (galley, color, gap) in [points, tag.filter(|_| fit.tag), marker]
+        .into_iter()
+        .flatten()
+    {
+        let size = galley.size();
+        painter.galley(egui::pos2(right - size.x, y1 - size.y / 2.0), galley, color);
+        right -= size.x + gap;
     }
     // The detail line and its stamp share one row from opposite ends.
-    let detail_font = egui::FontId::monospace(10.0);
-    let mut detail_limit = rect.right() - DETAIL_RIGHT_PAD_PX - x;
-    if let Some(stamp) = lines.stamp {
-        let galley = painter.layout_no_wrap(stamp, detail_font.clone(), theme::TEXT_FAINT);
-        let stamp_w = galley.size().x;
-        painter.galley(
-            egui::pos2(
-                rect.right() - DETAIL_RIGHT_PAD_PX - stamp_w,
-                y2 - galley.size().y / 2.0,
-            ),
-            galley,
-            theme::TEXT_FAINT,
-        );
-        detail_limit -= stamp_w + DETAIL_GAP_PX;
-    }
-    // Monospace, so one measured glyph gives the budget for all of them.
-    let glyph_w = painter
-        .layout_no_wrap("0".to_owned(), detail_font.clone(), theme::TEXT_FAINT)
-        .size()
-        .x
-        .max(1.0);
-    let budget = (detail_limit / glyph_w).floor().max(0.0) as usize;
-    painter.text(
-        egui::pos2(x, y2),
-        egui::Align2::LEFT_CENTER,
-        elide_tail(&lines.detail, budget),
-        detail_font,
-        theme::TEXT_FAINT,
+    let ends = [x, rect.right() - DETAIL_RIGHT_PAD_PX, y2];
+    let stamp = lines.stamp.as_deref().unwrap_or_default();
+    let font = egui::FontId::monospace(10.0);
+    paint_fitted(
+        painter,
+        font,
+        ends,
+        &[&lines.detail],
+        &[stamp],
+        [theme::TEXT_FAINT; 2],
     );
 }
 
-/// Cut `text` to `budget` characters, marking the cut with `…` so a
-/// shortened exit reason can never be read as a complete one. Below the
-/// ellipsis plus one character there is nothing honest left to say, so the
-/// text is dropped entirely rather than reduced to a lone `…`.
-pub(super) fn elide_tail(text: &str, budget: usize) -> String {
-    if text.chars().count() <= budget {
-        return text.to_owned();
-    }
-    if budget < 2 {
-        return String::new();
-    }
-    let mut out: String = text.chars().take(budget - 1).collect();
-    out.push('…');
-    out
+/// Paints a line fitted by [`fit_line`]: the left form from `x0`, the right
+/// one ending at `x1`, both centred on `y`.
+pub(super) fn paint_fitted(
+    painter: &egui::Painter,
+    font: egui::FontId,
+    [x0, x1, y]: [f32; 3],
+    lefts: &[&str],
+    rights: &[&str],
+    [left_color, right_color]: [egui::Color32; 2],
+) {
+    let measure = |text: &str| text_width(painter, text, &font);
+    let fit = fit_line(x1 - x0, DETAIL_GAP_PX, lefts, rights, measure);
+    let (left, right) = (egui::pos2(x0, y), egui::pos2(x1, y));
+    painter.text(
+        left,
+        egui::Align2::LEFT_CENTER,
+        fit.left,
+        font.clone(),
+        left_color,
+    );
+    painter.text(
+        right,
+        egui::Align2::RIGHT_CENTER,
+        fit.right,
+        font,
+        right_color,
+    );
+}
+
+/// How wide `text` paints in `font` - the measure the ledger's fitting
+/// decisions in [`quantick_paper::report::fit`] are made with.
+pub(super) fn text_width(painter: &egui::Painter, text: &str, font: &egui::FontId) -> f32 {
+    painter
+        .layout_no_wrap(text.to_owned(), font.clone(), theme::TEXT_FAINT)
+        .size()
+        .x
 }
 
 /// One closed trade in the ledger. Every row selects on click (the tag
