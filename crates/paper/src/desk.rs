@@ -307,12 +307,13 @@ impl Desk {
         if !self.cmd_trading.enabled || !frame.layer_visible {
             return None;
         }
-        // A drawing a press would grab, or the canvas's own chrome. The
-        // buy modifier is Shift by default — the very key that levels a
-        // channel corner — so sweeping across a drawn line blinks the aim
-        // off for its grab band, in step with the move cursor the drawings
-        // put up.
-        if frame.canvas_claimed {
+        // A drawing handle a press would grab, a live quick range, or the
+        // pane's chrome, floating or the canvas's own (`on_chrome`): the
+        // press there is not the aim's, so no label paints over it. The buy
+        // modifier is Shift by default — the very key that levels a channel
+        // corner — so sweeping across a drawn line blinks the aim off for
+        // its grab band, in step with the move cursor the drawings put up.
+        if frame.canvas_claimed || frame.on_chrome {
             return None;
         }
         // An armed limit/stop is an intent already stated, with its own
@@ -410,6 +411,7 @@ impl Desk {
         // `hover_cursor` — one value each, never a formula re-run against a
         // different pointer.
         self.gesture.layer_visible = frame.layer_visible;
+        self.gesture.on_chrome = frame.on_chrome;
         self.gesture.refresh_open_tags(account, frame, axis);
         self.gesture.cmd_preview = self.compute_cmd_preview(account, frame, axis);
 
@@ -454,6 +456,13 @@ impl Desk {
         frame: &ChartFrame,
         axis: Option<&dyn PriceAxis>,
     ) -> InputOutcome {
+        // A press on the pane's chrome (the tape chip, the lane divider, a
+        // floating control) is the chrome's: no ✕, aim, armed click or line
+        // grab below starts there. A drag already in the hand keeps going.
+        let frame = &ChartFrame {
+            primary_pressed: frame.primary_pressed && !frame.on_chrome,
+            ..*frame
+        };
         let idle = self.gesture.drag == PaperDrag::None;
         // An overlay control (a tag's ✕, a bracket handle) takes the press
         // before *everything*: before the armed click — arming an order must

@@ -76,48 +76,53 @@ impl PaperArbitration<'_> {
         // is armed: the button is handed out once, and a click meant to drop
         // an anchor must not also cancel the order under it.
         //
-        // The aim claims the *whole* plot, so it alone yields to what already
-        // holds the pixel (`ChartFrame::canvas_claimed`); the pane answers
-        // that here, as paper never reads the drawings. Drawing *handles*
-        // only, never a body: Shift on a corner levels it, while a body may
-        // be huge (a fixed-range profile claims its whole strip) and moves
-        // with no modifier. Floating chrome (`over_chrome`: the tape's
-        // bubble-scale control, a flyout) takes the press, so no label
-        // paints over it. The canvas's own chrome is not floating: the tape
-        // chip and lane divider, an indicator pane's header or divider
-        // already mean something to a press. The handle pick runs only with
-        // a modifier down: the bounded pick `handle_pointer_tool` performs.
-        let modifiers = ui.input(|input| input.modifiers);
-        let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
-        // A live quick range (not a raw right button) owns the hand and Shift
-        // levels it (`quick_range.rs`): the aim stands down, no press places.
-        let range_held = chrome.drawing_chrome.quick_range.held();
-        let canvas_claimed = pointer_position
-            .filter(|_| modifier_down)
-            .is_some_and(|position| {
-                over_chrome
-                    || pane_chrome_hit(areas, position)
+        // The pane's chrome, floating (`over_chrome`: the tape's bubble-scale
+        // control, a flyout) or the canvas's own (the tape chip and lane
+        // divider, an indicator pane's header or divider), modifier or not:
+        // those pixels already mean something to a press, so the desk starts
+        // no paper press and shows no paper cursor there
+        // (`ChartFrame::on_chrome`).
+        let on_chrome = over_chrome
+            || pointer_position.is_some_and(|position| {
+                pane_chrome_hit(areas, position)
                     || self.tape_switch.contains(position)
                     || crate::plot_area::gesture_hits_lane_divider(
                         self.lane_divider,
                         position.x,
                         LANE_HANDLE_HALF_WIDTH_PX,
                     )
-                    || (chrome.toolrail.tool() == Tool::Pointer
-                        && bands::band_at(bands, px(position))
-                            .filter(|band| band.drawable())
-                            .is_some_and(|band| {
-                                self.projection
-                                    .drawing_point_handle_at(
-                                        self.drawings,
-                                        px(position),
-                                        band,
-                                        history_right,
-                                        total,
-                                    )
-                                    .is_some()
-                            }))
             });
+        // The aim claims the *whole* plot, so it also yields to a drawing
+        // handle (`ChartFrame::canvas_claimed`); the pane answers that here,
+        // as paper never reads the drawings. Handles only, never a body:
+        // Shift on a corner levels it, while a body may be huge (a
+        // fixed-range profile claims its whole strip) and moves with no
+        // modifier. The pick runs only with a modifier down: the bounded
+        // pick `handle_pointer_tool` performs.
+        let modifiers = ui.input(|input| input.modifiers);
+        let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
+        // A live quick range (not a raw right button) owns the hand and Shift
+        // levels it (`quick_range.rs`): the aim stands down, no press places.
+        let range_held = chrome.drawing_chrome.quick_range.held();
+        let canvas_claimed = chrome.toolrail.tool() == Tool::Pointer
+            && !on_chrome
+            && pointer_position
+                .filter(|_| modifier_down)
+                .is_some_and(|position| {
+                    bands::band_at(bands, px(position))
+                        .filter(|band| band.drawable())
+                        .is_some_and(|band| {
+                            self.projection
+                                .drawing_point_handle_at(
+                                    self.drawings,
+                                    px(position),
+                                    band,
+                                    history_right,
+                                    total,
+                                )
+                                .is_some()
+                        })
+                });
         // The wheel over the plot, offered to the paper layer first: with an
         // aim up it belongs to the ruler, and the chart's zoom is told in
         // `handle_navigation` to leave that frame's travel alone. Floating
@@ -145,11 +150,12 @@ impl PaperArbitration<'_> {
                 aim_area,
                 scale: drawing_scale.as_ref(),
                 pointer: pointer_position,
-                primary_pressed: primary_pressed && !over_chrome && !range_held,
+                primary_pressed: primary_pressed && !range_held,
                 primary_down,
                 primary_released,
                 modifiers,
                 canvas_claimed: canvas_claimed || range_held,
+                on_chrome,
                 scroll_y: paper_scroll,
                 middle_pressed: ui
                     .input(|input| input.pointer.button_pressed(egui::PointerButton::Middle)),
@@ -167,11 +173,10 @@ impl PaperArbitration<'_> {
         // drawings get hover cursors in `handle_pointer_tool`, and a draggable stop must not
         // feel deader than an annotation — nor may the entry line's blocked
         // band refuse a pan with no explanation at all.
-        // The layer gate lives inside `hover_cursor` itself, next to the
-        // frame's other decisions, so it cannot be forgotten by a caller.
+        // The layer and chrome gates live inside `hover_cursor` itself, next
+        // to the frame's other decisions, so a caller cannot forget them.
         let tags = crate::paper_trading::tag_band(drawing_area, aim_area);
         if chrome.paper_takes_input
-            && !over_chrome
             && !tool_armed
             && let Some(position) = pointer_position.filter(|position| aim_area.contains(*position))
             && let Some(scale) = drawing_scale.as_ref()

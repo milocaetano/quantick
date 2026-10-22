@@ -146,6 +146,7 @@ mod tests {
             primary_released: false,
             keys,
             canvas_claimed: false,
+            on_chrome: false,
             scroll_y: 0.0,
             middle_pressed: false,
             layer_visible: true,
@@ -261,21 +262,24 @@ mod tests {
             assert_eq!(desk.aim_paint(other_band(), false, &OTHER), None, "{why}");
         }
 
-        let mut desk = aiming_desk(&account);
-        let mut claimed = frame(Some(Point::new(200.0, 250.0)), SHIFT);
-        claimed.canvas_claimed = true;
-        desk.handle_input(&account, &claimed, Some(&AIMED));
-        assert_eq!(
-            desk.aim_paint(other_band(), false, &OTHER),
-            None,
-            "a drawing handle or the pane chrome took the hand"
-        );
+        for (claim, why) in [
+            (true, "a drawing handle or a quick range took the hand"),
+            (false, "the pointer is on the pane's chrome"),
+        ] {
+            let mut desk = aiming_desk(&account);
+            let mut claimed = frame(Some(Point::new(200.0, 250.0)), SHIFT);
+            claimed.canvas_claimed = claim;
+            claimed.on_chrome = !claim;
+            desk.handle_input(&account, &claimed, Some(&AIMED));
+            assert_eq!(desk.aim_paint(other_band(), false, &OTHER), None, "{why}");
+        }
     }
 
     /// The pane the aim was made in never echoes it. A toast or menu over
     /// the band hides the pointer from the pane, but the pane still ran the
-    /// input, so it paints the whole aim; and a forced aim parked past the
-    /// tape-lane divider paints nothing there rather than an echo.
+    /// input, so it paints the whole aim; and asked about a band its aim's
+    /// pointer lies outside (here a forced aim parked right of it), it
+    /// paints nothing there rather than an echo.
     #[test]
     fn the_aiming_pane_never_echoes_its_own_aim() {
         let dir = ScratchDir::new("echo-self");
@@ -298,11 +302,11 @@ mod tests {
         );
         let preview = desk.gesture.cmd_preview.expect("the hook forces an aim");
         assert_eq!(preview.pointer.x, 360.0);
-        let left_of_divider = Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(300.0, 400.0));
+        let narrower = Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(300.0, 400.0));
         assert_eq!(
-            desk.aim_paint(left_of_divider, true, &AIMED),
+            desk.aim_paint(narrower, true, &AIMED),
             None,
-            "parked past the divider: no aim here, and no echo of it either"
+            "parked outside the band: no aim here, and no echo of it either"
         );
     }
 

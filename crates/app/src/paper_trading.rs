@@ -176,8 +176,9 @@ const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
 const CMD_LINE_MAX_DASHES: f32 = 96.0;
 /// The aim's echo in the panes it was not made in: a side-coloured line as
 /// wide as a hovered order line and nearly opaque, so the level reads across
-/// a busy chart. Its long 12/4 dash, against the 4/4 every order line and the
-/// aim itself use, and its hollow chip say it is a level, not an order.
+/// a busy chart. Its long 12/4 dash, against the 4/4 of the aim and of every
+/// working order and bracket leg (the position's entry line is solid), and
+/// its hollow chip say it is a level, not an order.
 pub(crate) const AIM_ECHO_ALPHA: f32 = 0.85;
 const AIM_ECHO_WIDTH_PX: f32 = LINE_HOVER_WIDTH_PX;
 const AIM_ECHO_DASH_PX: f32 = 12.0;
@@ -218,6 +219,7 @@ pub struct ChartInput<'a> {
     pub primary_released: bool,
     pub modifiers: egui::Modifiers,
     pub canvas_claimed: bool,
+    pub on_chrome: bool,
     pub scroll_y: f32,
     pub middle_pressed: bool,
     pub layer_visible: bool,

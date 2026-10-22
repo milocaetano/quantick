@@ -238,3 +238,142 @@ fn tape_only_cancels_from_the_tag_inside_the_plot() {
         "the ✕ where it is painted cancels the order"
     );
 }
+
+/// The tape chip, in the canvas's top-right corner.
+fn tape_chip(app: &QuantickApp) -> egui::Rect {
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_area
+        .expect("the pane laid out");
+    crate::pane::tape_switch_rect(chart, false)
+}
+
+/// The lane divider's x on the flow pane.
+fn divider_x(app: &QuantickApp) -> f32 {
+    app.active_tab()
+        .flow_pane
+        .frame
+        .lane_divider_x
+        .expect("a tape lane on the flow pane")
+}
+
+/// Arm the ticket's sell limit: a level above the mark is a price it takes.
+fn arm_a_sell(app: &mut QuantickApp) {
+    app.active_tab_mut()
+        .paper
+        .arm_for_tests(quantick_engine::Side::Sell, quantick_sim::EntryKind::Limit);
+}
+
+/// A sell resting on the chip's row, rested with Alt on the bare tape left
+/// of the chip: its line runs under the chip. Answers its price.
+fn rest_a_sell_under_the_chip(app: &mut QuantickApp, ctx: &egui::Context) -> Decimal {
+    let at = egui::pos2(divider_x(app) + 20.0, tape_chip(app).center().y);
+    click_chart_with(app, ctx, at, egui::Modifiers::ALT);
+    let (side, price) = the_order(app);
+    assert_eq!(side, quantick_engine::Side::Sell);
+    price
+}
+
+/// With a ticket armed, a plain click on the tape chip is the chip's: it
+/// puts the tape away and rests nothing.
+#[test]
+fn an_armed_click_on_the_tape_chip_only_toggles_the_tape() {
+    let ctx = egui::Context::default();
+    let mut app = tape_app(&ctx, TapeMode::Chart);
+    arm_a_sell(&mut app);
+    let chip = tape_chip(&app).center();
+    click_chart_with(&mut app, &ctx, chip, egui::Modifiers::NONE);
+    assert!(
+        app.active_tab().paper.working_orders().is_empty(),
+        "the chip is chrome, not a price"
+    );
+    assert!(
+        !layer_on(&app, ChartLayer::TapeChart),
+        "the click put the tape away"
+    );
+}
+
+/// On the chip an order line under it shows no drag cursor and takes no
+/// press: the chip keeps its hand and its click, and the order stays put.
+#[test]
+fn the_tape_chip_keeps_its_cursor_and_press_over_an_order_line() {
+    let ctx = egui::Context::default();
+    let mut app = tape_app(&ctx, TapeMode::Chart);
+    let price = rest_a_sell_under_the_chip(&mut app, &ctx);
+    let chip = tape_chip(&app).center();
+    let line_y = price_y(
+        &app,
+        PaneSide::Flow,
+        rust_decimal::prelude::ToPrimitive::to_f64(&price).expect("a price"),
+    );
+    assert!(
+        (line_y - chip.y).abs() < 5.0,
+        "the line runs under the chip"
+    );
+
+    let hover = move_chart_with(&mut app, &ctx, chip, egui::Modifiers::NONE);
+    assert_eq!(
+        hover.platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand,
+        "the chip's hand, not the line's drag cursor"
+    );
+
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(chip, true)]);
+    assert!(
+        !app.active_tab().paper.gesture_active(),
+        "the press on the chip grabbed the line"
+    );
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(chip, false)]);
+    assert_eq!(the_order(&app).1, price, "the order did not move");
+    assert!(
+        !layer_on(&app, ChartLayer::TapeChart),
+        "the click put the tape away"
+    );
+}
+
+/// The divider's lane-side half resizes the lane under an armed ticket and
+/// over an order line alike: the drag rests nothing and grabs nothing.
+#[test]
+fn the_lane_divider_resizes_under_an_armed_ticket_and_over_a_line() {
+    for armed in [false, true] {
+        let ctx = egui::Context::default();
+        let mut app = tape_app(&ctx, TapeMode::Chart);
+        let at = on_the_tape(&app);
+        click_chart_with(&mut app, &ctx, at, egui::Modifiers::ALT);
+        let (_, price) = the_order(&app);
+        if armed {
+            arm_a_sell(&mut app);
+        }
+        let before = divider_x(&app);
+        let grip = egui::pos2(before + 2.0, at.y);
+        let to = grip + egui::vec2(40.0, 0.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(grip), pointer_button(grip, true)],
+        );
+        assert!(
+            !app.active_tab().paper.gesture_active(),
+            "armed {armed}: the press on the divider grabbed the line"
+        );
+        for events in [
+            vec![egui::Event::PointerMoved(grip + egui::vec2(20.0, 0.0))],
+            vec![egui::Event::PointerMoved(to)],
+            vec![egui::Event::PointerMoved(to), pointer_button(to, false)],
+        ] {
+            run_frame_with_events(&mut app, &ctx, events);
+        }
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            the_order(&app).1,
+            price,
+            "armed {armed}: one order, where it was"
+        );
+        assert!(
+            (divider_x(&app) - before).abs() > 1.0,
+            "armed {armed}: the drag resized the lane"
+        );
+    }
+}

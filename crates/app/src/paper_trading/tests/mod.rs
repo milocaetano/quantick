@@ -1167,6 +1167,7 @@ fn ruler_frame<'a>(
             ..Default::default()
         },
         canvas_claimed: false,
+        on_chrome: false,
         scroll_y,
         middle_pressed: false,
         layer_visible: true,
@@ -1368,6 +1369,7 @@ fn frame_at<'a>(
         primary_released: released,
         modifiers: egui::Modifiers::default(),
         canvas_claimed: false,
+        on_chrome: false,
         scroll_y: 0.0,
         middle_pressed: false,
         layer_visible: true,
@@ -1393,6 +1395,7 @@ fn cmd_frame<'a>(
         primary_released: false,
         modifiers,
         canvas_claimed: false,
+        on_chrome: false,
         scroll_y: 0.0,
         middle_pressed: false,
         layer_visible: true,
@@ -1728,6 +1731,7 @@ fn the_aim_yields_the_pixel_to_a_drawing_already_under_it() {
         primary_released: false,
         modifiers: shift,
         canvas_claimed: true,
+        on_chrome: false,
         scroll_y: 0.0,
         middle_pressed: false,
         layer_visible: true,
@@ -2155,6 +2159,7 @@ fn a_hidden_layer_paints_nothing_and_takes_no_press() {
         primary_released: false,
         modifiers: shift,
         canvas_claimed: false,
+        on_chrome: false,
         scroll_y: 0.0,
         middle_pressed: false,
         layer_visible: false,
@@ -2632,6 +2637,7 @@ fn the_order_tags_close_is_geometric_and_beats_the_armed_click() {
         primary_released: false,
         modifiers: egui::Modifiers::default(),
         canvas_claimed: false,
+        on_chrome: false,
         scroll_y: 0.0,
         middle_pressed: false,
         layer_visible: true,
@@ -2675,6 +2681,7 @@ fn a_bracket_handle_press_starts_the_create_drag() {
         primary_released: false,
         modifiers: egui::Modifiers::default(),
         canvas_claimed: false,
+        on_chrome: false,
         scroll_y: 0.0,
         middle_pressed: false,
         layer_visible: true,
@@ -3254,4 +3261,12 @@ fn default_cmd_trading_does_not_arm_a_sell_with_ctrl() {
         false,
     ));
     assert!(paper.desk.gesture.cmd_preview.is_none());
+}
+
+impl PaperTrading {
+    /// Arm the ticket's click as its Buy/Sell button does, for the window
+    /// tests that press the chart with a ticket armed.
+    pub(crate) fn arm_for_tests(&mut self, side: Side, kind: EntryKind) {
+        self.desk.armed = Some(ArmedPlacement { side, kind });
+    }
 }

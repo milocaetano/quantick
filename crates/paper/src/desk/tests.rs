@@ -404,6 +404,7 @@ fn frame(pointer: Point, aiming: bool, pressed: bool) -> ChartFrame {
             ..HeldKeys::default()
         },
         canvas_claimed: false,
+        on_chrome: false,
         scroll_y: 0.0,
         middle_pressed: false,
         layer_visible: true,
@@ -1219,5 +1220,87 @@ fn a_chart_reprice_moves_the_order_it_names_and_no_other() {
     assert_eq!(
         *other, before[1],
         "the other order is byte for byte as it was"
+    );
+}
+
+/// On the pane's chrome (the tape chip, the lane divider, a floating
+/// control) no paper press starts and no paper cursor shows: the aim, its
+/// press, a line grab, an armed click and a ✕ all stand down. A drag
+/// already in the hand keeps following across it.
+#[test]
+fn the_panes_chrome_stands_every_paper_press_down() {
+    let dir = ScratchDir::new("desk-on-chrome");
+    let mut account = marked_account(&dir);
+    let mut desk = Desk::default();
+    let (first, _) = rest_two_limits(&mut desk, &mut account);
+    let on_chrome = |pointer, aiming, pressed| ChartFrame {
+        on_chrome: true,
+        ..beside_tape(pointer, aiming, pressed)
+    };
+    let axis = Some(&LinearAxis as &dyn PriceAxis);
+
+    let below = Point::new(700.0, LinearAxis.y(85.0));
+    desk.handle_input(&account, &on_chrome(below, true, false), axis);
+    assert_eq!(desk.gesture.cmd_preview, None, "no aim on the chrome");
+    let aimed = desk.handle_input(&account, &on_chrome(below, true, true), axis);
+    assert_eq!(aimed.command, None, "the held key's press rests nothing");
+
+    let on_line = Point::new(700.0, LinearAxis.y(95.0));
+    desk.handle_input(&account, &on_chrome(on_line, false, false), axis);
+    let band = beside_tape(on_line, false, false).tag_band();
+    assert_eq!(
+        desk.gesture
+            .hover_cursor(&account, on_line, band, &LinearAxis),
+        None,
+        "the chrome's cursor stands over the line"
+    );
+    let grabbed = desk.handle_input(&account, &on_chrome(on_line, false, true), axis);
+    assert!(!grabbed.owned, "the press on the chrome grabs no line");
+    assert_eq!(desk.gesture.drag, PaperDrag::None);
+
+    desk.armed = Some(ArmedPlacement {
+        side: Side::Sell,
+        kind: EntryKind::Limit,
+    });
+    let armed = desk.handle_input(
+        &account,
+        &on_chrome(Point::new(700.0, 50.0), false, true),
+        axis,
+    );
+    assert_eq!(armed.command, None, "the armed click is the chrome's");
+    assert!(desk.armed.is_some(), "and the ticket stays armed");
+    desk.armed = None;
+
+    let cross = close_button_rect(600.0, clamp_tag_center(on_line.y, 0.0, 400.0)).center();
+    let closed = desk.handle_input(&account, &on_chrome(cross, false, true), axis);
+    assert_eq!(
+        closed.command, None,
+        "the ✕ under the chrome cancels nothing"
+    );
+
+    desk.handle_input(&account, &beside_tape(on_line, false, true), axis);
+    assert_eq!(desk.gesture.drag, PaperDrag::Order(first), "grabbed off it");
+    let held = ChartFrame {
+        primary_down: true,
+        ..on_chrome(Point::new(700.0, LinearAxis.y(92.0)), false, false)
+    };
+    assert!(desk.handle_input(&account, &held, axis).owned);
+    assert!(
+        desk.gesture
+            .drag_price
+            .is_some_and(|price| (price - 92.0).abs() < 1e-6),
+        "the drag follows across the chrome"
+    );
+
+    let released = ChartFrame {
+        primary_released: true,
+        ..beside_tape(on_line, false, false)
+    };
+    desk.handle_input(&account, &released, axis);
+    let off = desk.handle_input(&account, &beside_tape(cross, false, true), axis);
+    assert_eq!(
+        off.command,
+        Some(ChartCommand::CancelOrder(first)),
+        "off the chrome the same ✕ cancels"
     );
 }

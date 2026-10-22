@@ -64,12 +64,12 @@ pub enum PaperDrag {
 /// One frame's answer for one working order's in-plot tag: computed by the
 /// input pass, read by the paint *and* by the press.
 ///
-/// A shared **value**, not a shared formula. The two sides are handed
-/// different pointers (`hover_pos` for the paint, `latest_pos` for the
-/// press) and different rects (the whole chart vs. the band left of the
-/// tape lane), so asking them to recompute the same predicate is asking
-/// them to disagree — and a ✕ that one side paints and the other side does
-/// not is a cancel the trader never saw coming.
+/// A shared **value**, not a shared formula. Both sides anchor the tags in
+/// the same rect (`tag_band`), but they are handed different pointers
+/// (`hover_pos` for the paint, `latest_pos` for the press), so asking them
+/// to recompute the same predicate is asking them to disagree — and a ✕
+/// that one side paints and the other side does not is a cancel the trader
+/// never saw coming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpenTag {
     pub key: TagKey,
@@ -150,14 +150,23 @@ pub struct ChartFrame {
     pub primary_released: bool,
     /// The frame's held modifiers — what the cmd-trading gesture reads.
     pub keys: HeldKeys,
-    /// Whether something the pane owns already holds this pixel — a
-    /// drawing a press would grab, or the canvas's own chrome (the tape
-    /// chip and lane divider, an indicator pane's header or divider). The
-    /// pane answers it, the way it answers "a tool is armed": the desk never
-    /// reads the drawings. The aim is the *last* claimant on the canvas, so
-    /// it paints nothing and places nothing there; the buy modifier is Shift
-    /// by default, which is also the key that levels a channel corner.
+    /// Whether a drawing handle a press would grab, or a live quick range,
+    /// holds the hand. The pane answers it, the way it answers "a tool is
+    /// armed": the desk never reads the drawings. Only the aim yields to it
+    /// (it is the *last* claimant on the canvas, so it paints nothing and
+    /// places nothing there); the buy modifier is Shift by default, which
+    /// is also the key that levels a channel corner. Chrome is not a claim
+    /// but [`Self::on_chrome`], which stands every paper gesture down.
     pub canvas_claimed: bool,
+    /// Whether the pointer is on the pane's chrome: floating chrome
+    /// (`over_chrome`: the tape's bubble-scale control, a flyout, a toast)
+    /// or the canvas's own (the tape chip, the lane divider's grab band, an
+    /// indicator pane's header, chevron or divider). Answered whether or
+    /// not a modifier is held. Those pixels already mean something to a
+    /// press, so no paper press starts there (no aim, armed click, line
+    /// grab or ✕) and no paper cursor shows; a drag already in the hand
+    /// keeps running across them.
+    pub on_chrome: bool,
     /// This frame's wheel travel over the chart, in pixels. The ruler
     /// spends it while the aim is up, and the host's zoom then leaves it
     /// alone (`Gesture::scroll_consumed`).
@@ -254,6 +263,10 @@ pub struct Gesture {
     /// the gate lives *here* so that every reader honours it: an unpainted
     /// line offers no cursor, no control and no press, whoever asks.
     pub layer_visible: bool,
+    /// Whether this frame's pointer is on the pane's chrome
+    /// ([`ChartFrame::on_chrome`]). Same contract, so the cursor honours it
+    /// the way the press does: the chrome's own cursor stands.
+    pub on_chrome: bool,
     /// Harness override: paint the preview for this side, optionally at a
     /// stated x, with nobody at the keyboard (`QUANTICK_CMD_PREVIEW`).
     pub cmd_preview_force: Option<CmdPreviewForce>,
@@ -277,6 +290,7 @@ impl Default for Gesture {
             cmd_preview: None,
             open_tags: Vec::new(),
             layer_visible: true,
+            on_chrome: false,
             cmd_preview_force: None,
             order_hover_force: false,
             hovered_order: None,
@@ -615,7 +629,7 @@ impl Gesture {
         chart: Bounds,
         axis: &dyn PriceAxis,
     ) -> Option<CursorHint> {
-        if !self.layer_visible {
+        if !self.layer_visible || self.on_chrome {
             return None;
         }
         if self.control_at(account, pointer, chart, axis).is_some() {

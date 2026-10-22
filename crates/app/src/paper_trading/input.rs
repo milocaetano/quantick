@@ -53,6 +53,7 @@ impl ChartInput<'_> {
                 alt: self.modifiers.alt,
             },
             canvas_claimed: self.canvas_claimed,
+            on_chrome: self.on_chrome,
             scroll_y: self.scroll_y,
             middle_pressed: self.middle_pressed,
             layer_visible: self.layer_visible,
