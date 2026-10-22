@@ -31,12 +31,23 @@ pub fn elide_tail(text: &str, budget: usize) -> String {
 
 /// The longest form of `text` - whole, else elided by [`elide_tail`] - that
 /// `measure` puts within `width`. Empty when not even two characters fit.
+/// A form only narrows as its budget shrinks, so the budget is found by
+/// bisection: a handful of measures per call, never one per character.
 pub fn elide_to_width(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> String {
-    (0..=text.chars().count())
-        .rev()
-        .map(|budget| elide_tail(text, budget))
-        .find(|form| measure(form) <= width)
-        .unwrap_or_default()
+    let fits = |budget| measure(&elide_tail(text, budget)) <= width;
+    let (mut lo, mut hi) = (0, text.chars().count());
+    if fits(hi) {
+        return text.to_owned();
+    }
+    // Invariant: `lo` fits (budget 0 is the empty string), `hi` does not.
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if fits(mid) { lo = mid } else { hi = mid }
+    }
+    if measure("") > width {
+        return String::new();
+    }
+    elide_tail(text, lo)
 }
 
 /// The first fact of a ` · `-separated readout: the headline figure (money
@@ -68,7 +79,7 @@ pub struct FittedLine {
 /// gives way before the right does: every left form is tried against the
 /// full right before the right falls back to a shorter form. When no pair
 /// fits, the shortest right stays whole and the shortest left is elided
-/// into what remains.
+/// into what remains. An empty right needs no gap.
 pub fn fit_line(
     width: f32,
     gap: f32,
@@ -77,7 +88,7 @@ pub fn fit_line(
     measure: impl Fn(&str) -> f32,
 ) -> FittedLine {
     for right in rights {
-        let room = width - gap - measure(right);
+        let room = width - gap_before(right, gap) - measure(right);
         if let Some(left) = lefts.iter().find(|left| measure(left) <= room) {
             return FittedLine {
                 left: (*left).to_owned(),
@@ -88,9 +99,17 @@ pub fn fit_line(
     let right = rights.last().copied().unwrap_or_default();
     let left = lefts.last().copied().unwrap_or_default();
     FittedLine {
-        left: elide_to_width(left, width - gap - measure(right), &measure),
+        left: elide_to_width(
+            left,
+            width - gap_before(right, gap) - measure(right),
+            &measure,
+        ),
         right: right.to_owned(),
     }
+}
+
+fn gap_before(right: &str, gap: f32) -> f32 {
+    if right.is_empty() { 0.0 } else { gap }
 }
 
 /// What a trade row's head line keeps at a given width.
@@ -102,11 +121,11 @@ pub struct HeadLine {
     pub route: String,
 }
 
-/// Fits a trade row's head line - side and quantity, route, instrument tag,
-/// P&L - into `width`. `fixed` is the width nothing may cut: side, quantity,
-/// P&L, the source marker and the gaps between them. The tag goes first
-/// (the scope filter above the list already names the instrument), then the
-/// route is elided.
+/// Fits the part of a trade row's head line after side and quantity - the
+/// route, then right-anchored the source marker, instrument tag and P&L -
+/// into `width`, measured from where the route starts. `fixed` is the part
+/// of that width nothing may cut: the P&L, the marker and their gaps; `tag`
+/// is the tag with its gap. The tag goes first, then the route is elided.
 pub fn fit_head(
     width: f32,
     fixed: f32,

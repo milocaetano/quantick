@@ -133,3 +133,26 @@ fn a_head_line_drops_the_tag_then_elides_the_route() {
         }
     );
 }
+
+/// Bisection lands on the same form a scan from the longest down would.
+#[test]
+fn eliding_by_bisection_matches_the_longest_form_that_fits() {
+    let text = "absorption-at-vwap · breakout · 13:01";
+    for width in 0..260 {
+        let width = width as f32;
+        let scanned = (0..=text.chars().count())
+            .rev()
+            .map(|budget| elide_tail(text, budget))
+            .find(|form| mono(form) <= width)
+            .unwrap_or_default();
+        assert_eq!(elide_to_width(text, width, mono), scanned, "at {width}");
+    }
+}
+
+#[test]
+fn an_empty_right_part_costs_no_gap() {
+    let line = fit_line(60.0, 6.0, &["take profit"], &[""], mono);
+    assert_eq!(line.left, "take prof…");
+    let line = fit_line(66.0, 6.0, &["take profit"], &[""], mono);
+    assert_eq!(line.left, "take profit");
+}

@@ -679,13 +679,13 @@ pub(super) fn draw_totals_strip(
         } else {
             String::new()
         };
-        // The net is laid out first and never cut; the counts give way.
+        // The net is never cut; the win rate goes before the scope notice.
         let font = egui::TextStyle::Monospace.resolve(ui.style());
         let left = format!("{} trades{win_rate}{scope}", totals.trades);
         let fit = fit_line(
             ui.available_width(),
             ui.spacing().item_spacing.x,
-            &[&left],
+            &[&left, &format!("{} trades{scope}", totals.trades)],
             &[&net.0, first_fact(&net.0)],
             |text| text_width(ui.painter(), text, &font),
         );
