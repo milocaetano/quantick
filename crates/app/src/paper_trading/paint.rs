@@ -573,17 +573,16 @@ impl PaperTrading {
     }
 }
 
-/// The aim as another pane sees it: a side-coloured dashed line at the
-/// aimed price across the plot band, and that price in a side-coloured chip
-/// on this pane's gutter — where the order will go, read on this pane's own
-/// axis. No label and no click target: the click belongs to the pane the
-/// aim was made in.
+/// The aim as another pane sees it: the aimed price as a long-dashed line
+/// and a hollow gutter chip on this pane's own axis. No label, no click: the
+/// click is the aiming pane's. Orders and the aim wear a solid chip and a 4/4
+/// dash; the echo, no order, wears neither (`AIM_ECHO_*`).
 fn draw_aim_echo(ctx: &PaintCtx<'_>, band: egui::Rect, side: Side, y: f32, price: Decimal) {
     let color = theme::side_color(side);
     let ends = [egui::pos2(band.left(), y), egui::pos2(band.right(), y)];
     let stroke = egui::Stroke::new(AIM_ECHO_WIDTH_PX, color.gamma_multiply(AIM_ECHO_ALPHA));
     dashed_run(ctx, ends, stroke, AIM_ECHO_DASH_PX, AIM_ECHO_GAP_PX);
-    ctx.gutter_chip(y, color, &fmt_decimal(price));
+    ctx.hollow_gutter_chip(y, color, &fmt_decimal(price));
 }
 
 /// A horizontal dashed run in a `dash`:`gap` rhythm. The period stretches on

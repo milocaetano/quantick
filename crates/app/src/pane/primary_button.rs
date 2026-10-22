@@ -64,53 +64,29 @@ impl PaperArbitration<'_> {
             ..
         } = pointer;
         let (pointer_position, drawing_area) = (pointer_position.map(pos), egui_rect(drawing_area));
-        // The aim lives on the whole plot, tape lane included (same price
-        // axis); lines, tags and drawings keep the candles' `drawing_area`.
+        // The aim, armed click and line grab live on the whole plot, tape lane
+        // included (one price axis); tags anchor in `tag_band`.
         let aim_area = areas.chart;
-        // Simulated order lines take the pointer before the drawings: they
-        // sit higher in the draw stack, and a grabbed stop is operational,
-        // not annotational. The flag mirrors the drawings' gesture
-        // consumption so the chart never pans under a held line; the chrome
-        // gate applies at press time only, like everywhere else. Escape is
-        // deliberately absent here — cancels live in the app's single escape
-        // stack (`handle_drawing_keys`). Only the focused pane offers the
-        // gesture, because the whole tab shares one simulator.
+        // Order lines take the pointer before the drawings: they sit higher in
+        // the draw stack, and a grabbed stop is operational, not annotational.
+        // The flag keeps the chart from panning under a held line; the chrome
+        // gate applies at press time only. Escape lives in the app's single
+        // escape stack (`handle_drawing_keys`). Only the focused pane offers
+        // the gesture: the tab shares one simulator. Not while a drawing tool
+        // is armed: the button is handed out once, and a click meant to drop
+        // an anchor must not also cancel the order under it.
         //
-        // Not while a drawing tool is armed: the button is the tool's, and it
-        // can only be handed out once. Without this gate a click meant to
-        // drop an anchor would *also* reach an order's ✕ and cancel it —
-        // the early return this replaced used to hide that.
-        //
-        // The cmd-trading aim is the one paper gesture that claims the
-        // *whole* plot rather than a line or a ✕, so it alone yields to an
-        // annotation already under the pointer. The pane answers that
-        // question here — paper never reads the drawings — for the same
-        // reason it answers "a tool is armed": the button can be handed
-        // out once, and the default buy modifier is Shift, the very key
-        // that levels a channel corner.
-        //
-        // **Handles only, never a body.** A handle is a 12 px target where
-        // the two gestures genuinely collide: Shift on a corner levels the
-        // object, and there is no other way to ask for that. A body is a
-        // region, and some bodies are enormous — a fixed-range profile's
-        // hit test claims its whole histogram strip on purpose
-        // (`fixed_range_profile.rs`), so yielding bodies meant a chart with
-        // a profile on it had a hole where the aim simply did not appear.
-        // Moving a body needs no modifier at all, and a body drag reads
-        // Shift every frame, so pressing first and then holding it still
-        // constrains the move.
-        //
-        // The canvas's own chrome counts too, and it does *not* live in a
-        // floating layer, so `over_chrome` never sees it: the tape chip and
-        // lane divider, an indicator pane's header or divider are pixels a
-        // press already means something on, and a modifier resting under the
-        // hand must not turn "put the tape back" into "rest an order".
-        //
-        // Per-frame path, so it costs nothing on a frame with no modifier
-        // down: the aim cannot exist without one, and only then is the
-        // pick worth running — the same bounded, visible-objects-only
-        // handle pick the drag initiation in `handle_pointer_tool` performs, so an
-        // *unselected* object's handle keeps its pixel too.
+        // The aim claims the *whole* plot, so it alone yields to what already
+        // holds the pixel (`ChartFrame::canvas_claimed`); the pane answers
+        // that here, as paper never reads the drawings. Drawing *handles*
+        // only, never a body: Shift on a corner levels it, while a body may
+        // be huge (a fixed-range profile claims its whole strip) and moves
+        // with no modifier. Floating chrome (`over_chrome`: the tape's
+        // bubble-scale control, a flyout) takes the press, so no label
+        // paints over it. The canvas's own chrome is not floating: the tape
+        // chip and lane divider, an indicator pane's header or divider
+        // already mean something to a press. The handle pick runs only with
+        // a modifier down: the bounded pick `handle_pointer_tool` performs.
         let modifiers = ui.input(|input| input.modifiers);
         let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
         // A live quick range (not a raw right button) owns the hand and Shift
@@ -119,7 +95,8 @@ impl PaperArbitration<'_> {
         let canvas_claimed = pointer_position
             .filter(|_| modifier_down)
             .is_some_and(|position| {
-                pane_chrome_hit(areas, position)
+                over_chrome
+                    || pane_chrome_hit(areas, position)
                     || self.tape_switch.contains(position)
                     || crate::plot_area::gesture_hits_lane_divider(
                         self.lane_divider,
@@ -127,7 +104,6 @@ impl PaperArbitration<'_> {
                         LANE_HANDLE_HALF_WIDTH_PX,
                     )
                     || (chrome.toolrail.tool() == Tool::Pointer
-                        && !over_chrome
                         && bands::band_at(bands, px(position))
                             .filter(|band| band.drawable())
                             .is_some_and(|band| {
@@ -193,18 +169,13 @@ impl PaperArbitration<'_> {
         // band refuse a pan with no explanation at all.
         // The layer gate lives inside `hover_cursor` itself, next to the
         // frame's other decisions, so it cannot be forgotten by a caller.
-        let cursor_area = if chrome.paper.aiming() {
-            aim_area
-        } else {
-            drawing_area
-        };
+        let tags = crate::paper_trading::tag_band(drawing_area, aim_area);
         if chrome.paper_takes_input
             && !over_chrome
             && !tool_armed
-            && let Some(position) =
-                pointer_position.filter(|position| cursor_area.contains(*position))
+            && let Some(position) = pointer_position.filter(|position| aim_area.contains(*position))
             && let Some(scale) = drawing_scale.as_ref()
-            && let Some(cursor) = chrome.paper.hover_cursor(position, drawing_area, scale)
+            && let Some(cursor) = chrome.paper.hover_cursor(position, tags, scale)
         {
             ui.ctx().set_cursor_icon(cursor);
         }

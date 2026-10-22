@@ -8,6 +8,7 @@
 //! hit-test ask one function the same question and get the same rectangle.
 
 use eframe::egui;
+use eframe::egui::{Color32, Stroke};
 use quantick_paper::desk::geometry::{self, Bounds, Point};
 use quantick_paper::desk::geometry::{
     LINE_GRAB_RADIUS_PX, TAG_BUTTON_PX, TAG_GAP_PX, TAG_HEIGHT_PX,
@@ -16,7 +17,7 @@ pub(crate) use quantick_paper::desk::geometry::{clamp_tag_center, dodged_chip_y}
 
 use super::{
     CLOSE_DIVIDER_ALPHA, DRAG_HALO_COLOR, DRAG_HALO_EXTRA_WIDTH_PX, GUTTER_NOTCH_PX,
-    LINE_DRAG_WIDTH_PX, LINE_HOVER_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
+    LINE_DRAG_WIDTH_PX, LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
 };
 use crate::chart::PriceScale;
 use crate::theme;
@@ -26,8 +27,8 @@ use crate::theme;
 pub(super) struct PaintCtx<'a> {
     pub(super) painter: &'a egui::Painter,
     pub(super) chart_rect: egui::Rect,
-    /// Right edge of the interactive plot (the lane divider when a live
-    /// lane is up, the chart's edge otherwise) — tags anchor inside it.
+    /// Right edge of the tag band (`tag_band`: the candles' band, or the
+    /// whole plot in tape only) — tags anchor inside it.
     pub(super) tag_right: f32,
     /// Left edge of the price axis — lines run to it, gutter chips sit past
     /// it.
@@ -97,25 +98,35 @@ impl PaintCtx<'_> {
     /// chip's geometry. The line stays at its true price; only the chip
     /// dodges the reserved last-price row.
     pub(super) fn gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
+        self.chip(y, color, text, (color, theme::CHIP_INK, egui::Stroke::NONE));
+    }
+
+    /// Hollow: a `color` border and ink on the chart's ground, for a level
+    /// that is no order (the aim's echo).
+    pub(super) fn hollow_gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
+        let border = egui::Stroke::new(LINE_WIDTH_PX, color);
+        self.chip(y, color, text, (theme::CANVAS, color, border));
+    }
+
+    fn chip(&self, y: f32, color: Color32, text: &str, look: (Color32, Color32, Stroke)) {
+        let (fill, ink, border) = look;
         let chip_y = dodged_chip_y(
             y,
             self.reserved_chip_y,
             self.chart_rect.top(),
             self.chart_rect.bottom(),
         );
-        let galley = self.painter.layout_no_wrap(
-            text.to_owned(),
-            egui::FontId::monospace(11.0),
-            theme::CHIP_INK,
-        );
+        let galley =
+            self.painter
+                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), ink);
         let text_pos = egui::pos2(self.axis_x + 6.0, chip_y - galley.size().y / 2.0);
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
             galley.size() + egui::vec2(6.0, 2.0),
         );
         self.painter
-            .rect_filled(bg, egui::Rounding::same(2.0), color);
-        self.painter.galley(text_pos, galley, theme::CHIP_INK);
+            .rect(bg, egui::Rounding::same(2.0), fill, border);
+        self.painter.galley(text_pos, galley, ink);
         // A chip dodged away from its own line is a price with no arrow back
         // to it, and near a chart edge every chip is dodged. The notch is
         // drawn at the *line's* height, not the chip's, so the two are only
@@ -356,6 +367,11 @@ pub(super) fn bounds(rect: egui::Rect) -> Bounds {
 /// A desk rectangle, back in the window's type.
 pub(super) fn rect(bounds: Bounds) -> egui::Rect {
     egui::Rect::from_min_max(pos(bounds.min), pos(bounds.max))
+}
+
+/// Where the paper tags and their controls anchor; see `geometry::tag_band`.
+pub(crate) fn tag_band(candles: egui::Rect, plot: egui::Rect) -> egui::Rect {
+    rect(geometry::tag_band(bounds(candles), bounds(plot)))
 }
 
 /// The ✕ zone every closable tag reserves at its right edge; see

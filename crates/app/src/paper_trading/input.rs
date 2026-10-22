@@ -154,7 +154,8 @@ impl PaperTrading {
 
     /// The cursor that announces what is under the pointer; `None` away
     /// from everything, so the caller falls through to the drawings' own
-    /// cursors. See `Gesture::hover_cursor`.
+    /// cursors. `chart` is the tag band (`tag_band`). See
+    /// `Gesture::hover_cursor`.
     #[must_use]
     pub fn hover_cursor(
         &self,

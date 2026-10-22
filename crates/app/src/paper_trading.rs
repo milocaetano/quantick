@@ -69,6 +69,7 @@ mod paint_ctx;
 mod strategies;
 mod ticket;
 
+pub(crate) use paint_ctx::tag_band;
 // The tag geometry, named by the tests that press a ✕ where one was painted.
 #[cfg(test)]
 pub(crate) use paint_ctx::{clamp_tag_center, close_button_rect};
@@ -175,12 +176,12 @@ const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
 const CMD_LINE_MAX_DASHES: f32 = 96.0;
 /// The aim's echo in the panes it was not made in: a side-coloured line as
 /// wide as a hovered order line and nearly opaque, so the level reads across
-/// a busy chart. Its long 6/3 dash keeps it apart from a pending order's
-/// accent 4/4 and, a step under full strength, from the aim itself.
+/// a busy chart. Its long 12/4 dash, against the 4/4 every order line and the
+/// aim itself use, and its hollow chip say it is a level, not an order.
 pub(crate) const AIM_ECHO_ALPHA: f32 = 0.85;
 const AIM_ECHO_WIDTH_PX: f32 = LINE_HOVER_WIDTH_PX;
-const AIM_ECHO_DASH_PX: f32 = 6.0;
-const AIM_ECHO_GAP_PX: f32 = 3.0;
+const AIM_ECHO_DASH_PX: f32 = 12.0;
+const AIM_ECHO_GAP_PX: f32 = 4.0;
 
 /// What the Trading tab asked of its host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

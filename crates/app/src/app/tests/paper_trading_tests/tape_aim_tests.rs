@@ -177,3 +177,64 @@ fn the_lane_divider_keeps_its_press_with_shift_down() {
         }
     }
 }
+
+/// Over the tape an order line is grabbed and dragged as over candles: the
+/// aim stands down near it there, and the press must not fall into a dead
+/// band between the two.
+#[test]
+fn an_order_line_drags_over_the_tape() {
+    for mode in [TapeMode::Chart, TapeMode::Only] {
+        let ctx = egui::Context::default();
+        let mut app = tape_app(&ctx, mode);
+        let at = on_the_tape(&app);
+        click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
+        let (_, placed) = the_order(&app);
+        let line = egui::pos2(
+            at.x,
+            price_y(
+                &app,
+                PaneSide::Flow,
+                rust_decimal::prelude::ToPrimitive::to_f64(&placed).expect("a price"),
+            ),
+        );
+        let lower = line + egui::vec2(0.0, 30.0);
+        drag_chart(&mut app, &ctx, line, lower);
+        let (_, moved) = the_order(&app);
+        assert_eq!(
+            moved,
+            pointer_price(&app, lower),
+            "{mode:?}: the drag over the tape repriced the order"
+        );
+    }
+}
+
+/// Tape only leaves the candles no width: the order's tag anchors at the
+/// plot's right edge, and its ✕ there cancels the order.
+#[test]
+fn tape_only_cancels_from_the_tag_inside_the_plot() {
+    let ctx = egui::Context::default();
+    let mut app = tape_app(&ctx, TapeMode::Only);
+    let at = on_the_tape(&app);
+    click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
+    let (_, placed) = the_order(&app);
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_area
+        .expect("the pane laid out");
+    let y = price_y(
+        &app,
+        PaneSide::Flow,
+        rust_decimal::prelude::ToPrimitive::to_f64(&placed).expect("a price"),
+    );
+    let center = crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom());
+    let cross = crate::paper_trading::close_button_rect(chart.right(), center).center();
+    assert!(chart.contains(cross), "the ✕ sits on the plot");
+    move_chart_with(&mut app, &ctx, cross, egui::Modifiers::NONE);
+    click_chart_with(&mut app, &ctx, cross, egui::Modifiers::NONE);
+    assert!(
+        app.active_tab().paper.working_orders().is_empty(),
+        "the ✕ where it is painted cancels the order"
+    );
+}

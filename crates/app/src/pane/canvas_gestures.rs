@@ -34,8 +34,7 @@ impl ChartPane {
             scroll_taken,
         } = input;
         let (tape_only, native_tape) = self.tape_modes();
-        // Tape only has no divider to grab: its left edge is the canvas's.
-        let divider = self.frame.lane_divider_x.filter(|_| !tape_only);
+        let divider = self.grabbable_lane_divider();
         let on_divider = |position: egui::Pos2| {
             plot_area::gesture_hits_lane_divider(divider, position.x, LANE_HANDLE_HALF_WIDTH_PX)
         };

@@ -2960,9 +2960,10 @@ fn aim_echo_ys(output: &egui::FullOutput, pane: egui::Rect) -> Vec<f32> {
     ys
 }
 
-/// The buy-coloured chips `output` painted in `pane`'s price gutter, the
-/// strip right of its plot, as their centre y.
-fn buy_gutter_chip_ys(output: &egui::FullOutput, pane: egui::Rect) -> Vec<f32> {
+/// The buy chips `output` painted in `pane`'s price gutter, the strip
+/// right of its plot, as their centre y: the hollow ones (a buy border on
+/// the chart's ground, the echo's) or the solid ones (an order's, the aim's).
+fn buy_gutter_chip_ys(output: &egui::FullOutput, pane: egui::Rect, hollow: bool) -> Vec<f32> {
     const GUTTER_PX: f32 = 90.0;
     let color = crate::theme::side_color(quantick_engine::Side::Buy);
     output
@@ -2970,8 +2971,11 @@ fn buy_gutter_chip_ys(output: &egui::FullOutput, pane: egui::Rect) -> Vec<f32> {
         .iter()
         .filter_map(|clipped| match &clipped.shape {
             egui::Shape::Rect(chip)
-                if chip.fill == color
-                    && chip.rect.left() >= pane.right()
+                if (if hollow {
+                    chip.fill == crate::theme::CANVAS && chip.stroke.color == color
+                } else {
+                    chip.fill == color
+                }) && chip.rect.left() >= pane.right()
                     && chip.rect.right() <= pane.right() + GUTTER_PX =>
             {
                 Some(chip.rect.center().y)
@@ -3032,13 +3036,15 @@ fn the_aim_is_echoed_in_the_other_pane_of_the_split() {
                 "the aiming pane paints the aim, never its echo"
             );
         };
-        // The echo's price chip on `other`'s own gutter: one more buy chip
-        // than the idle frame, beside the echo line (a chip dodges the
-        // last-price row by at most its own height).
+        // The echo's price chip on `other`'s own gutter: one hollow buy chip
+        // beside the echo line (a chip dodges the last-price row by at most
+        // its own height), and no solid one an order would wear.
         let assert_chip =
             |app: &QuantickApp, idle: &egui::FullOutput, output: &egui::FullOutput| {
-                let before = buy_gutter_chip_ys(idle, rect(app, other)).len();
-                let chips = buy_gutter_chip_ys(output, rect(app, other));
+                let solid = |frame| buy_gutter_chip_ys(frame, rect(app, other), false).len();
+                assert_eq!(solid(output), solid(idle), "the echo wears no order chip");
+                let before = buy_gutter_chip_ys(idle, rect(app, other), true).len();
+                let chips = buy_gutter_chip_ys(output, rect(app, other), true);
                 assert_eq!(chips.len(), before + 1, "one echo chip on {other:?}");
                 let line = aim_echo_ys(output, rect(app, other))[0];
                 assert!(
