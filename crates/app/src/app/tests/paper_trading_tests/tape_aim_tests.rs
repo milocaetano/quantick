@@ -2,7 +2,6 @@
 //! pane's price axis, so the aim and its press work there exactly as they do
 //! over candles, in every tape mode. The tape chip keeps its own press.
 use super::*;
-use rust_decimal::prelude::ToPrimitive;
 
 /// The tape modes a flow pane offers, and how a test enters each.
 #[derive(Debug, Clone, Copy)]
@@ -15,8 +14,10 @@ enum TapeMode {
     Native,
 }
 
-/// A flow pane with 200 backfilled prints (mark 100.0, range 100.0..101.9)
-/// in `mode`, laid out for two frames so the divider is published.
+/// A flow pane with 200 backfilled prints in `mode`, then one live print at
+/// 100.05: it marks the paper venue and teaches it a cent tick, so a level
+/// a quarter down the plot is a real price above the mark. Laid out for two
+/// frames, so the divider is published.
 fn tape_app(ctx: &egui::Context, mode: TapeMode) -> QuantickApp {
     let (mut app, _commands) = app_with_history(200);
     match mode {
@@ -28,23 +29,50 @@ fn tape_app(ctx: &egui::Context, mode: TapeMode) -> QuantickApp {
                 .apply_preset("mini index regions", false)
         ),
     }
+    let live = quantick_engine::Trade {
+        price: Decimal::new(10005, 2),
+        ..trade(201)
+    };
+    app.active_tab_mut()
+        .ingest_live_trade_at(&live, live.timestamp_ms);
     run_frame(&mut app, ctx);
     run_frame(&mut app, ctx);
+    let mark = app.active_tab().paper.mark_price();
+    assert_eq!(
+        mark,
+        Some(Decimal::new(10005, 2)),
+        "{mode:?}: the live mark"
+    );
     app
 }
 
-/// A point inside the tape lane at `price`, clear of the tape chip.
-fn on_the_tape(app: &QuantickApp, price: f64) -> egui::Pos2 {
+/// A quarter down the plot, at `x`: above the mark in every mode's fit.
+fn at_x(app: &QuantickApp, x: f32) -> egui::Pos2 {
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_area
+        .expect("the pane laid out");
+    egui::pos2(x, chart.top() + chart.height() * 0.25)
+}
+
+/// The middle of the tape lane, a quarter down the plot, clear of the chip.
+fn on_the_tape(app: &QuantickApp) -> egui::Pos2 {
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_area.expect("the pane laid out");
     let divider = pane
         .frame
         .lane_divider_x
         .expect("a tape lane on the flow pane");
-    egui::pos2(
-        (divider + chart.right()) / 2.0,
-        price_y(app, PaneSide::Flow, price),
-    )
+    at_x(app, (divider + chart.right()) / 2.0)
+}
+
+/// The price a press at `at` should rest at: the pane's own axis, snapped
+/// to the venue's tick.
+fn pointer_price(app: &QuantickApp, at: egui::Pos2) -> Decimal {
+    let raw = price_at_y(app, PaneSide::Flow, at.y);
+    app.active_tab().paper.account().snap(raw)
 }
 
 /// The one working order, as (side, price).
@@ -59,21 +87,18 @@ fn the_order(app: &QuantickApp) -> (quantick_engine::Side, Decimal) {
 #[test]
 fn shift_and_alt_rest_an_order_at_the_pointer_price_over_the_tape() {
     for mode in [TapeMode::Chart, TapeMode::Only, TapeMode::Native] {
-        for (modifiers, side, price) in [
-            (
-                egui::Modifiers::SHIFT,
-                quantick_engine::Side::Buy,
-                Decimal::new(1005, 1),
-            ),
-            (
-                egui::Modifiers::ALT,
-                quantick_engine::Side::Sell,
-                Decimal::new(1010, 1),
-            ),
+        for (modifiers, side) in [
+            (egui::Modifiers::SHIFT, quantick_engine::Side::Buy),
+            (egui::Modifiers::ALT, quantick_engine::Side::Sell),
         ] {
             let ctx = egui::Context::default();
             let mut app = tape_app(&ctx, mode);
-            let at = on_the_tape(&app, price.to_f64().unwrap());
+            let at = on_the_tape(&app);
+            let price = pointer_price(&app, at);
+            assert!(
+                price > Decimal::new(10005, 2),
+                "{mode:?}: {price} sits above the mark"
+            );
             move_chart_with(&mut app, &ctx, at, modifiers);
             assert!(
                 app.active_tab().paper.aiming(),
@@ -99,15 +124,10 @@ fn tape_only_aims_across_the_whole_plot() {
     let chart = pane.frame.chart_area.expect("the pane laid out");
     let divider = pane.frame.lane_divider_x.expect("the tape takes the plot");
     assert!((divider - chart.left()).abs() < 1.0, "no candles beside it");
-    let at = egui::pos2(
-        chart.left() + chart.width() * 0.25,
-        price_y(&app, PaneSide::Flow, 100.5),
-    );
+    let at = at_x(&app, chart.left() + chart.width() * 0.1);
+    let price = pointer_price(&app, at);
     click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
-    assert_eq!(
-        the_order(&app),
-        (quantick_engine::Side::Buy, Decimal::new(1005, 1))
-    );
+    assert_eq!(the_order(&app), (quantick_engine::Side::Buy, price));
 }
 
 /// The tape chip keeps its press with the buy key down: Shift on it puts the
@@ -127,5 +147,9 @@ fn the_tape_chip_keeps_its_press_with_shift_down() {
     assert!(
         app.active_tab().paper.working_orders().is_empty(),
         "the chip is chrome, not a price"
+    );
+    assert!(
+        !layer_on(&app, ChartLayer::TapeChart),
+        "the press put the tape away"
     );
 }
