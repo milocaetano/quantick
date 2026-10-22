@@ -2,10 +2,11 @@
 //! asset opens on, the trader's changes are filed under that asset alone, and
 //! a filed asset reopens exactly as it was left.
 
-use quantick_orderflow::LaneWindow;
+use quantick_orderflow::{HeatmapConfig, LaneFold, LaneWindow};
 use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, SharedAssetBubbles};
-use quantick_stores::bubble_assets::{self, AssetBubbles, AssetSource};
-use quantick_stores::bubble_presets::{self, BubblePresetFile};
+use quantick_stores::bubble_assets::{self, AssetBubbles, AssetBubblesFile, AssetSource};
+use quantick_stores::bubble_look::BubbleLook;
+use quantick_stores::bubble_presets::{self, BubblePresetFile, PresetSource};
 use quantick_stores::config::{AppConfig, BubbleAsset};
 
 const NATIVE_PRESET: &str = "mini index regions";
@@ -341,4 +342,58 @@ fn the_looks_assets_open_on_are_refused_as_save_names() {
         assert!(btc.refuses_preset_name(name, &presets).is_some(), "{name}");
     }
     assert_eq!(btc.refuses_preset_name("my btc", &presets), None);
+}
+
+/// A view on BTCUSDT wearing `settings`, as a tab opens on them.
+fn btc_screen(settings: &AssetBubbles) -> (BubbleLook, HeatmapConfig) {
+    let mut config = HeatmapConfig::default();
+    let loaded = (bubble_presets::embedded(), PresetSource::Embedded, None);
+    let mut look = BubbleLook::open(loaded, &mut config);
+    look.wear(settings, false, &mut config);
+    (look, config)
+}
+
+#[test]
+fn an_assets_tape_fold_is_saved_and_reopens_folded() {
+    let (_, declared) = bind(&memory(), "BTCUSDT");
+    let (look, config) = btc_screen(&declared);
+    let open = look.settings(&config, declared.candle_aggression, false);
+    assert_eq!(open, declared, "an open lane is the declared look");
+
+    for fold in [LaneFold::Candles, LaneFold::Tape] {
+        let (look, mut config) = btc_screen(&declared);
+        config.live_lane.fold = fold;
+        let folded = look.settings(&config, declared.candle_aggression, false);
+        let mut file = AssetBubblesFile::default();
+        assert!(
+            file.record("BTCUSDT", &folded, &declared),
+            "{fold:?} is a change the asset files"
+        );
+        let text = bubble_assets::render(&file).expect("the store renders");
+        let reloaded = bubble_assets::parse(&text).expect("the store reloads");
+        let stored = reloaded.get("BTCUSDT").expect("the fold is filed");
+        let (_, reopened) = btc_screen(stored);
+        assert_eq!(reopened.live_lane.fold, fold, "{fold:?} survives a restart");
+    }
+}
+
+#[test]
+fn a_stored_asset_without_a_fold_reopens_open() {
+    let (_, declared) = bind(&memory(), "BTCUSDT");
+    // An entry as a store from before the fold reads: the bubbles switched
+    // off, and no fold anywhere in the file.
+    let off = AssetBubbles {
+        bubbles: false,
+        ..declared.clone()
+    };
+    let mut file = AssetBubblesFile::default();
+    assert!(file.record("BTCUSDT", &off, &declared));
+    let text = bubble_assets::render(&file).expect("the store renders");
+    assert!(!text.contains("fold"), "{text}");
+    let file = bubble_assets::parse(&text).expect("an old store reads");
+    let stored = file.get("BTCUSDT").expect("its entry");
+    let (mut look, mut folded) = btc_screen(&declared);
+    folded.live_lane.fold = LaneFold::Candles;
+    look.wear(stored, false, &mut folded);
+    assert_eq!(folded.live_lane.fold, LaneFold::Open, "no fold reads open");
 }
