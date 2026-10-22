@@ -836,7 +836,10 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
-fn days_in_month(year: i64, month: u32) -> u32 {
+/// How many days `month` of `year` has, leap years included; 0 for a month
+/// that does not exist.
+#[must_use]
+pub fn days_in_month(year: i64, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
