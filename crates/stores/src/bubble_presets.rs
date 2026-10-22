@@ -905,6 +905,26 @@ name = "old"
         assert!(!cleared.live_lane.show_depth);
     }
 
+    /// A fold is where the pane's lane sits, not a look: a preset records the
+    /// lane open and choosing one leaves the target pane's fold alone.
+    #[test]
+    fn a_preset_never_carries_the_lanes_fold() {
+        use quantick_orderflow::LaneFold;
+        let mut config = HeatmapConfig::default();
+        config.live_lane.fold = LaneFold::Candles;
+        let mut preset = BubblePreset::capture("mine", &config);
+        assert_eq!(preset.live_lane.fold, LaneFold::Open, "captured open");
+
+        // Even a hand-edited fold in the file never moves a pane's lane.
+        preset.live_lane.fold = LaneFold::Tape;
+        for kept in [LaneFold::Open, LaneFold::Candles] {
+            let mut other = HeatmapConfig::default();
+            other.live_lane.fold = kept;
+            preset.apply_to(&mut other);
+            assert_eq!(other.live_lane.fold, kept);
+        }
+    }
+
     #[test]
     fn upsert_replaces_by_name_and_remove_clears_the_active_selection() {
         let mut file = BubblePresetFile::default();

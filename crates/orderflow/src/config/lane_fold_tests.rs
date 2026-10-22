@@ -418,3 +418,41 @@ fn on_a_wide_chart_the_divider_stays_under_the_hand_until_it_folds() {
     drag.drag(&mut style, 1.0, WIDE);
     assert_eq!(style.fold, LaneFold::Tape);
 }
+
+/// A lane kept outside the open range, narrower than the fold threshold or
+/// wider than its mirror, drags under the hand from where it is instead of
+/// folding on the first pixel; it folds only once the hand takes it past the
+/// share's own floor or ceiling, giving back the share it started from.
+#[test]
+fn a_lane_kept_outside_the_open_range_drags_from_where_it_is() {
+    for (share, chart, toward_edge, folds_to) in [
+        // 5% of 1000 px: 50 px, inside the 120 px threshold.
+        (MIN_LIVE_LANE_SHARE, CHART, 1.0_f32, LaneFold::Tape),
+        // 95% of 1000 px: 950 px, past the 880 px mirror.
+        (MAX_LIVE_LANE_SHARE, CHART, -1.0, LaneFold::Candles),
+        // 150 px kept on a 3000 px monitor, shown on a 1500 px window.
+        (MIN_LIVE_LANE_SHARE, 1_500.0, 1.0, LaneFold::Tape),
+    ] {
+        let mut style = LiveLaneStyle {
+            width_share: share,
+            ..LiveLaneStyle::default()
+        };
+        let start = style.resolved_width_px(chart);
+        let mut drag = LaneDividerDrag::begin(&style, chart);
+        let mut wanted = start;
+        // Away from the edge, pixel by pixel, the divider stays under the
+        // hand; then back to where it started, still open.
+        for step in [-toward_edge; 40].into_iter().chain([toward_edge; 40]) {
+            drag.drag(&mut style, step, chart);
+            wanted -= step;
+            assert_eq!(style.fold, LaneFold::Open, "{share} on {chart}");
+            let drawn = style.resolved_width_px(chart);
+            assert!((drawn - wanted).abs() < 0.05, "{drawn} under {wanted}");
+        }
+        assert!((style.resolved_width_px(chart) - start).abs() < 0.05);
+        // One pixel past the share's own floor or ceiling folds.
+        drag.drag(&mut style, toward_edge, chart);
+        assert_eq!(style.fold, folds_to, "{share} on {chart}");
+        assert_eq!(style.width_share, share);
+    }
+}
