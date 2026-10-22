@@ -717,22 +717,23 @@ mod tests {
     /// The lane is a pane of the chart, so its width is a share of the chart
     /// and nothing else — the candle zoom has no say in it at all.
     #[test]
-    fn the_lane_takes_a_share_of_the_chart_and_never_more_than_half() {
+    fn the_lane_takes_a_share_of_the_chart_and_never_more_than_the_ceiling() {
         let lane = LiveLaneStyle::default();
         assert!((lane.resolved_width_px(1_000.0) - 350.0).abs() < 0.01);
         assert!((lane.resolved_width_px(600.0) - 210.0).abs() < 0.01);
 
-        // A wider share takes more of the same chart; half is the ceiling.
+        // A wider share takes more of the same chart, up to the ceiling.
         let wide = LiveLaneStyle {
-            width_share: 0.9,
+            width_share: 0.99,
             ..LiveLaneStyle::default()
         };
         let mut capped = wide.clone();
         capped.sanitize();
         assert_eq!(capped.width_share, MAX_LIVE_LANE_SHARE);
-        assert!((capped.resolved_width_px(1_000.0) - 500.0).abs() < 0.01);
-        // Even unsanitized input cannot reach past half the chart.
-        assert!(wide.resolved_width_px(1_000.0) <= 500.01);
+        let ceiling = 1_000.0 * MAX_LIVE_LANE_SHARE;
+        assert!((capped.resolved_width_px(1_000.0) - ceiling).abs() < 0.01);
+        // Even unsanitized input cannot reach past the ceiling.
+        assert!(wide.resolved_width_px(1_000.0) <= ceiling + 0.01);
 
         // Degenerate charts get no lane rather than a width the layout would
         // have to invent a meaning for.
