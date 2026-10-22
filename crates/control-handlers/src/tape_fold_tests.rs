@@ -28,8 +28,12 @@ impl TapeFoldPort for Pane {
 }
 
 const BESIDE: TapeFoldPane = TapeFoldPane {
-    tape_on: true,
-    tape_only: false,
+    beside_candles: true,
+};
+/// No divider to fold: the tape off, or alone on the pane (one fact,
+/// read from the lane's own rule).
+const ALONE: TapeFoldPane = TapeFoldPane {
+    beside_candles: false,
 };
 
 fn pane(facts: TapeFoldPane) -> Pane {
@@ -61,50 +65,27 @@ fn a_side_folds_beside_the_candles_and_open_always_unfolds() {
     assert_eq!(call(&mut beside, json!("tape")).unwrap()["changed"], true);
     assert_eq!(beside.fold, TapeFold::Tape);
 
-    for facts in [
-        TapeFoldPane {
-            tape_on: false,
-            ..BESIDE
-        },
-        TapeFoldPane {
-            tape_only: true,
-            ..BESIDE
-        },
-    ] {
-        beside.facts = Ok(facts);
-        let opened = call(&mut beside, json!("open")).unwrap();
-        assert_eq!(opened["fold"], "open", "{facts:?}");
-        beside.fold = TapeFold::Tape;
-    }
+    beside.facts = Ok(ALONE);
+    let opened = call(&mut beside, json!("open")).unwrap();
+    assert_eq!(opened["fold"], "open");
 }
 
 /// A fold without a divider to fold is refused by name, before the pane
 /// keeps anything; malformed input and a missing pane are refused too.
 #[test]
 fn folding_without_a_lane_beside_the_candles_is_refused_by_name() {
-    for facts in [
-        TapeFoldPane {
-            tape_on: false,
-            ..BESIDE
-        },
-        TapeFoldPane {
-            tape_only: true,
-            ..BESIDE
-        },
-    ] {
-        let mut refused = pane(facts);
-        for fold in ["candles", "tape"] {
-            let error = call(&mut refused, json!(fold)).unwrap_err();
-            let named = error.context.violated_precondition.as_ref();
-            assert_eq!(
-                named.map(|id| id.as_str()),
-                Some(BESIDE_CANDLES_PRECONDITION)
-            );
-            assert!(!error.retryable);
-            assert_eq!(error.context.next_steps.len(), 1);
-        }
-        assert_eq!(refused.sets, 0, "{facts:?}");
+    let mut refused = pane(ALONE);
+    for fold in ["candles", "tape"] {
+        let error = call(&mut refused, json!(fold)).unwrap_err();
+        let named = error.context.violated_precondition.as_ref();
+        assert_eq!(
+            named.map(|id| id.as_str()),
+            Some(BESIDE_CANDLES_PRECONDITION)
+        );
+        assert!(!error.retryable);
+        assert_eq!(error.context.next_steps.len(), 1);
     }
+    assert_eq!(refused.sets, 0);
     let mut beside = pane(BESIDE);
     for bad in [json!("left"), json!(1), Value::Null] {
         assert!(call(&mut beside, bad).is_err());

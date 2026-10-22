@@ -326,3 +326,95 @@ fn a_pane_carries_its_divider_drag_in_one_slot() {
     assert_eq!(alone.drag_lane_divider(&mut hand, -300.0, CHART), None);
     assert_eq!((alone, hand), (before, None), "nothing moved");
 }
+
+/// Tape only and the tape's own switch win over a leftover fold in the
+/// budget too: such a pane spends the marks it spent before folding existed.
+#[test]
+fn a_leftover_fold_never_moves_a_tape_only_panes_budget() {
+    for fold in [LaneFold::Open, LaneFold::Candles, LaneFold::Tape] {
+        let alone = LiveLaneStyle {
+            tape_only: true,
+            width_share: 0.3,
+            ..lane(fold)
+        };
+        assert!((alone.budget_share() - 0.3).abs() < 1e-6, "{fold:?}");
+        let off = LiveLaneStyle {
+            enabled: false,
+            ..alone.clone()
+        };
+        assert!((off.budget_share() - 0.3).abs() < 1e-6, "{fold:?}");
+    }
+}
+
+/// One rule says whether a fold shows: the tape on and beside the candles.
+/// The rail, the divider and the control plane all read it.
+#[test]
+fn a_fold_shows_only_while_the_tape_sits_beside_the_candles() {
+    let tape = lane(LaneFold::Tape);
+    assert!(tape.beside_candles());
+    assert_eq!(tape.shown_fold(), LaneFold::Tape);
+    let off = LiveLaneStyle {
+        enabled: false,
+        ..tape.clone()
+    };
+    let alone = LiveLaneStyle {
+        tape_only: true,
+        ..tape
+    };
+    for hidden in [off, alone] {
+        assert!(!hidden.beside_candles(), "{hidden:?}");
+        assert_eq!(hidden.shown_fold(), LaneFold::Open);
+        assert!(hidden.fold_rail(CHART).is_none());
+        assert_eq!(hidden.divider_hit(CHART, 5.0), None);
+    }
+}
+
+/// The Tape chip brings back a tape, never an 8 px rail: switching the tape
+/// on opens a fold it was switched off in, at the share it kept.
+#[test]
+fn switching_the_tape_on_brings_back_a_tape_not_a_rail() {
+    for fold in [LaneFold::Candles, LaneFold::Tape] {
+        let mut style = LiveLaneStyle {
+            width_share: 0.42,
+            ..lane(fold)
+        };
+        assert!(style.set_enabled(false));
+        assert!(!style.set_enabled(false), "already off");
+        assert!(style.set_enabled(true));
+        assert_eq!(style.fold, LaneFold::Open, "{fold:?}");
+        assert_eq!(style.width_share, 0.42);
+    }
+    let mut on = lane(LaneFold::Tape);
+    assert!(!on.set_enabled(true), "already on: nothing to switch");
+    assert_eq!(on.fold, LaneFold::Tape, "a tape already on keeps its fold");
+}
+
+/// On a wide chart the share's floor and ceiling sit further from the edge
+/// than the fold threshold; the divider stays under the hand all the way to
+/// where it folds rather than stopping at the floor and jumping.
+#[test]
+fn on_a_wide_chart_the_divider_stays_under_the_hand_until_it_folds() {
+    const WIDE: f32 = 3_000.0;
+    for (step, folds_to) in [(1.0_f32, LaneFold::Tape), (-1.0, LaneFold::Candles)] {
+        let mut style = LiveLaneStyle::default();
+        let mut drag = LaneDividerDrag::begin(&style, WIDE);
+        let mut wanted = style.resolved_width_px(WIDE);
+        while style.fold.is_open() {
+            drag.drag(&mut style, step, WIDE);
+            wanted -= step;
+            if style.fold.is_open() {
+                let drawn = style.resolved_width_px(WIDE);
+                assert!((drawn - wanted).abs() < 0.05, "{drawn} under {wanted}");
+            }
+        }
+        assert_eq!(style.fold, folds_to);
+        assert_eq!(style.width_share, DEFAULT_LIVE_LANE_SHARE);
+    }
+    // The tape folds at its share's floor, 150 px, not 30 px past it.
+    let mut style = LiveLaneStyle::default();
+    let mut drag = LaneDividerDrag::begin(&style, WIDE);
+    drag.drag(&mut style, 1_050.0 - 150.0, WIDE);
+    assert_eq!(style.fold, LaneFold::Open, "exactly at the floor holds");
+    drag.drag(&mut style, 1.0, WIDE);
+    assert_eq!(style.fold, LaneFold::Tape);
+}

@@ -356,4 +356,23 @@ mod tests {
         );
         assert_eq!((all, none), (100, 0), "the candles get the whole budget");
     }
+
+    /// A fold left on a tape-only pane, or on a tape switched off, never
+    /// moves its budget: both split the frame as they did before folding.
+    #[test]
+    fn a_fold_never_moves_a_tape_only_or_switched_off_budget() {
+        use crate::config::LaneFold;
+        for (enabled, tape_only) in [(true, true), (false, false)] {
+            let lane_of = |fold: LaneFold| LiveLaneStyle {
+                enabled,
+                tape_only,
+                fold,
+                ..LiveLaneStyle::default()
+            };
+            let open = pane_budgets(100, &lane_of(LaneFold::Open));
+            for fold in [LaneFold::Candles, LaneFold::Tape] {
+                assert_eq!(pane_budgets(100, &lane_of(fold)), open, "{fold:?}");
+            }
+        }
+    }
 }
