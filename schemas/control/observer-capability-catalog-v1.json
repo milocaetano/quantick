@@ -5228,7 +5228,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Returns the candles' bar spacing to the one the pane opened on, or the native tape's window to the asset's own setting — what a double-click on that time strip does. Never moves the right edge or the other axis.",
+      "description": "Returns the candles' bar spacing to the one the pane opened on, or the native tape's window to the asset's own setting — what a double-click on that time strip does; that never moves the right edge or the other axis. With `to: live_overview` on the candles it returns them to the live edge at the overview spacing instead — what a double-click on open canvas does.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -5256,6 +5256,21 @@
               }
             ]
           },
+          "TimeAxisTarget": {
+            "description": "Where a reset takes the axis.",
+            "oneOf": [
+              {
+                "const": "opening",
+                "description": "Back to the spacing or window the axis opened on.",
+                "type": "string"
+              },
+              {
+                "const": "live_overview",
+                "description": "The candles only: back to the live edge at the overview spacing,\nthe recent move and its context across the candles' width, never a\nzoom-in.",
+                "type": "string"
+              }
+            ]
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -5272,6 +5287,11 @@
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "to": {
+            "$ref": "#/$defs/TimeAxisTarget",
+            "default": "opening",
+            "description": "Where the axis goes; the opening spacing when omitted."
           }
         },
         "required": [
@@ -5489,7 +5509,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "Stable tab and pane IDs select one axis; a reset is idempotent, and the result reports the spacing and tape window after it.",
+      "stale_input_safety": "Stable tab and pane IDs select one axis; a reset is idempotent, and the result reports the spacing, the live follow and the tape window after it.",
       "title": "Reset a pane's time axis",
       "version": 1
     },

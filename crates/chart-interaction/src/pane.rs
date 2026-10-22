@@ -89,6 +89,24 @@ pub struct Model {
     pub selection: Selection,
     pub menu: MenuState,
     pub tape_drag: crate::tape_drag::TapeDrag,
+    pub double_click: DoubleClickGate,
+    /// The candles' width the last frame laid out, in pixels — the chart's
+    /// left edge to the lane divider: what the live overview fits its bars
+    /// across. Zero before the first frame.
+    pub candles_px: f32,
+}
+
+impl Model {
+    /// Back to live at the overview spacing across [`Self::candles_px`]: the
+    /// open-canvas double click, and `chart.time_axis.reset`'s live overview.
+    /// `false`, and nothing moves, before a frame laid the candles out.
+    pub fn live_overview(&mut self) -> bool {
+        let laid_out = self.candles_px > 0.0;
+        if laid_out {
+            self.viewport.snap_to_live_overview(self.candles_px);
+        }
+        laid_out
+    }
 }
 
 /// Fresh facts are supplied at admission time, including when a command is replayed.
@@ -104,6 +122,86 @@ pub struct ContextPress {
     pub on_tape: bool,
     pub drawing: Option<DrawingFact>,
     pub places: Vec<(&'static str, ChartPoint)>,
+}
+
+/// Where a double click in the candles' price band landed, clear of every
+/// drawing and overlay line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CanvasHit {
+    /// On a candle's body or wick: the chart settings open, the view stays.
+    Candle,
+    /// Open canvas: nothing opens, and the view returns to live at the
+    /// overview spacing.
+    Empty,
+}
+
+impl CanvasHit {
+    /// Whether this double click asks the window for the chart settings.
+    #[must_use]
+    pub fn opens_chart_settings(self) -> bool {
+        matches!(self, Self::Candle)
+    }
+}
+
+/// Whether a double click is two clicks on the canvas itself.
+///
+/// The toolkit pairs any two clicks inside its delay, wherever they land: a
+/// click on the drawing rail and the placement click that follows it, or the
+/// two anchors of a quickly placed line, would otherwise read as a double
+/// click on the chart once the tool disarms — and open the settings or move
+/// the view the trader just drew on.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DoubleClickGate {
+    previous_on_canvas: bool,
+    last_pass: Option<u64>,
+}
+
+/// The click a frame completed anywhere in the window, as the canvas's
+/// double click reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowClick {
+    /// No click completed this frame.
+    None,
+    /// A click landed anywhere but this canvas with the primary button free.
+    Elsewhere,
+    /// This canvas took the click with the primary button free; `double`
+    /// when the toolkit paired it with the click before.
+    Canvas { double: bool },
+}
+
+impl WindowClick {
+    /// From the toolkit's frame: whether `any` click completed, whether this
+    /// canvas took it `on_canvas` with the primary button free, and whether
+    /// it was a `double` click.
+    #[must_use]
+    pub fn of(any: bool, on_canvas: bool, double: bool) -> Self {
+        match (any, on_canvas) {
+            (false, _) => Self::None,
+            (true, false) => Self::Elsewhere,
+            (true, true) => Self::Canvas { double },
+        }
+    }
+}
+
+impl DoubleClickGate {
+    /// Feed every frame the canvas runs: `pass` is the toolkit's frame
+    /// counter, `click` this frame's click. Answers whether the frame holds
+    /// the canvas's own double click — both of its clicks on the canvas. A
+    /// frame the canvas missed (another tab, a hidden pane) forgets the
+    /// earlier click: whatever the window was clicked on meanwhile went unseen.
+    pub fn observe(&mut self, pass: u64, click: WindowClick) -> bool {
+        let unbroken = self
+            .last_pass
+            .is_some_and(|last| pass == last || pass == last + 1);
+        self.last_pass = Some(pass);
+        let previous = self.previous_on_canvas && unbroken;
+        self.previous_on_canvas = match click {
+            WindowClick::None => previous,
+            WindowClick::Elsewhere => false,
+            WindowClick::Canvas { .. } => true,
+        };
+        click == WindowClick::Canvas { double: true } && previous
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +227,9 @@ pub enum Intent {
     ReturnToLive {
         tape: bool,
         overlay: Option<u64>,
+        /// What a double click in the candles' price band landed on; `None`
+        /// for every other target and for the live chip.
+        canvas: Option<CanvasHit>,
     },
     OpenMenu(ContextPress),
     CloseMenu {
@@ -275,13 +376,25 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
                 model.viewport.zoom(factor);
             }
         }
-        Intent::ReturnToLive { tape, overlay } => {
+        Intent::ReturnToLive {
+            tape,
+            overlay,
+            canvas,
+        } => {
             if tape {
                 effects.push(Effect::TapeLive);
             } else if let Some(slot) = overlay {
                 model.pending_settings = Some(slot);
             } else {
-                model.viewport.snap_to_live();
+                match canvas {
+                    // The candle is what the trader means to change: the
+                    // settings open over a view left where it was put.
+                    Some(CanvasHit::Candle) => {}
+                    Some(CanvasHit::Empty) => {
+                        model.live_overview();
+                    }
+                    None => model.viewport.snap_to_live(),
+                }
             }
         }
         Intent::OpenMenu(press) => {
@@ -392,6 +505,100 @@ mod tests {
             .is_empty()
         );
         assert_eq!(model.viewport.px_per_bar(), 16.0);
+    }
+    /// A double click on a candle asks for the chart settings and leaves
+    /// the view where the trader put it; on empty canvas it asks for nothing
+    /// and returns to the live edge at the overview spacing.
+    #[test]
+    fn a_canvas_double_click_splits_on_the_candle() {
+        let mut model = Model::default();
+        model
+            .viewport
+            .set_px_per_bar(crate::viewport::MAX_CANDLE_WIDTH);
+        model.viewport.pan_pixels(512.0, 400);
+        let before = (
+            model.viewport.px_per_bar(),
+            model.viewport.right_edge_bar(400),
+        );
+        assert!(CanvasHit::Candle.opens_chart_settings());
+        let candle = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: false,
+                overlay: None,
+                canvas: Some(CanvasHit::Candle),
+            },
+        );
+        assert!(candle.is_empty());
+        assert_eq!(
+            (
+                model.viewport.px_per_bar(),
+                model.viewport.right_edge_bar(400)
+            ),
+            before,
+            "the candle double click moves nothing"
+        );
+        assert!(!model.viewport.follows_live());
+
+        assert!(!model.live_overview(), "no laid-out candles, nothing moves");
+        assert!(!model.viewport.follows_live());
+        model.candles_px = 960.0;
+        let empty = CanvasHit::Empty;
+        assert!(!empty.opens_chart_settings());
+        let _ = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: false,
+                overlay: None,
+                canvas: Some(empty),
+            },
+        );
+        assert!(model.viewport.follows_live());
+        assert_eq!(model.viewport.px_per_bar(), 6.0, "960 px / 160 bars");
+
+        // The live chip and every other target keep the plain snap.
+        model.viewport.set_px_per_bar(40.0);
+        model.viewport.pan_pixels(400.0, 400);
+        let _ = update(
+            &mut model,
+            Intent::ReturnToLive {
+                tape: false,
+                overlay: None,
+                canvas: None,
+            },
+        );
+        assert!(model.viewport.follows_live());
+        assert_eq!(model.viewport.px_per_bar(), 40.0);
+    }
+    /// A rail click followed by a placement click, or two quick anchors, is
+    /// not the canvas's double click; two clicks on the free canvas are.
+    #[test]
+    fn a_double_click_counts_only_when_both_clicks_were_the_canvas() {
+        const SINGLE: WindowClick = WindowClick::Canvas { double: false };
+        const DOUBLE: WindowClick = WindowClick::Canvas { double: true };
+        assert_eq!(WindowClick::of(false, true, true), WindowClick::None);
+        assert_eq!(WindowClick::of(true, false, true), WindowClick::Elsewhere);
+        assert_eq!(WindowClick::of(true, true, true), DOUBLE);
+        let mut gate = DoubleClickGate::default();
+        assert!(!gate.observe(1, WindowClick::Elsewhere), "the drawing rail");
+        assert!(!gate.observe(2, DOUBLE), "the placement click after it");
+        let mut anchors = DoubleClickGate::default();
+        assert!(!anchors.observe(1, WindowClick::Elsewhere), "tool armed");
+        assert!(!anchors.observe(2, DOUBLE), "the second, tool disarmed");
+        let mut canvas = DoubleClickGate::default();
+        assert!(!canvas.observe(1, SINGLE));
+        assert!(!canvas.observe(2, WindowClick::None), "idle frames between");
+        assert!(canvas.observe(3, DOUBLE), "two clicks on the canvas");
+    }
+    /// A canvas click, then frames the pane never ran (a tab switch, where
+    /// any click went unseen): the next canvas click is no double click.
+    #[test]
+    fn a_frame_the_canvas_missed_forgets_its_last_click() {
+        let mut gate = DoubleClickGate::default();
+        assert!(!gate.observe(1, WindowClick::Canvas { double: false }));
+        assert!(!gate.observe(4, WindowClick::Canvas { double: true }));
+        // Seen again back to back, the next pair counts.
+        assert!(gate.observe(5, WindowClick::Canvas { double: true }));
     }
     #[test]
     fn close_commits_once_and_ignores_a_replaced_drawing() {

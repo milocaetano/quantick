@@ -489,8 +489,8 @@ impl ChartPane {
     /// - drag the bottom time strip left/right → zoom time (spread candles);
     /// - drag the right price gutter up/down → zoom the price scale;
     /// - scroll over either axis → zoom that axis;
-    /// - double-click the canvas → return to live, keeping zoom and price scale,
-    ///   and open the chart settings when it landed on the bare candles;
+    /// - double-click a candle → the chart settings; open canvas → back to live
+    ///   at the overview spacing, keeping the price scale;
     /// - double-click the price gutter → resume automatic price fitting.
     ///
     /// The native Tape owns its time navigation: dragging moves its history,
@@ -513,6 +513,8 @@ impl ChartPane {
         self.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
         self.frame.chart_area = Some(areas.chart);
+        let candles_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
+        self.model.candles_px = candles_right - areas.chart.left();
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
         let bands = crate::bands::BandGeometry {

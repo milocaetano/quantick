@@ -52,8 +52,8 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "chart.time_axis.reset",
-        title: "Reset a time axis to where it opened",
-        reach: "double-click the candles' time strip, or the tape's",
+        title: "Reset a time axis to where it opened, or the candles to a live overview",
+        reach: "double-click the candles' time strip, or the tape's; double-click open canvas",
         keys: &[(
             Source::Authored,
             "a time-strip double-click the canvas handles directly",

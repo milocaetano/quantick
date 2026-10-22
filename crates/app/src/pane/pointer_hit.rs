@@ -23,6 +23,7 @@ use crate::price_view::PriceView;
 use super::SharedSource;
 use super::frame::PaneFrame;
 use super::render_registry::{TextFonts, paint_scene};
+use quantick_chart_interaction::pane::CanvasHit;
 use quantick_drawings::gesture::DrawingProjection;
 
 /// How near an overlay's plotted line a double click has to land to be read as
@@ -218,34 +219,20 @@ impl PaneHitTest<'_> {
         })
     }
 
-    /// Whether `pos` is on the candles themselves: the price band of the
-    /// chart, on the history side of the lane divider, clear of every
-    /// drawing — where a double click opens the chart settings. A drawing,
-    /// an indicator pane, a right lane (tape, book or heatmap), an axis or
-    /// the legend each keep their own meaning for the gesture. Runs on a
-    /// double click only.
-    pub(super) fn on_bare_candles(&self, pos: egui::Pos2) -> bool {
-        let Some(chart) = self.frame.chart_area.filter(|chart| chart.contains(pos)) else {
-            return false;
-        };
+    /// What a double click at `pos` lands on in the candles' canvas, on the
+    /// history side of the lane divider — see `DrawingProjection::canvas_hit`.
+    /// A right lane (tape, book or heatmap), an axis or the legend is none of
+    /// it. Runs on a double click only.
+    pub(super) fn canvas_hit(&self, pos: egui::Pos2) -> Option<CanvasHit> {
+        let chart = self.frame.chart_area.filter(|chart| chart.contains(pos))?;
         if !bands::drawing_area(chart, self.frame.lane_divider_x).contains(pos) {
-            return false;
+            return None;
         }
-        let Some(band) = bands::band_at(&self.frame.bands, px(pos)) else {
-            return false;
-        };
-        if !matches!(band.key, DrawingBand::Price) {
-            return false;
-        }
-        let history_right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+        let band = bands::band_at(&self.frame.bands, px(pos))?;
+        let right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         let total = self.projection.series.slots();
         self.projection
-            .drawing_handle_at(self.drawings, px(pos), band, history_right, total)
-            .is_none()
-            && self
-                .projection
-                .drawing_at(self.drawings, px(pos), band, history_right, total)
-                .is_none()
+            .canvas_hit(self.drawings, px(pos), band, right, total)
     }
 
     /// Which overlay indicator's plotted line a pointer at `pos` is sitting

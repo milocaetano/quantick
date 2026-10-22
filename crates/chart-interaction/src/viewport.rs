@@ -65,6 +65,18 @@ const MAX_PROJECTION_FRACTION: f32 = 0.8;
 /// never dead.
 const MIN_PROJECTION_BARS: f32 = 8.0;
 
+/// How many bars the live overview fits across the candles' width — the
+/// zoom a double click on empty canvas returns to: the recent move and its
+/// context on one screen, never a close-up of the last few candles.
+pub const OVERVIEW_BARS: usize = 160;
+/// Narrowest spacing the live overview fits a narrow pane at, in pixels per
+/// bar: below it a candle stops reading as a body and a wick.
+pub const OVERVIEW_MIN_PX_PER_BAR: f32 = 3.0;
+/// How far from a candle's wick span and slot a double click still lands on
+/// that candle, in pixels. Forgiving, because a one-pixel wick or a doji at a
+/// narrow zoom can only be hit by luck without it.
+pub const CANDLE_PICK_TOLERANCE_PX: f32 = 4.0;
+
 /// The visible window over a bar series.
 #[derive(Debug, Clone, Copy)]
 pub struct Viewport {
@@ -235,6 +247,64 @@ impl Viewport {
     /// Pin the right edge back to the newest bar.
     pub fn snap_to_live(&mut self) {
         self.right_bar = None;
+    }
+
+    /// The spacing the live overview leaves this view at, for a candle area
+    /// `history_px` wide: about [`OVERVIEW_BARS`] bars across, no narrower
+    /// than [`OVERVIEW_MIN_PX_PER_BAR`] and no wider than the opening
+    /// [`DEFAULT_PX_PER_BAR`]. It only ever narrows the candles — a view
+    /// already zoomed out keeps its width. Without a usable width it is the
+    /// spacing now.
+    #[must_use]
+    pub fn overview_px_per_bar(&self, history_px: f32) -> f32 {
+        if !(history_px.is_finite() && history_px > 0.0) {
+            return self.px_per_bar;
+        }
+        let target =
+            (history_px / OVERVIEW_BARS as f32).clamp(OVERVIEW_MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR);
+        self.px_per_bar.min(target)
+    }
+
+    /// Back to the live edge at [`Self::overview_px_per_bar`]; a second call
+    /// changes nothing.
+    pub fn snap_to_live_overview(&mut self, history_px: f32) {
+        self.set_px_per_bar(self.overview_px_per_bar(history_px));
+        self.snap_to_live();
+    }
+
+    /// Whether `pointer` is on a candle: within [`CANDLE_PICK_TOLERANCE_PX`]
+    /// of the wick span `wick_y(slot)` returns for a slot whose centre is
+    /// within half a slot (or the tolerance, at a narrower zoom) of the
+    /// pointer. `wick_y` answers the screen y of a slot's high and low in
+    /// either order, or `None` where no bar is drawn.
+    ///
+    /// Cost: a double click only, over at most the slots inside that reach.
+    pub fn on_candle(
+        &self,
+        pointer: [f32; 2],
+        chart_right: f32,
+        total: usize,
+        wick_y: impl Fn(usize) -> Option<(f32, f32)>,
+    ) -> bool {
+        let [x, y] = pointer;
+        if total == 0 || self.px_per_bar <= 0.0 || !x.is_finite() || !y.is_finite() {
+            return false;
+        }
+        let reach = (0.5 * self.candle_width()).max(CANDLE_PICK_TOLERANCE_PX);
+        let first = self.bar_at_x(x - reach, chart_right, total).ceil().max(0.0);
+        let last = self
+            .bar_at_x(x + reach, chart_right, total)
+            .floor()
+            .min((total - 1) as f32);
+        if first > last {
+            return false;
+        }
+        (first as usize..=last as usize).any(|slot| {
+            wick_y(slot).is_some_and(|(a, b)| {
+                (a.min(b) - CANDLE_PICK_TOLERANCE_PX..=a.max(b) + CANDLE_PICK_TOLERANCE_PX)
+                    .contains(&y)
+            })
+        })
     }
 
     /// Bring `bar` to the middle of a window `width_px` wide — the object
@@ -936,5 +1006,116 @@ mod tests {
         v.pan_pixels(-24.0, 10);
         assert!(v.follows_live());
         assert_eq!(v.right_edge_bar(10), 9.0, "the newest bar is the edge");
+    }
+
+    /// The empty-canvas double click from max zoom-in: back to the live edge
+    /// at an overview spacing, never left on the close-up.
+    #[test]
+    fn the_live_overview_from_max_zoom_in_caps_the_spacing() {
+        let mut v = Viewport::new();
+        v.set_px_per_bar(MAX_CANDLE_WIDTH);
+        v.pan_pixels(500.0, 400);
+        assert!(!v.follows_live());
+        v.snap_to_live_overview(800.0);
+        assert!(v.follows_live(), "the overview is the live edge");
+        assert_eq!(v.px_per_bar(), 800.0 / OVERVIEW_BARS as f32);
+        // A wide pane caps at the opening spacing, never wider.
+        let mut wide = Viewport::new();
+        wide.set_px_per_bar(MAX_CANDLE_WIDTH);
+        wide.snap_to_live_overview(4_000.0);
+        assert_eq!(wide.px_per_bar(), DEFAULT_PX_PER_BAR);
+    }
+
+    /// Never a zoom-in: a trader already zoomed out keeps the wider view.
+    #[test]
+    fn the_live_overview_from_zoom_out_keeps_the_spacing() {
+        let mut v = Viewport::new();
+        v.set_px_per_bar(2.0);
+        v.pan_pixels(300.0, 4_000);
+        v.snap_to_live_overview(800.0);
+        assert!(v.follows_live());
+        assert_eq!(v.px_per_bar(), 2.0, "the overview never zooms in");
+    }
+
+    /// A narrow pane stops at the floor rather than squeezing to one pixel.
+    #[test]
+    fn the_live_overview_in_a_narrow_pane_stops_at_its_floor() {
+        let mut v = Viewport::new();
+        v.set_px_per_bar(64.0);
+        v.snap_to_live_overview(200.0);
+        assert_eq!(v.px_per_bar(), OVERVIEW_MIN_PX_PER_BAR);
+        // No usable width: back to live, the zoom untouched.
+        let mut blind = Viewport::new();
+        blind.set_px_per_bar(64.0);
+        blind.pan_pixels(640.0, 400);
+        blind.snap_to_live_overview(0.0);
+        assert!(blind.follows_live());
+        assert_eq!(blind.px_per_bar(), 64.0);
+        blind.snap_to_live_overview(f32::NAN);
+        assert_eq!(blind.px_per_bar(), 64.0);
+    }
+
+    /// A second double click changes nothing.
+    #[test]
+    fn the_live_overview_is_idempotent() {
+        for start in [MAX_CANDLE_WIDTH, 20.0, 6.0, MIN_PX_PER_BAR] {
+            let mut v = Viewport::new();
+            v.set_px_per_bar(start);
+            assert_eq!(v.overview_px_per_bar(1_000.0), start.min(1_000.0 / 160.0));
+            v.snap_to_live_overview(1_000.0);
+            let once = (v.px_per_bar(), v.follows_live());
+            v.snap_to_live_overview(1_000.0);
+            assert_eq!((v.px_per_bar(), v.follows_live()), once, "from {start}");
+        }
+    }
+
+    /// A candle is hit on its wick span and its slot, with the pick
+    /// tolerance around both; open canvas above it is not the candle.
+    #[test]
+    fn a_candle_is_hit_on_its_range_and_its_slot() {
+        let mut v = Viewport::new();
+        v.set_px_per_bar(40.0);
+        let (right, total) = (1_000.0, 50);
+        // Every candle spans y 300..340.
+        let wick = |_slot: usize| Some((300.0, 340.0));
+        let x = v.x_center(45, right, total);
+        assert!(v.on_candle([x, 320.0], right, total, wick));
+        assert!(v.on_candle(
+            [x + 19.0, 300.0 - CANDLE_PICK_TOLERANCE_PX],
+            right,
+            total,
+            wick
+        ));
+        assert!(!v.on_candle(
+            [x, 300.0 - CANDLE_PICK_TOLERANCE_PX - 1.0],
+            right,
+            total,
+            wick
+        ));
+        assert!(!v.on_candle([x, 100.0], right, total, wick), "open canvas");
+        // Past the newest bar there is no candle at all.
+        let future = v.x_center(49, right, total) + 2.0 * v.candle_width();
+        assert!(!v.on_candle([future, 320.0], right, total, |_| Some((0.0, 700.0))));
+        // A slot with no bar behind it is not a candle.
+        assert!(!v.on_candle([x, 320.0], right, total, |_| None));
+        assert!(!v.on_candle([x, 320.0], right, 0, wick));
+    }
+
+    /// At a narrow zoom the tolerance, not the one-pixel slot, sets the
+    /// reach: a near miss still lands on the neighbouring candle.
+    #[test]
+    fn a_narrow_candle_is_hit_within_the_pick_tolerance() {
+        let mut v = Viewport::new();
+        v.set_px_per_bar(MIN_PX_PER_BAR);
+        let (right, total) = (1_000.0, 500);
+        let x = v.x_center(400, right, total);
+        let wick = |slot: usize| (slot == 400).then_some((300.0, 340.0));
+        assert!(v.on_candle([x + CANDLE_PICK_TOLERANCE_PX, 320.0], right, total, wick));
+        assert!(!v.on_candle(
+            [x + CANDLE_PICK_TOLERANCE_PX + 1.5, 320.0],
+            right,
+            total,
+            wick
+        ));
     }
 }

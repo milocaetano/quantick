@@ -1222,6 +1222,17 @@ fn drive_navigation(
     area: egui::Rect,
     events: Vec<egui::Event>,
 ) -> Option<SlotId> {
+    drive_navigation_asking(pane, ctx, area, events).0
+}
+
+/// [`drive_navigation`], also answering whether the frame asked the window
+/// for the chart settings.
+fn drive_navigation_asking(
+    pane: &mut ChartPane,
+    ctx: &egui::Context,
+    area: egui::Rect,
+    events: Vec<egui::Event>,
+) -> (Option<SlotId>, bool) {
     let mut toolrail = crate::toolrail::ToolRail::new();
     let presets = drawings::presets::PresetStore::load_from(
         crate::scratch::thread_dir("pane-presets").join("no-such.toml"),
@@ -1266,7 +1277,7 @@ fn drive_navigation(
             pane.handle_navigation(ui, area, &mut chrome);
         });
     });
-    pane.take_settings_request()
+    (pane.take_settings_request(), layers.open_chart_settings)
 }
 
 /// Build a whole `PaneChrome` with `tool` armed and hand it to `body`.
@@ -1755,20 +1766,37 @@ fn double_click_at(
     area: egui::Rect,
     pos: egui::Pos2,
 ) -> Option<SlotId> {
-    let mut request = None;
+    double_click_asking(pane, ctx, area, pos).0
+}
+
+/// [`double_click_at`], also answering whether it asked for the chart
+/// settings.
+fn double_click_asking(
+    pane: &mut ChartPane,
+    ctx: &egui::Context,
+    area: egui::Rect,
+    pos: egui::Pos2,
+) -> (Option<SlotId>, bool) {
+    let (mut request, mut chart_settings) = (None, false);
     for pressed in [true, false, true, false] {
-        let events = vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::default(),
-            },
-        ];
-        request = drive_navigation(pane, ctx, area, events).or(request);
+        let (asked, settings) = drive_navigation_asking(pane, ctx, area, press_at(pos, pressed));
+        request = asked.or(request);
+        chart_settings |= settings;
     }
-    request
+    (request, chart_settings)
+}
+
+/// One frame's primary press or release at `pos`.
+fn press_at(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        },
+    ]
 }
 
 /// Criterion 1, the pane's own targets: a double click on an open pane's

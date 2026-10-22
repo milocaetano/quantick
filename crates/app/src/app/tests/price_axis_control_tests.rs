@@ -335,6 +335,44 @@ fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
     disable_test_gateway(&mut app, &ctx);
 }
 
+/// The open-canvas double-click, by name: the candles back to the live edge
+/// at the overview spacing the gesture lands on; the tape has no overview.
+#[test]
+fn the_live_overview_call_matches_the_open_canvas_double_click() {
+    const RESET: &str = "chart.time_axis.reset";
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    // The second frame lays the candles out against the lane the first drew.
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let pane = &mut app.active_tab_mut().flow_pane;
+    let pane_id = pane.id;
+    let candles_px = pane.model.candles_px;
+    assert!(candles_px > 0.0, "the candles laid out");
+    let viewport = &mut pane.model.viewport;
+    viewport.set_px_per_bar(quantick_chart_interaction::viewport::MAX_CANDLE_WIDTH);
+    viewport.pan_pixels(640.0, 200);
+    assert!(!viewport.follows_live());
+    let overview = viewport.overview_px_per_bar(candles_px);
+    let directory = gateway_test_directory("time-axis-live-overview");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let tab_id = app.tabs.active_id().to_string();
+    let payload = |axis: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis, "to": "live_overview"});
+    let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles"));
+    let viewport = &success_result(&candles)["viewport"];
+    assert_eq!(viewport["follows_live"], true);
+    let spacing = viewport["pixels_per_bar"].as_str().unwrap();
+    assert_eq!(spacing.parse::<f32>().unwrap(), overview);
+    let (tape, _) = unkeyed_call(&mut app, &mut client, RESET, payload("tape"));
+    assert_eq!(error_code(&tape), Some(codes::INVALID_REQUEST));
+    disable_test_gateway(&mut app, &ctx);
+}
+
 /// Review round 2, B3: the tape reset call and the tape strip's double-click
 /// accept and refuse the same panes, because both ask `has_time_axis`.
 #[test]

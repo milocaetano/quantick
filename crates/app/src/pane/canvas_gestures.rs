@@ -5,6 +5,7 @@
 //! tape its window, its time and the shared price axis, never the other side.
 //! Tape only is the tape across the whole canvas.
 use eframe::egui;
+use quantick_chart_interaction::pane::WindowClick;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::tape_view::TapeEnd;
 
@@ -23,7 +24,7 @@ pub(super) struct CanvasInput<'r> {
 
 impl ChartPane {
     /// Pan, zoom and the double click. Answers whether a double click landed
-    /// on the bare candles, which asks the window for the chart settings.
+    /// on a candle, which asks the window for the chart settings.
     pub(super) fn handle_canvas_gestures(&mut self, ui: &egui::Ui, input: CanvasInput<'_>) -> bool {
         let CanvasInput {
             chart,
@@ -40,7 +41,7 @@ impl ChartPane {
         let over_tape = |position: egui::Pos2| {
             native_tape && (tape_only || divider.is_some_and(|x| position.x > x))
         };
-        let (press, pressed_at, travel, middle_down, delta, scroll) = ui.input(|i| {
+        let (press, pressed_at, travel, middle_down, delta, scroll, any_click) = ui.input(|i| {
             let p = &i.pointer;
             let travel = p.latest_pos().zip(p.press_origin());
             (
@@ -50,6 +51,7 @@ impl ChartPane {
                 p.middle_down(),
                 p.delta(),
                 i.raw_scroll_delta.y,
+                p.any_click(),
             )
         });
         // Over the tape the sideways part of a drag is its time, and only a
@@ -89,27 +91,33 @@ impl ChartPane {
             self.pan_canvas(side(delta, tape), total, tape);
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
-        // Not with a tool armed: two placement clicks are two anchors. Over
-        // the tape a double click returns it to live; on an
-        // overlay's own line it opens that line; elsewhere the candles snap
-        // back to the live edge and the chart settings open on the Candles
-        // tab. Each keeps the chosen zoom and price scale.
+        // Not with a tool armed: two placement clicks are two anchors. Only a pair of canvas clicks
+        // counts (`DoubleClickGate`): over the tape it returns the tape to live; on an overlay's
+        // line it opens that line; on a candle the Candles settings, the view kept; on open canvas
+        // live at the overview spacing; on the divider or a drawing live at the candles' zoom.
         let mut open_settings = false;
-        if chart.double_clicked() && primary_free {
+        let on_canvas = chart.clicked() && primary_free;
+        let click = WindowClick::of(any_click, on_canvas, chart.double_clicked());
+        let pass = ui.ctx().cumulative_pass_nr();
+        if self.model.double_click.observe(pass, click) {
             let at = chart.interact_pointer_pos();
             let overlay = at
                 .and_then(|position| self.hit_test().overlay_plot_at(position))
                 .map(|slot| slot.0);
             let tape = at.is_some_and(over_tape);
             // The lane divider is a handle, as it is for the drag above:
-            // grabbing it twice is not a request for the chart settings.
-            open_settings = !tape
-                && overlay.is_none()
-                && !at.is_some_and(on_divider)
-                && at.is_some_and(|position| self.hit_test().on_bare_candles(position));
+            // grabbing it twice is neither a candle nor open canvas.
+            let canvas = at
+                .filter(|at| !tape && overlay.is_none() && !on_divider(*at))
+                .and_then(|at| self.hit_test().canvas_hit(at));
+            open_settings = canvas.is_some_and(|hit| hit.opens_chart_settings());
             navigate(
                 self,
-                quantick_chart_interaction::pane::Intent::ReturnToLive { tape, overlay },
+                quantick_chart_interaction::pane::Intent::ReturnToLive {
+                    tape,
+                    overlay,
+                    canvas,
+                },
             );
         }
         if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {
