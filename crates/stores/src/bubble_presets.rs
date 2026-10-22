@@ -166,6 +166,8 @@ impl BubblePreset {
                 enabled: LiveLaneStyle::default().enabled,
                 show_depth: LiveLaneStyle::default().show_depth,
                 show_aggressions: LiveLaneStyle::default().show_aggressions,
+                // Nor where the pane's lane sits: a fold is the pane's.
+                fold: LiveLaneStyle::default().fold,
                 ..config.live_lane.clone()
             },
         }
@@ -192,17 +194,19 @@ impl BubblePreset {
         // The lane's visibility is not the preset's to carry: choosing a look
         // may not blank the tape, take it off the canvas, or put it back, and
         // a preset file edited by hand may not switch layers on behind the
-        // trader. Everything else in the lane's style is exactly what the
-        // preset stored.
+        // trader, nor fold the pane's lane. Everything else in the lane's
+        // style is exactly what the preset stored.
         let visibility = (
             config.live_lane.enabled,
             config.live_lane.show_depth,
             config.live_lane.show_aggressions,
+            config.live_lane.fold,
         );
         config.live_lane = self.live_lane.clone();
         config.live_lane.enabled = visibility.0;
         config.live_lane.show_depth = visibility.1;
         config.live_lane.show_aggressions = visibility.2;
+        config.live_lane.fold = visibility.3;
     }
 }
 

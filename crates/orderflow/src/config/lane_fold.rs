@@ -222,6 +222,28 @@ fn open_range_px(chart_width: f32) -> (f32, f32) {
     (low, high)
 }
 
+/// The tape widths one drag leaves open: [`open_range_px`], reaching down to
+/// the share's floor or up to its ceiling when an open lane starts outside
+/// it, so a lane kept narrower or wider than the fold range moves with the
+/// hand from where it is rather than folding on the first pixel.
+fn drag_range_px(lane: &LiveLaneStyle, chart_width: f32) -> (f32, f32) {
+    let (low, high) = open_range_px(chart_width);
+    if !lane.fold.is_open() {
+        return (low, high);
+    }
+    let start = lane.resolved_width_px(chart_width);
+    let floor =
+        (chart_width * MIN_LIVE_LANE_SHARE).max(MIN_LIVE_LANE_WIDTH_PX.min(chart_width / 2.0));
+    let ceiling = chart_width * MAX_LIVE_LANE_SHARE;
+    let low = if start < low { floor.min(start) } else { low };
+    let high = if start > high {
+        ceiling.max(start)
+    } else {
+        high
+    };
+    (low, high)
+}
+
 /// One drag of the lane's divider, from press to release.
 ///
 /// Follows the hand rather than summing clamped steps: the tape is as wide as
@@ -234,6 +256,7 @@ pub struct LaneDividerDrag {
     chart_width: f32,
     wanted_px: f32,
     restore_share: f32,
+    open_px: (f32, f32),
 }
 
 impl LaneDividerDrag {
@@ -244,6 +267,7 @@ impl LaneDividerDrag {
             chart_width,
             wanted_px: lane.resolved_width_px(chart_width),
             restore_share: lane.width_share,
+            open_px: drag_range_px(lane, chart_width),
         }
     }
 
@@ -260,9 +284,10 @@ impl LaneDividerDrag {
             // screen rather than from a width measured on another chart.
             self.chart_width = chart_width;
             self.wanted_px = lane.resolved_width_px(chart_width);
+            self.open_px = drag_range_px(lane, chart_width);
         }
         self.wanted_px -= delta_px;
-        let (low, high) = open_range_px(chart_width);
+        let (low, high) = self.open_px;
         let (fold, share) = if self.wanted_px < low {
             (LaneFold::Tape, self.restore_share)
         } else if self.wanted_px > high {
