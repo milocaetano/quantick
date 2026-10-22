@@ -166,7 +166,8 @@ impl BubblePreset {
                 enabled: LiveLaneStyle::default().enabled,
                 show_depth: LiveLaneStyle::default().show_depth,
                 show_aggressions: LiveLaneStyle::default().show_aggressions,
-                // Nor where the pane's lane sits: a fold is the pane's.
+                // Nor where the pane's lane sits: a fold is the pane's, and
+                // its asset files it beside the look (`AssetBubbles::fold`).
                 fold: LiveLaneStyle::default().fold,
                 ..config.live_lane.clone()
             },

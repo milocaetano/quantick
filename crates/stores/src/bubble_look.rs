@@ -195,7 +195,8 @@ impl BubbleLook {
     }
 
     /// The settings on `config`, with the flow pane's `candle_aggression`
-    /// and its opening rule.
+    /// and its opening rule. The lane's fold is the asset's, filed beside
+    /// the look a preset captures without it.
     #[must_use]
     pub fn settings(
         &self,
@@ -207,6 +208,7 @@ impl BubbleLook {
             bubbles: self.held.filed(config.show_aggressions, self.asset()),
             candle_aggression,
             flow_ignore_opening,
+            fold: config.live_lane.fold,
             look: BubblePreset::capture(&self.look_name, config),
         }
     }
@@ -220,7 +222,8 @@ impl BubbleLook {
     /// Put `settings` on `config` without counting it as an edit;
     /// `keep_navigation` leaves the lane's width and window where this
     /// view's own gestures put them, and what a launch hook holds stays. The
-    /// flow pane's opening rule is the caller's to apply.
+    /// lane's fold is the asset's, worn either way. The flow pane's opening
+    /// rule is the caller's to apply.
     pub fn wear(
         &mut self,
         settings: &AssetBubbles,
@@ -233,6 +236,7 @@ impl BubbleLook {
             config.live_lane.window = window;
             config.live_lane.width_share = width_share;
         }
+        config.live_lane.fold = settings.fold;
         config.show_aggressions = settings.bubbles;
         self.held.wear(config);
         self.look_name.clone_from(&settings.look.name);
