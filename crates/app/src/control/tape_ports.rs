@@ -35,12 +35,13 @@ impl BubbleScalePort for dyn ControlPort {
 }
 impl TapeFoldPort for dyn ControlPort {
     fn tape_fold_pane(&mut self, tab: u64, id: u64) -> Result<TapeFoldPane, ControlError> {
-        let config = tape(self, tab, id)?.cached_config();
-        let (tape_on, tape_only) = (config.lane_enabled(), config.tape_only());
-        Ok(TapeFoldPane { tape_on, tape_only })
+        let lane = &tape(self, tab, id)?.cached_config().live_lane;
+        Ok(TapeFoldPane {
+            beside_candles: lane.beside_candles(),
+        })
     }
     fn set_tape_fold(&mut self, tab: u64, id: u64, fold: TapeFold) -> Result<bool, ControlError> {
-        let set = |config: &mut HeatmapConfig| config.live_lane.fold = fold.into();
+        let set = |config: &mut HeatmapConfig| _ = config.live_lane.set_fold(fold.into());
         Ok(tape(self, tab, id)?.edit_config(set))
     }
 }

@@ -54,6 +54,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
         cw: 8.0,
         indicator_guide_x: None,
         tape_only,
+        fits_tape: tape_only,
         native_tape: tape_only,
         tape_padding_px: 0.0,
     };
@@ -118,6 +119,23 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
         fitted(true, &candle_price_view, tape_range).range(),
         (994.0, 1_016.0)
     );
+
+    // Candles folded to a rail: still a split pane, but the axis fits the
+    // tape alone as tape only does, whatever candles sit under the rail.
+    let folded = FrameLayout {
+        tape_only: false,
+        fits_tape: true,
+        native_tape: true,
+        ..layout(false)
+    };
+    let series = Series {
+        prefix: &[],
+        closed: &bars,
+        partial: None,
+    };
+    let black = egui::Color32::BLACK;
+    let resolved = folded.resolve(&painter, series, tape_range, None, &PriceView::new(), black);
+    assert_eq!(resolved.expect("a scale").0.scale.range(), (994.0, 1_016.0));
 }
 
 #[test]

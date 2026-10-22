@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use super::HeatmapConfig;
 use super::lane::{
     DEFAULT_LIVE_LANE_SHARE, LiveLaneStyle, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
+    MIN_LIVE_LANE_WIDTH_PX,
 };
 
 /// Width of a folded side's rail, in pixels: the canvas pane's rail.
@@ -92,12 +93,45 @@ fn measurable(chart_width: f32) -> bool {
 }
 
 impl LiveLaneStyle {
-    /// Fold the lane, or open it at the share it kept. Answers whether the
-    /// fold changed.
+    /// Fold the lane, or open it at the share it kept: the one write every
+    /// fold goes through. Answers whether the fold changed.
     pub fn set_fold(&mut self, fold: LaneFold) -> bool {
         let changed = self.fold != fold;
         self.fold = fold;
         changed
+    }
+
+    /// Whether the tape sits beside the candles, switched on and not alone
+    /// on the pane: the one rule that says a divider exists to fold, read by
+    /// the rail, the divider and the control plane alike.
+    #[must_use]
+    pub fn beside_candles(&self) -> bool {
+        self.enabled && !self.tape_only
+    }
+
+    /// The fold the pane shows: the kept one beside the candles, open
+    /// otherwise, since the tape's own switches win over it.
+    #[must_use]
+    pub fn shown_fold(&self) -> LaneFold {
+        if self.beside_candles() {
+            self.fold
+        } else {
+            LaneFold::Open
+        }
+    }
+
+    /// Switch the tape on or off; answers whether it changed. Switched on,
+    /// a fold it was switched off in opens at the share it kept: the Tape
+    /// chip brings back a tape, never a rail.
+    pub fn set_enabled(&mut self, enabled: bool) -> bool {
+        if self.enabled == enabled {
+            return false;
+        }
+        self.enabled = enabled;
+        if enabled {
+            self.set_fold(LaneFold::Open);
+        }
+        true
     }
 
     /// The share the lane's open band takes, clamped as the layout clamps it.
@@ -122,10 +156,11 @@ impl LiveLaneStyle {
     }
 
     /// The share of the frame's mark budget the tape spends: its open share,
-    /// all of it with the candles folded, the least with itself folded.
+    /// all of it with the candles folded, the least with itself folded. A
+    /// fold the pane does not show ([`Self::shown_fold`]) moves nothing.
     #[must_use]
     pub fn budget_share(&self) -> f32 {
-        match self.fold {
+        match self.shown_fold() {
             LaneFold::Open => self.open_share(),
             LaneFold::Candles => 1.0,
             LaneFold::Tape => 0.0,
@@ -142,19 +177,19 @@ impl LiveLaneStyle {
         }
         let width = self.resolved_width_px(chart_width);
         let x = chart_width - width;
-        (width > 0.0 && !self.tape_only).then_some((x - half_px, x + half_px))
+        (width > 0.0 && self.beside_candles()).then_some((x - half_px, x + half_px))
     }
 
     /// The folded side's rail on a chart this wide, or `None` when there is
     /// no rail to draw: the lane open, the tape off or alone on the pane.
     #[must_use]
     pub fn fold_rail(&self, chart_width: f32) -> Option<FoldRail> {
-        if !self.enabled || self.tape_only || !measurable(chart_width) {
+        if !measurable(chart_width) {
             return None;
         }
         let rail = rail_px(chart_width);
         let hit = LANE_FOLD_HIT_PX.max(rail).min(chart_width);
-        match self.fold {
+        match self.shown_fold() {
             LaneFold::Open => None,
             LaneFold::Candles => Some(FoldRail {
                 side: LaneFold::Candles,
@@ -172,6 +207,19 @@ impl LiveLaneStyle {
             }),
         }
     }
+}
+
+/// The tape widths the divider can leave open on a chart this wide: from
+/// the wider of the fold threshold and the share's floor (and the pixel
+/// floor) up to the narrower of the threshold and the share's ceiling. Past
+/// either end a side folds, so an open lane is always drawn where the hand
+/// put it rather than stopping at a clamp and then jumping to a rail.
+fn open_range_px(chart_width: f32) -> (f32, f32) {
+    let at = fold_at_px(chart_width);
+    let floor_px = MIN_LIVE_LANE_WIDTH_PX.min(chart_width / 2.0);
+    let low = at.max(chart_width * MIN_LIVE_LANE_SHARE).max(floor_px);
+    let high = (chart_width - at).min(chart_width * MAX_LIVE_LANE_SHARE);
+    (low, high)
 }
 
 /// One drag of the lane's divider, from press to release.
@@ -207,7 +255,6 @@ impl LaneDividerDrag {
         if !delta_px.is_finite() || !measurable(chart_width) {
             return false;
         }
-        let was = lane.fold;
         if chart_width != self.chart_width {
             // The pane resized under the hand: carry on from the band on
             // screen rather than from a width measured on another chart.
@@ -215,18 +262,16 @@ impl LaneDividerDrag {
             self.wanted_px = lane.resolved_width_px(chart_width);
         }
         self.wanted_px -= delta_px;
-        let at = fold_at_px(chart_width);
-        if self.wanted_px < at {
-            lane.fold = LaneFold::Tape;
-            lane.width_share = self.restore_share;
-        } else if chart_width - self.wanted_px < at {
-            lane.fold = LaneFold::Candles;
-            lane.width_share = self.restore_share;
+        let (low, high) = open_range_px(chart_width);
+        let (fold, share) = if self.wanted_px < low {
+            (LaneFold::Tape, self.restore_share)
+        } else if self.wanted_px > high {
+            (LaneFold::Candles, self.restore_share)
         } else {
-            lane.fold = LaneFold::Open;
-            lane.width_share = self.wanted_px / chart_width;
-        }
-        lane.fold != was
+            (LaneFold::Open, self.wanted_px / chart_width)
+        };
+        lane.width_share = share;
+        lane.set_fold(fold)
     }
 }
 

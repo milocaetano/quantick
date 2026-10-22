@@ -6,6 +6,7 @@ use quantick_orderflow::{LaneFold, LiveLaneStyle};
 
 use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX};
 use crate::canvas_layout as canvas;
+use crate::plot_area::split_time_strip;
 
 // One feel for both folds: the lane's numbers are the canvas pane's.
 const _: () = assert!(quantick_orderflow::LANE_FOLD_RAIL_PX == canvas::COLLAPSED_PANE_WIDTH_PX);
@@ -18,6 +19,19 @@ fn span(chart: egui::Rect, (from, to): (f32, f32)) -> egui::Rect {
 
 fn lane(pane: &ChartPane) -> Option<&LiveLaneStyle> {
     Some(&pane.orderflow.as_ref()?.cached_config().live_lane)
+}
+
+/// The side folded to a rail on this pane, if any: what drops its chrome.
+pub(super) fn shown_fold(pane: &ChartPane) -> LaneFold {
+    lane(pane).map_or(LaneFold::Open, LiveLaneStyle::shown_fold)
+}
+
+/// The jump-to-live chip at the candles' end of the time strip: `None`
+/// while following live, or with the candles folded under their rail.
+pub(super) fn live_chip(pane: &ChartPane, strip: egui::Rect) -> Option<egui::Rect> {
+    let away = !pane.model.viewport.follows_live() && shown_fold(pane) != LaneFold::Candles;
+    let (history_strip, _) = split_time_strip(strip, pane.frame.lane_divider_x);
+    away.then(|| super::live_chip_rect(history_strip))
 }
 
 /// Where the divider takes the pointer; `None` without a divider to move.
@@ -33,8 +47,12 @@ pub(super) fn handle_lane_divider(pane: &mut ChartPane, ui: &egui::Ui, chart: eg
     let Some(rect) = lane_handle(pane, chart) else {
         return;
     };
-    let fold = lane(pane).map_or(LaneFold::Open, |lane| lane.fold);
-    let sense = [egui::Sense::click_and_drag(), egui::Sense::drag()][usize::from(fold.is_open())];
+    let fold = shown_fold(pane);
+    let sense = if fold.is_open() {
+        egui::Sense::drag()
+    } else {
+        egui::Sense::click_and_drag()
+    };
     let mut handle = ui.interact(rect, pane.interaction_id("lane_divider"), sense);
     handle = match fold {
         LaneFold::Open => handle,
@@ -51,7 +69,7 @@ pub(super) fn handle_lane_divider(pane: &mut ChartPane, ui: &egui::Ui, chart: eg
         tape.release_lane_drag();
     }
     if handle.clicked() {
-        tape.edit_config(|config| config.live_lane.fold = LaneFold::Open);
+        tape.edit_config(|config| _ = config.live_lane.set_fold(LaneFold::Open));
     }
     if handle.dragged() {
         // Drag left → a wider tape, at the expense of the candles.

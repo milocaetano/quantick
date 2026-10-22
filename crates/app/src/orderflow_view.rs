@@ -453,13 +453,13 @@ impl OrderflowView {
 
     /// Put the tape on the canvas, or take it off. Off, the lane reserves no width and asks for no
     /// projection; its two layer switches stay as they were, so switching it back on returns the
-    /// same tape.
+    /// same tape, opened if it was folded ([`quantick_orderflow::LiveLaneStyle::set_enabled`]).
     pub fn set_lane_enabled(&mut self, enabled: bool) {
         if self.config.live_lane.enabled == enabled {
             return;
         }
         let before = self.config.clone();
-        self.config.live_lane.enabled = enabled;
+        self.config.live_lane.set_enabled(enabled);
         if !self.config.depth_visible_anywhere() {
             // Drop the local frame immediately; the worker clears its own.
             self.published.frame = None;

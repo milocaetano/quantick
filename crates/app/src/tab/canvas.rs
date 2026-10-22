@@ -763,7 +763,7 @@ impl Tab {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
 
-        let edge_x = [rail.right(), rail.left()][usize::from(right)];
+        let edge_x = if right { rail.left() } else { rail.right() };
         paint_rail(ui.painter(), rail, edge_x, response.hovered());
         let drawn_width = if right {
             rail.left() - canvas.left()
@@ -927,6 +927,10 @@ pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, edge_x: f32,
     painter.vline(edge_x, rail.y_range(), stroke);
     let size = egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX);
     let grip = egui::Rect::from_center_size(rail.center(), size);
-    let colour = [theme::TEXT_MUTED, theme::ACCENT][usize::from(hot)];
+    let colour = if hot {
+        theme::ACCENT
+    } else {
+        theme::TEXT_MUTED
+    };
     painter.rect_filled(grip, egui::Rounding::same(1.0), colour);
 }

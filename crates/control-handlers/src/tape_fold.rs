@@ -12,17 +12,17 @@ use serde_json::Value;
 /// What the fold rule reads about a pane.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TapeFoldPane {
-    /// The tape is switched on.
-    pub tape_on: bool,
-    /// The pane shows the tape alone, so there is no divider to fold.
-    pub tape_only: bool,
+    /// The tape is on beside the candles, so there is a divider to fold:
+    /// the lane's own rule (`LiveLaneStyle::beside_candles`), read rather
+    /// than restated, so the rail and this call can never disagree.
+    pub beside_candles: bool,
 }
 
 impl TapeFoldPane {
     /// Whether `fold` may be kept on this pane.
     #[must_use]
     pub fn admits(self, fold: TapeFold) -> bool {
-        fold == TapeFold::Open || (self.tape_on && !self.tape_only)
+        fold == TapeFold::Open || self.beside_candles
     }
 }
 
