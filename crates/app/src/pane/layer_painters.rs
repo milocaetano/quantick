@@ -22,9 +22,7 @@ use quantick_chart::day_turn::DayTurn;
 use quantick_layers::ChartLayer;
 
 use super::draw_frame::{AxisChips, DrawFrame};
-use super::{
-    ChartPane, PaneChrome, PointerCompass, PriceAxisLevel, draw_live_chip, live_chip_rect,
-};
+use super::{ChartPane, PaneChrome, PointerCompass, PriceAxisLevel, draw_live_chip};
 
 /// Font size, in points, of the "nothing in view" line drawn where the candles
 /// would be. Matches the "connecting…" line: same voice, same weight.
@@ -364,9 +362,8 @@ impl ChartPane {
         } = frame;
         // The way back from history (audit F6), painted over the strip's
         // labels on the same geometry the input path registered.
-        if !self.model.viewport.follows_live() {
-            let (history_strip, _) = split_time_strip(areas.time_strip, self.frame.lane_divider_x);
-            draw_live_chip(painter, live_chip_rect(history_strip));
+        if let Some(chip) = super::lane_rail::live_chip(self, areas.time_strip) {
+            draw_live_chip(painter, chip);
         }
         // Panned off the data (or a rebuild re-cut the series under the
         // window): the chart is whole — axis, tape, badges — but there is

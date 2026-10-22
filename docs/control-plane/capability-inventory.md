@@ -92,6 +92,7 @@ capability that cannot change application state.
 | `orderflow.bubbles.save_changes.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.size.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.tick.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
+| `orderflow.tape.fold.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.tape.opening_scale.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `scene.read` | 1 | `scene` | yes | `observe`, `observe.attention`, `observe.market`, `observe.workspace` |
 | `session.journal.delete` | 1 | `session` | no | `cockpit`, `cockpit.journal.delete` |
@@ -106,4 +107,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-81 capabilities registered.
+82 capabilities registered.

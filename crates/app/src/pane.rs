@@ -54,6 +54,7 @@ mod frame_layout;
 mod frame_stages;
 mod gesture_input;
 mod history_worker;
+mod lane_rail;
 mod layer_painters;
 mod layers;
 mod render_registry;

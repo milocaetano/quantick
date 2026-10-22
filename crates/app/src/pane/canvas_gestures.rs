@@ -8,8 +8,7 @@ use eframe::egui;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::tape_view::TapeEnd;
 
-use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX, SCROLL_ZOOM_PX};
-use crate::plot_area;
+use super::{ChartPane, SCROLL_ZOOM_PX};
 
 /// What the canvas gestures read from this frame's input pass.
 pub(super) struct CanvasInput<'r> {
@@ -34,10 +33,10 @@ impl ChartPane {
             scroll_taken,
         } = input;
         let (tape_only, native_tape) = self.tape_modes();
-        let divider = self.grabbable_lane_divider();
-        let on_divider = |position: egui::Pos2| {
-            plot_area::gesture_hits_lane_divider(divider, position.x, LANE_HANDLE_HALF_WIDTH_PX)
-        };
+        // Tape only has no divider to grab: its left edge is the canvas's.
+        let divider = self.frame.lane_divider_x.filter(|_| !tape_only);
+        let handle = super::lane_rail::lane_handle(self, area);
+        let on_divider = |at: egui::Pos2| handle.is_some_and(|rect| rect.x_range().contains(at.x));
         let over_tape = |position: egui::Pos2| {
             native_tape && (tape_only || divider.is_some_and(|x| position.x > x))
         };

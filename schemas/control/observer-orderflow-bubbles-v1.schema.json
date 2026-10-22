@@ -168,6 +168,11 @@
           "default": null,
           "description": "The quantity drawn at the configured maximum radius for stable native\nTape with a fixed display reference. Its minimum radius remains visible;\narea above that minimum grows with quantity up to this amount. Separate\nfrom `volume_dots.volume_dot_full_quantity`, which still governs grouping.\nAbsent for automatic sizing and legacy native Tape looks."
         },
+        "tape_fold": {
+          "$ref": "#/$defs/TapeFold",
+          "default": "open",
+          "description": "Which side of the pane is folded to a rail: `open`, `candles` (the\ntape takes the pane) or `tape` (the candles do). Set by dragging the\ndivider to an edge or by `orderflow.tape.fold.set`; tape only and the\ntape's own switch win over it."
+        },
         "tape_only": {
           "default": false,
           "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
@@ -679,6 +684,26 @@
         "panes"
       ],
       "type": "object"
+    },
+    "TapeFold": {
+      "description": "Which side of the pane is folded to a rail.",
+      "oneOf": [
+        {
+          "const": "open",
+          "description": "Candles and tape side by side at the tape's width share.",
+          "type": "string"
+        },
+        {
+          "const": "candles",
+          "description": "The candles fold to a rail on the left; the tape takes the pane.",
+          "type": "string"
+        },
+        {
+          "const": "tape",
+          "description": "The tape folds to a rail on the right; the candles take the pane.",
+          "type": "string"
+        }
+      ]
     },
     "TickBubbleReferenceMode": {
       "enum": [

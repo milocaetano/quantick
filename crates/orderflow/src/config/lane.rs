@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::bubbles::{
     BubbleStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
+use super::lane_fold::LaneFold;
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
 
@@ -24,9 +25,10 @@ pub const CANDLE_DOT_RADIUS_SHARE: f32 = 0.4;
 pub const DEFAULT_LIVE_LANE_SHARE: f32 = 0.35;
 /// Narrowest live lane accepted, as a share of the chart.
 pub const MIN_LIVE_LANE_SHARE: f32 = 0.05;
-/// Widest live lane accepted. The tape may take half the chart and no more:
-/// past that there is no history left to read the tape against.
-pub const MAX_LIVE_LANE_SHARE: f32 = 0.5;
+/// Widest live lane accepted. The divider travels the whole chart, so the
+/// tape may take nearly all of it; a lane that wants the rest folds the
+/// candles to a rail instead ([`LaneFold`]).
+pub const MAX_LIVE_LANE_SHARE: f32 = 1.0 - MIN_LIVE_LANE_SHARE;
 /// Narrowest lane the layout will draw, in pixels. A floor rather than a
 /// setting: below this the band stops being a tape whatever share was asked
 /// for. Capped by the chart itself, so a tiny window is still split by share.
@@ -425,6 +427,10 @@ pub struct LiveLaneStyle {
     /// only, and always on the native tape. Off by default, so every other
     /// pane keeps its candles.
     pub tape_only: bool,
+    /// Which side the divider folded to a rail, if any. The share stays
+    /// where it was, so unfolding returns the band the lane had; `tape_only`
+    /// and the tape's own switch win over it.
+    pub fold: LaneFold,
 }
 
 impl Default for LiveLaneStyle {
@@ -443,6 +449,7 @@ impl Default for LiveLaneStyle {
             forward_book_preview: false,
             stable_size: false,
             tape_only: false,
+            fold: LaneFold::Open,
         }
     }
 }
@@ -492,6 +499,9 @@ struct LiveLaneStyleRepr {
     /// Written only when on, like `native_tape`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     tape_only: bool,
+    /// Written only when folded, so an open lane keeps its file.
+    #[serde(skip_serializing_if = "LaneFold::is_open")]
+    fold: LaneFold,
 }
 
 impl Default for LiveLaneStyleRepr {
@@ -527,6 +537,7 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
                 .unwrap_or(repr.depth_time_averaging),
             stable_size: repr.stable_size,
             tape_only: repr.tape_only,
+            fold: repr.fold,
         }
     }
 }
@@ -556,6 +567,7 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
                 .then_some(style.forward_book_preview),
             stable_size: style.stable_size,
             tape_only: style.tape_only,
+            fold: style.fold,
         }
     }
 }
@@ -614,16 +626,13 @@ impl LiveLaneStyle {
         if self.tape_only {
             return chart_width;
         }
-        let share = if self.width_share.is_finite() {
-            self.width_share
-                .clamp(MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE)
-        } else {
-            DEFAULT_LIVE_LANE_SHARE
-        };
-        // The floor yields to the cap on a narrow window: half a small chart
-        // beats a fixed band that would eat all of it.
-        let floor = MIN_LIVE_LANE_WIDTH_PX.min(chart_width * MAX_LIVE_LANE_SHARE);
-        (chart_width * share).max(floor)
+        if let Some(folded) = self.folded_width_px(chart_width) {
+            return folded;
+        }
+        // The floor yields on a narrow window: half a small chart beats a
+        // fixed band that would eat all of it.
+        let floor = MIN_LIVE_LANE_WIDTH_PX.min(chart_width / 2.0);
+        (chart_width * self.open_share()).max(floor)
     }
 
     /// Market time the lane shows, given the automatic reference window (the
@@ -717,22 +726,23 @@ mod tests {
     /// The lane is a pane of the chart, so its width is a share of the chart
     /// and nothing else — the candle zoom has no say in it at all.
     #[test]
-    fn the_lane_takes_a_share_of_the_chart_and_never_more_than_half() {
+    fn the_lane_takes_a_share_of_the_chart_and_never_more_than_the_ceiling() {
         let lane = LiveLaneStyle::default();
         assert!((lane.resolved_width_px(1_000.0) - 350.0).abs() < 0.01);
         assert!((lane.resolved_width_px(600.0) - 210.0).abs() < 0.01);
 
-        // A wider share takes more of the same chart; half is the ceiling.
+        // A wider share takes more of the same chart, up to the ceiling.
         let wide = LiveLaneStyle {
-            width_share: 0.9,
+            width_share: 0.99,
             ..LiveLaneStyle::default()
         };
         let mut capped = wide.clone();
         capped.sanitize();
         assert_eq!(capped.width_share, MAX_LIVE_LANE_SHARE);
-        assert!((capped.resolved_width_px(1_000.0) - 500.0).abs() < 0.01);
-        // Even unsanitized input cannot reach past half the chart.
-        assert!(wide.resolved_width_px(1_000.0) <= 500.01);
+        let ceiling = 1_000.0 * MAX_LIVE_LANE_SHARE;
+        assert!((capped.resolved_width_px(1_000.0) - ceiling).abs() < 0.01);
+        // Even unsanitized input cannot reach past the ceiling.
+        assert!(wide.resolved_width_px(1_000.0) <= ceiling + 0.01);
 
         // Degenerate charts get no lane rather than a width the layout would
         // have to invent a meaning for.

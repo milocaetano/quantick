@@ -19,7 +19,7 @@ use crate::plot_area::PlotAreas;
 use crate::toolrail::Tool;
 
 use super::constants::PANE_DIVIDER_HANDLE_PX;
-use super::{LANE_HANDLE_HALF_WIDTH_PX, PaneChrome, SharedPointer};
+use super::{PaneChrome, SharedPointer};
 use quantick_drawings::gesture::DrawingProjection;
 
 /// What the paper arbitration reads off the pane: the projection its handles
@@ -30,7 +30,8 @@ pub(super) struct PaperArbitration<'a> {
     pub(super) drawings: &'a Drawings,
     pub(super) layer_visible: bool,
     pub(super) tape_switch: egui::Rect,
-    pub(super) lane_divider: Option<f32>,
+    /// The lane divider's grip, or a folded side's rail: chrome, never an aim.
+    pub(super) lane_handle: Option<egui::Rect>,
 }
 
 impl PaperArbitration<'_> {
@@ -77,20 +78,18 @@ impl PaperArbitration<'_> {
         // an anchor must not also cancel the order under it.
         //
         // The pane's chrome, floating (`over_chrome`: the tape's bubble-scale
-        // control, a flyout) or the canvas's own (the tape chip and lane
-        // divider, an indicator pane's header or divider), modifier or not:
-        // those pixels already mean something to a press, so the desk starts
-        // no paper press and shows no paper cursor there
+        // control, a flyout) or the canvas's own (the tape chip, the lane
+        // divider or its fold rail, an indicator pane's header or divider),
+        // modifier or not: those pixels already mean something to a press,
+        // so the desk starts no paper press and shows no paper cursor there
         // (`ChartFrame::on_chrome`).
         let on_chrome = over_chrome
             || pointer_position.is_some_and(|position| {
                 pane_chrome_hit(areas, position)
                     || self.tape_switch.contains(position)
-                    || crate::plot_area::gesture_hits_lane_divider(
-                        self.lane_divider,
-                        position.x,
-                        LANE_HANDLE_HALF_WIDTH_PX,
-                    )
+                    || self
+                        .lane_handle
+                        .is_some_and(|rect| rect.x_range().contains(position.x))
             });
         // The aim claims the *whole* plot, so it also yields to a drawing
         // handle (`ChartFrame::canvas_claimed`); the pane answers that here,

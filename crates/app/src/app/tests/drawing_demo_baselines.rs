@@ -326,7 +326,7 @@ fn nine_hook_case(case: &str, env: Env) {
                 drawing
                     .payload
                     .as_any()
-                    .downcast_ref::<drawings::AvwapPayload>()
+                    .downcast_ref::<quantick_drawings::AvwapPayload>()
                     .unwrap()
                     .bands[1]
                     .on

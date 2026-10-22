@@ -20,8 +20,9 @@
 use quantick_anchored_studies::{AnchoredAverage, AverageInputs, AverageRequest};
 use quantick_engine::Bar;
 
-use crate::drawings::{AvwapPayload, Drawings};
-use crate::state::ChartState;
+use quantick_chart::state::ChartState;
+
+use crate::{AvwapPayload, DrawingTool, Drawings};
 
 /// The registry id of the anchored-VWAP tool — the one string this module
 /// and the pane share to recognise its objects.
@@ -41,7 +42,7 @@ pub struct RefreshInputs<'a> {
 /// Mutates only derived payload state ([`AvwapCache`]), which is excluded
 /// from payload equality — so this pass can never register as a user edit in
 /// the undo history, however often it runs.
-pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
+pub fn refresh(drawings: &mut Drawings<DrawingTool>, inputs: &RefreshInputs<'_>) {
     let core = AverageInputs {
         closed: inputs.state.bars(),
         partial: inputs.state.partial(),
@@ -73,7 +74,7 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drawings::{ChartPoint, DRAWING_TOOLS};
+    use crate::{ChartPoint, DRAWING_TOOLS};
     use quantick_anchored_studies::AvwapBand;
     use quantick_engine::Trade;
     use rust_decimal::Decimal;
@@ -88,7 +89,9 @@ mod tests {
         }
     }
 
-    fn avwap_tool() -> crate::drawings::DrawingTool {
+    type Drawings = crate::Drawings<DrawingTool>;
+
+    fn avwap_tool() -> DrawingTool {
         DRAWING_TOOLS
             .into_iter()
             .find(|tool| tool.id() == TOOL_ID)
@@ -99,7 +102,7 @@ mod tests {
     /// on bar 1 must reproduce the kernel's own numbers — the refresh is a
     /// bridge, never a second implementation.
     fn state_with_fixture() -> ChartState {
-        let mut state = ChartState::new(crate::state::BarSpec::Tick(3));
+        let mut state = ChartState::new(quantick_chart::state::BarSpec::Tick(3));
         let trades = [
             trade(1, 1_000, 100, 1),
             trade(2, 1_100, 100, 1),
@@ -279,7 +282,7 @@ mod tests {
 
     #[test]
     fn an_empty_pane_holds_no_cache() {
-        let state = ChartState::new(crate::state::BarSpec::Tick(3));
+        let state = ChartState::new(quantick_chart::state::BarSpec::Tick(3));
         let mut drawings = Drawings::default();
         assert!(drawings.place(avwap_tool(), ChartPoint::at(0.0, 100.0)));
         refresh(

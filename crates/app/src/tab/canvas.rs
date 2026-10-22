@@ -742,37 +742,11 @@ impl Tab {
         {
             self.collapsed_rail = Some(rail);
         }
-        let painter = ui.painter();
-        painter.rect_filled(rail, egui::Rounding::ZERO, theme::CHROME);
-        // The inner edge, so the rail reads as chrome against the chart rather
-        // than as a stripe the chart happens to start after.
-        painter.line_segment(
-            [
-                egui::pos2(if right { rail.left() } else { rail.right() }, rail.top()),
-                egui::pos2(
-                    if right { rail.left() } else { rail.right() },
-                    rail.bottom(),
-                ),
-            ],
-            egui::Stroke::new(1.0_f32, theme::BORDER),
-        );
-
+        let reach = canvas_layout::COLLAPSED_HIT_PX.max(rail.width());
         let hit = if right {
-            egui::Rect::from_min_max(
-                egui::pos2(
-                    rail.right() - canvas_layout::COLLAPSED_HIT_PX.max(rail.width()),
-                    rail.top(),
-                ),
-                rail.max,
-            )
+            rail.with_min_x(rail.right() - reach)
         } else {
-            egui::Rect::from_min_max(
-                rail.min,
-                egui::pos2(
-                    rail.left() + canvas_layout::COLLAPSED_HIT_PX.max(rail.width()),
-                    rail.bottom(),
-                ),
-            )
+            rail.with_max_x(rail.left() + reach)
         };
         let response = ui
             .interact(
@@ -789,20 +763,8 @@ impl Tab {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
 
-        // The grip: a short bar at the rail's middle, in the colour a reader
-        // already knows means "chrome you can take hold of".
-        let grip_colour = if response.hovered() {
-            theme::ACCENT
-        } else {
-            theme::TEXT_MUTED
-        };
-        let grip = egui::Rect::from_center_size(
-            rail.center(),
-            egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX),
-        );
-        ui.painter()
-            .rect_filled(grip, egui::Rounding::same(1.0), grip_colour);
-
+        let edge_x = if right { rail.left() } else { rail.right() };
+        paint_rail(ui.painter(), rail, edge_x, response.hovered());
         let drawn_width = if right {
             rail.left() - canvas.left()
         } else {
@@ -953,4 +915,22 @@ impl Tab {
             }
         }
     }
+}
+
+/// A folded side's rail, one look for every fold: chrome, the inner edge
+/// where it meets the open side (so it reads as chrome rather than a stripe
+/// the chart starts after), and a grip in the colour a reader knows means
+/// "chrome you can take hold of", lit while `hot`.
+pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, edge_x: f32, hot: bool) {
+    painter.rect_filled(rail, egui::Rounding::ZERO, theme::CHROME);
+    let stroke = egui::Stroke::new(1.0_f32, theme::BORDER);
+    painter.vline(edge_x, rail.y_range(), stroke);
+    let size = egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX);
+    let grip = egui::Rect::from_center_size(rail.center(), size);
+    let colour = if hot {
+        theme::ACCENT
+    } else {
+        theme::TEXT_MUTED
+    };
+    painter.rect_filled(grip, egui::Rounding::same(1.0), colour);
 }

@@ -659,6 +659,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        ("orderflow.tape.fold.set", 1, Value::Null, Readback::Moves),
         (
             "orderflow.bubbles.save_changes.set",
             1,
@@ -932,6 +933,11 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "ignore_opening_burst_in_scale": true,
+            }),
+            "orderflow.tape.fold.set" => json!({
+                "tab_id": app.tabs.active_id().to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "fold": "candles",
             }),
             "orderflow.bubbles.save_changes.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),

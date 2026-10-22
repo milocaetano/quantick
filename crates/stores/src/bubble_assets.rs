@@ -3,8 +3,9 @@
 //! An asset is what [`FeedConfig::bubble_asset`](crate::config::FeedConfig::bubble_asset)
 //! names: a symbol, or a family of dated contracts one config key declares
 //! (`WIN*`). Each asset keeps its own aggression-bubble settings — the panel's
-//! look, the tape mode, the tape's and the candles' opening-burst scale and
-//! the flow pane's aggression bubbles and candle aggression switches — so a
+//! look, the tape mode, the tape lane's fold, the tape's and the candles'
+//! opening-burst scale and the flow pane's aggression bubbles and candle
+//! aggression switches — so a
 //! change made while one market is on
 //! screen never dresses another.
 //!
@@ -20,7 +21,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use quantick_orderflow::HeatmapConfig;
+use quantick_orderflow::{HeatmapConfig, LaneFold};
 
 use crate::bubble_presets::BubblePreset;
 
@@ -60,6 +61,11 @@ pub struct AssetBubbles {
     /// their scale.
     #[serde(default)]
     pub flow_ignore_opening: bool,
+    /// Which side of the tape lane is folded to a rail: the pane's, never a
+    /// preset's, so it is kept here beside the look. Absent reads open, and
+    /// an open lane writes nothing.
+    #[serde(default, skip_serializing_if = "LaneFold::is_open")]
+    pub fold: LaneFold,
     /// Every panel value, named after the preset it started from: the look,
     /// the tape mode (`live_lane.native_tape`, `live_lane.tape_only`) and the
     /// tape's opening-burst scale.
@@ -76,6 +82,7 @@ impl AssetBubbles {
             bubbles: BUBBLES_LAYER_DEFAULT,
             candle_aggression,
             flow_ignore_opening: false,
+            fold: LaneFold::Open,
             look: BubblePreset::capture(&preset.name, &config),
         }
     }

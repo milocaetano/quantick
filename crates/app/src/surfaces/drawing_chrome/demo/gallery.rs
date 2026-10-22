@@ -307,7 +307,7 @@ impl DrawingRecipient for Drawings {
                 Look::Avwap => {
                     if let Some(avwap) = payload
                         .as_any_mut()
-                        .downcast_mut::<drawings::AvwapPayload>()
+                        .downcast_mut::<quantick_drawings::AvwapPayload>()
                     {
                         avwap.bands[1].on = true;
                     }

@@ -48,6 +48,7 @@ mod strategies;
 mod tape_clock;
 
 pub use canvas::CanvasChrome;
+pub(crate) use canvas::paint_rail;
 #[cfg(test)]
 pub use quantick_session::HISTORY_NOTE_LINGER;
 pub use quantick_session::{HistoryPolicy, OlderCandles};

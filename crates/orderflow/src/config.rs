@@ -13,6 +13,7 @@ pub mod dressing;
 mod exact;
 pub mod labels;
 mod lane;
+mod lane_fold;
 pub mod legend;
 pub mod theme;
 mod tick_bubbles;
@@ -36,6 +37,9 @@ pub use lane::{
     MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WIDTH_PX,
     MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_lag_label, lane_time_ticks,
     lane_window_label, same_lane_window,
+};
+pub use lane_fold::{
+    FoldRail, LANE_FOLD_AT_PX, LANE_FOLD_HIT_PX, LANE_FOLD_RAIL_PX, LaneDividerDrag, LaneFold,
 };
 
 /// Contracts a volume dot holds at the largest radius, by default: a dot
@@ -879,6 +883,7 @@ mod tests {
                 forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
+                fold: LaneFold::Open,
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,

@@ -375,7 +375,7 @@ impl<'a> FlowFrame<'a> {
 
 /// Bring the drawings' cached folds up to date before anything paints over
 /// the depth map: the range profiles (`crate::frvp`) and the anchored VWAPs
-/// (`crate::avwap`), both from the same series.
+/// (`quantick_drawings::avwap`), both from the same series.
 ///
 /// Key-guarded inside: the common frame compares one small key per object
 /// and folds nothing. It runs after the heatmap projection on purpose — the
@@ -396,9 +396,9 @@ pub(super) fn refresh_drawing_folds(
     // The anchored-VWAP objects' cached rows, same pass discipline: a key
     // comparison per object on the common frame, a replay only when the
     // tape or the config moved.
-    crate::avwap::refresh(
+    quantick_drawings::avwap::refresh(
         drawings,
-        &crate::avwap::RefreshInputs {
+        &quantick_drawings::avwap::RefreshInputs {
             state: inputs.state,
             prefix: inputs.prefix,
         },
