@@ -19,7 +19,7 @@ use crate::plot_area::PlotAreas;
 use crate::toolrail::Tool;
 
 use super::constants::PANE_DIVIDER_HANDLE_PX;
-use super::{PaneChrome, SharedPointer};
+use super::{LANE_HANDLE_HALF_WIDTH_PX, PaneChrome, SharedPointer};
 use quantick_drawings::gesture::DrawingProjection;
 
 /// What the paper arbitration reads off the pane: the projection its handles
@@ -30,6 +30,7 @@ pub(super) struct PaperArbitration<'a> {
     pub(super) drawings: &'a Drawings,
     pub(super) layer_visible: bool,
     pub(super) tape_switch: egui::Rect,
+    pub(super) lane_divider: Option<f32>,
 }
 
 impl PaperArbitration<'_> {
@@ -63,10 +64,8 @@ impl PaperArbitration<'_> {
             ..
         } = pointer;
         let (pointer_position, drawing_area) = (pointer_position.map(pos), egui_rect(drawing_area));
-        // The aim's own area is the whole plot, tape lane included: the lane
-        // reads the same price axis as the candles beside it, and in tape
-        // only it *is* the plot, leaving `drawing_area` no width at all. The
-        // lines, their tags and the drawings keep the candles' side.
+        // The aim lives on the whole plot, tape lane included (same price
+        // axis); lines, tags and drawings keep the candles' `drawing_area`.
         let aim_area = areas.chart;
         // Simulated order lines take the pointer before the drawings: they
         // sit higher in the draw stack, and a grabbed stop is operational,
@@ -102,9 +101,9 @@ impl PaperArbitration<'_> {
         // constrains the move.
         //
         // The canvas's own chrome counts too, and it does *not* live in a
-        // floating layer, so `over_chrome` never sees it: the tape chip
-        // and an indicator pane's header or divider are pixels a press
-        // already means something on, and a modifier resting under the
+        // floating layer, so `over_chrome` never sees it: the tape chip and
+        // lane divider, an indicator pane's header or divider are pixels a
+        // press already means something on, and a modifier resting under the
         // hand must not turn "put the tape back" into "rest an order".
         //
         // Per-frame path, so it costs nothing on a frame with no modifier
@@ -122,6 +121,11 @@ impl PaperArbitration<'_> {
             .is_some_and(|position| {
                 pane_chrome_hit(areas, position)
                     || self.tape_switch.contains(position)
+                    || crate::plot_area::gesture_hits_lane_divider(
+                        self.lane_divider,
+                        position.x,
+                        LANE_HANDLE_HALF_WIDTH_PX,
+                    )
                     || (chrome.toolrail.tool() == Tool::Pointer
                         && !over_chrome
                         && bands::band_at(bands, px(position))
@@ -189,15 +193,16 @@ impl PaperArbitration<'_> {
         // band refuse a pan with no explanation at all.
         // The layer gate lives inside `hover_cursor` itself, next to the
         // frame's other decisions, so it cannot be forgotten by a caller.
-        // An aim up over the tape lane is a click there too, so its hand
-        // shows wherever the aim lives.
-        let aiming = chrome.paper.aiming();
+        let cursor_area = if chrome.paper.aiming() {
+            aim_area
+        } else {
+            drawing_area
+        };
         if chrome.paper_takes_input
             && !over_chrome
             && !tool_armed
-            && let Some(position) = pointer_position.filter(|position| {
-                drawing_area.contains(*position) || (aiming && aim_area.contains(*position))
-            })
+            && let Some(position) =
+                pointer_position.filter(|position| cursor_area.contains(*position))
             && let Some(scale) = drawing_scale.as_ref()
             && let Some(cursor) = chrome.paper.hover_cursor(position, drawing_area, scale)
         {

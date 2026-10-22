@@ -149,16 +149,23 @@ pub struct ChartFrame {
     /// The frame's held modifiers — what the cmd-trading gesture reads.
     pub keys: HeldKeys,
     /// Whether something the pane owns already holds this pixel — a
-    /// drawing a press would grab, or the canvas's own chrome. The aim is
-    /// the *last* claimant on the canvas, so it paints nothing and places
-    /// nothing there.
+    /// drawing a press would grab, or the canvas's own chrome (the tape
+    /// chip and lane divider, an indicator pane's header or divider). The
+    /// pane answers it, the way it answers "a tool is armed": the desk never
+    /// reads the drawings. The aim is the *last* claimant on the canvas, so
+    /// it paints nothing and places nothing there; the buy modifier is Shift
+    /// by default, which is also the key that levels a channel corner.
     pub canvas_claimed: bool,
-    /// This frame's wheel travel over the chart, in pixels.
+    /// This frame's wheel travel over the chart, in pixels. The ruler
+    /// spends it while the aim is up, and the host's zoom then leaves it
+    /// alone (`Gesture::scroll_consumed`).
     pub scroll_y: f32,
-    /// The wheel was *pressed* this frame.
+    /// The wheel was *pressed* this frame. With an aim up it puts the ruler
+    /// away: the hand is already on the wheel that walked it out.
     pub middle_pressed: bool,
     /// Whether the paper layer is painted this frame. Switched off, its
-    /// lines and tags are unpainted — so they take no press either.
+    /// lines and tags are unpainted — so they take no press either: an
+    /// invisible control is not a control.
     pub layer_visible: bool,
 }
 

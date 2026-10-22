@@ -153,3 +153,27 @@ fn the_tape_chip_keeps_its_press_with_shift_down() {
         "the press put the tape away"
     );
 }
+
+/// The lane's divider keeps its drag with the buy key down: Shift on it
+/// rests nothing, on either side of the hairline.
+#[test]
+fn the_lane_divider_keeps_its_press_with_shift_down() {
+    for mode in [TapeMode::Chart, TapeMode::Native] {
+        let ctx = egui::Context::default();
+        let mut app = tape_app(&ctx, mode);
+        let divider = app
+            .active_tab()
+            .flow_pane
+            .frame
+            .lane_divider_x
+            .expect("a tape lane on the flow pane");
+        for x in [divider - 2.0, divider + 2.0] {
+            let at = at_x(&app, x);
+            click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
+            assert!(
+                app.active_tab().paper.working_orders().is_empty(),
+                "{mode:?}: the divider at {x} is chrome, not a price"
+            );
+        }
+    }
+}

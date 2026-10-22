@@ -204,40 +204,21 @@ pub enum TradingTabAction {
 }
 
 /// Everything `handle_chart_input` needs from the frame, gathered by the
-/// caller so this module never reads raw input state itself.
+/// caller so this module never reads raw input state itself: the desk's
+/// `ChartFrame` in the window's types, whose fields document each value,
+/// plus the price scale the desk reads through.
 pub struct ChartInput<'a> {
     pub chart: egui::Rect,
-    /// Where the aim may live: `chart` plus the tape lane beside it, which
-    /// shares the pane's price axis. See `ChartFrame::aim_area`.
     pub aim_area: egui::Rect,
     pub scale: Option<&'a PriceScale>,
     pub pointer: Option<egui::Pos2>,
     pub primary_pressed: bool,
     pub primary_down: bool,
     pub primary_released: bool,
-    /// The frame's held modifiers — what the cmd-trading gesture reads.
     pub modifiers: egui::Modifiers,
-    /// Whether something the pane owns already holds this pixel — a
-    /// drawing a press would grab, or the canvas's own chrome (the tape
-    /// chip, an indicator pane's header or its divider). The pane answers
-    /// it, the same way it answers "a tool is armed": this module never
-    /// reads the drawings itself. The aim-anywhere cmd gesture is the
-    /// *last* claimant on the canvas, so it paints nothing and places
-    /// nothing there; the buy modifier is Shift by default, which is also
-    /// the key that levels a channel corner mid-drag.
     pub canvas_claimed: bool,
-    /// This frame's wheel travel over the chart, in pixels. The ruler
-    /// spends it while the aim is up; the chart's own zoom is told to leave
-    /// it alone on those frames (see [`PaperTrading::consumed_scroll`]).
     pub scroll_y: f32,
-    /// The wheel was *pressed* this frame. With an aim up it puts the ruler
-    /// away: the hand is already on the wheel that walked it out, so the
-    /// way back costs no travel and no glance.
     pub middle_pressed: bool,
-    /// Whether the paper layer is painted this frame. Switched off, its
-    /// lines and tags are unpainted — so they take no press either. An
-    /// invisible control is not a control, and the aim's target is now the
-    /// whole plot rather than one small label.
     pub layer_visible: bool,
 }
 
