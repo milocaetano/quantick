@@ -27,7 +27,10 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use quantick_replay::Library;
-use quantick_replay::format::{CivilTime, UtcOffset};
+use quantick_replay::download_selection::{
+    days_in_month, month_name, next_month, parse_day, previous_month, size_label, tape_bytes,
+    thousands, weekday_monday_first,
+};
 
 use crate::config::ProviderKind;
 use crate::theme::{AMBER, TEXT_MUTED, TEXT_PRIMARY, WARN};
@@ -39,11 +42,6 @@ use quantick_feed::replay_download::{
 /// Context choices offered. A week is the default; the ends are there because
 /// "just yesterday" and "the whole fortnight" are both real ways to prepare.
 const CONTEXT_CHOICES: [u32; 5] = [1, 3, 5, 10, 20];
-
-/// Roughly how many bytes one tick costs in the replay format, measured on a
-/// real B3 export: 19,139,000 bytes for 389,622 prints. Used only to size the
-/// estimate shown before a download starts, and labelled as approximate.
-const BYTES_PER_TICK: u64 = 49;
 
 /// Broker clocks a trader can state, when the provider cannot measure one.
 ///
@@ -68,12 +66,6 @@ const BROKER_CLOCKS: [(i32, &str); 7] = [
 /// panel owns no clock, and reading one here would be the only wall-clock read
 /// on the path.
 const PLACEHOLDER_MONTH: (i64, u32) = (1970, 1);
-
-/// Rough prints per session for the estimate, when nothing better is known.
-///
-/// A busy WIN day is over a million; this is deliberately a round,
-/// order-of-magnitude figure, and the interface says "about".
-const TYPICAL_TICKS_PER_SESSION: u64 = 1_000_000;
 
 /// What the panel asks the browser to do.
 pub enum GetDataAction {
@@ -1231,7 +1223,6 @@ impl GetDataPanel {
         let ready = self.day.is_some() && !self.symbol.trim().is_empty();
         ui.horizontal(|ui| {
             if let Some(day) = &self.day {
-                let bytes = TYPICAL_TICKS_PER_SESSION * BYTES_PER_TICK;
                 // Two tapes cost twice one tape, and nobody may find that out
                 // from a progress bar that keeps going after they expected it
                 // to stop. Both days are named, because "2 tapes from the
@@ -1243,7 +1234,7 @@ impl GetDataPanel {
                 ui.label(
                     egui::RichText::new(format!(
                         "Tape {days} · about {} · run-up {} session(s) · under 1 MB",
-                        size_label(bytes * tapes),
+                        size_label(tape_bytes(tapes)),
                         self.context_sessions
                     ))
                     .color(TEXT_MUTED)
@@ -1312,131 +1303,10 @@ fn draw_day_cell(
     }
 }
 
-/// `2026-08-12` → `(2026, 8, 12)`.
-fn parse_day(iso: &str) -> Option<(i64, u32, u32)> {
-    let mut parts = iso.split('-');
-    let year = parts.next()?.parse().ok()?;
-    let month = parts.next()?.parse().ok()?;
-    let day = parts.next()?.parse().ok()?;
-    Some((year, month, day))
-}
-
-fn previous_month(year: i64, month: u32) -> (i64, u32) {
-    if month == 1 {
-        (year - 1, 12)
-    } else {
-        (year, month - 1)
-    }
-}
-
-fn next_month(year: i64, month: u32) -> (i64, u32) {
-    if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
-    }
-}
-
-fn month_name(month: u32) -> &'static str {
-    const NAMES: [&str; 12] = [
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-    ];
-    NAMES.get((month as usize).wrapping_sub(1)).unwrap_or(&"—")
-}
-
-fn days_in_month(year: i64, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
-        2 => 28,
-        _ => 0,
-    }
-}
-
-/// Which column a date falls in, with Monday at 0.
-///
-/// Derived from the replay crate's own civil-date arithmetic rather than a
-/// second calendar implementation: a date means one thing in this app.
-fn weekday_monday_first(year: i64, month: u32, day: u32) -> usize {
-    let ms = CivilTime {
-        year,
-        month,
-        day,
-        hour: 0,
-        minute: 0,
-        second: 0,
-        milli: 0,
-    }
-    .epoch_millis(UtcOffset::UTC);
-    let days = ms.div_euclid(86_400_000);
-    // 1970-01-01 was a Thursday, which is column 3 when Monday is 0.
-    usize::try_from((days + 3).rem_euclid(7)).unwrap_or(0)
-}
-
-/// `1234567` → `1,234,567`.
-fn thousands(value: u64) -> String {
-    let digits = value.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-/// A size a person reads at a glance.
-fn size_label(bytes: u64) -> String {
-    const MB: u64 = 1024 * 1024;
-    if bytes >= MB {
-        format!("{} MB", bytes / MB)
-    } else {
-        format!("{} kB", bytes / 1024)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_calendar_lines_up_with_a_known_week() {
-        // 2026-08-12 was a Wednesday — the day WINQ26 expired.
-        assert_eq!(weekday_monday_first(2026, 8, 12), 2);
-        assert_eq!(weekday_monday_first(2026, 8, 10), 0, "Monday is column 0");
-        assert_eq!(weekday_monday_first(2026, 8, 16), 6, "Sunday is column 6");
-        // 1970-01-01 was a Thursday.
-        assert_eq!(weekday_monday_first(1970, 1, 1), 3);
-    }
-
-    #[test]
-    fn months_have_the_right_number_of_days() {
-        assert_eq!(days_in_month(2026, 2), 28);
-        assert_eq!(days_in_month(2024, 2), 29, "2024 is a leap year");
-        assert_eq!(days_in_month(2000, 2), 29, "so is 2000");
-        assert_eq!(days_in_month(1900, 2), 28, "but 1900 is not");
-        assert_eq!(days_in_month(2026, 8), 31);
-    }
-
-    #[test]
-    fn month_navigation_crosses_the_year() {
-        assert_eq!(previous_month(2026, 1), (2025, 12));
-        assert_eq!(next_month(2026, 12), (2027, 1));
-        assert_eq!(next_month(2026, 8), (2026, 9));
-    }
+    use quantick_replay::format::UtcOffset;
 
     #[test]
     fn an_unmeasurable_clock_raises_the_control_that_answers_it() {
@@ -1512,20 +1382,6 @@ mod tests {
             panel.month = (year, month);
         }
         assert_eq!(panel.month, (2026, 8));
-    }
-
-    #[test]
-    fn counts_and_sizes_read_at_a_glance() {
-        assert_eq!(thousands(389_622), "389,622");
-        assert_eq!(thousands(1_000_000), "1,000,000");
-        assert_eq!(thousands(7), "7");
-        assert_eq!(size_label(49_000_000), "46 MB");
-    }
-
-    #[test]
-    fn a_day_is_parsed_out_of_the_provider_s_own_spelling() {
-        assert_eq!(parse_day("2026-08-12"), Some((2026, 8, 12)));
-        assert_eq!(parse_day("nonsense"), None);
     }
 
     /// Opening the tab *is* the question "what can I download?". The chart's
