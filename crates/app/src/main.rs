@@ -23,7 +23,6 @@ use quantick_chart::geometry as chart;
 use quantick_chart::work_meter;
 use quantick_chart::{indicator_style, live_strip, price_view, state, style, viewport};
 mod audio;
-mod avwap;
 mod bands;
 mod bubble_presets;
 mod candle_presets;

@@ -642,25 +642,18 @@ impl OrderflowView {
     /// Widen or narrow the lane by a pixel drag on its divider. Dragging left
     /// (negative `delta_px`) gives the tape more room, at the expense of the
     /// history beside it; near either edge that side folds
-    /// ([`quantick_orderflow::LaneDividerDrag`]).
+    /// ([`HeatmapConfig::drag_lane_divider`]).
     pub fn resize_live_lane(&mut self, delta_px: f32, chart_width: f32) {
-        // A tape-only pane is all tape: there is no divider to move.
-        if self.config.tape_only() {
-            return;
-        }
         let before = self.config.clone();
-        let lane = &mut self.config.live_lane;
-        let begin = || quantick_orderflow::LaneDividerDrag::begin(lane, chart_width);
+        let step = self
+            .config
+            .drag_lane_divider(&mut self.lane_drag, delta_px, chart_width);
         // The width is navigation; a fold is a setting the asset keeps.
-        if self
-            .lane_drag
-            .get_or_insert_with(begin)
-            .drag(lane, delta_px, chart_width)
-        {
-            self.commit_config_changes(before);
-        } else {
-            self.apply_config(before);
-        }
+        match step {
+            Some(true) => self.commit_config_changes(before),
+            Some(false) => self.apply_config(before),
+            None => false,
+        };
     }
 
     /// The divider let go, or taken again: the next drag starts afresh.

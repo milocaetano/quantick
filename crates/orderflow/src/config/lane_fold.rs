@@ -17,6 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::HeatmapConfig;
 use super::lane::{
     DEFAULT_LIVE_LANE_SHARE, LiveLaneStyle, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
 };
@@ -226,6 +227,27 @@ impl LaneDividerDrag {
             lane.width_share = self.wanted_px / chart_width;
         }
         lane.fold != was
+    }
+}
+
+impl HeatmapConfig {
+    /// One step of the divider drag a pane carries in `hand` across frames:
+    /// the first step begins it on the lane as it stands, every later one
+    /// moves it ([`LaneDividerDrag::drag`]). `None` on a tape-only pane, which
+    /// is all tape and has no divider to move; otherwise whether the fold
+    /// changed.
+    pub fn drag_lane_divider(
+        &mut self,
+        hand: &mut Option<LaneDividerDrag>,
+        delta_px: f32,
+        chart_width: f32,
+    ) -> Option<bool> {
+        if self.tape_only() {
+            return None;
+        }
+        let lane = &mut self.live_lane;
+        let drag = hand.get_or_insert_with(|| LaneDividerDrag::begin(lane, chart_width));
+        Some(drag.drag(lane, delta_px, chart_width))
     }
 }
 

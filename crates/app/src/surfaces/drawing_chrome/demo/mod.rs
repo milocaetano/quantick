@@ -217,7 +217,7 @@ impl DrawingDemoState {
         self.take_avwap_with_lookup(slots, || {
             DRAWING_TOOLS
                 .into_iter()
-                .find(|tool| tool.id() == crate::avwap::TOOL_ID)
+                .find(|tool| tool.id() == quantick_drawings::avwap::TOOL_ID)
         })
     }
     fn take_avwap_with_lookup(

@@ -28,10 +28,10 @@ use rust_decimal::Decimal;
 use super::{TextFonts, paint_scene};
 use crate::chart::PriceScale;
 use crate::drawings::{
-    AvwapPayload, ChartPoint, DRAWING_TOOLS, DrawContext, DrawingPayload, DrawingStyle,
-    DrawingTool, FrvpPayload, MarkScene, ValueUnit, px, px_rect,
+    ChartPoint, DRAWING_TOOLS, DrawContext, DrawingPayload, DrawingStyle, DrawingTool, FrvpPayload,
+    MarkScene, ValueUnit, px, px_rect,
 };
-use quantick_drawings::Px;
+use quantick_drawings::{AvwapPayload, Px};
 
 const GOLDEN_FILE: &str = "src/pane/render_registry/drawings_scene_golden.txt";
 
