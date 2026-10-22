@@ -19,6 +19,9 @@
 //!   and optionally the session day before it joined in front of its prints,
 //!   so a rehearsed open has real order flow behind it rather than candles
 //!   that carry none.
+//! - [`download_selection`] — the days picked on the Get data calendar, the
+//!   queue that downloads them oldest first past the ones already on disk,
+//!   and how that several-day download is going.
 //!
 //! Like [`quantick_engine`], this crate is headless and deterministic: no UI, no
 //! network, no async, and no wall-clock read anywhere. The playhead is *told*
@@ -57,6 +60,7 @@
 pub mod clock;
 pub mod context;
 pub mod deals;
+pub mod download_selection;
 pub mod format;
 pub mod library;
 pub mod recorder;
