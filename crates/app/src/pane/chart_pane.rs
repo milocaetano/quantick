@@ -143,6 +143,12 @@ impl ChartPane {
         })
     }
 
+    /// The lane divider's x for its resize handle, the pan's guard and the
+    /// aim's claim alike; tape only has none (its left edge is the canvas's).
+    pub(super) fn grabbable_lane_divider(&self) -> Option<f32> {
+        self.frame.lane_divider_x.filter(|_| !self.tape_modes().0)
+    }
+
     /// What the bubble size rule reads about this pane, the facts its size
     /// sliders and `orderflow.bubbles.size.set` both judge; `None` without
     /// an order-flow view.
@@ -662,6 +668,7 @@ impl ChartPane {
             drawings: &self.drawings,
             layer_visible: paper_layer_visible,
             tape_switch: super::tape_switch_rect(areas.chart, tape_only),
+            lane_divider: self.grabbable_lane_divider(),
         }
         .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);
         let projection = gesture::DrawingProjection {

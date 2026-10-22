@@ -42,6 +42,7 @@ impl ChartInput<'_> {
     fn frame(&self) -> ChartFrame {
         ChartFrame {
             chart: bounds(self.chart),
+            aim_area: bounds(self.aim_area),
             pointer: self.pointer.map(point),
             primary_pressed: self.primary_pressed,
             primary_down: self.primary_down,
@@ -52,6 +53,7 @@ impl ChartInput<'_> {
                 alt: self.modifiers.alt,
             },
             canvas_claimed: self.canvas_claimed,
+            on_chrome: self.on_chrome,
             scroll_y: self.scroll_y,
             middle_pressed: self.middle_pressed,
             layer_visible: self.layer_visible,
@@ -153,7 +155,8 @@ impl PaperTrading {
 
     /// The cursor that announces what is under the pointer; `None` away
     /// from everything, so the caller falls through to the drawings' own
-    /// cursors. See `Gesture::hover_cursor`.
+    /// cursors. `chart` is the tag band (`tag_band`). See
+    /// `Gesture::hover_cursor`.
     #[must_use]
     pub fn hover_cursor(
         &self,

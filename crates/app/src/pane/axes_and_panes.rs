@@ -321,11 +321,10 @@ pub(super) fn handle_axis_gestures(
     chrome: &mut PaneChrome<'_>,
 ) {
     let auto = pane.frame.auto_range;
-    let (tape_only, _) = pane.tape_modes();
     // The lane's divider, as a resize handle. Registered after the chart body so it takes the
     // drag that would otherwise pan the candles behind it; the line stays a hairline and the
     // cursor says it can be moved.
-    let divider = pane.frame.lane_divider_x.filter(|_| !tape_only).map(|x| {
+    let divider = pane.grabbable_lane_divider().map(|x| {
         ui.interact(
             egui::Rect::from_min_max(
                 egui::pos2(x - LANE_HANDLE_HALF_WIDTH_PX, areas.chart.top()),

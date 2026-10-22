@@ -77,6 +77,10 @@ fn drive(
     drive_with(pane, ctx, area, events, egui::Modifiers::NONE, 1.0).2
 }
 
+/// What one driven frame left behind: the paper ruler's wheel, the control
+/// panels painted, the controls laid out and whether the paper aim is up.
+type Driven = (bool, Vec<egui::Rect>, [Option<egui::Rect>; 2], bool);
+
 fn drive_with(
     pane: &mut ChartPane,
     ctx: &egui::Context,
@@ -84,7 +88,7 @@ fn drive_with(
     events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
     density: f32,
-) -> (bool, Vec<egui::Rect>, [Option<egui::Rect>; 2]) {
+) -> Driven {
     let mut toolrail = crate::toolrail::ToolRail::new();
     let presets = crate::drawings::presets::PresetStore::load_from(
         crate::scratch::thread_dir("bubble-scale-presets").join("not-present.toml"),
@@ -182,7 +186,7 @@ fn drive_with(
             _ => None,
         })
         .collect();
-    (paper.consumed_scroll(), panels, controls)
+    (paper.consumed_scroll(), panels, controls, paper.aiming())
 }
 
 #[test]
@@ -412,7 +416,7 @@ fn wheel_over_controls_is_private_but_the_bare_chart_still_zooms() {
         ]
     };
     let before = pane.model.viewport.px_per_bar();
-    let (paper, _, _) = drive_with(
+    let (paper, ..) = drive_with(
         &mut pane,
         &ctx,
         area,
@@ -427,7 +431,7 @@ fn wheel_over_controls_is_private_but_the_bare_chart_still_zooms() {
     );
     let zoom = pane.model.viewport.px_per_bar();
     for modifiers in [egui::Modifiers::NONE, egui::Modifiers::SHIFT] {
-        let (paper, _, _) = drive_with(
+        let (paper, ..) = drive_with(
             &mut pane,
             &ctx,
             area,
@@ -441,7 +445,7 @@ fn wheel_over_controls_is_private_but_the_bare_chart_still_zooms() {
         );
         assert_eq!(pane.model.viewport.px_per_bar(), zoom);
     }
-    let (paper, _, _) = drive_with(
+    let (paper, ..) = drive_with(
         &mut pane,
         &ctx,
         area,
@@ -454,6 +458,48 @@ fn wheel_over_controls_is_private_but_the_bare_chart_still_zooms() {
         "the ruler still owns its wheel on the uncovered chart"
     );
     assert_eq!(pane.model.viewport.px_per_bar(), zoom);
+}
+
+/// The tape's size control is floating chrome over the lane and takes the
+/// click, so a held Shift there raises no aim to paint a label over it;
+/// on the bare tape beside it the aim is up.
+#[test]
+fn a_size_control_over_the_tape_holds_the_aim_off() {
+    let mut pane = pane();
+    pane.state.ingest_live(&Trade {
+        agg_id: 1,
+        timestamp_ms: 1_000,
+        price: 100.into(),
+        quantity: 1.into(),
+        side: Side::Buy,
+    });
+    let ctx = egui::Context::default();
+    let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+    drive(&mut pane, &ctx, area, vec![]);
+    let tape = drive(&mut pane, &ctx, area, vec![])[1].expect("the tape's control");
+    let shift = egui::Modifiers::SHIFT;
+    let over = tape.center();
+    let bare = egui::pos2(over.x, over.y + 120.0);
+    for (at, aims, what) in [
+        (over, false, "on the control"),
+        (bare, true, "on the bare tape"),
+    ] {
+        // Twice: the floating layer is known to the frame after the one
+        // that first drew under the pointer.
+        let mut aiming = false;
+        for _ in 0..2 {
+            aiming = drive_with(
+                &mut pane,
+                &ctx,
+                area,
+                vec![egui::Event::PointerMoved(at)],
+                shift,
+                1.0,
+            )
+            .3;
+        }
+        assert_eq!(aiming, aims, "Shift {what}");
+    }
 }
 
 #[test]
@@ -471,7 +517,7 @@ fn actual_control_panels_fit_narrow_surfaces_at_each_display_density() {
             egui::Modifiers::NONE,
             density,
         );
-        let (_, panels, controls) = drive_with(
+        let (_, panels, controls, _) = drive_with(
             &mut pane,
             &ctx,
             area,

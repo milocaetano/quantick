@@ -501,18 +501,12 @@ impl PaperTrading {
         if self.desk.gesture.cmd_preview.is_none() {
             return;
         }
-        // Lay out against the band the input hit-tests (its right edge is
-        // the lane divider when the live tape lane is up), never the full
-        // chart rect — a label painted right of the divider would be a
-        // click target the press could not find (the overlay-controls
-        // rule).
-        let band = egui::Rect::from_min_max(
-            ctx.chart_rect.min,
-            egui::pos2(
-                ctx.tag_right.min(ctx.chart_rect.right()),
-                ctx.chart_rect.max.y,
-            ),
-        );
+        // Lay out against the area the input aims in: the whole plot, the
+        // tape lane included, because the lane reads the same price axis
+        // and in tape only it is the plot. The label is no click target —
+        // the held key is — so riding over the lane promises nothing the
+        // press cannot keep.
+        let band = ctx.chart_rect;
         // The aim belongs to the pane that made it; every other pane of
         // the split paints only its echo. The desk decides which.
         let preview = match self
@@ -520,7 +514,9 @@ impl PaperTrading {
             .aim_paint(bounds(band), aimed_here, &Axis(ctx.scale))
         {
             Some(AimPaint::Full(preview)) => *preview,
-            Some(AimPaint::Echo { side, y }) => return draw_aim_echo(ctx, band, side, y),
+            Some(AimPaint::Echo { side, y, price }) => {
+                return draw_aim_echo(ctx, band, side, y, price);
+            }
             None => return,
         };
         let color = theme::side_color(preview.side);
@@ -577,14 +573,16 @@ impl PaperTrading {
     }
 }
 
-/// The aim as another pane sees it: a faint, finely dotted side-coloured
-/// line at the aimed price across the plot band. No label, chip or click
-/// target: the click belongs to the pane the aim was made in.
-fn draw_aim_echo(ctx: &PaintCtx<'_>, band: egui::Rect, side: Side, y: f32) {
-    let color = theme::side_color(side).gamma_multiply(AIM_ECHO_ALPHA);
+/// The aim as another pane sees it: the aimed price as a long-dashed line
+/// and a hollow gutter chip on this pane's own axis. No label, no click: the
+/// click is the aiming pane's. Orders and the aim wear a solid chip and a 4/4
+/// dash; the echo, no order, wears neither (`AIM_ECHO_*`).
+fn draw_aim_echo(ctx: &PaintCtx<'_>, band: egui::Rect, side: Side, y: f32, price: Decimal) {
+    let color = theme::side_color(side);
     let ends = [egui::pos2(band.left(), y), egui::pos2(band.right(), y)];
-    let stroke = egui::Stroke::new(AIM_ECHO_WIDTH_PX, color);
+    let stroke = egui::Stroke::new(AIM_ECHO_WIDTH_PX, color.gamma_multiply(AIM_ECHO_ALPHA));
     dashed_run(ctx, ends, stroke, AIM_ECHO_DASH_PX, AIM_ECHO_GAP_PX);
+    ctx.hollow_gutter_chip(y, color, &fmt_decimal(price));
 }
 
 /// A horizontal dashed run in a `dash`:`gap` rhythm. The period stretches on
