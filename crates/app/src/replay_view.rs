@@ -675,15 +675,13 @@ impl ReplayView {
                         let folder = self.folder.clone();
                         let offered = self.offered_symbols(market);
                         let day_before = self.day_before;
-                        if let Some(GetDataAction::Downloaded(tape)) = self.get_data.draw(
+                        downloaded = self.get_data.draw(
                             ui,
                             &folder,
                             self.library.as_ref(),
                             &offered,
                             day_before,
-                        ) {
-                            downloaded = Some(tape);
-                        }
+                        );
                         // Drained apart from the action, so a tick and a
                         // landed tape in the same frame do not compete for the
                         // one slot an action has.
@@ -701,10 +699,15 @@ impl ReplayView {
         // A finished download lands the trader where the session now is: back
         // on the list, with the new day scanned and already picked. Making
         // them find it again would be the one avoidable step in the whole flow.
-        if let Some(tape) = downloaded {
-            self.rescan();
-            self.select_path(&tape);
-            self.tab = BrowserTab::Sessions;
+        match downloaded {
+            Some(GetDataAction::Downloaded(tape)) => {
+                self.rescan();
+                self.select_path(&tape);
+                self.tab = BrowserTab::Sessions;
+            }
+            // One of several days landed: the list learns it, nothing is selected.
+            Some(GetDataAction::Fetched) => self.rescan(),
+            None => {}
         }
         if load_clicked {
             self.load_selected();
