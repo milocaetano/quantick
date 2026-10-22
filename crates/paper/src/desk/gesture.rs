@@ -137,6 +137,11 @@ pub enum CursorHint {
 pub struct ChartFrame {
     /// The interactive band the press is tested against.
     pub chart: Bounds,
+    /// Where the aim may live: `chart` plus any tape lane beside it. The
+    /// lane shares the pane's price axis, so a held key aims there as it
+    /// does over candles, even where the lane is the whole plot and
+    /// `chart` has no width at all (tape only).
+    pub aim_area: Bounds,
     pub pointer: Option<Point>,
     pub primary_pressed: bool,
     pub primary_down: bool,

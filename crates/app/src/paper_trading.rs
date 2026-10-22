@@ -173,13 +173,14 @@ const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
 /// dash *every frame the modifier is held*. Past this the dash period
 /// stretches instead, so the cost is bounded and the rhythm still reads.
 const CMD_LINE_MAX_DASHES: f32 = 96.0;
-/// The aim's echo in the panes it was not made in: a fine, sparse dotted
-/// rhythm on a hairline, thinner and quieter than a pending leg's 4/4 dash,
-/// so it reads as the level and never as an order or as the aim itself.
-pub(crate) const AIM_ECHO_ALPHA: f32 = 0.6;
-const AIM_ECHO_WIDTH_PX: f32 = 0.75;
-const AIM_ECHO_DASH_PX: f32 = 2.0;
-const AIM_ECHO_GAP_PX: f32 = 6.0;
+/// The aim's echo in the panes it was not made in: a side-coloured line as
+/// wide as a hovered order line and nearly opaque, so the level reads across
+/// a busy chart. Its long 6/3 dash keeps it apart from a pending order's
+/// accent 4/4 and, a step under full strength, from the aim itself.
+pub(crate) const AIM_ECHO_ALPHA: f32 = 0.85;
+const AIM_ECHO_WIDTH_PX: f32 = LINE_HOVER_WIDTH_PX;
+const AIM_ECHO_DASH_PX: f32 = 6.0;
+const AIM_ECHO_GAP_PX: f32 = 3.0;
 
 /// What the Trading tab asked of its host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +207,9 @@ pub enum TradingTabAction {
 /// caller so this module never reads raw input state itself.
 pub struct ChartInput<'a> {
     pub chart: egui::Rect,
+    /// Where the aim may live: `chart` plus the tape lane beside it, which
+    /// shares the pane's price axis. See `ChartFrame::aim_area`.
+    pub aim_area: egui::Rect,
     pub scale: Option<&'a PriceScale>,
     pub pointer: Option<egui::Pos2>,
     pub primary_pressed: bool,

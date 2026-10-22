@@ -330,12 +330,12 @@ impl Desk {
             Some(force) => {
                 let pointer = match force.x_fraction {
                     Some(fraction) => Point::new(
-                        frame.chart.left() + frame.chart.width() * fraction,
+                        frame.aim_area.left() + frame.aim_area.width() * fraction,
                         frame
                             .pointer
-                            .map_or_else(|| frame.chart.center().y, |pointer| pointer.y),
+                            .map_or_else(|| frame.aim_area.center().y, |pointer| pointer.y),
                     ),
-                    None => frame.pointer.unwrap_or(frame.chart.center()),
+                    None => frame.pointer.unwrap_or(frame.aim_area.center()),
                 };
                 (pointer, force.side, true)
             }
@@ -345,7 +345,7 @@ impl Desk {
                 (pointer, side, false)
             }
         };
-        if !frame.chart.contains(pointer) {
+        if !frame.aim_area.contains(pointer) {
             return None;
         }
         // The desk's own furniture outranks the aim, the same way an

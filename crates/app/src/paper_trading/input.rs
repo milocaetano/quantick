@@ -42,6 +42,7 @@ impl ChartInput<'_> {
     fn frame(&self) -> ChartFrame {
         ChartFrame {
             chart: bounds(self.chart),
+            aim_area: bounds(self.aim_area),
             pointer: self.pointer.map(point),
             primary_pressed: self.primary_pressed,
             primary_down: self.primary_down,

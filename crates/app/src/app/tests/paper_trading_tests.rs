@@ -2960,6 +2960,27 @@ fn aim_echo_ys(output: &egui::FullOutput, pane: egui::Rect) -> Vec<f32> {
     ys
 }
 
+/// The buy-coloured chips `output` painted in `pane`'s price gutter, the
+/// strip right of its plot, as their centre y.
+fn buy_gutter_chip_ys(output: &egui::FullOutput, pane: egui::Rect) -> Vec<f32> {
+    const GUTTER_PX: f32 = 90.0;
+    let color = crate::theme::side_color(quantick_engine::Side::Buy);
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(chip)
+                if chip.fill == color
+                    && chip.rect.left() >= pane.right()
+                    && chip.rect.right() <= pane.right() + GUTTER_PX =>
+            {
+                Some(chip.rect.center().y)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// The price at `y` on `side`'s axis, the inverse of `price_y`.
 fn price_at_y(app: &QuantickApp, side: PaneSide, y: f32) -> f64 {
     let pane = app.active_tab().pane(side);
@@ -3011,6 +3032,20 @@ fn the_aim_is_echoed_in_the_other_pane_of_the_split() {
                 "the aiming pane paints the aim, never its echo"
             );
         };
+        // The echo's price chip on `other`'s own gutter: one more buy chip
+        // than the idle frame, beside the echo line (a chip dodges the
+        // last-price row by at most its own height).
+        let assert_chip =
+            |app: &QuantickApp, idle: &egui::FullOutput, output: &egui::FullOutput| {
+                let before = buy_gutter_chip_ys(idle, rect(app, other)).len();
+                let chips = buy_gutter_chip_ys(output, rect(app, other));
+                assert_eq!(chips.len(), before + 1, "one echo chip on {other:?}");
+                let line = aim_echo_ys(output, rect(app, other))[0];
+                assert!(
+                    chips.iter().any(|y| (y - line).abs() <= 20.0),
+                    "the chip sits at the echo's price, {chips:?} vs {line}"
+                );
+            };
         let point = pane_point(&app, aimed) - egui::vec2(0.0, 40.0);
         let idle = move_chart_with(&mut app, &ctx, point, egui::Modifiers::NONE);
         assert!(
@@ -3020,6 +3055,7 @@ fn the_aim_is_echoed_in_the_other_pane_of_the_split() {
 
         let first = move_chart_with(&mut app, &ctx, point, shift);
         assert_echo(&app, &first, point);
+        assert_chip(&app, &idle, &first);
 
         let released = move_chart_with(&mut app, &ctx, point, egui::Modifiers::NONE);
         assert!(

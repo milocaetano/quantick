@@ -1156,6 +1156,7 @@ fn ruler_frame<'a>(
 ) -> ChartInput<'a> {
     ChartInput {
         chart,
+        aim_area: chart,
         scale: Some(scale),
         pointer: Some(pointer),
         primary_pressed: false,
@@ -1359,6 +1360,7 @@ fn frame_at<'a>(
 ) -> ChartInput<'a> {
     ChartInput {
         chart,
+        aim_area: chart,
         scale: Some(scale),
         pointer: Some(pointer),
         primary_pressed: pressed,
@@ -1383,6 +1385,7 @@ fn cmd_frame<'a>(
 ) -> ChartInput<'a> {
     ChartInput {
         chart,
+        aim_area: chart,
         scale: Some(scale),
         pointer: Some(pointer),
         primary_pressed: pressed,
@@ -1717,6 +1720,7 @@ fn the_aim_yields_the_pixel_to_a_drawing_already_under_it() {
 
     let over_drawing = ChartInput {
         chart,
+        aim_area: chart,
         scale: Some(&scale),
         pointer: Some(aim),
         primary_pressed: true,
@@ -2143,6 +2147,7 @@ fn a_hidden_layer_paints_nothing_and_takes_no_press() {
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
     let hidden = ChartInput {
         chart,
+        aim_area: chart,
         scale: Some(&scale),
         pointer: Some(egui::pos2(400.0, 200.0)),
         primary_pressed: true,
@@ -2619,6 +2624,7 @@ fn the_order_tags_close_is_geometric_and_beats_the_armed_click() {
     );
     let press = ChartInput {
         chart,
+        aim_area: chart,
         scale: Some(&scale),
         pointer: Some(close.center()),
         primary_pressed: true,
@@ -2661,6 +2667,7 @@ fn a_bracket_handle_press_starts_the_create_drag() {
     let handle = bracket_handle_rect(chart.right(), entry_center, false);
     let press = ChartInput {
         chart,
+        aim_area: chart,
         scale: Some(&scale),
         pointer: Some(handle.center()),
         primary_pressed: true,

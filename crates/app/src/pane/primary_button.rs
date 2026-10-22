@@ -63,6 +63,11 @@ impl PaperArbitration<'_> {
             ..
         } = pointer;
         let (pointer_position, drawing_area) = (pointer_position.map(pos), egui_rect(drawing_area));
+        // The aim's own area is the whole plot, tape lane included: the lane
+        // reads the same price axis as the candles beside it, and in tape
+        // only it *is* the plot, leaving `drawing_area` no width at all. The
+        // lines, their tags and the drawings keep the candles' side.
+        let aim_area = areas.chart;
         // Simulated order lines take the pointer before the drawings: they
         // sit higher in the draw stack, and a grabbed stop is operational,
         // not annotational. The flag mirrors the drawings' gesture
@@ -138,7 +143,7 @@ impl PaperArbitration<'_> {
         // `handle_navigation` to leave that frame's travel alone. Floating
         // controls own their wheel too, just as they own the primary press.
         let paper_scroll = pointer_position
-            .filter(|position| !over_chrome && drawing_area.contains(*position))
+            .filter(|position| !over_chrome && aim_area.contains(*position))
             .map_or(0.0, |_| {
                 ui.input(|input| {
                     let delta = input.raw_scroll_delta;
@@ -157,6 +162,7 @@ impl PaperArbitration<'_> {
         let paper_gesture = if chrome.paper_takes_input && !tool_armed {
             chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
+                aim_area,
                 scale: drawing_scale.as_ref(),
                 pointer: pointer_position,
                 primary_pressed: primary_pressed && !over_chrome && !range_held,
@@ -183,11 +189,15 @@ impl PaperArbitration<'_> {
         // band refuse a pan with no explanation at all.
         // The layer gate lives inside `hover_cursor` itself, next to the
         // frame's other decisions, so it cannot be forgotten by a caller.
+        // An aim up over the tape lane is a click there too, so its hand
+        // shows wherever the aim lives.
+        let aiming = chrome.paper.aiming();
         if chrome.paper_takes_input
             && !over_chrome
             && !tool_armed
-            && let Some(position) =
-                pointer_position.filter(|position| drawing_area.contains(*position))
+            && let Some(position) = pointer_position.filter(|position| {
+                drawing_area.contains(*position) || (aiming && aim_area.contains(*position))
+            })
             && let Some(scale) = drawing_scale.as_ref()
             && let Some(cursor) = chrome.paper.hover_cursor(position, drawing_area, scale)
         {

@@ -3,12 +3,14 @@
 //! One desk serves every pane of a split, so the price a held key aims at in
 //! one pane is a level every other pane can show. The pane the aim was made
 //! in paints the whole aim (line, label, chip and bracket). Every other pane
-//! paints an echo: a faint dashed line at the aimed price on its *own* axis,
-//! so the trader reads the level against tick, renko and minute bars at
-//! once. The echo is a picture and nothing else. It has no label, no chip
-//! and no click, because the click belongs to the pane the aim was made in.
+//! paints an echo: a side-coloured dashed line at the aimed price on its
+//! *own* axis, and that price on its own gutter, so the trader reads where
+//! the order will go against tick, renko and minute bars at once. The echo
+//! is a picture and nothing else. It has no label and no click, because the
+//! click belongs to the pane the aim was made in.
 
 use quantick_engine::Side;
+use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
 use super::Desk;
@@ -21,8 +23,9 @@ pub enum AimPaint<'a> {
     /// The pane the aim was made in: line, label, chip and bracket.
     Full(&'a CmdPreview),
     /// Any other pane: a dashed line at `y`, the aimed price mapped
-    /// through that pane's own axis.
-    Echo { side: Side, y: f32 },
+    /// through that pane's own axis, and `price`, the snapped price the
+    /// press would rest at, on that pane's gutter chip.
+    Echo { side: Side, y: f32, price: Decimal },
 }
 
 impl Desk {
@@ -37,7 +40,7 @@ impl Desk {
     /// now: a toast or menu over the band hides the pointer from the pane
     /// without making it someone else's aim. It paints the whole aim, or
     /// nothing when the aim's pointer lies outside `band` (a forced aim
-    /// parked past the tape-lane divider), and never an echo of itself.
+    /// parked outside the band), and never an echo of itself.
     #[must_use]
     pub fn aim_paint(
         &self,
@@ -55,6 +58,7 @@ impl Desk {
         (band.top() <= y && y <= band.bottom()).then_some(AimPaint::Echo {
             side: preview.side,
             y,
+            price: preview.price,
         })
     }
 }
@@ -135,6 +139,7 @@ mod tests {
     fn frame(pointer: Option<Point>, keys: HeldKeys) -> ChartFrame {
         ChartFrame {
             chart: aimed_band(),
+            aim_area: aimed_band(),
             pointer,
             primary_pressed: false,
             primary_down: false,
@@ -180,8 +185,10 @@ mod tests {
             Some(AimPaint::Echo {
                 side: Side::Buy,
                 y: OTHER.y(95.0),
+                price: Decimal::from(95),
             }),
-            "95 on the other pane's own axis, not the aimed pane's pixel"
+            "95 on the other pane's own axis, not the aimed pane's pixel, \
+             and 95 on its gutter chip"
         );
         assert_ne!(OTHER.y(95.0), AIMED.y(95.0), "the panes disagree on y");
     }
@@ -231,8 +238,9 @@ mod tests {
             Some(AimPaint::Echo {
                 side: Side::Buy,
                 y: OTHER.y(90.0),
+                price: Decimal::from(90),
             }),
-            "the aim moved to 90; the echo moved with it"
+            "the aim moved to 90; the echo and its chip moved with it"
         );
 
         let both = HeldKeys {
@@ -323,6 +331,7 @@ mod tests {
             Some(AimPaint::Echo {
                 side: Side::Buy,
                 y: OTHER.y(95.0),
+                price: Decimal::from(95),
             })
         );
     }

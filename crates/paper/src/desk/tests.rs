@@ -393,6 +393,7 @@ fn chart() -> Bounds {
 fn frame(pointer: Point, aiming: bool, pressed: bool) -> ChartFrame {
     ChartFrame {
         chart: chart(),
+        aim_area: chart(),
         pointer: Some(pointer),
         primary_pressed: pressed,
         primary_down: false,
@@ -438,6 +439,36 @@ fn a_held_key_aims_and_the_press_asks_to_rest_there() {
             raw_price: 95.0,
         })
     );
+}
+
+/// Tape only: the lane is the whole plot, so the candles' band has no width
+/// and the lines keep it, but the aim lives across the aim area and its
+/// press rests where the hand is. Outside the aim area there is no aim.
+#[test]
+fn the_aim_lives_across_the_aim_area_where_the_band_has_no_width() {
+    let dir = ScratchDir::new("desk-aim-tape");
+    let account = marked_account(&dir);
+    let mut desk = Desk::default();
+    let at = Point::new(400.0, 250.0);
+    let tape_only = |pointer, pressed| ChartFrame {
+        chart: Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(0.0, 400.0)),
+        ..frame(pointer, true, pressed)
+    };
+
+    let pressed = desk.handle_input(&account, &tape_only(at, true), Some(&LinearAxis));
+    assert_eq!(
+        pressed.command,
+        Some(ChartCommand::PlaceResting {
+            side: Side::Buy,
+            kind: EntryKind::Limit,
+            raw_price: 95.0,
+        }),
+        "the press rests at the pointer's price over the tape"
+    );
+
+    let outside = Point::new(900.0, 250.0);
+    desk.handle_input(&account, &tape_only(outside, false), Some(&LinearAxis));
+    assert_eq!(desk.gesture.cmd_preview, None, "past the aim area, no aim");
 }
 
 /// The capture hook's aim paints and never places, and a hidden layer
