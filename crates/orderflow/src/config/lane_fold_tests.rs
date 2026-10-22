@@ -299,3 +299,30 @@ fn a_drag_says_when_the_fold_changed() {
     assert!(drag.drag(&mut style, -300.0, CHART), "open again");
     assert!(!drag.drag(&mut style, f32::NAN, CHART));
 }
+
+/// A pane keeps its drag in one slot across frames: the first step begins a
+/// drag on the lane as it stands and later steps carry it on, while a
+/// tape-only pane has no divider and its slot never fills.
+#[test]
+fn a_pane_carries_its_divider_drag_in_one_slot() {
+    let mut config = HeatmapConfig::default();
+    let mut hand = None;
+    assert_eq!(
+        config.drag_lane_divider(&mut hand, -10.0, CHART),
+        Some(false)
+    );
+    assert!(hand.is_some(), "the first step began the drag");
+    assert_eq!(
+        config.drag_lane_divider(&mut hand, 10_000.0, CHART),
+        Some(true)
+    );
+    assert_eq!(config.live_lane.fold, LaneFold::Tape);
+
+    let mut alone = HeatmapConfig::default();
+    alone.live_lane.enabled = true;
+    alone.live_lane.tape_only = true;
+    assert!(alone.tape_only());
+    let (before, mut hand) = (alone.clone(), None);
+    assert_eq!(alone.drag_lane_divider(&mut hand, -300.0, CHART), None);
+    assert_eq!((alone, hand), (before, None), "nothing moved");
+}
