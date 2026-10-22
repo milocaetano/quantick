@@ -7,6 +7,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_paper::report::fit::{first_fact, fit_line};
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerView, LedgerViewChange, SessionPress,
 };
@@ -16,7 +17,7 @@ use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, liv
 
 use super::rows::{
     GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
-    draw_more_row, draw_open_row, push_groups,
+    draw_more_row, draw_open_row, push_groups, text_width,
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
@@ -660,7 +661,7 @@ enum TradePick {
 
 /// The strip under the list: trades and win rate over everything in scope,
 /// and the net points.
-fn draw_totals_strip(
+pub(super) fn draw_totals_strip(
     ui: &mut egui::Ui,
     net: (String, rust_decimal::Decimal),
     totals: &LedgerTotals,
@@ -678,8 +679,18 @@ fn draw_totals_strip(
         } else {
             String::new()
         };
+        // The net is laid out first and never cut; the counts give way.
+        let font = egui::TextStyle::Monospace.resolve(ui.style());
+        let left = format!("{} trades{win_rate}{scope}", totals.trades);
+        let fit = fit_line(
+            ui.available_width(),
+            ui.spacing().item_spacing.x,
+            &[&left],
+            &[&net.0, first_fact(&net.0)],
+            |text| text_width(ui.painter(), text, &font),
+        );
         ui.label(
-            egui::RichText::new(format!("{} trades{win_rate}{scope}", totals.trades))
+            egui::RichText::new(fit.left)
                 .monospace()
                 .color(theme::TEXT_MUTED),
         )
@@ -689,7 +700,7 @@ fn draw_totals_strip(
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(net.0)
+                egui::RichText::new(fit.right)
                     .monospace()
                     .strong()
                     .color(points_color(net.1)),

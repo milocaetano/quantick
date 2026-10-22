@@ -15,7 +15,7 @@ use rust_decimal::Decimal;
 // The items the split gave owners; `super::*` still carries the state
 // itself, the environment types and the module's constants.
 use super::ledger::LedgerPage;
-use super::rows::{GroupView, Item, LedgerRow, TradeMeta, elide_tail, ledger_detail, push_groups};
+use super::rows::{GroupView, Item, LedgerRow, TradeMeta, ledger_detail, push_groups};
 use super::window::ReportPeriod;
 use super::*;
 use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
@@ -24,6 +24,7 @@ use quantick_paper::pnl::PnlReader;
 use quantick_paper::report::readout::LedgerTotals;
 
 mod ledger_keys_tests;
+mod narrow_ledger_tests;
 
 /// A closed trade that netted `pnl` points, closing at `closed_ms`.
 fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
@@ -423,23 +424,6 @@ fn a_ledger_row_names_its_market_its_clock_its_age_and_its_ending() {
         CivilDate::from_ms(trade.closed_ms, TzOffset::new(-180)).short(),
         "16 Mar"
     );
-}
-
-/// A detail line that outgrows its share of the row is cut with an
-/// ellipsis, never clipped mid-glyph: a shortened "take prof" must not
-/// be readable as a complete exit reason.
-#[test]
-fn a_detail_line_too_long_for_its_row_is_elided_not_clipped() {
-    assert_eq!(elide_tail("take profit", 11), "take profit");
-    assert_eq!(elide_tail("take profit", 12), "take profit");
-    assert_eq!(elide_tail("take profit", 6), "take …");
-    assert_eq!(elide_tail("take profit", 2), "t…");
-    // Below the ellipsis plus a character there is nothing honest left
-    // to say, so the line says nothing.
-    assert_eq!(elide_tail("take profit", 1), "");
-    assert_eq!(elide_tail("take profit", 0), "");
-    // Multi-byte characters are counted as characters, not bytes.
-    assert_eq!(elide_tail("WINV26 · 13:01", 8), "WINV26 …");
 }
 
 /// The ledger reveals saved history one page at a time and states how

@@ -20,6 +20,7 @@ use quantick_trading::ClosedTrade;
 use crate::format::sanitize_symbol;
 use quantick_civil::{CivilDate, DAY_MS, DateRange, TzOffset};
 
+pub mod fit;
 pub mod ledger_state;
 pub mod readout;
 pub mod session_edit;

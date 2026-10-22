@@ -11,7 +11,9 @@ use egui_phosphor::regular as icons;
 use quantick_sim::{PerformanceReport, SideReport, history};
 use rust_decimal::Decimal;
 
-use super::rows::elide_tail;
+use quantick_paper::report::fit::elide_to_width;
+
+use super::rows::text_width;
 use super::{HEADLINE_FONT_PX, REPORT_LIST_MAX_H_PX, ReportView, TILE_GUTTER_PX, TILE_HEIGHT_PX};
 use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{
@@ -161,22 +163,15 @@ fn trade_list_width() -> f32 {
 
 /// Paint one row of cells on the shared column grid, each cut to its own
 /// column rather than allowed to run into the next one.
-fn paint_list_row(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    glyph_w: f32,
-    cells: &[(String, egui::Color32)],
-) {
+fn paint_list_row(painter: &egui::Painter, rect: egui::Rect, cells: &[(String, egui::Color32)]) {
     let font = egui::FontId::monospace(10.0);
     let mut x = rect.left();
     for ((text, color), (_, width)) in cells.iter().zip(TRADE_LIST_COLUMNS) {
-        let budget = ((width - 2.0 * TRADE_LIST_CELL_PAD_PX) / glyph_w)
-            .floor()
-            .max(0.0) as usize;
+        let room = width - 2.0 * TRADE_LIST_CELL_PAD_PX;
         painter.text(
             egui::pos2(x + TRADE_LIST_CELL_PAD_PX, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            elide_tail(text, budget),
+            elide_to_width(text, room, |text| text_width(painter, text, &font)),
             font.clone(),
             *color,
         );
@@ -225,16 +220,6 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
         return toggled;
     }
     let width = trade_list_width();
-    let glyph_w = ui
-        .painter()
-        .layout_no_wrap(
-            "0".to_owned(),
-            egui::FontId::monospace(10.0),
-            theme::TEXT_MUTED,
-        )
-        .size()
-        .x
-        .max(1.0);
     // Wide by nature — ten columns of facts — and long by nature too. It
     // scrolls both ways inside a bounded strip rather than pushing the
     // window wider, clipping a number in half, or growing until the metric
@@ -264,7 +249,7 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                             .iter()
                             .map(|(label, _)| ((*label).to_owned(), theme::TEXT_FAINT))
                             .collect();
-                        paint_list_row(ui.painter(), rect, glyph_w, &cells);
+                        paint_list_row(ui.painter(), rect, &cells);
                         ui.painter().line_segment(
                             [
                                 egui::pos2(rect.left(), rect.bottom()),
@@ -340,7 +325,7 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                             None => ("—".to_owned(), theme::TEXT_FAINT),
                         },
                     ];
-                    paint_list_row(ui.painter(), rect, glyph_w, &cells);
+                    paint_list_row(ui.painter(), rect, &cells);
                     // Every fact the columns cannot hold whole, on hover -
                     // including the session source, which is never guessed.
                     // Spelled with words, not an arrow: a hover card is

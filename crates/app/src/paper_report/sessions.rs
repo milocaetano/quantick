@@ -19,6 +19,9 @@ use quantick_paper::report::sessions::{LedgerFilter, SessionKey, TradeRef};
 use quantick_sim::history::SessionSource;
 use rust_decimal::Decimal;
 
+use quantick_paper::report::fit::count_and_net;
+
+use super::rows::paint_fitted;
 use super::{LEDGER_ROW_HEIGHT_PX, SourceFilter};
 use crate::paper_calendar::{CalendarAction, CalendarState, DayIndex, draw_month, today};
 use crate::paper_chrome::{pill_toggle, points_color};
@@ -303,19 +306,14 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
             );
         }
         x += 14.0;
-        painter.text(
-            egui::pos2(x, mid),
-            egui::Align2::LEFT_CENTER,
-            &head.label,
+        let rights = count_and_net(head.count, &head.net.1);
+        paint_fitted(
+            painter,
             egui::FontId::monospace(10.0),
-            theme::TEXT_PRIMARY,
-        );
-        painter.text(
-            egui::pos2(rect.right() - 6.0, mid),
-            egui::Align2::RIGHT_CENTER,
-            format!("{} · {}", head.count, head.net.1),
-            egui::FontId::monospace(10.0),
-            points_color(head.net.0),
+            [x, rect.right() - 6.0, mid],
+            &[&head.label],
+            &[&rights[0], &rights[1]],
+            [theme::TEXT_PRIMARY, points_color(head.net.0)],
         );
     }
     if response.clicked() {
