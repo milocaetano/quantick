@@ -307,12 +307,13 @@ impl Desk {
         if !self.cmd_trading.enabled || !frame.layer_visible {
             return None;
         }
-        // A drawing a press would grab, or the canvas's own chrome. The
-        // buy modifier is Shift by default — the very key that levels a
-        // channel corner — so sweeping across a drawn line blinks the aim
-        // off for its grab band, in step with the move cursor the drawings
-        // put up.
-        if frame.canvas_claimed {
+        // A drawing handle a press would grab, a live quick range, or the
+        // pane's chrome, floating or the canvas's own (`on_chrome`): the
+        // press there is not the aim's, so no label paints over it. The buy
+        // modifier is Shift by default — the very key that levels a channel
+        // corner — so sweeping across a drawn line blinks the aim off for
+        // its grab band, in step with the move cursor the drawings put up.
+        if frame.canvas_claimed || frame.on_chrome {
             return None;
         }
         // An armed limit/stop is an intent already stated, with its own
@@ -326,16 +327,19 @@ impl Desk {
             // The harness has no hand; park the pointer mid-chart, or at
             // the x the hook stated — which is the whole point of a run
             // capturing where the label rides, so it wins over a stray
-            // real pointer that in such a run is nobody's aim.
+            // real pointer that in such a run is nobody's aim. Measured
+            // across the candles' band, as it always was, and across the
+            // whole plot only where that band has no room (tape only).
             Some(force) => {
+                let band = frame.tag_band();
                 let pointer = match force.x_fraction {
                     Some(fraction) => Point::new(
-                        frame.chart.left() + frame.chart.width() * fraction,
+                        band.left() + band.width() * fraction,
                         frame
                             .pointer
-                            .map_or_else(|| frame.chart.center().y, |pointer| pointer.y),
+                            .map_or_else(|| band.center().y, |pointer| pointer.y),
                     ),
-                    None => frame.pointer.unwrap_or(frame.chart.center()),
+                    None => frame.pointer.unwrap_or(band.center()),
                 };
                 (pointer, force.side, true)
             }
@@ -345,7 +349,7 @@ impl Desk {
                 (pointer, side, false)
             }
         };
-        if !frame.chart.contains(pointer) {
+        if !frame.aim_area.contains(pointer) {
             return None;
         }
         // The desk's own furniture outranks the aim, the same way an
@@ -355,7 +359,7 @@ impl Desk {
         // with the hand cursor promising exactly that.
         if self
             .gesture
-            .control_at(account, pointer, frame.chart, axis)
+            .control_at(account, pointer, frame.tag_band(), axis)
             .is_some()
             || line_at(account, pointer, axis).is_some()
         {
@@ -407,6 +411,7 @@ impl Desk {
         // `hover_cursor` — one value each, never a formula re-run against a
         // different pointer.
         self.gesture.layer_visible = frame.layer_visible;
+        self.gesture.on_chrome = frame.on_chrome;
         self.gesture.refresh_open_tags(account, frame, axis);
         self.gesture.cmd_preview = self.compute_cmd_preview(account, frame, axis);
 
@@ -451,6 +456,13 @@ impl Desk {
         frame: &ChartFrame,
         axis: Option<&dyn PriceAxis>,
     ) -> InputOutcome {
+        // A press on the pane's chrome (the tape chip, the lane divider, a
+        // floating control) is the chrome's: no ✕, aim, armed click or line
+        // grab below starts there. A drag already in the hand keeps going.
+        let frame = &ChartFrame {
+            primary_pressed: frame.primary_pressed && !frame.on_chrome,
+            ..*frame
+        };
         let idle = self.gesture.drag == PaperDrag::None;
         // An overlay control (a tag's ✕, a bracket handle) takes the press
         // before *everything*: before the armed click — arming an order must
@@ -463,7 +475,9 @@ impl Desk {
             && idle
             && let Some(pointer) = frame.pointer
             && let Some(axis) = axis
-            && let Some(control) = self.gesture.control_at(account, pointer, frame.chart, axis)
+            && let Some(control) = self
+                .gesture
+                .control_at(account, pointer, frame.tag_band(), axis)
         {
             let command = self.press_control(control, axis.price_at(pointer.y));
             return InputOutcome::claimed(command);
@@ -491,11 +505,13 @@ impl Desk {
             }));
         }
 
-        // An armed placement takes the next chart click.
+        // An armed placement takes the next chart click, anywhere the aim
+        // could live: over candles or the tape lane, which reads the same
+        // price axis. Both ways of resting an order agree on where.
         if let Some(armed) = self.armed
             && frame.primary_pressed
             && let Some(pointer) = frame.pointer
-            && frame.chart.contains(pointer)
+            && frame.aim_area.contains(pointer)
             && let Some(axis) = axis
         {
             return InputOutcome::claimed(Some(ChartCommand::PlaceArmed {
@@ -504,11 +520,13 @@ impl Desk {
             }));
         }
 
-        // Grab a line.
+        // Grab a line, across the whole plot: the aim stands down near a
+        // line over the tape lane too (`line_at`), so the grab must answer
+        // there or that band would be dead to both.
         if frame.primary_pressed
             && idle
             && let Some(pointer) = frame.pointer
-            && frame.chart.contains(pointer)
+            && frame.aim_area.contains(pointer)
             && let Some(axis) = axis
             && let Some(target) = line_at(account, pointer, axis)
         {

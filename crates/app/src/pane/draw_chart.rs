@@ -683,11 +683,10 @@ impl ChartPane {
         } else {
             None
         };
-        // Tags anchor inside the interactive plot (left of the live lane when
-        // one is up) — the same right edge the input pass hands to
-        // `handle_chart_input`, so a painted ✕ and its press agree about
-        // where it is.
-        let tag_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
+        // Tags anchor in the band the input pass tests their ✕ against, so a
+        // painted ✕ and its press agree about where it is.
+        let candles = crate::bands::drawing_area(chart_rect, self.frame.lane_divider_x);
+        let tag_right = crate::paper_trading::tag_band(candles, chart_rect).right();
         // Hover affordances paint only on the pane whose pointer feeds the
         // paper input; the others keep display-only tags. Every pane still
         // paints the lines themselves — an order is a fact about the account,

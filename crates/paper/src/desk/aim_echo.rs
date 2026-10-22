@@ -3,12 +3,14 @@
 //! One desk serves every pane of a split, so the price a held key aims at in
 //! one pane is a level every other pane can show. The pane the aim was made
 //! in paints the whole aim (line, label, chip and bracket). Every other pane
-//! paints an echo: a faint dashed line at the aimed price on its *own* axis,
-//! so the trader reads the level against tick, renko and minute bars at
-//! once. The echo is a picture and nothing else. It has no label, no chip
-//! and no click, because the click belongs to the pane the aim was made in.
+//! paints an echo: a side-coloured dashed line at the aimed price on its
+//! *own* axis, and that price on its own gutter, so the trader reads where
+//! the order will go against tick, renko and minute bars at once. The echo
+//! is a picture and nothing else. It has no label and no click, because the
+//! click belongs to the pane the aim was made in.
 
 use quantick_engine::Side;
+use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
 use super::Desk;
@@ -21,8 +23,9 @@ pub enum AimPaint<'a> {
     /// The pane the aim was made in: line, label, chip and bracket.
     Full(&'a CmdPreview),
     /// Any other pane: a dashed line at `y`, the aimed price mapped
-    /// through that pane's own axis.
-    Echo { side: Side, y: f32 },
+    /// through that pane's own axis, and `price`, the snapped price the
+    /// press would rest at, on that pane's gutter chip.
+    Echo { side: Side, y: f32, price: Decimal },
 }
 
 impl Desk {
@@ -37,7 +40,7 @@ impl Desk {
     /// now: a toast or menu over the band hides the pointer from the pane
     /// without making it someone else's aim. It paints the whole aim, or
     /// nothing when the aim's pointer lies outside `band` (a forced aim
-    /// parked past the tape-lane divider), and never an echo of itself.
+    /// parked outside the band), and never an echo of itself.
     #[must_use]
     pub fn aim_paint(
         &self,
@@ -55,6 +58,7 @@ impl Desk {
         (band.top() <= y && y <= band.bottom()).then_some(AimPaint::Echo {
             side: preview.side,
             y,
+            price: preview.price,
         })
     }
 }
@@ -135,12 +139,14 @@ mod tests {
     fn frame(pointer: Option<Point>, keys: HeldKeys) -> ChartFrame {
         ChartFrame {
             chart: aimed_band(),
+            aim_area: aimed_band(),
             pointer,
             primary_pressed: false,
             primary_down: false,
             primary_released: false,
             keys,
             canvas_claimed: false,
+            on_chrome: false,
             scroll_y: 0.0,
             middle_pressed: false,
             layer_visible: true,
@@ -180,8 +186,10 @@ mod tests {
             Some(AimPaint::Echo {
                 side: Side::Buy,
                 y: OTHER.y(95.0),
+                price: Decimal::from(95),
             }),
-            "95 on the other pane's own axis, not the aimed pane's pixel"
+            "95 on the other pane's own axis, not the aimed pane's pixel, \
+             and 95 on its gutter chip"
         );
         assert_ne!(OTHER.y(95.0), AIMED.y(95.0), "the panes disagree on y");
     }
@@ -231,8 +239,9 @@ mod tests {
             Some(AimPaint::Echo {
                 side: Side::Buy,
                 y: OTHER.y(90.0),
+                price: Decimal::from(90),
             }),
-            "the aim moved to 90; the echo moved with it"
+            "the aim moved to 90; the echo and its chip moved with it"
         );
 
         let both = HeldKeys {
@@ -253,21 +262,24 @@ mod tests {
             assert_eq!(desk.aim_paint(other_band(), false, &OTHER), None, "{why}");
         }
 
-        let mut desk = aiming_desk(&account);
-        let mut claimed = frame(Some(Point::new(200.0, 250.0)), SHIFT);
-        claimed.canvas_claimed = true;
-        desk.handle_input(&account, &claimed, Some(&AIMED));
-        assert_eq!(
-            desk.aim_paint(other_band(), false, &OTHER),
-            None,
-            "a drawing handle or the pane chrome took the hand"
-        );
+        for (claim, why) in [
+            (true, "a drawing handle or a quick range took the hand"),
+            (false, "the pointer is on the pane's chrome"),
+        ] {
+            let mut desk = aiming_desk(&account);
+            let mut claimed = frame(Some(Point::new(200.0, 250.0)), SHIFT);
+            claimed.canvas_claimed = claim;
+            claimed.on_chrome = !claim;
+            desk.handle_input(&account, &claimed, Some(&AIMED));
+            assert_eq!(desk.aim_paint(other_band(), false, &OTHER), None, "{why}");
+        }
     }
 
     /// The pane the aim was made in never echoes it. A toast or menu over
     /// the band hides the pointer from the pane, but the pane still ran the
-    /// input, so it paints the whole aim; and a forced aim parked past the
-    /// tape-lane divider paints nothing there rather than an echo.
+    /// input, so it paints the whole aim; and asked about a band its aim's
+    /// pointer lies outside (here a forced aim parked right of it), it
+    /// paints nothing there rather than an echo.
     #[test]
     fn the_aiming_pane_never_echoes_its_own_aim() {
         let dir = ScratchDir::new("echo-self");
@@ -290,11 +302,11 @@ mod tests {
         );
         let preview = desk.gesture.cmd_preview.expect("the hook forces an aim");
         assert_eq!(preview.pointer.x, 360.0);
-        let left_of_divider = Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(300.0, 400.0));
+        let narrower = Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(300.0, 400.0));
         assert_eq!(
-            desk.aim_paint(left_of_divider, true, &AIMED),
+            desk.aim_paint(narrower, true, &AIMED),
             None,
-            "parked past the divider: no aim here, and no echo of it either"
+            "parked outside the band: no aim here, and no echo of it either"
         );
     }
 
@@ -323,6 +335,7 @@ mod tests {
             Some(AimPaint::Echo {
                 side: Side::Buy,
                 y: OTHER.y(95.0),
+                price: Decimal::from(95),
             })
         );
     }

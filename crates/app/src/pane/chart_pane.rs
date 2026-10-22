@@ -662,6 +662,7 @@ impl ChartPane {
             drawings: &self.drawings,
             layer_visible: paper_layer_visible,
             tape_switch: super::tape_switch_rect(areas.chart, tape_only),
+            lane_handle: super::lane_rail::lane_handle(self, areas.chart),
         }
         .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);
         let projection = gesture::DrawingProjection {

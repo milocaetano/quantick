@@ -149,6 +149,10 @@ pub struct SessionEntry {
     pub has_quotes: bool,
     /// Non-fatal remarks: the file loads, but something is worth knowing.
     pub notes: Vec<String>,
+    /// Whether the run-up candles written with the tape sit beside it, as
+    /// [`context::context_path`] names them. A tape without them is a
+    /// download that did not finish, or one asked for with no run-up.
+    pub has_context: bool,
 }
 
 impl SessionEntry {
@@ -392,6 +396,7 @@ fn classify(path: &Path, size_bytes: u64, library: &mut Library) {
                 side_source: header.side_source,
                 has_quotes: header.columns.has_quotes(),
                 notes,
+                has_context: context::context_path(path).is_file(),
             });
         }
         Err(FormatError { kind, detail, line }) => {
@@ -538,6 +543,21 @@ Date,Time,Price,Bid,Ask,Volume,Side
         );
     }
 
+    /// Read from the folder on every scan, never remembered: a tape whose
+    /// run-up was never written says so until the run-up is there.
+    #[test]
+    fn a_session_knows_whether_its_run_up_sits_beside_it() {
+        let scratch = Scratch::new("run-up-beside");
+        scratch.write("WINQ26/20260316.csv", GOOD);
+        let has_context = |scratch: &Scratch| scan(scratch.path()).sessions[0].has_context;
+        assert!(!has_context(&scratch), "a tape alone");
+        scratch.write(
+            "WINQ26/20260316.context.csv",
+            "# interval_ms=60000\nDate,Time,Open,High,Low,Close,Volume\n",
+        );
+        assert!(has_context(&scratch), "a fresh scan sees the run-up");
+    }
+
     #[test]
     fn a_malformed_csv_is_reported_with_its_reason() {
         let scratch = Scratch::new("malformed");
@@ -595,6 +615,7 @@ Date,Time,Price,Bid,Ask,Volume,Side
             side_source: None,
             has_quotes: false,
             notes: Vec::new(),
+            has_context: false,
         };
         assert_eq!(entry(512).size_label(), "512 B");
         assert_eq!(entry(2048).size_label(), "2 kB");

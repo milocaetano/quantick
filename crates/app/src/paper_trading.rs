@@ -69,6 +69,7 @@ mod paint_ctx;
 mod strategies;
 mod ticket;
 
+pub(crate) use paint_ctx::tag_band;
 // The tag geometry, named by the tests that press a ✕ where one was painted.
 #[cfg(test)]
 pub(crate) use paint_ctx::{clamp_tag_center, close_button_rect};
@@ -173,13 +174,15 @@ const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
 /// dash *every frame the modifier is held*. Past this the dash period
 /// stretches instead, so the cost is bounded and the rhythm still reads.
 const CMD_LINE_MAX_DASHES: f32 = 96.0;
-/// The aim's echo in the panes it was not made in: a fine, sparse dotted
-/// rhythm on a hairline, thinner and quieter than a pending leg's 4/4 dash,
-/// so it reads as the level and never as an order or as the aim itself.
-pub(crate) const AIM_ECHO_ALPHA: f32 = 0.6;
-const AIM_ECHO_WIDTH_PX: f32 = 0.75;
-const AIM_ECHO_DASH_PX: f32 = 2.0;
-const AIM_ECHO_GAP_PX: f32 = 6.0;
+/// The aim's echo in the panes it was not made in: a side-coloured line as
+/// wide as a hovered order line and nearly opaque, so the level reads across
+/// a busy chart. Its long 12/4 dash, against the 4/4 of the aim and of every
+/// working order and bracket leg (the position's entry line is solid), and
+/// its hollow chip say it is a level, not an order.
+pub(crate) const AIM_ECHO_ALPHA: f32 = 0.85;
+const AIM_ECHO_WIDTH_PX: f32 = LINE_HOVER_WIDTH_PX;
+const AIM_ECHO_DASH_PX: f32 = 12.0;
+const AIM_ECHO_GAP_PX: f32 = 4.0;
 
 /// What the Trading tab asked of its host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,37 +206,22 @@ pub enum TradingTabAction {
 }
 
 /// Everything `handle_chart_input` needs from the frame, gathered by the
-/// caller so this module never reads raw input state itself.
+/// caller so this module never reads raw input state itself: the desk's
+/// `ChartFrame` in the window's types, whose fields document each value,
+/// plus the price scale the desk reads through.
 pub struct ChartInput<'a> {
     pub chart: egui::Rect,
+    pub aim_area: egui::Rect,
     pub scale: Option<&'a PriceScale>,
     pub pointer: Option<egui::Pos2>,
     pub primary_pressed: bool,
     pub primary_down: bool,
     pub primary_released: bool,
-    /// The frame's held modifiers — what the cmd-trading gesture reads.
     pub modifiers: egui::Modifiers,
-    /// Whether something the pane owns already holds this pixel — a
-    /// drawing a press would grab, or the canvas's own chrome (the tape
-    /// chip, an indicator pane's header or its divider). The pane answers
-    /// it, the same way it answers "a tool is armed": this module never
-    /// reads the drawings itself. The aim-anywhere cmd gesture is the
-    /// *last* claimant on the canvas, so it paints nothing and places
-    /// nothing there; the buy modifier is Shift by default, which is also
-    /// the key that levels a channel corner mid-drag.
     pub canvas_claimed: bool,
-    /// This frame's wheel travel over the chart, in pixels. The ruler
-    /// spends it while the aim is up; the chart's own zoom is told to leave
-    /// it alone on those frames (see [`PaperTrading::consumed_scroll`]).
+    pub on_chrome: bool,
     pub scroll_y: f32,
-    /// The wheel was *pressed* this frame. With an aim up it puts the ruler
-    /// away: the hand is already on the wheel that walked it out, so the
-    /// way back costs no travel and no glance.
     pub middle_pressed: bool,
-    /// Whether the paper layer is painted this frame. Switched off, its
-    /// lines and tags are unpainted — so they take no press either. An
-    /// invisible control is not a control, and the aim's target is now the
-    /// whole plot rather than one small label.
     pub layer_visible: bool,
 }
 

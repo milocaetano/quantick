@@ -16,7 +16,7 @@ use rust_decimal::prelude::ToPrimitive;
 use super::cmd::{CmdPreview, CmdPreviewForce, HeldKeys};
 use super::geometry::{
     Bounds, CREATE_DECIDE_THRESHOLD_PX, LINE_GRAB_RADIUS_PX, Point, PriceAxis, TAG_BUTTON_PX,
-    TAG_GAP_PX, bracket_handle_rect, clamp_tag_center, close_button_rect, tag_row_hit,
+    TAG_GAP_PX, bracket_handle_rect, clamp_tag_center, close_button_rect, tag_band, tag_row_hit,
 };
 use crate::PaperAccount;
 use crate::account::Leg;
@@ -64,12 +64,12 @@ pub enum PaperDrag {
 /// One frame's answer for one working order's in-plot tag: computed by the
 /// input pass, read by the paint *and* by the press.
 ///
-/// A shared **value**, not a shared formula. The two sides are handed
-/// different pointers (`hover_pos` for the paint, `latest_pos` for the
-/// press) and different rects (the whole chart vs. the band left of the
-/// tape lane), so asking them to recompute the same predicate is asking
-/// them to disagree — and a ✕ that one side paints and the other side does
-/// not is a cancel the trader never saw coming.
+/// A shared **value**, not a shared formula. Both sides anchor the tags in
+/// the same rect (`tag_band`), but they are handed different pointers
+/// (`hover_pos` for the paint, `latest_pos` for the press), so asking them
+/// to recompute the same predicate is asking them to disagree — and a ✕
+/// that one side paints and the other side does not is a cancel the trader
+/// never saw coming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpenTag {
     pub key: TagKey,
@@ -135,26 +135,58 @@ pub enum CursorHint {
 /// host gathers it, so the desk never reads raw input state itself.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChartFrame {
-    /// The interactive band the press is tested against.
+    /// The candles' band, left of any tape lane. The tags, their ✕ and the
+    /// bracket handles anchor in it while it has room ([`Self::tag_band`]);
+    /// presses, grabs and the aim test against `aim_area`.
     pub chart: Bounds,
+    /// Where the aim may live: `chart` plus any tape lane beside it. The
+    /// lane shares the pane's price axis, so a held key aims there as it
+    /// does over candles, even where the lane is the whole plot and
+    /// `chart` has no width at all (tape only).
+    pub aim_area: Bounds,
     pub pointer: Option<Point>,
     pub primary_pressed: bool,
     pub primary_down: bool,
     pub primary_released: bool,
     /// The frame's held modifiers — what the cmd-trading gesture reads.
     pub keys: HeldKeys,
-    /// Whether something the pane owns already holds this pixel — a
-    /// drawing a press would grab, or the canvas's own chrome. The aim is
-    /// the *last* claimant on the canvas, so it paints nothing and places
-    /// nothing there.
+    /// Whether a drawing handle a press would grab, or a live quick range,
+    /// holds the hand. The pane answers it, the way it answers "a tool is
+    /// armed": the desk never reads the drawings. Only the aim yields to it
+    /// (it is the *last* claimant on the canvas, so it paints nothing and
+    /// places nothing there); the buy modifier is Shift by default, which
+    /// is also the key that levels a channel corner. Chrome is not a claim
+    /// but [`Self::on_chrome`], which stands every paper gesture down.
     pub canvas_claimed: bool,
-    /// This frame's wheel travel over the chart, in pixels.
+    /// Whether the pointer is on the pane's chrome: floating chrome
+    /// (`over_chrome`: the tape's bubble-scale control, a flyout, a toast)
+    /// or the canvas's own (the tape chip, the lane divider's grab band, an
+    /// indicator pane's header, chevron or divider). Answered whether or
+    /// not a modifier is held. Those pixels already mean something to a
+    /// press, so no paper press starts there (no aim, armed click, line
+    /// grab or ✕) and no paper cursor shows; a drag already in the hand
+    /// keeps running across them.
+    pub on_chrome: bool,
+    /// This frame's wheel travel over the chart, in pixels. The ruler
+    /// spends it while the aim is up, and the host's zoom then leaves it
+    /// alone (`Gesture::scroll_consumed`).
     pub scroll_y: f32,
-    /// The wheel was *pressed* this frame.
+    /// The wheel was *pressed* this frame. With an aim up it puts the ruler
+    /// away: the hand is already on the wheel that walked it out.
     pub middle_pressed: bool,
     /// Whether the paper layer is painted this frame. Switched off, its
-    /// lines and tags are unpainted — so they take no press either.
+    /// lines and tags are unpainted — so they take no press either: an
+    /// invisible control is not a control.
     pub layer_visible: bool,
+}
+
+impl ChartFrame {
+    /// Where the tags and their controls anchor this frame, and what a
+    /// capture's forced aim is measured across: see [`tag_band`].
+    #[must_use]
+    pub fn tag_band(&self) -> Bounds {
+        tag_band(self.chart, self.aim_area)
+    }
 }
 
 /// What a press asked of the account. The desk decides; the host carries it
@@ -231,6 +263,10 @@ pub struct Gesture {
     /// the gate lives *here* so that every reader honours it: an unpainted
     /// line offers no cursor, no control and no press, whoever asks.
     pub layer_visible: bool,
+    /// Whether this frame's pointer is on the pane's chrome
+    /// ([`ChartFrame::on_chrome`]). Same contract, so the cursor honours it
+    /// the way the press does: the chrome's own cursor stands.
+    pub on_chrome: bool,
     /// Harness override: paint the preview for this side, optionally at a
     /// stated x, with nobody at the keyboard (`QUANTICK_CMD_PREVIEW`).
     pub cmd_preview_force: Option<CmdPreviewForce>,
@@ -254,6 +290,7 @@ impl Default for Gesture {
             cmd_preview: None,
             open_tags: Vec::new(),
             layer_visible: true,
+            on_chrome: false,
             cmd_preview_force: None,
             order_hover_force: false,
             hovered_order: None,
@@ -334,7 +371,8 @@ impl Gesture {
     /// stale between paint and press the moment a live chart autoscales.
     /// Priority follows the draw stack: working orders on top, then the
     /// take profit, the stop, the position's ✕, and last the bracket
-    /// handles beside the entry line.
+    /// handles beside the entry line. `chart` is the frame's tag band
+    /// ([`ChartFrame::tag_band`]), the rect the paint anchors the tags in.
     #[must_use]
     pub fn control_at(
         &self,
@@ -481,7 +519,7 @@ impl Gesture {
                 || self.order_hover_force
                 || frame
                     .pointer
-                    .is_some_and(|pointer| tag_row_hit(pointer, axis.y(price), frame.chart));
+                    .is_some_and(|pointer| tag_row_hit(pointer, axis.y(price), frame.tag_band()));
             if expanded {
                 open.push(OpenTag {
                     key: TagKey::Order(order.id),
@@ -489,7 +527,7 @@ impl Gesture {
                 });
             }
         }
-        self.fill_open_legs(open, account, frame.pointer, frame.chart, axis);
+        self.fill_open_legs(open, account, frame.pointer, frame.tag_band(), axis);
     }
 
     /// The leg tags this frame opens, appended to the order tags'.
@@ -591,7 +629,7 @@ impl Gesture {
         chart: Bounds,
         axis: &dyn PriceAxis,
     ) -> Option<CursorHint> {
-        if !self.layer_visible {
+        if !self.layer_visible || self.on_chrome {
             return None;
         }
         if self.control_at(account, pointer, chart, axis).is_some() {
