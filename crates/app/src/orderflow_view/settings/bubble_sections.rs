@@ -219,7 +219,7 @@ impl LiveLaneSection<'_> {
                 lane_set |= width.inner.changed();
                 width.response
                 .on_hover_text(
-                    "how much of the chart the rolling tape takes, up to half of it. Also set by dragging the divider on the chart; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
+                    "how much of the chart the rolling tape takes, up to nearly all of it. Also set by dragging the divider on the chart, where an edge folds that side to a rail; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
                 }
                 lane_set |= window_rows(ui, lane, native_tape);

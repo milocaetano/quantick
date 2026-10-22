@@ -26,9 +26,11 @@ pub mod feed_source;
 pub mod history;
 pub mod journal_sessions;
 pub mod notify;
+pub mod opening_scale;
 pub mod pnl_display;
 pub mod recovery;
 mod tabs;
+pub mod tape_fold;
 pub mod ticket_money;
 
 pub use tabs::{TabDirectory, tab_index};

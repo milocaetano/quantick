@@ -236,6 +236,7 @@ impl ChartPane {
             self.paint_trade_marks(&frame, chrome);
         }
         self.frame.bands = carved;
+        super::lane_rail::paint_lane_rail(self, painter, chart_rect);
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
         let turns = day_turns.as_deref();
         self.paint_axis_marks(&frame, axis_x, &levels, time_chip, turns, chrome);
@@ -371,7 +372,7 @@ impl ChartPane {
             // No candles to have panned away from: the pane is the live tape.
             self.model.viewport.snap_to_live();
         }
-        let live_lane = self.lay_out_lane(chart_rect, tape_only);
+        let live_lane = self.lay_out_lane(chart_rect);
         if total == 0 {
             self.paint_empty_pane(painter, area, chart_rect, chrome);
             return None;
@@ -430,7 +431,7 @@ impl ChartPane {
     /// movement out of it: panning, zooming and dragging move the candles
     /// beside the tape and never the tape itself, so the most recent prints
     /// are on screen whatever the rest of the chart is doing.
-    fn lay_out_lane(&mut self, chart_rect: egui::Rect, tape_only: bool) -> Option<LiveLane> {
+    fn lay_out_lane(&mut self, chart_rect: egui::Rect) -> Option<LiveLane> {
         // Band and live edge in one look at the published book: the panes need
         // the instant the band's right edge stands for, and reading it again
         // further down would put a second worker-mutex wait on the render
@@ -439,13 +440,11 @@ impl ChartPane {
             .orderflow
             .as_mut()
             .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
-        let lane_width_px = if tape_only {
-            chart_rect.width()
-        } else {
-            self.orderflow
-                .as_ref()
-                .map_or(0.0, |view| view.lane_width_px(chart_rect.width()))
-        };
+        // Tape only and a folded side included: the band is the lane's own.
+        let lane_width_px = self
+            .orderflow
+            .as_ref()
+            .map_or(0.0, |view| view.lane_width_px(chart_rect.width()));
         // Everything left of the divider is the candles' pane. They pan and
         // zoom inside it exactly as they did when it was the whole chart.
         self.frame.lane_divider_x =

@@ -79,7 +79,7 @@ fn the_rail_sits_on_the_folded_edge_and_is_hit_wider_than_it_paints() {
     assert!((candles.paint_to_px - LANE_FOLD_RAIL_PX).abs() < 0.01);
     assert_eq!(candles.hit_from_px, 0.0);
     assert!((candles.hit_to_px - LANE_FOLD_HIT_PX).abs() < 0.01);
-    assert!(LANE_FOLD_HIT_PX > LANE_FOLD_RAIL_PX);
+    const { assert!(LANE_FOLD_HIT_PX > LANE_FOLD_RAIL_PX) };
 }
 
 /// Folding never touches the share, so unfolding returns the band the lane
@@ -92,7 +92,10 @@ fn unfolding_returns_the_width_the_lane_had_before_the_fold() {
     };
     let before = style.resolved_width_px(CHART);
     assert!(style.set_fold(LaneFold::Candles));
-    assert!(!style.set_fold(LaneFold::Candles), "the same fold twice is no change");
+    assert!(
+        !style.set_fold(LaneFold::Candles),
+        "the same fold twice is no change"
+    );
     assert_eq!(style.width_share, 0.42);
     assert!(style.set_fold(LaneFold::Open));
     assert!((style.resolved_width_px(CHART) - before).abs() < 0.01);
@@ -165,7 +168,11 @@ fn dragging_out_of_a_rail_opens_the_lane_where_it_is_let_go() {
     };
     let mut drag = LaneDividerDrag::begin(&style, CHART);
     drag.drag(&mut style, -50.0, CHART);
-    assert_eq!(style.fold, LaneFold::Tape, "a twitch on the rail stays folded");
+    assert_eq!(
+        style.fold,
+        LaneFold::Tape,
+        "a twitch on the rail stays folded"
+    );
     drag.drag(&mut style, -250.0, CHART);
     assert_eq!(style.fold, LaneFold::Open);
     let opened = LANE_FOLD_RAIL_PX + 300.0;
@@ -228,7 +235,10 @@ fn folding_never_regroups_the_tape() {
     folded.live_lane.fold = LaneFold::Candles;
     assert!(open.same_tape_grouping(&folded));
     assert!(folded.same_tape_grouping(&open));
-    assert!(!open.identical(&folded), "a fold is still a different setting");
+    assert!(
+        !open.identical(&folded),
+        "a fold is still a different setting"
+    );
 }
 
 /// A file from before folding opens open, an open lane writes the file it
@@ -246,4 +256,46 @@ fn a_fold_round_trips_through_its_file() {
         assert_eq!(toml::from_str::<LiveLaneStyle>(&text).unwrap(), style);
     }
     assert!(toml::from_str::<LiveLaneStyle>("fold = \"sideways\"\n").is_err());
+}
+
+/// The divider takes the pointer on the hairline's band while open and on
+/// the whole rail while folded; without a lane beside the candles there is
+/// nothing to take.
+#[test]
+fn the_divider_is_taken_on_its_band_or_on_its_rail() {
+    let open = LiveLaneStyle::default();
+    assert_eq!(open.divider_hit(CHART, 5.0), Some((645.0, 655.0)));
+    let tape = lane(LaneFold::Tape);
+    let rail = tape.fold_rail(CHART).expect("a rail");
+    let hit = Some((rail.hit_from_px, rail.hit_to_px));
+    assert_eq!(tape.divider_hit(CHART, 5.0), hit);
+    assert!((rail.edge_px() - (CHART - LANE_FOLD_RAIL_PX)).abs() < 0.01);
+    let candles = lane(LaneFold::Candles).fold_rail(CHART).expect("a rail");
+    assert!((candles.edge_px() - LANE_FOLD_RAIL_PX).abs() < 0.01);
+    let alone = LiveLaneStyle {
+        tape_only: true,
+        ..open.clone()
+    };
+    assert_eq!(alone.divider_hit(CHART, 5.0), None);
+    let off = LiveLaneStyle {
+        enabled: false,
+        ..open
+    };
+    assert_eq!(off.divider_hit(CHART, 5.0), None);
+}
+
+/// A drag says when it folded or unfolded, so the caller can keep the fold
+/// as a setting while the width stays navigation.
+#[test]
+fn a_drag_says_when_the_fold_changed() {
+    let mut style = LiveLaneStyle::default();
+    let mut drag = LaneDividerDrag::begin(&style, CHART);
+    assert!(
+        !drag.drag(&mut style, -10.0, CHART),
+        "a wider tape is no fold"
+    );
+    assert!(drag.drag(&mut style, 300.0, CHART), "folded the tape");
+    assert!(!drag.drag(&mut style, 10.0, CHART), "still folded");
+    assert!(drag.drag(&mut style, -300.0, CHART), "open again");
+    assert!(!drag.drag(&mut style, f32::NAN, CHART));
 }

@@ -14,9 +14,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 use super::constants::MAX_FOLD_IDS;
 
 use super::model::{AggressionPrimitive, normalized_area_size};
-use crate::config::{
-    DEFAULT_LIVE_LANE_SHARE, LiveLaneStyle, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
-};
+use crate::config::LiveLaneStyle;
 use crate::history::AggressorSide;
 use crate::timeline::BarTimeline;
 
@@ -42,7 +40,8 @@ fn side_key(side: AggressorSide) -> u8 {
 /// The split is the tape's own width share ([`LiveLaneStyle::width_share`]),
 /// not a number of its own: marks need room to be read, so the pane with a
 /// third of the canvas gets a third of the marks, and a trader who drags the
-/// divider moves both together.
+/// divider moves both together. A folded side keeps only a rail, so the open
+/// side spends the budget ([`LiveLaneStyle::budget_share`]).
 ///
 /// With the tape switched off there is no second pane, and the candles get the
 /// whole budget — reserving a share for a band nobody is drawing would fold the
@@ -54,12 +53,7 @@ pub(super) fn pane_budgets(limit: usize, lane: &LiveLaneStyle) -> (usize, usize)
     if !lane.enabled {
         return (limit, 0);
     }
-    let share = if lane.width_share.is_finite() {
-        lane.width_share
-            .clamp(MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE)
-    } else {
-        DEFAULT_LIVE_LANE_SHARE
-    };
+    let share = lane.budget_share();
     let lane_budget = ((limit as f32) * share).round().max(0.0) as usize;
     let lane_budget = lane_budget.clamp(2, limit.saturating_sub(2).max(2));
     (limit.saturating_sub(lane_budget).max(2), lane_budget)
@@ -307,6 +301,7 @@ pub(super) fn fold_to_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{DEFAULT_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE};
 
     /// Widening the tape buys it more marks, because marks need room.
     ///

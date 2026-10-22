@@ -1059,3 +1059,165 @@ fn the_cursor_over_a_held_band_reports_the_held_instant_not_live() {
         );
     }
 }
+
+fn primary_drag(app: &mut QuantickApp, ctx: &egui::Context, from: egui::Pos2, to: egui::Pos2) {
+    let middle = egui::pos2((from.x + to.x) / 2.0, from.y);
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(from), pointer_button(from, true)],
+    );
+    run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(middle)]);
+    run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(to)]);
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(to), pointer_button(to, false)],
+    );
+    run_frame(app, ctx);
+}
+
+fn lane_of(app: &QuantickApp) -> quantick_orderflow::LiveLaneStyle {
+    app.active_tab().tape().cached_config().live_lane.clone()
+}
+
+/// Dropping the divider near the left edge folds the candles to a rail and
+/// near the right edge folds the tape; a click on the rail brings the lane
+/// back at the width it had. The share is never touched by a fold.
+#[test]
+fn dragging_the_divider_to_an_edge_folds_that_side_and_a_click_on_its_rail_unfolds_it() {
+    use quantick_orderflow::{LANE_FOLD_RAIL_PX, LaneFold};
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    let share = lane_of(&app).width_share;
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_rect.expect("the canvas laid out");
+    let open = pane.frame.lane_divider_x.expect("the divider");
+    let y = chart.center().y;
+    let divider = |app: &QuantickApp| app.active_tab().flow_pane.frame.lane_divider_x;
+
+    primary_drag(
+        &mut app,
+        &ctx,
+        egui::pos2(open, y),
+        egui::pos2(chart.left() + 30.0, y),
+    );
+    assert_eq!(lane_of(&app).fold, LaneFold::Candles);
+    assert_eq!(lane_of(&app).width_share, share, "a fold keeps the share");
+    let folded = divider(&app).expect("the rail's edge");
+    assert!(
+        (folded - (chart.left() + LANE_FOLD_RAIL_PX)).abs() < 0.5,
+        "{folded}"
+    );
+
+    click_chart(&mut app, &ctx, egui::pos2(chart.left() + 4.0, y));
+    run_frame(&mut app, &ctx);
+    assert_eq!(lane_of(&app).fold, LaneFold::Open);
+    assert!(
+        (divider(&app).unwrap() - open).abs() < 0.5,
+        "back where it was"
+    );
+
+    primary_drag(
+        &mut app,
+        &ctx,
+        egui::pos2(open, y),
+        egui::pos2(chart.right() - 30.0, y),
+    );
+    assert_eq!(lane_of(&app).fold, LaneFold::Tape);
+    assert_eq!(lane_of(&app).width_share, share);
+    let folded = divider(&app).expect("the rail's edge");
+    assert!(
+        (folded - (chart.right() - LANE_FOLD_RAIL_PX)).abs() < 0.5,
+        "{folded}"
+    );
+
+    click_chart(&mut app, &ctx, egui::pos2(chart.right() - 4.0, y));
+    run_frame(&mut app, &ctx);
+    assert_eq!(lane_of(&app).fold, LaneFold::Open);
+    assert!((divider(&app).unwrap() - open).abs() < 0.5);
+}
+
+fn read_fold(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    let scopes = json!({"scopes":["orderflow.bubbles"]});
+    let (response, _) = unkeyed_call(app, client, "snapshot.read", scopes);
+    success_result(&response)["scopes"]["orderflow.bubbles"]["value"]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|tab| tab["panes"].as_array().unwrap())
+        .find(|pane| pane["pane_id"] == pane_id)
+        .expect("the flow pane is readable")["bubbles"]["tape_fold"]
+        .clone()
+}
+
+/// The fold is one named call away: permission-checked, safe to retry, read
+/// back, refused by name where there is no divider, and open always allowed.
+#[test]
+fn the_tape_fold_is_named_retry_safe_refused_without_a_lane_and_read_back() {
+    const FOLD: &str = "orderflow.tape.fold.set";
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    let share = lane_of(&app).width_share;
+    let directory = gateway_test_directory("tape-fold-control");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    assert_eq!(read_fold(&mut app, &mut observer), "open");
+
+    let candles = input(&app, json!({"fold": "candles"}));
+    let (denied, _) = unkeyed_call(&mut app, &mut observer, FOLD, candles.clone());
+    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
+    let (first, _) = keyed_call(
+        &mut app,
+        &mut cockpit,
+        "fold",
+        FOLD,
+        candles.clone(),
+        "fold-key",
+    );
+    let (retry, _) = keyed_call(
+        &mut app,
+        &mut cockpit,
+        "fold-retry",
+        FOLD,
+        candles.clone(),
+        "fold-key",
+    );
+    assert_eq!(first.outcome, retry.outcome);
+    assert_eq!(success_result(&first)["fold"], "candles");
+    assert_eq!(success_result(&first)["changed"], true);
+    let (again, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, candles.clone());
+    assert_eq!(success_result(&again)["changed"], false);
+    assert_eq!(read_fold(&mut app, &mut observer), "candles");
+    assert_eq!(lane_of(&app).width_share, share);
+
+    let left = input(&app, json!({"fold": "left"}));
+    let (bad, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, left);
+    assert!(error_code(&bad).is_some());
+
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.live_lane.tape_only = true);
+    let tape = input(&app, json!({"fold": "tape"}));
+    let (refused, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, tape);
+    assert_eq!(
+        violated_precondition(&refused),
+        Some(quantick_control_schema::tape_fold::BESIDE_CANDLES_PRECONDITION)
+    );
+    assert_eq!(
+        read_fold(&mut app, &mut observer),
+        "candles",
+        "nothing kept"
+    );
+    let open = input(&app, json!({"fold": "open"}));
+    let (opened, _) = unkeyed_call(&mut app, &mut cockpit, FOLD, open);
+    assert_eq!(success_result(&opened)["changed"], true);
+    assert_eq!(read_fold(&mut app, &mut observer), "open");
+    assert!(lane_of(&app).tape_only, "tape only keeps its own meaning");
+}

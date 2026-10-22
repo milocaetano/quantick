@@ -108,6 +108,16 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: LAYER_SWITCH,
     },
     UiBehaviour {
+        id: "orderflow.tape.fold.set",
+        title: "Fold the candles or the tape to a rail, or bring it back",
+        reach: "drag the tape lane's divider to the left or right edge of the pane; click the rail it leaves",
+        keys: &[(
+            Source::Authored,
+            "the tape lane's divider and rail the pane handles directly",
+        )],
+        mapping: capability!("orderflow.tape.fold.set"),
+    },
+    UiBehaviour {
         id: "orderflow.tape.opening_scale.set",
         title: "Choose whether the first recorded burst sets Tape or FLOW region size references",
         reach: "Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference",

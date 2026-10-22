@@ -27,13 +27,12 @@ mod time_axis;
 use quantick_control_host::journal;
 mod bubble_preset;
 mod bubble_save;
-mod bubble_scale;
 mod layers;
 mod layout;
 mod notify;
-mod opening_scale;
 mod orderflow;
 mod ports;
+mod tape_ports;
 mod tick_bubbles;
 pub(crate) use interaction::drawing_band_name;
 #[cfg(test)]

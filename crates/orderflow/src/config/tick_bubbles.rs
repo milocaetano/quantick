@@ -42,6 +42,7 @@ impl super::HeatmapConfig {
     pub fn same_tape_grouping(&self, other: &Self) -> bool {
         let mut compared = other.clone();
         compared.live_lane.width_share = self.live_lane.width_share;
+        compared.live_lane.fold = self.live_lane.fold;
         if self.stable_tape_groups() && other.stable_tape_groups() {
             compared.live_lane.window = self.live_lane.window;
         }

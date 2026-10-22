@@ -76,19 +76,6 @@ pub fn plot_split(
     }
 }
 
-/// Whether a pointer at `x` is on the lane divider's own resize handle.
-///
-/// The one strip of the tape a chart gesture may not have: the resize drag and
-/// the pan must never both fire on the same pixel. Everything else in the band
-/// is the candles' — the tape is pinned to the live edge and does not pan, so a
-/// drag across it has no second meaning to protect, and reserving a third of
-/// the canvas to guard a ten-pixel handle is a dead zone rather than a guard.
-/// Without a lane there is no handle, and every pixel is the candles'.
-#[must_use]
-pub fn gesture_hits_lane_divider(divider_x: Option<f32>, x: f32, half_width: f32) -> bool {
-    divider_x.is_some_and(|divider| (x - divider).abs() <= half_width)
-}
-
 /// Split the bottom time strip at the lane's divider: the candles' own time
 /// axis on the left, the lane's on the right.
 ///
@@ -413,27 +400,6 @@ mod tests {
         assert_eq!(split_time_strip(strip, None), (strip, None));
         // A divider off the strip is not a split either.
         assert_eq!(split_time_strip(strip, Some(-5.0)), (strip, None));
-    }
-
-    /// The divider is the tape's, and nothing else in the band is.
-    ///
-    /// The predicate this replaced claimed the *whole* lane, so a third of the
-    /// canvas took a press and did nothing with it: the trader pulled and the
-    /// chart did not move, with nothing on screen saying why. The wheel had
-    /// already been handed back to the candles for exactly that reason; this is
-    /// the drag catching up.
-    #[test]
-    fn only_the_divider_handle_is_off_limits_to_the_pan() {
-        let half = 5.0;
-        assert!(gesture_hits_lane_divider(Some(700.0), 700.0, half));
-        assert!(gesture_hits_lane_divider(Some(700.0), 695.0, half));
-        assert!(gesture_hits_lane_divider(Some(700.0), 705.0, half));
-        // The band beyond the handle belongs to the candles again.
-        assert!(!gesture_hits_lane_divider(Some(700.0), 706.0, half));
-        assert!(!gesture_hits_lane_divider(Some(700.0), 1_200.0, half));
-        assert!(!gesture_hits_lane_divider(Some(700.0), 694.0, half));
-        // No lane, no handle.
-        assert!(!gesture_hits_lane_divider(None, 700.0, half));
     }
 
     #[test]

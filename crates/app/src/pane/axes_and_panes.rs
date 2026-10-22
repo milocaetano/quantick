@@ -14,7 +14,7 @@ use crate::plot_area::{PlotAreas, split_time_strip};
 use crate::price_view::PriceView;
 use quantick_layers::ChartLayer;
 
-use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX, PaneChrome, SCROLL_ZOOM_PX, live_chip_rect};
+use super::{ChartPane, PaneChrome, SCROLL_ZOOM_PX, live_chip_rect};
 use quantick_chart_interaction::pane::{Effect, Intent, Model, update};
 use quantick_chart_interaction::pane_axis::{
     AxisGesture, IndicatorGesture, ScaleAction, ScaleTarget, Sizing,
@@ -321,35 +321,7 @@ pub(super) fn handle_axis_gestures(
     chrome: &mut PaneChrome<'_>,
 ) {
     let auto = pane.frame.auto_range;
-    let (tape_only, _) = pane.tape_modes();
-    // The lane's divider, as a resize handle. Registered after the chart body so it takes the
-    // drag that would otherwise pan the candles behind it; the line stays a hairline and the
-    // cursor says it can be moved.
-    let divider = pane.frame.lane_divider_x.filter(|_| !tape_only).map(|x| {
-        ui.interact(
-            egui::Rect::from_min_max(
-                egui::pos2(x - LANE_HANDLE_HALF_WIDTH_PX, areas.chart.top()),
-                egui::pos2(x + LANE_HANDLE_HALF_WIDTH_PX, areas.chart.bottom()),
-            ),
-            pane.interaction_id("lane_divider"),
-            egui::Sense::drag(),
-        )
-    });
-    if let Some(divider) = &divider {
-        if divider.hovered() || divider.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-        }
-        if divider.dragged() {
-            // Drag left → a wider tape, at the expense of the candles.
-            super::canvas_gestures::navigate(
-                pane,
-                Intent::Axis(AxisGesture::ResizeTape {
-                    delta: divider.drag_delta().x,
-                    width: areas.chart.width(),
-                }),
-            );
-        }
-    }
+    super::lane_rail::handle_lane_divider(pane, ui, areas.chart);
 
     // Bottom time strip: drag or scroll to zoom. The segment under the
     // lane zooms the lane's window, the rest zooms the candle spacing —

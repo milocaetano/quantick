@@ -13687,6 +13687,143 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Folds one side of a pane that shows the tape beside its candles to a thin rail, as dragging the divider to that edge does: candles leaves the tape the whole pane, tape leaves the candles it. Open unfolds at the width share the tape had before the fold, which folding never changes. Presentation only: executions, grouping and the tape's own switches (tape on, tape only) are untouched, and tape only wins over a fold while it is on. One of the asset's bubble settings (orderflow.bubbles names it), saved for it while its save switch is on.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.tape.fold.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "TapeFold": {
+            "description": "Which side of the pane is folded to a rail.",
+            "oneOf": [
+              {
+                "const": "open",
+                "description": "Candles and tape side by side at the tape's width share.",
+                "type": "string"
+              },
+              {
+                "const": "candles",
+                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "type": "string"
+              },
+              {
+                "const": "tape",
+                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "type": "string"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "fold": {
+            "$ref": "#/$defs/TapeFold",
+            "description": "`open` unfolds at the width the tape had before it was folded."
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "fold"
+        ],
+        "title": "TapeFoldInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "TapeFold": {
+            "description": "Which side of the pane is folded to a rail.",
+            "oneOf": [
+              {
+                "const": "open",
+                "description": "Candles and tape side by side at the tape's width share.",
+                "type": "string"
+              },
+              {
+                "const": "candles",
+                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "type": "string"
+              },
+              {
+                "const": "tape",
+                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "type": "string"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "fold": {
+            "$ref": "#/$defs/TapeFold"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "fold",
+          "changed"
+        ],
+        "title": "TapeFoldResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [
+        {
+          "description": "Folding a side needs the tape switched on beside the candles, not off and not tape only.",
+          "id": "orderflow.tape.beside_candles"
+        }
+      ],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a fold has no further effect, and the result and orderflow.bubbles report the fold kept.",
+      "title": "Fold the tape or the candles",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference. Target candle requires active tick FLOW bubbles and has an independent pane preference. Both belong to the asset the pane shows (orderflow.bubbles names it): saved for it, and back whenever a tab shows it, while its save switch is on (asset.save_changes); off, the change lasts on this pane for the session only. Target candle: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
       "destructive": false,
       "dry_run_supported": false,
@@ -19680,6 +19817,11 @@
                 "default": null,
                 "description": "The quantity drawn at the configured maximum radius for stable native\nTape with a fixed display reference. Its minimum radius remains visible;\narea above that minimum grows with quantity up to this amount. Separate\nfrom `volume_dots.volume_dot_full_quantity`, which still governs grouping.\nAbsent for automatic sizing and legacy native Tape looks."
               },
+              "tape_fold": {
+                "$ref": "#/$defs/TapeFold",
+                "default": "open",
+                "description": "Which side of the pane is folded to a rail: `open`, `candles` (the\ntape takes the pane) or `tape` (the candles do). Set by dragging the\ndivider to an edge or by `orderflow.tape.fold.set`; tape only and the\ntape's own switch win over it."
+              },
               "tape_only": {
                 "default": false,
                 "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
@@ -20191,6 +20333,26 @@
               "panes"
             ],
             "type": "object"
+          },
+          "TapeFold": {
+            "description": "Which side of the pane is folded to a rail.",
+            "oneOf": [
+              {
+                "const": "open",
+                "description": "Candles and tape side by side at the tape's width share.",
+                "type": "string"
+              },
+              {
+                "const": "candles",
+                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "type": "string"
+              },
+              {
+                "const": "tape",
+                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "type": "string"
+              }
+            ]
           },
           "TickBubbleReferenceMode": {
             "enum": [
