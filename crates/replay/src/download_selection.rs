@@ -25,11 +25,11 @@
 //! moves it into place only once whole, and the library never lists a `.part`
 //! file. So a tape in the folder is never a truncated one. What a refused or
 //! cancelled day *can* leave is a whole tape without the run-up written after
-//! it. Such a day is remembered as unfinished and is never counted as already
-//! here, so the next several-day download fetches it again rather than
-//! skipping a day that did not complete.
+//! it. So a day is already here only when the scanned folder holds both its
+//! tape and its run-up file — read from disk on every scan, never remembered —
+//! and a several-day download fetches any other day again.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::ops::Bound;
 use std::path::PathBuf;
 
@@ -133,31 +133,35 @@ impl DaySelection {
     }
 }
 
-/// The days of `symbol` the scanned folder holds, `YYYY-MM-DD`.
+/// The days of `symbol` the scanned folder holds whole — tape and run-up
+/// both — `YYYY-MM-DD`.
 ///
 /// Another contract's tape of the same date is not this one's, so the symbol
 /// is matched exactly.
 #[must_use]
 pub fn held_days(library: &Library, symbol: &str) -> BTreeSet<String> {
+    days_of(library, symbol, true)
+}
+
+fn days_of(library: &Library, symbol: &str, whole: bool) -> BTreeSet<String> {
     library
         .sessions
         .iter()
-        .filter(|held| held.symbol == symbol)
+        .filter(|held| held.symbol == symbol && (held.has_context || !whole))
         .filter_map(|held| held.date.map(|d| d.label()))
         .collect()
 }
 
-/// The days on disk for the typed symbol, worked out once per folder scan and
-/// symbol rather than once per frame, minus the days a download left
-/// unfinished.
+/// The days on disk for the typed symbol, read once per folder scan and
+/// symbol rather than once per frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HeldDays {
-    /// The symbol `days` was read for; `None` until read, and after a rescan.
+    /// The symbol these were read for; `None` until read, and after a rescan.
     symbol: Option<String>,
-    days: BTreeSet<String>,
-    /// Days per symbol refused or cancelled after starting, whose tape may
-    /// stand on disk without the rest of its download.
-    unfinished: BTreeMap<String, BTreeSet<String>>,
+    /// Days whose tape and run-up are both in the folder.
+    whole: BTreeSet<String>,
+    /// Days whose tape is in the folder, run-up or not.
+    tapes: BTreeSet<String>,
 }
 
 impl HeldDays {
@@ -171,34 +175,24 @@ impl HeldDays {
         if self.symbol.as_deref() == Some(symbol) {
             return;
         }
-        self.days = library.map_or_else(BTreeSet::new, |l| held_days(l, symbol));
+        let read = |whole| library.map_or_else(BTreeSet::new, |l| days_of(l, symbol, whole));
+        self.whole = read(true);
+        self.tapes = read(false);
         self.symbol = Some(symbol.to_owned());
     }
 
-    /// Whether the folder holds the whole of `day` for the refreshed symbol.
+    /// Whether the folder holds the whole of `day`, tape and run-up: the
+    /// only day a several-day download skips as already here.
     #[must_use]
     pub fn contains(&self, day: &str) -> bool {
-        self.days.contains(day)
-            && !self
-                .symbol
-                .as_ref()
-                .and_then(|symbol| self.unfinished.get(symbol))
-                .is_some_and(|days| days.contains(day))
+        self.whole.contains(day)
     }
 
-    /// `day` of `symbol` started and did not finish.
-    pub fn unfinished(&mut self, symbol: &str, day: &str) {
-        self.unfinished
-            .entry(symbol.to_owned())
-            .or_default()
-            .insert(day.to_owned());
-    }
-
-    /// `day` of `symbol` landed whole.
-    pub fn finished(&mut self, symbol: &str, day: &str) {
-        if let Some(days) = self.unfinished.get_mut(symbol) {
-            days.remove(day);
-        }
+    /// Whether the folder holds `day`'s tape, run-up or not — all the day
+    /// before a picked day needs, since it joins the chart as prints only.
+    #[must_use]
+    pub fn has_tape(&self, day: &str) -> bool {
+        self.tapes.contains(day)
     }
 }
 
@@ -225,11 +219,16 @@ pub enum DayStatus {
     Running {
         /// Prints written so far.
         ticks: u64,
+        /// Sessions of run-up written so far.
+        run_up: u32,
     },
     /// On disk.
     Fetched {
         /// Prints it holds.
         ticks: u64,
+        /// Sessions of run-up the broker served, which may be fewer than
+        /// asked for — or none.
+        run_up: u32,
     },
     /// Already in the folder, so skipped: re-exporting it would cost minutes
     /// and overwrite a recording the trader may have corrected by hand.
@@ -258,16 +257,24 @@ pub struct BatchRow {
 }
 
 impl BatchRow {
-    /// The row as the panel prints it, with a refusal's fix on its own line.
+    /// The row as the panel prints it, with a refusal's fix on its own line;
+    /// `asked` is the run-up every day was asked for.
     #[must_use]
-    pub fn line(&self) -> String {
+    pub fn line(&self, asked: u32) -> String {
         let day = &self.day;
         match &self.status {
             DayStatus::Waiting => format!("{day} — waiting"),
-            DayStatus::Running { ticks } => {
+            DayStatus::Running { ticks, .. } => {
                 format!("{day} — downloading, {} prints so far", prints(*ticks))
             }
-            DayStatus::Fetched { ticks } => format!("{day} — {} prints downloaded", prints(*ticks)),
+            DayStatus::Fetched { ticks, run_up } if *run_up < asked => format!(
+                "{day} — {} prints downloaded, run-up short: {run_up} of {asked} sessions — \
+                 the broker held fewer sessions than asked for",
+                prints(*ticks)
+            ),
+            DayStatus::Fetched { ticks, .. } => {
+                format!("{day} — {} prints downloaded", prints(*ticks))
+            }
             DayStatus::AlreadyHere => format!("{day} — already here, skipped"),
             DayStatus::Refused { headline, fix } => match fix {
                 Some(fix) => format!("{day} — refused: {headline}\n{fix}"),
@@ -286,6 +293,8 @@ impl BatchRow {
 pub struct BatchSummary {
     /// Days that landed.
     pub fetched: usize,
+    /// Of those, days whose run-up came short of what was asked for.
+    pub short_run_up: usize,
     /// Days skipped because the folder held them.
     pub already_here: usize,
     /// Days the provider refused.
@@ -303,8 +312,12 @@ impl BatchSummary {
     /// after several days, so it says where they went.
     #[must_use]
     pub fn line(&self) -> String {
+        let short = match self.short_run_up {
+            0 => String::new(),
+            n => format!(", {n} with a short run-up"),
+        };
         let mut line = format!(
-            "{} fetched ({} prints) · {} already here · {} refused",
+            "{} fetched ({} prints{short}) · {} already here · {} refused",
             self.fetched,
             prints(self.ticks),
             self.already_here,
@@ -379,7 +392,10 @@ impl DayBatch {
             .rows
             .iter_mut()
             .find(|row| row.status == DayStatus::Waiting)?;
-        row.status = DayStatus::Running { ticks: 0 };
+        row.status = DayStatus::Running {
+            ticks: 0,
+            run_up: 0,
+        };
         Some(row.day.clone())
     }
 
@@ -394,12 +410,20 @@ impl DayBatch {
 
     /// Prints written so far for the running day.
     pub fn progress(&mut self, ticks: u64) {
-        self.settle(|_| DayStatus::Running { ticks });
+        self.settle(|_, run_up| DayStatus::Running { ticks, run_up });
     }
 
-    /// The running day landed.
+    /// The running day's run-up landed, `sessions` of it.
+    pub fn run_up(&mut self, sessions: u32) {
+        self.settle(|ticks, _| DayStatus::Running {
+            ticks,
+            run_up: sessions,
+        });
+    }
+
+    /// The running day landed, with whatever run-up it said it wrote.
     pub fn finish(&mut self) {
-        self.settle(|ticks| DayStatus::Fetched { ticks });
+        self.settle(|ticks, run_up| DayStatus::Fetched { ticks, run_up });
     }
 
     /// The running day was refused. When `every_day` — no interpreter, no
@@ -407,7 +431,7 @@ impl DayBatch {
     /// the days still waiting would only be refused the same way, so they
     /// are not asked for.
     pub fn refuse(&mut self, headline: String, fix: Option<String>, every_day: bool) {
-        self.settle(|_| DayStatus::Refused { headline, fix });
+        self.settle(|_, _| DayStatus::Refused { headline, fix });
         if every_day {
             self.replace_waiting(&DayStatus::NotTried);
         }
@@ -415,7 +439,7 @@ impl DayBatch {
 
     /// Stop: the running day and every waiting one are cancelled.
     pub fn cancel(&mut self) {
-        self.settle(|_| DayStatus::Cancelled);
+        self.settle(|_, _| DayStatus::Cancelled);
         self.replace_waiting(&DayStatus::Cancelled);
     }
 
@@ -431,8 +455,9 @@ impl DayBatch {
         let mut summary = BatchSummary::default();
         for row in &self.rows {
             match row.status {
-                DayStatus::Fetched { ticks } => {
+                DayStatus::Fetched { ticks, run_up } => {
                     summary.fetched += 1;
+                    summary.short_run_up += usize::from(run_up < self.template.context_sessions);
                     summary.ticks += ticks;
                 }
                 DayStatus::AlreadyHere => summary.already_here += 1,
@@ -457,15 +482,16 @@ impl DayBatch {
         }
     }
 
-    /// Move the running row on, handing the new status its prints so far.
-    fn settle(&mut self, next: impl FnOnce(u64) -> DayStatus) {
+    /// Move the running row on, handing the new status its prints and
+    /// run-up so far.
+    fn settle(&mut self, next: impl FnOnce(u64, u32) -> DayStatus) {
         if let Some(row) = self
             .rows
             .iter_mut()
             .find(|row| matches!(row.status, DayStatus::Running { .. }))
-            && let DayStatus::Running { ticks } = row.status
+            && let DayStatus::Running { ticks, run_up } = row.status
         {
-            row.status = next(ticks);
+            row.status = next(ticks, run_up);
         }
     }
 }
@@ -558,39 +584,33 @@ impl DownloadDays {
 
     /// Prints written so far for the running day.
     pub fn progress(&mut self, ticks: u64) {
-        if let Some(batch) = self.batch.as_mut() {
-            batch.progress(ticks);
-        }
+        self.batch_mut(|batch| batch.progress(ticks));
     }
 
-    /// The running day landed whole.
+    /// The running day's run-up landed, `sessions` of it.
+    pub fn run_up(&mut self, sessions: u32) {
+        self.batch_mut(|batch| batch.run_up(sessions));
+    }
+
+    /// The running day landed.
     pub fn finish(&mut self) {
-        if let Some((symbol, day)) = self.running_key() {
-            self.held.finished(&symbol, &day);
-        }
-        if let Some(batch) = self.batch.as_mut() {
-            batch.finish();
-        }
+        self.batch_mut(DayBatch::finish);
     }
 
     /// The running day was refused; see [`DayBatch::refuse`].
     pub fn refuse(&mut self, headline: String, fix: Option<String>, every_day: bool) {
-        if let Some((symbol, day)) = self.running_key() {
-            self.held.unfinished(&symbol, &day);
-        }
-        if let Some(batch) = self.batch.as_mut() {
-            batch.refuse(headline, fix, every_day);
-        }
+        self.batch_mut(|batch| batch.refuse(headline, fix, every_day));
     }
 
     /// Cancel the running day and every waiting one.
     pub fn cancel(&mut self) {
-        if let Some((symbol, day)) = self.running_key() {
-            self.held.unfinished(&symbol, &day);
-        }
-        if let Some(batch) = self.batch.as_mut() {
-            batch.cancel();
-        }
+        self.batch_mut(DayBatch::cancel);
+    }
+
+    /// Whether several days are picked and every one is already here.
+    #[must_use]
+    pub fn nothing_to_fetch(&self) -> bool {
+        self.selection.len() > 1 && self.selection.iter().all(|d| self.held.contains(d))
     }
 
     /// The sentence above the Download button for several picks: every
@@ -630,7 +650,7 @@ impl DownloadDays {
         let earlier = day_before(offered?, self.selection.only()?)?;
         Some(DayBeforeTarget {
             day: earlier.to_owned(),
-            on_disk: self.held.contains(earlier),
+            on_disk: self.held.has_tape(earlier),
         })
     }
 
@@ -676,9 +696,10 @@ impl DownloadDays {
         }
     }
 
-    fn running_key(&self) -> Option<(String, String)> {
-        let batch = self.batch.as_ref()?;
-        Some((batch.template.symbol.clone(), batch.running()?.to_owned()))
+    fn batch_mut(&mut self, change: impl FnOnce(&mut DayBatch)) {
+        if let Some(batch) = self.batch.as_mut() {
+            change(batch);
+        }
     }
 }
 
@@ -920,12 +941,22 @@ mod tests {
             side_source: None,
             has_quotes: false,
             notes: Vec::new(),
+            has_context: true,
         };
         Library {
             root: PathBuf::from("replay"),
             sessions: tapes.iter().map(entry).collect(),
             problems: Vec::new(),
         }
+    }
+
+    /// A folder holding these tapes with no run-up file beside any of them.
+    fn tapes_only(tapes: &[(&str, &str)]) -> Library {
+        let mut library = library_of(tapes);
+        for entry in &mut library.sessions {
+            entry.has_context = false;
+        }
+        library
     }
 
     /// A queue for `selection` with `held` already on disk.
@@ -989,7 +1020,13 @@ mod tests {
         batch.progress(900);
         assert_eq!(batch.running(), Some("2026-07-30"));
         batch.finish();
-        assert_eq!(batch.rows()[0].status, DayStatus::Fetched { ticks: 900 });
+        assert_eq!(
+            batch.rows()[0].status,
+            DayStatus::Fetched {
+                ticks: 900,
+                run_up: 0
+            }
+        );
         assert_eq!(
             batch.begin_next().as_deref(),
             Some("2026-08-05"),
@@ -1021,6 +1058,7 @@ mod tests {
             summary,
             BatchSummary {
                 fetched: 1,
+                short_run_up: 0,
                 already_here: 1,
                 refused: 1,
                 not_tried: 0,
@@ -1034,9 +1072,9 @@ mod tests {
         assert!(line.contains("1 refused"), "{line}");
         assert!(!line.contains("cancelled"), "nothing was: {line}");
         assert!(
-            batch.rows()[0].line().contains("no ticks for that day"),
+            batch.rows()[0].line(0).contains("no ticks for that day"),
             "the refusal is said on its own row: {}",
-            batch.rows()[0].line()
+            batch.rows()[0].line(0)
         );
     }
 
@@ -1094,15 +1132,15 @@ mod tests {
         let summary = batch.summary();
         assert_eq!((summary.refused, summary.not_tried), (1, 2));
         assert!(summary.line().contains("2 not tried"), "{}", summary.line());
-        let refused = batch.rows()[0].line();
+        let refused = batch.rows()[0].line(0);
         assert!(
             refused.contains("Open the terminal and log in."),
             "the fix is kept beside the refusal: {refused}"
         );
         assert!(
-            batch.rows()[1].line().contains("refused the same way"),
+            batch.rows()[1].line(0).contains("refused the same way"),
             "and the untried days say why: {}",
-            batch.rows()[1].line()
+            batch.rows()[1].line(0)
         );
     }
 
@@ -1140,38 +1178,88 @@ mod tests {
         assert!(held.contains("2026-07-30"), "so is another symbol");
     }
 
-    /// A refused or cancelled day can leave its whole tape without the
-    /// run-up behind it. Skipping it next time as "already here" would hide a
-    /// day that never completed.
+    /// A refused or cancelled day can leave its whole tape without the run-up
+    /// behind it. Held is read from the folder: a tape alone is not already
+    /// here, a tape with its run-up is, and a fresh scan answers again with
+    /// nothing remembered from the last one.
     #[test]
-    fn a_day_that_did_not_finish_is_never_already_here() {
+    fn only_a_tape_with_its_run_up_beside_it_is_already_here() {
+        let mut held = HeldDays::default();
+        held.refresh(Some(&tapes_only(&[("WINV26", "2026-07-29")])), "WINV26");
+        assert!(!held.contains("2026-07-29"), "a tape alone is not held");
+        assert!(
+            held.has_tape("2026-07-29"),
+            "though it can join as a day before"
+        );
+
+        held.rescanned();
+        held.refresh(Some(&library_of(&[("WINV26", "2026-07-29")])), "WINV26");
+        assert!(held.contains("2026-07-29"), "with its run-up it is");
+
+        held.rescanned();
+        held.refresh(Some(&tapes_only(&[("WINV26", "2026-07-29")])), "WINV26");
+        assert!(!held.contains("2026-07-29"), "and each scan answers afresh");
+
+        let selection = selection_of(&["2026-07-29", "2026-07-30"]);
+        let mut days = days_over(selection, &tapes_only(&[("WINV26", "2026-07-29")]));
+        days.begin(template("WINV26"));
+        assert_eq!(
+            days.batch().map(DayBatch::to_fetch),
+            Some(2),
+            "fetched again"
+        );
+    }
+
+    /// A run-up the broker served short is said on the row and counted, in
+    /// the single-day path's words.
+    #[test]
+    fn a_short_run_up_is_labelled_on_its_row_and_in_the_summary() {
         let mut days = days_over(
             selection_of(&["2026-07-29", "2026-07-30", "2026-07-31"]),
             &library_of(&[]),
         );
-        // The first two days start and stop, one refused and one cancelled,
-        // and both tapes land in the folder anyway.
         days.begin(template("WINV26"));
         days.begin_next();
-        days.refuse("the download stopped".to_string(), None, false);
-        days.begin_next();
-        days.cancel();
-        let library = library_of(&[("WINV26", "2026-07-29"), ("WINV26", "2026-07-30")]);
-        days.held.rescanned();
-        days.held.refresh(Some(&library), "WINV26");
-        assert!(!days.held.contains("2026-07-29"), "refused: not held");
-        assert!(!days.held.contains("2026-07-30"), "cancelled: not held");
-        days.begin(template("WINV26"));
-        assert_eq!(
-            days.batch().map(DayBatch::to_fetch),
-            Some(3),
-            "all three are fetched again"
-        );
-
-        // Landing whole makes it held again.
-        days.begin_next();
+        days.progress(300);
+        days.run_up(2);
         days.finish();
-        assert!(days.held.contains("2026-07-29"));
+        days.begin_next();
+        // No run-up written at all: the broker had none.
+        days.finish();
+        days.begin_next();
+        days.run_up(5);
+        days.finish();
+
+        let batch = days.batch().expect("a batch");
+        let line = batch.rows()[0].line(5);
+        assert!(line.contains("run-up short: 2 of 5 sessions"), "{line}");
+        assert!(line.contains("fewer sessions than asked for"), "{line}");
+        assert!(
+            batch.rows()[1].line(5).contains("0 of 5"),
+            "{}",
+            batch.rows()[1].line(5)
+        );
+        assert!(
+            !batch.rows()[2].line(5).contains("short"),
+            "{}",
+            batch.rows()[2].line(5)
+        );
+        let summary = batch.summary();
+        assert_eq!(summary.short_run_up, 2);
+        assert!(
+            summary.line().contains("2 with a short run-up"),
+            "{}",
+            summary.line()
+        );
+    }
+
+    #[test]
+    fn nothing_is_left_to_fetch_when_every_pick_is_here() {
+        let library = library_of(&[("WINV26", "2026-07-29"), ("WINV26", "2026-07-30")]);
+        let all = days_over(selection_of(&["2026-07-29", "2026-07-30"]), &library);
+        assert!(all.nothing_to_fetch());
+        let one_more = days_over(selection_of(&["2026-07-29", "2026-07-31"]), &library);
+        assert!(!one_more.nothing_to_fetch());
     }
 
     #[test]

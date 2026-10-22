@@ -489,19 +489,8 @@ impl GetDataPanel {
                 }
                 Some(GetDataAction::Downloaded(tape))
             }
-            DownloadEvent::Failed { headline, mut fix } => {
-                // The one failure the trader can answer here rather than in a
-                // terminal: raise the control instead of handing them advice
-                // about a command-line flag they have nowhere to type.
-                if headline.contains("clock offset") {
-                    self.clock_needed = true;
-                    if self.declared_clock.is_none() {
-                        self.declared_clock = Some(BROKER_CLOCKS[0].0);
-                    }
-                    fix = Some(
-                        "Pick the broker clock above, then look up the days again.".to_string(),
-                    );
-                }
+            DownloadEvent::Failed { headline, fix } => {
+                let fix = self.answer_clock(&headline, fix);
                 self.phase = Phase::Failed { headline, fix };
                 None
             }
@@ -570,14 +559,25 @@ impl GetDataPanel {
                 return Some(GetDataAction::Fetched);
             }
             DownloadEvent::Failed { headline, fix } => {
-                // The control that answers an unknown clock comes up as it
-                // does for one day.
-                self.clock_needed |= headline.contains("clock offset");
+                let fix = self.answer_clock(&headline, fix);
                 self.days.refuse(headline, fix, every_day);
             }
-            DownloadEvent::ContextWritten { .. } | DownloadEvent::DaysAvailable { .. } => {}
+            DownloadEvent::ContextWritten { sessions, .. } => self.days.run_up(sessions),
+            DownloadEvent::DaysAvailable { .. } => {}
         }
         None
+    }
+
+    /// The one failure the trader can answer here rather than in a terminal:
+    /// an unknown broker clock raises the control, and the fix points at it
+    /// instead of at a command-line flag they have nowhere to type.
+    fn answer_clock(&mut self, headline: &str, fix: Option<String>) -> Option<String> {
+        if !headline.contains("clock offset") {
+            return fix;
+        }
+        self.clock_needed = true;
+        self.declared_clock = self.declared_clock.or(Some(BROKER_CLOCKS[0].0));
+        Some("Pick the broker clock above, then look up the days again.".to_string())
     }
 
     /// Start the oldest waiting day of a several-day download, once no job
@@ -1238,9 +1238,14 @@ impl GetDataPanel {
                     egui::Button::new(egui::RichText::new(text).color(egui::Color32::BLACK))
                         .fill(AMBER);
                 if ui
-                    .add_enabled(ready && !self.is_busy(), button)
+                    .add_enabled(
+                        ready && !self.days.nothing_to_fetch() && !self.is_busy(),
+                        button,
+                    )
                     .on_disabled_hover_text(if self.symbol.trim().is_empty() {
                         "Type a symbol first"
+                    } else if self.days.nothing_to_fetch() {
+                        "Every picked day is already here"
                     } else if self.available.is_none() {
                         "Look up the symbol's days first"
                     } else {
@@ -1260,13 +1265,14 @@ impl GetDataPanel {
         let Some(batch) = self.days.batch() else {
             return false;
         };
+        let asked = batch.template().context_sessions;
         egui::ScrollArea::vertical()
             .max_height(140.0)
             .show(ui, |ui| {
                 for row in batch.rows() {
                     let colour = match row.status {
                         DayStatus::Running { .. } => {
-                            crate::loading::inline(ui, &row.line());
+                            crate::loading::inline(ui, &row.line(asked));
                             continue;
                         }
                         DayStatus::Refused { .. } => WARN,
@@ -1275,7 +1281,7 @@ impl GetDataPanel {
                             TEXT_MUTED
                         }
                     };
-                    ui.label(egui::RichText::new(row.line()).color(colour).small());
+                    ui.label(egui::RichText::new(row.line(asked)).color(colour).small());
                 }
             });
         let running = batch.running().is_some();
@@ -1588,9 +1594,19 @@ mod tests {
                     side_source: None,
                     has_quotes: false,
                     notes: Vec::new(),
+                    has_context: true,
                 })
                 .collect(),
         }
+    }
+
+    /// [`library_holding`], with no run-up file beside any tape.
+    fn tapes_only(days: &[&str]) -> Library {
+        let mut library = library_holding(days);
+        for entry in &mut library.sessions {
+            entry.has_context = false;
+        }
+        library
     }
 
     #[test]
@@ -1998,8 +2014,14 @@ mod tests {
                     fix: Some("Pick another day.".to_string()),
                 },
                 DayStatus::AlreadyHere,
-                DayStatus::Fetched { ticks: 10 },
-                DayStatus::Fetched { ticks: 0 },
+                DayStatus::Fetched {
+                    ticks: 10,
+                    run_up: 0
+                },
+                DayStatus::Fetched {
+                    ticks: 0,
+                    run_up: 0
+                },
             ],
             "the fix stays beside its refusal"
         );
@@ -2120,39 +2142,83 @@ mod tests {
         );
     }
 
-    /// A day refused after its tape landed has no run-up behind it. Counting
-    /// it as already here would skip a day that never completed.
+    /// A tape whose run-up never landed — refused, cancelled, or a late
+    /// Done after a cancel — is not already here: the folder, read afresh,
+    /// is what says so, not anything this panel remembers.
     #[test]
-    fn a_day_refused_after_its_tape_landed_is_fetched_again() {
+    fn a_tape_without_its_run_up_is_fetched_again() {
         let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+        panel.folder_rescanned();
+        let mut folder = tapes_only(&["2026-08-27"]);
+        folder
+            .sessions
+            .extend(library_holding(&["2026-08-28"]).sessions);
+        panel.pump(Some(&folder), true);
+        assert!(!panel.days.held.contains("2026-08-27"), "a tape alone");
+        assert!(panel.days.held.contains("2026-08-28"), "tape and run-up");
+
+        panel.download("replay");
+        assert_eq!(
+            asked(&log),
+            ["2026-08-27"],
+            "fetched again, the whole day skipped"
+        );
+    }
+
+    #[test]
+    fn a_short_run_up_is_said_on_its_row() {
+        let (mut panel, _) = panel_picking(&["2026-08-27", "2026-08-28"], false);
         panel.download("replay");
         land(
             &mut panel,
             vec![
-                DownloadEvent::TapeWritten {
-                    path: PathBuf::from("replay/WINV26/20260827.csv"),
-                    ticks: 500,
-                    bytes: 24_500,
+                DownloadEvent::Progress { ticks: 40 },
+                DownloadEvent::ContextWritten {
+                    sessions: 2,
+                    complete: false,
                 },
-                DownloadEvent::Failed {
-                    headline: "the terminal served no ticks for that day".to_string(),
-                    fix: None,
-                },
+                done("20260827"),
             ],
         );
-        land(&mut panel, vec![done("20260828")]);
-        // Both tapes are in the folder now.
+        let batch = panel.days.batch().expect("a batch");
+        let asked = batch.template().context_sessions;
+        let line = batch.rows()[0].line(asked);
+        assert!(
+            line.contains(&format!("run-up short: 2 of {asked} sessions")),
+            "{line}"
+        );
+    }
+
+    /// An unknown clock in a queue gets the answer one day gets: the control,
+    /// a stated default, and a fix pointing at it — never a command-line flag.
+    #[test]
+    fn a_clock_refusal_in_a_queue_points_at_the_clock_control() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+        panel.download("replay");
+        land(
+            &mut panel,
+            vec![DownloadEvent::Failed {
+                headline: "quantick does not know this broker's clock offset yet".to_string(),
+                fix: Some("pass --utc-offset-s (B3 brokers use -10800)".to_string()),
+            }],
+        );
+        assert!(panel.clock_needed);
+        assert_eq!(panel.declared_clock, Some(-10_800));
+        let DayStatus::Refused { fix: Some(fix), .. } = &statuses(&panel)[0] else {
+            panic!("refused with a fix: {:?}", statuses(&panel));
+        };
+        assert!(fix.contains("broker clock above"), "{fix}");
+        assert!(!fix.contains("--utc-offset-s"), "{fix}");
+        assert_eq!(statuses(&panel)[1], DayStatus::NotTried);
+        assert_eq!(asked(&log), ["2026-08-27"]);
+    }
+
+    #[test]
+    fn download_is_off_when_every_picked_day_is_here() {
+        let (mut panel, _) = panel_picking(&["2026-08-27", "2026-08-28"], false);
         panel.folder_rescanned();
         panel.pump(Some(&library_holding(&["2026-08-27", "2026-08-28"])), true);
-        assert!(!panel.days.held.contains("2026-08-27"), "unfinished");
-        assert!(panel.days.held.contains("2026-08-28"));
-
-        panel.download("replay");
-        assert_eq!(
-            asked(&log)[2..],
-            ["2026-08-27"],
-            "fetched again, not skipped"
-        );
+        assert!(panel.days.nothing_to_fetch());
     }
 
     #[test]
