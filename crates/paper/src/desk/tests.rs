@@ -17,9 +17,10 @@ use super::cmd::{
     CmdPreviewForce, CmdTradingSettings, cmd_preview_layout, resolve_cmd_kind,
 };
 use super::geometry::{
-    Bounds, CHIP_CLEAR_PX, Point, TAG_HEIGHT_PX, clamp_tag_center, dodged_chip_y,
+    Bounds, CHIP_CLEAR_PX, Point, TAG_HEIGHT_PX, clamp_tag_center, close_button_rect,
+    dodged_chip_y, tag_band,
 };
-use super::gesture::{ArmedPlacement, ChartCommand, ChartFrame, PaperDrag};
+use super::gesture::{ArmedPlacement, ChartCommand, ChartFrame, CursorHint, PaperDrag};
 use super::leg_tag::{LegPaint, leg_tag_text};
 use super::ruler::{RULER_MAX_NOTCHES, Ruler};
 use super::ticket::{
@@ -450,12 +451,8 @@ fn the_aim_lives_across_the_aim_area_where_the_band_has_no_width() {
     let account = marked_account(&dir);
     let mut desk = Desk::default();
     let at = Point::new(400.0, 250.0);
-    let tape_only = |pointer, pressed| ChartFrame {
-        chart: Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(0.0, 400.0)),
-        ..frame(pointer, true, pressed)
-    };
 
-    let pressed = desk.handle_input(&account, &tape_only(at, true), Some(&LinearAxis));
+    let pressed = desk.handle_input(&account, &tape_only(at, true, true), Some(&LinearAxis));
     assert_eq!(
         pressed.command,
         Some(ChartCommand::PlaceResting {
@@ -467,8 +464,145 @@ fn the_aim_lives_across_the_aim_area_where_the_band_has_no_width() {
     );
 
     let outside = Point::new(900.0, 250.0);
-    desk.handle_input(&account, &tape_only(outside, false), Some(&LinearAxis));
+    desk.handle_input(
+        &account,
+        &tape_only(outside, true, false),
+        Some(&LinearAxis),
+    );
     assert_eq!(desk.gesture.cmd_preview, None, "past the aim area, no aim");
+}
+
+/// Candles left of 600, the tape lane from 600 to 800: the tape-beside-
+/// candles layout, with the pointer at `pointer`.
+fn beside_tape(pointer: Point, aiming: bool, pressed: bool) -> ChartFrame {
+    ChartFrame {
+        chart: Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(600.0, 400.0)),
+        ..frame(pointer, aiming, pressed)
+    }
+}
+
+/// Tape only: the lane is the plot and the candles' band has no width.
+fn tape_only(pointer: Point, aiming: bool, pressed: bool) -> ChartFrame {
+    ChartFrame {
+        chart: Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(0.0, 400.0)),
+        ..frame(pointer, aiming, pressed)
+    }
+}
+
+/// An armed ticket's click rests over the tape lane as the aim's press
+/// does: beside the candles and in tape only, both ways of resting an
+/// order agree on where a click lands.
+#[test]
+fn an_armed_click_places_over_the_tape_lane() {
+    let dir = ScratchDir::new("desk-armed-tape");
+    let account = marked_account(&dir);
+    let armed = ArmedPlacement {
+        side: Side::Sell,
+        kind: EntryKind::Limit,
+    };
+    for (layout, at) in [
+        ("beside", beside_tape(Point::new(700.0, 50.0), false, true)),
+        ("only", tape_only(Point::new(400.0, 50.0), false, true)),
+    ] {
+        let mut desk = Desk {
+            armed: Some(armed),
+            ..Desk::default()
+        };
+        let outcome = desk.handle_input(&account, &at, Some(&LinearAxis));
+        assert_eq!(
+            outcome.command,
+            Some(ChartCommand::PlaceArmed {
+                armed,
+                raw_price: 115.0,
+            }),
+            "{layout}: the armed click rests at the tape's price"
+        );
+    }
+}
+
+/// Near an order line over the tape lane the aim stands down, and the
+/// press grabs the line there instead, with the cursor saying so: no dead
+/// band between the two.
+#[test]
+fn an_order_line_is_grabbed_over_the_tape_lane() {
+    let dir = ScratchDir::new("desk-grab-tape");
+    let mut account = marked_account(&dir);
+    let mut desk = Desk::default();
+    let (first, _) = rest_two_limits(&mut desk, &mut account);
+    let on_line = Point::new(700.0, LinearAxis.y(95.0));
+
+    desk.handle_input(
+        &account,
+        &beside_tape(on_line, true, false),
+        Some(&LinearAxis),
+    );
+    assert_eq!(desk.gesture.cmd_preview, None, "the line holds the pixel");
+    let band = beside_tape(on_line, false, false).tag_band();
+    assert_eq!(
+        desk.gesture
+            .hover_cursor(&account, on_line, band, &LinearAxis),
+        Some(CursorHint::ResizeVertical),
+        "the cursor offers the drag over the lane"
+    );
+
+    let outcome = desk.handle_input(
+        &account,
+        &beside_tape(on_line, false, true),
+        Some(&LinearAxis),
+    );
+    assert!(outcome.owned, "the press is the line's");
+    assert_eq!(desk.gesture.drag, PaperDrag::Order(first));
+}
+
+/// Tape only leaves the candles no width, so the tags anchor to the whole
+/// plot instead of hanging off its left edge, and the ✕ the paint puts
+/// there is the one the press finds. With room, the candles keep them.
+#[test]
+fn tape_only_anchors_the_tags_inside_the_plot() {
+    let plot = chart();
+    let candles = Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(600.0, 400.0));
+    assert_eq!(tag_band(candles, plot), candles, "candles keep their tags");
+    assert_eq!(tape_only(Point::default(), false, false).tag_band(), plot);
+
+    let dir = ScratchDir::new("desk-tags-tape");
+    let mut account = marked_account(&dir);
+    let mut desk = Desk::default();
+    let (first, _) = rest_two_limits(&mut desk, &mut account);
+    let y = LinearAxis.y(95.0);
+    let cross = close_button_rect(plot.right(), clamp_tag_center(y, plot.top(), plot.bottom()));
+    assert!(plot.contains(cross.center()), "the ✕ sits on the plot");
+
+    let outcome = desk.handle_input(
+        &account,
+        &tape_only(cross.center(), false, true),
+        Some(&LinearAxis),
+    );
+    assert_eq!(
+        outcome.command,
+        Some(ChartCommand::CancelOrder(first)),
+        "the press finds the ✕ where it is painted"
+    );
+}
+
+/// The capture hook's x is measured across the candles' band, so the
+/// captures taken before the tape lane joined the aim still park the hand
+/// where they did; only where that band has no width does the whole plot
+/// stand in.
+#[test]
+fn a_forced_aim_measures_its_x_across_the_candles() {
+    let dir = ScratchDir::new("desk-forced-x");
+    let account = marked_account(&dir);
+    let mut desk = Desk::default();
+    desk.gesture.cmd_preview_force = CmdPreviewForce::parse("buy@0.5");
+    let at = Point::new(10.0, 250.0);
+
+    desk.handle_input(&account, &beside_tape(at, false, false), Some(&LinearAxis));
+    let parked = desk.gesture.cmd_preview.expect("the hook aims").pointer;
+    assert_eq!(parked.x, 300.0, "half the candles' band, not of the plot");
+
+    desk.handle_input(&account, &tape_only(at, false, false), Some(&LinearAxis));
+    let parked = desk.gesture.cmd_preview.expect("the hook aims").pointer;
+    assert_eq!(parked.x, 400.0, "tape only: half the plot");
 }
 
 /// The capture hook's aim paints and never places, and a hidden layer

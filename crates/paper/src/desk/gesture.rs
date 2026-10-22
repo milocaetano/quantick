@@ -16,7 +16,7 @@ use rust_decimal::prelude::ToPrimitive;
 use super::cmd::{CmdPreview, CmdPreviewForce, HeldKeys};
 use super::geometry::{
     Bounds, CREATE_DECIDE_THRESHOLD_PX, LINE_GRAB_RADIUS_PX, Point, PriceAxis, TAG_BUTTON_PX,
-    TAG_GAP_PX, bracket_handle_rect, clamp_tag_center, close_button_rect, tag_row_hit,
+    TAG_GAP_PX, bracket_handle_rect, clamp_tag_center, close_button_rect, tag_band, tag_row_hit,
 };
 use crate::PaperAccount;
 use crate::account::Leg;
@@ -135,7 +135,9 @@ pub enum CursorHint {
 /// host gathers it, so the desk never reads raw input state itself.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChartFrame {
-    /// The interactive band the press is tested against.
+    /// The candles' band, left of any tape lane. The tags, their ✕ and the
+    /// bracket handles anchor in it while it has room ([`Self::tag_band`]);
+    /// presses, grabs and the aim test against `aim_area`.
     pub chart: Bounds,
     /// Where the aim may live: `chart` plus any tape lane beside it. The
     /// lane shares the pane's price axis, so a held key aims there as it
@@ -167,6 +169,15 @@ pub struct ChartFrame {
     /// lines and tags are unpainted — so they take no press either: an
     /// invisible control is not a control.
     pub layer_visible: bool,
+}
+
+impl ChartFrame {
+    /// Where the tags and their controls anchor this frame, and what a
+    /// capture's forced aim is measured across: see [`tag_band`].
+    #[must_use]
+    pub fn tag_band(&self) -> Bounds {
+        tag_band(self.chart, self.aim_area)
+    }
 }
 
 /// What a press asked of the account. The desk decides; the host carries it
@@ -346,7 +357,8 @@ impl Gesture {
     /// stale between paint and press the moment a live chart autoscales.
     /// Priority follows the draw stack: working orders on top, then the
     /// take profit, the stop, the position's ✕, and last the bracket
-    /// handles beside the entry line.
+    /// handles beside the entry line. `chart` is the frame's tag band
+    /// ([`ChartFrame::tag_band`]), the rect the paint anchors the tags in.
     #[must_use]
     pub fn control_at(
         &self,
@@ -493,7 +505,7 @@ impl Gesture {
                 || self.order_hover_force
                 || frame
                     .pointer
-                    .is_some_and(|pointer| tag_row_hit(pointer, axis.y(price), frame.chart));
+                    .is_some_and(|pointer| tag_row_hit(pointer, axis.y(price), frame.tag_band()));
             if expanded {
                 open.push(OpenTag {
                     key: TagKey::Order(order.id),
@@ -501,7 +513,7 @@ impl Gesture {
                 });
             }
         }
-        self.fill_open_legs(open, account, frame.pointer, frame.chart, axis);
+        self.fill_open_legs(open, account, frame.pointer, frame.tag_band(), axis);
     }
 
     /// The leg tags this frame opens, appended to the order tags'.

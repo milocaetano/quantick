@@ -326,16 +326,19 @@ impl Desk {
             // The harness has no hand; park the pointer mid-chart, or at
             // the x the hook stated — which is the whole point of a run
             // capturing where the label rides, so it wins over a stray
-            // real pointer that in such a run is nobody's aim.
+            // real pointer that in such a run is nobody's aim. Measured
+            // across the candles' band, as it always was, and across the
+            // whole plot only where that band has no room (tape only).
             Some(force) => {
+                let band = frame.tag_band();
                 let pointer = match force.x_fraction {
                     Some(fraction) => Point::new(
-                        frame.aim_area.left() + frame.aim_area.width() * fraction,
+                        band.left() + band.width() * fraction,
                         frame
                             .pointer
-                            .map_or_else(|| frame.aim_area.center().y, |pointer| pointer.y),
+                            .map_or_else(|| band.center().y, |pointer| pointer.y),
                     ),
-                    None => frame.pointer.unwrap_or(frame.aim_area.center()),
+                    None => frame.pointer.unwrap_or(band.center()),
                 };
                 (pointer, force.side, true)
             }
@@ -355,7 +358,7 @@ impl Desk {
         // with the hand cursor promising exactly that.
         if self
             .gesture
-            .control_at(account, pointer, frame.chart, axis)
+            .control_at(account, pointer, frame.tag_band(), axis)
             .is_some()
             || line_at(account, pointer, axis).is_some()
         {
@@ -463,7 +466,9 @@ impl Desk {
             && idle
             && let Some(pointer) = frame.pointer
             && let Some(axis) = axis
-            && let Some(control) = self.gesture.control_at(account, pointer, frame.chart, axis)
+            && let Some(control) = self
+                .gesture
+                .control_at(account, pointer, frame.tag_band(), axis)
         {
             let command = self.press_control(control, axis.price_at(pointer.y));
             return InputOutcome::claimed(command);
@@ -491,11 +496,13 @@ impl Desk {
             }));
         }
 
-        // An armed placement takes the next chart click.
+        // An armed placement takes the next chart click, anywhere the aim
+        // could live: over candles or the tape lane, which reads the same
+        // price axis. Both ways of resting an order agree on where.
         if let Some(armed) = self.armed
             && frame.primary_pressed
             && let Some(pointer) = frame.pointer
-            && frame.chart.contains(pointer)
+            && frame.aim_area.contains(pointer)
             && let Some(axis) = axis
         {
             return InputOutcome::claimed(Some(ChartCommand::PlaceArmed {
@@ -504,11 +511,13 @@ impl Desk {
             }));
         }
 
-        // Grab a line.
+        // Grab a line, across the whole plot: the aim stands down near a
+        // line over the tape lane too (`line_at`), so the grab must answer
+        // there or that band would be dead to both.
         if frame.primary_pressed
             && idle
             && let Some(pointer) = frame.pointer
-            && frame.chart.contains(pointer)
+            && frame.aim_area.contains(pointer)
             && let Some(axis) = axis
             && let Some(target) = line_at(account, pointer, axis)
         {

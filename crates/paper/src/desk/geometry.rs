@@ -155,6 +155,20 @@ pub fn clamp_tag_center(y: f32, top: f32, bottom: f32) -> f32 {
     y.clamp(top + half, bottom - half)
 }
 
+/// The band the paper tags, their ✕ and the bracket handles anchor in: the
+/// candles' band while it can hold a ✕, else the whole plot. Tape only lays
+/// the lane over the plot and leaves the candles no width, which would hang
+/// every tag off the plot's left edge. The paint and the press both ask this
+/// with the same two rects, so a ✕ is pressable exactly where it is painted.
+#[must_use]
+pub fn tag_band(candles: Bounds, plot: Bounds) -> Bounds {
+    if candles.width() < TAG_GAP_PX + TAG_BUTTON_PX {
+        plot
+    } else {
+        candles
+    }
+}
+
 /// The ✕ zone every closable tag reserves at its right edge — a fixed
 /// position derivable without measuring text, which is what lets the
 /// paint and the press-time geometric hit-test share one truth.

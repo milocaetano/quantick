@@ -285,9 +285,10 @@ pub struct CmdPreview {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CmdPreviewForce {
     pub side: Side,
-    /// 0.0 is the band's left edge, 1.0 its right; `None` leaves the
-    /// pointer mid-band, which is what the hook meant before the label
-    /// followed it.
+    /// 0.0 is the candles' band's left edge, 1.0 its right, or the whole
+    /// plot's where that band has no room (tape only; see
+    /// `ChartFrame::tag_band`); `None` leaves the pointer mid-band, which is
+    /// what the hook meant before the label followed it.
     pub x_fraction: Option<f32>,
 }
 
@@ -366,13 +367,11 @@ pub fn cmd_preview_layout(band: Bounds, axis_x: f32, pointer: Point) -> (Point, 
             .max(band.left()),
         pointer.y,
     );
-    // The *band* stops at the live lane's divider, because that is where a
-    // click can still be pressed; the line does not, because it is a read
-    // and not a control. Stopping it there left the tape lane — the widest
-    // thing on the chart — as a blank gap between the aim and its own price
-    // on the axis, so the one place a trader watches the order arrive was
-    // the one place the order was invisible. Every other level here already
-    // spans to the axis (`level_line`); this now says the same.
+    // The band is the plot the aim lives in, tape lane included; the line
+    // runs on past its right edge to the axis, because it is a read and
+    // not a control, and it is what ties the aim to its own price on the
+    // gutter. Every other level here already spans to the axis
+    // (`level_line`); this says the same.
     (
         start,
         Point::new(axis_x.max(band.right()), pointer.y),
