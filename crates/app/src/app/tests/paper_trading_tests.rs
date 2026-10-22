@@ -1,4 +1,5 @@
 mod pane_model_tests;
+mod tape_aim_tests;
 
 use super::*;
 
