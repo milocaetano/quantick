@@ -31,6 +31,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
+use quantick_replay::download_selection::DayTemplate;
+
 use crate::config::ProviderKind;
 use crate::mt5_bridge;
 
@@ -86,7 +88,39 @@ impl DownloadRequest {
     pub fn is_probe(&self) -> bool {
         self.day.is_none()
     }
+
+    /// What every day of a several-day download shares, frozen from this
+    /// request so a field edited mid-queue never reaches a later day.
+    #[must_use]
+    pub fn template(&self) -> DayTemplate {
+        DayTemplate {
+            symbol: self.symbol.clone(),
+            context_sessions: self.context_sessions,
+            utc_offset_s: self.utc_offset_s,
+            out_dir: self.out_dir.clone(),
+        }
+    }
+
+    /// One day of a several-day download, asked with its frozen template.
+    #[must_use]
+    pub fn for_day(template: &DayTemplate, day: String) -> Self {
+        Self {
+            symbol: template.symbol.clone(),
+            day: Some(day),
+            context_sessions: template.context_sessions,
+            out_dir: template.out_dir.clone(),
+            utc_offset_s: template.utc_offset_s,
+        }
+    }
 }
+
+/// The refusals about the machine or the instrument rather than the day:
+/// every other day of the same request would be refused the same way.
+const NO_PACKAGE: &str = "the MetaTrader 5 Python package is not installed";
+const NO_TERMINAL: &str = "quantick could not reach the MetaTrader 5 terminal";
+const NO_CLOCK: &str = "quantick does not know this broker's clock offset yet";
+const NOT_SERVED: &str = "the terminal does not serve ";
+const NOT_STARTED: &str = " could not be started: ";
 
 /// Something that happened during a download, in the interface's terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +165,22 @@ pub enum DownloadEvent {
         /// The single next step, when there is one.
         fix: Option<String>,
     },
+}
+
+impl DownloadEvent {
+    /// Whether this is a refusal every day of the same request would repeat
+    /// — no Python package, no terminal, an unknown broker clock, a symbol
+    /// the broker does not serve, an exporter that cannot start — rather
+    /// than one about this day alone.
+    #[must_use]
+    pub fn refuses_every_day(&self) -> bool {
+        let DownloadEvent::Failed { headline, .. } = self else {
+            return false;
+        };
+        [NO_PACKAGE, NO_TERMINAL, NO_CLOCK].contains(&headline.as_str())
+            || headline.starts_with(NOT_SERVED)
+            || headline.contains(NOT_STARTED)
+    }
 }
 
 /// Why a download could not be started at all.
@@ -222,16 +272,16 @@ pub fn parse_event(line: &str) -> Option<DownloadEvent> {
         // Surfacing the raw MT5 error code instead would be the difference
         // between a user who fixes it and one who files a bug.
         "EXPORT_PKG_MISSING" => Some(DownloadEvent::Failed {
-            headline: "the MetaTrader 5 Python package is not installed".to_string(),
+            headline: NO_PACKAGE.to_string(),
             fix: text("fix"),
         }),
         "EXPORT_ATTACH_FAILED" => Some(DownloadEvent::Failed {
-            headline: "quantick could not reach the MetaTrader 5 terminal".to_string(),
+            headline: NO_TERMINAL.to_string(),
             fix: text("fix"),
         }),
         "EXPORT_SYMBOL_UNKNOWN" | "EXPORT_SYMBOL_UNAVAILABLE" => Some(DownloadEvent::Failed {
             headline: format!(
-                "the terminal does not serve {}",
+                "{NOT_SERVED}{}",
                 text("symbol").unwrap_or_else(|| "this symbol".to_string())
             ),
             fix: text("fix"),
@@ -249,7 +299,7 @@ pub fn parse_event(line: &str) -> Option<DownloadEvent> {
             fix: text("fix"),
         }),
         "EXPORT_UTC_OFFSET_UNMEASURED" => Some(DownloadEvent::Failed {
-            headline: "quantick does not know this broker's clock offset yet".to_string(),
+            headline: NO_CLOCK.to_string(),
             fix: text("fix"),
         }),
         _ => None,
@@ -528,7 +578,7 @@ fn pump(
         let detail =
             last_error.map_or_else(|| "no interpreter to try".to_string(), |e| e.to_string());
         let _ = tx.send(DownloadEvent::Failed {
-            headline: format!("{label} could not be started: {detail}"),
+            headline: format!("{label}{NOT_STARTED}{detail}"),
             fix: Some("Install Python 3 and make sure it is on PATH.".to_string()),
         });
         return;
@@ -806,6 +856,41 @@ mod tests {
                 tried: "none".to_string(),
             })
         }
+    }
+
+    /// A machine-wide refusal stops a several-day download; a refusal about
+    /// one day leaves the rest to be asked for.
+    #[test]
+    fn only_machine_wide_refusals_refuse_every_day() {
+        let failed = |line: &str| parse_event(line).expect("a known event");
+        for every_day in [
+            r#"{"event_code":"EXPORT_PKG_MISSING"}"#,
+            r#"{"event_code":"EXPORT_ATTACH_FAILED"}"#,
+            r#"{"event_code":"EXPORT_UTC_OFFSET_UNMEASURED"}"#,
+            r#"{"event_code":"EXPORT_SYMBOL_UNKNOWN","symbol":"WINV26"}"#,
+        ] {
+            assert!(failed(every_day).refuses_every_day(), "{every_day}");
+        }
+        for one_day in [
+            r#"{"event_code":"EXPORT_TAPE_EMPTY","symbol":"WINV26","day":"2026-08-28"}"#,
+            r#"{"event_code":"EXPORT_TAPE_FAILED"}"#,
+            r#"{"event_code":"EXPORT_DONE","tape":"x/y.csv"}"#,
+        ] {
+            assert!(!failed(one_day).refuses_every_day(), "{one_day}");
+        }
+    }
+
+    #[test]
+    fn a_several_day_request_is_rebuilt_from_its_frozen_template() {
+        let request = DownloadRequest {
+            symbol: "WINV26".to_string(),
+            day: Some("2026-08-27".to_string()),
+            context_sessions: 5,
+            out_dir: PathBuf::from("replay"),
+            utc_offset_s: Some(-10_800),
+        };
+        let again = DownloadRequest::for_day(&request.template(), "2026-08-27".to_string());
+        assert_eq!(again, request);
     }
 
     #[test]

@@ -450,6 +450,7 @@ impl ReplayView {
         market: &MarketMenu<'_>,
     ) -> Option<ReplayAction> {
         self.poll_picker();
+        self.poll_download(ctx);
         let mut action = self.poll_loading();
         // The browser starts a load rather than returning an action: the
         // session is parsed on a worker, and `poll_loading` turns the result
@@ -505,6 +506,33 @@ impl ReplayView {
         }
     }
 
+    /// Move a download on every frame, shown or not — a queue of days must
+    /// not stall behind a closed window or the other tab — and land it.
+    fn poll_download(&mut self, ctx: &egui::Context) {
+        let landed = self.get_data.pump(self.library.as_ref(), self.day_before);
+        if self.get_data.is_busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
+        match landed {
+            // A finished download lands the trader where the session now is:
+            // back on the list, with the new day scanned and already picked.
+            Some(GetDataAction::Downloaded(tape)) => {
+                self.rescan();
+                self.select_path(&tape);
+                self.tab = BrowserTab::Sessions;
+            }
+            // One of several days landed: the list learns it, the pick stays.
+            Some(GetDataAction::Fetched) => {
+                let kept = self.selected_entry().map(|entry| entry.path.clone());
+                self.rescan();
+                if let Some(path) = kept {
+                    self.select_path(&path);
+                }
+            }
+            None => {}
+        }
+    }
+
     /// Take the folder the native dialog came back with.
     fn poll_picker(&mut self) {
         let Some(picker) = self.picker.as_ref() else {
@@ -542,6 +570,7 @@ impl ReplayView {
         );
         self.selected = (!library.sessions.is_empty()).then_some(0);
         self.library = Some(library);
+        self.get_data.folder_rescanned();
         self.error = None;
     }
 
@@ -646,7 +675,6 @@ impl ReplayView {
         }
         let mut open = true;
         let mut load_clicked = false;
-        let mut downloaded = None;
         let mut day_before_change = None;
 
         egui::Window::new("Market Replay")
@@ -674,14 +702,7 @@ impl ReplayView {
                     BrowserTab::GetData => {
                         let folder = self.folder.clone();
                         let offered = self.offered_symbols(market);
-                        let day_before = self.day_before;
-                        downloaded = self.get_data.draw(
-                            ui,
-                            &folder,
-                            self.library.as_ref(),
-                            &offered,
-                            day_before,
-                        );
+                        self.get_data.draw(ui, &folder, &offered);
                         // Drained apart from the action, so a tick and a
                         // landed tape in the same frame do not compete for the
                         // one slot an action has.
@@ -695,19 +716,6 @@ impl ReplayView {
         // made on either row is applied to the browser that owns it.
         if let Some(enabled) = day_before_change {
             self.set_day_before(enabled);
-        }
-        // A finished download lands the trader where the session now is: back
-        // on the list, with the new day scanned and already picked. Making
-        // them find it again would be the one avoidable step in the whole flow.
-        match downloaded {
-            Some(GetDataAction::Downloaded(tape)) => {
-                self.rescan();
-                self.select_path(&tape);
-                self.tab = BrowserTab::Sessions;
-            }
-            // One of several days landed: the list learns it, nothing is selected.
-            Some(GetDataAction::Fetched) => self.rescan(),
-            None => {}
         }
         if load_clicked {
             self.load_selected();

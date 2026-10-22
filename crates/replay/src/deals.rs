@@ -330,11 +330,18 @@ pub fn sanitize_symbol(symbol: &str) -> String {
 /// shown with, readable at a glance where a bare seven-digit number is not.
 #[must_use]
 pub fn thousands(value: usize) -> String {
+    grouped(value as u64, ' ')
+}
+
+/// `value` in groups of three digits joined by `separator` — the one digit
+/// grouping every count in the app is drawn with, whatever mark it uses.
+#[must_use]
+pub fn grouped(value: u64, separator: char) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, ch) in digits.chars().enumerate() {
         if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(' ');
+            out.push(separator);
         }
         out.push(ch);
     }
