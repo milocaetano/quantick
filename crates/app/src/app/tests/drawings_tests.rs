@@ -537,7 +537,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
     let (mut app, _commands) = app_with_history(200);
     let pane = app.active_tab().drawing_pane();
     let owner = QuickRangeOwner {
-        tab: app.tabs.active_id(),
+        tab: app.runtime.tabs.active_id(),
         side: PaneSide::Flow,
         pane: pane.id,
         revision: pane.pagination_revision(),
@@ -997,7 +997,7 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     let held = app.active_tab().flow_pane.state.trades().len();
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
@@ -1023,7 +1023,7 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
             resumed.clone(),
         ]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
 
     let tab = app.active_tab();
@@ -1055,7 +1055,7 @@ fn a_reconnect_that_worked_leaves_no_mark() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
     app.active_tab_mut().resume_floor_ms = Some(floor);
@@ -1068,7 +1068,7 @@ fn a_reconnect_that_worked_leaves_no_mark() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), resumed]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
 
     assert!(
@@ -1297,8 +1297,9 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
         crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
     form.window = 3;
     form.min_range = "0".to_owned();
-    app.tabs
-        .runtime_mut(app.tabs.active_index())
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
         .arm_strategy_instance(
             &mut *app.audio.alerts,
             pane::PaneSide::Flow,
@@ -1386,8 +1387,9 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
         crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
     form.window = 3;
     form.min_range = "0".to_owned();
-    app.tabs
-        .runtime_mut(app.tabs.active_index())
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
         .arm_strategy_instance(
             &mut *app.audio.alerts,
             pane::PaneSide::Flow,
@@ -1480,15 +1482,15 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(
         app.active_tab().paper.session_trades().len(),
@@ -1535,7 +1537,7 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(0)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(
         app.active_tab().paper.session_trades().len(),
@@ -1556,7 +1558,7 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
     for id in [2, 4, 6] {
         evt_tx.try_send(FeedEvent::Live(trade(id))).unwrap();
     }
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let covered = settled(&mut app);
     switch_layer(&mut app, ChartLayer::TradePaint, false);
@@ -3253,7 +3255,7 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
             .unwrap_or(chart.right()),
         app.drawings
             .drawing_bbox_on_screen(
-                &crate::app::drawing_controller::DrawingReadAccess::new(&app.tabs),
+                &crate::app::drawing_controller::DrawingReadAccess::new(&app.runtime.tabs),
                 chart,
                 profile,
             )
@@ -3281,7 +3283,7 @@ fn giving_the_placement_back_is_saved_as_well() {
     draw_horizontal_line(&mut app, &ctx, 300.0);
     park_the_popup(&mut app, &ctx, egui::vec2(120.0, 90.0));
     assert!(
-        ui_state::load(app.workspace.ui_state_path())
+        ui_state::load(app.runtime.workspace.ui_state_path())
             .chrome
             .is_some_and(|chrome| chrome.inspector_position.is_some()),
         "the parked position is on disk before the reset"
@@ -3305,14 +3307,14 @@ fn giving_the_placement_back_is_saved_as_well() {
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        ui_state::load(app.workspace.ui_state_path())
+        ui_state::load(app.runtime.workspace.ui_state_path())
             .chrome
             .expect("the chrome is still recorded")
             .inspector_position,
         None,
         "the file forgets the position the trader discarded"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// The harness table tells an agent to pair `QUANTICK_DRAWING_INSPECTOR=1`
@@ -3323,7 +3325,8 @@ fn giving_the_placement_back_is_saved_as_well() {
 fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(500);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("demo-inspector"));
     app.drawings
         .chrome
@@ -3377,7 +3380,8 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
             ..AppLaunch::default()
         },
     );
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("hook-inspector"));
     app.drawings
         .chrome
@@ -3585,7 +3589,7 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=201).map(trade).collect();
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
@@ -3755,7 +3759,9 @@ fn undo_after_typing_takes_the_whole_note_back() {
     }
     run_frame(&mut app, &ctx);
     // Close the editor: the typing gesture commits with it.
-    app.drawings.chrome.commit_inline_text(&mut app.tabs);
+    app.drawings
+        .chrome
+        .commit_inline_text(&mut app.runtime.tabs);
     assert!(app.active_tab_mut().flow_pane.drawings.undo());
     let drawing = &app.active_tab().flow_pane.drawings.items()[index];
     assert_eq!(
@@ -3788,7 +3794,9 @@ fn the_note_stops_painting_itself_while_its_editor_is_open() {
 
     // Closed again, the object is the only thing holding the words — so
     // an empty note goes back to saying it is there.
-    app.drawings.chrome.commit_inline_text(&mut app.tabs);
+    app.drawings
+        .chrome
+        .commit_inline_text(&mut app.runtime.tabs);
     let painted = painted_text(&run_frame(&mut app, &ctx));
     assert!(
         painted.iter().any(|text| text == "Note"),
@@ -3856,7 +3864,9 @@ fn a_double_click_on_a_note_opens_its_editor_again() {
         &ctx,
         vec![egui::Event::Text("swing high".to_owned())],
     );
-    app.drawings.chrome.commit_inline_text(&mut app.tabs);
+    app.drawings
+        .chrome
+        .commit_inline_text(&mut app.runtime.tabs);
     run_frame(&mut app, &ctx);
     assert_eq!(
         app.drawings.chrome.inline_text_editing(),
@@ -3906,7 +3916,7 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
     run_frame(&mut app, &ctx);
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::Text("mine".to_owned())]);
     assert!(app.drawings.chrome.inline_text_editing().is_some());
-    let home = app.tabs.active_id();
+    let home = app.runtime.tabs.active_id();
 
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
@@ -3922,6 +3932,7 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
     // a commit on the next frame.
     run_frame(&mut app, &ctx);
     let mirrored = app
+        .runtime
         .tabs
         .iter_with_ids()
         .find(|(id, _)| *id != home)
@@ -3936,7 +3947,7 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
         Some("mine")
     );
 
-    let owner = app.tabs.by_id(home).expect("home tab");
+    let owner = app.runtime.tabs.by_id(home).expect("home tab");
     let drawing = &owner.flow_pane.drawings.items()[0];
     assert_eq!(
         drawing.tool.inline_text(drawing.payload.as_ref()),
@@ -4652,19 +4663,19 @@ fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     app.apply_toolbar_action(ToolbarAction::OpenIndicatorSettings(slot.0));
     assert!(
-        app.indicators.indicator_settings.is_some(),
+        app.runtime.indicators.indicator_settings.is_some(),
         "the dialog opened"
     );
 
-    if let Some(dialog) = app.indicators.indicator_settings.as_mut()
+    if let Some(dialog) = app.runtime.indicators.indicator_settings.as_mut()
         && let Some(quantick_indicators::InputValue::Int(len)) = dialog.draft.first_mut()
     {
         *len = 21;
     }
-    let change = app.indicators.apply_settings();
+    let change = app.runtime.indicators.apply_settings();
     app.apply_indicator_settings_change(change);
     assert!(
-        app.indicators.indicator_settings.is_some(),
+        app.runtime.indicators.indicator_settings.is_some(),
         "Apply keeps the dialog open for the next nudge"
     );
     settle_indicators(&mut app);
@@ -4690,7 +4701,7 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
-    let home = app.tabs.active_id();
+    let home = app.runtime.tabs.active_id();
     place_level(&mut app, PaneSide::Flow, 100.0);
     run_frame(&mut app, &ctx);
 
@@ -4699,7 +4710,7 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
         .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let twin = app.tabs.active_id();
+    let twin = app.runtime.tabs.active_id();
     assert_ne!(twin, home, "a second tab opened");
     assert_eq!(
         drawings_on(&app, PaneSide::Flow),
@@ -4713,14 +4724,14 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
 
     // And draws a second level on the other tab.
     app.arrangement_adapter().cycle_tab(-1);
-    assert_eq!(app.tabs.active_id(), home);
+    assert_eq!(app.runtime.tabs.active_id(), home);
     place_level(&mut app, PaneSide::Flow, 200.0);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
     // The twin took the new level and kept pointing at the same object.
     app.arrangement_adapter().cycle_tab(1);
-    assert_eq!(app.tabs.active_id(), twin);
+    assert_eq!(app.runtime.tabs.active_id(), twin);
     assert_eq!(
         drawings_on(&app, PaneSide::Flow),
         vec![100.0, 200.0],
@@ -4757,7 +4768,7 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
         "the twin still holds both levels after an edit of its own"
     );
     app.arrangement_adapter().cycle_tab(-1);
-    assert_eq!(app.tabs.active_id(), home);
+    assert_eq!(app.runtime.tabs.active_id(), home);
     let here = drawings_on(&app, PaneSide::Flow);
     assert!(
         here.contains(&200.0),
@@ -4959,7 +4970,7 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     run_frame(&mut app, &ctx);
     let top_id = app.active_tab().pane(PaneSide::Time(0)).id;
 
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     assert!(
         app.layout_adapter().move_context_pane_at(tab_id, 1, 2),
         "the top chart moved down"
@@ -4977,7 +4988,8 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     );
     assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
     assert!(
-        app.indicators
+        app.runtime
+            .indicators
             .slot_kinds
             .iter()
             .filter(|(owner, _)| owner.tab == tab_id && owner.side == PaneSide::Time(1))
@@ -5063,7 +5075,7 @@ fn an_inspector_edit_commits_on_the_pane_it_started_on() {
     // An edit begun on the time pane: the baseline, then a real change to
     // the object (the store records an entry only if something moved).
     let before = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.drawings
         .chrome
         .open_edit_gesture(tab_id, PaneSide::Time(0), 0, before);
@@ -5161,7 +5173,7 @@ fn a_run_in_flight_keeps_its_target_when_the_default_changes() {
         HistoryReach::Sessions(3),
     ));
     assert_eq!(drain_load_older(&mut commands).len(), 1);
-    app.history.history_reach = HistoryReach::Hours(2);
+    app.runtime.history.history_reach = HistoryReach::Hours(2);
     app.drain_tabs();
     assert!(matches!(
         app.active_tab().session.history_status(),
@@ -5459,14 +5471,14 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     };
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
     run_frame(&mut app, &ctx);
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(replayed_marks(&app), 1, "a tab switch does not re-inject");
 
     // The playhead moves on, then restarts: the rerun injects the mark
     // again, at its logical time, and the sidecar still does not grow.
-    let status = std::sync::Arc::clone(&app.tabs[0].replay.as_ref().unwrap().status);
+    let status = std::sync::Arc::clone(&app.runtime.tabs[0].replay.as_ref().unwrap().status);
     replay_test_support::set_position_ms(&status, status.start_ms() + 5_000);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);

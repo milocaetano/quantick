@@ -21,7 +21,7 @@ fn dense_trade(id: u64) -> quantick_engine::Trade {
 #[test]
 fn one_press_of_yesterday_reaches_the_previous_open_on_a_million_print_tape() {
     let (mut app, events, mut commands, _book) = test_app();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     let mut config = app.tab_reads().config().clone();
     config.feeds[0].provider = ProviderKind::MetaTrader;
     let tab = app.active_tab_mut();
@@ -109,7 +109,7 @@ fn one_press_of_yesterday_reaches_the_previous_open_on_a_million_print_tape() {
 #[test]
 fn metatrader_runs_ask_in_bounded_campaign_pages() {
     let (mut app, events, mut commands, _book) = test_app();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     let mut config = app.tab_reads().config().clone();
     config.feeds[0].provider = ProviderKind::MetaTrader;
     events

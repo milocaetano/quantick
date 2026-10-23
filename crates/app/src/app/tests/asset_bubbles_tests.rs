@@ -18,7 +18,7 @@ pub(super) fn look(app: &QuantickApp) -> BubblePreset {
 fn candle_aggression(app: &QuantickApp) -> bool {
     app.active_tab()
         .flow_pane
-        .layer_switched_on(ChartLayer::CandleAggression, &app.style)
+        .layer_switched_on(ChartLayer::CandleAggression, &app.runtime.style)
 }
 
 /// The tab's own symbol switch, without a live feed behind it.
@@ -180,14 +180,14 @@ fn candle_aggression_on_a_win_tab_does_not_reach_a_btc_tab_after_a_restart() {
     let dir = crate::scratch::ScratchDir::new("asset-layers");
     let path = dir.join("chart-layers.toml");
     let mut win = app_on(shipped_config(), "metatrader-b3", "WINV26");
-    win.workspace.set_chart_layers_path(path.clone());
-    let mask = win.active_tab().flow_pane.layer_mask(&win.style);
-    win.workspace.layers_mut().record(mask);
+    win.runtime.workspace.set_chart_layers_path(path.clone());
+    let mask = win.active_tab().flow_pane.layer_mask(&win.runtime.style);
+    win.runtime.workspace.layers_mut().record(mask);
     switch_layer(&mut win, ChartLayer::CandleAggression, true);
     win.layer_wiring().maintain(&egui::Context::default());
 
     let mut btc = app_on(shipped_config(), "binance", "BTCUSDT");
-    btc.workspace.set_chart_layers_path(path);
+    btc.runtime.workspace.set_chart_layers_path(path);
     btc.layer_wiring().restore();
     assert!(
         !candle_aggression(&btc),
@@ -253,7 +253,7 @@ fn an_edit_in_one_win_tab_reaches_the_other_and_survives_its_next_edit() {
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "BTCUSDT".to_owned(), None);
     select_market(&mut app, "metatrader-b3", "WIN$N");
-    assert_eq!(app.tabs.active_index(), 1);
+    assert_eq!(app.runtime.tabs.active_index(), 1);
     assert!(
         app.active_tab_mut()
             .tape_mut()
@@ -263,7 +263,7 @@ fn an_edit_in_one_win_tab_reaches_the_other_and_survives_its_next_edit() {
     maintain(&mut app);
     maintain(&mut app);
 
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     let tape = app.active_tab().tape();
     assert!(
         tape.cached_config()
@@ -279,7 +279,7 @@ fn an_edit_in_one_win_tab_reaches_the_other_and_survives_its_next_edit() {
     maintain(&mut app);
     maintain(&mut app);
 
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     let tape = app.active_tab().tape();
     assert!(tape.ignore_flow_opening(), "and the other way round");
     assert!(
@@ -339,13 +339,13 @@ fn an_unfiled_edit_is_filed_even_when_another_tab_filed_first() {
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "BTCUSDT".to_owned(), None);
     select_market(&mut app, "metatrader-b3", "WIN$N");
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     assert!(
         app.active_tab_mut()
             .tape_mut()
             .edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true)
     );
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     assert!(
         app.active_tab_mut()
             .tape_mut()
@@ -357,7 +357,7 @@ fn an_unfiled_edit_is_filed_even_when_another_tab_filed_first() {
         "the second tab's edit is on screen, not dropped"
     );
     maintain(&mut app);
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     assert!(
         app.active_tab().tape().ignore_flow_opening(),
         "and reaches the first tab"
@@ -427,7 +427,7 @@ fn the_bubbles_autostart_hook_holds_through_a_switch_and_files_nothing() {
     assert!(app.active_tab().tape().bubbles_enabled());
     app.config = shipped_config();
     // The trader switched the mini index's bubbles off in an earlier run.
-    let store = app.workspace.bubble_assets().clone();
+    let store = app.runtime.workspace.bubble_assets().clone();
     let presets = app.active_tab().tape().bubble_presets().clone();
     let win = ("metatrader-b3", "WINV26");
     let (_, declared) = AssetBinding::bind(store.clone(), &app.config, win, &presets, false);

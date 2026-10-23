@@ -5,7 +5,7 @@ const ACTION: &str = "orderflow.tape.opening_scale.set";
 
 fn input(app: &QuantickApp, enabled: bool) -> Value {
     json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "ignore_opening_burst_in_scale": enabled,
     })
@@ -138,7 +138,7 @@ fn flow_opening_scale_is_independent_retry_safe_and_refuses_context() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let payload = json!({"tab_id":app.tabs.active_id().to_string(),"pane_id":pane_id,"target":"candle","ignore_opening_burst_in_scale":true});
+    let payload = json!({"tab_id":app.runtime.tabs.active_id().to_string(),"pane_id":pane_id,"target":"candle","ignore_opening_burst_in_scale":true});
     let (first, _) = keyed_call(
         &mut app,
         &mut cockpit,
@@ -223,7 +223,7 @@ fn an_opening_scale_set_by_control_is_read_back_and_kept_per_asset() {
     assert_eq!(win["asset"]["preset"], "mini index regions");
 
     let payload = json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "ignore_opening_burst_in_scale": true,
     });

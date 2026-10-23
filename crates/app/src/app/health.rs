@@ -65,7 +65,7 @@ impl QuantickApp {
     /// [`HealthSummary`]'s, built from those readings and the counters.
     pub(super) fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
         let elapsed = now - self.health.last_summary;
-        if !worker_diagnostics::emit_if_due(&self.tabs, elapsed) {
+        if !worker_diagnostics::emit_if_due(&self.runtime.tabs, elapsed) {
             return;
         }
         let geometry = WindowGeometry::read(ctx, self.chrome.surface.as_ref());
@@ -219,16 +219,16 @@ impl<'a> HealthSummary<'a> {
         let book_updates_per_s = book.depth_updates_since_summary as f64 / seconds;
         let tab = app.active_tab();
         Self {
-            tab_count: app.tabs.len(),
-            tab_id: app.tabs.active_id(),
+            tab_count: app.runtime.tabs.len(),
+            tab_id: app.runtime.tabs.active_id(),
             tab,
             health: &app.health,
-            style: &app.style,
-            style_revision: app.style_revision,
-            candle_preset: CandlePreset::detect(&app.style.candles)
+            style: &app.runtime.style,
+            style_revision: app.runtime.style_revision,
+            candle_preset: CandlePreset::detect(&app.runtime.style.candles)
                 .map_or("custom", CandlePreset::log_value),
             geometry,
-            envelope: envelope::observe(&app.tabs, trades_per_s, book_updates_per_s),
+            envelope: envelope::observe(&app.runtime.tabs, trades_per_s, book_updates_per_s),
             book,
             trades_per_s,
             book_updates_per_s,

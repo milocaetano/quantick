@@ -809,7 +809,7 @@ impl AppRig {
                 (0..session as u64).map(print).collect(),
             ))
             .unwrap();
-        let tab_id = app.tabs.active_id();
+        let tab_id = app.runtime.tabs.active_id();
         app.active_tab_mut().drain_feed(tab_id);
         // Read again after the warm-up below; these only fill the fields.
         let worker = &app.active_tab().flow_pane.indicator_worker;

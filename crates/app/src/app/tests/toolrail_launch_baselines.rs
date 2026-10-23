@@ -109,7 +109,10 @@ fn six_hook_case(case: &str, env: Env, workspace: ui_state::Workspace) {
     assert_eq!(app.workspace_state().starred_tool_ids(), favorites);
     assert_eq!(app.toolrail.dock(), dock);
     assert_eq!(app.toolrail.launch_pending_for_test(), (target, flyout));
-    assert_eq!(app.workspace.session().favorites_are_staged(), staged);
+    assert_eq!(
+        app.runtime.workspace.session().favorites_are_staged(),
+        staged
+    );
 
     let ctx = egui::Context::default();
     if case.starts_with("scroll-") {
@@ -145,7 +148,7 @@ fn six_hook_case(case: &str, env: Env, workspace: ui_state::Workspace) {
         }
     }
     let path = scratch_ui_state(&format!("literal-launch-favorites-{case}"));
-    app.workspace.set_ui_state_path(path.clone());
+    app.runtime.workspace.set_ui_state_path(path.clone());
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
     assert_eq!(path.exists(), !staged, "only ordinary stars reach disk");

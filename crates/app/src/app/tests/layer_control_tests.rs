@@ -1,7 +1,7 @@
 //! Real gateway + real chart rendering; no adapter-specific layer vocabulary.
 use super::*;
 fn layer_input(app: &QuantickApp, id: &str, visible: bool) -> Value {
-    json!({ "tab_id": app.tabs.active_id().to_string(), "pane_id": app.active_tab().flow_pane.id.to_string(), "layer_id": id, "visible": visible })
+    json!({ "tab_id": app.runtime.tabs.active_id().to_string(), "pane_id": app.active_tab().flow_pane.id.to_string(), "layer_id": id, "visible": visible })
 }
 fn snapshot(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
     let (response, _) = unkeyed_call(
@@ -61,7 +61,7 @@ fn additive_layer_traverses_discovery_admission_common_operation_and_real_chart(
     let payload = layer_input(&app, "grid", false);
     let (grid, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
     assert_eq!(success_result(&grid)["layer"]["scope"], "window");
-    assert!(!app.style.canvas.grid_enabled);
+    assert!(!app.runtime.style.canvas.grid_enabled);
     let payload = layer_input(&app, "tape_chart", false);
     let (off, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
     assert!(matches!(off.outcome, ResponseOutcome::Success { .. }));
@@ -82,18 +82,22 @@ fn omitted_pane_mutations_have_correlated_once_only_and_noop_journal_readback() 
     // More panes than the snapshot budget, using disconnected in-memory feeds.
     for id in 2..=66 {
         let (other, _, _, _) = test_app();
-        let mut tab = other.tabs.into_single_runtime();
+        let mut tab = other.runtime.tabs.into_single_runtime();
 
         tab.flow_pane.id = id + 1000;
-        let opening = app.tabs.plan_open();
-        app.tabs.append(opening, tab);
+        let opening = app.runtime.tabs.plan_open();
+        app.runtime.tabs.append(opening, tab);
     }
-    let target = app.tabs.last().unwrap();
-    let tab_id = app.tabs.id_at(app.tabs.len() - 1).to_string();
+    let target = app.runtime.tabs.last().unwrap();
+    let tab_id = app
+        .runtime
+        .tabs
+        .id_at(app.runtime.tabs.len() - 1)
+        .to_string();
     let pane_id = target.flow_pane.id.to_string();
     let visible = !target
         .flow_pane
-        .layer_switched_on(ChartLayer::Crosshair, &app.style);
+        .layer_switched_on(ChartLayer::Crosshair, &app.runtime.style);
     let directory = gateway_test_directory("layers-omitted-readback");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);

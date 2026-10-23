@@ -8,7 +8,7 @@ fn configured_feed_selection_is_validated_retry_safe_and_reads_back() {
     let directory = gateway_test_directory("feed-source");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.recover");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let input = json!({"tab_id":app.tabs.active_id().to_string(),
+    let input = json!({"tab_id":app.runtime.tabs.active_id().to_string(),
         "feed_id":app.active_tab().active.0, "symbol":app.active_tab().active.1});
     let generation = app.active_tab().feed_generation();
     let mut observer = connect(&directory, &options("observer", &[]));
@@ -73,7 +73,7 @@ fn a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position() 
     app.active_tab_mut()
         .paper
         .redirect_history_dir(dir.path().to_path_buf());
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();

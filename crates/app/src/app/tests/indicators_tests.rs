@@ -66,7 +66,7 @@ fn selected_indicator_bounds_use_the_drawn_band_scale() {
     let bbox = app
         .drawings
         .drawing_bbox_on_screen(
-            &crate::app::drawing_controller::DrawingReadAccess::new(&app.tabs),
+            &crate::app::drawing_controller::DrawingReadAccess::new(&app.runtime.tabs),
             chart,
             index,
         )
@@ -124,11 +124,13 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
 fn forgetting_a_tab_clears_all_slot_collections_without_touching_other_tabs() {
     let (mut app, _commands) = app_with_history(1);
     let owners = [7, 9].map(|tab| super::super::TabSlot {
+        workspace: crate::app::WORKSPACE_ID,
+        pane: 0,
         tab,
         side: PaneSide::Flow,
         slot: SlotId(0),
     });
-    let state = &mut app.indicators;
+    let state = &mut app.runtime.indicators;
     for owner in owners {
         state.slot_kinds.push((
             owner,
@@ -224,13 +226,14 @@ fn opening_a_workspace_keeps_the_indicator_set_being_saved() {
     app.workspace_bundle_adapter().import_workspace_from(&file);
 
     assert!(
-        app.tabs
+        app.runtime
+            .tabs
             .iter()
             .all(|tab| tab.panes().all(|(pane, _)| pane.layout_seeded())),
         "every pane of the imported strip carries the imported layout"
     );
     assert!(
-        !app.workspace.layouts().is_dirty(),
+        !app.runtime.workspace.layouts().is_dirty(),
         "what is on screen is the file's; nothing to write back yet"
     );
     let _ = std::fs::remove_file(&file);
@@ -249,7 +252,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
     let layouts_path = crate::layouts::default_path();
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&layouts_path);
-    app.workspace.set_layouts_path(layouts_path.clone());
+    app.runtime.workspace.set_layouts_path(layouts_path.clone());
 
     // A saved set: one native with bound inputs, one hidden native, and
     // a script the library does not have.
@@ -289,30 +292,33 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         "the old set migrated into the first layout"
     );
     assert_eq!(
-        app.indicators.slot_kinds.len(),
+        app.runtime.indicators.slot_kinds.len(),
         3,
         "a script the library lacks takes an error slot saying so, keeping the layout's positions aligned"
     );
     assert_eq!(
-        app.indicators.slot_kinds[0].1,
+        app.runtime.indicators.slot_kinds[0].1,
         SavedKind::native("native.ema")
     );
     assert_eq!(
-        app.indicators.slot_kinds[1].1,
+        app.runtime.indicators.slot_kinds[1].1,
         SavedKind::native("native.cvd")
     );
     assert_eq!(
-        app.indicators.pending_hidden.len(),
+        app.runtime.indicators.pending_hidden.len(),
         1,
         "the hidden flag survived"
     );
     assert!(
-        !app.workspace.layouts().is_dirty(),
+        !app.runtime.workspace.layouts().is_dirty(),
         "restoring is not a user edit and must not rewrite the file"
     );
 
     // A user edit, settled: the file must match the live set.
-    let target = (app.tabs.active_id(), app.active_tab().focused_side());
+    let target = (
+        app.runtime.tabs.active_id(),
+        app.active_tab().focused_side(),
+    );
     app.layout_adapter()
         .note_indicator_edit_at(target.0, target.1);
     // Let the worker answer the adds, so the views the snapshot reads
@@ -331,12 +337,12 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         "the whole migrated set is written — the script the library lacks stays in the layout, waiting for its file"
     );
     assert_eq!(
-        app.indicators.slot_kinds.len(),
+        app.runtime.indicators.slot_kinds.len(),
         3,
         "and every entry has its slot on the chart"
     );
     assert!(
-        !app.workspace.layouts().is_dirty(),
+        !app.runtime.workspace.layouts().is_dirty(),
         "the debounce fired, so the change is written"
     );
     let _ = std::fs::remove_file(&path);
@@ -452,12 +458,13 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
         "the pane beside the focused one gained the same indicator"
     );
     assert_eq!(
-        app.indicators.slot_kinds.len(),
+        app.runtime.indicators.slot_kinds.len(),
         2,
         "one registration per pane, each on its own slot"
     );
     assert_eq!(
-        app.indicators
+        app.runtime
+            .indicators
             .slot_kinds
             .iter()
             .filter(|(owner, _)| owner.side == PaneSide::Time(0))
@@ -482,7 +489,7 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
 
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     let pane_id = app.active_tab().flow_pane.id;
     let cvd = app.active_tab().flow_pane.indicators.all()[0].slot;
     app.active_tab_mut()
@@ -533,6 +540,7 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
     app.active_tab_mut().flow_pane.request_settings(slot);
     app.service_indicator_requests();
     let dialog = app
+        .runtime
         .indicators
         .indicator_settings
         .as_ref()
@@ -544,10 +552,10 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
         "holding that indicator's own values"
     );
 
-    app.indicators.indicator_settings = None;
+    app.runtime.indicators.indicator_settings = None;
     app.service_indicator_requests();
     assert!(
-        app.indicators.indicator_settings.is_none(),
+        app.runtime.indicators.indicator_settings.is_none(),
         "the request was taken, not left to fire again next frame"
     );
 }
@@ -642,13 +650,14 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
     app.service_indicator_requests();
 
     let dialog = app
+        .runtime
         .indicators
         .indicator_settings
         .as_ref()
         .expect("the hook found the indicator on the pane that has one");
     assert_eq!(dialog.slot, slot);
     assert_eq!(
-        app.indicators.indicator_settings_target.side,
+        app.runtime.indicators.indicator_settings_target.side,
         PaneSide::Time(0),
         "and addressed it on the focused pane, which carries the layout too"
     );
@@ -684,7 +693,9 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
     assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
 
     let target = TabSlot {
-        tab: app.tabs.active_id(),
+        workspace: crate::app::WORKSPACE_ID,
+        pane: app.active_tab().pane(PaneSide::Time(0)).id,
+        tab: app.runtime.tabs.active_id(),
         side: PaneSide::Time(0),
         slot,
     };
@@ -707,9 +718,9 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
     );
-    assert!(app.indicators.indicator_settings.is_some());
+    assert!(app.runtime.indicators.indicator_settings.is_some());
     assert_eq!(
-        app.indicators.indicator_settings_target.side,
+        app.runtime.indicators.indicator_settings_target.side,
         PaneSide::Time(0),
         "the dialog's Apply will land on the legend's pane"
     );
@@ -806,7 +817,8 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
         "and on the flow pane, through the layout"
     );
     assert!(
-        app.indicators
+        app.runtime
+            .indicators
             .slot_kinds
             .iter()
             .any(|(owner, _)| owner.side == PaneSide::Time(1)),
@@ -951,7 +963,7 @@ fn a_workspace_naming_a_native_this_build_lacks_restores_an_error_slot() {
     let layouts_path = crate::layouts::default_path();
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&layouts_path);
-    app.workspace.set_layouts_path(layouts_path.clone());
+    app.runtime.workspace.set_layouts_path(layouts_path.clone());
 
     crate::indicators::state_file::save(
         &path,
@@ -967,7 +979,7 @@ fn a_workspace_naming_a_native_this_build_lacks_restores_an_error_slot() {
     settle_indicators(&mut app);
 
     assert_eq!(
-        app.indicators.slot_kinds.len(),
+        app.runtime.indicators.slot_kinds.len(),
         1,
         "the slot is kept so the layout's positions stay aligned"
     );

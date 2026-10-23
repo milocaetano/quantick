@@ -87,9 +87,8 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
     let (mut app, _commands) = app_with_history_and_launch(20_000, launch);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     let QuantickApp {
-        tabs,
+        runtime: workspace_runtime::WorkspaceRuntime { tabs, style, .. },
         config,
-        style,
         pane_ids,
         ..
     } = &mut app;
@@ -363,9 +362,8 @@ fn nine_hook_case(case: &str, env: Env) {
         "stress" => {
             app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
             let QuantickApp {
-                tabs,
+                runtime: workspace_runtime::WorkspaceRuntime { tabs, style, .. },
                 config,
-                style,
                 pane_ids,
                 ..
             } = &mut app;

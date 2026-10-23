@@ -17,11 +17,15 @@ use super::TabSlot;
 /// The two host effects needed by attachment and removal. No focus, layout,
 /// library, compilation policy or authority can be changed through this port.
 pub(super) trait IndicatorHost {
+    fn pane_id(&self) -> u64;
     fn add(&mut self, source: IndicatorSource) -> SlotId;
     fn remove(&mut self, slot: SlotId);
 }
 
 impl IndicatorHost for ChartPane {
+    fn pane_id(&self) -> u64 {
+        self.id
+    }
     fn add(&mut self, source: IndicatorSource) -> SlotId {
         self.add_indicator(source)
     }
@@ -37,6 +41,7 @@ impl IndicatorHost for ChartPane {
 /// A borrowed operation context, not another state owner. The existing
 /// IndicatorState retains these collections and its independent UI state.
 pub(super) struct IndicatorSlots<'a> {
+    pub workspace: quantick_workspace::lifetime::WorkspaceId,
     pub slot_kinds: &'a mut Vec<(TabSlot, SavedKind)>,
     pub operator_slots: &'a mut BTreeSet<TabSlot>,
     pub script_files: &'a mut Vec<(TabSlot, usize, SystemTime)>,
@@ -63,7 +68,13 @@ impl IndicatorSlots<'_> {
             id: id.to_owned(),
             values: Vec::new(),
         });
-        let target = TabSlot { tab, side, slot };
+        let target = TabSlot {
+            workspace: self.workspace,
+            pane: host.pane_id(),
+            tab,
+            side,
+            slot,
+        };
         let kind = SavedKind::native(id);
         self.slot_kinds.push((target, kind.clone()));
         IndicatorAttachment {
@@ -84,7 +95,13 @@ impl IndicatorSlots<'_> {
             name: name.clone(),
             text,
         });
-        let target = TabSlot { tab, side, slot };
+        let target = TabSlot {
+            workspace: self.workspace,
+            pane: host.pane_id(),
+            tab,
+            side,
+            slot,
+        };
         let kind = SavedKind::Script { name };
         self.slot_kinds.push((target, kind.clone()));
         if by_operator {
@@ -137,6 +154,9 @@ mod tests {
     }
 
     impl IndicatorHost for FakeHost {
+        fn pane_id(&self) -> u64 {
+            0
+        }
         fn add(&mut self, source: IndicatorSource) -> SlotId {
             let slot = SlotId(self.next);
             self.next += 1;
@@ -157,6 +177,7 @@ mod tests {
         let mut hidden = Vec::new();
         let mut styles = Vec::new();
         let mut slots = IndicatorSlots {
+            workspace: crate::app::WORKSPACE_ID,
             slot_kinds: &mut kinds,
             operator_slots: &mut operators,
             script_files: &mut files,
@@ -253,6 +274,9 @@ mod tests {
             removed: Vec<SlotId>,
         }
         impl IndicatorHost for NativeHost {
+            fn pane_id(&self) -> u64 {
+                0
+            }
             fn add(&mut self, source: IndicatorSource) -> SlotId {
                 let IndicatorSource::Native { id, values } = source else {
                     panic!("native attachment must send a native source");
@@ -271,6 +295,7 @@ mod tests {
             let mut hidden = Vec::new();
             let mut styles = Vec::new();
             let mut slots = IndicatorSlots {
+                workspace: crate::app::WORKSPACE_ID,
                 slot_kinds: &mut kinds,
                 operator_slots: &mut operators,
                 script_files: &mut files,
@@ -280,6 +305,8 @@ mod tests {
             let mut host = NativeHost::default();
             let attached = slots.attach_native(&mut host, (73, PaneSide::Time(1)), id);
             let expected = TabSlot {
+                workspace: crate::app::WORKSPACE_ID,
+                pane: 0,
                 tab: 73,
                 side: PaneSide::Time(1),
                 slot: SlotId(41),

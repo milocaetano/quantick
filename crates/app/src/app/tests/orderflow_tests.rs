@@ -125,16 +125,18 @@ fn a_source_with_no_book_never_banks_the_heatmap_as_switched_off() {
     let (app, _commands) = app_without_depth();
     let pane = &app.active_tab().flow_pane;
     assert!(
-        !pane.layer_visible(ChartLayer::Heatmap, &app.style),
+        !pane.layer_visible(ChartLayer::Heatmap, &app.runtime.style),
         "with no book there is nothing to draw, which is the renderer's answer"
     );
     assert_eq!(
-        pane.layer_states(&app.style).get(&ChartLayer::Heatmap),
+        pane.layer_states(&app.runtime.style)
+            .get(&ChartLayer::Heatmap),
         Some(&true),
         "but the file records the switch, which the shipped config left on"
     );
     assert_eq!(
-        pane.layer_states(&app.style).get(&ChartLayer::TapeHeatmap),
+        pane.layer_states(&app.runtime.style)
+            .get(&ChartLayer::TapeHeatmap),
         Some(&true),
         "the tape's depth layer answers to the same rule"
     );
@@ -191,8 +193,9 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
     form.window = 3;
     form.min_range = "0".to_owned();
     form.alarm = true;
-    app.tabs
-        .runtime_mut(app.tabs.active_index())
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
         .arm_strategy_instance(
             &mut *app.audio.alerts,
             pane::PaneSide::Flow,
@@ -293,7 +296,7 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
     let ctx = egui::Context::default();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0));
     let (mut app, _events, _commands, _book) = test_app();
-    app.workspace.set_chart_layers_path(path.clone());
+    app.runtime.workspace.set_chart_layers_path(path.clone());
 
     let menu_frame = |app: &mut QuantickApp, on_tape: bool| {
         with_flow_pane(app, |pane, chrome| {

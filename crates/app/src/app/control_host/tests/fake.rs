@@ -76,7 +76,11 @@ impl FakeWindow {
         );
         let scratch = crate::scratch::thread_dir("fake-window-presets");
         Self {
-            tabs: ArrangementHost::new(quantick_workspace::arrangement::TabId(1), tab),
+            tabs: ArrangementHost::new(
+                quantick_workspace::lifetime::WorkspaceId(0),
+                quantick_workspace::arrangement::TabId(1),
+                tab,
+            ),
             config: AppConfig {
                 default_feed: FAKE_FEED_ID.to_owned(),
                 default_symbol: FAKE_SYMBOL.to_owned(),

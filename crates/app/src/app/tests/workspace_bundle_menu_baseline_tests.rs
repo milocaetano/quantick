@@ -80,10 +80,10 @@ fn bundle_menu_baseline_empty_recent_cannot_open_an_entry() {
             .iter()
             .any(|text| text == "Open recent")
     );
-    assert!(app.workspace.recent_on_disk().is_empty());
-    assert!(app.workspace.session().recent().is_empty());
+    assert!(app.runtime.workspace.recent_on_disk().is_empty());
+    assert!(app.runtime.workspace.session().recent().is_empty());
     assert_eq!(app.surfaces.toast.message(), None);
-    assert!(!app.workspace.picker_open());
+    assert!(!app.runtime.workspace.picker_open());
 }
 
 #[test]
@@ -93,9 +93,11 @@ fn bundle_menu_baseline_recent_click_imports_the_real_file() {
     let input = crate::scratch::ScratchFile::new("bundle-menu-recent", "chosen.qws.toml");
     std::fs::write(&input, "version = 1\nname = 'chosen'\n[sections]\n").unwrap();
     app.added_symbols.add("binance", "REOPENUSDT");
-    symbols_file::save(app.workspace.symbols_path(), &app.added_symbols).unwrap();
+    symbols_file::save(app.runtime.workspace.symbols_path(), &app.added_symbols).unwrap();
     app.added_symbols.remove("binance", "REOPENUSDT");
-    app.workspace.set_recent_on_disk(vec![input.to_path_buf()]);
+    app.runtime
+        .workspace
+        .set_recent_on_disk(vec![input.to_path_buf()]);
     let output = open_bundle_menu(&mut app, &ctx, TEST_WINDOW);
     let submenu = click_bundle_label(&mut app, &ctx, TEST_WINDOW, &output, "Open recent");
     let label = crate::workspace_bundle::recent_label(&input);
@@ -103,7 +105,7 @@ fn bundle_menu_baseline_recent_click_imports_the_real_file() {
     click_bundle_label(&mut app, &ctx, TEST_WINDOW, &submenu, &label);
     assert!(app.added_symbols.contains("binance", "REOPENUSDT"));
     assert_eq!(
-        app.workspace.session().recent(),
+        app.runtime.workspace.session().recent(),
         [input.to_string_lossy().into_owned()]
     );
     assert!(
@@ -120,13 +122,14 @@ fn bundle_menu_baseline_duplicate_opens_preserve_original_channel_and_intent() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     let (sender, receiver) = std::sync::mpsc::channel();
-    app.workspace
+    app.runtime
+        .workspace
         .picker_mut()
         .set_pending_for_test(crate::workspace_store::WorkspacePick::Export, receiver);
     for label in ["Export to file…", "Open from file…"] {
         let output = open_bundle_menu(&mut app, &ctx, TEST_WINDOW);
         click_bundle_label(&mut app, &ctx, TEST_WINDOW, &output, label);
-        assert!(app.workspace.picker_open());
+        assert!(app.runtime.workspace.picker_open());
     }
     let output = crate::scratch::ScratchFile::new("bundle-menu-original-picker", "export.qws.toml");
     assert!(!output.exists());
@@ -134,7 +137,7 @@ fn bundle_menu_baseline_duplicate_opens_preserve_original_channel_and_intent() {
         .send(Some(output.to_path_buf()))
         .expect("original receiver is still live");
     app.workspace_bundle_adapter().poll_picker();
-    assert!(!app.workspace.picker_open());
+    assert!(!app.runtime.workspace.picker_open());
     assert!(
         output.is_file(),
         "the original Export intent, not Import, was retained"

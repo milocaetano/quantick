@@ -31,7 +31,7 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
             .unwrap();
     }
     events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.trades().len(), 1);
     assert_eq!(
@@ -204,7 +204,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     app.chrome.harness.arm_load_older(2, 3);
     app.chrome
         .harness
-        .apply_load_older(&mut app.tabs, &app.config);
+        .apply_load_older(&mut app.runtime.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
         "nothing is charted yet, so nothing may be asked for"
@@ -220,7 +220,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     for _ in 0..3 {
         app.chrome
             .harness
-            .apply_load_older(&mut app.tabs, &app.config);
+            .apply_load_older(&mut app.runtime.tabs, &app.config);
     }
     assert_eq!(
         app.chrome.harness.load_older_remaining(),
@@ -238,12 +238,12 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     let (mut app, events, mut cmd_rx) = history_app(&ctx);
     while cmd_rx.try_recv().is_ok() {}
     // An hour of tape, which the reply below meets: each press is one run.
-    app.history.history_reach = history_reach::HistoryReach::Hours(1);
+    app.runtime.history.history_reach = history_reach::HistoryReach::Hours(1);
     app.drain_tabs();
     app.chrome.harness.arm_load_older(2, 10);
     app.chrome
         .harness
-        .apply_load_older(&mut app.tabs, &app.config);
+        .apply_load_older(&mut app.runtime.tabs, &app.config);
     assert!(
         matches!(cmd_rx.try_recv(), Ok(FeedCommand::LoadOlder { .. })),
         "the first press asks"
@@ -258,7 +258,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // press while a run pages starts nothing.
     app.chrome
         .harness
-        .apply_load_older(&mut app.tabs, &app.config);
+        .apply_load_older(&mut app.runtime.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
         "a run is in flight; the hook waits for it"
@@ -285,7 +285,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     }
     app.chrome
         .harness
-        .apply_load_older(&mut app.tabs, &app.config);
+        .apply_load_older(&mut app.runtime.tabs, &app.config);
     assert!(matches!(
         cmd_rx.try_recv(),
         Ok(FeedCommand::LoadOlder { .. })
@@ -319,7 +319,7 @@ fn loader_tracks_only_accepted_history_requests() {
     evt_tx
         .try_send(FeedEvent::Backfilled((1..=10).map(trade).collect()))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
@@ -352,7 +352,7 @@ fn rejected_request_does_not_arm_the_loader() {
     // With the command channel closed the request never reaches the feed,
     // so no reply will ever come - the count must not grow.
     let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     evt_tx
         .try_send(FeedEvent::Backfilled((1..=10).map(trade).collect()))
         .unwrap();
@@ -379,7 +379,7 @@ fn rejected_request_does_not_arm_the_loader() {
 fn a_source_reset_restarts_the_history_wait() {
     // The admitted older request is abandoned; the reset starts one refill.
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     evt_tx
         .try_send(FeedEvent::Backfilled((1..=10).map(trade).collect()))
         .unwrap();
@@ -394,7 +394,7 @@ fn a_source_reset_restarts_the_history_wait() {
         .place(drawing_tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
 
     evt_tx.try_send(FeedEvent::Reset).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
     assert_eq!(
@@ -418,7 +418,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
@@ -507,7 +507,7 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(5)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
     app.active_tab_mut().resume_floor_ms = Some(floor);
@@ -517,7 +517,7 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::Backfilled(Vec::new()))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().resume_floor_ms,
@@ -546,7 +546,7 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::HistoryPrepended(older))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().flow_pane.state.trades().len(),
@@ -564,7 +564,7 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().resume_floor_ms = app.active_tab().latest_trade_ms;
     app.active_tab_mut().feed_gaps.push(quantick_feed::FeedGap {
@@ -638,7 +638,7 @@ fn backfill_does_not_claim_a_live_transport_latency() {
         .try_send(FeedEvent::Backfilled(vec![trade(1)]))
         .unwrap();
 
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
 
     assert_eq!(app.active_tab().trade_arrival_ms(), None);
@@ -1226,7 +1226,7 @@ fn turning_the_switch_off_asks_for_the_whole_span_in_one_reply() {
     app.drain_tabs();
 
     // Forget the answer and ask again with the switch off.
-    app.history.progressive_history = false;
+    app.runtime.history.progressive_history = false;
     app.active_tab_mut().forget_ohlcv_generation_for_test();
     app.drain_tabs();
     assert_eq!(
@@ -1497,7 +1497,7 @@ fn a_replay_installs_its_downloaded_context_without_a_press() {
     // And with the lead-in on, it reaches the chart cut by trades too —
     // the whole point of a run-up during a replay, where there are no
     // older *trades* to page: the tape in the file is the whole day.
-    app.history.venue_lead_in = true;
+    app.runtime.history.venue_lead_in = true;
     app.drain_tabs();
     assert_eq!(
         app.active_tab().flow_pane.seam_slot(),
@@ -1785,9 +1785,9 @@ fn a_hidden_tabs_run_pauses_and_resumes_when_shown() {
         history_reach::HistoryReach::Sessions(1),
     ));
     drain_load_older(&mut commands);
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     let config = app.config.clone();
-    let mut policy = app.history.policy(app.tz, false);
+    let mut policy = app.runtime.history.policy(app.runtime.tz, false);
     // The tab was hidden on an earlier frame; this one only says so.
     app.active_tab_mut().drain_frame(tab_id, &config, policy);
     events
@@ -2019,8 +2019,8 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let path = symbols_scratch("added");
     let _ = std::fs::remove_file(&path);
-    app.workspace.set_symbols_path(path.clone());
-    let tabs_before = app.tabs.len();
+    app.runtime.workspace.set_symbols_path(path.clone());
+    let tabs_before = app.runtime.tabs.len();
 
     // The real dialog: open it, type the contract, press Add.
     app.apply_tab_action(TabAction::New);
@@ -2045,7 +2045,7 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
         !app.surfaces.source_picker.is_open(),
         "adding closes the dialog, because it opened the market"
     );
-    assert_eq!(app.tabs.len(), tabs_before + 1);
+    assert_eq!(app.runtime.tabs.len(), tabs_before + 1);
     assert_eq!(app.active_tab().symbol, "WINQ26", "and it is what opened");
     // Both surfaces that list symbols see it, because both read the
     // catalog the app is running on.
@@ -2101,8 +2101,8 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     );
     let path = symbols_scratch("refused");
     let _ = std::fs::remove_file(&path);
-    app.workspace.set_symbols_path(path.clone());
-    let tabs_before = app.tabs.len();
+    app.runtime.workspace.set_symbols_path(path.clone());
+    let tabs_before = app.runtime.tabs.len();
 
     // The real dialog, on the B3 feed, typing the Tickmill instrument.
     app.apply_tab_action(TabAction::New);
@@ -2139,7 +2139,11 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         "the reason is shown where the symbol was typed: {:?}",
         picker.refusal()
     );
-    assert_eq!(app.tabs.len(), tabs_before, "and no market was opened");
+    assert_eq!(
+        app.runtime.tabs.len(),
+        tabs_before,
+        "and no market was opened"
+    );
     assert!(
         !app.config
             .feed("b3")
@@ -2193,13 +2197,16 @@ fn the_same_market_can_be_open_twice() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let _ends = open_second_tab(&mut app, &ctx, "TESTUSDT");
 
-    assert_eq!(app.tabs.len(), 2);
-    assert_eq!(app.tabs[0].symbol, app.tabs[1].symbol);
-    assert_ne!(app.tabs.id_at(0), app.tabs.id_at(1));
-    assert_ne!(app.tabs[0].flow_pane.id, app.tabs[1].flow_pane.id);
+    assert_eq!(app.runtime.tabs.len(), 2);
+    assert_eq!(app.runtime.tabs[0].symbol, app.runtime.tabs[1].symbol);
+    assert_ne!(app.runtime.tabs.id_at(0), app.runtime.tabs.id_at(1));
+    assert_ne!(
+        app.runtime.tabs[0].flow_pane.id,
+        app.runtime.tabs[1].flow_pane.id
+    );
     // Separate engines: what one holds says nothing about the other.
-    assert!(!app.tabs[0].flow_pane.state.bars().is_empty());
-    assert!(app.tabs[1].flow_pane.state.bars().is_empty());
+    assert!(!app.runtime.tabs[0].flow_pane.state.bars().is_empty());
+    assert!(app.runtime.tabs[1].flow_pane.state.bars().is_empty());
 }
 
 /// A market order takes no price, and saying otherwise is refused before

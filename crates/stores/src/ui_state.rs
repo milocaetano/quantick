@@ -1410,3 +1410,32 @@ time_bars = "time:60000"
         workspace
     }
 }
+
+/// The interval a saved bar rule names, when it is a time rule at all — a
+/// workspace that recorded `tick:50` for a context chart is a file written by
+/// hand, and the chart opens on the default rather than on a guess.
+fn saved_time_interval(text: Option<&str>) -> Option<i64> {
+    text.and_then(|text| {
+        quantick_engine::bar_registry::BUILTIN_BARS
+            .parse(text)
+            .ok()?
+            .time_interval_ms()
+    })
+}
+
+/// Every context chart's opening interval, top to bottom, from the rules a
+/// workspace saved. A rule that is not a time rule keeps the default for its
+/// slot so the slots after it still line up with their charts. A file written
+/// before the stack existed carries only `time_bars`, which is the top chart's.
+pub fn saved_context_intervals(
+    bars: &[String],
+    time_bars: Option<&str>,
+    default_interval_ms: i64,
+) -> Vec<i64> {
+    if bars.is_empty() {
+        return saved_time_interval(time_bars).into_iter().collect();
+    }
+    bars.iter()
+        .map(|text| saved_time_interval(Some(text)).unwrap_or(default_interval_ms))
+        .collect()
+}

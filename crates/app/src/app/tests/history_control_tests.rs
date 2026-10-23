@@ -5,7 +5,7 @@ use super::*;
 
 /// The active tab's `history_load` block in `feed.status`.
 fn history_read(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
-    let tab_id = app.tabs.active_id().to_string();
+    let tab_id = app.runtime.tabs.active_id().to_string();
     let (response, _) = unkeyed_call(
         app,
         client,
@@ -176,12 +176,12 @@ fn a_mouse_press_and_a_control_press_leave_the_same_state() {
             // An hours target is what a v1 `span` of its minutes meant.
             let span_minutes = match reach {
                 HistoryReach::Hours(hours) => hours * 60,
-                HistoryReach::Sessions(_) => app.history.history_reach_span_minutes,
+                HistoryReach::Sessions(_) => app.runtime.history.history_reach_span_minutes,
             };
             assert_eq!(summary.1, span_minutes.to_string(), "{reach:?}");
             assert_eq!(summary.2, reach.token().as_str(), "{reach:?}");
             states.push((
-                app.history.history_reach,
+                app.runtime.history.history_reach,
                 app.active_tab().session.main_history_reach(),
                 summary,
             ));
@@ -230,7 +230,7 @@ fn a_press_refused_while_a_run_loads_leaves_the_default_alone() {
             ));
         }
         assert_eq!(
-            app.history.history_reach,
+            app.runtime.history.history_reach,
             HistoryReach::Hours(2),
             "by control: {by_control}; the refused target is not the default"
         );

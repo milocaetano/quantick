@@ -176,7 +176,7 @@ pub(super) fn deliver_synthetic_prefix(
     candles: i64,
     slice: quantick_feed::OhlcvSlice,
 ) -> bool {
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     let tab = app.active_tab_mut();
     let Some(first) = tab.flow_pane.state.bars().first() else {
         return false;
@@ -293,8 +293,9 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
     match mode {
         StrategyDemoMode::Armed => {
             let _ = app
+                .runtime
                 .tabs
-                .runtime_mut(app.tabs.active_index())
+                .runtime_mut(app.runtime.tabs.active_index())
                 .arm_strategy_instance(
                     &mut *app.audio.alerts,
                     pane::PaneSide::Flow,
@@ -306,8 +307,9 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
         StrategyDemoMode::AlarmBadge => {
             form.alarm_only = true;
             let _ = app
+                .runtime
                 .tabs
-                .runtime_mut(app.tabs.active_index())
+                .runtime_mut(app.runtime.tabs.active_index())
                 .arm_strategy_instance(
                     &mut *app.audio.alerts,
                     pane::PaneSide::Flow,
@@ -332,8 +334,9 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
         }
         StrategyDemoMode::EndedBadge | StrategyDemoMode::PausedBadge => {
             let _ = app
+                .runtime
                 .tabs
-                .runtime_mut(app.tabs.active_index())
+                .runtime_mut(app.runtime.tabs.active_index())
                 .arm_strategy_instance(
                     &mut *app.audio.alerts,
                     pane::PaneSide::Flow,
@@ -372,7 +375,7 @@ pub(super) fn apply_strategy_demo(app: &mut QuantickApp) {
             if mode == StrategyDemoMode::AlarmSounds {
                 app.surfaces.strategy_popup.stage_sound_picker();
             }
-            let tab = app.tabs.active_id();
+            let tab = app.runtime.tabs.active_id();
             app.surfaces
                 .strategy_popup
                 .open(tab, pane::PaneSide::Flow, drawing_id, form);

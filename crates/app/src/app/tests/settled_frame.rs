@@ -40,7 +40,7 @@ pub(super) fn frame_instant(ctx: &egui::Context) -> Instant {
 /// Wait for every tab's book worker and adopt what it published, so the
 /// next frame lays out from a publication the test chose, not the host.
 pub(super) fn settle_workers(app: &mut QuantickApp) {
-    for tab in app.tabs.iter_mut() {
+    for tab in app.runtime.tabs.iter_mut() {
         tab.tape_mut().flush_for_test();
     }
 }

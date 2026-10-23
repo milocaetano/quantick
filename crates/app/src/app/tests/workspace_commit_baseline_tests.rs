@@ -18,7 +18,7 @@ fn idle_commit_adapter_borrows_and_decides_without_allocation() {
         assert_eq!(work.reallocs, 0);
         assert_eq!(work.realloc_copy_bytes, 0);
     });
-    assert!(!app.workspace.ui_state_path().exists());
+    assert!(!app.runtime.workspace.ui_state_path().exists());
 }
 
 fn maintain(app: &mut QuantickApp, closing: bool) {
@@ -41,30 +41,30 @@ fn maintain(app: &mut QuantickApp, closing: bool) {
 fn commit_baseline_full_and_toggle_save_overwrite_unknown_documents() {
     for reason in ["explicit", "save_on_exit_toggled"] {
         let (mut app, _evt, _cmd, _book) = test_app();
-        app.workspace.session_mut().set_save_on_exit(false);
-        std::fs::write(app.workspace.ui_state_path(), FUTURE).unwrap();
+        app.runtime.workspace.session_mut().set_save_on_exit(false);
+        std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
         app.workspace_save_adapter().save_workspace(reason);
-        let file = ui_state::load(app.workspace.ui_state_path());
+        let file = ui_state::load(app.runtime.workspace.ui_state_path());
         assert_eq!(file.tabs.len(), 1);
         assert_eq!(file.tabs[0].symbol, "TESTUSDT");
         assert!(!file.save_on_exit);
-        assert!(app.workspace.session().saved());
+        assert!(app.runtime.workspace.session().saved());
     }
 }
 
 #[test]
 fn commit_baseline_close_overwrites_unknown_and_consumes_inspector_dirty_each_time() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.workspace.session_mut().set_save_on_exit(true);
+    app.runtime.workspace.session_mut().set_save_on_exit(true);
     for position in [[120.0, 240.0], [220.0, 340.0]] {
-        std::fs::write(app.workspace.ui_state_path(), FUTURE).unwrap();
+        std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
         app.drawings
             .chrome
             .restore_inspector_position(Some(position));
-        app.workspace.session_mut().inspector_moved();
+        app.runtime.workspace.session_mut().inspector_moved();
         maintain(&mut app, true);
-        assert!(!app.workspace.session().inspector_pending());
-        let file = ui_state::load(app.workspace.ui_state_path());
+        assert!(!app.runtime.workspace.session().inspector_pending());
+        let file = ui_state::load(app.runtime.workspace.ui_state_path());
         assert_eq!(file.tabs.len(), 1);
         assert_eq!(file.chrome.unwrap().inspector_position, Some(position));
     }
@@ -73,44 +73,47 @@ fn commit_baseline_close_overwrites_unknown_and_consumes_inspector_dirty_each_ti
 #[test]
 fn commit_baseline_autosave_off_consumes_inspector_without_later_retry() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    std::fs::write(app.workspace.ui_state_path(), FUTURE).unwrap();
-    app.workspace.session_mut().set_save_on_exit(false);
-    app.workspace.session_mut().inspector_moved();
+    std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
+    app.runtime.workspace.session_mut().set_save_on_exit(false);
+    app.runtime.workspace.session_mut().inspector_moved();
     maintain(&mut app, false);
-    assert!(!app.workspace.session().inspector_pending());
-    app.workspace.session_mut().set_save_on_exit(true);
+    assert!(!app.runtime.workspace.session().inspector_pending());
+    app.runtime.workspace.session_mut().set_save_on_exit(true);
     maintain(&mut app, false);
     assert_eq!(
-        std::fs::read_to_string(app.workspace.ui_state_path()).unwrap(),
+        std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
         FUTURE
     );
-    assert!(!app.workspace.session().saved());
+    assert!(!app.runtime.workspace.session().saved());
 }
 
 #[test]
 fn commit_baseline_inspector_refusal_is_silent_and_does_not_rearm() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.workspace.session_mut().set_save_on_exit(true);
-    std::fs::write(app.workspace.ui_state_path(), FUTURE).unwrap();
+    app.runtime.workspace.session_mut().set_save_on_exit(true);
+    std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
     app.drawings
         .chrome
         .restore_inspector_position(Some([120.0, 240.0]));
-    app.workspace.session_mut().inspector_moved();
+    app.runtime.workspace.session_mut().inspector_moved();
     let before = app.surfaces.toast.message().map(str::to_owned);
     maintain(&mut app, false);
-    assert!(!app.workspace.session().inspector_pending());
+    assert!(!app.runtime.workspace.session().inspector_pending());
     assert_eq!(app.surfaces.toast.message(), before.as_deref());
     assert_eq!(
-        std::fs::read_to_string(app.workspace.ui_state_path()).unwrap(),
+        std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
         FUTURE
     );
     // The failed attempt was consumed: admitting a file later is not a retry.
     let mut admitted = app.workspace_state().capture_workspace();
     admitted.chrome.as_mut().unwrap().inspector_position = None;
-    assert!(ui_state::save(app.workspace.ui_state_path(), &admitted));
+    assert!(ui_state::save(
+        app.runtime.workspace.ui_state_path(),
+        &admitted
+    ));
     maintain(&mut app, false);
     assert_eq!(
-        ui_state::load(app.workspace.ui_state_path())
+        ui_state::load(app.runtime.workspace.ui_state_path())
             .chrome
             .unwrap()
             .inspector_position,
@@ -121,25 +124,25 @@ fn commit_baseline_inspector_refusal_is_silent_and_does_not_rearm() {
 #[test]
 fn commit_baseline_named_memory_changes_survive_standing_edit_refusal() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    std::fs::write(app.workspace.ui_state_path(), FUTURE).unwrap();
+    std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
     app.workspace_save_adapter().save_named_workspace("opening");
-    assert_eq!(app.workspace.session().bookmarks().len(), 1);
-    assert!(!app.workspace.session().saved());
+    assert_eq!(app.runtime.workspace.session().bookmarks().len(), 1);
+    assert!(!app.runtime.workspace.session().saved());
     assert_eq!(
-        std::fs::read_to_string(app.workspace.ui_state_path()).unwrap(),
+        std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
         FUTURE
     );
     app.workspace_save_adapter()
         .delete_named_workspace("opening");
-    assert!(app.workspace.session().bookmarks().is_empty());
+    assert!(app.runtime.workspace.session().bookmarks().is_empty());
     assert_eq!(
-        std::fs::read_to_string(app.workspace.ui_state_path()).unwrap(),
+        std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
         FUTURE
     );
     app.workspace_save_adapter().save_named_workspace("return");
     app.workspace_save_adapter().save_workspace("explicit");
     assert_eq!(
-        ui_state::load(app.workspace.ui_state_path()).saved[0].name,
+        ui_state::load(app.runtime.workspace.ui_state_path()).saved[0].name,
         "return"
     );
 }
@@ -154,16 +157,16 @@ fn commit_baseline_empty_reset_removes_unknown_but_kept_reset_refuses_it() {
             vec![]
         };
         app.toolrail.set_favorites(&favorites);
-        assert!(app.workspace.session().bookmarks().is_empty());
-        assert!(app.workspace.session().recent().is_empty());
+        assert!(app.runtime.workspace.session().bookmarks().is_empty());
+        assert!(app.runtime.workspace.session().recent().is_empty());
         assert!(app.replay_view.stored_pick().is_none());
-        std::fs::write(app.workspace.ui_state_path(), FUTURE).unwrap();
+        std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
         app.workspace_save_adapter().forget_workspace();
-        assert_eq!(app.workspace.ui_state_path().exists(), keep_star);
-        assert_eq!(app.workspace.session().saved(), keep_star);
+        assert_eq!(app.runtime.workspace.ui_state_path().exists(), keep_star);
+        assert_eq!(app.runtime.workspace.session().saved(), keep_star);
         if keep_star {
             assert_eq!(
-                std::fs::read_to_string(app.workspace.ui_state_path()).unwrap(),
+                std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
                 FUTURE
             );
         }
@@ -175,14 +178,14 @@ fn commit_baseline_day_before_alone_does_not_keep_a_reset_file() {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.toolrail.set_favorites(&[]);
     app.workspace_save_adapter().write_replay_day_before(true);
-    assert!(app.workspace.session().saved());
+    assert!(app.runtime.workspace.session().saved());
     assert_eq!(
-        ui_state::load(app.workspace.ui_state_path()).replay_day_before,
+        ui_state::load(app.runtime.workspace.ui_state_path()).replay_day_before,
         Some(true)
     );
     app.workspace_save_adapter().forget_workspace();
-    assert!(!app.workspace.ui_state_path().exists());
-    assert!(!app.workspace.session().saved());
+    assert!(!app.runtime.workspace.ui_state_path().exists());
+    assert!(!app.runtime.workspace.session().saved());
 }
 
 #[test]
@@ -190,16 +193,16 @@ fn commit_baseline_saved_flag_depends_on_write_purpose_and_failure_is_or() {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.toolrail.set_favorites(&["measure".to_owned()]);
     app.workspace_save_adapter().write_favorites();
-    assert!(app.workspace.ui_state_path().is_file());
-    assert!(!app.workspace.session().saved());
+    assert!(app.runtime.workspace.ui_state_path().is_file());
+    assert!(!app.runtime.workspace.session().saved());
     app.workspace_save_adapter()
         .write_replay_folder(Some("D:/baseline-tape"));
-    assert!(app.workspace.session().saved());
-    std::fs::write(app.workspace.ui_state_path(), FUTURE).unwrap();
+    assert!(app.runtime.workspace.session().saved());
+    std::fs::write(app.runtime.workspace.ui_state_path(), FUTURE).unwrap();
     app.workspace_save_adapter().write_replay_day_before(false);
-    assert!(app.workspace.session().saved());
+    assert!(app.runtime.workspace.session().saved());
     assert_eq!(
-        std::fs::read_to_string(app.workspace.ui_state_path()).unwrap(),
+        std::fs::read_to_string(app.runtime.workspace.ui_state_path()).unwrap(),
         FUTURE
     );
 }

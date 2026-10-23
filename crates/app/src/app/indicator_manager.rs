@@ -35,6 +35,7 @@ const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
 /// `pending_*` queues, `tabs` mirrors the live set onto a new tab, and
 /// `workspace_save` persists it; nothing else names the group.
 pub(super) struct IndicatorState {
+    pub(super) workspace: quantick_workspace::lifetime::WorkspaceId,
     /// Loadable `.pine` scripts (embedded + indicators dir), scanned at
     /// startup. A file-backed script then follows its file: `poll_script_files`
     /// checks mtimes on a debounce and reloads on a save.
@@ -86,11 +87,18 @@ pub(super) struct IndicatorState {
 
 impl IndicatorState {
     /// Initialize the feature at its existing startup phase: scan, clock, presets.
-    pub(super) fn new(first_tab: u64, presets_path: &std::path::Path) -> Self {
+    pub(super) fn new(
+        workspace: quantick_workspace::lifetime::WorkspaceId,
+        first_tab: u64,
+        presets_path: &std::path::Path,
+    ) -> Self {
         Self {
+            workspace,
             script_library: crate::indicators::library::scan(),
             indicator_settings: None,
             indicator_settings_target: TabSlot {
+                workspace,
+                pane: 0,
                 tab: first_tab,
                 side: PaneSide::Flow,
                 slot: SlotId(0),
@@ -121,6 +129,7 @@ impl IndicatorState {
     /// Lend only slot bookkeeping to operations; UI/library/poll state stays here.
     pub(super) fn slots_mut(&mut self) -> super::indicator_operations::IndicatorSlots<'_> {
         super::indicator_operations::IndicatorSlots {
+            workspace: self.workspace,
             slot_kinds: &mut self.slot_kinds,
             operator_slots: &mut self.operator_slots,
             script_files: &mut self.script_files,
@@ -139,6 +148,18 @@ pub(super) enum IndicatorEdit {
     Style(TabSlot),
 }
 
+impl IndicatorEdit {
+    pub(super) fn target(&self) -> TabSlot {
+        match self {
+            Self::Attached(attachment) => attachment.target,
+            Self::Hidden(target)
+            | Self::Remove(target)
+            | Self::Inputs(target, _)
+            | Self::Style(target) => *target,
+        }
+    }
+}
+
 /// The settings owner distinguishes a worker preview from a persisted edit.
 pub(super) enum SettingsChange {
     None,
@@ -152,6 +173,12 @@ pub(super) enum SettingsChange {
 }
 
 impl SettingsChange {
+    pub(super) fn target(&self) -> Option<TabSlot> {
+        match self {
+            Self::None => None,
+            Self::Inputs { target, .. } | Self::Style(target) => Some(*target),
+        }
+    }
     pub(super) fn worker_target(&self) -> Option<TabSlot> {
         match self {
             Self::Inputs { target, .. } => Some(*target),
@@ -251,21 +278,23 @@ impl IndicatorState {
     pub(super) fn open_autostart(
         &mut self,
         tab: u64,
-        focused: (PaneSide, &[IndicatorView]),
-        flow: &[IndicatorView],
+        focused: (PaneSide, u64, &[IndicatorView]),
+        flow: (u64, &[IndicatorView]),
         request: Option<(usize, indicator_panel::SettingsTab)>,
     ) -> bool {
         let Some((index, settings_tab)) = request else {
             return false;
         };
-        let Some((side, view)) = [focused, (PaneSide::Flow, flow)]
+        let Some((side, pane, view)) = [focused, (PaneSide::Flow, flow.0, flow.1)]
             .into_iter()
-            .find_map(|(side, views)| views.get(index).map(|view| (side, view)))
+            .find_map(|(side, pane, views)| views.get(index).map(|view| (side, pane, view)))
         else {
             return false;
         };
         self.open_settings(
             TabSlot {
+                workspace: self.workspace,
+                pane,
                 tab,
                 side,
                 slot: view.slot,
@@ -283,17 +312,19 @@ impl IndicatorState {
     pub(super) fn open_first_editable(
         &mut self,
         tab: u64,
-        flow: &[IndicatorView],
+        flow: (u64, &[IndicatorView]),
         requested: bool,
     ) -> bool {
         if !requested || self.indicator_settings.is_some() {
             return false;
         }
-        let Some(view) = flow.iter().find(|view| !view.input_values.is_empty()) else {
+        let Some(view) = flow.1.iter().find(|view| !view.input_values.is_empty()) else {
             return false;
         };
         self.open_settings(
             TabSlot {
+                workspace: self.workspace,
+                pane: flow.0,
                 tab,
                 side: PaneSide::Flow,
                 slot: view.slot,
@@ -318,7 +349,15 @@ impl IndicatorState {
         (tab, side): (u64, PaneSide),
         action: indicator_legend::LegendAction,
     ) -> Option<IndicatorEdit> {
-        let at = |slot| TabSlot { tab, side, slot };
+        let workspace = self.workspace;
+        let pane_id = pane.id;
+        let at = |slot| TabSlot {
+            workspace,
+            pane: pane_id,
+            tab,
+            side,
+            slot,
+        };
         match action {
             indicator_legend::LegendAction::OpenSettings(slot) => {
                 self.open_settings(

@@ -179,7 +179,7 @@ fn a_drawings_own_magnet_is_set_by_a_named_call_and_read_back() {
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
     let id = drawing_id.0.to_string();
-    let tab_id = app.tabs.active_id().to_string();
+    let tab_id = app.runtime.tabs.active_id().to_string();
     let pane = pane_id.to_string();
     let call = |enabled: serde_json::Value| json!({"tab_id": tab_id, "pane_id": pane, "drawing_id": id, "enabled": enabled});
     let read = |app: &mut QuantickApp, client: &mut LocalClient| {
@@ -307,7 +307,7 @@ fn the_object_magnet_moves_only_the_named_panes_drawing_when_ids_collide() {
     let last = time.drawings.items().len() - 1;
     time.drawings.items_mut()[last].id = flow_id;
     run_frame(&mut app, &ctx);
-    let tab_id = app.tabs.active_id().to_string();
+    let tab_id = app.runtime.tabs.active_id().to_string();
     let flow_pane = app.active_tab().flow_pane.id.to_string();
     let time_pane = app.active_tab().time_pane().unwrap().id.to_string();
     assert_ne!(flow_pane, time_pane);
@@ -355,7 +355,7 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
     let index = place_drawing(&mut app, &ctx, "arrow-mark-up", &[egui::pos2(700.0, 300.0)]);
     let pane = app.active_tab().drawing_pane();
     let input = json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": pane.id.to_string(),
         "drawing_id": pane.drawings.items()[index].id.0.to_string(),
         "enabled": true,

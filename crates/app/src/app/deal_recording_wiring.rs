@@ -24,26 +24,31 @@ fn recorder_for(
         day_cache,
     )
     .for_feed(feed_id);
-    recorder.set_timezone(app.tz.minutes());
+    recorder.set_timezone(app.runtime.tz.minutes());
     recorder
 }
 
 /// Ensure every tab owns a recorder for its current feed and symbol.
 pub(super) fn ensure(app: &mut QuantickApp) {
-    let tz_minutes = app.tz.minutes();
-    for index in 0..app.tabs.len() {
+    let tz_minutes = app.runtime.tz.minutes();
+    for index in 0..app.runtime.tabs.len() {
         let (feed_id, symbol) = {
-            let tab = app.tabs.runtime_mut(index);
+            let tab = app.runtime.tabs.runtime_mut(index);
             tab.deal_recorder.set_timezone(tz_minutes);
             if tab.deal_recorder.is_for(&tab.active.0, &tab.active.1) {
                 continue;
             }
             tab.active.clone()
         };
-        app.tabs.runtime_mut(index).deal_recorder.stop();
-        let day_cache = app.tabs.runtime_mut(index).deal_recorder.take_day_cache();
+        app.runtime.tabs.runtime_mut(index).deal_recorder.stop();
+        let day_cache = app
+            .runtime
+            .tabs
+            .runtime_mut(index)
+            .deal_recorder
+            .take_day_cache();
         let mut recorder = recorder_for(app, &feed_id, &symbol, day_cache);
-        let tab = app.tabs.runtime_mut(index);
+        let tab = app.runtime.tabs.runtime_mut(index);
         recorder.set_available(tab.feed_capabilities.borrow().deal_counter);
         tab.deal_recorder = recorder;
     }
@@ -72,7 +77,7 @@ pub(super) fn draw_toggle(app: &mut QuantickApp, ui: &mut eframe::egui::Ui) {
 /// Save the default and apply it to undecided recorders.
 pub(crate) fn set_default(app: &mut QuantickApp, enabled: bool) {
     app.chrome.record_deals = Some(enabled);
-    for tab in app.tabs.iter_mut() {
+    for tab in app.runtime.tabs.iter_mut() {
         tab.deal_recorder.set_default(enabled);
     }
 }

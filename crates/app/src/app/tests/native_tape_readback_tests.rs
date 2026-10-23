@@ -47,7 +47,7 @@ fn the_bubbles_scope_reads_back_the_native_tape_and_tape_only() {
     assert_eq!(beside["native_tape"], true, "{beside}");
     assert_eq!(beside["tape_only"], false, "{beside}");
     let payload = json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": pane_id,
         "layer_id": "tape_only",
         "visible": true,
@@ -65,7 +65,7 @@ fn the_bubbles_scope_reads_back_the_native_tape_and_tape_only() {
 
 fn set_layer(app: &mut QuantickApp, cockpit: &mut LocalClient, layer: &str, on: bool) -> Value {
     let payload = json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "layer_id": layer,
         "visible": on,
@@ -154,7 +154,7 @@ fn the_native_tape_is_switched_by_the_layer_call_and_read_back_as_built() {
         "the ordinary lane is what is built"
     );
     let payload = json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "layer_id": "native_tape",
         "visible": false,
@@ -213,7 +213,7 @@ fn under_tape_only_the_native_tape_layer_is_blocked_and_says_why() {
     assert_eq!(layer["effective"], false, "{layer}");
     for visible in [false, true] {
         let payload = json!({
-            "tab_id": app.tabs.active_id().to_string(),
+            "tab_id": app.runtime.tabs.active_id().to_string(),
             "pane_id": app.active_tab().flow_pane.id.to_string(),
             "layer_id": "native_tape",
             "visible": visible,
@@ -346,7 +346,7 @@ fn regional_colours_at_opacity(app: &QuantickApp, opacity: f32) -> [egui::Color3
         // Independently model the old source-over-opaque-canvas GPU result.
         let rgb = std::array::from_fn(|channel| {
             (f64::from(source[channel])
-                + f64::from(app.style.canvas.background[channel])
+                + f64::from(app.runtime.style.canvas.background[channel])
                     * (1.0 - f64::from(source.a()) / 255.0))
                 .round() as u8
         });

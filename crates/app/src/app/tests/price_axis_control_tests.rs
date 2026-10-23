@@ -61,7 +61,7 @@ fn enable_tape(app: &mut QuantickApp) {
 
 fn input(app: &QuantickApp, mode: Value) -> Value {
     json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "mode": mode,
     })
@@ -313,7 +313,7 @@ fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let tab_id = app.tabs.active_id().to_string();
+    let tab_id = app.runtime.tabs.active_id().to_string();
     let payload =
         |axis: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis});
     let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles"));
@@ -361,7 +361,7 @@ fn the_live_overview_call_matches_the_open_canvas_double_click() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let tab_id = app.tabs.active_id().to_string();
+    let tab_id = app.runtime.tabs.active_id().to_string();
     let payload = |axis: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis, "to": "live_overview"});
     let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles"));
     let viewport = &success_result(&candles)["viewport"];
@@ -392,7 +392,7 @@ fn the_tape_reset_call_and_the_tape_strip_accept_the_same_panes() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let tab_id = app.tabs.active_id().to_string();
+    let tab_id = app.runtime.tabs.active_id().to_string();
     let panes: Vec<(u64, Option<egui::Rect>, bool)> = app
         .active_tab()
         .panes()

@@ -46,11 +46,8 @@ pub(crate) fn set_indicator_mouse_vertical_line(
     side.is_some_and(|side| {
         set_at(
             app,
-            TabSlot {
-                tab: tab_id,
-                side,
-                slot,
-            },
+            app.slot_at(tab_id, side, slot)
+                .expect("addressed indicator pane"),
             enabled,
         )
     })

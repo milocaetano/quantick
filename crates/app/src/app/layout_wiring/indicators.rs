@@ -16,6 +16,55 @@ mod guide;
 pub(crate) use guide::set_indicator_mouse_vertical_line;
 
 impl LayoutAdapter<'_> {
+    /// Apply an owner-validated edit through the same layout and worker ports.
+    pub(in crate::app) fn apply_indicator_edit(
+        &mut self,
+        edit: super::super::indicator_manager::IndicatorEdit,
+    ) {
+        use super::super::indicator_manager::IndicatorEdit;
+        let target = match edit {
+            IndicatorEdit::Attached(attached) => {
+                if let Some(kind) = attached.layout_entry {
+                    self.mirror_add(attached.target, &kind);
+                }
+                attached.target
+            }
+            IndicatorEdit::Hidden(target) => {
+                self.mirror_hidden(target);
+                target
+            }
+            IndicatorEdit::Remove(target) => {
+                // Read its layout position before either mirror or origin cleanup.
+                self.mirror_remove(target);
+                let Some(tab) = self.tabs.by_id_mut(target.tab) else {
+                    return;
+                };
+                self.indicators
+                    .remove(Some(tab.pane_mut(target.side)), target);
+                target
+            }
+            IndicatorEdit::Inputs(target, values) => {
+                self.mirror_inputs(target, &values);
+                target
+            }
+            IndicatorEdit::Style(target) => {
+                self.mirror_style(target);
+                target
+            }
+        };
+        self.note_indicator_edit_at(target.tab, target.side);
+    }
+
+    fn slot_at(&self, tab: u64, side: PaneSide, slot: SlotId) -> Option<TabSlot> {
+        Some(TabSlot {
+            workspace: self.tabs.owner(),
+            pane: self.pane_at(tab, side)?.id,
+            tab,
+            side,
+            slot,
+        })
+    }
+
     /// Where a slot sits in its pane's layout, or `None` for a slot the
     /// layout does not carry — an operator's, or one a validation hook added.
     fn layout_index_of(&self, target: TabSlot) -> Option<usize> {
@@ -119,7 +168,9 @@ impl LayoutAdapter<'_> {
                     }
                     None => return None,
                 };
-                let owner = TabSlot { tab, side, slot };
+                let owner = self
+                    .slot_at(tab, side, slot)
+                    .expect("existing indicator pane");
                 self.indicators.slot_kinds.push((owner, kind.clone()));
                 if let (Some(index), Some((_, mtime))) = (index, file_info) {
                     self.indicators.script_files.push((owner, index, mtime));
@@ -128,16 +179,21 @@ impl LayoutAdapter<'_> {
             }
         };
         let slot = self.pane_mut_at(tab, side)?.add_indicator(source);
-        self.indicators
-            .slot_kinds
-            .push((TabSlot { tab, side, slot }, kind.clone()));
+        self.indicators.slot_kinds.push((
+            self.slot_at(tab, side, slot)
+                .expect("existing indicator pane"),
+            kind.clone(),
+        ));
         Some(slot)
     }
 
     /// Take every layout slot off one pane, view and worker alike.
     pub(super) fn remove_layout_indicators_at(&mut self, tab: u64, side: PaneSide) {
         for slot in self.layout_slots_at(tab, side) {
-            self.remove_indicator_silently(TabSlot { tab, side, slot });
+            self.remove_indicator_silently(
+                self.slot_at(tab, side, slot)
+                    .expect("existing indicator pane"),
+            );
         }
     }
 
@@ -162,7 +218,9 @@ impl LayoutAdapter<'_> {
             let Some(slot) = self.add_indicator_at(tab, side, &entry.kind) else {
                 continue;
             };
-            let owner = TabSlot { tab, side, slot };
+            let owner = self
+                .slot_at(tab, side, slot)
+                .expect("existing indicator pane");
             self.apply_saved_entry(owner, entry);
         }
     }
@@ -266,6 +324,11 @@ impl LayoutAdapter<'_> {
     /// The origin pane's layout and the index of the slot in it — the two
     /// coordinates every mirror writes to.
     fn edit_coordinates(&self, origin: TabSlot) -> Option<(LayoutId, usize)> {
+        if origin.workspace != self.tabs.owner()
+            || self.pane_at(origin.tab, origin.side)?.id != origin.pane
+        {
+            return None;
+        }
         let index = self.layout_index_of(origin)?;
         Some((self.pane_layout(origin.tab, origin.side), index))
     }
@@ -329,7 +392,10 @@ impl LayoutAdapter<'_> {
         }
         for (tab, side) in self.mirror_targets(origin, layout) {
             if let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() {
-                self.remove_indicator_silently(TabSlot { tab, side, slot });
+                self.remove_indicator_silently(
+                    self.slot_at(tab, side, slot)
+                        .expect("existing indicator pane"),
+                );
             }
         }
     }
@@ -359,7 +425,9 @@ impl LayoutAdapter<'_> {
             let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() else {
                 continue;
             };
-            let owner = TabSlot { tab, side, slot };
+            let owner = self
+                .slot_at(tab, side, slot)
+                .expect("existing indicator pane");
             let Some(pane) = self.pane_mut_at(tab, side) else {
                 continue;
             };
@@ -449,7 +517,9 @@ impl LayoutAdapter<'_> {
             let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() else {
                 continue;
             };
-            let owner = TabSlot { tab, side, slot };
+            let owner = self
+                .slot_at(tab, side, slot)
+                .expect("existing indicator pane");
             match self
                 .pane_mut_at(tab, side)
                 .and_then(|pane| pane.indicators.view_mut(slot))

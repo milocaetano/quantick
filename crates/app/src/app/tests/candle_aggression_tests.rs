@@ -32,7 +32,7 @@ fn context_fixture(
         })
         .collect();
     events.try_send(FeedEvent::Backfilled(prints)).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, ctx);
@@ -106,7 +106,7 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     let layer = ChartLayer::CandleAggression;
     for (pane, _) in app.active_tab().panes() {
         assert!(
-            !pane.layer_switched_on(layer, &app.style),
+            !pane.layer_switched_on(layer, &app.runtime.style),
             "ordinary/BTC defaults stay off"
         );
     }
@@ -133,7 +133,7 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
         "context panes never acquire a book worker"
     );
     assert_eq!(left.state.bar_footprints().len(), 5);
-    assert!(!left.layer_switched_on(ChartLayer::Footprint, &app.style));
+    assert!(!left.layer_switched_on(ChartLayer::Footprint, &app.runtime.style));
     assert_eq!(
         candle_ink(&after, chart),
         ink,
@@ -146,7 +146,7 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     assert!(
         !app.active_tab()
             .flow_pane
-            .layer_switched_on(layer, &app.style)
+            .layer_switched_on(layer, &app.runtime.style)
     );
     app.active_tab_mut().time_panes[0].set_layer_visible(layer, false, &mut Default::default());
     run_frame(&mut app, &ctx);
@@ -231,7 +231,7 @@ fn candle_aggression_is_reachable_by_the_existing_named_layer_action() {
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
     for visible in [true, false] {
-        let input = json!({"tab_id":app.tabs.active_id().to_string(),"pane_id":pane_id,"layer_id":"candle_aggression","visible":visible});
+        let input = json!({"tab_id":app.runtime.tabs.active_id().to_string(),"pane_id":pane_id,"layer_id":"candle_aggression","visible":visible});
         let (response, _) = unkeyed_call(&mut app, &mut client, "layers.visibility.set", input);
         let result = success_result(&response);
         assert_eq!(result["layer"]["requested"], visible);

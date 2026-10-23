@@ -12,46 +12,22 @@ use smallvec::SmallVec;
 impl QuantickApp {
     /// Execute persistence only after the owner has prepared the indicator edit.
     pub(super) fn apply_indicator_edit(&mut self, edit: IndicatorEdit) {
-        let target = match edit {
-            IndicatorEdit::Attached(attached) => {
-                if let Some(kind) = attached.layout_entry {
-                    self.layout_adapter().mirror_add(attached.target, &kind);
-                }
-                attached.target
-            }
-            IndicatorEdit::Hidden(target) => {
-                self.layout_adapter().mirror_hidden(target);
-                target
-            }
-            IndicatorEdit::Remove(target) => {
-                if !self.tabs.by_id(target.tab).is_some() {
-                    return;
-                }
-                // Read its layout position before either mirror or origin cleanup.
-                self.layout_adapter().mirror_remove(target);
-                let Some(tab) = self.tabs.by_id_mut(target.tab) else {
-                    return;
-                };
-                self.indicators
-                    .remove(Some(tab.pane_mut(target.side)), target);
-                target
-            }
-            IndicatorEdit::Inputs(target, values) => {
-                self.layout_adapter().mirror_inputs(target, &values);
-                target
-            }
-            IndicatorEdit::Style(target) => {
-                self.layout_adapter().mirror_style(target);
-                target
-            }
-        };
-        self.layout_adapter()
-            .note_indicator_edit_at(target.tab, target.side);
+        if self.runtime.validate_target(edit.target()).is_err() {
+            return;
+        }
+        self.layout_adapter().apply_indicator_edit(edit);
     }
 
     pub(super) fn apply_indicator_settings_change(&mut self, change: SettingsChange) {
+        if change
+            .target()
+            .is_some_and(|target| self.runtime.validate_target(target).is_err())
+        {
+            return;
+        }
         let worker = change.worker_target().and_then(|target| {
-            self.tabs
+            self.runtime
+                .tabs
                 .by_id(target.tab)
                 .map(|tab| &tab.pane(target.side).indicator_worker)
         });
@@ -67,11 +43,12 @@ impl QuantickApp {
         side: PaneSide,
         action: LegendAction,
     ) {
-        let Some(tab) = self.tabs.by_id_mut(tab_id) else {
+        let Some(tab) = self.runtime.tabs.by_id_mut(tab_id) else {
             return;
         };
         if let Some(edit) =
-            self.indicators
+            self.runtime
+                .indicators
                 .legend_action(tab.pane_mut(side), (tab_id, side), action)
         {
             self.apply_indicator_edit(edit);
@@ -80,14 +57,18 @@ impl QuantickApp {
 
     /// Existing hook and pane requests are resolved at their original frame phase.
     pub(super) fn service_indicator_requests(&mut self) {
-        let tab_id = self.tabs.active_id();
+        let tab_id = self.runtime.tabs.active_id();
         #[cfg(any(feature = "scenario-harness", test))]
         {
-            let tab = &self.tabs[self.tabs.active_index()];
-            if self.indicators.open_autostart(
+            let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
+            if self.runtime.indicators.open_autostart(
                 tab_id,
-                (tab.focused_side(), tab.focused_pane().indicators.all()),
-                tab.flow_pane.indicators.all(),
+                (
+                    tab.focused_side(),
+                    tab.focused_pane().id,
+                    tab.focused_pane().indicators.all(),
+                ),
+                (tab.flow_pane.id, tab.flow_pane.indicators.all()),
                 self.chrome.harness.settings_autostart(),
             ) {
                 self.chrome.harness.settings_autostart_opened();
@@ -135,32 +116,19 @@ impl QuantickApp {
     pub(super) fn draw_indicator_surfaces(&mut self, ctx: &egui::Context) {
         #[cfg(any(feature = "scenario-harness", test))]
         {
-            let tab = &self.tabs[self.tabs.active_index()];
-            if self.indicators.open_first_editable(
-                self.tabs.active_id(),
-                tab.flow_pane.indicators.all(),
+            let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
+            if self.runtime.indicators.open_first_editable(
+                self.runtime.tabs.active_id(),
+                (tab.flow_pane.id, tab.flow_pane.indicators.all()),
                 self.chrome.harness.wants_indicator_settings_dialog(),
             ) {
                 self.chrome.harness.indicator_settings_dialog_opened();
             }
         }
-        if let Some(slot) = self
-            .indicators
-            .indicator_settings
-            .as_ref()
-            .map(|dialog| dialog.slot)
-        {
-            let target = self.indicators.indicator_settings_target;
-            let view = self
-                .tabs
-                .by_id_mut(target.tab)
-                .and_then(|tab| tab.pane_mut(target.side).indicators.view_mut(slot));
-            let change =
-                self.indicators
-                    .draw_settings(ctx, view, self.workspace.indicator_presets_path());
+        if let Some(change) = self.runtime.draw_indicator_settings(ctx) {
             self.apply_indicator_settings_change(change);
         }
-        let tab_id = self.tabs.active_id();
+        let tab_id = self.runtime.tabs.active_id();
         let split = self.active_tab().shows_context_charts();
         let shown = self.active_tab().context_panes_shown();
         let sides: SmallVec<[PaneSide; MAX_CANVAS_PANES]> = self.active_tab().sides().collect();
@@ -173,13 +141,17 @@ impl QuantickApp {
                 && pane.paper_hud_anchor().is_some()
                 && self.active_tab().paper.position_summary().is_some();
             let pane = self
+                .runtime
                 .tabs
-                .runtime_mut(self.tabs.active_index())
+                .runtime_mut(self.runtime.tabs.active_index())
                 .pane_mut(side);
-            for action in
-                self.indicators
-                    .draw_legend(ctx, pane, (tab_id, side), visible, position_open)
-            {
+            for action in self.runtime.indicators.draw_legend(
+                ctx,
+                pane,
+                (tab_id, side),
+                visible,
+                position_open,
+            ) {
                 pending.push((side, action));
             }
         }

@@ -69,3 +69,14 @@ fn independent_frame_stages_stay_free_to_move() {
     order.swap(0, 1);
     assert!(release::FrameStage::is_valid_order(&order));
 }
+
+#[test]
+fn owner_stages_continue_without_presentation_in_both_builds() {
+    assert!(!harness::FrameStage::DrainSources.needs_presentation());
+    assert!(!harness::FrameStage::IndicatorSurfaces.needs_presentation());
+    assert!(harness::FrameStage::Canvas.needs_presentation());
+    assert!(harness::FrameStage::EvidenceHook.needs_presentation());
+    assert!(!release::FrameStage::DrainSources.needs_presentation());
+    assert!(!release::FrameStage::IndicatorSurfaces.needs_presentation());
+    assert!(release::FrameStage::Canvas.needs_presentation());
+}

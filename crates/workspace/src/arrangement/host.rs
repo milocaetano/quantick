@@ -39,9 +39,9 @@ pub struct Arrangement<R> {
     runtimes: Vec<TabEntry<R>>,
 }
 impl<R> Arrangement<R> {
-    pub fn new(id: TabId, runtime: R) -> Self {
+    pub fn new(owner: crate::lifetime::WorkspaceId, id: TabId, runtime: R) -> Self {
         Self {
-            lifecycle: ArrangementLifecycle::new(id),
+            lifecycle: ArrangementLifecycle::new(owner, id),
             runtimes: vec![TabEntry { id, runtime }],
         }
     }
@@ -56,7 +56,10 @@ impl<R> Arrangement<R> {
     }
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_fixture_identity(self, id: u64) -> Self {
-        Self::new(TabId(id), self.into_single_runtime())
+        Self::new(self.owner(), TabId(id), self.into_single_runtime())
+    }
+    pub const fn owner(&self) -> crate::lifetime::WorkspaceId {
+        self.lifecycle.owner
     }
     pub fn len(&self) -> usize {
         self.runtimes.len()

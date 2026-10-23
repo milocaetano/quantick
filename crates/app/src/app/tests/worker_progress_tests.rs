@@ -42,8 +42,8 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     // advances 0 -> 10 (queue) -> 40 (observe) -> release. No frame or sleeps.
     let (mut app, _events, _commands, _book) = test_app();
     let (other, _other_events, _other_commands, _other_book) = test_app();
-    app.tabs = app.tabs.with_fixture_identity(41);
-    let mut tab = other.tabs.into_single_runtime();
+    app.runtime.tabs = app.runtime.tabs.with_fixture_identity(41);
+    let mut tab = other.runtime.tabs.into_single_runtime();
 
     tab.time_panes
         .push(crate::pane::ChartPane::time(900, 60_000));
@@ -58,11 +58,11 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
         BookWorker::prepared_for_test("TESTUSDT", WorkerProgress::with_clock(book_clock.clone()));
     let (book_first_tx, book_first_rx) = channel();
     let (book_ack_tx, book_ack_rx) = channel();
-    let opening = app.tabs.plan_open();
-    app.tabs.append(opening, tab);
-    app.tabs.select(0);
-    let flow_id = app.tabs[1].flow_pane.id;
-    let indicator_id = app.tabs[1]
+    let opening = app.runtime.tabs.plan_open();
+    app.runtime.tabs.append(opening, tab);
+    app.runtime.tabs.select(0);
+    let flow_id = app.runtime.tabs[1].flow_pane.id;
+    let indicator_id = app.runtime.tabs[1]
         .flow_pane
         .indicator_worker
         .progress()
@@ -86,13 +86,13 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     book_clock.at(10);
     book.send(BookCommand::Flush(book_ack_tx));
     book_clock.at(40);
-    app.tabs.runtime_mut(1).flow_pane.orderflow = Some(
+    app.runtime.tabs.runtime_mut(1).flow_pane.orderflow = Some(
         crate::orderflow_view::OrderflowView::with_worker_for_test("TESTUSDT", book),
     );
     let indicator_thread = tracing::subscriber::with_default(subscriber, || {
         let normal_at = app.health.last_summary + Duration::from_secs(2);
         app.maybe_emit_summary(normal_at, &ctx);
-        let worker = &app.tabs[1].flow_pane.indicator_worker;
+        let worker = &app.runtime.tabs[1].flow_pane.indicator_worker;
         worker.send(crate::indicator_worker::WorkerCommand::Flush(first_tx));
         let thread = std::thread::spawn(run_indicator);
         indicator_hold.reached();
@@ -126,6 +126,7 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
         .filter(|row| row["fields"]["event_code"] == "APP_WORKER_PROGRESS")
         .collect();
     let owners = app
+        .runtime
         .tabs
         .iter()
         .flat_map(|t| t.panes())

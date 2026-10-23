@@ -79,6 +79,8 @@ mod toolrail_tests;
 mod workspace_bundle_menu_baseline_tests;
 mod workspace_bundle_runtime_baseline_tests;
 mod workspace_commit_baseline_tests;
+mod workspace_lifetime_baseline_tests;
+mod workspace_lifetime_tests;
 mod workspaces_tests;
 
 use super::*;
@@ -459,7 +461,7 @@ fn app_with_history_and_launch(
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=count).map(trade).collect();
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
     (app, cmd_rx)
@@ -516,13 +518,17 @@ fn with_flow_pane<R>(
     let side_inferred = app.active_tab().side_note(&app.config).is_some();
     let mut begin_text_edit = false;
     let QuantickApp {
-        tabs,
+        runtime:
+            workspace_runtime::WorkspaceRuntime {
+                tabs,
+                style,
+                tz,
+                workspace,
+                footprint_config,
+                ..
+            },
         toolrail,
         drawings,
-        style,
-        tz,
-        workspace,
-        footprint_config,
         ..
     } = app;
     let tab_id = tabs.id_at(tabs.active_index());
@@ -564,7 +570,9 @@ fn switch_layer(app: &mut QuantickApp, layer: ChartLayer, visible: bool) {
 
 /// Whether the active tab's flow pane is painting `layer`.
 fn layer_on(app: &QuantickApp, layer: ChartLayer) -> bool {
-    app.active_tab().flow_pane.layer_visible(layer, &app.style)
+    app.active_tab()
+        .flow_pane
+        .layer_visible(layer, &app.runtime.style)
 }
 
 /// A one-print recording on disk, read back through the replay crate's
@@ -1148,12 +1156,14 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
 /// one starts from. The autosave updates a workspace; it does not invent
 /// one.
 fn with_a_saved_workspace(app: &mut QuantickApp, ctx: &egui::Context, name: &str) {
-    app.workspace.set_ui_state_path(scratch_ui_state(name));
+    app.runtime
+        .workspace
+        .set_ui_state_path(scratch_ui_state(name));
     run_frame(app, ctx);
     app.workspace_save_adapter().save_workspace("test");
     app.surfaces.toast.clear();
     assert!(
-        app.workspace.ui_state_path().exists(),
+        app.runtime.workspace.ui_state_path().exists(),
         "the cockpit is on disk"
     );
 }
@@ -2399,7 +2409,7 @@ fn measure_max_chart_window_capture_us() -> BestBatches {
         .expect("the reviewed page limit fits in the wire integer");
     let (app, _commands) = app_with_history(max_page_items);
     let query = ChartWindowQuery {
-        tab_id: WireU64::new(app.tabs.active_id()),
+        tab_id: WireU64::new(app.runtime.tabs.active_id()),
         pane_id: WireU64::new(app.active_tab().flow_pane.id),
         range: ChartWindowRange::Slots {
             start_slot: WireU64::new(0),
@@ -2700,10 +2710,14 @@ fn attach_script_for_test(
     text: String,
     by_operator: bool,
 ) -> (u64, crate::control::PaneSideDto, SlotId) {
-    let target = (app.tabs.active_id(), app.active_tab().focused_side());
-    let attached = app.indicators.attach_script(
-        app.tabs
-            .runtime_mut(app.tabs.active_index())
+    let target = (
+        app.runtime.tabs.active_id(),
+        app.active_tab().focused_side(),
+    );
+    let attached = app.runtime.indicators.attach_script(
+        app.runtime
+            .tabs
+            .runtime_mut(app.runtime.tabs.active_index())
             .pane_mut(target.1),
         target,
         name,
@@ -2717,10 +2731,14 @@ fn attach_script_for_test(
     (owner.tab, owner.side.into(), owner.slot)
 }
 fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
-    let target = (app.tabs.active_id(), app.active_tab().focused_side());
-    let (slot, added) = app.indicators.add_library(
-        app.tabs
-            .runtime_mut(app.tabs.active_index())
+    let target = (
+        app.runtime.tabs.active_id(),
+        app.active_tab().focused_side(),
+    );
+    let (slot, added) = app.runtime.indicators.add_library(
+        app.runtime
+            .tabs
+            .runtime_mut(app.runtime.tabs.active_index())
             .pane_mut(target.1),
         target,
         index,
@@ -2730,7 +2748,7 @@ fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
             attached,
         ));
     }
-    app.indicators.watch_attachment(added.watch);
+    app.runtime.indicators.watch_attachment(added.watch);
     Some(slot)
 }
 

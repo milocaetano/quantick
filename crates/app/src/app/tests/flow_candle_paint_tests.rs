@@ -46,7 +46,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         })
         .collect();
     events.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     native_split(&mut app);
     app.active_tab_mut().flow_pane.set_layer_visible(
@@ -54,9 +54,9 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         false,
         &mut Default::default(),
     );
-    app.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
-    app.style.candles.fill_opacity = 0.6;
-    app.style.candles.forming_opacity = 0.5;
+    app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
+    app.runtime.style.candles.fill_opacity = 0.6;
+    app.runtime.style.candles.forming_opacity = 0.5;
     settled_frame(&mut app, &ctx);
     let pane = &mut app.active_tab_mut().flow_pane;
     pane.model.viewport.set_px_per_bar(45.0);
@@ -215,7 +215,13 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         .iter()
         .filter(|bar| bar.close >= bar.open)
         .count();
-    let normal = app.style.candles.resolved(true, false).fill.unwrap();
+    let normal = app
+        .runtime
+        .style
+        .candles
+        .resolved(true, false)
+        .fill
+        .unwrap();
     let normal = egui::Color32::from_rgba_unmultiplied(normal[0], normal[1], normal[2], normal[3]);
     let history = pane
         .frame
@@ -236,7 +242,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         .view_mut(slot)
         .unwrap()
         .hidden = false;
-    app.style.candles.body_mode = crate::style::CandleBodyMode::OutlineOnly;
+    app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::OutlineOnly;
     let outline = settled_flow_frame(&mut app, &ctx);
     for colour in colours {
         assert!(painted_bodies(&outline, colour).is_empty());
@@ -260,8 +266,8 @@ fn assert_footprint_layering(
     // Context is beneath footprint; highlighted sectors follow it. Exactly one
     // normal candle pass stays last, with every source fact and radius retained.
     let original_colours = [regional_colours(app, true), regional_colours(app, false)];
-    app.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
-    app.style.canvas.background = [13, 17, 23];
+    app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
+    app.runtime.style.canvas.background = [13, 17, 23];
     let pane = &mut app.active_tab_mut().flow_pane;
     pane.footprint.config = Some(crate::footprint_config::FootprintConfig {
         style: crate::footprint_config::FootprintStyle::Split,
@@ -358,10 +364,12 @@ fn assert_footprint_layering(
         crate::footprint_config::CandleTreatment::Fade,
         app.active_tab().flow_pane.model.viewport.candle_width(),
         quantick_chart::footprint_lod::DETAILED_FROM_PX,
-        app.style.candles,
+        app.runtime.style.candles,
     );
-    let dressed = dressed.unwrap_or(app.style.candles);
-    assert!(dressed.fill_opacity > 0.0 && dressed.fill_opacity < app.style.candles.fill_opacity);
+    let dressed = dressed.unwrap_or(app.runtime.style.candles);
+    assert!(
+        dressed.fill_opacity > 0.0 && dressed.fill_opacity < app.runtime.style.candles.fill_opacity
+    );
     let [r, g, b, a] = dressed.resolved(true, false).fill.unwrap();
     let bodies: Vec<_> = painted_bodies(
         &footprint,

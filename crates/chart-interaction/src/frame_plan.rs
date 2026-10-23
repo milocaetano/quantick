@@ -138,5 +138,27 @@ macro_rules! frame_stages {
                 FrameStage::canonical()
             }
         }
+        impl FrameStage {
+            /// Rendering/input adapters depend on native placement; process work does not.
+            pub const fn needs_presentation(self) -> bool {
+                match self {
+                    Self::TopChrome
+                    | Self::Surfaces
+                    | Self::StatusLine
+                    | Self::LayoutDialogs
+                    | Self::ReplayBrowser
+                    | Self::DrawingRail
+                    | Self::Dock
+                    | Self::PinnedInspector
+                    | Self::Canvas
+                    | Self::DrawingChrome => true,
+                    #[cfg($scenario)]
+                    Self::WindowStartupHook => true,
+                    #[cfg($control)]
+                    Self::EvidenceHook => true,
+                    _ => false,
+                }
+            }
+        }
     };
 }

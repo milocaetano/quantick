@@ -238,7 +238,7 @@ fn a_trip_to_a_daily_pane_and_back_keeps_the_paged_minutes() {
         venue_history(120),
     );
     app.drain_tabs();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     let capabilities = app.active_tab().capabilities(&app.config);
     assert!(
         app.active_tab_mut()

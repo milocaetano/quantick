@@ -34,7 +34,7 @@ fn whole_presets_reapply_drift_and_are_authorized_retry_safe() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let payload = json!({"tab_id":app.tabs.active_id().to_string(),
+    let payload = json!({"tab_id":app.runtime.tabs.active_id().to_string(),
         "pane_id":app.active_tab().flow_pane.id.to_string(), "preset":"Binance BTC perpetual spheres"});
     let before = app.active_tab().tape().cached_config().clone();
     let (denied, _) = unkeyed_call(&mut app, &mut observer, APPLY, payload.clone());

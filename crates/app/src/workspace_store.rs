@@ -8,117 +8,14 @@
 //! is a shell observation, refreshed only on adoption or a recent-file visit.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
-use crate::layouts::LayoutBook;
-use quantick_workspace::session::LayoutSession;
 use quantick_workspace::workspace_commit::WorkspaceCommitSession;
 
-use quantick_workspace::layout_commit::LayoutCommitPolicy;
 pub(crate) use quantick_workspace::layout_commit::LayoutSave;
 
-/// The layout book, and the one rule that decides when it reaches disk.
-///
-/// The pure commit policy owns the dirty/timestamp/blocked transition. This
-/// handle associates its effects with the already resolved layout path.
-pub(crate) struct LayoutStore {
-    /// The workspace's layouts: the strip's tabs, their indicator sets and
-    /// their per-market drawings. See [`crate::layouts`].
-    session: LayoutSession,
-    /// Where the layouts persist. Handed in, never resolved here.
-    path: PathBuf,
-    policy: LayoutCommitPolicy,
-}
+pub(crate) use quantick_workspace::layout_store::LayoutStore;
 
-impl LayoutStore {
-    /// A store over a book already loaded, at a path already resolved.
-    ///
-    /// `blocked` comes from the load: it is the "could not read it and could
-    /// not set it aside" answer, which only the loader can give.
-    pub(crate) fn new(book: LayoutBook, path: PathBuf, blocked: bool) -> Self {
-        Self {
-            session: LayoutSession::new(book),
-            path,
-            policy: LayoutCommitPolicy::new(blocked),
-        }
-    }
-
-    /// The book, for the strip, the menu and the control plane to read.
-    pub(crate) fn book(&self) -> &LayoutBook {
-        self.session.book()
-    }
-
-    pub(crate) fn session(&self) -> &LayoutSession {
-        &self.session
-    }
-    pub(crate) fn session_mut(&mut self) -> &mut LayoutSession {
-        &mut self.session
-    }
-
-    /// Where the layouts persist.
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Note that the file could not be read at launch, so this session's book
-    /// must not replace it.
-    pub(crate) fn set_blocked(&mut self, blocked: bool) {
-        self.policy.set_blocked(blocked);
-    }
-
-    /// Replace the book wholesale — a workspace bundle landing, or a reset.
-    ///
-    /// Deliberately silent about the flags. The caller has work to do between
-    /// putting the book in place and knowing what it owes the file (it seeds
-    /// panes, which marks changes of its own), so the pending state is stated
-    /// afterwards by [`Self::settle`] rather than guessed at here.
-    pub(crate) fn set_book(&mut self, book: LayoutBook) {
-        self.session.replace_book(book);
-    }
-
-    pub(crate) fn settle(&mut self, changed: bool, now: Instant) {
-        self.policy.settle(changed, now);
-    }
-    pub(crate) fn mark_changed(&mut self, now: Instant) {
-        self.policy.mark_changed(now);
-    }
-    pub(crate) fn take_save(&mut self, now: Instant) -> LayoutSave {
-        self.policy.take_save(now)
-    }
-    pub(crate) fn take_flush(&mut self) -> LayoutSave {
-        self.policy.take_flush()
-    }
-    #[cfg(test)]
-    pub(crate) fn is_dirty(&self) -> bool {
-        self.policy.is_dirty()
-    }
-}
-
-/// Where the cockpit's stores live this run.
-///
-/// Five paths, each resolved by its own module and handed in. The sixth — the
-/// layouts file — is not here but on [`LayoutStore`], beside the rule that
-/// decides when it is written: a path and the question "may I write it yet?"
-/// are one subject, and splitting them is what this module exists to undo.
-///
-/// A carrier, deliberately without behaviour: the moment it grew a `resolve`
-/// it would become a second answer to a question [`crate::store_home`] already
-/// answers, and the two would drift.
-pub(crate) struct StorePaths {
-    /// Where the picker's added instruments persist. See
-    /// [`crate::symbols_file`].
-    pub(crate) symbols: PathBuf,
-    /// Where layer visibility persists.
-    pub(crate) chart_layers: PathBuf,
-    /// Where the footprint's live edits persist.
-    pub(crate) footprint_settings: PathBuf,
-    /// Where the settings dialog's named input setups persist.
-    pub(crate) indicator_presets: PathBuf,
-    /// Where the workspace persists.
-    pub(crate) ui_state: PathBuf,
-    /// Where each asset's bubble settings persist.
-    pub(crate) bubble_assets: PathBuf,
-}
+pub(crate) use quantick_stores::paths::StorePaths;
 
 use quantick_layers::SavedLayers;
 
@@ -289,7 +186,7 @@ impl WorkspaceStore {
     /// See [`Self::set_ui_state_path`].
     #[cfg(test)]
     pub(crate) fn set_layouts_path(&mut self, path: PathBuf) {
-        self.layouts.path = path;
+        self.layouts.set_path(path);
     }
 
     /// Where trades save this run.

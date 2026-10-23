@@ -111,8 +111,10 @@ plot(close)
     )
     .expect("write");
 
-    app.indicators.script_library = crate::indicators::library::ScriptLibrary::scan_dir(&dir);
+    app.runtime.indicators.script_library =
+        crate::indicators::library::ScriptLibrary::scan_dir(&dir);
     let index = app
+        .runtime
         .indicators
         .script_library
         .entries()
@@ -294,7 +296,7 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     // ledger, which would photograph nothing it exists to show.
     app.chrome
         .harness
-        .apply_replay_restart(&mut app.tabs, &app.config);
+        .apply_replay_restart(&mut app.runtime.tabs, &app.config);
     assert_eq!(
         app.chrome.harness.replay_restart_after(),
         Some(1),
@@ -305,21 +307,21 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(app.active_tab().paper.session_trades().len(), 1);
 
     app.chrome
         .harness
-        .apply_replay_restart(&mut app.tabs, &app.config);
+        .apply_replay_restart(&mut app.runtime.tabs, &app.config);
     assert_eq!(
         app.chrome.harness.replay_restart_after(),
         None,
@@ -337,7 +339,7 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     // run, not a standing rule.
     app.chrome
         .harness
-        .apply_replay_restart(&mut app.tabs, &app.config);
+        .apply_replay_restart(&mut app.runtime.tabs, &app.config);
     assert!(cmd_rx.try_recv().is_err(), "the seek repeated itself");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -354,7 +356,7 @@ fn the_scripted_replay_restart_waits_for_a_recording() {
     app.chrome.harness.arm_replay_restart(1);
     app.chrome
         .harness
-        .apply_replay_restart(&mut app.tabs, &app.config);
+        .apply_replay_restart(&mut app.runtime.tabs, &app.config);
     assert_eq!(
         app.chrome.harness.replay_restart_after(),
         Some(1),
@@ -560,7 +562,9 @@ fn the_scripted_view_targets_visible_tick_candles_beside_an_independent_tape() {
 
     app.chrome.harness.arm_candle_width(40.0);
     app.chrome.harness.arm_pan_px(-160.0);
-    app.chrome.harness.apply_scripted_view(&mut app.tabs);
+    app.chrome
+        .harness
+        .apply_scripted_view(&mut app.runtime.tabs);
 
     let candles_after = crate::control::chart::viewport_snapshot(&app.active_tab().time_panes[0]);
     assert_eq!(candles_after.pixels_per_bar.as_str(), "40");
@@ -638,13 +642,15 @@ fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
 fn the_saved_workspace_describes_the_window_that_saved_it() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace.set_ui_state_path(scratch_ui_state("capture"));
+    app.runtime
+        .workspace
+        .set_ui_state_path(scratch_ui_state("capture"));
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     app.active_tab_mut().split_fraction = 0.35;
     app.active_tab_mut().focus = PaneSide::Flow;
-    app.tz = TzOffset::new(-180);
+    app.runtime.tz = TzOffset::new(-180);
     app.dock.open_tab(DockTab::Trading);
     app.toolrail.set_dock(ToolboxDock::Bottom);
     app.health.show_perf = false;
@@ -1727,7 +1733,7 @@ fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
         crate::footprint_config::FootprintStyle::Cluster,
         crate::footprint_config::FootprintStyle::Auto,
     ] {
-        styled.footprint_config.style = style;
+        styled.runtime.footprint_config.style = style;
         let capture = registry
             .capture(
                 &styled,
@@ -3311,7 +3317,7 @@ plot(close)
 
     // With its own claim spent, the same number now names only the
     // trader's slot, and the tier refuses it rather than reaching across.
-    app.tabs.select(traders_index);
+    app.runtime.tabs.select(traders_index);
     run_frame(&mut app, &ctx);
     let refused = app
         .control_action(
@@ -3901,8 +3907,9 @@ fn two_tabs_on_the_same_recording_share_one_trace_walk() {
     let (mut app, _commands) = app_with_history(12);
     app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    app.tabs.runtime_mut(1).replay = Some(replay_test_support::detached_link(recording_at(&dir)));
-    app.tabs.select(0);
+    app.runtime.tabs.runtime_mut(1).replay =
+        Some(replay_test_support::detached_link(recording_at(&dir)));
+    app.runtime.tabs.select(0);
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
@@ -4385,7 +4392,7 @@ fn observer_chart_pagination_allows_append_but_rejects_prefix_changes() {
     use quantick_control::{error::codes, wire::WireU64};
 
     let (mut app, _commands) = app_with_history(8);
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     let pane_id = app.active_tab().flow_pane.id;
     let query = ChartWindowQuery {
         tab_id: WireU64::new(tab_id),
@@ -5686,7 +5693,7 @@ fn control_idle_dense_replay_benchmark() {
     events
         .try_send(FeedEvent::Backfilled((1..=8_000).map(trade).collect()))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
 
     let mut next_trade = 8_001;
@@ -5784,7 +5791,7 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
             session_deals: 2_301_455,
         }))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     let seen = recorder(&app);
     assert_eq!(seen["state"], "off");
@@ -5935,7 +5942,7 @@ fn incremental_lane_dense_frame_benchmark() {
         events
             .try_send(FeedEvent::Backfilled((1..=8_000).map(btc_print).collect()))
             .unwrap();
-        let tab_id = app.tabs.active_id();
+        let tab_id = app.runtime.tabs.active_id();
         app.active_tab_mut().drain_feed(tab_id);
         let mut next = 8_001;
         let mut samples = Vec::with_capacity(FRAMES as usize);

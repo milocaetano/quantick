@@ -136,6 +136,10 @@ impl QuantickApp {
         spawn: &mut crate::tab::LiveFeedSpawn<'_>,
         tail: &mut Option<T>,
     ) {
+        let presented = self.presentation.resolve(&self.runtime, ctx).is_ok();
+        if stage.needs_presentation() && !presented {
+            return;
+        }
         match stage {
             FrameStage::RecordFrameTime => {
                 if let Some(last) = self.health.last_frame {
@@ -153,13 +157,15 @@ impl QuantickApp {
             // forward minutes later must not surface a sentence about a press
             // that is long over.
             FrameStage::ExpireHistoryNotes => {
-                for tab in self.tabs.iter_mut() {
+                for tab in self.runtime.tabs.iter_mut() {
                     tab.expire_history_note(now);
                 }
             }
             #[cfg(any(feature = "scenario-harness", test))]
             FrameStage::HistoryNoteHook => {
-                self.chrome.harness.apply_history_note_hook(&mut self.tabs);
+                self.chrome
+                    .harness
+                    .apply_history_note_hook(&mut self.runtime.tabs);
             }
             #[cfg(any(feature = "control-harness", test))]
             FrameStage::EnableControlAccess => self.enable_scenario_control(ctx),
@@ -202,15 +208,20 @@ impl QuantickApp {
             // the dialog on the same frame the gesture happened.
             FrameStage::IndicatorSurfaces => {
                 self.service_indicator_requests();
-                self.draw_indicator_surfaces(ctx);
+                if presented {
+                    self.draw_indicator_surfaces(ctx);
+                }
             }
             FrameStage::StrategyPopupRequests => surfaces::open_requested_strategy_popups(
-                &mut self.tabs,
+                &mut self.runtime.tabs,
                 &mut self.surfaces.strategy_popup,
             ),
             FrameStage::Surfaces => self.draw_surface_stage(ctx, now),
             FrameStage::IndicatorMaintenance => {
-                surfaces::reload_changed_scripts(&mut self.indicators, &mut self.tabs);
+                surfaces::reload_changed_scripts(
+                    &mut self.runtime.indicators,
+                    &mut self.runtime.tabs,
+                );
                 self.layout_adapter().apply_pending_indicator_state();
                 self.layer_wiring().maintain(ctx);
             }
@@ -221,7 +232,7 @@ impl QuantickApp {
                 panels::draw_drawing_rail(
                     ctx,
                     &mut self.toolrail,
-                    &mut self.tabs,
+                    &mut self.runtime.tabs,
                     &mut self.drawings,
                 );
                 // A star clicked this frame is on disk this frame: the pinned
@@ -241,7 +252,7 @@ impl QuantickApp {
             FrameStage::PinnedInspector => {
                 if let Some(ask) = self.drawings.draw_pinned_inspector(
                     ctx,
-                    &super::drawing_controller::DrawingReadAccess::new(&self.tabs),
+                    &super::drawing_controller::DrawingReadAccess::new(&self.runtime.tabs),
                     &self.toolrail,
                 ) {
                     self.resolve_drawing_response(ask, now);
@@ -249,7 +260,7 @@ impl QuantickApp {
             }
             FrameStage::FeedAndLayoutSwitches => self.apply_feed_and_layout_switches(),
             FrameStage::MirrorLoadingWaits => {
-                panels::mirror_loading_waits(&self.replay_view, &mut self.tabs);
+                panels::mirror_loading_waits(&self.replay_view, &mut self.runtime.tabs);
             }
             FrameStage::Canvas => self.draw_canvas_stage(ctx, scratch),
             FrameStage::DrawingChrome => self.draw_drawing_chrome_stage(ctx, now, scratch),
@@ -260,10 +271,10 @@ impl QuantickApp {
             // tab's feed keeps running — its cancel must not sit stranded
             // until the tab is looked at again.
             FrameStage::StrategyCleanup => {
-                for tab in self.tabs.iter_mut() {
+                for tab in self.runtime.tabs.iter_mut() {
                     tab.apply_strategy_cleanup();
                 }
-                if let Some(note) = self.audio.play_pending(&mut self.tabs) {
+                if let Some(note) = self.audio.play_pending(&mut self.runtime.tabs) {
                     self.alerts().show_toast(note);
                 }
             }
@@ -299,17 +310,19 @@ impl QuantickApp {
     #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
     fn apply_scenario_hooks(&mut self) {
         #[cfg(any(feature = "scenario-harness", test))]
-        self.chrome.harness.apply_scripted_view(&mut self.tabs);
+        self.chrome
+            .harness
+            .apply_scripted_view(&mut self.runtime.tabs);
         #[cfg(any(feature = "drawing-harness", test))]
         super::demo_hooks::apply_drawing_demo(self);
         #[cfg(any(feature = "scenario-harness", test))]
         self.chrome
             .harness
-            .apply_load_older(&mut self.tabs, &self.config);
+            .apply_load_older(&mut self.runtime.tabs, &self.config);
         #[cfg(any(feature = "scenario-harness", test))]
         self.chrome
             .harness
-            .apply_load_older_candles(&mut self.tabs, &self.config);
+            .apply_load_older_candles(&mut self.runtime.tabs, &self.config);
         #[cfg(any(feature = "drawing-harness", test))]
         super::demo_hooks::apply_drawing_draft(self);
         #[cfg(any(feature = "scenario-harness", test))]
@@ -323,7 +336,7 @@ impl QuantickApp {
         #[cfg(any(feature = "scenario-harness", test))]
         self.chrome
             .harness
-            .apply_replay_restart(&mut self.tabs, &self.config);
+            .apply_replay_restart(&mut self.runtime.tabs, &self.config);
     }
 
     /// Chrome panels claim their zones outside-in (§5): menu and toolbar on
@@ -331,12 +344,12 @@ impl QuantickApp {
     /// transport directly above it, then the edge-docked drawing rail and the
     /// right dock. The chart keeps whatever remains.
     fn draw_top_chrome(&mut self, ctx: &egui::Context, now: Instant, scratch: &mut FrameScratch) {
-        scratch.background = Some(pane::background_color(&self.style));
+        scratch.background = Some(pane::background_color(&self.runtime.style));
         // Rail shortcuts (Esc, 1, 2) first: no widget holds the keyboard yet.
         self.toolrail.handle_keys(ctx);
         self.handle_tab_keys(ctx);
         let effects = self.drawings.handle_drawing_keys(
-            &mut super::drawing_controller::DrawingAccess::new(&mut self.tabs),
+            &mut super::drawing_controller::DrawingAccess::new(&mut self.runtime.tabs),
             &mut self.toolrail,
             &mut *self.audio.alerts,
             ctx,
@@ -364,12 +377,12 @@ impl QuantickApp {
             now,
             &mut self.surfaces,
             surfaces::SurfaceOwners {
-                indicators: &self.indicators,
+                indicators: &self.runtime.indicators,
                 alert_failure: self.audio.alert_failure.as_deref(),
-                workspace: &self.workspace,
-                style: &self.style,
-                footprint_config: &self.footprint_config,
-                tabs: &mut self.tabs,
+                workspace: &self.runtime.workspace,
+                style: &self.runtime.style,
+                footprint_config: &self.runtime.footprint_config,
+                tabs: &mut self.runtime.tabs,
                 config: &self.config,
                 added_symbols: &self.added_symbols,
             },
@@ -378,15 +391,15 @@ impl QuantickApp {
             self.workspace_save_adapter().save_named_workspace(&name);
         }
         if let Some(style) = asks.style {
-            self.style = style;
-            self.style_revision = self.style_revision.saturating_add(1);
+            self.runtime.style = style;
+            self.runtime.style_revision = self.runtime.style_revision.saturating_add(1);
         }
         // After the assignment, never before: the log line reports the
         // appearance that is now in force, and the revision it landed on.
         if let Some(request) = asks.log_style_change {
             super::health::emit_style_changed(
-                &self.style,
-                self.style_revision,
+                &self.runtime.style,
+                self.runtime.style_revision,
                 request.applied_preset,
             );
         }
@@ -400,8 +413,9 @@ impl QuantickApp {
         }
         if let Some(request) = asks.arm_strategy {
             let outcome = self
+                .runtime
                 .tabs
-                .runtime_mut(self.tabs.active_index())
+                .runtime_mut(self.runtime.tabs.active_index())
                 .arm_strategy_instance(
                     &mut *self.audio.alerts,
                     request.side,
@@ -434,15 +448,19 @@ impl QuantickApp {
             .chrome_reads()
             .feed_offline_accent(scratch.stall.as_ref());
         let status = self.status_model();
-        let status_response = statusbar::draw(ctx, &status, &mut self.tz, offline_accent);
+        let status_response = statusbar::draw(ctx, &status, &mut self.runtime.tz, offline_accent);
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
     }
 
     fn draw_replay_browser_stage(&mut self, ctx: &egui::Context) {
-        let action =
-            panels::draw_replay_browser(ctx, &mut self.replay_view, &self.tabs, &self.config);
+        let action = panels::draw_replay_browser(
+            ctx,
+            &mut self.replay_view,
+            &self.runtime.tabs,
+            &self.config,
+        );
         if let Some(action) = action {
             let (tab, config) = self.active_with_config();
             super::replay_and_history::apply_replay_action(tab, config, action);
@@ -467,9 +485,9 @@ impl QuantickApp {
         let response = panels::draw_dock(
             ctx,
             &mut self.dock,
-            &mut self.tabs,
+            &mut self.runtime.tabs,
             &mut self.replay_view,
-            self.tz,
+            self.runtime.tz,
         );
         // The strategy editor is a window of the active tab's ticket, drawn
         // whatever the dock is showing and whether it is showing at all: it
@@ -518,8 +536,13 @@ impl QuantickApp {
     fn apply_feed_and_layout_switches(&mut self) {
         let (tab, config) = self.active_with_config();
         tab.maybe_switch_feed(config);
-        for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
-            tab.apply_pending_layout(tab_id, &self.config, &self.style, &mut self.pane_ids);
+        for (tab_id, tab) in self.runtime.tabs.iter_with_ids_mut() {
+            tab.apply_pending_layout(
+                tab_id,
+                &self.config,
+                &self.runtime.style,
+                &mut self.pane_ids,
+            );
         }
         // Right after panes appear and markets switch, so a pane built this
         // frame is seeded this frame and a tab that changed symbol swaps its
@@ -532,10 +555,10 @@ impl QuantickApp {
     fn draw_canvas_stage(&mut self, ctx: &egui::Context, scratch: &mut FrameScratch) {
         let background = scratch
             .background
-            .unwrap_or_else(|| pane::background_color(&self.style));
+            .unwrap_or_else(|| pane::background_color(&self.runtime.style));
         // Read before the canvas borrows the tabs, and answered after it
         // lets go.
-        let popup_tab = self.tabs.active_id();
+        let popup_tab = self.runtime.tabs.active_id();
         let mut answers = canvas::CanvasAnswers {
             popup_tab,
             popup_open: self.chrome.feed_popup_tab == Some(popup_tab),
@@ -549,7 +572,9 @@ impl QuantickApp {
         // Told before the canvas paints, not after: the object holding the
         // words the editor is showing must stand down on the *same* frame,
         // or the note flashes its placeholder under the field for one.
-        self.drawings.chrome.sync_content_editing(&mut self.tabs);
+        self.drawings
+            .chrome
+            .sync_content_editing(&mut self.runtime.tabs);
         let stall = scratch.stall.as_ref();
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(background))
@@ -560,20 +585,18 @@ impl QuantickApp {
                     presets: &self.drawings.presets,
                     drawing_chrome: &mut self.drawings.chrome,
                     begin_text_edit: &mut answers.begin_text_edit,
-                    style: &self.style,
-                    tz: self.tz,
+                    style: &self.runtime.style,
+                    tz: self.runtime.tz,
                     capabilities,
                     side_inferred,
-                    footprint: &mut self.footprint_config,
-                    layers: &mut self.workspace.layers_mut().actions,
+                    footprint: &mut self.runtime.footprint_config,
+                    layers: &mut self.runtime.workspace.layers_mut().actions,
                 };
-                let tab_id = self.tabs.active_id();
-                self.tabs.runtime_mut(self.tabs.active_index()).draw_canvas(
-                    tab_id,
-                    ui,
-                    area,
-                    &mut chrome,
-                );
+                let tab_id = self.runtime.tabs.active_id();
+                self.runtime
+                    .tabs
+                    .runtime_mut(self.runtime.tabs.active_index())
+                    .draw_canvas(tab_id, ui, area, &mut chrome);
                 // Each visible pane published its own reserved footer during
                 // the canvas split. Draw the shared catalogue into every one
                 // now, while their exact same-frame rectangles are available.
@@ -602,7 +625,7 @@ impl QuantickApp {
         }
         let ask = self.drawings.draw_drawing_chrome(
             ctx,
-            &super::drawing_controller::DrawingReadAccess::new(&self.tabs),
+            &super::drawing_controller::DrawingReadAccess::new(&self.runtime.tabs),
             &self.toolrail,
         );
         self.resolve_drawing_response(ask, now);
@@ -618,7 +641,7 @@ impl QuantickApp {
     ) {
         let answers = &scratch.canvas;
         super::frame_tail::FrameTailOwners {
-            tabs: &mut self.tabs,
+            tabs: &mut self.runtime.tabs,
             config: &self.config,
             toast: &mut self.surfaces.toast,
             chip_rect: &mut self.chrome.feed_chip_rect,
@@ -628,7 +651,7 @@ impl QuantickApp {
             super::frame_tail::FrameTailInput {
                 ctx,
                 now,
-                tz: self.tz,
+                tz: self.runtime.tz,
                 notice_action: answers.notice_action,
                 popup_tab: answers.popup_tab,
                 popup_open: answers.popup_open,
@@ -674,13 +697,13 @@ impl QuantickApp {
         }
         let effects = self.drawings.apply_drawing_chrome(
             ask,
-            &mut super::drawing_controller::DrawingAccess::new(&mut self.tabs),
+            &mut super::drawing_controller::DrawingAccess::new(&mut self.runtime.tabs),
             &mut *self.audio.alerts,
             now,
         );
         crate::control::journal_own_magnet_flip(self, effects.own_magnet);
         if effects.inspector_moved {
-            self.workspace.session_mut().inspector_moved();
+            self.runtime.workspace.session_mut().inspector_moved();
         }
         effects.apply(&mut self.surfaces.toast, &mut self.toolrail);
     }

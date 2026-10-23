@@ -42,7 +42,7 @@ fn the_corner_answers_a_hover_without_being_opened() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
@@ -340,7 +340,7 @@ fn a_parked_popup_comes_back_after_a_restart() {
     let (mut next, _commands) = app_with_history(200);
     let config = next.config.clone();
     next.arrangement_adapter()
-        .restore_workspace(ui_state::load(app.workspace.ui_state_path()).restore(&config));
+        .restore_workspace(ui_state::load(app.runtime.workspace.ui_state_path()).restore(&config));
 
     assert_eq!(
         next.drawings.chrome.inspector_pos(),
@@ -351,7 +351,7 @@ fn a_parked_popup_comes_back_after_a_restart() {
         next.drawings.chrome.inspector_moved(),
         "and counts as hand-placed, so nothing places it again"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 #[test]
@@ -795,7 +795,7 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
         },
         |ctx| {
             app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.tabs),
+                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
                 &mut app.toolrail,
                 &mut *app.audio.alerts,
                 ctx,
@@ -814,7 +814,7 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
         },
         |ctx| {
             app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.tabs),
+                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
                 &mut app.toolrail,
                 &mut *app.audio.alerts,
                 ctx,
@@ -835,7 +835,7 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
         },
         |ctx| {
             app.drawings.handle_drawing_keys(
-                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.tabs),
+                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
                 &mut app.toolrail,
                 &mut *app.audio.alerts,
                 ctx,
