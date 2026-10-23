@@ -20,7 +20,7 @@
 
 use quantick_chart_interaction::{
     annotation::{self as resolver, InputAnchor, Refusal, Series, horizontal_level_anchors},
-    quick_range::{Action, Owner, PlaceRequest, RangeContext},
+    quick_range::{Owner, PlaceRequest, RangeContext},
 };
 use quantick_control::{
     annotation::{
@@ -190,7 +190,7 @@ where
         fib_descriptor(
             FIB_PROJECTION_CAPABILITY_ID,
             "Place a Fibonacci projection",
-            "Projects one measured move from a third chart coordinate.",
+            "Projects one measured move forward from its second chart coordinate; a legacy third coordinate is the projection origin.",
         ),
         |app, access, actor, input| place_chart(app, access, actor, input, "fib-extension"),
     )?;
@@ -307,7 +307,14 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
 ) -> Result<Value, ControlError> {
     let input: ChartAnnotationInput = parse(input)?;
     let tool = registered_tool(tool_id)?;
-    let required = tool.required_points();
+    // A count the tool still accepts (a legacy three-anchor projection) is
+    // placed as given; anything else is refused against the current count.
+    // The input schema already bounds the call to two or three anchors.
+    let required = if tool.accepts_points(input.anchors.len()) {
+        input.anchors.len()
+    } else {
+        tool.required_points()
+    };
     let (tab_id, side) = resolve_target(app, input.target.as_ref())?;
     let author = annotation_author(access, actor);
     let opening = app.new_drawing(tool);
@@ -438,11 +445,8 @@ pub fn quick_range_input(request: &PlaceRequest, side: PaneSide) -> Option<Value
         PaneSide::Flow => None,
         PaneSide::Time(slot) => Some(WireU64::new(u64::try_from(slot).ok()?)),
     };
-    let mut points = request.anchors.to_vec();
-    if request.action == Action::Projection {
-        points.push(points[1]);
-    }
-    let anchors = points
+    let anchors = request
+        .anchors
         .into_iter()
         .map(|anchor| {
             Some(ChartAnnotationAnchor {

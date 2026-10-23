@@ -22,7 +22,7 @@ const ACTIONS: [(Action, &str, u32, usize); 6] = [
         Action::Projection,
         crate::control::FIB_PROJECTION_CAPABILITY_ID,
         1,
-        3,
+        2,
     ),
     (
         Action::Rectangle,

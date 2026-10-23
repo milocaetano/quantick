@@ -477,7 +477,7 @@ impl DisplayOptions<'_> {
             edited |= log.changed();
             if ui
                 .small_button("Invert A \u{2194} B")
-                .on_hover_text("Swap the A and B anchors; C never moves")
+                .on_hover_text("Swap the A and B anchors; a legacy origin C never moves")
                 .clicked()
             {
                 swap_anchors = true;

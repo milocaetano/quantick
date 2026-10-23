@@ -366,7 +366,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Projects one measured move from a third chart coordinate.",
+      "description": "Projects one measured move forward from its second chart coordinate; a legacy third coordinate is the projection origin.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "annotate",
