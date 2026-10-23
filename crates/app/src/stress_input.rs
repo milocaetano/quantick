@@ -55,7 +55,7 @@ impl StressInput {
                 return;
             };
             let now_ms = self.started.elapsed().as_millis() as u64;
-            let before = flow.model.viewport.gesture_fingerprint();
+            let before = answer_fingerprint(flow);
             if let Some(gesture) = self.probe.due(now_ms, self.frame, before) {
                 self.script = script(gesture, area, time_strip);
             }
@@ -75,9 +75,7 @@ impl StressInput {
         }
         self.last_frame = Some(now);
         if self.script.is_empty()
-            && let Some(outcome) = self
-                .probe
-                .observe(self.frame, flow.model.viewport.gesture_fingerprint())
+            && let Some(outcome) = self.probe.observe(self.frame, answer_fingerprint(flow))
         {
             match outcome.frames {
                 Some(frames) => tracing::info!(
@@ -121,6 +119,13 @@ impl StressInput {
             "stress input totals"
         );
     }
+}
+
+/// What a gesture changes when the chart answers it: the view it moves, or
+/// a drawing it moved instead — a press that lands on an unlocked mark drags
+/// the mark, which is an answer too. A locked mark changes neither.
+fn answer_fingerprint(flow: &ChartPane) -> u64 {
+    flow.model.viewport.gesture_fingerprint() ^ flow.drawings.revision().rotate_left(17)
 }
 
 /// The flow pane's candle area, once the pane has drawn.
