@@ -503,9 +503,7 @@ impl QuantickApp {
             self.paper_settings()
                 .persist(super::paper_wiring::PaperSettingsChange::CmdTrading);
         }
-        // A click on a chart leg flips the same switch the ticket shows.
-        let flipped = self.active_tab_mut().paper.take_pnl_flip();
-        if response.risk_settings_changed || flipped {
+        if response.risk_settings_changed {
             self.paper_settings()
                 .persist(super::paper_wiring::PaperSettingsChange::RiskSettings);
         }
