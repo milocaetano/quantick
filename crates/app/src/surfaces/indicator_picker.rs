@@ -88,10 +88,23 @@ impl Surface for IndicatorPickerSurface {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .resizable(false)
             .collapsible(false)
-            .open(&mut open)
+            .title_bar(false)
             .fixed_size(egui::vec2(width, height + 60.0))
             .frame(egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16.0)))
             .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Indicators").size(20.0).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(icons::X)
+                            .on_hover_text("Close indicators")
+                            .clicked()
+                        {
+                            open = false;
+                        }
+                    });
+                });
+                ui.separator();
                 let search = ui.add_sized(
                     [ui.available_width(), 30.0],
                     egui::TextEdit::singleline(&mut self.state.query)
@@ -145,6 +158,7 @@ impl Surface for IndicatorPickerSurface {
                                             .allocate_ui_with_layout(
                                                 egui::vec2(ui.available_width(), 32.0),
                                                 egui::Layout::left_to_right(egui::Align::Center)
+                                                    .with_main_align(egui::Align::Min)
                                                     .with_main_justify(true),
                                                 |ui| ui.selectable_label(false, &entry.name),
                                             )
@@ -251,6 +265,15 @@ mod tests {
         events: Vec<egui::Event>,
         size: egui::Vec2,
     ) -> (egui::FullOutput, SurfaceResponse) {
+        frame_with_entries(surface, ctx, events, size, &[])
+    }
+    fn frame_with_entries(
+        surface: &mut IndicatorPickerSurface,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        size: egui::Vec2,
+        entries: &[IndicatorMenuEntry],
+    ) -> (egui::FullOutput, SurfaceResponse) {
         let mut response = SurfaceResponse::default();
         let output = ctx.run(
             egui::RawInput {
@@ -259,7 +282,9 @@ mod tests {
                 ..Default::default()
             },
             |ctx| {
-                response = surface.draw(ctx, &SurfaceEnv::quiet(Instant::now()));
+                let mut env = SurfaceEnv::quiet(Instant::now());
+                env.picker_indicators = entries;
+                response = surface.draw(ctx, &env);
             },
         );
         (output, response)
@@ -340,5 +365,84 @@ mod tests {
             vec![ToolbarAction::AddNative("native.cvd")]
         );
         assert!(surface.state.target.is_none());
+    }
+    #[test]
+    fn picker_custom_close_dismisses_and_header_and_results_align_left() {
+        let ctx = egui::Context::default();
+        let mut surface = IndicatorPickerSurface::default();
+        surface.state.open((0, 0));
+        let size = egui::vec2(1000.0, 700.0);
+        let mut output = frame(&mut surface, &ctx, vec![], size).0;
+        for _ in 0..3 {
+            output = frame(&mut surface, &ctx, vec![], size).0;
+        }
+        let title = text_rect(&output, "Indicators").unwrap();
+        let category = text_rect(&output, "All indicators").unwrap();
+        let ema = text_rect(&output, "EMA(9) on close").unwrap();
+        let cvd = text_rect(&output, "CVD pane").unwrap();
+        assert!((title.left() - category.left()).abs() < 12.0);
+        assert!((ema.left() - cvd.left()).abs() < 1.0);
+        let at = text_rect(&output, icons::X).unwrap().center();
+        for pressed in [true, false] {
+            frame(&mut surface, &ctx, click(at, pressed), size);
+        }
+        assert!(surface.state.target.is_none());
+    }
+    fn click(at: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+    #[test]
+    fn picker_active_controls_preserve_slot_actions_and_error_stale_status() {
+        for (icon, expected, remains_open) in [
+            (
+                icons::EYE_SLASH,
+                ToolbarAction::ToggleIndicatorHidden(17),
+                true,
+            ),
+            (icons::GEAR, ToolbarAction::OpenIndicatorSettings(17), false),
+            (icons::TRASH, ToolbarAction::RemoveIndicator(17), false),
+        ] {
+            let ctx = egui::Context::default();
+            let mut surface = IndicatorPickerSurface::default();
+            surface.state.open((0, 0));
+            surface.state.category = Category::Active;
+            let entries = [
+                IndicatorMenuEntry {
+                    slot: 17,
+                    label: "Failed script".into(),
+                    hidden: false,
+                    errored: true,
+                    stale: false,
+                },
+                IndicatorMenuEntry {
+                    slot: 18,
+                    label: "Stale script".into(),
+                    hidden: false,
+                    errored: false,
+                    stale: true,
+                },
+            ];
+            let size = egui::vec2(1000.0, 700.0);
+            let mut output = frame_with_entries(&mut surface, &ctx, vec![], size, &entries).0;
+            for _ in 0..3 {
+                output = frame_with_entries(&mut surface, &ctx, vec![], size, &entries).0;
+            }
+            assert!(text_rect(&output, icons::WARNING_CIRCLE).is_some());
+            assert!(text_rect(&output, icons::WARNING).is_some());
+            let at = text_rect(&output, icon).unwrap().center();
+            frame_with_entries(&mut surface, &ctx, click(at, true), size, &entries);
+            let (_, response) =
+                frame_with_entries(&mut surface, &ctx, click(at, false), size, &entries);
+            assert_eq!(response.indicator_actions, vec![expected]);
+            assert_eq!(surface.state.target.is_some(), remains_open);
+        }
     }
 }

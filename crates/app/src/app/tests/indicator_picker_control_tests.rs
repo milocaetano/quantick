@@ -7,8 +7,24 @@ fn indicator_picker_control_opens_searches_inspects_and_closes_without_attaching
     let (mut app, _) = app_with_history(20);
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("indicator-picker-control");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    grant_annotate_for_test(
+        &mut app,
+        "all-reads,cockpit,cockpit.layout,observe.user_text",
+    );
     enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut denied_client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let denied = unkeyed_call(
+        &mut app,
+        &mut denied_client,
+        CAPABILITY,
+        json!({"operation": {"action": "open"}}),
+    )
+    .0;
+    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
+    assert!(app.surfaces.indicator_picker.state.target.is_none());
     let mut client = connect(
         &directory,
         &options(

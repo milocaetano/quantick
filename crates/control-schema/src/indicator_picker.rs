@@ -11,7 +11,7 @@ use quantick_stores::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const CAPABILITY_ID: &str = "indicator.picker.set";
+pub const PICKER_CAPABILITY_ID: &str = "indicator.picker.set";
 pub const EVENT_KIND: &str = "indicator.picker.changed";
 pub const MAX_QUERY_BYTES: usize = 256;
 pub const MAX_PAGE: usize = 64;
@@ -117,7 +117,7 @@ pub fn apply(
 }
 pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::layout::transient_descriptor::<PickerInput, PickerResult>(
-        CAPABILITY_ID,
+        PICKER_CAPABILITY_ID,
         "indicator",
         "Inspect and search the indicator picker",
         "Opens or closes the centered indicator picker on the focused pane, searches its built-in and script library by case-insensitive name, or inspects its current state. Search does not attach an indicator. Categories: all, native, scripts, active. Active slots and their errors are read through analysis.indicators. Results are paginated (1..64); script IDs are library indices for this process. Changing focus dismisses the sitting. All operations return the state and matching library entries.",
@@ -129,7 +129,7 @@ pub fn descriptor() -> CapabilityDescriptor {
     descriptor
 }
 pub const READBACKS: &[Readback] = &[journal(
-    CAPABILITY_ID,
+    PICKER_CAPABILITY_ID,
     IdempotencyPolicy::Optional,
     EVENT_KIND,
     "payload.indicator_picker",

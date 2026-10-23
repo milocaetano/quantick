@@ -1,0 +1,94 @@
+{
+  "$defs": {
+    "PickerEntry": {
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "category"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "categories": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "category": {
+      "type": "string"
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/PickerEntry"
+      },
+      "type": "array"
+    },
+    "next_offset": {
+      "format": "uint",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "open": {
+      "type": "boolean"
+    },
+    "pane_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "query": {
+      "type": "string"
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "total": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "open",
+    "query",
+    "category",
+    "categories",
+    "entries",
+    "total"
+  ],
+  "title": "PickerResult",
+  "type": "object"
+}

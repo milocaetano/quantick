@@ -112,10 +112,10 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 37 |
+| deduplicated per connection | 38 |
 | key refused; not retryable, read back | 17 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **61** |
+| **Total** | **62** |
 
 ## Capabilities
 
@@ -146,6 +146,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `feed.reload` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].feed_generation` | the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation) | `a_dropped_feed_recovery_answer_is_replayed_and_the_recovery_runs_once`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_feed_generation_advances_on_every_respawn_and_reads_back` |
 | `feed.source.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].active_symbol` | the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the pair changed and not otherwise | `configured_feed_selection_is_validated_retry_safe_and_reads_back`, `a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position` |
 | `indicator.mouse_vertical_line.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `indicator.mouse_vertical_line.changed` | `payload.indicator_guide.enabled` | an event after the pre-call cursor carries the requested boolean and its payload names the exact tab, pane and slot | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `indicator.picker.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `indicator.picker.changed` | `payload.indicator_picker` | the event reports the picker state after the call | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `indicator.script.attach` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `indicator.script.attached` | `payload.script.slot_id` | an event after the pre-call cursor names a new `slot_id` | `an_interrupted_script_attach_or_detach_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `indicator.script.detach` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `indicator.script.detached` | `payload.script.slot_id` | an event after the pre-call cursor names the `slot_id` asked for | `an_interrupted_script_attach_or_detach_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `layers.visibility.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `layers.visibility.set` | `payload.result` | an event after the pre-call cursor matches connection_id and request_id, stable tab/pane IDs, layer ID and requested boolean; emitted even for a no-op, including panes omitted from the bounded snapshot; a retention gap leaves the outcome unknown | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -183,4 +184,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-61 mutable capabilities registered, 61 with a readback.
+62 mutable capabilities registered, 62 with a readback.
