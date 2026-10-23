@@ -363,3 +363,17 @@ fn a_drag_inside_a_locked_filled_rectangle_pans_the_chart() {
         "the locked zone stays put"
     );
 }
+
+/// The press is the chart's, but a plain click inside a locked zone still
+/// selects it: the context bar that unlocks it stays one click away.
+#[test]
+fn a_click_inside_a_locked_filled_rectangle_still_selects_it() {
+    let (mut app, ctx, _commands) = drawn_rectangle();
+    app.active_tab_mut()
+        .flow_pane
+        .drawings
+        .set_selected_locked(true);
+    app.active_tab_mut().flow_pane.drawings.select(None);
+    click_chart(&mut app, &ctx, egui::pos2((LEFT + RIGHT) / 2.0, MID_Y));
+    assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
+}

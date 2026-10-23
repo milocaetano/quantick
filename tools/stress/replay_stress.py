@@ -233,6 +233,7 @@ def verdict(state):
         "gestures_sent": sent,
         "answered": answered,
         "answered_on_time": on_time,
+        "answered_by_mark": int(num("answered_by_mark")),
         "slowest_answer_frames": int(num("slowest_answer_frames")),
         "stalls": stalls,
         "stalled_gestures": state["stalls"],

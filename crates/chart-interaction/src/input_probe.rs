@@ -46,6 +46,15 @@ impl Gesture {
     }
 }
 
+/// What the gestures can move, as the host reads it after a frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fingerprint {
+    /// The view: the zoom and the taken edge.
+    pub view: u64,
+    /// The marks: a press on an unlocked one drags it instead of the view.
+    pub marks: u64,
+}
+
 /// What one sent gesture came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outcome {
@@ -53,13 +62,17 @@ pub struct Outcome {
     /// Frames from the frame that delivered it to the frame that showed it;
     /// `None` for a stall.
     pub frames: Option<u64>,
+    /// Answered by moving a mark while the view stayed put. Counted apart,
+    /// so a mark that changed for another reason cannot pass for an answer
+    /// unseen.
+    pub by_mark: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Pending {
     gesture: Gesture,
     sent_frame: u64,
-    before: u64,
+    before: Fingerprint,
 }
 
 /// The probe's running totals, readable at any point of the run.
@@ -67,6 +80,8 @@ struct Pending {
 pub struct Summary {
     pub sent: u64,
     pub answered: u64,
+    /// Of `answered`, how many moved a mark rather than the view.
+    pub answered_by_mark: u64,
     pub on_time: u64,
     pub stalls: u64,
     pub slowest_answer_frames: u64,
@@ -87,6 +102,7 @@ pub struct InputProbe {
     pending: Option<Pending>,
     sent: u64,
     answered: u64,
+    answered_by_mark: u64,
     on_time: u64,
     stalls: u64,
     slowest_answer_frames: u64,
@@ -108,6 +124,7 @@ impl InputProbe {
             pending: None,
             sent: 0,
             answered: 0,
+            answered_by_mark: 0,
             on_time: 0,
             stalls: 0,
             slowest_answer_frames: 0,
@@ -120,8 +137,8 @@ impl InputProbe {
     }
 
     /// The gesture to start this frame, if one is due and none is in flight.
-    /// `before` is the view fingerprint the gesture is meant to change.
-    pub fn due(&mut self, now_ms: u64, frame: u64, before: u64) -> Option<Gesture> {
+    /// `before` is what the gesture is meant to change, as it stands.
+    pub fn due(&mut self, now_ms: u64, frame: u64, before: Fingerprint) -> Option<Gesture> {
         if self.pending.is_some() {
             return None;
         }
@@ -152,12 +169,14 @@ impl InputProbe {
 
     /// The fingerprint after `frame` was drawn. Returns the gesture's outcome
     /// on the frame it is decided.
-    pub fn observe(&mut self, frame: u64, after: u64) -> Option<Outcome> {
+    pub fn observe(&mut self, frame: u64, after: Fingerprint) -> Option<Outcome> {
         let pending = self.pending?;
         let waited = frame.saturating_sub(pending.sent_frame);
         if after != pending.before {
+            let by_mark = after.view == pending.before.view;
             self.pending = None;
             self.answered += 1;
+            self.answered_by_mark += u64::from(by_mark);
             if waited <= ANSWER_FRAMES {
                 self.on_time += 1;
             }
@@ -165,6 +184,7 @@ impl InputProbe {
             return Some(Outcome {
                 gesture: pending.gesture,
                 frames: Some(waited),
+                by_mark,
             });
         }
         if waited >= STALL_FRAMES {
@@ -173,6 +193,7 @@ impl InputProbe {
             return Some(Outcome {
                 gesture: pending.gesture,
                 frames: None,
+                by_mark: false,
             });
         }
         None
@@ -206,6 +227,7 @@ impl InputProbe {
         Summary {
             sent: self.sent,
             answered: self.answered,
+            answered_by_mark: self.answered_by_mark,
             on_time: self.on_time,
             stalls: self.stalls,
             slowest_answer_frames: self.slowest_answer_frames,
@@ -238,42 +260,51 @@ impl InputProbe {
 mod input_probe_tests {
     use super::*;
 
+    fn view(view: u64) -> Fingerprint {
+        Fingerprint { view, marks: 0 }
+    }
+
     #[test]
     fn gestures_cycle_on_the_period_and_wait_for_the_one_in_flight() {
         let mut probe = InputProbe::new(1_000);
-        assert_eq!(probe.due(0, 0, 7), None, "the first is a period away");
-        assert_eq!(probe.due(999, 1, 7), None);
-        assert_eq!(probe.due(1_000, 2, 7), Some(Gesture::Pan));
-        assert_eq!(probe.due(5_000, 3, 7), None, "one gesture at a time");
+        assert_eq!(probe.due(0, 0, view(7)), None, "the first is a period away");
+        assert_eq!(probe.due(999, 1, view(7)), None);
+        assert_eq!(probe.due(1_000, 2, view(7)), Some(Gesture::Pan));
+        assert_eq!(probe.due(5_000, 3, view(7)), None, "one gesture at a time");
         assert_eq!(
-            probe.observe(4, 8),
+            probe.observe(4, view(8)),
             Some(Outcome {
                 gesture: Gesture::Pan,
-                frames: Some(2)
+                frames: Some(2),
+                by_mark: false
             })
         );
-        assert_eq!(probe.due(5_000, 5, 8), Some(Gesture::Zoom));
-        probe.observe(5, 9);
-        assert_eq!(probe.due(6_000, 6, 9), Some(Gesture::DoubleClick));
-        probe.observe(7, 10);
-        assert_eq!(probe.due(7_000, 8, 10), Some(Gesture::Pan));
+        assert_eq!(probe.due(5_000, 5, view(8)), Some(Gesture::Zoom));
+        probe.observe(5, view(9));
+        assert_eq!(probe.due(6_000, 6, view(9)), Some(Gesture::DoubleClick));
+        probe.observe(7, view(10));
+        assert_eq!(probe.due(7_000, 8, view(10)), Some(Gesture::Pan));
     }
 
     #[test]
     fn a_late_answer_is_answered_but_not_on_time_and_silence_is_a_stall() {
         let mut probe = InputProbe::new(10);
-        assert_eq!(probe.due(0, 0, 1), None);
-        assert_eq!(probe.due(10, 0, 1), Some(Gesture::Pan));
+        assert_eq!(probe.due(0, 0, view(1)), None);
+        assert_eq!(probe.due(10, 0, view(1)), Some(Gesture::Pan));
         probe.delivered(2);
-        assert_eq!(probe.observe(4, 1), None);
-        assert!(probe.observe(5, 2).is_some(), "three frames after delivery");
-        probe.due(100, 6, 2);
-        assert_eq!(probe.observe(6 + STALL_FRAMES - 1, 2), None);
+        assert_eq!(probe.observe(4, view(1)), None);
+        assert!(
+            probe.observe(5, view(2)).is_some(),
+            "three frames after delivery"
+        );
+        probe.due(100, 6, view(2));
+        assert_eq!(probe.observe(6 + STALL_FRAMES - 1, view(2)), None);
         assert_eq!(
-            probe.observe(6 + STALL_FRAMES, 2),
+            probe.observe(6 + STALL_FRAMES, view(2)),
             Some(Outcome {
                 gesture: Gesture::Zoom,
-                frames: None
+                frames: None,
+                by_mark: false
             })
         );
         let summary = probe.summary();
@@ -293,8 +324,8 @@ mod input_probe_tests {
     fn frame_percentiles_count_freezes_and_the_tail() {
         let mut probe = InputProbe::new(1_000);
         probe.record_frame(900.0);
-        assert_eq!(probe.due(0, 0, 0), None);
-        assert_eq!(probe.due(1_000, 1, 0), Some(Gesture::Pan));
+        assert_eq!(probe.due(0, 0, view(0)), None);
+        assert_eq!(probe.due(1_000, 1, view(0)), Some(Gesture::Pan));
         for _ in 0..990 {
             probe.record_frame(16.6);
         }
@@ -313,5 +344,17 @@ mod input_probe_tests {
         );
         probe.record_frame(40.2);
         assert_eq!(probe.summary().p99_ms, 40.5);
+    }
+
+    #[test]
+    fn a_moved_mark_answers_and_is_counted_apart() {
+        let mut probe = InputProbe::new(10);
+        let before = Fingerprint { view: 1, marks: 1 };
+        assert_eq!(probe.due(0, 0, before), None);
+        assert_eq!(probe.due(10, 0, before), Some(Gesture::Pan));
+        let moved = probe.observe(1, Fingerprint { view: 1, marks: 2 });
+        assert_eq!(moved.map(|outcome| outcome.by_mark), Some(true));
+        let summary = probe.summary();
+        assert_eq!((summary.answered, summary.answered_by_mark), (1, 1));
     }
 }

@@ -11,8 +11,9 @@
 //! Now a line is formatted where it is raised and queued; the writer thread
 //! does the I/O. The queue is bounded, so a sink that never drains costs
 //! memory once and nothing after: a line that finds it full is dropped and
-//! counted, and the writer says how many went before its next line — a gap
-//! in the log is announced, never silent.
+//! counted, and the count rides in front of the next line that gets in, so
+//! the notice sits exactly where the gap is. A gap is announced, never
+//! silent — at exit and on a panic too, which drain the queue first.
 //!
 //! It lives here because this is the level of the graph that owns threads;
 //! the app hands `tracing` a closure over [`LogSink::line`].
@@ -27,7 +28,7 @@ use std::time::{Duration, Instant};
 /// Lines the queue holds before new ones are dropped: minutes of the busiest
 /// log this app writes, a few megabytes at worst.
 pub const LOG_QUEUE_LINES: usize = 8_192;
-/// How long an exit waits for queued lines to reach the sink.
+/// How long an exit or a panic waits for queued lines to reach the sink.
 const DRAIN_BUDGET: Duration = Duration::from_secs(2);
 
 /// The process's sink, installed once by [`install`].
@@ -40,11 +41,11 @@ pub struct LogSink {
     counts: Arc<Counts>,
 }
 
-#[derive(Default)]
 struct Counts {
+    capacity: usize,
     /// Lines queued and not yet written.
     pending: AtomicUsize,
-    /// Lines dropped since the writer last said so.
+    /// Lines dropped and not yet announced.
     dropped: AtomicU64,
 }
 
@@ -57,29 +58,19 @@ pub struct LogLine {
 impl LogSink {
     /// A sink whose writer thread writes to `out`, in order.
     pub fn spawn(out: impl Write + Send + 'static, capacity: usize) -> Self {
-        let (queue, lines) = sync_channel(capacity.max(1));
-        let counts = Arc::new(Counts::default());
+        let capacity = capacity.max(1);
+        let (queue, lines) = sync_channel(capacity);
+        let counts = Arc::new(Counts {
+            capacity,
+            pending: AtomicUsize::new(0),
+            dropped: AtomicU64::new(0),
+        });
         let writer_counts = Arc::clone(&counts);
         std::thread::Builder::new()
             .name("quantick-log".into())
             .spawn(move || write_lines(out, &lines, &writer_counts))
             .expect("the log writer thread starts");
         Self { queue, counts }
-    }
-
-    /// Queue one line without waiting: a full queue drops it and counts it.
-    fn send(&self, bytes: Vec<u8>) {
-        self.counts.pending.fetch_add(1, Ordering::AcqRel);
-        if let Err(error) = self.queue.try_send(bytes) {
-            self.counts.pending.fetch_sub(1, Ordering::AcqRel);
-            match error {
-                TrySendError::Full(_) => {
-                    self.counts.dropped.fetch_add(1, Ordering::AcqRel);
-                }
-                // The writer is gone (its sink failed): nothing left to do.
-                TrySendError::Disconnected(_) => {}
-            }
-        }
     }
 
     /// A writer for one event: its bytes are queued when it is dropped.
@@ -91,16 +82,59 @@ impl LogSink {
         }
     }
 
-    /// Wait up to `budget` for every queued line to be written.
+    /// Queue `bytes` without waiting, behind the notice of any gap before
+    /// it. A full queue drops it, and the gap carries on to the next line.
+    fn send(&self, bytes: Vec<u8>) {
+        let gap = self.counts.dropped.swap(0, Ordering::AcqRel);
+        let bytes = if gap == 0 {
+            bytes
+        } else {
+            let mut announced = self.notice(gap);
+            announced.extend_from_slice(&bytes);
+            announced
+        };
+        self.counts.pending.fetch_add(1, Ordering::AcqRel);
+        if let Err(error) = self.queue.try_send(bytes) {
+            self.counts.pending.fetch_sub(1, Ordering::AcqRel);
+            if let TrySendError::Full(_) = error {
+                self.counts.dropped.fetch_add(gap + 1, Ordering::AcqRel);
+            }
+        }
+    }
+
+    fn notice(&self, gap: u64) -> Vec<u8> {
+        format!(
+            "quantick: {gap} log line(s) dropped: the log sink fell {} lines behind\n",
+            self.counts.capacity
+        )
+        .into_bytes()
+    }
+
+    /// Wait up to `budget` for every queued line to be written, announcing
+    /// a gap that no later line will carry.
     pub fn drain(&self, budget: Duration) -> bool {
         let deadline = Instant::now() + budget;
-        while self.counts.pending.load(Ordering::Acquire) > 0 {
+        loop {
+            if self.counts.pending.load(Ordering::Acquire) == 0 {
+                let gap = self.counts.dropped.swap(0, Ordering::AcqRel);
+                if gap == 0 {
+                    return true;
+                }
+                self.send_notice(gap);
+            }
             if Instant::now() >= deadline {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        true
+    }
+
+    fn send_notice(&self, gap: u64) {
+        self.counts.pending.fetch_add(1, Ordering::AcqRel);
+        if self.queue.try_send(self.notice(gap)).is_err() {
+            self.counts.pending.fetch_sub(1, Ordering::AcqRel);
+            self.counts.dropped.fetch_add(gap, Ordering::AcqRel);
+        }
     }
 }
 
@@ -123,30 +157,29 @@ impl Drop for LogLine {
     }
 }
 
-/// The writer thread: each line in order, a drop notice before the line
-/// that follows a gap. Ends when the sink fails or every sender is gone.
+/// The writer thread: each line in order. A write that fails loses that
+/// line and no other — the next one is tried as if nothing happened.
 fn write_lines(mut out: impl Write, lines: &Receiver<Vec<u8>>, counts: &Counts) {
     for line in lines {
-        let dropped = counts.dropped.swap(0, Ordering::AcqRel);
-        let written = (dropped == 0
-            || writeln!(
-                out,
-                "quantick: {dropped} log line(s) dropped: the log sink fell {LOG_QUEUE_LINES} lines behind"
-            )
-            .is_ok())
-            && out.write_all(&line).is_ok();
+        let _ = out.write_all(&line);
         let _ = out.flush();
         counts.pending.fetch_sub(1, Ordering::AcqRel);
-        if !written {
-            return;
-        }
     }
 }
 
-/// Install the process sink onto stderr, once, and hand back its handle.
+/// Install the process sink onto stderr, once, and hand back its handle. A
+/// panic drains it before the panic message, so the lines that led up to
+/// the panic come out ahead of it.
 pub fn install() -> LogSink {
-    SINK.get_or_init(|| LogSink::spawn(std::io::stderr(), LOG_QUEUE_LINES))
-        .clone()
+    SINK.get_or_init(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            drain_before_exit();
+            previous(info);
+        }));
+        LogSink::spawn(std::io::stderr(), LOG_QUEUE_LINES)
+    })
+    .clone()
 }
 
 /// Before the process ends: let what was logged reach the sink.
@@ -179,12 +212,42 @@ mod log_sink_tests {
         }
     }
 
+    /// A sink that refuses its first write and takes every later one.
+    struct FailsOnce {
+        failed: bool,
+        got: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for FailsOnce {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if !std::mem::replace(&mut self.failed, true) {
+                return Err(std::io::Error::other("the sink hiccuped"));
+            }
+            self.got.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     fn line(sink: &LogSink, text: &str) {
         sink.line().write_all(text.as_bytes()).unwrap();
     }
 
+    fn text(got: &Arc<Mutex<Vec<u8>>>) -> String {
+        String::from_utf8(got.lock().unwrap().clone()).unwrap()
+    }
+
+    fn dropped_in(text: &str) -> usize {
+        text.lines()
+            .filter_map(|l| l.strip_prefix("quantick: "))
+            .filter_map(|l| l.split(' ').next()?.parse::<usize>().ok())
+            .sum()
+    }
+
     #[test]
-    fn a_stuck_sink_never_holds_the_caller_and_the_gap_is_announced() {
+    fn a_stuck_sink_never_holds_the_caller_and_the_gap_is_announced_where_it_is() {
         let (open, gate) = channel();
         let got = Arc::new(Mutex::new(Vec::new()));
         let sink = LogSink::spawn(
@@ -202,36 +265,80 @@ mod log_sink_tests {
             started.elapsed() < Duration::from_millis(500),
             "ten lines into a sink that writes nothing must not wait on it"
         );
-        // Every write the gate lets through costs one token; a few hundred
-        // cover the kept lines, the notice and the line after.
+        // Every write the gate lets through costs one token.
         for _ in 0..256 {
             let _ = open.send(());
         }
-        // Once the backlog is written the queue has room again: the next
-        // line is kept, and the notice went out ahead of it.
-        assert!(sink.drain(Duration::from_secs(5)));
+        // Wait out the backlog without announcing it: the next line is the
+        // one that carries the gap.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while sink.counts.pending.load(Ordering::Acquire) > 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
         line(&sink, "after\n");
         assert!(sink.drain(Duration::from_secs(5)));
-        let text = String::from_utf8(got.lock().unwrap().clone()).unwrap();
-        let kept_lines: Vec<&str> = text.lines().filter(|l| l.starts_with("line ")).collect();
-        assert_eq!(
-            kept_lines.first(),
-            Some(&"line 0"),
-            "the oldest line goes first: {text}"
+        let text = text(&got);
+        let lines: Vec<&str> = text.lines().collect();
+        let kept: Vec<&str> = lines
+            .iter()
+            .copied()
+            .filter(|l| l.starts_with("line "))
+            .collect();
+        let expected: Vec<String> = (0..kept.len()).map(|n| format!("line {n}")).collect();
+        assert_eq!(kept, expected, "the oldest lines go, in order: {text}");
+        let notice = format!(
+            "quantick: {} log line(s) dropped: the log sink fell 2 lines behind",
+            10 - kept.len()
         );
-        assert!(text.contains("log line(s) dropped"), "{text}");
-        assert!(text.ends_with("after\n"), "{text}");
+        assert_eq!(
+            &lines[lines.len() - 2..],
+            [notice.as_str(), "after"],
+            "the notice sits at the gap, right before the first line after it: {text}"
+        );
+    }
+
+    #[test]
+    fn a_gap_no_later_line_carries_is_announced_on_drain() {
+        let (open, gate) = channel();
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let sink = LogSink::spawn(
+            Gate {
+                open: gate,
+                got: Arc::clone(&got),
+            },
+            1,
+        );
+        for n in 0..5 {
+            line(&sink, &format!("line {n}\n"));
+        }
+        for _ in 0..256 {
+            let _ = open.send(());
+        }
+        assert!(sink.drain(Duration::from_secs(5)));
+        let text = text(&got);
         let kept = text.lines().filter(|l| l.starts_with("line ")).count();
-        let dropped: usize = text
-            .lines()
-            .filter_map(|l| l.strip_prefix("quantick: "))
-            .filter_map(|l| l.split(" ").next()?.parse::<usize>().ok())
-            .sum();
-        assert_eq!(
-            kept + dropped,
-            10,
-            "every line is written or counted: {text}"
+        assert!(text.ends_with("lines behind\n"), "{text}");
+        assert_eq!(kept + dropped_in(&text), 5, "{text}");
+    }
+
+    #[test]
+    fn a_failed_write_loses_that_line_and_no_other() {
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let sink = LogSink::spawn(
+            FailsOnce {
+                failed: false,
+                got: Arc::clone(&got),
+            },
+            8,
         );
+        line(&sink, "lost\n");
+        assert!(sink.drain(Duration::from_secs(5)));
+        line(&sink, "kept\n");
+        assert!(
+            sink.drain(Duration::from_secs(5)),
+            "nothing left pending behind the failure"
+        );
+        assert_eq!(text(&got), "kept\n");
     }
 
     #[test]
@@ -252,8 +359,7 @@ mod log_sink_tests {
             line(&sink, &format!("{n}\n"));
         }
         assert!(sink.drain(Duration::from_secs(5)));
-        let text = String::from_utf8(got.lock().unwrap().clone()).unwrap();
         let expected: String = (0..50).map(|n| format!("{n}\n")).collect();
-        assert_eq!(text, expected);
+        assert_eq!(text(&got), expected);
     }
 }

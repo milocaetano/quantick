@@ -9,6 +9,7 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+use quantick_chart_interaction::input_probe::Fingerprint;
 use quantick_chart_interaction::scripted_hand::{Area, HandEvent, ScriptedHand, Targets};
 
 use crate::pane::ChartPane;
@@ -59,10 +60,12 @@ impl StressInput {
                 candles: area(crate::bands::drawing_area(chart, flow.frame.lane_divider_x)),
                 time_axis: area(time),
             });
-        // What a gesture changes when answered: the view, or a drawing a
-        // press on an unlocked mark dragged instead. A locked one moves neither.
-        let fingerprint =
-            flow.model.viewport.gesture_fingerprint() ^ flow.drawings.revision().rotate_left(17);
+        // What a gesture changes when answered: the view, or a mark a press
+        // on an unlocked one dragged instead. A locked one moves neither.
+        let fingerprint = Fingerprint {
+            view: flow.model.viewport.gesture_fingerprint(),
+            marks: flow.drawings.revision(),
+        };
         let elapsed_ms = self.started.elapsed().as_millis() as u64;
         let step = self.hand.frame(elapsed_ms, interval, fingerprint, targets);
         raw_input
@@ -74,7 +77,7 @@ impl StressInput {
                 None => "STRESS_INPUT_STALL",
             };
             let gesture = outcome.gesture.name();
-            tracing::info!(target: "quantick::app", event_code, gesture, frames = ?outcome.frames, "a scripted gesture");
+            tracing::info!(target: "quantick::app", event_code, gesture, frames = ?outcome.frames, by_mark = outcome.by_mark, "a scripted gesture");
         }
         if now - self.last_summary >= SUMMARY_EVERY {
             self.last_summary = now;

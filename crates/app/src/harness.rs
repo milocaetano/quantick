@@ -510,8 +510,17 @@ impl Harness {
                     frames: LOAD_OLDER_CANDLES_HOOK_FRAMES,
                 }),
             history_note: read("QUANTICK_HISTORY_NOTE").and_then(parse_history_note),
-            stress_input: read("QUANTICK_STRESS_INPUT")
-                .and_then(|value| crate::stress_input::StressInput::from_env_value(&value)),
+            stress_input: read("QUANTICK_STRESS_INPUT").and_then(|value| {
+                let parsed = crate::stress_input::StressInput::from_env_value(&value);
+                if parsed.is_none() {
+                    tracing::warn!(
+                        target: "quantick",
+                        value = %value,
+                        "STRESS_INPUT_HOOK_REJECTED: expected a period in milliseconds, at least 1"
+                    );
+                }
+                parsed
+            }),
         }
     }
 

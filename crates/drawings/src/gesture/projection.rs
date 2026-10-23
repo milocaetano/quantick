@@ -142,6 +142,24 @@ pub struct DrawingProjection<'a> {
     pub indicators: &'a IndicatorViews,
 }
 
+/// Whether `pos` lands on `drawing`'s strokes: its hit-test with the fill
+/// off. The one rule a locked mark's press follows, on its own pane and on a
+/// pane mirroring it: strokes grip, fill does not.
+pub(crate) fn strokes_hit(
+    drawing: &Mark,
+    rect: PxRect,
+    points: &[Px],
+    pos: Px,
+    ctxt: &mut DrawContext<'_>,
+) -> bool {
+    let fill = std::mem::replace(&mut ctxt.style.fill_alpha, 0);
+    let hit = drawing
+        .tool
+        .hit_test(rect, points, pos, DRAWING_SELECT_RADIUS_PX, ctxt);
+    ctxt.style.fill_alpha = fill;
+    hit
+}
+
 impl DrawingProjection<'_> {
     /// Convert a chart pixel into an overlay anchor. The x coordinate is a
     /// fractional bar slot, so drawings follow pan/zoom instead of being stuck
@@ -510,10 +528,7 @@ impl DrawingProjection<'_> {
         };
         let projected = self.projected_drawing_points(drawing, history_right, total, scale);
         let mut ctxt = self.draw_context(drawing, scale, band, false);
-        ctxt.style.fill_alpha = 0;
-        !drawing
-            .tool
-            .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+        !strokes_hit(drawing, band.rect, &projected, pos, &mut ctxt)
     }
 
     /// Alt+click: deterministic z-order cycling through every visible object

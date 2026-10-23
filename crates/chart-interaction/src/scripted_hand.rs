@@ -10,7 +10,7 @@
 
 use std::collections::VecDeque;
 
-use crate::input_probe::{Gesture, InputProbe, Outcome, Summary};
+use crate::input_probe::{Fingerprint, Gesture, InputProbe, Outcome, Summary};
 
 /// How far a scripted pan drags, in points.
 pub const PAN_POINTS: f32 = 160.0;
@@ -123,7 +123,7 @@ impl ScriptedHand {
         &mut self,
         now_ms: u64,
         interval_ms: Option<f32>,
-        fingerprint: u64,
+        fingerprint: Fingerprint,
         targets: Option<Targets>,
     ) -> HandFrame {
         if let Some(interval_ms) = interval_ms {
@@ -160,6 +160,9 @@ impl ScriptedHand {
 #[cfg(test)]
 mod scripted_hand_tests {
     use super::*;
+
+    const FP_A: Fingerprint = Fingerprint { view: 7, marks: 0 };
+    const FP_B: Fingerprint = Fingerprint { view: 8, marks: 0 };
 
     const TARGETS: Targets = Targets {
         candles: Area {
@@ -201,26 +204,27 @@ mod scripted_hand_tests {
     #[test]
     fn the_hand_waits_for_targets_then_judges_each_gesture_after_its_last_event() {
         let mut hand = ScriptedHand::new(100);
-        assert_eq!(hand.frame(0, None, 7, None), HandFrame::default());
+        assert_eq!(hand.frame(0, None, FP_A, None), HandFrame::default());
         assert!(
-            hand.frame(50, Some(16.0), 7, Some(TARGETS))
+            hand.frame(50, Some(16.0), FP_A, Some(TARGETS))
                 .events
                 .is_empty()
         );
         let frames: Vec<HandFrame> = (0..4)
-            .map(|n| hand.frame(150 + n, Some(16.0), 7, Some(TARGETS)))
+            .map(|n| hand.frame(150 + n, Some(16.0), FP_A, Some(TARGETS)))
             .collect();
         assert!(frames.iter().all(|frame| frame.outcome.is_none()));
         assert_eq!(
             frames[3].events,
             vec![HandEvent::Release { x: 560.0, y: 200.0 }]
         );
-        let answered = hand.frame(160, Some(16.0), 8, Some(TARGETS));
+        let answered = hand.frame(160, Some(16.0), FP_B, Some(TARGETS));
         assert_eq!(
             answered.outcome,
             Some(Outcome {
                 gesture: Gesture::Pan,
-                frames: Some(0)
+                frames: Some(0),
+                by_mark: false
             })
         );
         let summary = hand.summary();
