@@ -33,6 +33,16 @@ impl PaperAccount {
         self.pnl.chosen = Some(primary);
     }
 
+    /// Lead with the other figure: money gives way to points per contract,
+    /// either points figure to money. What a click on a chart leg asks for -
+    /// the same switch, so the ticket shows what the chart now reads.
+    pub fn flip_pnl_primary(&mut self) {
+        self.set_pnl_primary(match self.pnl_primary() {
+            PnlPrimary::Money => PnlPrimary::PointsPerContract,
+            PnlPrimary::PointsPerContract | PnlPrimary::PointsTimesQty => PnlPrimary::Money,
+        });
+    }
+
     /// The switch's choices, labelled for this chart's instrument: money
     /// reads as its currency code.
     #[must_use]
