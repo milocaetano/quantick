@@ -353,28 +353,25 @@ impl PaneGestures {
         }) = target
         {
             drawings.select(Some(drawing_index));
-            self.drag = if drawings.items()[drawing_index].locked {
-                DrawingDrag::Blocked
-            } else {
+            // A locked mark is selected, never held: its drag pans the chart.
+            if !drawings.items()[drawing_index].locked {
                 drawings.begin_gesture();
-                DrawingDrag::Handle {
+                self.drag = DrawingDrag::Handle {
                     drawing_index,
                     handle,
-                }
-            };
+                };
+            }
         } else if let Some(PressTarget::Body { index, .. }) = target {
             drawings.select(Some(index));
-            self.drag = if drawings.items()[index].locked {
-                DrawingDrag::Blocked
-            } else {
+            if !drawings.items()[index].locked {
                 drawings.begin_gesture();
                 self.translate_from = Some(TranslateFrom {
                     index,
                     last: position,
                     free: drawings.items()[index].points.clone(),
                 });
-                DrawingDrag::Translate
-            };
+                self.drag = DrawingDrag::Translate;
+            }
         }
         // A press that hits no geometry is not ours to interpret: it
         // belongs to whatever the window routed it to (inspector, manager,
@@ -496,8 +493,9 @@ fn local_hover_cursor(
         );
     };
     let drawing = &drawings.items()[target.index()];
+    // A locked mark does not take the drag, so the cursor stays the chart's.
     if drawing.locked {
-        return (Some(GestureCursor::NotAllowed), None);
+        return (None, None);
     }
     match target {
         PressTarget::Handle { handle, .. } => (Some(handle_cursor(drawing, handle)), None),
@@ -936,13 +934,13 @@ mod tests {
             magnet: false,
         };
         let bands = Bands::new();
-        for locked in [false, true] {
+        {
             let mut gestures = PaneGestures::default();
             let pick = SharedPick {
                 owner: 7,
                 index: 3,
                 anchor: None,
-                locked,
+                locked: false,
                 magnet: false,
                 snap: crate::AnchorSnap::Pointer,
             };
@@ -967,7 +965,7 @@ mod tests {
             );
             assert_eq!(press.shared.owner, Some(7));
             assert_eq!(press.shared.edit, Some(SharedEdit::Select(3)));
-            assert_eq!(press.shared.begin_gesture, !locked);
+            assert!(press.shared.begin_gesture);
             assert!(gestures.shared_drag.is_active());
             let mut release = PointerOutcome::default();
             gestures.interact_shared(
@@ -985,6 +983,81 @@ mod tests {
             assert_eq!(gestures.shared_drag_pending_from, None);
             assert_eq!(gestures.shared_pointer_mark, None);
         }
+    }
+
+    /// A press on another pane's locked mark selects it but holds nothing:
+    /// the drag that follows is the chart's pan, and no edit is sent.
+    #[test]
+    fn a_locked_shared_mark_is_selected_and_its_drag_left_to_the_chart() {
+        with_projection(|projection, bands| {
+            let mut gestures = PaneGestures::default();
+            let pick = SharedPick {
+                owner: 7,
+                index: 3,
+                anchor: None,
+                locked: true,
+                magnet: false,
+                snap: crate::AnchorSnap::Pointer,
+            };
+            let from = bands[0].rect.center();
+            let to = from + crate::vec2(40.0, 25.0);
+            let frame = |position, pressed, released: bool| SharedPointer {
+                pressed,
+                down: !released,
+                released,
+                ..pointer_at(position, bands)
+            };
+            let mut press = PointerOutcome::default();
+            let pointer = frame(from, true, false);
+            gestures.interact_shared(projection, bands, Some(pick), &mut press, pointer);
+            assert_eq!(press.shared.owner, Some(7));
+            assert_eq!(press.shared.edit, Some(SharedEdit::Select(3)));
+            assert!(!press.shared.begin_gesture);
+            assert!(!gestures.shared_drag.is_active());
+            let mut drag = PointerOutcome::default();
+            let pointer = frame(to, false, false);
+            gestures.interact_shared(projection, bands, Some(pick), &mut drag, pointer);
+            assert_eq!(drag.shared, SharedInteraction::default());
+            assert_eq!(drag.cursor, None);
+            let mut release = PointerOutcome::default();
+            let pointer = frame(to, false, true);
+            gestures.interact_shared(projection, bands, Some(pick), &mut release, pointer);
+            assert!(!release.shared.commit_gesture);
+            assert_eq!(release.shared.edit, None);
+            assert_eq!(gestures.shared_drag_owner, None);
+        });
+    }
+
+    /// A press on a locked rectangle, body or handle, selects it but does not
+    /// take the gesture: the chart pans under the drag and the geometry stays.
+    #[test]
+    fn a_locked_rectangle_is_selected_and_its_drag_left_to_the_chart() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.set_locked_at(0, true);
+            let before = store.items()[0].points.clone();
+            for from in [rect.center(), rect.min] {
+                store.select(None);
+                assert_eq!(hover(&mut store, projection, bands, from), None);
+                let mut gestures = PaneGestures::default();
+                let mut pointer = pointer_at(from, bands);
+                pointer.pressed = true;
+                let press = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+                assert!(!press.consumed, "{from:?}");
+                assert_eq!(store.selected(), Some(0));
+                pointer.pressed = false;
+                pointer.position = Some(from + crate::vec2(40.0, 25.0));
+                let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+                assert!(!drag.consumed, "{from:?}");
+                assert_eq!(drag.cursor, None, "{from:?}");
+                pointer.down = false;
+                pointer.released = true;
+                let release = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+                assert!(!release.consumed, "{from:?}");
+                assert_eq!(store.items()[0].points, before);
+                assert!(!gestures.drag.is_active());
+            }
+        });
     }
 
     /// An outline-only rectangle wide enough for both side zones and a
