@@ -540,6 +540,7 @@ impl PaperTrading {
     }
 
     /// How far one notch walks this instrument's ruler, in points.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn ruler_step(&self) -> Decimal {
         self.desk.ruler_step(&self.account)
@@ -560,6 +561,12 @@ impl PaperTrading {
     /// Replace the remembered steps wholesale, from the sidecar.
     pub(crate) fn set_ruler_steps(&mut self, steps: BTreeMap<String, Decimal>) {
         self.desk.ruler.set_steps(steps, self.account.symbol());
+    }
+
+    /// Whether a chart click flipped the P&L switch since the last ask; see
+    /// `Desk::take_pnl_flip`.
+    pub(crate) fn take_pnl_flip(&mut self) -> bool {
+        self.desk.take_pnl_flip()
     }
 
     /// Clear the ruler, so the next aim starts from the entry again.
@@ -720,6 +727,8 @@ impl PaperTrading {
         };
         let env = self.account_env(side, reference);
         self.account.market(side, reference, ticket, &env);
+        // The wheel's distance was for this trade; the next starts bare.
+        self.desk.ruler.clear();
     }
 
     /// Flip the open position: one market order for twice its size, which

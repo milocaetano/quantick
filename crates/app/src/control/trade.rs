@@ -197,6 +197,9 @@ fn place_order<P: TabsPort + TabsMutPort + ?Sized>(
         return Err(ControlError::invalid_request(refusal));
     }
     let events = paper.account_mut().place_intent(intent);
+    // The ruler shaped this one order, as it does a click's; the next
+    // starts bare.
+    paper.clear_ruler();
     let result = answer(app, &events);
     journal(access, actor, PLACE_EVENT_KIND, &result, asked);
     to_value(result)

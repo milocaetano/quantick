@@ -22,6 +22,7 @@ use rust_decimal::Decimal;
 use crate::PaperAccount;
 use crate::account::AccountEnv;
 use crate::risk_sizing::RiskState;
+use geometry::CREATE_DECIDE_THRESHOLD_PX;
 
 pub mod aim_echo;
 pub mod cmd;
@@ -128,6 +129,9 @@ pub struct Desk {
     pub gesture: Gesture,
     /// The strategy editor's window state.
     pub strategy_editor: StrategyEditor,
+    /// A chart click flipped the P&L switch and the host has not saved it
+    /// yet; see [`Self::take_pnl_flip`].
+    pnl_flipped: bool,
 }
 
 impl Desk {
@@ -222,6 +226,13 @@ impl Desk {
         self.armed.take().is_some() || self.gesture.drop_drag()
     }
 
+    /// Whether a chart click flipped the P&L switch since the last ask: the
+    /// host persists and fans it out, as it does a pick on the ticket's own
+    /// switch.
+    pub fn take_pnl_flip(&mut self) -> bool {
+        std::mem::take(&mut self.pnl_flipped)
+    }
+
     /// The source rebuilt its timeline: nothing armed, nothing in the hand.
     pub fn reset_timeline(&mut self) {
         self.armed = None;
@@ -281,7 +292,9 @@ impl Desk {
                 kind,
                 raw_price,
             } => {
-                self.place_resting(account, side, kind, raw_price)?;
+                if self.place_resting(account, side, kind, raw_price)? {
+                    self.ruler.clear();
+                }
             }
             // The armed click: place at the clicked price and disarm on
             // success. Stays armed on a rejection — the toast explains where
@@ -289,7 +302,12 @@ impl Desk {
             ChartCommand::PlaceArmed { armed, raw_price } => {
                 if self.place_resting(account, armed.side, armed.kind, raw_price)? {
                     self.armed = None;
+                    self.ruler.clear();
                 }
+            }
+            ChartCommand::FlipPnl => {
+                account.flip_pnl_primary();
+                self.pnl_flipped = true;
             }
         }
         Ok(())
@@ -372,8 +390,15 @@ impl Desk {
         // kind. `None` stands the aim down rather than substituting the
         // other kind — see `resolve_cmd_kind`.
         let kind = resolve_cmd_kind(self.cmd_trading.kind, side, price, mark)?;
-        let quantity = self.ticket.quantity_preview().unwrap_or(Decimal::ONE);
         let ticket = self.ticket_bracket(side, price);
+        let env = self.account_env(account, side, price);
+        // The size this click would send, read the way the placement reads
+        // it: the risk per trade at this price first, then the typed field.
+        let quantity = account
+            .risk_sized(side, price, ticket, &env)
+            .0
+            .derived_quantity()
+            .or_else(|| self.ticket.quantity_preview());
         Some(CmdPreview {
             side,
             kind,
@@ -384,10 +409,11 @@ impl Desk {
             bracket: account.aim_bracket(
                 side,
                 price,
-                quantity,
+                quantity.unwrap_or(Decimal::ONE),
                 ticket,
-                &self.account_env(account, side, price),
+                &env,
             ),
+            quantity,
             ruler_ticks: self.ruler.notches,
         })
     }
@@ -423,6 +449,13 @@ impl Desk {
         // and never spends the wheel.
         // Pressing the wheel puts the ruler away. Only while an aim is up,
         // so a middle-click anywhere else stays whatever it already was.
+        // Letting go of the aim does too: every trade is sized on its own
+        // chart, and a distance rolled for one must not ride along on the
+        // next order, a market press included.
+        let held = self.cmd_trading.enabled && self.cmd_trading.aimed_side(frame.keys).is_some();
+        if std::mem::replace(&mut self.gesture.aim_held, held) && !held {
+            self.ruler.clear();
+        }
         if frame.middle_pressed && self.gesture.real_aim() && self.ruler.clear() {
             self.gesture.cmd_preview = self.compute_cmd_preview(account, frame, axis);
         }
@@ -532,6 +565,7 @@ impl Desk {
         {
             self.gesture.drag = target;
             self.gesture.drag_price = Some(axis.price_at(pointer.y));
+            self.gesture.press_y = Some(pointer.y);
             return InputOutcome::claimed(None);
         }
 
@@ -572,6 +606,13 @@ impl Desk {
     ) {
         let y = pointer.y.clamp(chart.top(), chart.bottom());
         self.gesture.drag_price = Some(axis.price_at(y));
+        if self
+            .gesture
+            .press_y
+            .is_some_and(|pressed| (y - pressed).abs() >= CREATE_DECIDE_THRESHOLD_PX)
+        {
+            self.gesture.press_y = None;
+        }
         if self.gesture.drag == PaperDrag::CreatePending {
             self.gesture.decide_pending_leg(account, y, axis);
         }
@@ -605,9 +646,26 @@ impl Desk {
 
     /// Let go of the line in the hand: what it asks for at the snapped
     /// price it was dropped on, if anything.
+    ///
+    /// A press on the position's line or on a leg that never travelled is a
+    /// click, and a click there flips money and points rather than nudging
+    /// the leg to wherever in its grab band the pointer happened to land.
     fn release(&mut self, account: &PaperAccount) -> Option<ChartCommand> {
         let drag = std::mem::take(&mut self.gesture.drag);
+        let clicked = self.gesture.press_y.take().is_some();
         let price = account.snap(self.gesture.drag_price.take()?);
+        if clicked
+            && matches!(
+                drag,
+                PaperDrag::Leg { .. }
+                    | PaperDrag::CreateLeg { .. }
+                    | PaperDrag::Rung { .. }
+                    | PaperDrag::Blocked
+                    | PaperDrag::CreatePending
+            )
+        {
+            return Some(ChartCommand::FlipPnl);
+        }
         match drag {
             PaperDrag::Leg { owner, leg } | PaperDrag::CreateLeg { owner, leg } => {
                 Some(ChartCommand::AmendLeg {
