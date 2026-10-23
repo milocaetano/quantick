@@ -47,7 +47,7 @@ impl MarkTool for FibExtension {
     }
     fn placement_hint(&self, placed: usize) -> Option<&'static str> {
         match placed {
-            1 => Some("Drag the leg"),
+            1 => Some("Release or click at the end of the leg"),
             _ => None,
         }
     }

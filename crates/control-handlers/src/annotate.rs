@@ -308,9 +308,22 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let input: ChartAnnotationInput = parse(input)?;
     let tool = registered_tool(tool_id)?;
     // A count the tool still accepts (a legacy three-anchor projection) is
-    // placed as given; anything else is refused against the current count.
-    let required = if tool.accepts_points(input.anchors.len()) {
-        input.anchors.len()
+    // placed as given. A tool accepting more than one count names them all
+    // when it refuses; any other refusal is the resolver's.
+    let given = input.anchors.len();
+    let accepted: Vec<usize> = (1..=3)
+        .filter(|&count| tool.accepts_points(count))
+        .collect();
+    if !accepted.contains(&given) && accepted.len() > 1 {
+        let counts: Vec<String> = accepted.iter().map(ToString::to_string).collect();
+        return Err(ControlError::invalid_request(format!(
+            "`{}` takes {} anchor(s), not {given}",
+            tool.name(),
+            counts.join(" or ")
+        )));
+    }
+    let required = if accepted.contains(&given) {
+        given
     } else {
         tool.required_points()
     };

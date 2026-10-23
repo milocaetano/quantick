@@ -767,13 +767,14 @@ pub(super) fn paint(
     paint_anchor_guides(painter, style, points, ctxt, payload.kind);
 }
 
-/// Dashed guides along the legs, and for an extension a dot on every anchor.
+/// The dashed A-B guide and, for an extension, a dot on A and on B.
 ///
 /// A retracement shows its guide only while selected: its levels already
 /// span the leg. An extension's levels start past its last anchor, so the
 /// move they were measured from would vanish the moment it is deselected;
-/// its leg and anchors therefore stay painted, selected or not. Selection
-/// draws the normal handles over the dots.
+/// its leg and both ends therefore stay painted, selected or not. A legacy
+/// extension's B-C guide keeps its old rule and shows only while selected.
+/// Selection draws the normal handles over the dots.
 fn paint_anchor_guides(
     painter: &mut MarkScene,
     style: DrawingStyle,
@@ -786,7 +787,7 @@ fn paint_anchor_guides(
         return;
     }
     let guide = Stroke::new(1.0_f32, style.color);
-    let legs = if always { points.len() - 1 } else { 1 };
+    let legs = if ctxt.selected && always { 2 } else { 1 };
     for pair in points.windows(2).take(legs) {
         painter.add(MarkShape::dashed_line(
             &[pair[0], pair[1]],
@@ -796,7 +797,7 @@ fn paint_anchor_guides(
         ));
     }
     if always {
-        for point in points {
+        for point in &points[..2] {
             painter.circle_filled(*point, SELECTED_ANCHOR_RADIUS_PX, style.color);
         }
     }
@@ -1243,6 +1244,12 @@ mod tests {
             .collect();
         let want_ys: Vec<f32> = expected.iter().map(|&price| scale.y(price)).collect();
         assert_eq!(level_ys, want_ys);
+
+        // Unselected, it shows its A-B leg and two dots like a new one; the
+        // B-C guide stays a selection affordance, as it always was.
+        let (dashed, dots) = guides_and_dots(&scene);
+        assert_eq!(dashed, vec![points[..2].to_vec()]);
+        assert_eq!(dots.len(), 2);
     }
 
     fn guides_and_dots(scene: &MarkScene) -> (Vec<Vec<Px>>, Vec<(Px, f32)>) {

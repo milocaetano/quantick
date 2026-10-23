@@ -416,6 +416,15 @@ fn a_projection_call_takes_two_anchors_or_the_legacy_three() {
         "origin C kept"
     );
 
+    let too_many = call(
+        &mut window,
+        &mut access,
+        FIB_PROJECTION_CAPABILITY_ID,
+        json!({ "anchors": [leg[0], leg[1], origin, origin] }),
+    )
+    .expect_err("four anchors are no projection");
+    assert!(too_many.message.contains("2 or 3"), "{}", too_many.message);
+
     let refused = call(
         &mut window,
         &mut access,
