@@ -26,7 +26,7 @@ use super::{
 /// Centre-x of the letter in both icons — one column, so on two stacked rail
 /// buttons the eye finds the letter in the same place and only the letter
 /// changes.
-const FIB_LETTER_X: f32 = 0.22;
+const FIB_LETTER_X: f32 = 0.20;
 /// Height of the letter in both icons, as a fraction of the glyph box.
 /// Large enough to read at rail size — at 0.46, and still at 0.70, the
 /// trader could not make the letters out. Shared for the same reason: an `R` and a `P` at one size are a choice
@@ -39,7 +39,7 @@ const FIB_LETTER_HEIGHT: f32 = 0.90;
 ///
 /// Its two ends are the 0 and the 1 of the level list — that is why they
 /// carry a dot and no line of their own.
-const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.48, 0.92), (0.86, 0.30)];
+const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.62, 0.92), (0.92, 0.30)];
 
 /// The retracement icon, drawn as the gesture is drawn on a chart: the leg
 /// across the move, its ends marked, and the levels hanging **between** those
@@ -51,9 +51,9 @@ const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.48, 0.92), (0.86, 0.30)];
 /// the letter in the corner names it for the trader who would rather read
 /// than compare.
 pub const FIB_RETRACEMENT_ICON: IconStrokes = &[
-    &[(0.60, 0.42), (0.98, 0.42)],
-    &[(0.60, 0.58), (0.98, 0.58)],
-    &[(0.60, 0.74), (0.98, 0.74)],
+    &[(0.66, 0.42), (0.98, 0.42)],
+    &[(0.66, 0.58), (0.98, 0.58)],
+    &[(0.66, 0.74), (0.98, 0.74)],
     RETRACEMENT_LEG,
 ];
 
@@ -74,7 +74,7 @@ pub const FIB_RETRACEMENT_LETTER: IconLetter = IconLetter {
 /// The extension's leg, named once for the same reason as
 /// [`RETRACEMENT_LEG`]: the one move the trader drags, whose far end is the
 /// origin the projection hangs from.
-const EXTENSION_LEG: &[(f32, f32)] = &[(0.56, 0.95), (0.92, 0.72)];
+const EXTENSION_LEG: &[(f32, f32)] = &[(0.62, 0.95), (0.94, 0.72)];
 
 /// The extension icon: the same rungs as the retracement, moved **above** the
 /// leg — price the move has not reached yet, which is what a projection is.
@@ -85,9 +85,9 @@ const EXTENSION_LEG: &[(f32, f32)] = &[(0.56, 0.95), (0.92, 0.72)];
 /// the favorites star there (`FAVORITE_BADGE_INSET_PX`), and an anchor under
 /// a star is an anchor the trader cannot see.
 pub const FIB_EXTENSION_ICON: IconStrokes = &[
-    &[(0.60, 0.30), (0.98, 0.30)],
-    &[(0.60, 0.43), (0.98, 0.43)],
-    &[(0.60, 0.56), (0.98, 0.56)],
+    &[(0.66, 0.30), (0.98, 0.30)],
+    &[(0.66, 0.43), (0.98, 0.43)],
+    &[(0.66, 0.56), (0.98, 0.56)],
     EXTENSION_LEG,
 ];
 
