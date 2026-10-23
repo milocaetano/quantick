@@ -156,9 +156,6 @@ pub enum SharedDrag {
     Body { index: usize },
     /// Dragging one handle.
     Anchor { index: usize, anchor: usize },
-    /// The mark is locked: the gesture is ours (the chart must not pan under
-    /// it) but the geometry stays exactly where the trader left it.
-    Blocked,
 }
 
 impl SharedDrag {
@@ -573,6 +570,10 @@ impl PaneGestures {
             // whether or not the drag that may follow is allowed.
             outcome.shared.owner = Some(pick.owner);
             outcome.shared.edit = Some(SharedEdit::Select(pick.index));
+            // A locked mark is selected, never held: its drag pans the chart.
+            if pick.locked {
+                return true;
+            }
             self.shared_drag_owner = Some(pick.owner);
             self.shared_drag_pending_from = Some(position);
             self.shared_drag_magnet = pick.magnet;
@@ -585,17 +586,13 @@ impl PaneGestures {
                 position,
                 (magnet, pick.snap),
             );
-            self.shared_drag = if pick.locked {
-                SharedDrag::Blocked
-            } else {
-                outcome.shared.begin_gesture = true;
-                match pick.anchor {
-                    Some(anchor) => SharedDrag::Anchor {
-                        index: pick.index,
-                        anchor,
-                    },
-                    None => SharedDrag::Body { index: pick.index },
-                }
+            outcome.shared.begin_gesture = true;
+            self.shared_drag = match pick.anchor {
+                Some(anchor) => SharedDrag::Anchor {
+                    index: pick.index,
+                    anchor,
+                },
+                None => SharedDrag::Body { index: pick.index },
             };
             return true;
         }
@@ -649,7 +646,6 @@ impl PaneGestures {
                 }
                 outcome.set_cursor(GestureCursor::Move);
             }
-            SharedDrag::Blocked => outcome.set_cursor(GestureCursor::NotAllowed),
             SharedDrag::None => {}
         }
         self.shared_pointer_mark = Some((time_ms, price));
@@ -696,11 +692,12 @@ fn shared_hover_cursor(
             .is_some_and(|position| pointer.area.contains(position))
         && let Some(pick) = shared_pick
     {
-        return Some(match (pick.locked, pick.anchor) {
-            (true, _) => GestureCursor::NotAllowed,
-            (false, Some(_)) => GestureCursor::Resize,
-            (false, None) => GestureCursor::Move,
-        });
+        // A locked mark does not take the drag, so the cursor stays the chart's.
+        return match (pick.locked, pick.anchor) {
+            (true, _) => None,
+            (false, Some(_)) => Some(GestureCursor::Resize),
+            (false, None) => Some(GestureCursor::Move),
+        };
     }
     None
 }
