@@ -98,3 +98,4 @@ a bound.
 | 666 | 2026-10-11 | feat/drawing-magnet-per-object | main | 21118 | 25 | `crates/app/src/orderflow_view.rs` (732) |
 | 681 | 2026-10-12 | fix/two-decimal-display | main | 21516 | 19 | `crates/app/src/replay_view.rs` (783) |
 | 687 | 2026-10-13 | fix/app-ui-free-ceiling | main | 7231 | 5 | `crates/app/src/orderflow_view.rs` (735) |
+| 719 | 2026-10-23 | fix/replay-ui-freeze | main | 29527 | 17 | `crates/app/src/replay_get_data.rs` (962) |
