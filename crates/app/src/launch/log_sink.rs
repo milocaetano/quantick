@@ -203,13 +203,15 @@ mod log_sink_tests {
             started.elapsed() < Duration::from_millis(500),
             "ten lines into a sink that writes nothing must not wait on it"
         );
-        for _ in 0..64 {
+        // Every write the gate lets through costs one token; a few hundred
+        // cover the kept lines, the notice and the line after.
+        for _ in 0..256 {
             let _ = open.send(());
         }
+        // Once the backlog is written the queue has room again: the next
+        // line is kept, and the notice went out ahead of it.
+        assert!(sink.drain(Duration::from_secs(5)));
         line(&sink, "after\n");
-        for _ in 0..64 {
-            let _ = open.send(());
-        }
         assert!(sink.drain(Duration::from_secs(5)));
         let text = String::from_utf8(got.lock().unwrap().clone()).unwrap();
         let kept_lines: Vec<&str> = text.lines().filter(|l| l.starts_with("line ")).collect();
