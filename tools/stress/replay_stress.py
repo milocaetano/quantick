@@ -87,12 +87,14 @@ history_reach = "sessions:5"
 venue_lead_in = false
 """
 FIELD = re.compile(r'(\w+)=("[^"]*"|\S+)')
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
 FREEZE_MS = 250.0
 P99_MS = 50.0
 ANSWER_FRAMES = 2
 
 
 def fields(line):
+    line = ANSI.sub("", line)
     return {key: value.strip('"') for key, value in FIELD.findall(line)}
 
 
@@ -141,6 +143,7 @@ def environment(args, out):
         QUANTICK_REPLAY_SPEED=str(args.speed),
         QUANTICK_STRESS_INPUT=str(args.period_ms),
         RUST_LOG="quantick=info",
+        NO_COLOR="1",
     )
     return env
 
@@ -198,7 +201,9 @@ def run(args, out, env):
 
 
 def verdict(state):
-    s = state["summary"] or {}
+    s = state["summary"]
+    if not s:
+        return {"pass": False, "error": "no STRESS_INPUT_SUMMARY: is the exe a --features harness build?"}
     num = lambda key: float(s.get(key, "nan"))
     sent, on_time = int(num("sent")), int(num("on_time"))
     stalls, answered = int(num("stalls")), int(num("answered"))

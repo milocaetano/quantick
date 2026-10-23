@@ -358,6 +358,14 @@ impl DrawingController {
             // Every armed instance just lost its drawing at once; sweep them
             // now so no resting bot order outlives its badge.
             if deleted > 0 {
+                // Logged, so a toast nobody remembers asking for has a time
+                // to line up against the rest of the session.
+                tracing::info!(
+                    target: "quantick::app",
+                    event_code = "DRAWINGS_DELETED_ALL",
+                    deleted,
+                    "every drawing on the pane was deleted"
+                );
                 effects.note_with_undo("All drawings deleted.", now);
             }
         }
