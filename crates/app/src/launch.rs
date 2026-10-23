@@ -24,6 +24,7 @@ use crate::config::{AppConfig, StartupSelectionError};
 
 // Gated inside the file (`#![cfg]`): the window hooks are harness.
 pub(super) mod boot;
+mod log_sink;
 pub(crate) mod window;
 
 /// The commit this binary was built from, when the build said so. Build
