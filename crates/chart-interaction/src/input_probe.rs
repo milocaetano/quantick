@@ -28,7 +28,7 @@ pub enum Gesture {
     Pan,
     /// One wheel notch: changes the bar spacing.
     Zoom,
-    /// A double click on the candles: back to the live overview.
+    /// A double click on the time axis: back to the live overview.
     DoubleClick,
 }
 

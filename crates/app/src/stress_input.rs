@@ -51,13 +51,13 @@ impl StressInput {
     /// This frame's scripted events, before egui reads the input.
     pub(crate) fn push_input(&mut self, flow: &ChartPane, raw_input: &mut egui::RawInput) {
         if self.script.is_empty() {
-            let Some(area) = candle_area(flow) else {
+            let (Some(area), Some(time_strip)) = (candle_area(flow), flow.frame.time_strip) else {
                 return;
             };
             let now_ms = self.started.elapsed().as_millis() as u64;
             let before = flow.model.viewport.gesture_fingerprint();
             if let Some(gesture) = self.probe.due(now_ms, self.frame, before) {
-                self.script = script(gesture, area);
+                self.script = script(gesture, area, time_strip);
             }
         }
         if let Some(events) = self.script.pop_front() {
@@ -132,39 +132,50 @@ fn candle_area(flow: &ChartPane) -> Option<egui::Rect> {
 }
 
 /// The gesture as pointer events, one entry per frame.
-fn script(gesture: Gesture, area: egui::Rect) -> VecDeque<Vec<egui::Event>> {
-    let at = area.center();
+///
+/// Each opens with a frame that only moves the pointer there, as a hand
+/// arrives before it presses: egui decides what a press grabs from where the
+/// pointer already was. The double click lands on the time axis, where it
+/// has one meaning — the live overview — and not on the candles, where it
+/// may mean "open this candle's settings" and leave the view alone.
+fn script(
+    gesture: Gesture,
+    area: egui::Rect,
+    time_strip: egui::Rect,
+) -> VecDeque<Vec<egui::Event>> {
     let button = |pos, pressed| egui::Event::PointerButton {
         pos,
         button: egui::PointerButton::Primary,
         pressed,
         modifiers: egui::Modifiers::default(),
     };
+    let arrive = |pos| vec![egui::Event::PointerMoved(pos)];
     match gesture {
         Gesture::Pan => {
-            let from = egui::pos2(area.left() + area.width() * 0.3, at.y);
+            let from = egui::pos2(area.left() + area.width() * 0.3, area.center().y);
             let to = from + egui::vec2(PAN_POINTS, 0.0);
             VecDeque::from([
-                vec![egui::Event::PointerMoved(from), button(from, true)],
+                arrive(from),
+                vec![button(from, true)],
                 vec![egui::Event::PointerMoved(to)],
                 vec![button(to, false)],
             ])
         }
-        Gesture::Zoom => VecDeque::from([vec![
-            egui::Event::PointerMoved(at),
-            egui::Event::MouseWheel {
+        Gesture::Zoom => VecDeque::from([
+            arrive(area.center()),
+            vec![egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(0.0, WHEEL_POINTS),
                 modifiers: egui::Modifiers::default(),
-            },
-        ]]),
-        Gesture::DoubleClick => VecDeque::from([
-            vec![
-                egui::Event::PointerMoved(at),
-                button(at, true),
-                button(at, false),
-            ],
-            vec![button(at, true), button(at, false)],
+            }],
         ]),
+        Gesture::DoubleClick => {
+            let at = time_strip.center();
+            VecDeque::from([
+                arrive(at),
+                vec![button(at, true), button(at, false)],
+                vec![button(at, true), button(at, false)],
+            ])
+        }
     }
 }
