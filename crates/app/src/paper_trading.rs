@@ -726,9 +726,11 @@ impl PaperTrading {
             return;
         };
         let env = self.account_env(side, reference);
-        self.account.market(side, reference, ticket, &env);
-        // The wheel's distance was for this trade; the next starts bare.
-        self.desk.ruler.clear();
+        // The wheel's distance was for this trade; the next starts bare. A
+        // refused entry was no trade, so the distance stays for the retry.
+        if self.account.market(side, reference, ticket, &env) {
+            self.desk.ruler.clear();
+        }
     }
 
     /// Flip the open position: one market order for twice its size, which

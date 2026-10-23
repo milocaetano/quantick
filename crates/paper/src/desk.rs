@@ -394,11 +394,16 @@ impl Desk {
         let env = self.account_env(account, side, price);
         // The size this click would send, read the way the placement reads
         // it: the risk per trade at this price first, then the typed field.
-        let quantity = account
-            .risk_sized(side, price, ticket, &env)
-            .0
-            .derived_quantity()
-            .or_else(|| self.ticket.quantity_preview());
+        // An entry the risk lock refuses sends nothing, so it has no size to
+        // put a worth on.
+        let (state, _) = account.risk_sized(side, price, ticket, &env);
+        let quantity = if state.blocks_entry(account.risk_settings().lock) {
+            None
+        } else {
+            state
+                .derived_quantity()
+                .or_else(|| self.ticket.quantity_preview())
+        };
         Some(CmdPreview {
             side,
             kind,
@@ -472,7 +477,7 @@ impl Desk {
         // Nothing paper is painted while its layer is off, so nothing
         // paper takes the press: an invisible line is not a control.
         if !frame.layer_visible {
-            self.gesture.drag = PaperDrag::None;
+            self.gesture.drop_drag();
             return InputOutcome {
                 owned: false,
                 command: None,
@@ -497,6 +502,11 @@ impl Desk {
             ..*frame
         };
         let idle = self.gesture.drag == PaperDrag::None;
+        // A click is only a click from the line grab below; any other press
+        // starts with no press to measure travel from.
+        if frame.primary_pressed {
+            self.gesture.press_y = None;
+        }
         // An overlay control (a tag's ✕, a bracket handle) takes the press
         // before *everything*: before the armed click — arming an order must
         // never eat the ✕ under the pointer — and before the line grab,
