@@ -487,6 +487,35 @@ impl DrawingProjection<'_> {
             })
     }
 
+    /// Whether a press at `pos` on a locked drawing grips it: its strokes do,
+    /// its fill does not. A locked mark cannot move, so its fill has nothing
+    /// to hold, and a filled zone extended across the pane would otherwise
+    /// take every press on the chart — no pan, no double click back to live.
+    /// The press stays the chart's; a click still selects the mark.
+    #[must_use]
+    pub fn locked_fill_only(
+        &self,
+        drawings: &Marks,
+        index: usize,
+        pos: Px,
+        band: &Band,
+        history_right: f32,
+        total: usize,
+    ) -> bool {
+        let Some(drawing) = drawings.items().get(index).filter(|drawing| drawing.locked) else {
+            return false;
+        };
+        let Some(scale) = band.scale.as_ref() else {
+            return false;
+        };
+        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+        let mut ctxt = self.draw_context(drawing, scale, band, false);
+        ctxt.style.fill_alpha = 0;
+        !drawing
+            .tool
+            .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+    }
+
     /// Alt+click: deterministic z-order cycling through every visible object
     /// under the pointer. From the current selection, the next hit beneath
     /// it wins; past the bottom it wraps back to the top.
