@@ -2,7 +2,7 @@
 //! on it* on the right (`docs/ux/ui-design-model.md` §6).
 //!
 //! Left: SOURCE (feed + symbol, or the amber session label while replaying),
-//! BARS (kind + one parameter), HISTORY (a `+ older ▾` split button whose
+//! BARS (kind + one parameter), INDICATORS (searchable modal), HISTORY (a `+ older ▾` split button whose
 //! menu holds the page size). Right: LAYERS (one icon toggle per visual
 //! layer; right-click opens its dock tab), LOOK (appearance dialog), PANELS
 //! (dock show/hide). Between HISTORY and the right groups sits TRADE — the
@@ -43,7 +43,7 @@ pub const TOOLBAR_HEIGHT: f32 = 44.0;
 // the literal itself proves nothing: revert the button and it still passes.
 // The two layers that own a dock tab take the tab's glyph instead of a
 // constant here, so a toggle and the panel behind it cannot drift apart.
-/// The indicators menu: a plotted line.
+/// The Indicators button: a plotted line.
 const LAYER_INDICATORS_ICON: &str = icons::CHART_LINE;
 /// The live strip: a sideways histogram, which is what it draws.
 const LAYER_STRIP_ICON: &str = icons::CHART_BAR_HORIZONTAL;
@@ -74,8 +74,9 @@ const W_TIME_PARAM: f32 = 365.0;
 const W_IMBALANCE_PARAM: f32 = 330.0;
 /// The `History: <target> ▾` split button.
 const W_HISTORY: f32 = 150.0;
-/// The LAYERS icon group (bubbles, heatmap, live strip, indicators).
-const W_LAYERS: f32 = 128.0;
+/// The LAYERS icon group (bubbles, heatmap, live strip, footprint).
+const W_LAYERS: f32 = 100.0;
+const W_INDICATORS: f32 = 110.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
 /// One TRADE button's own horizontal padding, in pixels.
@@ -154,7 +155,7 @@ impl CollapsePlan {
     /// width ([`W_TRADE`]), and the time kind's chip row is wider than the
     /// other kinds' single drag.
     fn width(self, trade_width: f32, param_width: f32) -> f32 {
-        let mut width = W_SLACK + W_ICON + W_BARS + W_LAYERS;
+        let mut width = W_SLACK + W_ICON + W_BARS + W_LAYERS + W_INDICATORS;
         width += if self.feed_full_name {
             W_SOURCE_FULL
         } else {
@@ -292,11 +293,6 @@ pub struct ToolbarModel<'a> {
     /// The TRADE group: readiness, state-aware entry labels and the close
     /// button, all computed by the paper host (`PaperTrading`).
     pub paper: PaperTradeModel,
-    /// Active indicators, for the INDICATORS menu (add order).
-    pub indicators: Vec<IndicatorMenuEntry>,
-    /// Loadable script names, embedded first (the INDICATORS menu's "add"
-    /// section; indices map straight to [`ToolbarAction::AddScriptIndicator`]).
-    pub scripts: Vec<String>,
 }
 
 /// What the TRADE group shows this frame: the paper desk's
@@ -306,7 +302,7 @@ pub struct ToolbarModel<'a> {
 /// the hovers disclose what the press would do to the open position.
 pub type PaperTradeModel = quantick_paper::desk::TradeBar;
 
-/// One active indicator as the INDICATORS menu shows it. Raw slot numbers
+/// One active indicator as the picker shows it. Raw slot numbers
 /// keep the toolbar decoupled from the worker's types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndicatorMenuEntry {
@@ -325,6 +321,8 @@ pub struct IndicatorMenuEntry {
 /// A side effect the toolbar asks the app to perform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarAction {
+    /// Open the searchable indicator library for the focused pane.
+    OpenIndicatorPicker,
     /// Switch the canvas to a named arrangement from the layout registry.
     ///
     /// Carries the registry entry rather than a copy of its shape, so the
@@ -408,6 +406,12 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 draw_source(ui, model, plan, &mut actions);
                 ui.separator();
                 draw_bars(ui, model, plan);
+                if ui
+                    .button(format!("{} Indicators", LAYER_INDICATORS_ICON))
+                    .clicked()
+                {
+                    actions.push(ToolbarAction::OpenIndicatorPicker);
+                }
                 if plan.history_inline {
                     ui.separator();
                     draw_history(ui, model, &mut actions);
@@ -985,8 +989,6 @@ impl LayerToggle {
 /// or with what the trader sees — and the depth map, which *is* the bid/ask
 /// lists, was the one that read least like itself.
 fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
-    draw_indicators_menu(ui, model, actions);
-
     // Zipped rather than indexed: the array is filled in `ALL` order, so
     // walking the two together is what makes that the only ordering. A second
     // hand-written position map beside `ALL` is how a lamp ends up reporting
@@ -1007,105 +1009,6 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
             actions.push(layer.settings_action());
         }
     }
-}
-
-/// INDICATORS: add the native indicators and manage the active ones —
-/// status dot, eye toggle, remove.
-///
-/// The native entries are the catalog in menu order, not a hand-written list:
-/// a native added to `quantick-indicators` appears here with no edit to this
-/// file. Each entry prints its own `menu_label` verbatim rather than a label
-/// this function assembles, so the strings a trader reads are owned in one
-/// place.
-fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
-    let any_active = !model.indicators.is_empty();
-    let icon = egui::RichText::new(LAYER_INDICATORS_ICON)
-        .size(16.0)
-        .color(if any_active {
-            theme::ACCENT
-        } else {
-            theme::TEXT_MUTED
-        });
-    ui.menu_button(icon, |ui| {
-        for entry in quantick_indicators::native::NATIVES {
-            if ui
-                .button(format!("{} {}", icons::PLUS, entry.menu_label))
-                .clicked()
-            {
-                actions.push(ToolbarAction::AddNative(entry.id));
-                ui.close_menu();
-            }
-        }
-        if !model.scripts.is_empty() {
-            ui.separator();
-            ui.label(
-                egui::RichText::new("scripts")
-                    .size(11.0)
-                    .color(theme::TEXT_MUTED),
-            );
-            for (index, name) in model.scripts.iter().enumerate() {
-                if ui.button(format!("{} {name}", icons::FILE_CODE)).clicked() {
-                    actions.push(ToolbarAction::AddScriptIndicator(index));
-                    ui.close_menu();
-                }
-            }
-        }
-        if any_active {
-            ui.separator();
-        }
-        for entry in &model.indicators {
-            ui.horizontal(|ui| {
-                // Status dot: honest state at a glance — errored beats hidden.
-                let (dot, color) = if entry.errored {
-                    (icons::WARNING_CIRCLE, theme::SELL)
-                } else if entry.stale {
-                    // Running, but the file on disk has errors.
-                    (icons::WARNING, theme::ACCENT)
-                } else if entry.hidden {
-                    (icons::EYE_SLASH, theme::TEXT_MUTED)
-                } else {
-                    (icons::CIRCLE, theme::BUY)
-                };
-                ui.label(egui::RichText::new(dot).color(color));
-                ui.label(&entry.label);
-                if ui
-                    .small_button(if entry.hidden {
-                        icons::EYE
-                    } else {
-                        icons::EYE_SLASH
-                    })
-                    .on_hover_text("hide/show without removing (no recompute)")
-                    .clicked()
-                {
-                    actions.push(ToolbarAction::ToggleIndicatorHidden(entry.slot));
-                }
-                if ui
-                    .small_button(icons::GEAR)
-                    .on_hover_text("settings (applying recomputes from scratch)")
-                    .clicked()
-                {
-                    actions.push(ToolbarAction::OpenIndicatorSettings(entry.slot));
-                    // The menu closes so it cannot occlude the dialog it
-                    // just spawned (egui paints menus above windows) —
-                    // audit M3.
-                    ui.close_menu();
-                }
-                if ui
-                    .small_button(icons::TRASH)
-                    .on_hover_text("remove this indicator")
-                    .clicked()
-                {
-                    actions.push(ToolbarAction::RemoveIndicator(entry.slot));
-                    // Closing beats redrawing the menu around a vanished
-                    // row. The eye deliberately keeps the menu open:
-                    // toggling several indicators is one errand.
-                    ui.close_menu();
-                }
-            });
-        }
-    })
-    .response
-    .on_hover_text("indicators: add or manage overlay and pane indicators");
 }
 
 /// The `⋯` menu holding every folded group, in a fixed order so muscle
@@ -1428,27 +1331,6 @@ mod tests {
                         dock_visible: true,
                         appearance_open: false,
                         paper: flat_trade(true),
-                        // Non-empty on purpose: the entry rows (status dot,
-                        // eye, trash) are only drawn when the menu has
-                        // something in it, and an empty vec never exercises
-                        // them.
-                        indicators: vec![
-                            IndicatorMenuEntry {
-                                slot: 0,
-                                label: "EMA(9, close)".to_owned(),
-                                hidden: false,
-                                errored: false,
-                                stale: false,
-                            },
-                            IndicatorMenuEntry {
-                                slot: 1,
-                                label: "CVD".to_owned(),
-                                hidden: true,
-                                errored: true,
-                                stale: true,
-                            },
-                        ],
-                        scripts: vec!["ema.pine".to_owned(), "zigzag.pine".to_owned()],
                     };
                     let actions = draw(ctx, &mut model);
                     assert!(actions.is_empty(), "no clicks, no actions");
@@ -1520,8 +1402,6 @@ mod tests {
                     dock_visible: true,
                     appearance_open: false,
                     paper: flat_trade(true),
-                    indicators: Vec::new(),
-                    scripts: Vec::new(),
                 };
                 let actions = draw(ctx, &mut model);
                 assert!(actions.is_empty(), "no clicks, no actions");
@@ -1605,8 +1485,6 @@ mod tests {
                         // Not yet ready: the TRADE pair must lay out in its
                         // disabled state without asking anything of the app.
                         paper: flat_trade(false),
-                        indicators: Vec::new(),
-                        scripts: Vec::new(),
                     };
                     let actions = draw(ctx, &mut model);
                     assert!(actions.is_empty(), "no clicks, no actions");
@@ -1716,8 +1594,6 @@ mod tests {
                     dock_visible: true,
                     appearance_open: false,
                     paper: paper.clone(),
-                    indicators: Vec::new(),
-                    scripts: Vec::new(),
                 };
                 let actions = draw(ctx, &mut model);
                 assert!(actions.is_empty(), "no clicks, no actions");

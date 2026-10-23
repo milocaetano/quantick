@@ -19,6 +19,7 @@ mod feed;
 mod gateway;
 mod health;
 mod indicator_guide;
+mod indicator_picker;
 mod interaction;
 pub(crate) mod inventory;
 mod price_axis;

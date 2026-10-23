@@ -45,3 +45,5 @@ pub mod time_axis;
 pub mod trace_replay;
 pub mod trade;
 pub mod workspace;
+
+pub mod indicator_picker;

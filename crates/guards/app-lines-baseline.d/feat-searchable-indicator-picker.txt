@@ -1,0 +1,3 @@
+# Centered indicator modal painting and host bindings; catalog, search, session state and control decisions live in stores/control-schema. Replaces the old toolbar menu.
+crates/app +160
+!budget +160

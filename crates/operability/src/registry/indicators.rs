@@ -8,6 +8,13 @@ use super::{ExclusionClass, Mapping, PENDING_SURFACE, Source, UiBehaviour};
 /// Every row this family owns.
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "indicator.picker.open",
+        title: "Open and search the indicator library",
+        reach: "left toolbar Indicators button, searchable centered modal",
+        keys: &[(Source::ToolbarAction, "OpenIndicatorPicker")],
+        mapping: capability!("indicator.picker.set"),
+    },
+    UiBehaviour {
         id: "appearance.dialog.toggle",
         title: "Open the chart settings on the Candles tab — candles, canvas, grid",
         reach: "toolbar brush button, Tools menu, a double click on a candle",
@@ -30,7 +37,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "indicator.hidden.toggle",
         title: "Hide an indicator's drawing without removing it",
-        reach: "the eye on the legend row, and the indicators menu",
+        reach: "the eye on the legend row, and the indicator picker",
         keys: &[(Source::ToolbarAction, "ToggleIndicatorHidden")],
         mapping: excluded!(
             PendingCapability,
@@ -58,7 +65,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "indicator.native.add",
         title: "Add a native indicator from the catalog",
-        reach: "toolbar indicators menu",
+        reach: "toolbar indicator picker",
         keys: &[(Source::ToolbarAction, "AddNative")],
         mapping: excluded!(
             PendingCapability,
@@ -70,7 +77,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "indicator.native.remove",
         title: "Remove a native indicator",
-        reach: "the legend row's close, and the indicators menu",
+        reach: "the legend row's close, and the indicator picker",
         keys: &[(
             Source::Authored,
             "the legend row close, which the toolbar enum sees only as `RemoveIndicator`",
@@ -84,21 +91,21 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "indicator.script.add",
         title: "Load a Pine script from the library",
-        reach: "toolbar indicators menu",
+        reach: "toolbar indicator picker",
         keys: &[(Source::ToolbarAction, "AddScriptIndicator")],
         mapping: capability!("indicator.script.attach"),
     },
     UiBehaviour {
         id: "indicator.script.remove",
         title: "Remove a script indicator",
-        reach: "the legend row's close, and the indicators menu",
+        reach: "the legend row's close, and the indicator picker",
         keys: &[(Source::ToolbarAction, "RemoveIndicator")],
         mapping: capability!("indicator.script.detach"),
     },
     UiBehaviour {
         id: "indicator.settings.open",
         title: "Open an indicator's settings",
-        reach: "the legend row's gear, and the indicators menu",
+        reach: "the legend row's gear, and the indicator picker",
         keys: &[(Source::ToolbarAction, "OpenIndicatorSettings")],
         mapping: PENDING_SURFACE,
     },
