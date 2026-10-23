@@ -2,32 +2,23 @@
 //!
 //! Every period a pan, a wheel notch or a double click goes into the active
 //! tab's flow pane as real pointer events, through `raw_input_hook` — the
-//! same path a trader's mouse takes. The schedule, the answer ledger and the
-//! frame percentiles are [`InputProbe`]'s; this file only turns a gesture into
-//! egui events and reads the pane's view back. `tools/stress/replay_stress.py`
-//! launches the run and grades the `STRESS_INPUT_SUMMARY` it logs.
+//! same path a trader's mouse takes. The gestures, their schedule and the
+//! judging are [`ScriptedHand`]'s; this file turns its events into egui's and
+//! reads the pane back. `tools/stress/replay_stress.py` grades the log.
 
-use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use quantick_chart_interaction::input_probe::{Gesture, InputProbe};
+use quantick_chart_interaction::scripted_hand::{Area, HandEvent, ScriptedHand, Targets};
 
 use crate::pane::ChartPane;
 
 /// How often the running totals are logged.
 const SUMMARY_EVERY: Duration = Duration::from_secs(5);
-/// How far a scripted pan drags, in points.
-const PAN_POINTS: f32 = 160.0;
-/// One wheel notch, in points.
-const WHEEL_POINTS: f32 = 60.0;
 
-/// The scripted hand and its ledger.
+/// The scripted hand, with the clock it is told.
 pub(crate) struct StressInput {
-    probe: InputProbe,
-    /// Events still owed to the gesture in flight, one entry per frame.
-    script: VecDeque<Vec<egui::Event>>,
-    frame: u64,
+    hand: ScriptedHand,
     started: Instant,
     last_frame: Option<Instant>,
     last_summary: Instant,
@@ -39,148 +30,75 @@ impl StressInput {
         let period_ms = value.trim().parse::<u64>().ok().filter(|ms| *ms > 0)?;
         let now = Instant::now();
         Some(Self {
-            probe: InputProbe::new(period_ms),
-            script: VecDeque::new(),
-            frame: 0,
+            hand: ScriptedHand::new(period_ms),
             started: now,
             last_frame: None,
             last_summary: now,
         })
     }
 
-    /// This frame's scripted events, before egui reads the input.
-    pub(crate) fn push_input(&mut self, flow: &ChartPane, raw_input: &mut egui::RawInput) {
-        if self.script.is_empty() {
-            let (Some(area), Some(time_strip)) = (candle_area(flow), flow.frame.time_strip) else {
-                return;
+    /// Once a frame, before egui reads the input: judge the frame just drawn
+    /// and inject this one's events.
+    pub(crate) fn drive(&mut self, flow: &ChartPane, raw_input: &mut egui::RawInput) {
+        let now = Instant::now();
+        let interval = self
+            .last_frame
+            .replace(now)
+            .map(|last| (now - last).as_secs_f32() * 1000.0);
+        let area = |rect: egui::Rect| Area {
+            left: rect.left(),
+            top: rect.top(),
+            right: rect.right(),
+            bottom: rect.bottom(),
+        };
+        let targets = flow
+            .frame
+            .chart_rect
+            .zip(flow.frame.time_strip)
+            .map(|(chart, time)| Targets {
+                candles: area(crate::bands::drawing_area(chart, flow.frame.lane_divider_x)),
+                time_axis: area(time),
+            });
+        // What a gesture changes when answered: the view, or a drawing a
+        // press on an unlocked mark dragged instead. A locked one moves neither.
+        let fingerprint =
+            flow.model.viewport.gesture_fingerprint() ^ flow.drawings.revision().rotate_left(17);
+        let elapsed_ms = self.started.elapsed().as_millis() as u64;
+        let step = self.hand.frame(elapsed_ms, interval, fingerprint, targets);
+        raw_input
+            .events
+            .extend(step.events.into_iter().map(to_egui));
+        if let Some(outcome) = step.outcome {
+            let event_code = match outcome.frames {
+                Some(_) => "STRESS_INPUT_ANSWERED",
+                None => "STRESS_INPUT_STALL",
             };
-            let now_ms = self.started.elapsed().as_millis() as u64;
-            let before = answer_fingerprint(flow);
-            if let Some(gesture) = self.probe.due(now_ms, self.frame, before) {
-                self.script = script(gesture, area, time_strip);
-            }
+            let gesture = outcome.gesture.name();
+            tracing::info!(target: "quantick::app", event_code, gesture, frames = ?outcome.frames, "a scripted gesture");
         }
-        if let Some(events) = self.script.pop_front() {
-            raw_input.events.extend(events);
-            if self.script.is_empty() {
-                self.probe.delivered(self.frame);
-            }
-        }
-    }
-
-    /// After the frame drew: pace it, see whether the view answered, and log.
-    pub(crate) fn after_frame(&mut self, flow: &ChartPane, now: Instant) {
-        if let Some(last) = self.last_frame {
-            self.probe.record_frame((now - last).as_secs_f32() * 1000.0);
-        }
-        self.last_frame = Some(now);
-        if self.script.is_empty()
-            && let Some(outcome) = self.probe.observe(self.frame, answer_fingerprint(flow))
-        {
-            match outcome.frames {
-                Some(frames) => tracing::info!(
-                    target: "quantick::app",
-                    event_code = "STRESS_INPUT_ANSWERED",
-                    gesture = outcome.gesture.name(),
-                    frames,
-                    "a scripted gesture moved the chart"
-                ),
-                None => tracing::warn!(
-                    target: "quantick::app",
-                    event_code = "STRESS_INPUT_STALL",
-                    gesture = outcome.gesture.name(),
-                    frames = quantick_chart_interaction::input_probe::STALL_FRAMES,
-                    "a scripted gesture never moved the chart"
-                ),
-            }
-        }
-        self.frame += 1;
         if now - self.last_summary >= SUMMARY_EVERY {
             self.last_summary = now;
-            self.log_summary();
+            let summary = self.hand.summary();
+            tracing::info!(target: "quantick::app", event_code = "STRESS_INPUT_SUMMARY", ?summary, "stress input totals");
         }
     }
-
-    fn log_summary(&self) {
-        let s = self.probe.summary();
-        tracing::info!(
-            target: "quantick::app",
-            event_code = "STRESS_INPUT_SUMMARY",
-            sent = s.sent,
-            answered = s.answered,
-            on_time = s.on_time,
-            stalls = s.stalls,
-            slowest_answer_frames = s.slowest_answer_frames,
-            frames = s.frames,
-            freezes = s.freezes,
-            worst_ms = s.worst_ms,
-            p99_ms = s.p99_ms,
-            opening_worst_ms = s.opening_worst_ms,
-            "stress input totals"
-        );
-    }
 }
 
-/// What a gesture changes when the chart answers it: the view it moves, or
-/// a drawing it moved instead — a press that lands on an unlocked mark drags
-/// the mark, which is an answer too. A locked mark changes neither.
-fn answer_fingerprint(flow: &ChartPane) -> u64 {
-    flow.model.viewport.gesture_fingerprint() ^ flow.drawings.revision().rotate_left(17)
-}
-
-/// The flow pane's candle area, once the pane has drawn.
-fn candle_area(flow: &ChartPane) -> Option<egui::Rect> {
-    Some(crate::bands::drawing_area(
-        flow.frame.chart_rect?,
-        flow.frame.lane_divider_x,
-    ))
-}
-
-/// The gesture as pointer events, one entry per frame.
-///
-/// Each opens with a frame that only moves the pointer there, as a hand
-/// arrives before it presses: egui decides what a press grabs from where the
-/// pointer already was. The double click lands on the time axis, where it
-/// has one meaning — the live overview — and not on the candles, where it
-/// may mean "open this candle's settings" and leave the view alone.
-fn script(
-    gesture: Gesture,
-    area: egui::Rect,
-    time_strip: egui::Rect,
-) -> VecDeque<Vec<egui::Event>> {
-    let button = |pos, pressed| egui::Event::PointerButton {
-        pos,
+fn to_egui(event: HandEvent) -> egui::Event {
+    let button = |x, y, pressed| egui::Event::PointerButton {
+        pos: egui::pos2(x, y),
         button: egui::PointerButton::Primary,
         pressed,
         modifiers: egui::Modifiers::default(),
     };
-    let arrive = |pos| vec![egui::Event::PointerMoved(pos)];
-    match gesture {
-        Gesture::Pan => {
-            let from = egui::pos2(area.left() + area.width() * 0.3, area.center().y);
-            let to = from + egui::vec2(PAN_POINTS, 0.0);
-            VecDeque::from([
-                arrive(from),
-                vec![button(from, true)],
-                vec![egui::Event::PointerMoved(to)],
-                vec![button(to, false)],
-            ])
-        }
-        Gesture::Zoom => VecDeque::from([
-            arrive(area.center()),
-            vec![egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: egui::vec2(0.0, WHEEL_POINTS),
-                modifiers: egui::Modifiers::default(),
-            }],
-        ]),
-        Gesture::DoubleClick => {
-            let at = time_strip.center();
-            VecDeque::from([
-                arrive(at),
-                vec![button(at, true), button(at, false)],
-                vec![button(at, true), button(at, false)],
-            ])
-        }
+    match event {
+        HandEvent::Move { x, y } => egui::Event::PointerMoved(egui::pos2(x, y)),
+        HandEvent::Press { x, y } => button(x, y, true),
+        HandEvent::Release { x, y } => button(x, y, false),
+        HandEvent::Wheel { dy } => egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, dy),
+            modifiers: egui::Modifiers::default(),
+        },
     }
 }

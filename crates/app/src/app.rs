@@ -743,13 +743,6 @@ impl eframe::App for QuantickApp {
             self.health.cpu_frames.record(cpu * 1000.0);
         }
         self.draw_frame(ctx, Instant::now());
-        #[cfg(any(feature = "scenario-harness", test))]
-        if let Some(stress) = self.chrome.harness.stress_input_mut() {
-            stress.after_frame(
-                &self.tabs[self.tabs.active_index()].flow_pane,
-                Instant::now(),
-            );
-        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -816,12 +809,8 @@ impl eframe::App for QuantickApp {
         // down with it: the capture showed no compass, no crosshair and no
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
-        self.chrome
-            .harness
-            .push_scripted_pointer(&self.active_tab().flow_pane, raw_input);
-        if let Some(stress) = self.chrome.harness.stress_input_mut() {
-            stress.push_input(&self.tabs[self.tabs.active_index()].flow_pane, raw_input);
-        }
+        let flow = &self.tabs[self.tabs.active_index()].flow_pane;
+        self.chrome.harness.push_scripted_input(flow, raw_input);
         let Some(pane) = self.chrome.harness.context_menu() else {
             return;
         };

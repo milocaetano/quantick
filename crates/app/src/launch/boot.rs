@@ -11,17 +11,18 @@ use quantick_feed as feed;
 use crate::ui_state::WorkspaceExt;
 
 /// Install the tracing subscriber. Feed and app events flow to stderr through
-/// one writer thread (`log_sink`), never written by the thread that raised them; the level
+/// one writer thread (`feed::log_sink`), never written by the thread that raised them; the level
 /// is controlled by `RUST_LOG` (default `quantick=info`). Set
 /// `QUANTICK_LOG_FORMAT=json` for newline-delimited JSON that an operator or an
 /// AI diagnostic tool can parse without scraping prose. Deterministic cores emit
 /// nothing, so logging can never affect replay results.
 fn init_tracing(format: super::LogFormat) {
+    let sink = feed::log_sink::install();
     if format == super::LogFormat::Json {
         let filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("quantick=info"));
         tracing_subscriber::fmt()
-            .with_writer(super::log_sink::install())
+            .with_writer(move || sink.line())
             .json()
             .flatten_event(true)
             .with_current_span(true)
@@ -33,7 +34,7 @@ fn init_tracing(format: super::LogFormat) {
         let filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("quantick=info"));
         tracing_subscriber::fmt()
-            .with_writer(super::log_sink::install())
+            .with_writer(move || sink.line())
             .with_env_filter(filter)
             .with_target(true)
             .init();
@@ -166,7 +167,7 @@ pub(crate) fn run() -> eframe::Result {
                 %e,
                 "cannot load configuration; fix it or unset QUANTICK_CONFIG"
             );
-            super::log_sink::drain_before_exit();
+            feed::log_sink::drain_before_exit();
             std::process::exit(1);
         }
     };
@@ -177,7 +178,7 @@ pub(crate) fn run() -> eframe::Result {
             %e,
             "cannot apply startup feed/symbol selection; fix or unset QUANTICK_DEFAULT_FEED and QUANTICK_DEFAULT_SYMBOL"
         );
-        super::log_sink::drain_before_exit();
+        feed::log_sink::drain_before_exit();
         std::process::exit(1);
     }
 
@@ -304,6 +305,6 @@ pub(crate) fn run() -> eframe::Result {
             Ok(Box::new(app))
         }),
     );
-    super::log_sink::drain_before_exit();
+    feed::log_sink::drain_before_exit();
     ran
 }

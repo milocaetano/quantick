@@ -89,14 +89,20 @@ venue_lead_in = false
 """
 FIELD = re.compile(r'(\w+)=("[^"]*"|\S+)')
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-FREEZE_MS = 250.0
 P99_MS = 50.0
-ANSWER_FRAMES = 2
+
+
+TOTAL = re.compile(r"(\w+): (-?[0-9.]+)")
 
 
 def fields(line):
     line = ANSI.sub("", line)
     return {key: value.strip('"') for key, value in FIELD.findall(line)}
+
+
+def totals(line):
+    """The `summary=Summary { sent: 3, ... }` a STRESS_INPUT_SUMMARY carries."""
+    return dict(TOTAL.findall(ANSI.sub("", line)))
 
 
 def prepare(args, repo):
@@ -169,7 +175,7 @@ def run(args, out, env):
                 log.write(raw)
                 line = raw.decode("utf-8", "replace")
                 if "STRESS_INPUT_SUMMARY" in line:
-                    state["summary"] = fields(line)
+                    state["summary"] = totals(line)
                 elif "STRESS_INPUT_STALL" in line:
                     state["stalls"].append(fields(line).get("gesture"))
                 elif "APP_HEALTH_SUMMARY" in line:

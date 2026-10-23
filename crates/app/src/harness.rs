@@ -416,7 +416,7 @@ pub(crate) struct Harness {
     /// whole surface is invisible to anything but a bad afternoon.
     history_note: Option<Budgeted<CampaignEnd>>,
     /// `QUANTICK_STRESS_INPUT`: the stress run's scripted hand, if armed.
-    stress_input: Option<crate::stress_input::StressInput>,
+    pub(crate) stress_input: Option<crate::stress_input::StressInput>,
 }
 
 impl Harness {
@@ -513,11 +513,6 @@ impl Harness {
             stress_input: read("QUANTICK_STRESS_INPUT")
                 .and_then(|value| crate::stress_input::StressInput::from_env_value(&value)),
         }
-    }
-
-    /// The stress run's scripted hand, when `QUANTICK_STRESS_INPUT` armed one.
-    pub(crate) fn stress_input_mut(&mut self) -> Option<&mut crate::stress_input::StressInput> {
-        self.stress_input.as_mut()
     }
 
     /// Whether the layout popover should open this frame, and never again:

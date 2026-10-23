@@ -13,6 +13,9 @@
 //! memory once and nothing after: a line that finds it full is dropped and
 //! counted, and the writer says how many went before its next line — a gap
 //! in the log is announced, never silent.
+//!
+//! It lives here because this is the level of the graph that owns threads;
+//! the app hands `tracing` a closure over [`LogSink::line`].
 
 use std::io::Write;
 use std::sync::Arc;
@@ -23,7 +26,7 @@ use std::time::{Duration, Instant};
 
 /// Lines the queue holds before new ones are dropped: minutes of the busiest
 /// log this app writes, a few megabytes at worst.
-pub(crate) const LOG_QUEUE_LINES: usize = 8_192;
+pub const LOG_QUEUE_LINES: usize = 8_192;
 /// How long an exit waits for queued lines to reach the sink.
 const DRAIN_BUDGET: Duration = Duration::from_secs(2);
 
@@ -32,7 +35,7 @@ static SINK: OnceLock<LogSink> = OnceLock::new();
 
 /// A handle onto the writer thread's queue; cheap to clone.
 #[derive(Clone)]
-pub(crate) struct LogSink {
+pub struct LogSink {
     queue: SyncSender<Vec<u8>>,
     counts: Arc<Counts>,
 }
@@ -46,14 +49,14 @@ struct Counts {
 }
 
 /// One event's bytes, queued whole when the formatter lets go of it.
-pub(crate) struct LogLine {
+pub struct LogLine {
     sink: LogSink,
     bytes: Vec<u8>,
 }
 
 impl LogSink {
     /// A sink whose writer thread writes to `out`, in order.
-    pub(crate) fn spawn(out: impl Write + Send + 'static, capacity: usize) -> Self {
+    pub fn spawn(out: impl Write + Send + 'static, capacity: usize) -> Self {
         let (queue, lines) = sync_channel(capacity.max(1));
         let counts = Arc::new(Counts::default());
         let writer_counts = Arc::clone(&counts);
@@ -79,8 +82,17 @@ impl LogSink {
         }
     }
 
+    /// A writer for one event: its bytes are queued when it is dropped.
+    #[must_use]
+    pub fn line(&self) -> LogLine {
+        LogLine {
+            sink: self.clone(),
+            bytes: Vec::new(),
+        }
+    }
+
     /// Wait up to `budget` for every queued line to be written.
-    pub(crate) fn drain(&self, budget: Duration) -> bool {
+    pub fn drain(&self, budget: Duration) -> bool {
         let deadline = Instant::now() + budget;
         while self.counts.pending.load(Ordering::Acquire) > 0 {
             if Instant::now() >= deadline {
@@ -89,17 +101,6 @@ impl LogSink {
             std::thread::sleep(Duration::from_millis(1));
         }
         true
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogSink {
-    type Writer = LogLine;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        LogLine {
-            sink: self.clone(),
-            bytes: Vec::new(),
-        }
     }
 }
 
@@ -142,15 +143,14 @@ fn write_lines(mut out: impl Write, lines: &Receiver<Vec<u8>>, counts: &Counts) 
     }
 }
 
-/// Install the process sink onto stderr and return the writer `tracing`
-/// formats into.
-pub(crate) fn install() -> LogSink {
+/// Install the process sink onto stderr, once, and hand back its handle.
+pub fn install() -> LogSink {
     SINK.get_or_init(|| LogSink::spawn(std::io::stderr(), LOG_QUEUE_LINES))
         .clone()
 }
 
 /// Before the process ends: let what was logged reach the sink.
-pub(crate) fn drain_before_exit() {
+pub fn drain_before_exit() {
     if let Some(sink) = SINK.get() {
         let _ = sink.drain(DRAIN_BUDGET);
     }
@@ -180,8 +180,7 @@ mod log_sink_tests {
     }
 
     fn line(sink: &LogSink, text: &str) {
-        let mut writer = tracing_subscriber::fmt::MakeWriter::make_writer(sink);
-        writer.write_all(text.as_bytes()).unwrap();
+        sink.line().write_all(text.as_bytes()).unwrap();
     }
 
     #[test]
