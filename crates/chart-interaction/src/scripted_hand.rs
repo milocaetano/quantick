@@ -36,6 +36,17 @@ pub struct Area {
 }
 
 impl Area {
+    /// The rectangle with these four edges.
+    #[must_use]
+    pub const fn new(left: f32, top: f32, right: f32, bottom: f32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
     fn center(self) -> (f32, f32) {
         (
             (self.left + self.right) / 2.0,

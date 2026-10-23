@@ -26,9 +26,13 @@ pub(crate) struct StressInput {
 }
 
 impl StressInput {
-    /// Parse the hook's value: a period in milliseconds, at least one.
+    /// Parse the hook's value: a period in milliseconds, at least one. Any
+    /// other value is logged and arms nothing.
     pub(crate) fn from_env_value(value: &str) -> Option<Self> {
-        let period_ms = value.trim().parse::<u64>().ok().filter(|ms| *ms > 0)?;
+        let Some(period_ms) = value.trim().parse::<u64>().ok().filter(|ms| *ms > 0) else {
+            tracing::warn!(target: "quantick", value, "STRESS_INPUT_HOOK_REJECTED: expected a period in milliseconds");
+            return None;
+        };
         let now = Instant::now();
         Some(Self {
             hand: ScriptedHand::new(period_ms),
@@ -46,12 +50,8 @@ impl StressInput {
             .last_frame
             .replace(now)
             .map(|last| (now - last).as_secs_f32() * 1000.0);
-        let area = |rect: egui::Rect| Area {
-            left: rect.left(),
-            top: rect.top(),
-            right: rect.right(),
-            bottom: rect.bottom(),
-        };
+        let area =
+            |rect: egui::Rect| Area::new(rect.left(), rect.top(), rect.right(), rect.bottom());
         let targets = flow
             .frame
             .chart_rect

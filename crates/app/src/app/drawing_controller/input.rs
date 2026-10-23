@@ -360,12 +360,7 @@ impl DrawingController {
             if deleted > 0 {
                 // Logged, so a toast nobody remembers asking for has a time
                 // to line up against the rest of the session.
-                tracing::info!(
-                    target: "quantick::app",
-                    event_code = "DRAWINGS_DELETED_ALL",
-                    deleted,
-                    "every drawing on the pane was deleted"
-                );
+                tracing::info!(target: "quantick::app", event_code = "DRAWINGS_DELETED_ALL", deleted, "all drawings deleted");
                 effects.note_with_undo("All drawings deleted.", now);
             }
         }

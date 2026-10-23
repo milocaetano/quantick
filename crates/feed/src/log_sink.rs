@@ -278,22 +278,23 @@ mod log_sink_tests {
         line(&sink, "after\n");
         assert!(sink.drain(Duration::from_secs(5)));
         let text = text(&got);
-        let lines: Vec<&str> = text.lines().collect();
-        let kept: Vec<&str> = lines
-            .iter()
-            .copied()
-            .filter(|l| l.starts_with("line "))
-            .collect();
-        let expected: Vec<String> = (0..kept.len()).map(|n| format!("line {n}")).collect();
-        assert_eq!(kept, expected, "the oldest lines go, in order: {text}");
-        let notice = format!(
-            "quantick: {} log line(s) dropped: the log sink fell 2 lines behind",
-            10 - kept.len()
-        );
-        assert_eq!(
-            &lines[lines.len() - 2..],
-            [notice.as_str(), "after"],
-            "the notice sits at the gap, right before the first line after it: {text}"
+        // Walk the output: each notice stands exactly where its gap is, so
+        // after it the next line written is the one past the lines it counts.
+        let mut next = 0;
+        for line in text.lines() {
+            if let Some(index) = line.strip_prefix("line ") {
+                assert_eq!(index, next.to_string(), "a line out of place: {text}");
+                next += 1;
+            } else if line == "after" {
+                assert_eq!(next, 10, "every line before it written or counted: {text}");
+            } else {
+                assert!(line.ends_with("the log sink fell 2 lines behind"), "{text}");
+                next += dropped_in(line);
+            }
+        }
+        assert!(
+            text.ends_with("lines behind\nafter\n"),
+            "a gap sits right before after: {text}"
         );
     }
 
