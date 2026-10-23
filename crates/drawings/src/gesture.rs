@@ -30,8 +30,8 @@ mod shared;
 mod marks_tests;
 
 pub use band::{
-    ABSENT_BAND_REFUSAL, Band, Bands, COLLAPSED_BAND_REFUSAL, MAX_BANDS, band_at, band_of,
-    band_refusal, drawing_in_band, magnet_value_of, pane_key,
+    ABSENT_BAND_REFUSAL, Band, Bands, COLLAPSED_BAND_REFUSAL, MAX_BANDS, asked_band, band_at,
+    band_of, band_refusal, drawing_in_band, magnet_value_of, pane_key,
 };
 pub use placing::{
     PlacementCompletion, PlacementDefaults, PlacementFrame, PlacementOptions, PlacementOutcome,

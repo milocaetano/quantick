@@ -131,7 +131,7 @@ pub(crate) struct QuickRange {
     geometry: Option<Geometry>,
     action_rects: [Option<egui::Rect>; ACTION_COUNT],
     #[cfg(any(feature = "quick-range-harness", test))]
-    demo_requested: Option<(bool, bool)>,
+    demo_requested: Option<core::DemoRequest>,
     #[cfg(any(feature = "quick-range-harness", test))]
     pending_launch: Option<QuickRangeLaunch>,
 }

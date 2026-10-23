@@ -112,6 +112,22 @@ pub fn band_refusal(
     }
 }
 
+/// The carved band an anchor named by `key` goes on: refused when the pane
+/// is not carved or is collapsed, `Ok(None)` while it is still warming up.
+pub fn asked_band<'a>(
+    bands: &'a [Band],
+    key: &DrawingBand,
+) -> Result<Option<&'a Band>, &'static str> {
+    let band = bands
+        .iter()
+        .find(|band| band.key == *key)
+        .ok_or(ABSENT_BAND_REFUSAL)?;
+    if band.refusal == Some(COLLAPSED_BAND_REFUSAL) {
+        return Err(COLLAPSED_BAND_REFUSAL);
+    }
+    Ok(band.scale.is_some().then_some(band))
+}
+
 /// The band under a pointer, drawable or not — a refusing band still owns its
 /// pixels, which is what lets the cursor explain the refusal.
 #[must_use]

@@ -171,11 +171,19 @@ impl QuickRangeView<'_> {
             chrome
                 .drawing_chrome
                 .quick_range
-                .stage_demo(owner, |future| {
-                    let band = bands.first()?;
-                    let scale = band.scale.as_ref()?;
-                    let measure = drawings::DrawingTool::by_id("measure")?;
-                    (total >= DEMO_MIN_BARS).then(|| {
+                .stage_demo(owner, |key, future| {
+                    if total < DEMO_MIN_BARS {
+                        return Ok(None);
+                    }
+                    let Some(band) = quantick_drawings::gesture::asked_band(bands, key)? else {
+                        return Ok(None);
+                    };
+                    let (Some(scale), Some(measure)) =
+                        (band.scale.as_ref(), drawings::DrawingTool::by_id("measure"))
+                    else {
+                        return Ok(None);
+                    };
+                    Ok(Some({
                         let (start, end) = if future {
                             (total.saturating_sub(28), total.saturating_add(2))
                         } else {
@@ -195,7 +203,7 @@ impl QuickRangeView<'_> {
                             ],
                             drawings::new_drawing_from_defaults(chrome.presets, measure),
                         )
-                    })
+                    }))
                 });
         }
         let geometry = chrome

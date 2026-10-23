@@ -5,13 +5,16 @@
 use std::ffi::OsString;
 
 use super::{Owner, QuickRange};
-use crate::drawings::{ChartPoint, NewDrawing};
+use crate::drawings::{ChartPoint, DrawingBand, NewDrawing};
+
+/// A demo leg's two anchors and the look it opens with.
+type Staged = ([ChartPoint; 2], NewDrawing);
 use eframe::egui;
 use quantick_chart_interaction::quick_range as core;
 
 #[derive(Default)]
 pub(crate) struct QuickRangeLaunch {
-    requested: Option<(bool, bool)>,
+    requested: Option<core::DemoRequest>,
     rejected: Option<String>,
 }
 
@@ -22,33 +25,20 @@ impl QuickRangeLaunch {
         else {
             return Self::default();
         };
-        match value.trim() {
-            "active" => Self {
-                requested: Some((false, false)),
-                rejected: None,
-            },
-            "1" | "ready" => Self {
-                requested: Some((true, false)),
-                rejected: None,
-            },
-            "future" => Self {
-                requested: Some((true, true)),
-                rejected: None,
-            },
-            other => Self {
-                requested: None,
-                rejected: Some(other.to_owned()),
-            },
+        let requested = core::DemoRequest::parse(value.trim());
+        Self {
+            rejected: requested.is_none().then(|| value.trim().to_owned()),
+            requested,
         }
     }
 
     pub fn apply(self, quick: &mut QuickRange) {
-        self.deliver(|ready, future| quick.request_demo(ready, future));
+        self.deliver(|request| quick.demo_requested = Some(request));
     }
 
-    fn deliver(self, request: impl FnOnce(bool, bool)) {
-        if let Some((ready, future)) = self.requested {
-            request(ready, future);
+    fn deliver(self, request: impl FnOnce(core::DemoRequest)) {
+        if let Some(requested) = self.requested {
+            request(requested);
         }
         if let Some(value) = self.rejected {
             tracing::warn!(value, "unknown quick-range demo state");
@@ -77,7 +67,7 @@ mod tests {
             });
             assert_eq!(reads, ["QUANTICK_QUICK_RANGE_DEMO"]);
             let mut calls = Vec::new();
-            input.deliver(|ready, future| calls.push((ready, future)));
+            input.deliver(|request| calls.push((request.ready, request.future)));
             assert_eq!(calls, [expected]);
         }
     }
@@ -86,7 +76,7 @@ mod tests {
     fn absent_or_unknown_modes_do_not_invent_a_request() {
         for value in [None, Some(""), Some("READY"), Some("unknown")] {
             let input = QuickRangeLaunch::capture(|_| value.map(OsString::from));
-            input.deliver(|_, _| panic!("an invalid input must not request a scenario"));
+            input.deliver(|_| panic!("an invalid input must not request a scenario"));
         }
     }
 }
@@ -103,22 +93,22 @@ impl QuickRange {
         }
     }
 
-    pub fn request_demo(&mut self, ready: bool, future: bool) {
-        self.demo_requested = Some((ready, future));
-    }
-
+    /// `opening` reads the asked band: `Ok(None)` waits for it to have
+    /// values, `Err` is a band the chart will not show, which drops the ask.
     pub fn stage_demo(
         &mut self,
         owner: Owner,
-        opening: impl FnOnce(bool) -> Option<([ChartPoint; 2], NewDrawing)>,
+        opening: impl FnOnce(&DrawingBand, bool) -> Result<Option<Staged>, &'static str>,
     ) {
-        let Some((ready, future)) = self.demo_requested else {
+        let Some(request) = self.demo_requested.take() else {
             return;
         };
-        let Some((anchors, look)) = opening(future) else {
-            return;
+        let (anchors, look) = match opening(&request.band, request.future) {
+            Ok(Some(staged)) => staged,
+            Ok(None) => return self.demo_requested = Some(request),
+            Err(reason) => return tracing::warn!(reason, "quick-range demo band refused"),
         };
-        self.demo_requested = None;
+        let ready = request.ready;
         self.press(
             owner,
             egui::pos2(0.0, 0.0),
@@ -131,7 +121,7 @@ impl QuickRange {
                     max: [20.0; 2],
                 },
             },
-            crate::drawings::DrawingBand::Price,
+            request.band,
         );
         self.drag(owner, egui::pos2(10.0, 0.0), anchors[1], 4.0, false, || {
             look
@@ -169,27 +159,30 @@ mod stage_tests {
                 quick.demo_requested.is_none(),
                 "construction must not stage a demo"
             );
-            quick.stage_demo(owner, |_| {
+            quick.stage_demo(owner, |_, _| {
                 panic!("the launch phase has not applied its input")
             });
             quick.apply_launch();
             assert!(quick.pending_launch.is_none());
             assert!(!quick.model.present(), "launch waits for the staging phase");
-            quick.stage_demo(owner, |requested_future| {
+            quick.stage_demo(owner, |band, requested_future| {
                 assert_eq!(requested_future, future);
+                assert_eq!(*band, DrawingBand::Price, "no `@`: the candles");
                 let tool = drawings::DrawingTool::by_id("measure").unwrap();
-                Some((
+                Ok(Some((
                     [ChartPoint::at(1.5, 100.0), ChartPoint::at(10.5, 101.0)],
                     NewDrawing {
                         style: tool.default_style(),
                         payload: tool.default_payload(),
                     },
-                ))
+                )))
             });
             assert_eq!(quick.model.view().unwrap().actionable(), ready);
             quick.dismiss();
             quick.apply_launch();
-            quick.stage_demo(owner, |_| panic!("the captured demo was already consumed"));
+            quick.stage_demo(owner, |_, _| {
+                panic!("the captured demo was already consumed")
+            });
             assert!(!quick.model.present());
         }
     }
@@ -203,12 +196,14 @@ mod stage_tests {
             revision: 3,
             layout: Some(4),
         };
-        let mut quick = QuickRange::default();
-        quick.request_demo(true, true);
-        quick.stage_demo(owner, |future| {
+        let mut quick = QuickRange {
+            demo_requested: core::DemoRequest::parse("future"),
+            ..QuickRange::default()
+        };
+        quick.stage_demo(owner, |_, future| {
             assert!(future);
             let tool = drawings::DrawingTool::by_id("measure").unwrap();
-            Some((
+            Ok(Some((
                 [
                     ChartPoint::at_time(1.5, 100.0, Some(1)),
                     ChartPoint::at(10.5, 101.0),
@@ -217,11 +212,11 @@ mod stage_tests {
                     style: tool.default_style(),
                     payload: tool.default_payload(),
                 },
-            ))
+            )))
         });
         assert!(quick.model.view().unwrap().actionable());
         quick.dismiss();
-        quick.stage_demo(owner, |_| panic!("the demo was consumed"));
+        quick.stage_demo(owner, |_, _| panic!("the demo was consumed"));
         assert!(!quick.model.present());
     }
 }

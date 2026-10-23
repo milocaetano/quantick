@@ -489,3 +489,53 @@ fn a_new_press_takes_its_own_band_and_a_dismiss_drops_it() {
     model.update(Command::Dismiss, ctx);
     assert_eq!(model.band(), None);
 }
+
+#[test]
+fn a_demo_request_names_its_mode_and_optionally_an_indicator_band() {
+    use crate::quick_range::DemoRequest;
+    let cvd = |ordinal| {
+        DrawingBand::Indicator(crate::drawing_model::PaneKey {
+            kind: "native.cvd".into(),
+            ordinal,
+        })
+    };
+    let request = |ready, future, band| {
+        Some(DemoRequest {
+            ready,
+            future,
+            band,
+        })
+    };
+    assert_eq!(
+        DemoRequest::parse("active"),
+        request(false, false, DrawingBand::Price)
+    );
+    assert_eq!(
+        DemoRequest::parse("1"),
+        request(true, false, DrawingBand::Price)
+    );
+    assert_eq!(
+        DemoRequest::parse("future"),
+        request(true, true, DrawingBand::Price)
+    );
+    assert_eq!(
+        DemoRequest::parse("ready@native.cvd"),
+        request(true, false, cvd(0))
+    );
+    assert_eq!(
+        DemoRequest::parse("future@native.cvd:2"),
+        request(true, true, cvd(2))
+    );
+    for refused in [
+        "",
+        "READY",
+        "ready@",
+        "ready@:1",
+        "ready@native.cvd:",
+        "ready@native.cvd:300",
+        "ready@native.cvd:-1",
+        "soon@native.cvd",
+    ] {
+        assert_eq!(DemoRequest::parse(refused), None, "{refused:?}");
+    }
+}

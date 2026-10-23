@@ -8,7 +8,7 @@
 //! range into its placement request, so the drawing it becomes lands where
 //! it was measured and never reads a CVD value as a price.
 
-use crate::drawing_model::DrawingBand;
+use crate::drawing_model::{DrawingBand, PaneKey};
 
 pub mod conversion_plan;
 
@@ -77,6 +77,48 @@ impl Action {
     /// instead of a finished drawing.
     pub fn arms_placement(self) -> bool {
         self == Self::Channel
+    }
+}
+
+/// A staged range as a harness asks for one:
+/// `<active|ready|future>[@<indicator kind>[:<ordinal>]]`, `1` aliasing
+/// `ready`. Without `@` the range is on the candles; the ordinal defaults
+/// to 0.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DemoRequest {
+    /// The drag is released, so the action bar shows.
+    pub ready: bool,
+    /// The leg ends past the newest bar.
+    pub future: bool,
+    pub band: DrawingBand,
+}
+
+impl DemoRequest {
+    /// `None` for anything the grammar does not name.
+    pub fn parse(value: &str) -> Option<Self> {
+        let (mode, band) = match value.split_once('@') {
+            Some((mode, band)) => (mode, Some(band)),
+            None => (value, None),
+        };
+        let (ready, future) = match mode {
+            "active" => (false, false),
+            "1" | "ready" => (true, false),
+            "future" => (true, true),
+            _ => return None,
+        };
+        let band = match band.map(|band| band.split_once(':').unwrap_or((band, "0"))) {
+            None => DrawingBand::Price,
+            Some(("", _)) => return None,
+            Some((kind, ordinal)) => DrawingBand::Indicator(PaneKey {
+                kind: kind.into(),
+                ordinal: ordinal.parse().ok()?,
+            }),
+        };
+        Some(Self {
+            ready,
+            future,
+            band,
+        })
     }
 }
 

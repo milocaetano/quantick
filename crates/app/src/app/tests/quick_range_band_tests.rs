@@ -351,3 +351,59 @@ fn a_call_on_a_collapsed_cvd_pane_is_refused_as_the_hand_is() {
     assert!(error.message.contains(crate::bands::COLLAPSED_BAND_REFUSAL));
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
 }
+
+/// The harness hook's value, staged the way a launch stages it.
+fn stage(app: &mut QuantickApp, ctx: &egui::Context, value: &str) {
+    let launch = crate::surfaces::drawing_chrome::QuickRangeLaunch::capture(|_| Some(value.into()));
+    let quick = &mut app.drawings.chrome.quick_range;
+    quick.queue_launch(launch);
+    quick.apply_launch();
+    run_frame(app, ctx);
+    run_frame(app, ctx);
+}
+
+#[test]
+fn the_demo_hook_stages_a_ready_range_on_the_named_indicator_pane() {
+    let Pane {
+        ctx,
+        mut app,
+        _commands,
+    } = cvd_pane();
+    stage(&mut app, &ctx, "ready@test.indicator");
+    let quick = &app.drawings.chrome.quick_range;
+    assert!(on_cvd(quick.band()), "staged on the CVD pane");
+    let leg = quick.paint_anchors().expect("a staged range");
+    assert!(
+        leg.iter().all(|point| cvd_value(point.price)),
+        "anchors read from the pane's own scale: {leg:?}"
+    );
+    assert!(quick_range_action(&app, Action::TrendLine).enabled);
+}
+
+#[test]
+fn the_demo_hook_stages_nothing_on_a_pane_the_chart_lacks_or_collapses() {
+    for (value, collapse) in [
+        ("ready@native.cvd", false),
+        ("ready@test.indicator:1", false),
+        ("ready@test.indicator", true),
+    ] {
+        let Pane {
+            ctx,
+            mut app,
+            _commands,
+        } = cvd_pane();
+        if collapse {
+            cvd_view(&mut app).sizing = crate::indicators::PaneSizing::Collapsed;
+            run_frame(&mut app, &ctx);
+        }
+        stage(&mut app, &ctx, value);
+        assert!(app.drawings.chrome.quick_range.band().is_none(), "{value}");
+        if collapse {
+            // The ask was dropped, not parked until the pane opens again.
+            cvd_view(&mut app).sizing = crate::indicators::PaneSizing::Auto;
+            run_frame(&mut app, &ctx);
+            run_frame(&mut app, &ctx);
+            assert!(app.drawings.chrome.quick_range.band().is_none());
+        }
+    }
+}
