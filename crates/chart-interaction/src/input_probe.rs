@@ -4,8 +4,10 @@
 //! The host injects each gesture as real pointer events and reports, every
 //! frame, a fingerprint of the view the gesture should move. Answering is a
 //! changed fingerprint; a gesture still unanswered after [`STALL_FRAMES`]
-//! frames is an input stall. Time is supplied, never read: the same frame
-//! times and fingerprints in give the same summary out.
+//! frames is an input stall. Frames are paced from the first gesture on;
+//! the ones before it — the window opening, the session loading — are kept
+//! apart as the opening's worst. Time is supplied, never read: the same
+//! frame times and fingerprints in give the same summary out.
 
 /// Frames a gesture may take to show on the chart and still count as
 /// answered on time.
@@ -72,6 +74,8 @@ pub struct Summary {
     pub freezes: u64,
     pub worst_ms: f32,
     pub p99_ms: f32,
+    /// The longest frame before the first gesture went out.
+    pub opening_worst_ms: f32,
 }
 
 /// The scripted-input schedule and its ledger.
@@ -90,6 +94,7 @@ pub struct InputProbe {
     frames: u64,
     freezes: u64,
     worst_ms: f32,
+    opening_worst_ms: f32,
 }
 
 impl InputProbe {
@@ -110,6 +115,7 @@ impl InputProbe {
             frames: 0,
             freezes: 0,
             worst_ms: 0.0,
+            opening_worst_ms: 0.0,
         }
     }
 
@@ -181,6 +187,10 @@ impl InputProbe {
     /// One frame interval, in milliseconds.
     pub fn record_frame(&mut self, interval_ms: f32) {
         let interval_ms = interval_ms.max(0.0);
+        if self.sent == 0 {
+            self.opening_worst_ms = self.opening_worst_ms.max(interval_ms);
+            return;
+        }
         self.frames += 1;
         if interval_ms >= FREEZE_MS {
             self.freezes += 1;
@@ -203,6 +213,7 @@ impl InputProbe {
             freezes: self.freezes,
             worst_ms: self.worst_ms,
             p99_ms: self.percentile_ms(0.99),
+            opening_worst_ms: self.opening_worst_ms,
         }
     }
 
@@ -281,6 +292,9 @@ mod input_probe_tests {
     #[test]
     fn frame_percentiles_count_freezes_and_the_tail() {
         let mut probe = InputProbe::new(1_000);
+        probe.record_frame(900.0);
+        assert_eq!(probe.due(0, 0, 0), None);
+        assert_eq!(probe.due(1_000, 1, 0), Some(Gesture::Pan));
         for _ in 0..990 {
             probe.record_frame(16.6);
         }
@@ -292,6 +306,7 @@ mod input_probe_tests {
         assert_eq!(summary.frames, 1_000);
         assert_eq!(summary.freezes, 1);
         assert_eq!(summary.worst_ms, 300.0);
+        assert_eq!(summary.opening_worst_ms, 900.0, "kept apart from the run");
         assert_eq!(
             summary.p99_ms, 17.0,
             "990 of 1000 sit in the 16.5-17 bucket"

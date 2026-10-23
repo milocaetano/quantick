@@ -5,7 +5,8 @@ Plays one recorded session through a `--features harness` quantick-app at
 pane every `--period-ms`, then grades the `STRESS_INPUT_SUMMARY` the app logs:
 
   * the session plays to its last print,
-  * no frame interval at or over 250 ms, frame p99 under 50 ms,
+  * from the first gesture on, no frame interval at or over 250 ms and a
+    frame p99 under 50 ms (the opening frames are reported apart),
   * every gesture answered within two frames, no input stall.
 
 Everything the run reads is copied into `--out` first, and every store the app
@@ -222,6 +223,7 @@ def verdict(state):
         "freezes": int(num("freezes")),
         "worst_ms": num("worst_ms"),
         "p99_ms": num("p99_ms"),
+        "opening_worst_ms": num("opening_worst_ms"),
         "gestures_sent": sent,
         "answered": answered,
         "answered_on_time": on_time,

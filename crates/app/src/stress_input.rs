@@ -117,6 +117,7 @@ impl StressInput {
             freezes = s.freezes,
             worst_ms = s.worst_ms,
             p99_ms = s.p99_ms,
+            opening_worst_ms = s.opening_worst_ms,
             "stress input totals"
         );
     }
