@@ -122,6 +122,10 @@ const CONFIGURATION: &[(&str, &[HookSpec])] = &[("crates/app/src/launch.rs", cra
 #[cfg(any(feature = "scenario-harness", test))]
 const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
     (
+        "crates/app/src/surfaces/indicator_picker.rs",
+        crate::surfaces::indicator_picker::HOOKS,
+    ),
+    (
         "crates/app/src/app/launch_hooks.rs",
         crate::app::launch_hooks::HOOKS,
     ),

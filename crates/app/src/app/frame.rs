@@ -332,6 +332,7 @@ impl QuantickApp {
     /// right dock. The chart keeps whatever remains.
     fn draw_top_chrome(&mut self, ctx: &egui::Context, now: Instant, scratch: &mut FrameScratch) {
         scratch.background = Some(pane::background_color(&self.style));
+        self.surfaces.indicator_picker.capture_keyboard(ctx);
         // Rail shortcuts (Esc, 1, 2) first: no widget holds the keyboard yet.
         self.toolrail.handle_keys(ctx);
         self.handle_tab_keys(ctx);
@@ -374,6 +375,9 @@ impl QuantickApp {
                 added_symbols: &self.added_symbols,
             },
         );
+        for action in asks.indicator_actions {
+            self.apply_toolbar_action(action);
+        }
         if let Some(name) = asks.save_workspace_as {
             self.workspace_save_adapter().save_named_workspace(&name);
         }

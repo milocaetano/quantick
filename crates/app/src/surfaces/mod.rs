@@ -45,6 +45,7 @@ pub(crate) mod agent_popup;
 pub(crate) mod bar_switch;
 pub(crate) mod chart_settings;
 pub(crate) mod drawing_chrome;
+pub(crate) mod indicator_picker;
 pub(crate) mod indicator_preview;
 pub(crate) mod source_picker;
 pub(crate) mod strategy_popup;
@@ -68,6 +69,9 @@ pub(crate) use workspace_name::WorkspaceNameSurface;
 /// What the surfaces need from the application, kept to what they actually
 /// read so a surface cannot quietly acquire the whole app.
 pub(crate) struct SurfaceEnv<'a> {
+    pub picker_pane_id: u64,
+    pub picker_indicators: &'a [crate::toolbar::IndicatorMenuEntry],
+    pub picker_scripts: &'a [quantick_stores::script_library::ScriptEntry],
     /// The saved arrangements, so the Save-as box can warn before a name
     /// replaces one. Borrowed, never copied: a surface reads what the host
     /// holds rather than keeping a copy that can go stale.
@@ -167,6 +171,9 @@ impl SurfaceEnv<'static> {
         static QUIET_SYMBOLS: std::sync::LazyLock<crate::symbols_file::AddedSymbols> =
             std::sync::LazyLock::new(crate::symbols_file::AddedSymbols::default);
         Self {
+            picker_pane_id: 0,
+            picker_indicators: &[],
+            picker_scripts: &[],
             bookmarks: &[],
             now,
             indicator_preview_area: None,
@@ -196,6 +203,7 @@ impl SurfaceEnv<'static> {
 /// the tests compare with, and it is the honest one.
 #[derive(Default, Debug, PartialEq)]
 pub(crate) struct SurfaceResponse {
+    pub indicator_actions: Vec<crate::toolbar::ToolbarAction>,
     /// The toast's Undo button was pressed — the host owns the drawing stack,
     /// and the sweep of any strategy left orphaned by the undo.
     pub undo_drawing: bool,
@@ -305,6 +313,7 @@ impl SurfaceResponse {
     /// rule is pinned by a test so a second producer meets a documented answer
     /// rather than a surprise.
     fn merge(&mut self, other: Self) {
+        self.indicator_actions.extend(other.indicator_actions);
         self.undo_drawing |= other.undo_drawing;
         self.save_workspace_as = self.save_workspace_as.take().or(other.save_workspace_as);
         self.style = self.style.take().or(other.style);
@@ -349,6 +358,7 @@ pub(crate) trait Surface {
 /// Every floating surface the application owns.
 #[derive(Default)]
 pub(crate) struct Surfaces {
+    pub indicator_picker: indicator_picker::IndicatorPickerSurface,
     /// Whether the capture hooks have run.
     ///
     /// They are applied on the first *drawn frame*, not at construction. The
@@ -423,6 +433,7 @@ impl Surfaces {
         #[cfg(any(feature = "scenario-harness", test))]
         if !self.hooks_applied {
             self.hooks_applied = true;
+            self.indicator_picker.apply_env_hook(env);
             self.agent_popup.apply_env_hook(env);
             self.bar_switch.apply_env_hook(env);
             self.chart_settings.apply_env_hook(env);
@@ -433,6 +444,7 @@ impl Surfaces {
             self.workspace_name.apply_env_hook(env);
         }
         let mut response = SurfaceResponse::default();
+        response.merge(self.indicator_picker.draw(ctx, env));
         response.merge(self.agent_popup.draw(ctx, env));
         response.merge(self.bar_switch.draw(ctx, env));
         response.merge(self.chart_settings.draw(ctx, env));
@@ -572,6 +584,7 @@ mod tests {
         let mut contested = crate::style::ChartStyle::default();
         contested.canvas.grid_enabled = !contested.canvas.grid_enabled;
         first.merge(SurfaceResponse {
+            indicator_actions: Vec::new(),
             save_workspace_as: Some("second".to_owned()),
             style: Some(contested),
             log_style_change: Some(StyleLogRequest {

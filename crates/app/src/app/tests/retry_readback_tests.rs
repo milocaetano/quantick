@@ -67,6 +67,8 @@ mod drawing_magnet_control;
 mod feed_source_control;
 #[path = "history_control_tests.rs"]
 mod history_control_tests;
+#[path = "indicator_picker_control_tests.rs"]
+mod indicator_picker_control;
 #[path = "journal_sessions_control_tests.rs"]
 mod journal_sessions_control_tests;
 #[path = "layer_control_tests.rs"]
@@ -626,6 +628,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
         ("chart.settings.set", 1, Value::Null, Readback::Moves),
+        ("indicator.picker.set", 1, Value::Null, Readback::Moves),
         // A listing changes nothing, so no `session.journal.changed` is
         // journaled either side of it; the edits are proven in
         // `quantick-paper` and `quantick-control-handlers`.
@@ -928,6 +931,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "axis": "candles",
                 })
             }
+            "indicator.picker.set" => json!({ "operation": { "action": "open" } }),
             "chart.settings.set" => json!({ "action": "open", "tab": "candles" }),
             "orderflow.tape.opening_scale.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
