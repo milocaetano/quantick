@@ -2,6 +2,13 @@
 //!
 //! All coordinates, owner facts and revisions are supplied by the caller.
 //! Updates allocate nothing; drawing construction happens only through effects.
+//!
+//! A range lives on one band: the value axis the press landed on, the
+//! candles' price or one indicator pane's own values. The band rides the
+//! range into its placement request, so the drawing it becomes lands where
+//! it was measured and never reads a CVD value as a price.
+
+use crate::drawing_model::DrawingBand;
 
 pub mod conversion_plan;
 
@@ -194,20 +201,25 @@ impl RangeView {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlaceRequest {
     pub id: u64,
     pub action: Action,
     pub context: RangeContext,
     pub anchors: [Anchor; 2],
+    /// The band the range was measured on: the drawing's value axis.
+    pub band: DrawingBand,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Press {
         position: [f32; 2],
         anchor: Anchor,
         eligibility: GestureEligibility,
+        /// The drawable band under the press. The caller resolves every later
+        /// drag position through this same band; a range never crosses bands.
+        band: DrawingBand,
     },
     Drag {
         position: [f32; 2],
@@ -231,13 +243,13 @@ pub enum Event {
     Refused(u64),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Place(PlaceRequest),
     ExplainRefusal,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Transition {
     /// The renderer may now construct the ruler's opening style/payload once.
     pub opened: bool,
@@ -261,6 +273,8 @@ enum State {
 #[derive(Default)]
 pub struct QuickRangeModel {
     state: State,
+    /// The band of the current range; meaningful only while one is present.
+    band: DrawingBand,
     next_request: u64,
     selection: Option<Selection>,
 }
@@ -268,6 +282,11 @@ pub struct QuickRangeModel {
 impl QuickRangeModel {
     pub fn present(&self) -> bool {
         !matches!(self.state, State::Idle)
+    }
+
+    /// The band the current range was pressed on, while there is a range.
+    pub fn band(&self) -> Option<&DrawingBand> {
+        self.present().then_some(&self.band)
     }
 
     pub fn context(&self) -> Option<RangeContext> {
@@ -330,12 +349,14 @@ impl QuickRangeModel {
                 position,
                 anchor,
                 eligibility,
+                band,
             } if eligibility.permits(position) && anchor.valid() => {
                 self.state = State::Pressed {
                     context,
                     position,
                     anchor,
                 };
+                self.band = band;
             }
             Command::Drag {
                 position,
@@ -400,6 +421,7 @@ impl QuickRangeModel {
                         action,
                         context,
                         anchors: view.anchors,
+                        band: self.band.clone(),
                     }));
                     view.phase = Phase::Pending(id);
                 }

@@ -25,7 +25,8 @@ use quantick_chart_interaction::{
 use quantick_control::{
     annotation::{
         ANNOTATE_MODULE_ID, ANNOTATION_CREATED_EVENT_KIND, ANNOTATION_PRICE_DECIMALS,
-        ANNOTATION_REMOVED_EVENT_KIND, ARROW_CAPABILITY_ID, ARROW_TOOL_ID, AnnotationInput,
+        ANNOTATION_REMOVED_EVENT_KIND, ARROW_CAPABILITY_ID, ARROW_TOOL_ID, AnnotationBand,
+        AnnotationInput,
         AnnotationResult, AnnotationTarget, ChartAnnotationAnchor, ChartAnnotationInput,
         ChartAnnotationResult, ChartAnnotationSetResult, ChartReference,
         FIB_PROJECTION_CAPABILITY_ID, FIB_RETRACEMENT_CAPABILITY_ID, HORIZONTAL_LINE_TOOL_ID,
@@ -49,8 +50,8 @@ use quantick_control_host::{
     },
 };
 use quantick_drawings::{
-    ChartPoint, DrawingAuthor, DrawingEffect, DrawingId, DrawingIntent, DrawingTool, Drawings,
-    NewDrawing, Placement, PlacementFailure, update,
+    ChartPoint, DrawingAuthor, DrawingBand, DrawingEffect, DrawingId, DrawingIntent, DrawingTool,
+    Drawings, NewDrawing, PaneKey, Placement, PlacementFailure, update,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -98,6 +99,9 @@ pub trait AnnotatedPane {
     fn drawings(&self) -> &Drawings<DrawingTool>;
     /// The pane's marks, to fold an intent into.
     fn drawings_mut(&mut self) -> &mut Drawings<DrawingTool>;
+    /// Whether the pane carves `band` right now: always the price band; an
+    /// indicator band while that indicator has a pane of its own.
+    fn shows_band(&self, band: &DrawingBand) -> bool;
     /// Let go whatever rode a mark that is gone: a strategy armed on a
     /// removed annotation, the same sweep every removal path makes.
     fn sweep_orphans(&mut self);
@@ -275,6 +279,7 @@ fn place<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let placement = Placement {
         tool,
         points,
+        band: DrawingBand::Price,
         opening,
         author,
         name: input.name,
@@ -312,10 +317,12 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let author = annotation_author(access, actor);
     let opening = app.new_drawing(tool);
     let pane = target_pane(app, tab_id, side)?;
+    let band = resolve_band(&*pane, tool, &input.band)?;
     let validated = resolve_chart(&*pane, tab_id, &input, required)?;
     let placement = Placement {
         tool,
         points: validated.iter().map(chart_point).collect(),
+        band: band.clone(),
         opening,
         author,
         name: input.name,
@@ -323,7 +330,7 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     };
     let effects = update(pane.drawings_mut(), DrawingIntent::Place(placement));
     let placed = placed(effects, tool, required)?;
-    let target = (tab_id, pane.pane_id(), side);
+    let target = (tab_id, pane.pane_id(), side, &band);
     let result = chart_result(placed, target, tool, &validated, actor);
     journal(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
     answer(&result, "annotation result")
@@ -345,6 +352,7 @@ fn place_horizontal_levels<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
     let author = annotation_author(access, actor);
     let openings = [(); 2].map(|()| app.new_drawing(tool));
     let pane = target_pane(app, tab_id, side)?;
+    let band = resolve_band(&*pane, tool, &input.band)?;
     let validated = resolve_chart(&*pane, tab_id, &input, 2)?;
     let levels: Vec<_> = horizontal_level_anchors([validated[0], validated[1]]).collect();
     let placements = levels
@@ -353,6 +361,7 @@ fn place_horizontal_levels<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
         .map(|(anchor, opening)| Placement {
             tool,
             points: vec![chart_point(anchor)],
+            band: band.clone(),
             opening,
             author: author.clone(),
             name: input.name.clone(),
@@ -361,7 +370,7 @@ fn place_horizontal_levels<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
         .collect();
     let effects = update(pane.drawings_mut(), DrawingIntent::PlaceAll(placements));
     let placed = placed_all(effects, tool, 1)?;
-    let target = (tab_id, pane.pane_id(), side);
+    let target = (tab_id, pane.pane_id(), side, &band);
     let annotations: Vec<_> = placed
         .into_iter()
         .zip(&levels)
@@ -465,8 +474,58 @@ pub fn quick_range_input(request: &PlaceRequest, side: PaneSide) -> Option<Value
             series_revision: WireU64::new(request.context.revision),
             layout_id: request.context.owner.layout.map(WireU64::new),
         }),
+        band: band_dto(&request.band),
     })
     .ok()
+}
+
+/// The band a chart annotation names, as the pane's marks key it — refused
+/// when the pane does not show it, or when the tool would carry the values
+/// onto another axis (a volume profile is price; a CVD value is not one).
+fn resolve_band(
+    pane: &dyn AnnotatedPane,
+    tool: DrawingTool,
+    band: &AnnotationBand,
+) -> Result<DrawingBand, ControlError> {
+    let resolved = match band {
+        AnnotationBand::Price => DrawingBand::Price,
+        AnnotationBand::Indicator { kind, ordinal } => u8::try_from(*ordinal)
+            .ok()
+            .map(|ordinal| {
+                DrawingBand::Indicator(PaneKey {
+                    kind: kind.as_str().into(),
+                    ordinal,
+                })
+            })
+            .filter(|band| pane.shows_band(band))
+            .ok_or_else(|| {
+                let mut error = capability_unavailable(format!(
+                    "this pane shows no `{kind}` indicator pane with ordinal {ordinal}"
+                ));
+                error.context.next_steps.push(UNKNOWN_BAND_NEXT_STEP.to_owned());
+                error
+            })?,
+    };
+    if tool.band_for(&resolved) != resolved {
+        return Err(ControlError::invalid_request(format!(
+            "`{}` is placed only on the price band; omit `band` or pick another tool",
+            tool.name()
+        )));
+    }
+    Ok(resolved)
+}
+
+const UNKNOWN_BAND_NEXT_STEP: &str = "read the pane's indicators snapshot and name a non-overlay, visible indicator by its `kind` and `ordinal`";
+
+/// A mark's band on the wire.
+fn band_dto(band: &DrawingBand) -> AnnotationBand {
+    match band {
+        DrawingBand::Indicator(key) => AnnotationBand::Indicator {
+            kind: key.kind.to_string(),
+            ordinal: u32::from(key.ordinal),
+        },
+        DrawingBand::Price | DrawingBand::AllBands => AnnotationBand::Price,
+    }
 }
 
 fn parse<T: DeserializeOwned>(input: &Value) -> Result<T, ControlError> {
@@ -533,7 +592,7 @@ fn placed(
 
 fn chart_result(
     (annotation_id, label): (u64, String),
-    (tab_id, pane_id, side): (u64, u64, PaneSide),
+    (tab_id, pane_id, side, band): (u64, u64, PaneSide, &DrawingBand),
     tool: DrawingTool,
     validated: &[resolver::ResolvedAnchor],
     actor: &ActorContext,
@@ -555,6 +614,7 @@ fn chart_result(
         anchors,
         author: acting_author(actor),
         label,
+        band: band_dto(band),
     }
 }
 

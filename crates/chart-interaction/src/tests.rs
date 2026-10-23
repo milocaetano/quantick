@@ -1,3 +1,4 @@
+use crate::drawing_model::{DrawingBand, PaneKey};
 use crate::quick_range::*;
 
 fn context() -> RangeContext {
@@ -20,6 +21,10 @@ fn anchor(bar: f32) -> Anchor {
 }
 
 fn press(model: &mut QuickRangeModel, context: RangeContext) {
+    press_on(model, context, DrawingBand::Price);
+}
+
+fn press_on(model: &mut QuickRangeModel, context: RangeContext, band: DrawingBand) {
     model.update(
         Command::Press {
             position: [10.0, 10.0],
@@ -32,9 +37,17 @@ fn press(model: &mut QuickRangeModel, context: RangeContext) {
                     max: [100.0; 2],
                 },
             },
+            band,
         },
         context,
     );
+}
+
+fn cvd() -> DrawingBand {
+    DrawingBand::Indicator(PaneKey {
+        kind: "native.cvd".into(),
+        ordinal: 0,
+    })
 }
 
 fn selected(model: &mut QuickRangeModel, context: RangeContext) {
@@ -146,6 +159,7 @@ fn only_a_pressed_or_dragging_range_is_held() {
                     max: [100.0; 2],
                 },
             },
+            band: DrawingBand::Price,
         },
         ctx,
     );
@@ -303,6 +317,7 @@ fn history_geometry_excludes_tape_but_accepts_empty_future_chart_space() {
                 unoccluded: true,
                 area,
             },
+            band: DrawingBand::Price,
         },
         context(),
     );
@@ -320,8 +335,9 @@ fn a_headless_executor_consumes_the_same_effect_and_completion_event() {
             let Effect::Place(request) = effect else {
                 panic!("placement expected")
             };
+            let id = request.id;
             self.placed.push(request);
-            Event::Completed(request.id)
+            Event::Completed(id)
         }
     }
     let mut model = QuickRangeModel::default();
@@ -418,4 +434,50 @@ fn every_action_names_its_own_slot_control_and_label() {
             assert_ne!(action.label(), other.label());
         }
     }
+}
+
+#[test]
+fn a_range_places_on_the_band_its_press_landed_on() {
+    let mut model = QuickRangeModel::default();
+    let ctx = context();
+    assert_eq!(model.band(), None, "no range, no band");
+    press_on(&mut model, ctx, cvd());
+    assert_eq!(model.band(), Some(&cvd()), "pressed on the CVD pane");
+    model.update(
+        Command::Drag {
+            position: [30.0, 10.0],
+            anchor: anchor(4.5),
+            threshold_px: 4.0,
+            level: false,
+        },
+        ctx,
+    );
+    model.update(Command::Release, ctx);
+    let Some(Effect::Place(request)) = model
+        .update(Command::Convert(Action::TrendLine), ctx)
+        .effect
+    else {
+        panic!("a settled CVD range is actionable");
+    };
+    assert_eq!(request.band, cvd(), "the drawing lands where it was measured");
+}
+
+#[test]
+fn a_new_press_takes_its_own_band_and_a_dismiss_drops_it() {
+    let mut model = QuickRangeModel::default();
+    let ctx = context();
+    press_on(&mut model, ctx, cvd());
+    model.update(Command::Release, ctx);
+    assert_eq!(model.band(), None, "a released click leaves no range");
+    selected(&mut model, ctx);
+    assert_eq!(model.band(), Some(&DrawingBand::Price));
+    let Some(Effect::Place(request)) = model
+        .update(Command::Convert(Action::Rectangle), ctx)
+        .effect
+    else {
+        panic!("a settled price range is actionable");
+    };
+    assert_eq!(request.band, DrawingBand::Price, "the price band is unchanged");
+    model.update(Command::Dismiss, ctx);
+    assert_eq!(model.band(), None);
 }

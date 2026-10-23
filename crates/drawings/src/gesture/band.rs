@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use quantick_chart::indicator_views::{IndicatorView, MAX_PANES};
+use quantick_chart::indicator_views::{IndicatorView, IndicatorViews, MAX_PANES};
 use smallvec::SmallVec;
 
 use super::Mark;
@@ -72,6 +72,19 @@ pub fn pane_key(view: &IndicatorView) -> PaneKey {
     PaneKey {
         kind: Arc::clone(&view.kind),
         ordinal: view.ordinal,
+    }
+}
+
+/// Whether the pane whose indicators are `views` carves `band` right now:
+/// the price band and a time-only object always, an indicator band while
+/// its indicator has a pane of its own — the bands [`band_at`] can find.
+#[must_use]
+pub fn shows_band(views: &IndicatorViews, band: &DrawingBand) -> bool {
+    match band {
+        DrawingBand::Price | DrawingBand::AllBands => true,
+        DrawingBand::Indicator(key) => views
+            .visible_panes()
+            .any(|view| *view.kind == *key.kind && view.ordinal == key.ordinal),
     }
 }
 

@@ -30,7 +30,7 @@ mod shared;
 mod marks_tests;
 
 pub use band::{
-    Band, Bands, MAX_BANDS, band_at, band_of, drawing_in_band, magnet_value_of, pane_key,
+    Band, Bands, MAX_BANDS, band_at, band_of, drawing_in_band, magnet_value_of, pane_key, shows_band,
 };
 pub use placing::{
     PlacementCompletion, PlacementDefaults, PlacementFrame, PlacementOptions, PlacementOutcome,

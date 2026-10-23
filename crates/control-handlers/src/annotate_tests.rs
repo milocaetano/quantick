@@ -61,6 +61,17 @@ impl AnnotatedPane for FakePane {
     fn sweep_orphans(&mut self) {
         self.sweeps += 1;
     }
+    fn shows_band(&self, band: &DrawingBand) -> bool {
+        *band == DrawingBand::Price || *band == cvd()
+    }
+}
+
+/// The one indicator pane the fake pane shows.
+fn cvd() -> DrawingBand {
+    DrawingBand::Indicator(PaneKey {
+        kind: "native.cvd".into(),
+        ordinal: 0,
+    })
 }
 
 /// One tab of id 7: its flow pane, and no context chart.
@@ -135,10 +146,19 @@ fn call(
     capability_id: &str,
     input: Value,
 ) -> Result<Value, ControlError> {
+    call_version(window, access, (capability_id, CAPABILITY_VERSION), input)
+}
+
+fn call_version(
+    window: &mut FakeWindow,
+    access: &mut FakeAccess,
+    (capability_id, version): (&str, u32),
+    input: Value,
+) -> Result<Value, ControlError> {
     let mut registry = ActionRegistry::<FakeWindow, FakeAccess>::new();
     register(&mut registry).expect("the annotate descriptors are valid");
     let action = registry
-        .lookup(capability_id, CAPABILITY_VERSION)
+        .lookup(capability_id, version)
         .expect("registered");
     (action.handler)(window, access, &Actors::assistant(), &input)
 }
@@ -378,4 +398,104 @@ fn v1_and_v2_answer_an_uncovered_anchor_with_one_message_and_remedy() {
             "Read a bar's open_time_unix_ms from chart.window.read or the cursor, and anchor to that."
         ]
     );
+}
+
+/// A quick range measured on `band` over bars 0 and 2 of the fake pane.
+fn range_on(action: Action, band: DrawingBand) -> PlaceRequest {
+    let anchor = |bar: f32, price: f64, time_ms: i64| quantick_chart_interaction::quick_range::Anchor {
+        bar,
+        price,
+        time_ms: Some(time_ms),
+    };
+    PlaceRequest {
+        id: 1,
+        action,
+        context: RangeContext {
+            owner: Owner {
+                tab: 7,
+                pane: 70,
+                layout: None,
+            },
+            revision: 0,
+        },
+        anchors: [anchor(0.5, -1_250.0, 1_000), anchor(2.5, 830.5, 3_000)],
+        band,
+    }
+}
+
+#[test]
+fn a_price_range_writes_no_band_and_reads_back_as_the_price_band() {
+    let input = quick_range_input(
+        &range_on(Action::TrendLine, DrawingBand::Price),
+        PaneSide::Flow,
+    )
+    .expect("serializable");
+    assert!(input.get("band").is_none(), "existing journals stay byte-equal");
+    let parsed: ChartAnnotationInput = serde_json::from_value(input).expect("a v2 input");
+    assert_eq!(parsed.band, AnnotationBand::Price);
+}
+
+#[test]
+fn a_cvd_range_places_a_cvd_trend_line_through_the_same_call() {
+    let mut window = FakeWindow::new();
+    let mut access = FakeAccess::default();
+    let input = quick_range_input(&range_on(Action::TrendLine, cvd()), PaneSide::Flow)
+        .expect("serializable");
+    assert_eq!(
+        input["band"],
+        json!({"indicator": {"kind": "native.cvd", "ordinal": 0}})
+    );
+    let answer = call(&mut window, &mut access, TREND_LINE_CAPABILITY_ID, input).expect("placed");
+    let answer: ChartAnnotationResult = serde_json::from_value(answer).expect("a v2 result");
+    assert_eq!(
+        answer.band,
+        AnnotationBand::Indicator {
+            kind: "native.cvd".to_owned(),
+            ordinal: 0
+        },
+        "the answer names the band it landed on"
+    );
+    let placed = &window.flow.drawings.items()[0];
+    assert_eq!(placed.band, cvd(), "painted, hit and saved only on the CVD pane");
+    assert_eq!(placed.points[0].price, -1_250.0, "a CVD value, not a price tick");
+    assert_eq!(access.events.len(), 1);
+}
+
+#[test]
+fn a_band_the_pane_does_not_show_is_refused_before_anything_is_placed() {
+    let mut window = FakeWindow::new();
+    let mut access = FakeAccess::default();
+    for band in [
+        json!({"indicator": {"kind": "native.cvd", "ordinal": 1}}),
+        json!({"indicator": {"kind": "native.delta", "ordinal": 0}}),
+        json!({"indicator": {"kind": "native.cvd", "ordinal": 300}}),
+    ] {
+        let mut input =
+            quick_range_input(&range_on(Action::Rectangle, cvd()), PaneSide::Flow).unwrap();
+        input["band"] = band.clone();
+        let error = call(&mut window, &mut access, ZONE_CAPABILITY_ID.replace("zone", "rectangle").as_str(), input)
+            .expect_err("no such band");
+        assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE, "{band}");
+        assert_eq!(error.context.next_steps, [UNKNOWN_BAND_NEXT_STEP], "{band}");
+    }
+    assert!(window.flow.drawings.items().is_empty());
+    assert!(access.events.is_empty(), "nothing journaled");
+}
+
+#[test]
+fn a_price_only_tool_refuses_an_indicator_band_instead_of_reading_cvd_as_price() {
+    let mut window = FakeWindow::new();
+    let mut access = FakeAccess::default();
+    let input =
+        quick_range_input(&range_on(Action::Profile, cvd()), PaneSide::Flow).expect("serializable");
+    let error = call_version(
+        &mut window,
+        &mut access,
+        (PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION),
+        input,
+    )
+    .expect_err("a volume profile is price");
+    assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
+    assert!(window.flow.drawings.items().is_empty());
+    assert!(access.events.is_empty());
 }

@@ -18,6 +18,11 @@ use crate::{
 pub struct Placement {
     pub tool: DrawingTool,
     pub points: Vec<ChartPoint>,
+    /// The value axis the points' prices are on: the candles', or one
+    /// indicator pane's. The tool still decides ([`DrawingTool::band_for`]):
+    /// a price-only tool lands on the price band whatever is asked, so a
+    /// caller that must not move a value across axes checks that first.
+    pub band: DrawingBand,
     /// The look the mark opens with, read through the same door a click
     /// reads it: one is enough, the draft asks for it once.
     pub opening: NewDrawing,
@@ -201,6 +206,7 @@ fn place(
     let Placement {
         tool,
         points,
+        band,
         opening,
         author,
         name,
@@ -209,7 +215,7 @@ fn place(
     let mut opening = Some(opening);
     let mut completed = false;
     for point in points {
-        completed = store.place_with(tool, &DrawingBand::Price, point, |_| {
+        completed = store.place_with(tool, &band, point, |_| {
             opening.take().expect("one opening look per placement")
         });
     }
@@ -385,6 +391,7 @@ mod tests {
         Placement {
             tool,
             points,
+            band: DrawingBand::Price,
             opening: crate::new_drawing_from_defaults(&crate::NullPresetHost, tool),
             author: Some(DrawingAuthor {
                 actor_kind: "agent".to_owned(),
@@ -428,6 +435,24 @@ mod tests {
             placed.tool.inline_text(placed.payload.as_ref()),
             Some("watch the bid")
         );
+    }
+
+    #[test]
+    fn a_placement_lands_on_the_indicator_band_it_names() {
+        let cvd = DrawingBand::Indicator(crate::PaneKey {
+            kind: "native.cvd".into(),
+            ordinal: 0,
+        });
+        let mut store = Drawings::default();
+        let mut leg = placement(
+            line(),
+            vec![ChartPoint::at(1.5, -1_250.0), ChartPoint::at(4.5, 830.0)],
+        );
+        leg.band = cvd.clone();
+        let effects = update(&mut store, DrawingIntent::Place(leg));
+        assert!(matches!(effects.as_slice(), [DrawingEffect::Placed { .. }]));
+        assert_eq!(store.items()[0].band, cvd, "a CVD leg stays a CVD leg");
+        assert_eq!(store.items()[0].points[0].price, -1_250.0);
     }
 
     #[test]
