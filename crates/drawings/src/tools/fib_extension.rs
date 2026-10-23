@@ -1,7 +1,7 @@
-use crate::{MarkScene, Px, PxRect};
+use crate::icons;
 #[cfg(test)]
 use crate::pos2;
-use crate::icons;
+use crate::{MarkScene, Px, PxRect};
 
 use super::fib::{self, FibKind, FibPayload};
 use super::{DrawContext, DrawingPayload, DrawingStyle, MarkTool, ToolShortcut};
@@ -43,17 +43,21 @@ impl MarkTool for FibExtension {
     /// trader who has not met the pair yet meets them here, in the one place
     /// they go to ask what a button is.
     fn hover_text(&self) -> &'static str {
-        "Fib extension (P for projection) - drag the first leg, then click the projection origin"
+        "Fib extension (P for projection) - drag the leg"
     }
     fn placement_hint(&self, placed: usize) -> Option<&'static str> {
         match placed {
-            1 => Some("Drag out the first leg"),
-            2 => Some("Click where the retracement ended"),
+            1 => Some("Drag the leg"),
             _ => None,
         }
     }
     fn required_points(&self) -> usize {
         FibKind::Extension.required_points()
+    }
+    /// Two for every new extension, three for one saved before the gesture
+    /// lost its separate origin — that one keeps projecting from it.
+    fn accepts_points(&self, count: usize) -> bool {
+        FibKind::Extension.accepts_points(count)
     }
     /// No key of its own, and that is the fix rather than the omission.
     ///
@@ -99,14 +103,10 @@ impl MarkTool for FibExtension {
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<Px>, Px) {
         (
-            vec![
-                pos2(100.0, 100.0),
-                pos2(200.0, 200.0),
-                pos2(250.0, 150.0),
-            ],
-            // Right of the last anchor: the levels project forward from
-            // there now, so that is where the object can be grabbed.
-            pos2(300.0, 250.0),
+            vec![pos2(100.0, 100.0), pos2(200.0, 200.0)],
+            // Right of B on the 100 % level: the levels project forward
+            // from there, so that is where the object can be grabbed.
+            pos2(300.0, 300.0),
         )
     }
 }

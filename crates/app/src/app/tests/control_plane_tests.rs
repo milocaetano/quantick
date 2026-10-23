@@ -3442,7 +3442,7 @@ fn both_fibonacci_tools_dock_through_the_annotation_registry() {
         (
             crate::control::FIB_PROJECTION_CAPABILITY_ID,
             "fib-extension",
-            3,
+            2,
         ),
     ] {
         let ctx = egui::Context::default();

@@ -49,6 +49,13 @@ pub trait MarkTool: Sync {
     }
     fn hover_text(&self) -> &'static str;
     fn required_points(&self) -> usize;
+    /// Whether an object of this tool may hold `count` anchors. A new
+    /// object always completes at [`Self::required_points`]; a tool whose
+    /// gesture changed answers `true` for the older count too, so what was
+    /// saved or sent in that shape still loads and places unchanged.
+    fn accepts_points(&self, count: usize) -> bool {
+        count == self.required_points()
+    }
     /// What the *next* click will do, with `placed` anchors already down.
     ///
     /// A multi-anchor tool that stops following the pointer looks broken:
@@ -603,6 +610,11 @@ impl DrawingTool {
     #[must_use]
     pub fn required_points(self) -> usize {
         self.0.required_points()
+    }
+
+    #[must_use]
+    pub fn accepts_points(self, count: usize) -> bool {
+        self.0.accepts_points(count)
     }
 
     #[must_use]
