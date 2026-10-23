@@ -8,7 +8,8 @@
 //! differ between the two kinds.
 
 use crate::{
-    Align2, FontSpec, MarkScene, MarkShape, Px, PxRect, RgbaExt, Stroke, pos2, rgba_unmultiplied,
+    Align2, FontSpec, MarkScene, MarkShape, Px, PxRect, RgbaExt, SELECTED_ANCHOR_RADIUS_PX, Stroke,
+    pos2, rgba_unmultiplied,
 };
 use quantick_chart::style::PremultipliedRgba;
 use std::any::Any;
@@ -25,19 +26,20 @@ use super::{
 /// Centre-x of the letter in both icons — one column, so on two stacked rail
 /// buttons the eye finds the letter in the same place and only the letter
 /// changes.
-const FIB_LETTER_X: f32 = 0.15;
+const FIB_LETTER_X: f32 = 0.20;
 /// Height of the letter in both icons, as a fraction of the glyph box.
-/// Shared for the same reason: an `R` and a `P` at one size are a choice
+/// Large enough to read at rail size — at 0.46, and still at 0.70, the
+/// trader could not make the letters out. Shared for the same reason: an `R` and a `P` at one size are a choice
 /// between two tools, while two letters at two sizes read as two unrelated
 /// marks.
-const FIB_LETTER_HEIGHT: f32 = 0.46;
+const FIB_LETTER_HEIGHT: f32 = 0.90;
 /// The leg the retracement was dragged across, named once: the strokes draw
 /// it and the dots mark its ends, so nudging the glyph cannot leave the
 /// anchors behind on the old line.
 ///
 /// Its two ends are the 0 and the 1 of the level list — that is why they
 /// carry a dot and no line of their own.
-const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.36, 0.88), (0.84, 0.22)];
+const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.62, 0.92), (0.92, 0.30)];
 
 /// The retracement icon, drawn as the gesture is drawn on a chart: the leg
 /// across the move, its ends marked, and the levels hanging **between** those
@@ -49,9 +51,9 @@ const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.36, 0.88), (0.84, 0.22)];
 /// the letter in the corner names it for the trader who would rather read
 /// than compare.
 pub const FIB_RETRACEMENT_ICON: IconStrokes = &[
-    &[(0.52, 0.42), (0.96, 0.42)],
-    &[(0.52, 0.58), (0.96, 0.58)],
-    &[(0.52, 0.74), (0.96, 0.74)],
+    &[(0.66, 0.42), (0.98, 0.42)],
+    &[(0.66, 0.58), (0.98, 0.58)],
+    &[(0.66, 0.74), (0.98, 0.74)],
     RETRACEMENT_LEG,
 ];
 
@@ -65,33 +67,32 @@ pub const FIB_RETRACEMENT_DOTS: IconDots = RETRACEMENT_LEG;
 /// this icon's own drawing leaves empty.
 pub const FIB_RETRACEMENT_LETTER: IconLetter = IconLetter {
     text: "R",
-    at: (FIB_LETTER_X, 0.26),
+    at: (FIB_LETTER_X, 0.33),
     height: FIB_LETTER_HEIGHT,
 };
 
-/// The extension's three-anchor path, named once for the same reason as
-/// [`RETRACEMENT_LEG`]: impulse up, pullback down, and the origin the
-/// projection hangs from.
-const EXTENSION_LEG: &[(f32, f32)] = &[(0.44, 0.92), (0.68, 0.64), (0.88, 0.80)];
+/// The extension's leg, named once for the same reason as
+/// [`RETRACEMENT_LEG`]: the one move the trader drags, whose far end is the
+/// origin the projection hangs from.
+const EXTENSION_LEG: &[(f32, f32)] = &[(0.62, 0.95), (0.94, 0.72)];
 
 /// The extension icon: the same rungs as the retracement, moved **above** the
 /// leg — price the move has not reached yet, which is what a projection is.
-/// The three-anchor path under them is the gesture, and the third dot is
-/// what says so.
+/// The leg under them is the gesture, the same drag the retracement takes;
+/// the rungs' side of it is the whole difference.
 ///
 /// Neither icon reaches into the box's top-right corner: a pinned tool wears
 /// the favorites star there (`FAVORITE_BADGE_INSET_PX`), and an anchor under
 /// a star is an anchor the trader cannot see.
 pub const FIB_EXTENSION_ICON: IconStrokes = &[
-    &[(0.52, 0.20), (0.96, 0.20)],
-    &[(0.52, 0.33), (0.96, 0.33)],
-    &[(0.52, 0.46), (0.96, 0.46)],
+    &[(0.66, 0.30), (0.98, 0.30)],
+    &[(0.66, 0.43), (0.98, 0.43)],
+    &[(0.66, 0.56), (0.98, 0.56)],
     EXTENSION_LEG,
 ];
 
-/// The three anchors of the trend-based extension — impulse, pullback and the
-/// origin the projection hangs from. Three dots against two is a true
-/// difference, but one the eye has to count.
+/// The two anchors of the extension — where the move started and where it
+/// ended, which is also where the projection starts.
 pub const FIB_EXTENSION_DOTS: IconDots = EXTENSION_LEG;
 
 /// `P` for projection, not `E` for extension: the letter has to say what the
@@ -102,7 +103,7 @@ pub const FIB_EXTENSION_DOTS: IconDots = EXTENSION_LEG;
 /// at the top.
 pub const FIB_EXTENSION_LETTER: IconLetter = IconLetter {
     text: "P",
-    at: (FIB_LETTER_X, 0.72),
+    at: (FIB_LETTER_X, 0.67),
     height: FIB_LETTER_HEIGHT,
 };
 
@@ -125,8 +126,13 @@ pub const MAX_LEVEL_LABEL_LEN: usize = 40;
 pub const MAX_BAND_ALPHA: u8 = 153;
 /// Default band-fill alpha (~9%, inside the spec's recommended 8-18%).
 pub const DEFAULT_BAND_ALPHA: u8 = 24;
-/// Dash geometry of the anchor guides shown while selected.
+/// Dash geometry of the anchor guides: shown while a retracement is
+/// selected, and always on an extension.
 const GUIDE_DASH_PX: f32 = 4.0;
+/// Anchors of an extension saved before it took two: impulse, pullback and
+/// a separate projection origin C. Such an object still loads and projects
+/// from its own C; no new object is placed with three.
+pub const LEGACY_EXTENSION_POINTS: usize = 3;
 /// Inline capacity of the per-frame level projection — one slot above the
 /// largest built-in preset (Extended, 11 levels), so no shipped preset ever
 /// touches the heap while painting.
@@ -140,18 +146,24 @@ pub enum FibKind {
     /// Two anchors; levels give back part of the A→B move:
     /// `P(r) = PA + (PB − PA)·r`.
     Retracement,
-    /// Three anchors; the A→B impulse is projected from origin C:
-    /// `P(r) = PC + (PB − PA)·r`.
+    /// Two anchors; the A→B move is projected forward from B:
+    /// `P(r) = PB + (PB − PA)·r`. A legacy object holding a third anchor C
+    /// projects from C instead: `P(r) = PC + (PB − PA)·r`.
     Extension,
 }
 
 impl FibKind {
     #[must_use]
     pub fn required_points(self) -> usize {
-        match self {
-            Self::Retracement => 2,
-            Self::Extension => 3,
-        }
+        2
+    }
+
+    /// Whether an object of this kind may hold `count` anchors: the two a
+    /// new one completes with, or the legacy three of an extension.
+    #[must_use]
+    pub fn accepts_points(self, count: usize) -> bool {
+        count == self.required_points()
+            || (self == Self::Extension && count == LEGACY_EXTENSION_POINTS)
     }
 }
 
@@ -543,7 +555,8 @@ pub fn log_scale_allowed(a: f64, b: f64, c: f64) -> bool {
 /// through the middle of the move and names them all wrong.
 ///
 /// Extension is the other question — where the *next* leg may reach — so it
-/// projects forward from `c` by the size of the `a`→`b` move, unchanged.
+/// projects forward from `c` by the size of the `a`→`b` move. `c` is `b` on
+/// a two-anchor extension and the saved origin on a legacy three-anchor one.
 #[must_use]
 pub fn level_price(
     kind: FibKind,
@@ -617,10 +630,11 @@ fn anchor_prices(payload: &FibPayload, ctxt: &DrawContext<'_>) -> Option<Anchors
     }
     let a = ctxt.anchors[0].price;
     let b = ctxt.anchors[1].price;
-    let c = if payload.kind == FibKind::Extension {
-        ctxt.anchors[2].price
-    } else {
-        b
+    // A legacy extension keeps the origin it was saved with; every other
+    // object projects from B.
+    let c = match ctxt.anchors.get(2) {
+        Some(origin) if payload.kind == FibKind::Extension => origin.price,
+        _ => b,
     };
     Some(Anchors { a, b, c })
 }
@@ -751,22 +765,41 @@ pub(super) fn paint(
         }
     }
 
-    // Anchor guides while selected: dashed A-B (and B-C for extension).
-    if ctxt.selected && !ctxt.halo && points.len() >= 2 {
-        let guide = Stroke::new(1.0_f32, style.color);
+    paint_anchor_guides(painter, style, points, ctxt, payload.kind);
+}
+
+/// The dashed A-B guide and, for an extension, a dot on A and on B.
+///
+/// A retracement shows its guide only while selected: its levels already
+/// span the leg. An extension's levels start past its last anchor, so the
+/// move they were measured from would vanish the moment it is deselected;
+/// its leg and both ends therefore stay painted, selected or not. A legacy
+/// extension's B-C guide keeps its old rule and shows only while selected.
+/// Selection draws the normal handles over the dots.
+fn paint_anchor_guides(
+    painter: &mut MarkScene,
+    style: DrawingStyle,
+    points: &[Px],
+    ctxt: &DrawContext<'_>,
+    kind: FibKind,
+) {
+    let always = kind == FibKind::Extension;
+    if ctxt.halo || points.len() < 2 || !(ctxt.selected || always) {
+        return;
+    }
+    let guide = Stroke::new(1.0_f32, style.color);
+    let legs = if ctxt.selected && always { 2 } else { 1 };
+    for pair in points.windows(2).take(legs) {
         painter.add(MarkShape::dashed_line(
-            &[points[0], points[1]],
+            &[pair[0], pair[1]],
             guide,
             GUIDE_DASH_PX,
             GUIDE_DASH_PX,
         ));
-        if payload.kind == FibKind::Extension && points.len() >= 3 {
-            painter.add(MarkShape::dashed_line(
-                &[points[1], points[2]],
-                guide,
-                GUIDE_DASH_PX,
-                GUIDE_DASH_PX,
-            ));
+    }
+    if always {
+        for point in &points[..2] {
+            painter.circle_filled(*point, SELECTED_ANCHOR_RADIUS_PX, style.color);
         }
     }
 }
@@ -1082,6 +1115,202 @@ mod tests {
         assert!(
             (left - 620.0).abs() < f32::EPSILON,
             "an extension starts where its projection origin is: {left}"
+        );
+    }
+
+    fn context<'a>(
+        payload: &'a FibPayload,
+        anchors: &'a [crate::ChartPoint],
+        scale: &'a crate::chart::PriceScale,
+        selected: bool,
+        halo: bool,
+    ) -> DrawContext<'a> {
+        DrawContext {
+            payload,
+            anchors,
+            scale,
+            px_per_bar: 1.0,
+            unit: super::super::ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected,
+            halo,
+            content_editing: false,
+            text: &crate::UNMEASURED,
+        }
+    }
+
+    fn anchors(prices: &[f64]) -> Vec<crate::ChartPoint> {
+        prices
+            .iter()
+            .enumerate()
+            .map(|(index, &price)| crate::ChartPoint::at(index as f32, price))
+            .collect()
+    }
+
+    /// The drag is the whole gesture now: A→B places the extension, and its
+    /// levels hang from B by the size of that move — linear and log.
+    #[test]
+    fn a_new_extension_projects_the_leg_forward_from_b() {
+        assert_eq!(FibKind::Extension.required_points(), 2);
+        assert!(FibKind::Extension.accepts_points(2));
+        assert!(FibKind::Extension.accepts_points(LEGACY_EXTENSION_POINTS));
+        assert!(!FibKind::Retracement.accepts_points(3));
+
+        let scale = crate::chart::PriceScale::from_range(0.0, 1000.0, 0.0, 1000.0);
+        let mut payload = FibPayload::new(FibKind::Extension);
+        let placed = anchors(&[100.0, 150.0]);
+        let ctxt = context(&payload, &placed, &scale, false, false);
+        let Anchors { a, b, c } = anchor_prices(&payload, &ctxt).expect("two anchors complete it");
+        for ratio in [0.618, 1.0, 1.618] {
+            let linear = level_price(FibKind::Extension, false, a, b, c, ratio).unwrap();
+            assert!(close(linear, 150.0 + 50.0 * ratio), "{ratio}: {linear}");
+            let log = level_price(FibKind::Extension, true, a, b, c, ratio).unwrap();
+            assert!(close(log, 150.0 * 1.5_f64.powf(ratio)), "{ratio}: {log}");
+        }
+
+        // The log flag reads the same origin through the paint path.
+        payload.log_scale = true;
+        let ctxt = context(&payload, &placed, &scale, false, false);
+        let Anchors { a, b, c } = anchor_prices(&payload, &ctxt).unwrap();
+        assert!(effective_log(&payload, a, b, c));
+    }
+
+    /// A projection saved with three anchors loads as it was: the payload a
+    /// workspace or the control plane wrote before the two-anchor gesture,
+    /// with its own origin C, paints its levels at exactly the prices the
+    /// three-anchor formula gave — never silently moved to B.
+    #[test]
+    fn a_legacy_three_anchor_extension_keeps_its_origin_and_its_prices() {
+        const LEGACY_PAYLOAD: &str = r#"
+            version = 1
+            kind = "Extension"
+            band_alpha = 24
+            label_mode = "PercentPrice"
+            label_position = "RightOutside"
+            extend = "Forward"
+
+            [[levels]]
+            ratio = 1.0
+            label = ""
+            visible = true
+            fill_to_next = false
+
+            [[levels]]
+            ratio = 1.618
+            label = ""
+            visible = true
+            fill_to_next = false
+
+            [[levels]]
+            ratio = 2.618
+            label = ""
+            visible = true
+            fill_to_next = false
+        "#;
+        let value: toml::Value = toml::from_str(LEGACY_PAYLOAD).expect("legacy payload parses");
+        let mut payload = FibPayload::new(FibKind::Extension);
+        assert!(payload.import_preset(&value), "the legacy payload loads");
+
+        // Impulse 100 -> 150, pullback origin C at 120.
+        let saved = anchors(&[100.0, 150.0, 120.0]);
+        let expected = [170.0, 200.9, 250.9];
+        let scale = crate::chart::PriceScale::from_range(0.0, 1000.0, 0.0, 1000.0);
+        let ctxt = context(&payload, &saved, &scale, false, false);
+        let Anchors { a, b, c } = anchor_prices(&payload, &ctxt).expect("three anchors still load");
+        assert!(close(c, 120.0), "the saved origin is kept: {c}");
+        for (level, want) in payload.levels.iter().zip(expected) {
+            let price = level_price(payload.kind, false, a, b, c, level.ratio).unwrap();
+            assert!(close(price, want), "{}: {price} vs {want}", level.ratio);
+        }
+
+        // And the painted level lines sit at those prices.
+        let points: Vec<Px> = saved
+            .iter()
+            .enumerate()
+            .map(|(index, anchor)| pos2(100.0 * (index as f32 + 1.0), scale.y(anchor.price)))
+            .collect();
+        let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 1000.0));
+        let mut scene = MarkScene::default();
+        paint(&mut scene, chart, DrawingStyle::default(), &points, &ctxt);
+        let level_ys: Vec<f32> = scene
+            .shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                MarkShape::Line { from, to, .. } if (from.y - to.y).abs() < f32::EPSILON => {
+                    Some(from.y)
+                }
+                _ => None,
+            })
+            .collect();
+        let want_ys: Vec<f32> = expected.iter().map(|&price| scale.y(price)).collect();
+        assert_eq!(level_ys, want_ys);
+
+        // Unselected, it shows its A-B leg and two dots like a new one; the
+        // B-C guide stays a selection affordance, as it always was.
+        let (dashed, dots) = guides_and_dots(&scene);
+        assert_eq!(dashed, vec![points[..2].to_vec()]);
+        assert_eq!(dots.len(), 2);
+    }
+
+    fn guides_and_dots(scene: &MarkScene) -> (Vec<Vec<Px>>, Vec<(Px, f32)>) {
+        let mut dashed = Vec::new();
+        let mut dots = Vec::new();
+        for shape in &scene.shapes {
+            match shape {
+                MarkShape::DashedLine {
+                    points, dash_px, ..
+                } if (*dash_px - GUIDE_DASH_PX).abs() < f32::EPSILON => dashed.push(points.clone()),
+                MarkShape::Circle {
+                    center, radius_px, ..
+                } => dots.push((*center, *radius_px)),
+                _ => {}
+            }
+        }
+        (dashed, dots)
+    }
+
+    /// An extension's levels start past B, so without its leg the move they
+    /// measure is gone the moment it is deselected. Both anchors and the
+    /// dashed A-B guide stay painted, selected or not; the halo pass and a
+    /// retracement are untouched.
+    #[test]
+    fn an_unselected_extension_paints_both_anchors_and_its_dashed_leg() {
+        let scale = crate::chart::PriceScale::from_range(0.0, 1000.0, 0.0, 1000.0);
+        let chart = PxRect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 1000.0));
+        let placed = anchors(&[100.0, 150.0]);
+        let points = [pos2(200.0, scale.y(100.0)), pos2(400.0, scale.y(150.0))];
+        let extension = FibPayload::new(FibKind::Extension);
+
+        for selected in [false, true] {
+            let mut scene = MarkScene::default();
+            let ctxt = context(&extension, &placed, &scale, selected, false);
+            paint(&mut scene, chart, DrawingStyle::default(), &points, &ctxt);
+            let (dashed, dots) = guides_and_dots(&scene);
+            assert_eq!(dashed, vec![points.to_vec()], "selected = {selected}");
+            assert_eq!(
+                dots,
+                points
+                    .iter()
+                    .map(|point| (*point, SELECTED_ANCHOR_RADIUS_PX))
+                    .collect::<Vec<_>>(),
+                "selected = {selected}"
+            );
+        }
+
+        let mut halo = MarkScene::default();
+        let ctxt = context(&extension, &placed, &scale, true, true);
+        paint(&mut halo, chart, DrawingStyle::default(), &points, &ctxt);
+        assert_eq!(guides_and_dots(&halo), (Vec::new(), Vec::new()));
+
+        let retracement = FibPayload::new(FibKind::Retracement);
+        let mut scene = MarkScene::default();
+        let ctxt = context(&retracement, &placed, &scale, false, false);
+        paint(&mut scene, chart, DrawingStyle::default(), &points, &ctxt);
+        assert_eq!(
+            guides_and_dots(&scene),
+            (Vec::new(), Vec::new()),
+            "an unselected retracement paints no guide"
         );
     }
 }

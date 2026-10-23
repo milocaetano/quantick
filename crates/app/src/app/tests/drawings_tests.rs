@@ -401,7 +401,7 @@ fn quick_range_fibonacci_actions_use_the_dragged_move() {
         (
             crate::surfaces::drawing_chrome::QuickRangeAction::Projection,
             "fib-extension",
-            3,
+            2,
         ),
     ] {
         let ctx = egui::Context::default();
@@ -424,9 +424,6 @@ fn quick_range_fibonacci_actions_use_the_dragged_move() {
         assert_eq!(drawings[0].points.len(), expected_points);
         assert!((drawings[0].points[0].bar - 80.5).abs() < 0.01);
         assert!((drawings[0].points[1].bar - 160.5).abs() < 0.01);
-        if action == crate::surfaces::drawing_chrome::QuickRangeAction::Projection {
-            assert_eq!(drawings[0].points[2], drawings[0].points[1]);
-        }
     }
 }
 

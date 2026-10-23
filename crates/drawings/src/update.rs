@@ -218,6 +218,17 @@ fn place(
     if !tool.holds_band(&band) {
         return Err(PlacementFailure::BandRefused);
     }
+    // A tool that still accepts an older, longer anchor count completes at
+    // its new one through the click door; the extra anchors then join the
+    // object as they were given, instead of starting a second draft.
+    // A count the tool does not accept never reaches the store: too many
+    // would open a second draft with no opening look left to give it.
+    let mut points = points;
+    let required = tool.required_points();
+    if required > 0 && !tool.accepts_points(points.len()) {
+        return Err(PlacementFailure::Incomplete);
+    }
+    let legacy_tail = points.split_off(required.min(points.len()));
     let mut opening = Some(opening);
     let mut completed = false;
     for point in points {
@@ -231,6 +242,7 @@ fn place(
         return Err(PlacementFailure::Incomplete);
     }
     let drawing = store.selected_mut().ok_or(PlacementFailure::Unreadable)?;
+    drawing.points.extend(legacy_tail);
     drawing.author = author;
     drawing.name = name;
     if let Some(text) = text
@@ -569,5 +581,41 @@ mod tests {
             update(&mut store, DrawingIntent::RemoveAuthored(authored)),
             []
         );
+    }
+
+    /// A projection completes on its two-anchor leg, and one sent in the
+    /// legacy three-anchor shape is placed whole — origin C kept, no second
+    /// draft opened. A count the tool never accepted still fails clean.
+    #[test]
+    fn a_projection_places_from_two_anchors_or_its_legacy_three() {
+        let projection = DrawingTool::by_id("fib-extension").expect("registered");
+        let at = |bar: f32, price: f64| ChartPoint::at(bar, price);
+        let mut store = Drawings::default();
+
+        let effects = update(
+            &mut store,
+            DrawingIntent::Place(placement(projection, vec![at(1.0, 100.0), at(2.0, 150.0)])),
+        );
+        assert!(matches!(effects[..], [DrawingEffect::Placed { .. }]));
+        assert_eq!(store.items()[0].points.len(), 2);
+
+        let legacy = vec![at(1.0, 100.0), at(2.0, 150.0), at(3.0, 120.0)];
+        let effects = update(
+            &mut store,
+            DrawingIntent::Place(placement(projection, legacy.clone())),
+        );
+        assert!(matches!(effects[..], [DrawingEffect::Placed { .. }]));
+        assert_eq!(store.items()[1].points, legacy, "the legacy origin is kept");
+        assert!(store.draft().is_none(), "no second draft was opened");
+
+        let effects = update(
+            &mut store,
+            DrawingIntent::Place(placement(
+                projection,
+                vec![at(1.0, 1.0), at(2.0, 2.0), at(3.0, 3.0), at(4.0, 4.0)],
+            )),
+        );
+        assert!(!matches!(effects[..], [DrawingEffect::Placed { .. }]));
+        assert!(store.draft().is_none());
     }
 }

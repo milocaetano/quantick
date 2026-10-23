@@ -2,6 +2,7 @@
 //! access, with no application behind them.
 
 use quantick_chart_interaction::annotation::slot_at_position;
+use quantick_chart_interaction::quick_range::Action;
 use quantick_control::annotation::{
     CAPABILITY_VERSION, HORIZONTAL_LEVELS_CAPABILITY_ID, RECTANGLE_CAPABILITY_ID,
     REMOVE_CAPABILITY_ID, TREND_LINE_CAPABILITY_ID,
@@ -561,4 +562,59 @@ fn a_listed_marks_band_is_the_band_a_call_takes() {
         None,
         "time-only: no axis"
     );
+}
+
+/// A projection is placed from its two-anchor leg; a legacy three-anchor
+/// call still places, origin kept; any other count is refused before
+/// anything lands.
+#[test]
+fn a_projection_call_takes_two_anchors_or_the_legacy_three() {
+    let anchor = |time: i64, bar: &str, price: &str| json!({ "time_unix_ms": time, "bar_position": bar, "price": price });
+    let leg = [anchor(1_000, "0.5", "100"), anchor(2_000, "1.5", "150")];
+    let origin = anchor(3_000, "2.5", "120");
+    let mut window = FakeWindow::new();
+    let mut access = FakeAccess::default();
+
+    let placed = call(
+        &mut window,
+        &mut access,
+        FIB_PROJECTION_CAPABILITY_ID,
+        json!({ "anchors": leg }),
+    )
+    .expect("two anchors place a projection");
+    assert_eq!(placed["anchors"].as_array().map(Vec::len), Some(2));
+    assert_eq!(window.flow.drawings.items()[0].points.len(), 2);
+
+    let legacy = call(
+        &mut window,
+        &mut access,
+        FIB_PROJECTION_CAPABILITY_ID,
+        json!({ "anchors": [leg[0], leg[1], origin] }),
+    )
+    .expect("the legacy three anchors still place");
+    assert_eq!(legacy["anchors"].as_array().map(Vec::len), Some(3));
+    let kept = &window.flow.drawings.items()[1].points;
+    assert_eq!(kept.len(), 3);
+    assert!(
+        (kept[2].price - 120.0).abs() < f64::EPSILON,
+        "origin C kept"
+    );
+
+    let too_many = call(
+        &mut window,
+        &mut access,
+        FIB_PROJECTION_CAPABILITY_ID,
+        json!({ "anchors": [leg[0], leg[1], origin, origin] }),
+    )
+    .expect_err("four anchors are no projection");
+    assert_eq!(too_many.code.as_str(), codes::INVALID_REQUEST);
+
+    let refused = call(
+        &mut window,
+        &mut access,
+        FIB_RETRACEMENT_CAPABILITY_ID,
+        json!({ "anchors": [leg[0], leg[1], origin] }),
+    );
+    assert!(refused.is_err(), "a retracement never takes three");
+    assert_eq!(window.flow.drawings.items().len(), 2, "nothing more placed");
 }
