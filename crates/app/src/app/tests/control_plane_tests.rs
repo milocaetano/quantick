@@ -3480,7 +3480,7 @@ fn fibonacci_capabilities_reject_incomplete_anchor_sets_without_leaving_a_drawin
 
     for (capability_id, anchor_count) in [
         (crate::control::FIB_RETRACEMENT_CAPABILITY_ID, 1),
-        (crate::control::FIB_PROJECTION_CAPABILITY_ID, 2),
+        (crate::control::FIB_PROJECTION_CAPABILITY_ID, 1),
     ] {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(8);
