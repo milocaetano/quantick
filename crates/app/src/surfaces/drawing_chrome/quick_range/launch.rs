@@ -131,6 +131,7 @@ impl QuickRange {
                     max: [20.0; 2],
                 },
             },
+            crate::drawings::DrawingBand::Price,
         );
         self.drag(owner, egui::pos2(10.0, 0.0), anchors[1], 4.0, false, || {
             look

@@ -23,6 +23,7 @@ fn ready() -> QuickRange {
                     max: [100.0; 2],
                 },
             },
+            band: DrawingBand::Price,
         },
         context,
     );
@@ -43,7 +44,7 @@ fn ready() -> QuickRange {
 fn merge_carries_one_continuation_with_its_original_side_and_request() {
     let mut quick = ready();
     let placement = quick.convert(Action::Projection).unwrap();
-    let request = *placement.conversion.request();
+    let request = placement.conversion.request().clone();
     let mut ask = DrawingChromeAsk::default();
     ask.merge(DrawingChromeAsk {
         place_quick_range: Some(placement),

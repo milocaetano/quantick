@@ -283,8 +283,8 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.quick_range_fib_retracement",
         title: "Measure a range with a right-drag and turn it into a Fibonacci retracement",
-        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
-                range's Fib Retracement action",
+        reach: "a secondary-button drag on the price band or an indicator pane with the \
+                Pointer tool, then the range's Fib Retracement action",
         keys: &[(
             Source::Authored,
             "the quick-range action bar delegates to the registered Fibonacci retracement tool",
@@ -294,8 +294,8 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.quick_range_fib_projection",
         title: "Measure a range with a right-drag and project it from the final point",
-        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
-                range's Fib Projection action",
+        reach: "a secondary-button drag on the price band or an indicator pane with the \
+                Pointer tool, then the range's Fib Projection action",
         keys: &[(
             Source::Authored,
             "the quick-range action bar delegates to the registered Fibonacci projection tool",
@@ -305,8 +305,8 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.quick_range_rectangle",
         title: "Measure a range with a right-drag and turn its box into a rectangle",
-        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
-                range's Rectangle action",
+        reach: "a secondary-button drag on the price band or an indicator pane with the \
+                Pointer tool, then the range's Rectangle action",
         keys: &[(
             Source::Authored,
             "the quick-range action bar delegates to the registered rectangle tool",
@@ -316,8 +316,8 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.quick_range_trend_line",
         title: "Measure a range with a right-drag and turn its leg into a trend line",
-        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
-                range's Trend line action",
+        reach: "a secondary-button drag on the price band or an indicator pane with the \
+                Pointer tool, then the range's Trend line action",
         keys: &[(
             Source::Authored,
             "the quick-range action bar delegates to the registered trend line tool",
@@ -327,8 +327,8 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.quick_range_horizontal_levels",
         title: "Measure a range with a right-drag and mark its high and low with horizontal lines",
-        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
-                range's Horizontal lines action; one line when the range has no height",
+        reach: "a secondary-button drag on the price band or an indicator pane with the \
+                Pointer tool, then the range's Horizontal lines action; one line when the range has no height",
         keys: &[(
             Source::Authored,
             "the quick-range action bar places one registered horizontal line per distinct price",
@@ -338,8 +338,8 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.quick_range_parallel_channel",
         title: "Measure a range with a right-drag and turn its leg into a parallel channel's base",
-        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
-                range's Parallel channel action, then a click above or below the leg that sets \
+        reach: "a secondary-button drag on the price band or an indicator pane with the \
+                Pointer tool, then the range's Parallel channel action, then a click above or below the leg that sets \
                 the channel's width",
         keys: &[(
             Source::Authored,

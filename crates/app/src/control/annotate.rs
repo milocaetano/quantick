@@ -71,6 +71,9 @@ impl AnnotatedPane for ChartPane {
     fn sweep_orphans(&mut self) {
         self.strategies.sweep_orphans(&self.drawings);
     }
+    fn shows_band(&self, band: &drawings::DrawingBand) -> bool {
+        quantick_drawings::gesture::shows_band(&self.indicators, band)
+    }
 }
 
 impl AnnotateAccess for ControlAccess {

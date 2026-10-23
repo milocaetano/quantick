@@ -26,9 +26,8 @@ use quantick_control::{
     annotation::{
         ANNOTATE_MODULE_ID, ANNOTATION_CREATED_EVENT_KIND, ANNOTATION_PRICE_DECIMALS,
         ANNOTATION_REMOVED_EVENT_KIND, ARROW_CAPABILITY_ID, ARROW_TOOL_ID, AnnotationBand,
-        AnnotationInput,
-        AnnotationResult, AnnotationTarget, ChartAnnotationAnchor, ChartAnnotationInput,
-        ChartAnnotationResult, ChartAnnotationSetResult, ChartReference,
+        AnnotationInput, AnnotationResult, AnnotationTarget, ChartAnnotationAnchor,
+        ChartAnnotationInput, ChartAnnotationResult, ChartAnnotationSetResult, ChartReference,
         FIB_PROJECTION_CAPABILITY_ID, FIB_RETRACEMENT_CAPABILITY_ID, HORIZONTAL_LINE_TOOL_ID,
         LABEL_CAPABILITY_ID, LABEL_TOOL_ID, PARALLEL_CHANNEL_TOOL_ID, PROFILE_CAPABILITY_ID,
         PROFILE_CAPABILITY_VERSION, RemoveInput, RemoveResult, ResolvedAnchor, TREND_LINE_TOOL_ID,
@@ -502,7 +501,10 @@ fn resolve_band(
                 let mut error = capability_unavailable(format!(
                     "this pane shows no `{kind}` indicator pane with ordinal {ordinal}"
                 ));
-                error.context.next_steps.push(UNKNOWN_BAND_NEXT_STEP.to_owned());
+                error
+                    .context
+                    .next_steps
+                    .push(UNKNOWN_BAND_NEXT_STEP.to_owned());
                 error
             })?,
     };

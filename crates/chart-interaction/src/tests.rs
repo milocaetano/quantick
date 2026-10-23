@@ -459,7 +459,11 @@ fn a_range_places_on_the_band_its_press_landed_on() {
     else {
         panic!("a settled CVD range is actionable");
     };
-    assert_eq!(request.band, cvd(), "the drawing lands where it was measured");
+    assert_eq!(
+        request.band,
+        cvd(),
+        "the drawing lands where it was measured"
+    );
 }
 
 #[test]
@@ -477,7 +481,11 @@ fn a_new_press_takes_its_own_band_and_a_dismiss_drops_it() {
     else {
         panic!("a settled price range is actionable");
     };
-    assert_eq!(request.band, DrawingBand::Price, "the price band is unchanged");
+    assert_eq!(
+        request.band,
+        DrawingBand::Price,
+        "the price band is unchanged"
+    );
     model.update(Command::Dismiss, ctx);
     assert_eq!(model.band(), None);
 }

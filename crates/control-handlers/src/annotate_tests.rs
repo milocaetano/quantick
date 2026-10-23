@@ -3,7 +3,8 @@
 
 use quantick_chart_interaction::annotation::slot_at_position;
 use quantick_control::annotation::{
-    CAPABILITY_VERSION, HORIZONTAL_LEVELS_CAPABILITY_ID, REMOVE_CAPABILITY_ID,
+    CAPABILITY_VERSION, HORIZONTAL_LEVELS_CAPABILITY_ID, RECTANGLE_CAPABILITY_ID,
+    REMOVE_CAPABILITY_ID, TREND_LINE_CAPABILITY_ID,
 };
 use quantick_control_host::actions::ActionRegistry;
 use serde_json::json;
@@ -157,9 +158,7 @@ fn call_version(
 ) -> Result<Value, ControlError> {
     let mut registry = ActionRegistry::<FakeWindow, FakeAccess>::new();
     register(&mut registry).expect("the annotate descriptors are valid");
-    let action = registry
-        .lookup(capability_id, version)
-        .expect("registered");
+    let action = registry.lookup(capability_id, version).expect("registered");
     (action.handler)(window, access, &Actors::assistant(), &input)
 }
 
@@ -189,6 +188,7 @@ fn a_label_call_and_its_drawing_intent_give_the_same_mark_and_effect() {
         DrawingIntent::Place(Placement {
             tool,
             points: vec![ChartPoint::at_time(1.5, 101.5, Some(2_000))],
+            band: DrawingBand::Price,
             opening: window.new_drawing(tool),
             author: assistant_author(),
             name: Some("bid wall".to_owned()),
@@ -243,6 +243,7 @@ fn horizontal_levels_and_their_intent_place_the_same_lines() {
     let line = |price| Placement {
         tool,
         points: vec![ChartPoint::at_time(0.5, price, Some(1_000))],
+        band: DrawingBand::Price,
         opening: window.new_drawing(tool),
         author: assistant_author(),
         name: None,
@@ -402,11 +403,12 @@ fn v1_and_v2_answer_an_uncovered_anchor_with_one_message_and_remedy() {
 
 /// A quick range measured on `band` over bars 0 and 2 of the fake pane.
 fn range_on(action: Action, band: DrawingBand) -> PlaceRequest {
-    let anchor = |bar: f32, price: f64, time_ms: i64| quantick_chart_interaction::quick_range::Anchor {
-        bar,
-        price,
-        time_ms: Some(time_ms),
-    };
+    let anchor =
+        |bar: f32, price: f64, time_ms: i64| quantick_chart_interaction::quick_range::Anchor {
+            bar,
+            price,
+            time_ms: Some(time_ms),
+        };
     PlaceRequest {
         id: 1,
         action,
@@ -430,7 +432,10 @@ fn a_price_range_writes_no_band_and_reads_back_as_the_price_band() {
         PaneSide::Flow,
     )
     .expect("serializable");
-    assert!(input.get("band").is_none(), "existing journals stay byte-equal");
+    assert!(
+        input.get("band").is_none(),
+        "existing journals stay byte-equal"
+    );
     let parsed: ChartAnnotationInput = serde_json::from_value(input).expect("a v2 input");
     assert_eq!(parsed.band, AnnotationBand::Price);
 }
@@ -456,8 +461,15 @@ fn a_cvd_range_places_a_cvd_trend_line_through_the_same_call() {
         "the answer names the band it landed on"
     );
     let placed = &window.flow.drawings.items()[0];
-    assert_eq!(placed.band, cvd(), "painted, hit and saved only on the CVD pane");
-    assert_eq!(placed.points[0].price, -1_250.0, "a CVD value, not a price tick");
+    assert_eq!(
+        placed.band,
+        cvd(),
+        "painted, hit and saved only on the CVD pane"
+    );
+    assert_eq!(
+        placed.points[0].price, -1_250.0,
+        "a CVD value, not a price tick"
+    );
     assert_eq!(access.events.len(), 1);
 }
 
@@ -473,7 +485,7 @@ fn a_band_the_pane_does_not_show_is_refused_before_anything_is_placed() {
         let mut input =
             quick_range_input(&range_on(Action::Rectangle, cvd()), PaneSide::Flow).unwrap();
         input["band"] = band.clone();
-        let error = call(&mut window, &mut access, ZONE_CAPABILITY_ID.replace("zone", "rectangle").as_str(), input)
+        let error = call(&mut window, &mut access, RECTANGLE_CAPABILITY_ID, input)
             .expect_err("no such band");
         assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE, "{band}");
         assert_eq!(error.context.next_steps, [UNKNOWN_BAND_NEXT_STEP], "{band}");

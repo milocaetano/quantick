@@ -6,11 +6,16 @@
 //! owner is `quantick_chart_interaction::quick_range`. What the pane lends
 //! both is a [`QuickRangeView`]: who it is, as the owner's key, and the
 //! projection its pixels are read through — never the pane itself.
+//!
+//! The range lives on the band the press landed on — the candles or one
+//! indicator pane — and is dragged, measured and painted through that band's
+//! own scale and unit. A drag never crosses into the next band.
 
 use eframe::egui;
 
-use crate::bands::Band;
+use crate::bands::{self, Band};
 use crate::drawings::{self, DrawContext, MarkScene};
+use crate::plot_area::PlotAreas;
 use crate::surfaces::drawing_chrome::QuickRangeOwner;
 use crate::toolrail::Tool;
 
@@ -35,7 +40,7 @@ impl QuickRangeView<'_> {
     pub(super) fn handle(
         &self,
         ui: &egui::Ui,
-        price_band: &Band,
+        (bands, areas): (&[Band], &PlotAreas),
         history_right: f32,
         total: usize,
         magnet: bool,
@@ -43,12 +48,9 @@ impl QuickRangeView<'_> {
     ) {
         let owner = self.owner;
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
-        let area = quantick_chart_interaction::quick_range::GestureArea {
-            min: [price_band.rect.left(), price_band.rect.top()],
-            max: [
-                history_right.max(price_band.rect.left()),
-                price_band.rect.bottom(),
-            ],
+        let area = |band: &Band| quantick_chart_interaction::quick_range::GestureArea {
+            min: [band.rect.left(), band.rect.top()],
+            max: [history_right.max(band.rect.left()), band.rect.bottom()],
         };
         let (pressed, down, released, pointer, shift) = ui.input(|input| {
             (
@@ -63,15 +65,20 @@ impl QuickRangeView<'_> {
         // look without arming or placing the persistent ruler tool. A press
         // that never crosses the threshold remains the context-menu gesture.
         if let Some(measure) = drawings::DrawingTool::by_id("measure") {
+            // The press picks the band: never a divider, a pane header or a
+            // band that cannot honestly take an anchor.
             if pressed
                 && let Some(position) = pointer
+                && let Some(band) = bands::band_at(bands, drawings::px(position))
+                    .filter(|band| band.drawable())
+                    .filter(|_| !super::primary_button::pane_chrome_hit(areas, position))
                 && let Some(anchor) = self.projection.drawing_point_at(
                     drawings::px(position),
                     history_right,
                     total,
                     magnet,
                     measure.anchor_snap(),
-                    price_band,
+                    band,
                 )
             {
                 chrome.drawing_chrome.quick_range.press(
@@ -81,8 +88,9 @@ impl QuickRangeView<'_> {
                     quantick_chart_interaction::quick_range::GestureEligibility {
                         pointer_tool: chrome.toolrail.tool() == Tool::Pointer,
                         unoccluded: !super::gesture_input::over_chrome(ui, position),
-                        area,
+                        area: area(band),
                     },
+                    band.key.clone(),
                 );
             }
             // Past egui's own click distance, not only the drawing drag's:
@@ -92,12 +100,19 @@ impl QuickRangeView<'_> {
                 .ctx()
                 .options(|options| options.input_options.max_click_dist)
                 .max(DRAWING_DRAG_THRESHOLD_PX);
+            // Every drag frame reads through the band the press chose.
+            let pressed_band = chrome
+                .drawing_chrome
+                .quick_range
+                .band()
+                .and_then(|key| bands.iter().find(|band| band.key == *key));
             if (down || released)
                 && let Some(position) = pointer
+                && let Some(band) = pressed_band
             {
                 // The divider is last frame's and can sit left of the band
                 // after a layout change; `clamp` panics on an inverted range.
-                let [x, y] = area.clamp([position.x, position.y]);
+                let [x, y] = area(band).clamp([position.x, position.y]);
                 let position = egui::pos2(x, y);
                 if let Some(anchor) = self.projection.drawing_point_at(
                     drawings::px(position),
@@ -105,7 +120,7 @@ impl QuickRangeView<'_> {
                     total,
                     magnet,
                     measure.anchor_snap(),
-                    price_band,
+                    band,
                 ) {
                     chrome.drawing_chrome.quick_range.drag(
                         owner,
@@ -171,7 +186,7 @@ impl QuickRangeView<'_> {
             .quick_range
             .paint(owner)
             .and_then(|quick| {
-                let band = bands.first()?;
+                let band = bands.iter().find(|band| band.key == *quick.band)?;
                 let scale = band.scale.as_ref()?;
                 let tool = drawings::DrawingTool::by_id("measure")?;
                 let points = quick.anchors.map(|anchor| {
@@ -203,12 +218,16 @@ impl QuickRangeView<'_> {
                 ))
             })
             .or_else(|| {
-                chrome
-                    .drawing_chrome
-                    .quick_range
+                let quick = &chrome.drawing_chrome.quick_range;
+                quick
                     .stale(owner)
                     .then(|| {
-                        let chart = drawings::egui_rect(bands.first()?.rect);
+                        // The notice sits on the band the range was drawn on.
+                        let band = quick
+                            .band()
+                            .and_then(|key| bands.iter().find(|band| band.key == *key))
+                            .or_else(|| bands.first())?;
+                        let chart = drawings::egui_rect(band.rect);
                         Some((
                             chart,
                             egui::Rect::from_center_size(chart.center(), egui::Vec2::ZERO),

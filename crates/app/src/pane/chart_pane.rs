@@ -625,7 +625,7 @@ impl ChartPane {
         let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
         self.quick_range_view(chrome.tab, chrome.side).handle(
             ui,
-            price_band,
+            (&bands, &areas),
             history_right,
             total,
             magnet,
