@@ -71,8 +71,7 @@ impl StressInput {
     /// After the frame drew: pace it, see whether the view answered, and log.
     pub(crate) fn after_frame(&mut self, flow: &ChartPane, now: Instant) {
         if let Some(last) = self.last_frame {
-            self.probe
-                .record_frame((now - last).as_secs_f32() * 1000.0);
+            self.probe.record_frame((now - last).as_secs_f32() * 1000.0);
         }
         self.last_frame = Some(now);
         if self.script.is_empty()

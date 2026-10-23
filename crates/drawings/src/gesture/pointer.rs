@@ -1367,14 +1367,24 @@ mod tests {
             pointer.position = Some(crate::pos2(inside.x + 40.0, inside.y));
             let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert!(!drag.consumed, "the drag pans the chart");
-            assert_eq!(drawn_rect(&store, projection, bands), rect, "locked never moves");
+            assert_eq!(
+                drawn_rect(&store, projection, bands),
+                rect,
+                "locked never moves"
+            );
             pointer.down = false;
             pointer.released = true;
             owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert_eq!(store.selected(), None, "a drag selects nothing");
 
             let mut gestures = PaneGestures::default();
-            press_and_release(&mut gestures, &mut store, projection, (bands, inside), Hand::PLAIN);
+            press_and_release(
+                &mut gestures,
+                &mut store,
+                projection,
+                (bands, inside),
+                Hand::PLAIN,
+            );
             assert_eq!(store.selected(), Some(0), "a click still selects it");
 
             store.select(None);
@@ -1387,7 +1397,10 @@ mod tests {
             let mut pointer = pointer_at(border, bands);
             pointer.pressed = true;
             let press = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
-            assert!(press.consumed, "the border still holds a locked mark's press");
+            assert!(
+                press.consumed,
+                "the border still holds a locked mark's press"
+            );
             assert_eq!(gestures.drag, DrawingDrag::Blocked);
         });
     }

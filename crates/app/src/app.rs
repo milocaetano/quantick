@@ -745,7 +745,10 @@ impl eframe::App for QuantickApp {
         self.draw_frame(ctx, Instant::now());
         #[cfg(any(feature = "scenario-harness", test))]
         if let Some(stress) = self.chrome.harness.stress_input_mut() {
-            stress.after_frame(&self.tabs[self.tabs.active_index()].flow_pane, Instant::now());
+            stress.after_frame(
+                &self.tabs[self.tabs.active_index()].flow_pane,
+                Instant::now(),
+            );
         }
     }
 

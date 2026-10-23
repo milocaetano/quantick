@@ -213,7 +213,11 @@ mod log_sink_tests {
         assert!(sink.drain(Duration::from_secs(5)));
         let text = String::from_utf8(got.lock().unwrap().clone()).unwrap();
         let kept_lines: Vec<&str> = text.lines().filter(|l| l.starts_with("line ")).collect();
-        assert_eq!(kept_lines.first(), Some(&"line 0"), "the oldest line goes first: {text}");
+        assert_eq!(
+            kept_lines.first(),
+            Some(&"line 0"),
+            "the oldest line goes first: {text}"
+        );
         assert!(text.contains("log line(s) dropped"), "{text}");
         assert!(text.ends_with("after\n"), "{text}");
         let kept = text.lines().filter(|l| l.starts_with("line ")).count();
@@ -222,7 +226,11 @@ mod log_sink_tests {
             .filter_map(|l| l.strip_prefix("quantick: "))
             .filter_map(|l| l.split(" ").next()?.parse::<usize>().ok())
             .sum();
-        assert_eq!(kept + dropped, 10, "every line is written or counted: {text}");
+        assert_eq!(
+            kept + dropped,
+            10,
+            "every line is written or counted: {text}"
+        );
     }
 
     #[test]

@@ -267,7 +267,12 @@ mod input_probe_tests {
         );
         let summary = probe.summary();
         assert_eq!(
-            (summary.sent, summary.answered, summary.on_time, summary.stalls),
+            (
+                summary.sent,
+                summary.answered,
+                summary.on_time,
+                summary.stalls
+            ),
             (2, 1, 0, 1)
         );
         assert_eq!(summary.slowest_answer_frames, 3);
@@ -287,7 +292,10 @@ mod input_probe_tests {
         assert_eq!(summary.frames, 1_000);
         assert_eq!(summary.freezes, 1);
         assert_eq!(summary.worst_ms, 300.0);
-        assert_eq!(summary.p99_ms, 17.0, "990 of 1000 sit in the 16.5-17 bucket");
+        assert_eq!(
+            summary.p99_ms, 17.0,
+            "990 of 1000 sit in the 16.5-17 bucket"
+        );
         probe.record_frame(40.2);
         assert_eq!(probe.summary().p99_ms, 40.5);
     }
