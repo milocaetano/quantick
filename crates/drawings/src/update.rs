@@ -19,9 +19,9 @@ pub struct Placement {
     pub tool: DrawingTool,
     pub points: Vec<ChartPoint>,
     /// The value axis the points' prices are on: the candles', or one
-    /// indicator pane's. The tool still decides ([`DrawingTool::band_for`]):
-    /// a price-only tool lands on the price band whatever is asked, so a
-    /// caller that must not move a value across axes checks that first.
+    /// indicator pane's. A band the tool cannot hold
+    /// ([`DrawingTool::holds_band`]) is refused, never moved: a CVD value
+    /// placed as a price would be a level on the wrong axis.
     pub band: DrawingBand,
     /// The look the mark opens with, read through the same door a click
     /// reads it: one is enough, the draft asks for it once.
@@ -47,6 +47,9 @@ pub enum PlacementFailure {
     /// The trader is mid-gesture: a placement would push its anchor onto
     /// their draft or replace it, so nothing is touched.
     DraftInProgress,
+    /// The tool cannot hold the band asked for: a price-only tool on an
+    /// indicator pane. Nothing is touched.
+    BandRefused,
 }
 
 /// An edit the window asks the drawings to make.
@@ -212,6 +215,9 @@ fn place(
         name,
         text,
     } = placement;
+    if !tool.holds_band(&band) {
+        return Err(PlacementFailure::BandRefused);
+    }
     let mut opening = Some(opening);
     let mut completed = false;
     for point in points {
@@ -400,6 +406,44 @@ mod tests {
             name: None,
             text: None,
         }
+    }
+
+    #[test]
+    fn a_placement_on_a_band_its_tool_cannot_hold_is_refused_not_moved() {
+        let mut store = Drawings::default();
+        let profile = DrawingTool::by_id("fixed-range-profile").expect("registered");
+        let cvd = DrawingBand::Indicator(crate::PaneKey {
+            kind: "native.cvd".into(),
+            ordinal: 0,
+        });
+        let mut on_cvd = placement(
+            profile,
+            vec![ChartPoint::at(1.5, -500.0), ChartPoint::at(4.5, 800.0)],
+        );
+        on_cvd.band = cvd;
+        let effects = update(&mut store, DrawingIntent::Place(on_cvd));
+        assert!(matches!(
+            effects[..],
+            [DrawingEffect::NotPlaced {
+                failure: PlacementFailure::BandRefused,
+                ..
+            }]
+        ));
+        assert!(store.items().is_empty() && store.draft().is_none());
+    }
+
+    #[test]
+    fn holds_band_keeps_time_only_tools_on_every_band_and_price_tools_on_price() {
+        let cvd = DrawingBand::Indicator(crate::PaneKey {
+            kind: "native.cvd".into(),
+            ordinal: 0,
+        });
+        let tool = |id| DrawingTool::by_id(id).expect("registered");
+        assert!(tool("vertical-line").holds_band(&DrawingBand::Price));
+        assert!(tool("vertical-line").holds_band(&cvd));
+        assert!(tool("trend-line").holds_band(&cvd));
+        assert!(tool("fixed-range-profile").holds_band(&DrawingBand::Price));
+        assert!(!tool("fixed-range-profile").holds_band(&cvd));
     }
 
     fn level(price: f64) -> Placement {

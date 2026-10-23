@@ -16,7 +16,7 @@ use eframe::egui;
 use crate::bands::{self, Band};
 use crate::drawings::{self, DrawContext, MarkScene};
 use crate::plot_area::PlotAreas;
-use crate::surfaces::drawing_chrome::QuickRangeOwner;
+use crate::surfaces::drawing_chrome::{QuickRange, QuickRangeOwner};
 use crate::toolrail::Tool;
 
 use super::PaneChrome;
@@ -27,6 +27,13 @@ use quantick_drawings::gesture::DrawingProjection;
 /// Enough history for the demo's two anchors to span a real, visible range.
 #[cfg(any(feature = "quick-range-harness", test))]
 const DEMO_MIN_BARS: usize = 72;
+
+/// The band the current range lives on among this pane's `bands`; `None`
+/// with no range, or once that band is not carved here.
+fn range_band<'b>(quick: &QuickRange, bands: &'b [Band]) -> Option<&'b Band> {
+    let key = quick.band()?;
+    bands.iter().find(|band| band.key == *key)
+}
 
 /// One pane's side of the quick range for one frame.
 pub(super) struct QuickRangeView<'a> {
@@ -47,7 +54,17 @@ impl QuickRangeView<'_> {
         chrome: &mut PaneChrome<'_>,
     ) {
         let owner = self.owner;
-        chrome.drawing_chrome.quick_range.reconcile(Some(owner));
+        let quick = &mut chrome.drawing_chrome.quick_range;
+        quick.reconcile(Some(owner));
+        // A range whose band went with its pane (hidden, removed, collapsed)
+        // goes too, rather than holding Escape and coming back with the pane.
+        if quick.owner().is_some_and(|range| range.pane == owner.pane)
+            && quick.band().is_some()
+            && range_band(quick, bands)
+                .is_none_or(|band| band.refusal == Some(bands::COLLAPSED_BAND_REFUSAL))
+        {
+            quick.dismiss();
+        }
         let area = |band: &Band| quantick_chart_interaction::quick_range::GestureArea {
             min: [band.rect.left(), band.rect.top()],
             max: [history_right.max(band.rect.left()), band.rect.bottom()],
@@ -65,13 +82,17 @@ impl QuickRangeView<'_> {
         // look without arming or placing the persistent ruler tool. A press
         // that never crosses the threshold remains the context-menu gesture.
         if let Some(measure) = drawings::DrawingTool::by_id("measure") {
-            // The press picks the band: never a divider, a pane header or a
-            // band that cannot honestly take an anchor.
+            // The press picks the band: never a band that cannot honestly
+            // take an anchor, nor an indicator pane's divider or header. The
+            // candles keep every pixel they had before panes took ranges.
             if pressed
                 && let Some(position) = pointer
                 && let Some(band) = bands::band_at(bands, drawings::px(position))
                     .filter(|band| band.drawable())
-                    .filter(|_| !super::primary_button::pane_chrome_hit(areas, position))
+                    .filter(|band| {
+                        band.key == drawings::DrawingBand::Price
+                            || !super::primary_button::pane_chrome_hit(areas, position)
+                    })
                 && let Some(anchor) = self.projection.drawing_point_at(
                     drawings::px(position),
                     history_right,
@@ -101,11 +122,7 @@ impl QuickRangeView<'_> {
                 .options(|options| options.input_options.max_click_dist)
                 .max(DRAWING_DRAG_THRESHOLD_PX);
             // Every drag frame reads through the band the press chose.
-            let pressed_band = chrome
-                .drawing_chrome
-                .quick_range
-                .band()
-                .and_then(|key| bands.iter().find(|band| band.key == *key));
+            let pressed_band = range_band(&chrome.drawing_chrome.quick_range, bands);
             if (down || released)
                 && let Some(position) = pointer
                 && let Some(band) = pressed_band
@@ -186,7 +203,7 @@ impl QuickRangeView<'_> {
             .quick_range
             .paint(owner)
             .and_then(|quick| {
-                let band = bands.iter().find(|band| band.key == *quick.band)?;
+                let band = range_band(&chrome.drawing_chrome.quick_range, bands)?;
                 let scale = band.scale.as_ref()?;
                 let tool = drawings::DrawingTool::by_id("measure")?;
                 let points = quick.anchors.map(|anchor| {
@@ -223,10 +240,7 @@ impl QuickRangeView<'_> {
                     .stale(owner)
                     .then(|| {
                         // The notice sits on the band the range was drawn on.
-                        let band = quick
-                            .band()
-                            .and_then(|key| bands.iter().find(|band| band.key == *key))
-                            .or_else(|| bands.first())?;
+                        let band = range_band(quick, bands).or_else(|| bands.first())?;
                         let chart = drawings::egui_rect(band.rect);
                         Some((
                             chart,

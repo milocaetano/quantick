@@ -71,8 +71,8 @@ impl AnnotatedPane for ChartPane {
     fn sweep_orphans(&mut self) {
         self.strategies.sweep_orphans(&self.drawings);
     }
-    fn shows_band(&self, band: &drawings::DrawingBand) -> bool {
-        quantick_drawings::gesture::shows_band(&self.indicators, band)
+    fn band_refusal(&self, band: &drawings::DrawingBand) -> Option<&'static str> {
+        ChartPane::band_refusal(self, band)
     }
 }
 

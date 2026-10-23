@@ -18,6 +18,8 @@ struct FakePane {
     opens: Vec<i64>,
     drawings: Drawings<DrawingTool>,
     sweeps: usize,
+    /// The CVD pane is a collapsed strip: shown, but taking no anchor.
+    cvd_collapsed: bool,
 }
 
 impl FakePane {
@@ -27,6 +29,7 @@ impl FakePane {
             opens: vec![1_000, 2_000, 3_000],
             drawings: Drawings::default(),
             sweeps: 0,
+            cvd_collapsed: false,
         }
     }
 }
@@ -62,8 +65,13 @@ impl AnnotatedPane for FakePane {
     fn sweep_orphans(&mut self) {
         self.sweeps += 1;
     }
-    fn shows_band(&self, band: &DrawingBand) -> bool {
-        *band == DrawingBand::Price || *band == cvd()
+    fn band_refusal(&self, band: &DrawingBand) -> Option<&'static str> {
+        use quantick_drawings::gesture::{ABSENT_BAND_REFUSAL, COLLAPSED_BAND_REFUSAL};
+        match band {
+            DrawingBand::Price | DrawingBand::AllBands => None,
+            band if *band == cvd() => self.cvd_collapsed.then_some(COLLAPSED_BAND_REFUSAL),
+            _ => Some(ABSENT_BAND_REFUSAL),
+        }
     }
 }
 
@@ -495,6 +503,26 @@ fn a_band_the_pane_does_not_show_is_refused_before_anything_is_placed() {
 }
 
 #[test]
+fn a_collapsed_indicator_pane_refuses_a_call_as_it_refuses_the_hand() {
+    let mut window = FakeWindow::new();
+    window.flow.cvd_collapsed = true;
+    let mut access = FakeAccess::default();
+    let input = quick_range_input(&range_on(Action::Rectangle, cvd()), PaneSide::Flow).unwrap();
+    let error = call(&mut window, &mut access, RECTANGLE_CAPABILITY_ID, input)
+        .expect_err("a collapsed strip has no axis");
+    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+    assert!(
+        error
+            .message
+            .contains(quantick_drawings::gesture::COLLAPSED_BAND_REFUSAL),
+        "{}",
+        error.message
+    );
+    assert!(window.flow.drawings.items().is_empty());
+    assert!(access.events.is_empty());
+}
+
+#[test]
 fn a_price_only_tool_refuses_an_indicator_band_instead_of_reading_cvd_as_price() {
     let mut window = FakeWindow::new();
     let mut access = FakeAccess::default();
@@ -510,4 +538,27 @@ fn a_price_only_tool_refuses_an_indicator_band_instead_of_reading_cvd_as_price()
     assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
     assert!(window.flow.drawings.items().is_empty());
     assert!(access.events.is_empty());
+}
+
+#[test]
+fn a_listed_marks_band_is_the_band_a_call_takes() {
+    let mut window = FakeWindow::new();
+    let mut access = FakeAccess::default();
+    let input = quick_range_input(&range_on(Action::TrendLine, cvd()), PaneSide::Flow).unwrap();
+    call(&mut window, &mut access, TREND_LINE_CAPABILITY_ID, input).expect("placed");
+    // What the drawings snapshot lists for the mark, handed back unchanged.
+    let listed = annotation_band(&window.flow.drawings.items()[0].band).expect("a value band");
+    let mut again = quick_range_input(
+        &range_on(Action::TrendLine, DrawingBand::Price),
+        PaneSide::Flow,
+    )
+    .unwrap();
+    again["band"] = serde_json::to_value(&listed).unwrap();
+    call(&mut window, &mut access, TREND_LINE_CAPABILITY_ID, again).expect("placed again");
+    assert_eq!(window.flow.drawings.items()[1].band, cvd());
+    assert_eq!(
+        annotation_band(&DrawingBand::AllBands),
+        None,
+        "time-only: no axis"
+    );
 }

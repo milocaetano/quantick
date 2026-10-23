@@ -72,7 +72,7 @@ pub(crate) use quick_range::{QUICK_RANGE_HOOKS, QuickRangeLaunch};
 pub(crate) use quick_range::Action as QuickRangeAction;
 pub(crate) use quick_range::{
     ACTION_COUNT as QUICK_RANGE_ACTION_COUNT, ActionUi as QuickRangeActionUi,
-    Control as QuickRangeControl, Owner as QuickRangeOwner,
+    Control as QuickRangeControl, Owner as QuickRangeOwner, QuickRange,
 };
 
 use eframe::egui;

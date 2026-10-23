@@ -570,6 +570,15 @@ impl DrawingTool {
         }
     }
 
+    /// Whether a mark of this tool can keep its values on `band`: the one
+    /// rule an operator's call, the quick range's action bar and a whole
+    /// placement share. A price-only tool holds the price band alone; a
+    /// time-only tool holds every band, since it carries no value to move.
+    #[must_use]
+    pub fn holds_band(self, band: &DrawingBand) -> bool {
+        !self.value_axis() || self.band_for(band) == *band
+    }
+
     #[must_use]
     pub fn default_payload(self) -> Box<dyn DrawingPayload> {
         self.0.default_payload()

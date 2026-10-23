@@ -153,7 +153,8 @@ fn a_right_drag_from_the_pane_divider_raises_no_range() {
     } = cvd_pane();
     let body = pane_body(&app, 0);
     let (_, end) = cvd_leg(&app);
-    let divider = egui::pos2(x_at(&app, 80.5), body.top());
+    // Inside the divider's grab tolerance, on the pane's side of it.
+    let divider = egui::pos2(x_at(&app, 80.5), body.top() + 2.0);
     drag_quick_range(&mut app, &ctx, divider, end);
     assert!(app.drawings.chrome.quick_range.band().is_none());
     assert!(app.drawings.chrome.quick_range.paint_anchors().is_none());
@@ -203,4 +204,150 @@ fn a_call_names_the_cvd_band_and_one_the_pane_lacks_is_refused() {
     let placed = &app.active_tab().flow_pane.drawings.items()[0];
     assert!(on_cvd(Some(&placed.band)));
     assert_eq!(placed.points[0].price, 3_020.0);
+}
+
+fn cvd_slot(app: &QuantickApp) -> crate::indicator_worker::SlotId {
+    app.active_tab().flow_pane.indicators.all()[0].slot
+}
+
+fn cvd_view(app: &mut QuantickApp) -> &mut quantick_chart::indicator_views::IndicatorView {
+    let slot = cvd_slot(app);
+    app.active_tab_mut()
+        .flow_pane
+        .indicators
+        .view_mut(slot)
+        .expect("the CVD view")
+}
+
+#[test]
+fn a_range_goes_with_its_hidden_pane_and_escape_reaches_the_next_layer() {
+    let Pane {
+        ctx,
+        mut app,
+        _commands,
+    } = cvd_pane();
+    let (start, end) = cvd_leg(&app);
+    drag_quick_range(&mut app, &ctx, start, end);
+    assert!(on_cvd(app.drawings.chrome.quick_range.band()));
+    cvd_view(&mut app).hidden = true;
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.drawings.chrome.quick_range.band().is_none(),
+        "the range went with its pane"
+    );
+    app.toolrail.arm(Tool::Crosshair);
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    assert_eq!(
+        app.toolrail.tool(),
+        Tool::Pointer,
+        "Escape is not swallowed by a range nobody can see"
+    );
+    cvd_view(&mut app).hidden = false;
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.drawings.chrome.quick_range.paint_anchors().is_none(),
+        "the range does not come back with the pane"
+    );
+}
+
+#[test]
+fn a_range_goes_when_its_pane_collapses() {
+    let Pane {
+        ctx,
+        mut app,
+        _commands,
+    } = cvd_pane();
+    let (start, end) = cvd_leg(&app);
+    drag_quick_range(&mut app, &ctx, start, end);
+    cvd_view(&mut app).sizing = crate::indicators::PaneSizing::Collapsed;
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.drawings.chrome.quick_range.band().is_none());
+}
+
+#[test]
+fn a_right_drag_at_the_bottom_of_the_candles_measures_price_as_on_main() {
+    let Pane {
+        ctx,
+        mut app,
+        _commands,
+    } = cvd_pane();
+    let divider = pane_body(&app, 0).top();
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_area
+        .expect("the chart was laid out");
+    // Inside the divider's grab tolerance, but on the candles.
+    let start = egui::pos2(x_at(&app, 80.5), divider - 2.0);
+    let end = egui::pos2(x_at(&app, 160.5), chart.center().y);
+    drag_quick_range(&mut app, &ctx, start, end);
+    assert_eq!(
+        app.drawings.chrome.quick_range.band(),
+        Some(&drawings::DrawingBand::Price)
+    );
+    assert!(app.drawings.chrome.quick_range.paint_anchors().is_some());
+}
+
+#[test]
+fn measuring_the_cvd_pane_shows_no_pan_cursor() {
+    let Pane {
+        ctx,
+        mut app,
+        _commands,
+    } = cvd_pane();
+    let (start, end) = cvd_leg(&app);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            super::drawings_tests::secondary_button(start, true),
+        ],
+    );
+    let moving = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    assert!(
+        !matches!(
+            moving.platform_output.cursor_icon,
+            egui::CursorIcon::Grab | egui::CursorIcon::Grabbing
+        ),
+        "{:?}",
+        moving.platform_output.cursor_icon
+    );
+}
+
+#[test]
+fn a_call_on_a_collapsed_cvd_pane_is_refused_as_the_hand_is() {
+    let Pane {
+        ctx,
+        mut app,
+        _commands,
+    } = cvd_pane();
+    cvd_view(&mut app).sizing = crate::indicators::PaneSizing::Collapsed;
+    run_frame(&mut app, &ctx);
+    let mut first = anchor_at_slot(&app, 10);
+    let mut last = anchor_at_slot(&app, 40);
+    first["bar_position"] = serde_json::json!("10.5");
+    last["bar_position"] = serde_json::json!("40.5");
+    first["price"] = serde_json::json!("3020");
+    last["price"] = serde_json::json!("3080");
+    let error = app
+        .control_action(
+            crate::control::TREND_LINE_CAPABILITY_ID,
+            1,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({
+                "anchors": [first, last],
+                "band": {"indicator": {"kind": "test.indicator", "ordinal": 0}},
+            }),
+        )
+        .expect_err("a collapsed strip takes no anchor");
+    assert_eq!(
+        error.code.as_str(),
+        quantick_control::error::codes::CAPABILITY_UNAVAILABLE
+    );
+    assert!(error.message.contains(crate::bands::COLLAPSED_BAND_REFUSAL));
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
 }

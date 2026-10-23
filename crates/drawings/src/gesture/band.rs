@@ -75,16 +75,40 @@ pub fn pane_key(view: &IndicatorView) -> PaneKey {
     }
 }
 
-/// Whether the pane whose indicators are `views` carves `band` right now:
-/// the price band and a time-only object always, an indicator band while
-/// its indicator has a pane of its own — the bands [`band_at`] can find.
+/// Said by a collapsed pane, which has 20 px of strip and no axis to place
+/// an anchor against.
+pub const COLLAPSED_BAND_REFUSAL: &str = "collapsed - click the chevron to draw here";
+/// Said for an indicator band the pane does not carve: hidden, removed, or
+/// never added.
+pub const ABSENT_BAND_REFUSAL: &str = "this chart shows no such indicator pane";
+
+/// Why the pane whose indicators are `views` takes no anchor on `band`
+/// right now; `None` when it does. `collapsed` is the layout's verdict on
+/// each visible pane, top to bottom.
+///
+/// The one rule the window's carve and an operator's call both read, so a
+/// call cannot draw where the hand is refused: the price band and a
+/// time-only object always take one, an indicator band while its indicator
+/// has an expanded pane of its own.
 #[must_use]
-pub fn shows_band(views: &IndicatorViews, band: &DrawingBand) -> bool {
-    match band {
-        DrawingBand::Price | DrawingBand::AllBands => true,
-        DrawingBand::Indicator(key) => views
-            .visible_panes()
-            .any(|view| *view.kind == *key.kind && view.ordinal == key.ordinal),
+pub fn band_refusal(
+    views: &IndicatorViews,
+    collapsed: &[bool],
+    band: &DrawingBand,
+) -> Option<&'static str> {
+    let DrawingBand::Indicator(key) = band else {
+        return None;
+    };
+    match views
+        .visible_panes()
+        .position(|view| *view.kind == *key.kind && view.ordinal == key.ordinal)
+    {
+        None => Some(ABSENT_BAND_REFUSAL),
+        Some(index) => collapsed
+            .get(index)
+            .copied()
+            .unwrap_or(false)
+            .then_some(COLLAPSED_BAND_REFUSAL),
     }
 }
 

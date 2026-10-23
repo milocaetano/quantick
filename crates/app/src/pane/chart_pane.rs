@@ -449,6 +449,15 @@ impl ChartPane {
         )
     }
 
+    /// Why a call takes no anchor on `band`: the last carve's collapse, else the shared rule.
+    /// Warming refuses only the hand; a call brings its own values.
+    pub(crate) fn band_refusal(&self, band: &drawings::DrawingBand) -> Option<&'static str> {
+        let carved = self.frame.bands.iter().find(|carved| carved.key == *band);
+        (carved.and_then(|carved| carved.refusal) == Some(bands::COLLAPSED_BAND_REFUSAL))
+            .then_some(bands::COLLAPSED_BAND_REFUSAL)
+            .or_else(|| quantick_drawings::gesture::band_refusal(&self.indicators, &[], band))
+    }
+
     /// The indicator a gesture on this pane asked to configure, if any, taken so a request is acted
     /// on exactly once.
     pub fn take_settings_request(&mut self) -> Option<SlotId> {

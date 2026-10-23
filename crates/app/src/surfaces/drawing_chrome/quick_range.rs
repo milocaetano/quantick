@@ -5,6 +5,7 @@ use super::{DrawingChromeAsk, DrawingEnv};
 use crate::drawings::{self, ChartPoint, DrawingBand, DrawingPayload, NewDrawing};
 use crate::pane::PaneSide;
 use crate::widgets::{IconButton, TOOLRAIL_ICON};
+use core::PRICE_ONLY_REASON;
 use core::conversion_plan::{
     ConversionInput, ConversionReadback, PendingConversion, PlacementOutcome,
     QuickRangeConversionPlan, StartedConversion,
@@ -24,9 +25,6 @@ pub(crate) use launch::QuickRangeLaunch;
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_COUNT: usize = Action::ALL.len();
 const STALE_REASON_WIDTH_PX: f32 = 180.0;
-/// Why an action is off for a range on a band its tool cannot hold: a
-/// volume profile is price, and a CVD range has none.
-const PRICE_ONLY_REASON: &str = "range_band_price_only";
 
 #[cfg(test)]
 #[path = "quick_range/tests/conversion.rs"]
@@ -105,8 +103,6 @@ pub(crate) struct PendingRangePlacement {
 }
 
 pub(crate) struct Paint<'a> {
-    /// The band the range was pressed on, and is painted in.
-    pub band: &'a DrawingBand,
     pub anchors: [ChartPoint; 2],
     pub style: drawings::DrawingStyle,
     pub payload: &'a dyn DrawingPayload,
@@ -252,14 +248,11 @@ impl QuickRange {
         self.model.band()
     }
 
-    /// Why `action` cannot run on the current range: the range's own phase,
-    /// else a band the action's tool would carry the values off.
-    fn unavailable_reason(&self, view: core::RangeView, action: Action) -> Option<&'static str> {
-        view.unavailable_reason().or_else(|| {
-            let band = self.model.band()?;
-            drawings::DrawingTool::by_id(action.tool_id())
-                .is_some_and(|tool| tool.band_for(band) != *band)
-                .then_some(PRICE_ONLY_REASON)
+    /// Why `action` cannot run on the current range, by the model's rule and
+    /// the tool's own [`drawings::DrawingTool::holds_band`].
+    fn unavailable_reason(&self, action: Action) -> Option<&'static str> {
+        self.model.action_unavailable(|band| {
+            drawings::DrawingTool::by_id(action.tool_id()).is_none_or(|tool| tool.holds_band(band))
         })
     }
 
@@ -287,9 +280,7 @@ impl QuickRange {
     pub fn paint(&self, owner: Owner) -> Option<Paint<'_>> {
         let view = self.model.view()?;
         let look = self.look.as_ref()?;
-        let band = self.model.band()?;
         (view.paintable() && view.context.owner == owner.context().owner).then(|| Paint {
-            band,
             anchors: view.anchors.map(point),
             style: look.style,
             payload: look.payload.as_ref(),
@@ -345,7 +336,7 @@ impl QuickRange {
             return None;
         }
         Some(Action::ALL.map(|action| {
-            let unavailable_reason = self.unavailable_reason(view, action);
+            let unavailable_reason = self.unavailable_reason(action);
             Control {
                 action,
                 rect: self.action_rects[action.index()].expect("checked rectangles"),
@@ -415,7 +406,7 @@ pub(super) fn draw(
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     for (action, tool) in Action::ALL.into_iter().zip(tools.into_iter().flatten()) {
-                        let reason = quick.unavailable_reason(view, action);
+                        let reason = quick.unavailable_reason(action);
                         let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
                             .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
                             .enabled(reason.is_none())

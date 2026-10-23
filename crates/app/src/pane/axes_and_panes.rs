@@ -88,7 +88,8 @@ fn pane_pan_gesture(
     // The secondary drag is the quick range's (`pane/quick_range.rs`), here
     // as on the candles: it measures the pane, it does not pan it.
     let dragged = response.dragged() && !response.dragged_by(egui::PointerButton::Secondary);
-    if primary_free {
+    let measuring = ui.input(|input| input.pointer.secondary_down());
+    if primary_free && !measuring {
         if dragged {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         } else if response.hovered() {

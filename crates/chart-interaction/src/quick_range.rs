@@ -12,6 +12,10 @@ use crate::drawing_model::DrawingBand;
 
 pub mod conversion_plan;
 
+/// Why an action is off for a range on a band its tool cannot hold: a
+/// volume profile is price, and a CVD range has none.
+pub const PRICE_ONLY_REASON: &str = "range_band_price_only";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Profile,
@@ -287,6 +291,18 @@ impl QuickRangeModel {
     /// The band the current range was pressed on, while there is a range.
     pub fn band(&self) -> Option<&DrawingBand> {
         self.present().then_some(&self.band)
+    }
+
+    /// Why an action cannot run on the current range: its phase first, else
+    /// [`PRICE_ONLY_REASON`] when the action's tool cannot hold the range's
+    /// band, as `holds` judges it. `None` with no range, or when it can run.
+    pub fn action_unavailable(
+        &self,
+        holds: impl FnOnce(&DrawingBand) -> bool,
+    ) -> Option<&'static str> {
+        let view = self.view()?;
+        view.unavailable_reason()
+            .or_else(|| (!holds(&self.band)).then_some(PRICE_ONLY_REASON))
     }
 
     pub fn context(&self) -> Option<RangeContext> {

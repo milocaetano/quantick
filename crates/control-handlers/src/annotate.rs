@@ -98,9 +98,10 @@ pub trait AnnotatedPane {
     fn drawings(&self) -> &Drawings<DrawingTool>;
     /// The pane's marks, to fold an intent into.
     fn drawings_mut(&mut self) -> &mut Drawings<DrawingTool>;
-    /// Whether the pane carves `band` right now: always the price band; an
-    /// indicator band while that indicator has a pane of its own.
-    fn shows_band(&self, band: &DrawingBand) -> bool;
+    /// Why the pane takes no anchor on `band` right now, `None` when it
+    /// does: the rule the window's own carve reads
+    /// (`quantick_drawings::gesture::band_refusal`).
+    fn band_refusal(&self, band: &DrawingBand) -> Option<&'static str>;
     /// Let go whatever rode a mark that is gone: a strategy armed on a
     /// removed annotation, the same sweep every removal path makes.
     fn sweep_orphans(&mut self);
@@ -488,27 +489,32 @@ fn resolve_band(
 ) -> Result<DrawingBand, ControlError> {
     let resolved = match band {
         AnnotationBand::Price => DrawingBand::Price,
-        AnnotationBand::Indicator { kind, ordinal } => u8::try_from(*ordinal)
-            .ok()
-            .map(|ordinal| {
-                DrawingBand::Indicator(PaneKey {
-                    kind: kind.as_str().into(),
-                    ordinal,
-                })
-            })
-            .filter(|band| pane.shows_band(band))
-            .ok_or_else(|| {
+        AnnotationBand::Indicator { kind, ordinal } => {
+            let refuse = |reason: &str| {
                 let mut error = capability_unavailable(format!(
-                    "this pane shows no `{kind}` indicator pane with ordinal {ordinal}"
+                    "the `{kind}` indicator pane with ordinal {ordinal} takes no anchor: {reason}"
                 ));
                 error
                     .context
                     .next_steps
                     .push(UNKNOWN_BAND_NEXT_STEP.to_owned());
                 error
-            })?,
+            };
+            let band = u8::try_from(*ordinal)
+                .map(|ordinal| {
+                    DrawingBand::Indicator(PaneKey {
+                        kind: kind.as_str().into(),
+                        ordinal,
+                    })
+                })
+                .map_err(|_| refuse(quantick_drawings::gesture::ABSENT_BAND_REFUSAL))?;
+            if let Some(reason) = pane.band_refusal(&band) {
+                return Err(refuse(reason));
+            }
+            band
+        }
     };
-    if tool.band_for(&resolved) != resolved {
+    if !tool.holds_band(&resolved) {
         return Err(ControlError::invalid_request(format!(
             "`{}` is placed only on the price band; omit `band` or pick another tool",
             tool.name()
@@ -517,16 +523,25 @@ fn resolve_band(
     Ok(resolved)
 }
 
-const UNKNOWN_BAND_NEXT_STEP: &str = "read the pane's indicators snapshot and name a non-overlay, visible indicator by its `kind` and `ordinal`";
+const UNKNOWN_BAND_NEXT_STEP: &str = "read the pane's indicators snapshot and name a non-overlay, visible, expanded indicator by its `kind` and `ordinal`";
 
 /// A mark's band on the wire.
 fn band_dto(band: &DrawingBand) -> AnnotationBand {
+    annotation_band(band).unwrap_or_default()
+}
+
+/// A mark's band in the shape an annotate call takes as `band`, so a listed
+/// drawing's band can be handed straight back. `None` for a time-only mark,
+/// which has no value axis to name.
+#[must_use]
+pub fn annotation_band(band: &DrawingBand) -> Option<AnnotationBand> {
     match band {
-        DrawingBand::Indicator(key) => AnnotationBand::Indicator {
+        DrawingBand::Price => Some(AnnotationBand::Price),
+        DrawingBand::Indicator(key) => Some(AnnotationBand::Indicator {
             kind: key.kind.to_string(),
             ordinal: u32::from(key.ordinal),
-        },
-        DrawingBand::Price | DrawingBand::AllBands => AnnotationBand::Price,
+        }),
+        DrawingBand::AllBands => None,
     }
 }
 
@@ -573,6 +588,13 @@ fn placed_all(
                 failure: PlacementFailure::DraftInProgress,
                 ..
             } => Err(refused(Refusal::DraftInProgress)),
+            DrawingEffect::NotPlaced {
+                failure: PlacementFailure::BandRefused,
+                ..
+            } => Err(ControlError::invalid_request(format!(
+                "`{}` cannot hold that band; omit `band` or pick another tool",
+                tool.name()
+            ))),
             _ => Err(capability_unavailable(format!(
                 "the `{}` tool did not complete from {anchors} anchor(s)",
                 tool.name()
