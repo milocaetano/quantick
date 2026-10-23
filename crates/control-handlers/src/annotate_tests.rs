@@ -423,7 +423,7 @@ fn a_projection_call_takes_two_anchors_or_the_legacy_three() {
         json!({ "anchors": [leg[0], leg[1], origin, origin] }),
     )
     .expect_err("four anchors are no projection");
-    assert!(too_many.message.contains("2 or 3"), "{}", too_many.message);
+    assert_eq!(too_many.code.as_str(), codes::INVALID_REQUEST);
 
     let refused = call(
         &mut window,
