@@ -81,6 +81,8 @@ mod replay_view;
 mod risk_sizing;
 mod scratch;
 mod statusbar;
+#[cfg(any(feature = "scenario-harness", test))]
+mod stress_input;
 mod store_home;
 mod strategy_anchors;
 mod strategy_presets;

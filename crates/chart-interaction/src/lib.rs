@@ -5,6 +5,7 @@ pub mod annotation;
 mod constants;
 pub mod drawing_commands;
 pub mod drawing_model;
+pub mod input_probe;
 pub mod live_trade_plan;
 pub mod quick_range;
 

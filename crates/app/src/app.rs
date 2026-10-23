@@ -743,6 +743,10 @@ impl eframe::App for QuantickApp {
             self.health.cpu_frames.record(cpu * 1000.0);
         }
         self.draw_frame(ctx, Instant::now());
+        #[cfg(any(feature = "scenario-harness", test))]
+        if let Some(stress) = self.chrome.harness.stress_input_mut() {
+            stress.after_frame(&self.tabs[self.tabs.active_index()].flow_pane, Instant::now());
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -812,6 +816,9 @@ impl eframe::App for QuantickApp {
         self.chrome
             .harness
             .push_scripted_pointer(&self.active_tab().flow_pane, raw_input);
+        if let Some(stress) = self.chrome.harness.stress_input_mut() {
+            stress.push_input(&self.tabs[self.tabs.active_index()].flow_pane, raw_input);
+        }
         let Some(pane) = self.chrome.harness.context_menu() else {
             return;
         };
