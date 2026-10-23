@@ -335,3 +335,31 @@ fn a_modifier_press_on_a_side_line_still_rests_the_order() {
         "the side line leaves the press to the aim"
     );
 }
+
+/// A locked, filled zone is not a grip: a drag inside it pans the chart and
+/// leaves the zone where it is. The trader's frozen chart was this zone,
+/// extended across the pane, taking every press.
+#[test]
+fn a_drag_inside_a_locked_filled_rectangle_pans_the_chart() {
+    let (mut app, ctx, _commands) = drawn_rectangle();
+    app.active_tab_mut()
+        .flow_pane
+        .drawings
+        .set_selected_locked(true);
+    let edge = |app: &QuantickApp| {
+        let pane = &app.active_tab().flow_pane;
+        pane.model.viewport.right_edge_bar(pane.slots())
+    };
+    let before = edge(&app);
+    let points = app.active_tab().flow_pane.drawings.items()[0]
+        .points
+        .clone();
+    let inside = egui::pos2((LEFT + RIGHT) / 2.0, MID_Y);
+    drag_chart(&mut app, &ctx, inside, inside + egui::vec2(80.0, 0.0));
+    assert_ne!(edge(&app), before, "the drag pans the chart");
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].points,
+        points,
+        "the locked zone stays put"
+    );
+}
