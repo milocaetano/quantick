@@ -31,9 +31,7 @@ pub use quantick_drawings::gesture::{Band, Bands, band_at, band_of, drawing_in_b
 
 /// What the price band is called where a band has to name itself.
 pub const PRICE_BAND_LABEL: &str = "price";
-/// Said by the cursor over a collapsed pane, which has 20 px of strip and no
-/// axis to place an anchor against.
-pub const COLLAPSED_BAND_REFUSAL: &str = "collapsed - click the chevron to draw here";
+pub use quantick_drawings::gesture::COLLAPSED_BAND_REFUSAL;
 /// Said by a band that has no range yet. An indicator pane already writes
 /// "warming up" across its own centre, so the cursor only has to stop
 /// pretending; the candles say the same thing in their empty-chart notice.
@@ -85,28 +83,33 @@ pub fn carve(
         label: Arc::clone(price_label),
         refusal: (price.range.is_none()).then_some(WARMING_BAND_REFUSAL),
     });
+    let collapsed: [bool; crate::indicators::MAX_PANES] = std::array::from_fn(|i| {
+        areas
+            .indicator_panes
+            .get(i)
+            .is_some_and(|slot| slot.collapsed)
+    });
     for (view, slot) in indicators.visible_panes().zip(&areas.indicator_panes) {
+        let key = DrawingBand::Indicator(pane_key(view));
         let rect = egui::Rect::from_min_max(
             egui::pos2(price.rect.left(), slot.rect.top()),
             egui::pos2(price.rect.right(), slot.rect.bottom()),
         );
         let range = view.last_auto.map(|auto| view.scale.resolve(auto));
+        // A band that cannot honestly place an anchor says so before the
+        // press, through the cursor — never by swallowing a click. The rule
+        // is the one an operator's call reads, so neither draws where the
+        // other is refused.
+        let refusal = quantick_drawings::gesture::band_refusal(indicators, &collapsed, &key)
+            .or_else(|| range.is_none().then_some(WARMING_BAND_REFUSAL));
         out.push(Band {
-            key: DrawingBand::Indicator(pane_key(view)),
+            key,
             rect: px_rect(rect),
             scale: range
                 .filter(|_| !slot.collapsed)
                 .map(|(lo, hi)| PriceScale::from_range(lo, hi, rect.top(), rect.bottom())),
             label: view.label_shared(),
-            // A band that cannot honestly place an anchor says so before the
-            // press, through the cursor — never by swallowing a click.
-            refusal: if slot.collapsed {
-                Some(COLLAPSED_BAND_REFUSAL)
-            } else if range.is_none() {
-                Some(WARMING_BAND_REFUSAL)
-            } else {
-                None
-            },
+            refusal,
         });
     }
 }

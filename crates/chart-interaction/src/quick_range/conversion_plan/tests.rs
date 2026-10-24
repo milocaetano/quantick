@@ -19,6 +19,7 @@ fn dragging(model: &mut QuickRangeModel, context: RangeContext) {
                     max: [100.0; 2],
                 },
             },
+            band: crate::drawing_model::DrawingBand::Price,
         },
         context,
     );
@@ -207,11 +208,12 @@ fn result_before_update_cannot_complete_the_later_request() {
         action: input().action,
         context: input().context,
         anchors: model.view().unwrap().anchors,
+        band: crate::drawing_model::DrawingBand::Price,
     };
     // Seed a real successful completion for the ID the following Update
     // will issue, so DeliverResult calls observe rather than skipping it.
     let mut execution = Execution::new(input());
-    execution.request = Some(expected);
+    execution.request = Some(expected.clone());
     execution.outcome = Some(PlacementOutcome::Placed);
     let StartedConversion::Awaiting(pending) = execution.start(&mut model, &order) else {
         panic!("later update yields its request")

@@ -18,6 +18,11 @@ use crate::{
 pub struct Placement {
     pub tool: DrawingTool,
     pub points: Vec<ChartPoint>,
+    /// The value axis the points' prices are on: the candles', or one
+    /// indicator pane's. A band the tool cannot hold
+    /// ([`DrawingTool::holds_band`]) is refused, never moved: a CVD value
+    /// placed as a price would be a level on the wrong axis.
+    pub band: DrawingBand,
     /// The look the mark opens with, read through the same door a click
     /// reads it: one is enough, the draft asks for it once.
     pub opening: NewDrawing,
@@ -42,6 +47,9 @@ pub enum PlacementFailure {
     /// The trader is mid-gesture: a placement would push its anchor onto
     /// their draft or replace it, so nothing is touched.
     DraftInProgress,
+    /// The tool cannot hold the band asked for: a price-only tool on an
+    /// indicator pane. Nothing is touched.
+    BandRefused,
 }
 
 /// An edit the window asks the drawings to make.
@@ -201,11 +209,15 @@ fn place(
     let Placement {
         tool,
         points,
+        band,
         opening,
         author,
         name,
         text,
     } = placement;
+    if !tool.holds_band(&band) {
+        return Err(PlacementFailure::BandRefused);
+    }
     // A tool that still accepts an older, longer anchor count completes at
     // its new one through the click door; the extra anchors then join the
     // object as they were given, instead of starting a second draft.
@@ -220,7 +232,7 @@ fn place(
     let mut opening = Some(opening);
     let mut completed = false;
     for point in points {
-        completed = store.place_with(tool, &DrawingBand::Price, point, |_| {
+        completed = store.place_with(tool, &band, point, |_| {
             opening.take().expect("one opening look per placement")
         });
     }
@@ -397,6 +409,7 @@ mod tests {
         Placement {
             tool,
             points,
+            band: DrawingBand::Price,
             opening: crate::new_drawing_from_defaults(&crate::NullPresetHost, tool),
             author: Some(DrawingAuthor {
                 actor_kind: "agent".to_owned(),
@@ -405,6 +418,44 @@ mod tests {
             name: None,
             text: None,
         }
+    }
+
+    #[test]
+    fn a_placement_on_a_band_its_tool_cannot_hold_is_refused_not_moved() {
+        let mut store = Drawings::default();
+        let profile = DrawingTool::by_id("fixed-range-profile").expect("registered");
+        let cvd = DrawingBand::Indicator(crate::PaneKey {
+            kind: "native.cvd".into(),
+            ordinal: 0,
+        });
+        let mut on_cvd = placement(
+            profile,
+            vec![ChartPoint::at(1.5, -500.0), ChartPoint::at(4.5, 800.0)],
+        );
+        on_cvd.band = cvd;
+        let effects = update(&mut store, DrawingIntent::Place(on_cvd));
+        assert!(matches!(
+            effects[..],
+            [DrawingEffect::NotPlaced {
+                failure: PlacementFailure::BandRefused,
+                ..
+            }]
+        ));
+        assert!(store.items().is_empty() && store.draft().is_none());
+    }
+
+    #[test]
+    fn holds_band_keeps_time_only_tools_on_every_band_and_price_tools_on_price() {
+        let cvd = DrawingBand::Indicator(crate::PaneKey {
+            kind: "native.cvd".into(),
+            ordinal: 0,
+        });
+        let tool = |id| DrawingTool::by_id(id).expect("registered");
+        assert!(tool("vertical-line").holds_band(&DrawingBand::Price));
+        assert!(tool("vertical-line").holds_band(&cvd));
+        assert!(tool("trend-line").holds_band(&cvd));
+        assert!(tool("fixed-range-profile").holds_band(&DrawingBand::Price));
+        assert!(!tool("fixed-range-profile").holds_band(&cvd));
     }
 
     fn level(price: f64) -> Placement {
@@ -440,6 +491,24 @@ mod tests {
             placed.tool.inline_text(placed.payload.as_ref()),
             Some("watch the bid")
         );
+    }
+
+    #[test]
+    fn a_placement_lands_on_the_indicator_band_it_names() {
+        let cvd = DrawingBand::Indicator(crate::PaneKey {
+            kind: "native.cvd".into(),
+            ordinal: 0,
+        });
+        let mut store = Drawings::default();
+        let mut leg = placement(
+            line(),
+            vec![ChartPoint::at(1.5, -1_250.0), ChartPoint::at(4.5, 830.0)],
+        );
+        leg.band = cvd.clone();
+        let effects = update(&mut store, DrawingIntent::Place(leg));
+        assert!(matches!(effects.as_slice(), [DrawingEffect::Placed { .. }]));
+        assert_eq!(store.items()[0].band, cvd, "a CVD leg stays a CVD leg");
+        assert_eq!(store.items()[0].points[0].price, -1_250.0);
     }
 
     #[test]

@@ -256,6 +256,7 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
                         time_ms: pane.series_read().anchor_time(future),
                     },
                 ],
+                band: crate::drawings::DrawingBand::Price,
             };
             assert!(request.anchors[0].time_ms.is_some());
             assert!(request.anchors[1].time_ms.is_none());
