@@ -556,6 +556,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
                 max: [100.0; 2],
             },
         },
+        crate::drawings::DrawingBand::Price,
     );
     quick.drag(
         owner,

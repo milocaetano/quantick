@@ -532,14 +532,14 @@ impl DrawingController {
         else {
             return;
         };
-        let operation = *request.conversion.request();
+        let operation = request.conversion.request().clone();
         let (tab, side) = (operation.context.owner.tab, request.side);
         let points = operation
             .anchors
             .map(|anchor| drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms));
         let seeded = drawings::DrawingTool::by_id(operation.action.tool_id()).filter(|tool| {
             let opening = drawings::new_drawing_from_defaults(&self.presets, *tool);
-            host.seed_draft(tab, side, *tool, &points, opening)
+            host.seed_draft(tab, side, *tool, &operation.band, &points, opening)
         });
         let outcome = PlacementOutcome::of(seeded.is_some());
         let readback = self

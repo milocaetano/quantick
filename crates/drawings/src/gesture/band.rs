@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use quantick_chart::indicator_views::{IndicatorView, MAX_PANES};
+use quantick_chart::indicator_views::{IndicatorView, IndicatorViews, MAX_PANES};
 use smallvec::SmallVec;
 
 use super::Mark;
@@ -73,6 +73,59 @@ pub fn pane_key(view: &IndicatorView) -> PaneKey {
         kind: Arc::clone(&view.kind),
         ordinal: view.ordinal,
     }
+}
+
+/// Said by a collapsed pane, which has 20 px of strip and no axis to place
+/// an anchor against.
+pub const COLLAPSED_BAND_REFUSAL: &str = "collapsed - click the chevron to draw here";
+/// Said for an indicator band the pane does not carve: hidden, removed, or
+/// never added.
+pub const ABSENT_BAND_REFUSAL: &str = "this chart shows no such indicator pane";
+
+/// Why the pane whose indicators are `views` takes no anchor on `band`
+/// right now; `None` when it does. `collapsed` is the layout's verdict on
+/// each visible pane, top to bottom.
+///
+/// The one rule the window's carve and an operator's call both read, so a
+/// call cannot draw where the hand is refused: the price band and a
+/// time-only object always take one, an indicator band while its indicator
+/// has an expanded pane of its own.
+#[must_use]
+pub fn band_refusal(
+    views: &IndicatorViews,
+    collapsed: &[bool],
+    band: &DrawingBand,
+) -> Option<&'static str> {
+    let DrawingBand::Indicator(key) = band else {
+        return None;
+    };
+    match views
+        .visible_panes()
+        .position(|view| *view.kind == *key.kind && view.ordinal == key.ordinal)
+    {
+        None => Some(ABSENT_BAND_REFUSAL),
+        Some(index) => collapsed
+            .get(index)
+            .copied()
+            .unwrap_or(false)
+            .then_some(COLLAPSED_BAND_REFUSAL),
+    }
+}
+
+/// The carved band an anchor named by `key` goes on: refused when the pane
+/// is not carved or is collapsed, `Ok(None)` while it is still warming up.
+pub fn asked_band<'a>(
+    bands: &'a [Band],
+    key: &DrawingBand,
+) -> Result<Option<&'a Band>, &'static str> {
+    let band = bands
+        .iter()
+        .find(|band| band.key == *key)
+        .ok_or(ABSENT_BAND_REFUSAL)?;
+    if band.refusal == Some(COLLAPSED_BAND_REFUSAL) {
+        return Err(COLLAPSED_BAND_REFUSAL);
+    }
+    Ok(band.scale.is_some().then_some(band))
 }
 
 /// The band under a pointer, drawable or not — a refusing band still owns its

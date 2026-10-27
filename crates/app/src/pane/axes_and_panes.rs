@@ -85,15 +85,19 @@ fn pane_pan_gesture(
 ) -> (PaneGesture, egui::Response) {
     let ScaleView { view, auto } = scale;
     let response = ui.interact(body, id, egui::Sense::click_and_drag());
-    if primary_free {
-        if response.dragged() {
+    // The secondary drag is the quick range's (`pane/quick_range.rs`), here
+    // as on the candles: it measures the pane, it does not pan it.
+    let dragged = response.dragged() && !response.dragged_by(egui::PointerButton::Secondary);
+    let measuring = ui.input(|input| input.pointer.secondary_down());
+    if primary_free && !measuring {
+        if dragged {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         } else if response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
     }
     let mut gesture = PaneGesture::default();
-    if primary_free && response.dragged() {
+    if primary_free && dragged {
         gesture.pan_x = response.drag_delta().x;
     }
     if response.hovered() {
@@ -107,7 +111,7 @@ fn pane_pan_gesture(
             primary_free,
             drag: [
                 0.0,
-                if response.dragged() {
+                if dragged {
                     response.drag_delta().y
                 } else {
                     0.0
