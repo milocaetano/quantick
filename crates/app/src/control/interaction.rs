@@ -257,6 +257,7 @@ fn drawing_selection(
         label: format!("{} {}", drawing.tool.name(), index + 1),
         user_label_present: drawing.name.is_some(),
         band: drawing_band(&drawing.band),
+        annotation_band: quantick_control_handlers::annotate::annotation_band(&drawing.band),
         scope: match drawing.scope {
             DrawingScope::ThisChart => "this_chart",
             DrawingScope::AllCharts => "all_charts",

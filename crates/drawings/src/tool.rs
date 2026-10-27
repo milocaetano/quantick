@@ -49,6 +49,13 @@ pub trait MarkTool: Sync {
     }
     fn hover_text(&self) -> &'static str;
     fn required_points(&self) -> usize;
+    /// Whether an object of this tool may hold `count` anchors. A new
+    /// object always completes at [`Self::required_points`]; a tool whose
+    /// gesture changed answers `true` for the older count too, so what was
+    /// saved or sent in that shape still loads and places unchanged.
+    fn accepts_points(&self, count: usize) -> bool {
+        count == self.required_points()
+    }
     /// What the *next* click will do, with `placed` anchors already down.
     ///
     /// A multi-anchor tool that stops following the pointer looks broken:
@@ -570,6 +577,15 @@ impl DrawingTool {
         }
     }
 
+    /// Whether a mark of this tool can keep its values on `band`: the one
+    /// rule an operator's call, the quick range's action bar and a whole
+    /// placement share. A price-only tool holds the price band alone; a
+    /// time-only tool holds every band, since it carries no value to move.
+    #[must_use]
+    pub fn holds_band(self, band: &DrawingBand) -> bool {
+        !self.value_axis() || self.band_for(band) == *band
+    }
+
     #[must_use]
     pub fn default_payload(self) -> Box<dyn DrawingPayload> {
         self.0.default_payload()
@@ -603,6 +619,11 @@ impl DrawingTool {
     #[must_use]
     pub fn required_points(self) -> usize {
         self.0.required_points()
+    }
+
+    #[must_use]
+    pub fn accepts_points(self, count: usize) -> bool {
+        self.0.accepts_points(count)
     }
 
     #[must_use]

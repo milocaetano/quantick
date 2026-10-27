@@ -1352,13 +1352,11 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
     for (index, row) in rows.iter().enumerate() {
         let payload = match row.capability {
             "annotate.label.create" => json!({ "anchors": [anchors[1].clone()], "text": "k" }),
-            "annotate.fib_projection.create" => {
-                json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[1].clone()] })
-            }
             "annotate.arrow.create"
             | "annotate.zone.create"
             | "annotate.fixed_range_profile.create" => json!({ "anchors": anchors }),
             "annotate.fib_retracement.create"
+            | "annotate.fib_projection.create"
             | "annotate.rectangle.create"
             | "annotate.trend_line.create"
             | "annotate.horizontal_levels.create" => json!({ "anchors": fib_anchors }),

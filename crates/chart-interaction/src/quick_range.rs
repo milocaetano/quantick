@@ -2,8 +2,19 @@
 //!
 //! All coordinates, owner facts and revisions are supplied by the caller.
 //! Updates allocate nothing; drawing construction happens only through effects.
+//!
+//! A range lives on one band: the value axis the press landed on, the
+//! candles' price or one indicator pane's own values. The band rides the
+//! range into its placement request, so the drawing it becomes lands where
+//! it was measured and never reads a CVD value as a price.
+
+use crate::drawing_model::{DrawingBand, PaneKey};
 
 pub mod conversion_plan;
+
+/// Why an action is off for a range on a band its tool cannot hold: a
+/// volume profile is price, and a CVD range has none.
+pub const PRICE_ONLY_REASON: &str = "range_band_price_only";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -66,6 +77,48 @@ impl Action {
     /// instead of a finished drawing.
     pub fn arms_placement(self) -> bool {
         self == Self::Channel
+    }
+}
+
+/// A staged range as a harness asks for one:
+/// `<active|ready|future>[@<indicator kind>[:<ordinal>]]`, `1` aliasing
+/// `ready`. Without `@` the range is on the candles; the ordinal defaults
+/// to 0.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DemoRequest {
+    /// The drag is released, so the action bar shows.
+    pub ready: bool,
+    /// The leg ends past the newest bar.
+    pub future: bool,
+    pub band: DrawingBand,
+}
+
+impl DemoRequest {
+    /// `None` for anything the grammar does not name.
+    pub fn parse(value: &str) -> Option<Self> {
+        let (mode, band) = match value.split_once('@') {
+            Some((mode, band)) => (mode, Some(band)),
+            None => (value, None),
+        };
+        let (ready, future) = match mode {
+            "active" => (false, false),
+            "1" | "ready" => (true, false),
+            "future" => (true, true),
+            _ => return None,
+        };
+        let band = match band.map(|band| band.split_once(':').unwrap_or((band, "0"))) {
+            None => DrawingBand::Price,
+            Some(("", _)) => return None,
+            Some((kind, ordinal)) => DrawingBand::Indicator(PaneKey {
+                kind: kind.into(),
+                ordinal: ordinal.parse().ok()?,
+            }),
+        };
+        Some(Self {
+            ready,
+            future,
+            band,
+        })
     }
 }
 
@@ -194,20 +247,25 @@ impl RangeView {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlaceRequest {
     pub id: u64,
     pub action: Action,
     pub context: RangeContext,
     pub anchors: [Anchor; 2],
+    /// The band the range was measured on: the drawing's value axis.
+    pub band: DrawingBand,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Press {
         position: [f32; 2],
         anchor: Anchor,
         eligibility: GestureEligibility,
+        /// The drawable band under the press. The caller resolves every later
+        /// drag position through this same band; a range never crosses bands.
+        band: DrawingBand,
     },
     Drag {
         position: [f32; 2],
@@ -231,13 +289,13 @@ pub enum Event {
     Refused(u64),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Place(PlaceRequest),
     ExplainRefusal,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Transition {
     /// The renderer may now construct the ruler's opening style/payload once.
     pub opened: bool,
@@ -261,6 +319,8 @@ enum State {
 #[derive(Default)]
 pub struct QuickRangeModel {
     state: State,
+    /// The band of the current range; meaningful only while one is present.
+    band: DrawingBand,
     next_request: u64,
     selection: Option<Selection>,
 }
@@ -268,6 +328,23 @@ pub struct QuickRangeModel {
 impl QuickRangeModel {
     pub fn present(&self) -> bool {
         !matches!(self.state, State::Idle)
+    }
+
+    /// The band the current range was pressed on, while there is a range.
+    pub fn band(&self) -> Option<&DrawingBand> {
+        self.present().then_some(&self.band)
+    }
+
+    /// Why an action cannot run on the current range: its phase first, else
+    /// [`PRICE_ONLY_REASON`] when the action's tool cannot hold the range's
+    /// band, as `holds` judges it. `None` with no range, or when it can run.
+    pub fn action_unavailable(
+        &self,
+        holds: impl FnOnce(&DrawingBand) -> bool,
+    ) -> Option<&'static str> {
+        let view = self.view()?;
+        view.unavailable_reason()
+            .or_else(|| (!holds(&self.band)).then_some(PRICE_ONLY_REASON))
     }
 
     pub fn context(&self) -> Option<RangeContext> {
@@ -330,12 +407,14 @@ impl QuickRangeModel {
                 position,
                 anchor,
                 eligibility,
+                band,
             } if eligibility.permits(position) && anchor.valid() => {
                 self.state = State::Pressed {
                     context,
                     position,
                     anchor,
                 };
+                self.band = band;
             }
             Command::Drag {
                 position,
@@ -400,6 +479,7 @@ impl QuickRangeModel {
                         action,
                         context,
                         anchors: view.anchors,
+                        band: self.band.clone(),
                     }));
                     view.phase = Phase::Pending(id);
                 }

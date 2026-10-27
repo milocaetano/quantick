@@ -140,6 +140,29 @@ pub struct ChartAnnotationAnchor {
     pub price: CanonicalDecimal,
 }
 
+/// Which value axis of the pane an annotation's anchor prices are read on.
+/// Omitted: the candles' price axis, so every call written before indicator
+/// bands existed means what it always meant.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum AnnotationBand {
+    /// The candles' price axis.
+    #[default]
+    Price,
+    /// One indicator pane's own value axis, named by the `kind` and `ordinal`
+    /// the pane's indicators snapshot reports (`native.cvd`, `0`). Anchor
+    /// `price` is then that indicator's value: a CVD level, not a price.
+    Indicator { kind: String, ordinal: u32 },
+}
+
+impl AnnotationBand {
+    /// The default, which the wire leaves out.
+    #[must_use]
+    pub fn is_price(&self) -> bool {
+        *self == Self::Price
+    }
+}
+
 /// Ranged drawings share this future-aware input; the selected tool still
 /// owns whether exactly two or three anchors complete it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -157,6 +180,10 @@ pub struct ChartAnnotationInput {
     /// this pane's current series and active layout before anything is placed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chart_reference: Option<ChartReference>,
+    /// The value axis the anchors' prices are on. Omitted: the price band.
+    /// An indicator band must be an indicator pane the target pane shows.
+    #[serde(default, skip_serializing_if = "AnnotationBand::is_price")]
+    pub band: AnnotationBand,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -188,6 +215,9 @@ pub struct ChartAnnotationResult {
     pub anchors: Vec<ChartResolvedAnchor>,
     pub author: AnnotationAuthor,
     pub label: String,
+    /// The band the object landed on. Omitted: the price band.
+    #[serde(default, skip_serializing_if = "AnnotationBand::is_price")]
+    pub band: AnnotationBand,
 }
 
 /// One call that places several objects, in placement order.
@@ -480,5 +510,38 @@ mod tests {
                 .get("chart_reference")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn an_omitted_band_is_the_price_band_and_is_never_written() {
+        let anchors = serde_json::json!([
+            {"bar_position": "1.5", "price": "12"},
+            {"bar_position": "4.5", "price": "-3"}
+        ]);
+        let legacy: ChartAnnotationInput =
+            serde_json::from_value(serde_json::json!({"anchors": anchors})).unwrap();
+        assert_eq!(legacy.band, AnnotationBand::Price);
+        assert!(serde_json::to_value(&legacy).unwrap().get("band").is_none());
+        let cvd = serde_json::json!({
+            "anchors": anchors,
+            "band": {"indicator": {"kind": "native.cvd", "ordinal": 0}},
+        });
+        let input: ChartAnnotationInput = serde_json::from_value(cvd.clone()).unwrap();
+        assert_eq!(
+            input.band,
+            AnnotationBand::Indicator {
+                kind: "native.cvd".to_owned(),
+                ordinal: 0
+            }
+        );
+        assert_eq!(serde_json::to_value(&input).unwrap(), cvd, "round trip");
+        let explicit = serde_json::json!({"anchors": anchors, "band": "price"});
+        let input: ChartAnnotationInput = serde_json::from_value(explicit).unwrap();
+        assert!(input.band.is_price());
+        let stray = serde_json::json!({
+            "anchors": anchors,
+            "band": {"indicator": {"kind": "native.cvd", "ordinal": 0, "slot": 4}},
+        });
+        assert!(serde_json::from_value::<ChartAnnotationInput>(stray).is_err());
     }
 }

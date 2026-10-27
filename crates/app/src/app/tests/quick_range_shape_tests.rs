@@ -335,6 +335,7 @@ fn fail_on_the_second_line(app: &mut QuantickApp) {
         Placement {
             tool,
             points: vec![crate::drawings::ChartPoint::at_time(1.5, 100.0, None)],
+            band: crate::drawings::DrawingBand::Price,
             opening: app.tab_reads().new_drawing(tool),
             author: None,
             name: None,

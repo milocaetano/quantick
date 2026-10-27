@@ -71,6 +71,9 @@ impl AnnotatedPane for ChartPane {
     fn sweep_orphans(&mut self) {
         self.strategies.sweep_orphans(&self.drawings);
     }
+    fn band_refusal(&self, band: &drawings::DrawingBand) -> Option<&'static str> {
+        ChartPane::band_refusal(self, band)
+    }
 }
 
 impl AnnotateAccess for ControlAccess {

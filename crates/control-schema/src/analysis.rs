@@ -225,6 +225,12 @@ pub struct DrawingSnapshot {
     pub tool_id: String,
     /// The value axis the anchors were placed against.
     pub band: String,
+    /// The same band in the shape an `annotate.*.create` call takes as
+    /// `band`, so a listed mark's band can be handed straight back; absent for
+    /// a time-only mark, which has no value axis. Optional in the schema only
+    /// so v1 readers stay compatible.
+    #[serde(default)]
+    pub annotation_band: Option<quantick_control::annotation::AnnotationBand>,
     /// `this_chart` or `all_charts` — whether the tab's other panes show it.
     pub scope: String,
     pub locked: bool,

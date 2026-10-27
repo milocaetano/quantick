@@ -22,7 +22,7 @@ const ACTIONS: [(Action, &str, u32, usize); 6] = [
         Action::Projection,
         crate::control::FIB_PROJECTION_CAPABILITY_ID,
         1,
-        3,
+        2,
     ),
     (
         Action::Rectangle,
@@ -256,6 +256,7 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
                         time_ms: pane.series_read().anchor_time(future),
                     },
                 ],
+                band: crate::drawings::DrawingBand::Price,
             };
             assert!(request.anchors[0].time_ms.is_some());
             assert!(request.anchors[1].time_ms.is_none());
