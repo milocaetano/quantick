@@ -361,7 +361,9 @@ impl PaneGestures {
                     handle,
                 };
             }
-        } else if let Some(PressTarget::Body { index, .. }) = target {
+        } else if let Some(PressTarget::Body { index, .. }) = target
+            && !projection.locked_fill_only(drawings, index, position, band, history_right, total)
+        {
             drawings.select(Some(index));
             if !drawings.items()[index].locked {
                 drawings.begin_gesture();
@@ -1028,8 +1030,9 @@ mod tests {
         });
     }
 
-    /// A press on a locked rectangle, body or handle, selects it but does not
-    /// take the gesture: the chart pans under the drag and the geometry stays.
+    /// A press on a locked rectangle, body or handle, does not take the
+    /// gesture: the chart pans under the drag and the geometry stays. A press
+    /// on a stroke selects it; one off every stroke is the chart's alone.
     #[test]
     fn a_locked_rectangle_is_selected_and_its_drag_left_to_the_chart() {
         with_projection(|projection, bands| {
@@ -1044,7 +1047,8 @@ mod tests {
                 pointer.pressed = true;
                 let press = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
                 assert!(!press.consumed, "{from:?}");
-                assert_eq!(store.selected(), Some(0));
+                let selected = (from == rect.min).then_some(0);
+                assert_eq!(store.selected(), selected, "{from:?}");
                 pointer.pressed = false;
                 pointer.position = Some(from + crate::vec2(40.0, 25.0));
                 let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
@@ -1408,6 +1412,60 @@ mod tests {
                 moved.right() < rect.right() - 20.0,
                 "{moved:?} from {rect:?}"
             );
+        });
+    }
+
+    /// A locked, filled zone leaves its inside to the chart: a drag there
+    /// pans (the press is not consumed and nothing moves) and a click still
+    /// selects it, while a press on its border selects it and still pans.
+    #[test]
+    fn a_locked_fill_leaves_the_press_to_the_chart_and_its_border_selects() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 14;
+            store.items_mut()[0].locked = true;
+            let inside = rect.center();
+            assert_eq!(hover(&mut store, projection, bands, inside), None);
+
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(inside, bands);
+            pointer.pressed = true;
+            let press = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert!(!press.consumed, "the chart owns a press on a locked fill");
+            pointer.pressed = false;
+            pointer.position = Some(crate::pos2(inside.x + 40.0, inside.y));
+            let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert!(!drag.consumed, "the drag pans the chart");
+            assert_eq!(
+                drawn_rect(&store, projection, bands),
+                rect,
+                "locked never moves"
+            );
+            pointer.down = false;
+            pointer.released = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert_eq!(store.selected(), None, "a drag selects nothing");
+
+            let mut gestures = PaneGestures::default();
+            press_and_release(
+                &mut gestures,
+                &mut store,
+                projection,
+                (bands, inside),
+                Hand::PLAIN,
+            );
+            assert_eq!(store.selected(), Some(0), "a click still selects it");
+
+            store.select(None);
+            let border = crate::pos2(rect.left(), rect.center().y);
+            assert_eq!(hover(&mut store, projection, bands, border), None);
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(border, bands);
+            pointer.pressed = true;
+            let press = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert!(!press.consumed, "the border leaves the drag to the chart");
+            assert_eq!(store.selected(), Some(0), "the border press selects");
+            assert!(!gestures.drag.is_active());
         });
     }
 

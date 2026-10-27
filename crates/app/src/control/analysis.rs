@@ -333,6 +333,7 @@ fn drawing_snapshot(drawing: &Drawing) -> DrawingSnapshot {
         drawing_id: WireU64::new(drawing.id.0),
         tool_id: drawing.tool.id().to_owned(),
         band: drawing_band_name(&drawing.band).to_owned(),
+        annotation_band: quantick_control_handlers::annotate::annotation_band(&drawing.band),
         scope: match drawing.scope {
             DrawingScope::ThisChart => "this_chart",
             DrawingScope::AllCharts => "all_charts",

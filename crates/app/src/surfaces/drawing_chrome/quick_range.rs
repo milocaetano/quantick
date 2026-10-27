@@ -2,9 +2,10 @@
 //! Only toolkit geometry, ruler appearance and feature-gated demo setup live here.
 
 use super::{DrawingChromeAsk, DrawingEnv};
-use crate::drawings::{self, ChartPoint, DrawingPayload, NewDrawing};
+use crate::drawings::{self, ChartPoint, DrawingBand, DrawingPayload, NewDrawing};
 use crate::pane::PaneSide;
 use crate::widgets::{IconButton, TOOLRAIL_ICON};
+use core::PRICE_ONLY_REASON;
 use core::conversion_plan::{
     ConversionInput, ConversionReadback, PendingConversion, PlacementOutcome,
     QuickRangeConversionPlan, StartedConversion,
@@ -130,7 +131,7 @@ pub(crate) struct QuickRange {
     geometry: Option<Geometry>,
     action_rects: [Option<egui::Rect>; ACTION_COUNT],
     #[cfg(any(feature = "quick-range-harness", test))]
-    demo_requested: Option<(bool, bool)>,
+    demo_requested: Option<core::DemoRequest>,
     #[cfg(any(feature = "quick-range-harness", test))]
     pending_launch: Option<QuickRangeLaunch>,
 }
@@ -197,12 +198,14 @@ impl QuickRange {
         position: egui::Pos2,
         value: ChartPoint,
         eligibility: core::GestureEligibility,
+        band: DrawingBand,
     ) {
         self.model.update(
             Command::Press {
                 position: [position.x, position.y],
                 anchor: anchor(value),
                 eligibility,
+                band,
             },
             owner.context(),
         );
@@ -238,6 +241,19 @@ impl QuickRange {
 
     pub fn held(&self) -> bool {
         self.model.held()
+    }
+
+    /// The band the current range was pressed on.
+    pub fn band(&self) -> Option<&DrawingBand> {
+        self.model.band()
+    }
+
+    /// Why `action` cannot run on the current range, by the model's rule and
+    /// the tool's own [`drawings::DrawingTool::holds_band`].
+    fn unavailable_reason(&self, action: Action) -> Option<&'static str> {
+        self.model.action_unavailable(|band| {
+            drawings::DrawingTool::by_id(action.tool_id()).is_none_or(|tool| tool.holds_band(band))
+        })
     }
 
     pub fn release(&mut self, owner: Owner) {
@@ -319,11 +335,14 @@ impl QuickRange {
         {
             return None;
         }
-        Some(Action::ALL.map(|action| Control {
-            action,
-            rect: self.action_rects[action.index()].expect("checked rectangles"),
-            enabled: view.actionable(),
-            unavailable_reason: view.unavailable_reason(),
+        Some(Action::ALL.map(|action| {
+            let unavailable_reason = self.unavailable_reason(action);
+            Control {
+                action,
+                rect: self.action_rects[action.index()].expect("checked rectangles"),
+                enabled: unavailable_reason.is_none(),
+                unavailable_reason,
+            }
         }))
     }
 
@@ -387,10 +406,15 @@ pub(super) fn draw(
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     for (action, tool) in Action::ALL.into_iter().zip(tools.into_iter().flatten()) {
+                        let reason = quick.unavailable_reason(action);
                         let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
                             .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
-                            .enabled(view.actionable())
-                            .disabled_explanation("The chart changed. Draw the range again.")
+                            .enabled(reason.is_none())
+                            .disabled_explanation(if reason == Some(PRICE_ONLY_REASON) {
+                                "This tool reads price. Draw the range on the candles."
+                            } else {
+                                "The chart changed. Draw the range again."
+                            })
                             .hover_text(action.label())
                             .show(ui);
                         action_rects[action.index()] = Some(response.rect);

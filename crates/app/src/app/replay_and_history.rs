@@ -204,10 +204,14 @@ impl Harness {
         ))
     }
 
-    /// Deliver the parked pointer, every frame it is parked.
-    pub(crate) fn push_scripted_pointer(&self, flow: &ChartPane, raw_input: &mut egui::RawInput) {
+    /// Deliver the parked pointer, every frame it is parked, and the stress
+    /// run's scripted hand when `QUANTICK_STRESS_INPUT` armed one.
+    pub(crate) fn push_scripted_input(&mut self, flow: &ChartPane, raw_input: &mut egui::RawInput) {
         if let Some(position) = self.scripted_pointer_pos(flow) {
             raw_input.events.push(egui::Event::PointerMoved(position));
+        }
+        if let Some(stress) = self.stress_input.as_mut() {
+            stress.drive(flow, raw_input);
         }
     }
 

@@ -415,6 +415,8 @@ pub(crate) struct Harness {
     /// cannot page at all and the button never takes a press. Without this the
     /// whole surface is invisible to anything but a bad afternoon.
     history_note: Option<Budgeted<CampaignEnd>>,
+    /// `QUANTICK_STRESS_INPUT`: the stress run's scripted hand, if armed.
+    pub(crate) stress_input: Option<crate::stress_input::StressInput>,
 }
 
 impl Harness {
@@ -508,6 +510,8 @@ impl Harness {
                     frames: LOAD_OLDER_CANDLES_HOOK_FRAMES,
                 }),
             history_note: read("QUANTICK_HISTORY_NOTE").and_then(parse_history_note),
+            stress_input: read("QUANTICK_STRESS_INPUT")
+                .and_then(|value| crate::stress_input::StressInput::from_env_value(&value)),
         }
     }
 
@@ -941,6 +945,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_POINTER",
     "QUANTICK_REPLAY_RESTART_AFTER",
     "QUANTICK_STRATEGY_DEMO",
+    "QUANTICK_STRESS_INPUT",
     "QUANTICK_VENUE_HISTORY_DEMO",
 ];
 

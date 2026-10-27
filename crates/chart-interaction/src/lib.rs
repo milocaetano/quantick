@@ -5,8 +5,11 @@ pub mod annotation;
 mod constants;
 pub mod drawing_commands;
 pub mod drawing_model;
+pub mod frame_stats;
+pub mod input_probe;
 pub mod live_trade_plan;
 pub mod quick_range;
+pub mod scripted_hand;
 
 #[cfg(test)]
 mod tests;

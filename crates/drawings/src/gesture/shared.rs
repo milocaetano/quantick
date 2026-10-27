@@ -213,7 +213,7 @@ impl DrawingProjection<'_> {
                 .iter()
                 .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
                 .collect();
-            let ctxt = DrawContext {
+            let mut ctxt = DrawContext {
                 payload: drawing.payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
@@ -249,7 +249,14 @@ impl DrawingProjection<'_> {
                     .tool
                     .hit_test(band.rect, &points, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
             {
-                body = Some((index, None));
+                // A locked mark's fill is no grip on the mirror either: only
+                // its strokes take the press, or a locked zone mirrored across
+                // the pane would hold every press on the chart.
+                if !drawing.locked
+                    || super::projection::strokes_hit(drawing, band.rect, &points, pos, &mut ctxt)
+                {
+                    body = Some((index, None));
+                }
             }
         }
         body
