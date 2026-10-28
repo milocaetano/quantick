@@ -237,14 +237,15 @@ fn precise_profile_locked_selection_leaves_hidden_handle_space_to_the_chart() {
         before
     );
     assert!(target(&app, 120.0, 106.0).x < reference.x - 20.0);
-    // The actual painted body still owns the blocked gesture on a locked object.
+    // The painted body of a locked object leaves its drag to the chart too.
     let body = target(&app, 100.0, 100.5);
     let reference = target(&app, 120.0, 106.0);
     let hover = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(body)]);
-    assert_eq!(
+    assert_ne!(
         hover.platform_output.cursor_icon,
         egui::CursorIcon::NotAllowed
     );
+    assert_ne!(hover.platform_output.cursor_icon, egui::CursorIcon::Move);
     drag_sized(
         &mut app,
         &ctx,
@@ -252,7 +253,7 @@ fn precise_profile_locked_selection_leaves_hidden_handle_space_to_the_chart() {
         body,
         body - egui::vec2(40.0, 0.0),
     );
-    assert_eq!(target(&app, 120.0, 106.0), reference);
+    assert!(target(&app, 120.0, 106.0).x < reference.x - 10.0);
     assert_eq!(
         app.active_tab().flow_pane.drawings.items()[0].points,
         before

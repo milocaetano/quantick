@@ -134,14 +134,14 @@ def test_the_partial_flag_reaches_the_wire():
     term = FakeTerminal(38_723, NOW)
     bridge = load_bridge(term)
 
-    whole = session_for(bridge, term)
+    whole = session_at(bridge, term, NOW)
     whole.price = lambda v: f"{v:.2f}"
     whole.send_rates()
     ends = [m for m in whole.sent if m["type"] == "rates_end"]
     check("a whole block sends one rates_end", len(ends) == 1, ends)
     check("a whole block omits the flag", "partial" not in ends[0], ends[0])
 
-    clipped = session_for(bridge, term, rates_max_bars=100)
+    clipped = session_at(bridge, term, NOW, rates_max_bars=100)
     clipped.price = lambda v: f"{v:.2f}"
     clipped.send_rates()
     ends = [m for m in clipped.sent if m["type"] == "rates_end"]
@@ -153,7 +153,7 @@ def test_the_partial_flag_reaches_the_wire():
 def test_a_total_failure_still_delivers_the_empty_pair():
     term = FakeTerminal(1_000, NOW, maxbars=10)  # refuses even the minimum page
     bridge = load_bridge(term)
-    session = session_for(bridge, term)
+    session = session_at(bridge, term, NOW)
     session.price = lambda v: f"{v:.2f}"
     session.send_rates()
     kinds = [m["type"] for m in session.sent]
@@ -185,7 +185,7 @@ def test_the_daily_block_walks_d1_and_tags_its_interval():
         ]
 
     sys.modules["MetaTrader5"].copy_rates_from = d1
-    session = session_for(bridge, term, rates_daily_years=5)
+    session = session_at(bridge, term, NOW, rates_daily_years=5)
     session.price = lambda v: f"{v:.2f}"
     session.offset_s = 0
     session.send_daily_rates()

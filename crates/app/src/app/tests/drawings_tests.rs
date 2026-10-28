@@ -4338,14 +4338,14 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
         before,
         "locked geometry must not move"
     );
-    assert_eq!(
+    assert_ne!(
         app.active_tab()
             .flow_pane
             .model
             .viewport
             .right_edge_bar(app.active_tab().flow_pane.slots()),
         viewport_before,
-        "the blocked gesture still belongs to the drawing - the chart must not pan"
+        "a drag on a locked drawing is the chart's pan"
     );
 
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);

@@ -132,8 +132,9 @@ pub enum DrawingDrag {
         drawing_index: usize,
         handle: usize,
     },
-    /// The press landed on a locked drawing: the gesture belongs to the
-    /// object (the chart must not pan) but the geometry stays put.
+    /// A move whose grabbed drawing lost the selection mid-drag: the gesture
+    /// still belongs to the object (the chart must not pan) but the geometry
+    /// stays put.
     Blocked,
 }
 
