@@ -20,12 +20,10 @@ need; read it whole only for an inventory or coverage audit:
 grep -i 'heatmap\|book' .claude/skills/ui-harness/references/hook-registry.md
 ```
 
-Registry rows are generated from `declare_hooks!` beside each read and
-`docs/ui-harness/hook-prose.md`. Either a read without prose or prose without
-a read fails `cargo test -p quantick-guards`. Edit the prose, then run
-`cargo run -p quantick-app --features harness -- --dump-hook-registry`;
-never hand-edit the registry. *Declared in* locates each hook; launch hooks
-run in `crates/app/src/app/launch_hooks.rs` in its documented order.
+Rows come from `declare_hooks!` and `docs/ui-harness/hook-prose.md`; guards
+require both. Edit prose only; regenerate with
+`cargo run -p quantick-app --features harness -- --dump-hook-registry`.
+*Declared in* locates hooks; `app/launch_hooks.rs` documents launch order.
 
 **Hooks require a harness feature.** `--features harness` enables all four
 families (`scenario-`, `control-`, `drawing-`, `quick-range-harness`). Default

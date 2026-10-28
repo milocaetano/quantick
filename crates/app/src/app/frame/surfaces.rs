@@ -108,9 +108,28 @@ pub(super) fn draw_surfaces(
     // collapsed pane is focus on nothing.
     let focused_side = focused_tab.focused_side();
     let focused_pane = focused_tab.pane(focused_side);
+    let picker_indicators: Vec<_> = if staging || registry.indicator_picker.state.target.is_some() {
+        focused_pane
+            .indicators
+            .all()
+            .iter()
+            .map(|view| crate::toolbar::IndicatorMenuEntry {
+                slot: view.slot.0,
+                label: view.label().to_owned(),
+                hidden: view.hidden,
+                errored: view.error.is_some(),
+                stale: view.stale.is_some(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut asks = registry.draw_all(
         ctx,
         &SurfaceEnv {
+            picker_pane_id: focused_pane.id,
+            picker_indicators: &picker_indicators,
+            picker_scripts: indicators.script_library.entries(),
             bookmarks: workspace.session().bookmarks(),
             now,
             indicator_preview_area: indicator_preview_area(

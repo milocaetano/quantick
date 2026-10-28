@@ -44,6 +44,12 @@ pub(crate) struct SchemaDocument {
 
 pub(crate) fn documents() -> Vec<SchemaDocument> {
     let mut documents = vec![
+        document::<quantick_control_schema::indicator_picker::PickerInput>(
+            "indicator-picker-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::indicator_picker::PickerResult>(
+            "indicator-picker-result-v1.schema.json",
+        ),
         document::<EmptyInput>("observer-empty-input-v1.schema.json"),
         document::<SnapshotReadInput>("observer-snapshot-read-input-v1.schema.json"),
         document::<ChartWindowInput>("observer-chart-window-input-v1.schema.json"),

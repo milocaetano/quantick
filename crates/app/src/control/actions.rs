@@ -95,6 +95,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::drawing_magnet::register_object(&mut registry)?;
     super::chart_settings::register(&mut registry)?;
     super::indicator_guide::register(&mut registry)?;
+    super::indicator_picker::register(&mut registry)?;
     super::script::register(&mut registry)?;
     super::trade::register(&mut registry)?;
     Ok(registry)

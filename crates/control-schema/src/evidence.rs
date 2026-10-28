@@ -480,6 +480,7 @@ pub fn recent_events(
 /// - `text` — the words on a label, inside an annotation payload.
 /// - `label` — what an object is *called*: `Drawing::display_label` returns
 ///   the name the trader gave it, and the annotate events carry it as `label`.
+/// - `query` ? the search words in `indicator.picker.changed`.
 /// - `name`, `title` — a script's own name and an indicator's, inside the
 ///   `indicator.script.*` payloads.
 ///
@@ -487,7 +488,8 @@ pub fn recent_events(
 /// here, because nothing else can find prose in a free-form payload — and the
 /// day one is forgotten is the day a bundle carries the trader's words while
 /// its coverage says it does not.
-pub const USER_PROSE_PAYLOAD_KEYS: &[&str] = &["note", "message", "text", "label", "name", "title"];
+pub const USER_PROSE_PAYLOAD_KEYS: &[&str] =
+    &["note", "message", "text", "label", "name", "title", "query"];
 
 /// Take the operator's own words out of the events a bundle carries.
 ///
@@ -1111,6 +1113,51 @@ mod tests {
         // And everything that is not prose is untouched.
         assert_eq!(payload["target"]["pane_id"], "3");
         assert_eq!(payload["annotation"]["tool_id"], "text");
+    }
+
+    #[test]
+    fn picker_event_bundle_redacts_search_and_script_names_preserving_navigation() {
+        use crate::indicator_picker::{PickerAction, PickerInput};
+        use quantick_stores::{
+            indicator_picker::Picker,
+            script_library::{ScriptEntry, ScriptOrigin},
+        };
+        let scripts =
+            ["Private setup alpha.pine", "Private setup beta.pine"].map(|name| ScriptEntry {
+                name: name.into(),
+                origin: ScriptOrigin::Embedded(""),
+            });
+        let mut picker = Picker::default();
+        picker.open((7, 19));
+        let result = crate::indicator_picker::apply(
+            &mut picker,
+            &scripts,
+            (7, 19),
+            PickerInput {
+                operation: PickerAction::Search {
+                    query: "Private setup".into(),
+                    category: "scripts".into(),
+                },
+                offset: 0,
+                limit: 1,
+            },
+        )
+        .unwrap();
+        // This is the exact nested payload emitted by the picker control handler.
+        let mut payload = json!({"indicator_picker": result});
+        redact_prose_value(&mut payload);
+        let state = &payload["indicator_picker"];
+        assert_eq!(state["query"]["redacted"], true);
+        assert_eq!(state["entries"][0]["name"]["redacted"], true);
+        assert!(!payload.to_string().contains("Private setup"));
+        assert_eq!(state["open"], true);
+        assert_eq!(state["tab_id"], "7");
+        assert_eq!(state["pane_id"], "19");
+        assert_eq!(state["category"], "scripts");
+        assert_eq!(state["entries"][0]["id"], "script.0");
+        assert_eq!(state["entries"][0]["category"], "scripts");
+        assert_eq!(state["total"], 2);
+        assert_eq!(state["next_offset"], 1);
     }
 
     /// Every bundle embeds the build identity, so every bundle needs its scope.
