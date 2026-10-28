@@ -257,8 +257,7 @@ impl Dock {
 
     /// Draw the strip and, when a tab is open, its body panel.
     pub fn draw(&mut self, ctx: &egui::Context, env: &mut DockEnv) -> DockResponse {
-        // A click on a chart leg flips the switch this dock's ticket shows,
-        // so it is saved and fanned out as a pick on the switch is.
+        // A chart-leg click flips this ticket's switch: saved and fanned out like a pick.
         let mut response = DockResponse {
             risk_settings_changed: env.paper.take_pnl_flip(),
             ..DockResponse::default()
