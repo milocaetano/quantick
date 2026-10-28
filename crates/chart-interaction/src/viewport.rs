@@ -142,6 +142,14 @@ impl Viewport {
         self.right_bar.is_none()
     }
 
+    /// One number that changes when the trader moves the view and stays put
+    /// while new bars carry a live edge along: the zoom and the taken edge.
+    #[must_use]
+    pub fn gesture_fingerprint(&self) -> u64 {
+        let edge = self.right_bar.map_or(u32::MAX, f32::to_bits);
+        (u64::from(self.px_per_bar.to_bits()) << 32) | u64::from(edge)
+    }
+
     /// Zoom by a multiplicative factor: `> 1` widens the candles (zoom in),
     /// `< 1` narrows them (zoom out). Anchored to the right edge — the newest
     /// bar stays put.

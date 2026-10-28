@@ -194,7 +194,7 @@ impl Execution {
                 Stage::YieldEffect if self.request.is_some() => return true,
                 Stage::YieldEffect => {}
                 Stage::DeliverResult => {
-                    if let (Some(request), Some(outcome)) = (self.request, self.outcome) {
+                    if let (Some(request), Some(outcome)) = (&self.request, self.outcome) {
                         let event = if outcome == PlacementOutcome::Placed {
                             Event::Completed(request.id)
                         } else {

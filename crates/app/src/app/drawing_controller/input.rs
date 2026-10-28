@@ -358,6 +358,9 @@ impl DrawingController {
             // Every armed instance just lost its drawing at once; sweep them
             // now so no resting bot order outlives its badge.
             if deleted > 0 {
+                // Logged, so a toast nobody remembers asking for has a time
+                // to line up against the rest of the session.
+                tracing::info!(target: "quantick::app", event_code = "DRAWINGS_DELETED_ALL", deleted, "all drawings deleted");
                 effects.note_with_undo("All drawings deleted.", now);
             }
         }
@@ -529,14 +532,14 @@ impl DrawingController {
         else {
             return;
         };
-        let operation = *request.conversion.request();
+        let operation = request.conversion.request().clone();
         let (tab, side) = (operation.context.owner.tab, request.side);
         let points = operation
             .anchors
             .map(|anchor| drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms));
         let seeded = drawings::DrawingTool::by_id(operation.action.tool_id()).filter(|tool| {
             let opening = drawings::new_drawing_from_defaults(&self.presets, *tool);
-            host.seed_draft(tab, side, *tool, &points, opening)
+            host.seed_draft(tab, side, *tool, &operation.band, &points, opening)
         });
         let outcome = PlacementOutcome::of(seeded.is_some());
         let readback = self

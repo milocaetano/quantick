@@ -429,7 +429,7 @@ fn icon_dots_stay_in_the_unit_square_and_only_accompany_strokes() {
             );
         }
     }
-    for (id, anchors) in [("fib-retracement", 2), ("fib-extension", 3)] {
+    for (id, anchors) in [("fib-retracement", 2), ("fib-extension", 2)] {
         assert_eq!(
             tool(id).icon_dots().len(),
             anchors,

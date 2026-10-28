@@ -809,9 +809,8 @@ impl eframe::App for QuantickApp {
         // down with it: the capture showed no compass, no crosshair and no
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
-        self.chrome
-            .harness
-            .push_scripted_pointer(&self.active_tab().flow_pane, raw_input);
+        let flow = &self.tabs[self.tabs.active_index()].flow_pane;
+        self.chrome.harness.push_scripted_input(flow, raw_input);
         let Some(pane) = self.chrome.harness.context_menu() else {
             return;
         };

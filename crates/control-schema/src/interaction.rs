@@ -124,6 +124,12 @@ pub struct DrawingSelectionSnapshot {
     pub label: String,
     pub user_label_present: bool,
     pub band: String,
+    /// The same band in the shape an `annotate.*.create` call takes as
+    /// `band`, so a listed mark's band can be handed straight back; absent for
+    /// a time-only mark, which has no value axis. Optional in the schema only
+    /// so v1 readers stay compatible.
+    #[serde(default)]
+    pub annotation_band: Option<quantick_control::annotation::AnnotationBand>,
     pub scope: String,
     pub locked: bool,
     pub hidden: bool,
