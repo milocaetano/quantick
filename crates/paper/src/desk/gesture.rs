@@ -125,10 +125,8 @@ pub struct ArmedPlacement {
 pub enum CursorHint {
     /// A painted control, or anywhere a real aim is up.
     PointingHand,
-    /// A line a drag moves, or an entry line a drag grows a leg from.
+    /// A line a drag moves.
     ResizeVertical,
-    /// A fully bracketed entry line: history, it never moves.
-    NotAllowed,
 }
 
 /// Everything the input pass needs from the frame, in plain values. The
@@ -225,6 +223,11 @@ pub enum ChartCommand {
         armed: ArmedPlacement,
         raw_price: f64,
     },
+    /// A click that never became a drag, on the position's line or on a
+    /// protective leg: lead every readout with the other figure, money or
+    /// points. The P&L switch the ticket shows, flipped where the trader is
+    /// looking.
+    FlipPnl,
 }
 
 /// What one input pass decided: whether paper trading owns the gesture this
@@ -252,6 +255,13 @@ pub struct Gesture {
     pub drag: PaperDrag,
     /// Where the hand is holding it, as a raw price.
     pub drag_price: Option<f64>,
+    /// Where the press that took the line landed, in pixels; `None` once
+    /// the pointer has travelled far enough to be a drag. A release while
+    /// it still stands is a click, not a move.
+    pub press_y: Option<f32>,
+    /// Whether last frame's held keys were aiming. The release of the aim
+    /// is what puts the ruler away: its distance was for that one trade.
+    pub aim_held: bool,
     /// This frame's cmd preview — input computes, paint reads, one
     /// geometry both sides.
     pub cmd_preview: Option<CmdPreview>,
@@ -287,6 +297,8 @@ impl Default for Gesture {
         Self {
             drag: PaperDrag::None,
             drag_price: None,
+            press_y: None,
+            aim_held: false,
             cmd_preview: None,
             open_tags: Vec::new(),
             layer_visible: true,
@@ -311,6 +323,7 @@ impl Gesture {
     /// there was one.
     pub fn drop_drag(&mut self) -> bool {
         self.drag_price = None;
+        self.press_y = None;
         std::mem::take(&mut self.drag) != PaperDrag::None
     }
 
@@ -615,12 +628,12 @@ impl Gesture {
     }
 
     /// The cursor that announces what is under the pointer (audit M3/M4):
-    /// a pointing hand over a painted control, vertical-resize over a
-    /// draggable order/stop/target line and over an entry line with a
-    /// missing bracket leg (dragging away from it creates that leg),
-    /// not-allowed over a fully bracketed entry — the average entry itself
-    /// is history and never moves. `None` away from everything, so the
-    /// caller falls through to the drawings' own cursors.
+    /// a pointing hand over a painted control and over the position's entry
+    /// line, where a click flips money and points (the entry itself is
+    /// history and never moves; a pull from it still grows a missing leg),
+    /// vertical-resize over a draggable order/stop/target line. `None` away
+    /// from everything, so the caller falls through to the drawings' own
+    /// cursors.
     #[must_use]
     pub fn hover_cursor(
         &self,
@@ -643,11 +656,10 @@ impl Gesture {
             return Some(CursorHint::PointingHand);
         }
         match line_at(account, pointer, axis)? {
-            PaperDrag::Blocked => Some(CursorHint::NotAllowed),
-            PaperDrag::Leg { .. }
-            | PaperDrag::Rung { .. }
-            | PaperDrag::Order(_)
-            | PaperDrag::CreatePending => Some(CursorHint::ResizeVertical),
+            PaperDrag::Blocked | PaperDrag::CreatePending => Some(CursorHint::PointingHand),
+            PaperDrag::Leg { .. } | PaperDrag::Rung { .. } | PaperDrag::Order(_) => {
+                Some(CursorHint::ResizeVertical)
+            }
             PaperDrag::None | PaperDrag::CreateLeg { .. } => None,
         }
     }

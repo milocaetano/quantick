@@ -1136,12 +1136,21 @@ fn pressing_the_wheel_puts_the_ruler_away() {
         "and the aim is bare again"
     );
 
-    // With no aim up the press is nobody's business here.
+    // Letting go of the aim puts the distance away: it was for that trade.
     for _ in 0..2 {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
     }
     let mut bare = ruler_frame(chart, &scale, aim, 0.0);
     bare.modifiers = egui::Modifiers::default();
+    paper.handle_chart_input(&bare);
+    assert_eq!(
+        paper.desk.ruler.notches, 0,
+        "the aim let go spends the ruler"
+    );
+
+    // With no aim up the press is nobody's business here, even over a
+    // ruler a second operator set by name.
+    paper.set_ruler_ticks(2);
     bare.middle_pressed = true;
     paper.handle_chart_input(&bare);
     assert_eq!(paper.desk.ruler.notches, 2, "no aim, no claim on the press");
@@ -1497,8 +1506,8 @@ fn hover_cursors_announce_draggable_and_creatable_lines() {
     );
     assert_eq!(
         paper.hover_cursor(egui::pos2(400.0, 200.0), chart, &scale),
-        Some(egui::CursorIcon::ResizeVertical),
-        "the entry at 100 offers the missing take profit by drag"
+        Some(egui::CursorIcon::PointingHand),
+        "the entry at 100 is a click that flips money and points; a pull still grows the take profit"
     );
     assert_eq!(
         paper.hover_cursor(egui::pos2(400.0, 40.0), chart, &scale),
@@ -2055,7 +2064,7 @@ fn a_bracket_leg_tag_is_a_pill_until_the_pointer_reaches_it() {
 
     let opened = frame_at(&mut paper, 300.0);
     assert!(
-        opened.contains(&format!("#{id} SL 90 -5 pts × 1 · on fill")),
+        opened.contains(&format!("#{id} SL -5 pts × 1 · on fill")),
         "reaching for it states the leg whole: {opened}"
     );
     assert!(opened.contains("\"×\""), "…and offers the clear: {opened}");
@@ -2581,8 +2590,8 @@ fn a_fully_bracketed_entry_line_blocks_the_gesture_but_never_moves() {
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     assert_eq!(
         paper.hover_cursor(egui::pos2(400.0, 200.0), chart, &scale),
-        Some(egui::CursorIcon::NotAllowed),
-        "both legs exist, so their own lines are the handles"
+        Some(egui::CursorIcon::PointingHand),
+        "both legs exist, so the entry is a click: it flips money and points"
     );
     // Grabbing the entry still consumes the gesture (the chart must not
     // pan under it) but repositions nothing.

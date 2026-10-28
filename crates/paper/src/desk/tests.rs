@@ -21,7 +21,7 @@ use super::geometry::{
     dodged_chip_y, tag_band,
 };
 use super::gesture::{ArmedPlacement, ChartCommand, ChartFrame, CursorHint, PaperDrag};
-use super::leg_tag::{LegPaint, leg_tag_text};
+use super::leg_tag::{AimLeg, LegPaint, aim_leg_text, leg_tag_text};
 use super::ruler::{RULER_MAX_NOTCHES, Ruler};
 use super::ticket::{
     ENTRY_FACE_MAX_CHARS, Ticket, entry_face, entry_label, offset_price, parse_offset,
@@ -1076,11 +1076,11 @@ fn a_leg_tag_says_what_it_is_and_what_it_is_worth() {
     );
     assert_eq!(
         leg_tag_text(&paint, stop, true, false, pnl),
-        "SL 95 -5 pts × 1"
+        "SL -5 pts × 1"
     );
     assert_eq!(
         leg_tag_text(&paint, stop, true, true, pnl),
-        "SL 95 -5 pts × 1 · R:R 2"
+        "SL -5 pts × 1 · R:R 2"
     );
     paint.owner = BracketTarget::Order(OrderId(3));
     paint.pending = true;
@@ -1090,7 +1090,7 @@ fn a_leg_tag_says_what_it_is_and_what_it_is_worth() {
     );
     assert_eq!(
         leg_tag_text(&paint, stop, true, false, pnl),
-        "#3 SL 95 -5 pts × 1 · on fill"
+        "#3 SL -5 pts × 1 · on fill"
     );
 }
 
@@ -1302,5 +1302,173 @@ fn the_panes_chrome_stands_every_paper_press_down() {
         off.command,
         Some(ChartCommand::CancelOrder(first)),
         "off the chrome the same ✕ cancels"
+    );
+}
+
+/// WIN's money, a point at 0.20 BRL, read with money leading.
+fn win_reader_parts() -> (InstrumentBook, PnlSettings) {
+    let declared: InstrumentBook = [(
+        "WINV26".to_owned(),
+        InstrumentMoney {
+            point_value: Decimal::new(20, 2),
+            size_step: Decimal::ONE,
+            min_size: Decimal::ONE,
+            max_size: None,
+            currency: Currency::new("BRL").expect("BRL"),
+            source: MoneySource::Declared,
+        },
+    )]
+    .into_iter()
+    .collect();
+    let settings = PnlSettings {
+        chosen: Some(PnlPrimary::Money),
+        ..PnlSettings::default()
+    };
+    (declared, settings)
+}
+
+/// The aim's chips say what each leg is worth if the order fills and the
+/// leg is hit, money and points both, and never the price the gutter chip
+/// already shows - the trader's own B3 numbers from the request.
+#[test]
+fn the_aim_says_what_each_leg_is_worth_and_never_its_price() {
+    let (declared, settings) = win_reader_parts();
+    let reader = PnlReader {
+        book: PnlBook::declared_only(&declared),
+        settings: &settings,
+    };
+    let pnl = reader.of("WINV26");
+    let aim = |leg, level: i64, quantity: Option<i64>| AimLeg {
+        leg,
+        side: Side::Buy,
+        entry: Decimal::from(209_755),
+        level: Decimal::from(level),
+        quantity: quantity.map(Decimal::from),
+    };
+    assert_eq!(
+        aim_leg_text(&aim(Leg::TakeProfit, 210_215, Some(1)), None, true, pnl),
+        "TP +92.00 BRL · +460 pts × 1 · 1:1"
+    );
+    assert_eq!(
+        aim_leg_text(&aim(Leg::StopLoss, 209_295, Some(1)), None, true, pnl),
+        "SL -92.00 BRL · -460 pts × 1 · 1:1"
+    );
+    assert_eq!(
+        aim_leg_text(
+            &aim(Leg::TakeProfit, 210_215, Some(2)),
+            Some("2"),
+            false,
+            pnl
+        ),
+        "TP +184.00 BRL · +460 pts × 2 · 2",
+        "a rung is worth its own slice, and names it"
+    );
+    assert_eq!(
+        aim_leg_text(&aim(Leg::TakeProfit, 210_215, None), None, true, pnl),
+        "TP · 1:1",
+        "no size to read, no worth to invent"
+    );
+}
+
+/// A frame where the primary button is held at `pointer`, or let go there.
+fn held(pointer: Point, down: bool, released: bool) -> ChartFrame {
+    ChartFrame {
+        primary_down: down,
+        primary_released: released,
+        ..frame(pointer, false, false)
+    }
+}
+
+/// A click that never travels, on the position's line or on a leg, flips
+/// money and points; a pull from the same line still makes a leg, and the
+/// entry line offers the hand, not a refusal.
+#[test]
+fn a_click_on_the_position_or_a_leg_flips_money_and_points() {
+    let dir = ScratchDir::new("desk-flip");
+    let mut account = marked_account(&dir);
+    let mut desk = Desk::default();
+    account.place_intent(quantick_trading::OrderIntent::market(
+        Side::Buy,
+        Decimal::ONE,
+    ));
+    account.on_trade(&print(1, 100));
+    let entry = Point::new(400.0, 200.0);
+    assert_eq!(
+        desk.gesture
+            .hover_cursor(&account, entry, chart(), &LinearAxis),
+        Some(CursorHint::PointingHand)
+    );
+
+    let before = account.pnl_primary();
+    desk.handle_input(&account, &frame(entry, false, true), Some(&LinearAxis));
+    let click = desk.handle_input(&account, &held(entry, false, true), Some(&LinearAxis));
+    assert_eq!(click.command, Some(ChartCommand::FlipPnl));
+    desk.carry_out(&mut account, ChartCommand::FlipPnl)
+        .expect("a flip has nothing to refuse");
+    assert_ne!(account.pnl_primary(), before, "the leading figure flipped");
+    assert!(desk.take_pnl_flip(), "the host is told to save it");
+    assert!(!desk.take_pnl_flip(), "once");
+
+    // The same press, pulled: a take profit is born, nothing flips.
+    let target = Point::new(400.0, 150.0);
+    desk.handle_input(&account, &frame(entry, false, true), Some(&LinearAxis));
+    desk.handle_input(&account, &held(target, true, false), Some(&LinearAxis));
+    let pulled = desk.handle_input(&account, &held(target, false, true), Some(&LinearAxis));
+    let Some(
+        command @ ChartCommand::AmendLeg {
+            leg: Leg::TakeProfit,
+            ..
+        },
+    ) = pulled.command
+    else {
+        panic!("a pull makes a leg, not a flip: {:?}", pulled.command);
+    };
+    desk.carry_out(&mut account, command).expect("a leg takes");
+
+    // A click on the leg it made flips back.
+    desk.handle_input(&account, &frame(target, false, true), Some(&LinearAxis));
+    let click = desk.handle_input(&account, &held(target, false, true), Some(&LinearAxis));
+    assert_eq!(click.command, Some(ChartCommand::FlipPnl));
+    desk.carry_out(&mut account, ChartCommand::FlipPnl)
+        .expect("a flip has nothing to refuse");
+    assert_eq!(account.pnl_primary(), before, "and back");
+}
+
+/// The wheel's distance is for one trade: the order it was rolled for
+/// carries it, and the next order - or the aim let go - starts bare.
+#[test]
+fn the_wheel_distance_is_spent_by_one_trade() {
+    let dir = ScratchDir::new("desk-ruler-spent");
+    let mut account = marked_account(&dir);
+    let mut desk = Desk::default();
+    let at = Point::new(400.0, 250.0);
+    let mut rolled = frame(at, true, false);
+    rolled.scroll_y = 40.0;
+
+    desk.handle_input(&account, &rolled, Some(&LinearAxis));
+    assert_eq!(desk.ruler.notches, 1);
+    desk.handle_input(&account, &frame(at, false, false), Some(&LinearAxis));
+    assert_eq!(desk.ruler.notches, 0, "letting go of the aim puts it away");
+
+    desk.handle_input(&account, &rolled, Some(&LinearAxis));
+    let pressed = desk.handle_input(&account, &frame(at, true, true), Some(&LinearAxis));
+    let command = pressed.command.expect("the aimed click places");
+    desk.carry_out(&mut account, command)
+        .expect("the default ticket has no offsets to refuse");
+    let order = account.working_orders()[0].clone();
+    assert!(
+        order
+            .bracket
+            .parts()
+            .next()
+            .is_some_and(|part| part.stop_loss.is_some()),
+        "the order it was rolled for carries the pair"
+    );
+    assert_eq!(desk.ruler.notches, 0, "and spends it");
+    assert_eq!(
+        desk.account_env(&account, Side::Buy, Decimal::from(100))
+            .ruler_levels,
+        None,
+        "a market press after it rests bare"
     );
 }

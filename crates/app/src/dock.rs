@@ -257,7 +257,11 @@ impl Dock {
 
     /// Draw the strip and, when a tab is open, its body panel.
     pub fn draw(&mut self, ctx: &egui::Context, env: &mut DockEnv) -> DockResponse {
-        let mut response = DockResponse::default();
+        // A chart-leg click flips this ticket's switch: saved and fanned out like a pick.
+        let mut response = DockResponse {
+            risk_settings_changed: env.paper.take_pnl_flip(),
+            ..DockResponse::default()
+        };
         if !self.visible {
             return response;
         }

@@ -276,6 +276,10 @@ pub struct CmdPreview {
     /// click - a preview that promised one bracket while the order took
     /// another is the worst bug this surface can have.
     pub bracket: Bracket,
+    /// The size this click would send: the risk per trade's, else the
+    /// typed field; `None` while the field does not parse. The label and the
+    /// legs' worth both read it, so they can never name two sizes.
+    pub quantity: Option<Decimal>,
     /// How many ticks the ruler stands at; zero means it is not in use.
     pub ruler_ticks: u32,
 }

@@ -100,11 +100,10 @@ impl PaperTrading {
         if self.account.report.clear_selected_trade() {
             return true;
         }
-        // The ruler is the *last* layer, not the first. It is a standing
-        // preference rather than a gesture left half-finished, and putting
-        // it in front shadowed the two things Escape was already for: a
-        // trader with an order armed presses Escape to disarm it, and must
-        // not lose their distance instead.
+        // The ruler is the *last* layer, not the first: putting it in front
+        // shadowed the two things Escape was already for. A trader with an
+        // order armed presses Escape to disarm it, and must not lose the
+        // distance rolled for the trade in hand instead.
         self.clear_ruler()
     }
 
@@ -170,7 +169,6 @@ impl PaperTrading {
             .map(|hint| match hint {
                 CursorHint::PointingHand => egui::CursorIcon::PointingHand,
                 CursorHint::ResizeVertical => egui::CursorIcon::ResizeVertical,
-                CursorHint::NotAllowed => egui::CursorIcon::NotAllowed,
             })
     }
 
