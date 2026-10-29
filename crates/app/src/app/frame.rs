@@ -280,7 +280,7 @@ impl QuantickApp {
             }
             FrameStage::Tail => {
                 if let Some(tail) = tail.take() {
-                    self.run_frame_tail(ctx, now, scratch, spawn, tail);
+                    self.run_frame_tail(ctx, now, &scratch.canvas, spawn, tail);
                 }
             }
             // Live feed: keep polling the channel ~60×/s without busy-spinning.
@@ -639,11 +639,11 @@ impl QuantickApp {
         &mut self,
         ctx: &egui::Context,
         now: Instant,
-        scratch: &FrameScratch,
+        answers: &canvas::CanvasAnswers,
         spawn: &mut crate::tab::LiveFeedSpawn<'_>,
         stages: impl IntoIterator<Item = FrameTailStage>,
     ) {
-        let answers = &scratch.canvas;
+        let presented = self.presentation.resolve(&self.runtime, ctx).is_ok();
         super::frame_tail::FrameTailOwners {
             tabs: &mut self.runtime.tabs,
             config: &self.config,
@@ -653,7 +653,7 @@ impl QuantickApp {
         }
         .execute(
             super::frame_tail::FrameTailInput {
-                ctx,
+                presentation: presented.then_some(ctx),
                 now,
                 tz: self.runtime.tz,
                 notice_action: answers.notice_action,

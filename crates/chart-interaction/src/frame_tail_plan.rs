@@ -23,6 +23,16 @@ declare_stages! {
     }
 }
 
+impl FrameTailStage {
+    /// Painting and canvas answers require the bound native presentation.
+    pub const fn needs_presentation(self) -> bool {
+        match self {
+            Self::DrawPaperReport | Self::PublishFeedPopup => true,
+            Self::ApplyNoticeAction | Self::SettlePaperPanels => false,
+        }
+    }
+}
+
 #[cfg(test)]
 type StageDescriptor = StageNode<FrameTailStage>;
 

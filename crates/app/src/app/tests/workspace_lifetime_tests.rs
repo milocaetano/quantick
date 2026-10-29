@@ -156,6 +156,88 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
 }
 
 #[test]
+fn workspace_lifetime_rebind_keeps_report_and_popup_while_unpresented_tail_settles() {
+    let ctx = egui::Context::default();
+    pin_frame_clock(&ctx);
+    let (mut app, _commands) = app_with_history(50);
+    let scratch = crate::scratch::ScratchDir::new("workspace-tail-rebind");
+    let paper = &mut app.active_tab_mut().paper;
+    paper.redirect_history_dir(scratch.path().to_path_buf());
+    paper.seed(&frame_tail_tests::print(0, 100));
+    paper.market(quantick_engine::Side::Buy);
+    paper.on_trade(&frame_tail_tests::print(1, 100));
+    paper.on_trade(&frame_tail_tests::print(2, 105));
+    let (report, env) = paper.report_parts();
+    report.open(&env);
+    app.active_tab_mut().notice =
+        FeedNotice::attention("Fixture transport is paused", "Choose how to recover.");
+    let tab = app.runtime.tabs.active_id();
+    app.chrome.feed_popup_tab = Some(tab);
+    for _ in 0..3 {
+        native_frame(&mut app, &ctx, egui::ViewportId::ROOT);
+    }
+    settle_workers(&mut app);
+    let before = native_frame(&mut app, &ctx, egui::ViewportId::ROOT);
+    assert!(painted_text_center(&before, "Simulated performance").is_some());
+    assert!(painted_text_center(&before, "Reload").is_some());
+    let chip = app.chrome.feed_chip_rect.expect("visible feed chip");
+    app.active_tab_mut().paper.on_timeline_reset();
+    assert!(
+        app.active_tab()
+            .paper
+            .report_state()
+            .snapshot()
+            .unwrap()
+            .rows
+            .is_empty(),
+        "the pending journal hint has not settled into the open report"
+    );
+    let destination = egui::ViewportId::from_hash_of("tail-destination");
+    app.presentation.rebind(&app.runtime, destination).unwrap();
+    for _ in 0..2 {
+        let old = native_frame(&mut app, &ctx, egui::ViewportId::ROOT);
+        assert!(old.shapes.is_empty(), "the old native view must not paint");
+        assert_eq!(app.chrome.feed_popup_tab, Some(tab));
+        assert_eq!(app.chrome.feed_chip_rect, Some(chip));
+        let report = app.active_tab().paper.report_state();
+        assert!(report.is_open());
+        assert!(
+            report.snapshot().is_none(),
+            "settlement reloads history and invalidates the previous painted view"
+        );
+        assert!(
+            !app.active_tab_mut()
+                .paper
+                .account_mut()
+                .take_journal_changed()
+        );
+    }
+    // A destination can need its own sizing pass before the window paints text.
+    native_frame(&mut app, &ctx, destination);
+    let rebound = native_frame(&mut app, &ctx, destination);
+    assert!(painted_text_center(&rebound, "Simulated performance").is_some());
+    assert!(painted_text_center(&rebound, "Reload").is_some());
+    assert_eq!(app.chrome.feed_popup_tab, Some(tab));
+    assert_eq!(
+        app.active_tab()
+            .paper
+            .report_state()
+            .snapshot()
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        quantick_paper::report::load_history(scratch.path(), Some("TESTUSDT"), &[])
+            .rows
+            .len(),
+        1,
+        "presentation changes never journal another close"
+    );
+}
+
+#[test]
 fn workspace_lifetime_refuses_foreign_missing_and_replaced_targets_before_detach() {
     let (mut app, _events, _commands, _book) = test_app();
     app.attach_script(

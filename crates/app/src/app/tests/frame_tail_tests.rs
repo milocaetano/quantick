@@ -415,7 +415,7 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
             }
             .execute(
                 super::super::frame_tail::FrameTailInput {
-                    ctx,
+                    presentation: Some(ctx),
                     now: Instant::now(),
                     tz: app.runtime.tz,
                     notice_action: feed_notice::NoticeAction::None,
