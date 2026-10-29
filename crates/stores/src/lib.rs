@@ -29,6 +29,7 @@ pub mod footprint_presets;
 pub mod home;
 pub mod indicator_presets;
 pub mod indicator_state;
+pub mod layouts;
 pub mod paths;
 #[cfg(test)]
 mod scratch;
@@ -36,3 +37,5 @@ pub mod script_library;
 pub mod symbol_catalog;
 pub mod symbols_file;
 pub mod ui_state;
+
+pub mod indicator_picker;

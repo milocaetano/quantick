@@ -30,8 +30,9 @@ pub(crate) mod control_host;
 #[cfg(test)]
 pub(crate) use control_host::control_quick_range;
 pub(crate) use control_host::{
-    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
-    PaperPort, RecordingPort, ScriptsPort, TabsMutPort, TabsPort, ToolRailPort,
+    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, IndicatorPickerPort,
+    LayersPort, LayoutPort, PaperPort, RecordingPort, ScriptsPort, TabsMutPort, TabsPort,
+    ToolRailPort,
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
@@ -799,9 +800,8 @@ impl eframe::App for QuantickApp {
         // down with it: the capture showed no compass, no crosshair and no
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
-        self.chrome
-            .harness
-            .push_scripted_pointer(&self.active_tab().flow_pane, raw_input);
+        let flow = &self.runtime.tabs[self.runtime.tabs.active_index()].flow_pane;
+        self.chrome.harness.push_scripted_input(flow, raw_input);
         let Some(pane) = self.chrome.harness.context_menu() else {
             return;
         };

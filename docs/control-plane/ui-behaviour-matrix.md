@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 75 |
+| Reachable by capability | 76 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **133** |
+| **Total** | **134** |
 
-83 of the 133 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 50 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+84 of the 134 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 50 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -102,16 +102,17 @@ The three exclusion classes are closed:
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
 | `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `indicator.picker.open` | Open and search the indicator library | left toolbar Indicators button, searchable centered modal | `indicator.picker.set` | — |
 | `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Tools menu, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
-| `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicators menu | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
+| `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicator picker | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
 | `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, View menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.mouse_vertical_line.toggle` | Mirror price hover into one non-price indicator pane | right-click menu on an indicator pane | `indicator.mouse_vertical_line.set` | — |
-| `indicator.native.add` | Add a native indicator from the catalog | toolbar indicators menu | — | `pending_capability` — `indicator.script.attach` attaches a Pine script; the native catalog has no capability, so an operator can add the indicators a trader writes and not the ones shipped. Tracked in issue 401 |
-| `indicator.native.remove` | Remove a native indicator | the legend row's close, and the indicators menu | — | `pending_capability` — `indicator.script.detach` names a script; a native has no identifier it accepts. Tracked in issue 401 |
-| `indicator.script.add` | Load a Pine script from the library | toolbar indicators menu | `indicator.script.attach` | — |
-| `indicator.script.remove` | Remove a script indicator | the legend row's close, and the indicators menu | `indicator.script.detach` | — |
-| `indicator.settings.open` | Open an indicator's settings | the legend row's gear, and the indicators menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `indicator.native.add` | Add a native indicator from the catalog | toolbar indicator picker | — | `pending_capability` — `indicator.script.attach` attaches a Pine script; the native catalog has no capability, so an operator can add the indicators a trader writes and not the ones shipped. Tracked in issue 401 |
+| `indicator.native.remove` | Remove a native indicator | the legend row's close, and the indicator picker | — | `pending_capability` — `indicator.script.detach` names a script; a native has no identifier it accepts. Tracked in issue 401 |
+| `indicator.script.add` | Load a Pine script from the library | toolbar indicator picker | `indicator.script.attach` | — |
+| `indicator.script.remove` | Remove a script indicator | the legend row's close, and the indicator picker | `indicator.script.detach` | — |
+| `indicator.settings.open` | Open an indicator's settings | the legend row's gear, and the indicator picker | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `trade.aim.bracket` | Send an entry with its stop and target attached | the ticket's bracket fields, and the aim on the chart | `trade.order.bracket` | — |
 | `trade.instrument.money.set` | Declare what one point of an instrument is worth | the Trading panel's instrument section | `trade.instrument.set_money` | — |
 | `trade.journal.filter` | Filter the trades ledger by source, dates, #tags or session name | the Trades tab's filter row | `session.journal.set` | — |
@@ -163,12 +164,12 @@ The three exclusion classes are closed:
 | `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu (drawing section and objects submenu), the object manager, Delete | `annotate.remove` | — |
 | `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; on the focused pane, Ctrl+C then Ctrl+V or any native copy and paste (Windows: Ctrl+Insert, Shift+Insert) | — | `pending_capability` — no capability copies an object; `annotate.*` places four shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
 | `drawing.quick_range_profile` | Measure a range with a right-drag and turn it into a volume profile | a secondary-button drag on the price band with the Pointer tool, then the range's action bar; a chart click or Escape dismisses the temporary range | `annotate.fixed_range_profile.create` | — |
-| `drawing.quick_range_fib_retracement` | Measure a range with a right-drag and turn it into a Fibonacci retracement | a secondary-button drag on the price band with the Pointer tool, then the range's Fib Retracement action | `annotate.fib_retracement.create` | — |
-| `drawing.quick_range_fib_projection` | Measure a range with a right-drag and project it from the final point | a secondary-button drag on the price band with the Pointer tool, then the range's Fib Projection action | `annotate.fib_projection.create` | — |
-| `drawing.quick_range_rectangle` | Measure a range with a right-drag and turn its box into a rectangle | a secondary-button drag on the price band with the Pointer tool, then the range's Rectangle action | `annotate.rectangle.create` | — |
-| `drawing.quick_range_trend_line` | Measure a range with a right-drag and turn its leg into a trend line | a secondary-button drag on the price band with the Pointer tool, then the range's Trend line action | `annotate.trend_line.create` | — |
-| `drawing.quick_range_horizontal_levels` | Measure a range with a right-drag and mark its high and low with horizontal lines | a secondary-button drag on the price band with the Pointer tool, then the range's Horizontal lines action; one line when the range has no height | `annotate.horizontal_levels.create` | — |
-| `drawing.quick_range_parallel_channel` | Measure a range with a right-drag and turn its leg into a parallel channel's base | a secondary-button drag on the price band with the Pointer tool, then the range's Parallel channel action, then a click above or below the leg that sets the channel's width | `annotate.parallel_channel.create` | — |
+| `drawing.quick_range_fib_retracement` | Measure a range with a right-drag and turn it into a Fibonacci retracement | a secondary-button drag on the price band or an indicator pane with the Pointer tool, then the range's Fib Retracement action | `annotate.fib_retracement.create` | — |
+| `drawing.quick_range_fib_projection` | Measure a range with a right-drag and project it from the final point | a secondary-button drag on the price band or an indicator pane with the Pointer tool, then the range's Fib Projection action | `annotate.fib_projection.create` | — |
+| `drawing.quick_range_rectangle` | Measure a range with a right-drag and turn its box into a rectangle | a secondary-button drag on the price band or an indicator pane with the Pointer tool, then the range's Rectangle action | `annotate.rectangle.create` | — |
+| `drawing.quick_range_trend_line` | Measure a range with a right-drag and turn its leg into a trend line | a secondary-button drag on the price band or an indicator pane with the Pointer tool, then the range's Trend line action | `annotate.trend_line.create` | — |
+| `drawing.quick_range_horizontal_levels` | Measure a range with a right-drag and mark its high and low with horizontal lines | a secondary-button drag on the price band or an indicator pane with the Pointer tool, then the range's Horizontal lines action; one line when the range has no height | `annotate.horizontal_levels.create` | — |
+| `drawing.quick_range_parallel_channel` | Measure a range with a right-drag and turn its leg into a parallel channel's base | a secondary-button drag on the price band or an indicator pane with the Pointer tool, then the range's Parallel channel action, then a click above or below the leg that sets the channel's width | `annotate.parallel_channel.create` | — |
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
 | `drawing.magnet.toggle` | Snap one drawing to the candle's open, high, low or close, whatever the rail says | the object context bar's magnet button, beside Lock | `annotate.drawing_magnet.set` | — |
@@ -196,7 +197,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 19 |
+| `toolbar_action` | 20 |
 | `strip_action` | 6 |
 | `tab_action` | 3 |
 | `dock_tab` | 5 |

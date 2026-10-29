@@ -379,6 +379,44 @@
       "idempotency": "forbidden",
       "input_schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "AnnotationTarget": {
             "additionalProperties": false,
             "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
@@ -498,6 +536,10 @@
             "minItems": 2,
             "type": "array"
           },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
           "chart_reference": {
             "anyOf": [
               {
@@ -553,6 +595,44 @@
               "client_name"
             ],
             "type": "object"
+          },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
@@ -626,6 +706,10 @@
           },
           "author": {
             "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The band the object landed on. Omitted: the price band."
           },
           "label": {
             "type": "string"
@@ -689,6 +773,44 @@
       "idempotency": "forbidden",
       "input_schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "AnnotationTarget": {
             "additionalProperties": false,
             "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
@@ -808,6 +930,10 @@
             "minItems": 2,
             "type": "array"
           },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
           "chart_reference": {
             "anyOf": [
               {
@@ -863,6 +989,44 @@
               "client_name"
             ],
             "type": "object"
+          },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
@@ -936,6 +1100,10 @@
           },
           "author": {
             "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The band the object landed on. Omitted: the price band."
           },
           "label": {
             "type": "string"
@@ -1255,6 +1423,44 @@
       "idempotency": "forbidden",
       "input_schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "AnnotationTarget": {
             "additionalProperties": false,
             "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
@@ -1374,6 +1580,10 @@
             "minItems": 2,
             "type": "array"
           },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
           "chart_reference": {
             "anyOf": [
               {
@@ -1429,6 +1639,44 @@
               "client_name"
             ],
             "type": "object"
+          },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
@@ -1503,6 +1751,10 @@
           "author": {
             "$ref": "#/$defs/AnnotationAuthor"
           },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The band the object landed on. Omitted: the price band."
+          },
           "label": {
             "type": "string"
           },
@@ -1565,6 +1817,44 @@
       "idempotency": "forbidden",
       "input_schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "AnnotationTarget": {
             "additionalProperties": false,
             "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
@@ -1684,6 +1974,10 @@
             "minItems": 2,
             "type": "array"
           },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
           "chart_reference": {
             "anyOf": [
               {
@@ -1740,6 +2034,44 @@
             ],
             "type": "object"
           },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
@@ -1757,6 +2089,10 @@
               },
               "author": {
                 "$ref": "#/$defs/AnnotationAuthor"
+              },
+              "band": {
+                "$ref": "#/$defs/AnnotationBand",
+                "description": "The band the object landed on. Omitted: the price band."
               },
               "label": {
                 "type": "string"
@@ -2211,6 +2547,44 @@
       "idempotency": "forbidden",
       "input_schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "AnnotationTarget": {
             "additionalProperties": false,
             "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
@@ -2330,6 +2704,10 @@
             "minItems": 2,
             "type": "array"
           },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
           "chart_reference": {
             "anyOf": [
               {
@@ -2385,6 +2763,44 @@
               "client_name"
             ],
             "type": "object"
+          },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
@@ -2458,6 +2874,10 @@
           },
           "author": {
             "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The band the object landed on. Omitted: the price band."
           },
           "label": {
             "type": "string"
@@ -2521,6 +2941,44 @@
       "idempotency": "forbidden",
       "input_schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "AnnotationTarget": {
             "additionalProperties": false,
             "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
@@ -2640,6 +3098,10 @@
             "minItems": 2,
             "type": "array"
           },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
           "chart_reference": {
             "anyOf": [
               {
@@ -2695,6 +3157,44 @@
               "client_name"
             ],
             "type": "object"
+          },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
@@ -2768,6 +3268,10 @@
           },
           "author": {
             "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The band the object landed on. Omitted: the price band."
           },
           "label": {
             "type": "string"
@@ -2915,6 +3419,44 @@
       "idempotency": "forbidden",
       "input_schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "AnnotationTarget": {
             "additionalProperties": false,
             "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
@@ -3034,6 +3576,10 @@
             "minItems": 2,
             "type": "array"
           },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The value axis the anchors' prices are on. Omitted: the price band.\nAn indicator band must be an indicator pane the target pane shows."
+          },
           "chart_reference": {
             "anyOf": [
               {
@@ -3089,6 +3635,44 @@
               "client_name"
             ],
             "type": "object"
+          },
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
@@ -3162,6 +3746,10 @@
           },
           "author": {
             "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "band": {
+            "$ref": "#/$defs/AnnotationBand",
+            "description": "The band the object landed on. Omitted: the price band."
           },
           "label": {
             "type": "string"
@@ -9384,6 +9972,225 @@
       "risk_reducing": false,
       "stale_input_safety": "The call names the exact tab, pane and live indicator slot; repeating the same state is harmless and the result reads it back.",
       "title": "Set an indicator's mouse vertical line",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Opens or closes the centered indicator picker on the focused pane, searches its built-in and script library by case-insensitive name, or inspects its current state. Search does not attach an indicator. Categories: all, native, scripts, active. Active slots and their errors are read through analysis.indicators. Results are paginated (1..64); script IDs are library indices for this process. Changing focus dismisses the sitting. All operations return the state and matching library entries.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "indicator.picker.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "PickerAction": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "inspect",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "open",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "close",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "const": "search",
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "query": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action",
+                  "query",
+                  "category"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 64,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operation": {
+            "$ref": "#/$defs/PickerAction"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "title": "PickerInput",
+        "type": "object"
+      },
+      "module": "indicator",
+      "output_schema": {
+        "$defs": {
+          "PickerEntry": {
+            "properties": {
+              "category": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "category"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "category": {
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/PickerEntry"
+            },
+            "type": "array"
+          },
+          "next_offset": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open",
+          "query",
+          "category",
+          "categories",
+          "entries",
+          "total"
+        ],
+        "title": "PickerResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout",
+        "observe.user_text"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Open, close and search set explicit state and are safe to repeat. Inspect returns state without opening the dialog. No indicator is attached or removed.",
+      "title": "Inspect and search the indicator picker",
       "version": 1
     },
     {
@@ -16972,6 +17779,44 @@
       ],
       "schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "DrawingAuthorSnapshot": {
             "properties": {
               "actor_kind": {
@@ -16993,6 +17838,18 @@
             "properties": {
               "anchor_count": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "annotation_band": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/AnnotationBand"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The same band in the shape an `annotate.*.create` call takes as\n`band`, so a listed mark's band can be handed straight back; absent for\na time-only mark, which has no value axis. Optional in the schema only\nso v1 readers stay compatible."
               },
               "author": {
                 "anyOf": [
@@ -19411,6 +20268,44 @@
       ],
       "schema": {
         "$defs": {
+          "AnnotationBand": {
+            "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+            "oneOf": [
+              {
+                "const": "price",
+                "description": "The candles' price axis.",
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+                "properties": {
+                  "indicator": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "ordinal"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "indicator"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "AvailabilitySnapshot": {
             "description": "Whether something is there to be read or acted on, and the coded reason\nwhen it is not.\n\nThe reason is a stable identifier, never the sentence an interface shows a\nhuman: a client made to parse that sentence would break the day it is\nreworded, and translating the interface would break every such client at\nonce.",
             "properties": {
@@ -19431,6 +20326,18 @@
           },
           "DrawingSelectionSnapshot": {
             "properties": {
+              "annotation_band": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/AnnotationBand"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The same band in the shape an `annotate.*.create` call takes as\n`band`, so a listed mark's band can be handed straight back; absent for\na time-only mark, which has no value axis. Optional in the schema only\nso v1 readers stay compatible."
+              },
               "band": {
                 "type": "string"
               },

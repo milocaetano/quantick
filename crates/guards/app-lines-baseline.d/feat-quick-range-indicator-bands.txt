@@ -1,0 +1,7 @@
+# The branch landed its quick-range band picking, painting and collapse dismissal
+# exactly at the ceiling; #719 (replay UI freeze) merged into main meanwhile and
+# spent the headroom the two shared. The band rule, the action policy and the
+# demo grammar already live in drawings and chart-interaction; what stays is the
+# pane's egui press, drag and paint path, so the merge raises by the difference.
+crates/app +73
+!budget +73

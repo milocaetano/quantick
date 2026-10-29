@@ -191,6 +191,7 @@ impl<'a> DrawingAccess<'a> {
         tab: u64,
         side: PaneSide,
         tool: drawings::DrawingTool,
+        band: &drawings::DrawingBand,
         points: &[drawings::ChartPoint],
         opening: drawings::NewDrawing,
     ) -> bool {
@@ -203,7 +204,7 @@ impl<'a> DrawingAccess<'a> {
         }
         let mut opening = Some(opening);
         for point in points {
-            drawings.place_with(tool, &drawings::DrawingBand::Price, *point, |_| {
+            drawings.place_with(tool, band, *point, |_| {
                 opening.take().expect("one opening look per draft")
             });
         }

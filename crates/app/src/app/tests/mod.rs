@@ -66,6 +66,7 @@ mod paper_trading_tests;
 mod profile_grid_tests;
 mod profile_pointer_tests;
 mod published_schema_compatibility_tests;
+mod quick_range_band_tests;
 mod quick_range_control_tests;
 mod quick_range_shape_tests;
 mod rectangle_extend_tests;

@@ -92,6 +92,9 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     let replay = app.active_tab().replay.clone().unwrap();
     let paper = app.active_tab().paper.position_summary();
     let drawings = app.active_tab().flow_pane.drawings.items().len();
+    app.apply_toolbar_action(ToolbarAction::OpenIndicatorPicker);
+    app.surfaces.indicator_picker.state.query = "owned".into();
+    let picker = app.surfaces.indicator_picker.state.clone();
     let destination = egui::ViewportId::from_hash_of("rebound-workspace");
     app.presentation.rebind(&app.runtime, destination).unwrap();
     assert_eq!(app.runtime.id(), owner);
@@ -137,7 +140,10 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
             .collect::<Vec<_>>(),
         live.iter().map(|n| n + 1).collect::<Vec<_>>()
     );
+    assert_eq!(app.surfaces.indicator_picker.state, picker);
     assert!(!native_frame(&mut app, &ctx, destination).shapes.is_empty());
+    assert_eq!(app.surfaces.indicator_picker.state.target, picker.target);
+    assert_eq!(app.surfaces.indicator_picker.state.query, picker.query);
     assert_eq!(
         app.runtime
             .tabs

@@ -1,5 +1,43 @@
 {
   "$defs": {
+    "AnnotationBand": {
+      "description": "Which value axis of the pane an annotation's anchor prices are read on.\nOmitted: the candles' price axis, so every call written before indicator\nbands existed means what it always meant.",
+      "oneOf": [
+        {
+          "const": "price",
+          "description": "The candles' price axis.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One indicator pane's own value axis, named by the `kind` and `ordinal`\nthe pane's indicators snapshot reports (`native.cvd`, `0`). Anchor\n`price` is then that indicator's value: a CVD level, not a price.",
+          "properties": {
+            "indicator": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "ordinal": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "ordinal"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "indicator"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "DrawingAuthorSnapshot": {
       "properties": {
         "actor_kind": {
@@ -21,6 +59,18 @@
       "properties": {
         "anchor_count": {
           "$ref": "#/$defs/WireU64"
+        },
+        "annotation_band": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnnotationBand"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The same band in the shape an `annotate.*.create` call takes as\n`band`, so a listed mark's band can be handed straight back; absent for\na time-only mark, which has no value axis. Optional in the schema only\nso v1 readers stay compatible."
         },
         "author": {
           "anyOf": [

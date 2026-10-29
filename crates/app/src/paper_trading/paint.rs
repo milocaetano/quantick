@@ -14,7 +14,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
 use quantick_paper::desk::geometry::TAG_HOVER_SLACK_PX;
-use quantick_paper::desk::leg_tag::{LegPaint, leg_tag_text};
+use quantick_paper::desk::leg_tag::{AimLeg, LegPaint, aim_leg_text, leg_tag_text};
 use quantick_paper::desk::{AimPaint, CmdPreview, PaperDrag, TagKey};
 
 use super::input::Axis;
@@ -227,27 +227,23 @@ impl PaperTrading {
 
     /// The protection the aim is carrying, drawn beside it.
     ///
-    /// Under the ruler both levels sit the same distance from the pointer,
-    /// so the pair *is* the 1:1 read, and one chip states that distance in
-    /// points and in ticks - a trader deciding whether a setup is worth
-    /// taking is asking how far, not where. Under a strategy the whole
-    /// ladder is drawn instead, every rung of it, before the click.
+    /// Each chip says what its leg is worth once the order fills and the
+    /// leg is hit, in money and in points (`aim_leg_text`) - a trader
+    /// deciding whether a setup is worth taking is asking how much, not
+    /// where; the price is on the gutter chip beside it. Under the ruler
+    /// both levels sit the same distance from the pointer, so the pair *is*
+    /// the 1:1 read. Under a strategy the whole ladder is drawn instead,
+    /// every rung of it, before the click.
     pub(super) fn draw_aim_bracket(&self, ctx: &PaintCtx<'_>, preview: &CmdPreview) {
         if preview.bracket.is_empty() {
             return;
         }
         let laddered = preview.bracket.is_laddered();
-        // The same arithmetic the levels came from. Measuring the chip
-        // against the tick while the lines were walked in points printed
-        // `0.02 pts` beside a line twenty points away - a number a trader
-        // would have sized a position from.
-        let distance = self
-            .ruler_step()
-            .saturating_mul(Decimal::from(preview.ruler_ticks));
+        let pnl = self.account.symbol_pnl();
         for part in preview.bracket.parts() {
-            for (level, word, color) in [
-                (part.stop_loss, "SL", theme::SELL),
-                (part.take_profit, "TP", theme::BUY),
+            for (level, leg, color) in [
+                (part.stop_loss, Leg::StopLoss, theme::SELL),
+                (part.take_profit, Leg::TakeProfit, theme::BUY),
             ] {
                 let Some(level) = level else { continue };
                 let y = ctx.scale.y(level.to_f64().unwrap_or_default());
@@ -256,27 +252,20 @@ impl PaperTrading {
                 }
                 ctx.level_line(y, color, true, LINE_WIDTH_PX, false, false);
                 ctx.gutter_chip(y, color, &fmt_decimal(level));
-                let text = if laddered {
-                    // A ladder labels each rung with the slice it closes:
-                    // "TP" on three lines at three prices says nothing about
-                    // which part each one belongs to.
-                    format!(
-                        "{word} {} · {}",
-                        fmt_decimal(level),
-                        part.quantity.map_or_else(|| "all".to_owned(), fmt_decimal),
-                    )
-                } else if preview.ruler_ticks > 0 {
-                    // No tick count: it was only ever meaningful while one
-                    // notch *was* one tick, and a notch is now worth what
-                    // the instrument's step says.
-                    format!(
-                        "{word} {} · {} pts · 1:1",
-                        fmt_decimal(level),
-                        fmt_decimal(distance),
-                    )
-                } else {
-                    format!("{word} {}", fmt_decimal(level))
+                // A ladder labels each rung with the slice it closes: "TP" on
+                // three lines at three prices says nothing about which part
+                // each one belongs to.
+                let slice =
+                    laddered.then(|| part.quantity.map_or_else(|| "all".to_owned(), fmt_decimal));
+                let aim = AimLeg {
+                    leg,
+                    side: preview.side,
+                    entry: preview.price,
+                    level,
+                    quantity: part.quantity.or(preview.quantity),
                 };
+                let even = !laddered && preview.ruler_ticks > 0;
+                let text = aim_leg_text(&aim, slice.as_deref(), even, pnl);
                 ctx.chip_tag(y, color, &text, false, false);
             }
         }
@@ -531,11 +520,7 @@ impl PaperTrading {
         // modifier is what makes the aim go away.
         ctx.painter
             .rect_filled(label, egui::Rounding::same(3.0), color);
-        let quantity = self
-            .desk
-            .ticket
-            .quantity_preview()
-            .map_or_else(|| "?".to_owned(), fmt_decimal);
+        let quantity = preview.quantity.map_or_else(|| "?".to_owned(), fmt_decimal);
         let text = format!(
             "{} {} {}",
             side_word_upper(preview.side),

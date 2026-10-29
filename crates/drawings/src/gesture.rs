@@ -30,7 +30,8 @@ mod shared;
 mod marks_tests;
 
 pub use band::{
-    Band, Bands, MAX_BANDS, band_at, band_of, drawing_in_band, magnet_value_of, pane_key,
+    ABSENT_BAND_REFUSAL, Band, Bands, COLLAPSED_BAND_REFUSAL, MAX_BANDS, asked_band, band_at,
+    band_of, band_refusal, drawing_in_band, magnet_value_of, pane_key,
 };
 pub use placing::{
     PlacementCompletion, PlacementDefaults, PlacementFrame, PlacementOptions, PlacementOutcome,
@@ -131,8 +132,9 @@ pub enum DrawingDrag {
         drawing_index: usize,
         handle: usize,
     },
-    /// The press landed on a locked drawing: the gesture belongs to the
-    /// object (the chart must not pan) but the geometry stays put.
+    /// A move whose grabbed drawing lost the selection mid-drag: the gesture
+    /// still belongs to the object (the chart must not pan) but the geometry
+    /// stays put.
     Blocked,
 }
 

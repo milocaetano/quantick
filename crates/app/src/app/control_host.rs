@@ -58,6 +58,7 @@ pub(crate) trait ControlPort:
     + PaperPort
     + LayersPort
     + ScriptsPort
+    + IndicatorPickerPort
     + RecordingPort
     + ToolRailPort
     + GatewayPort
@@ -74,6 +75,7 @@ impl<T> ControlPort for T where
         + PaperPort
         + LayersPort
         + ScriptsPort
+        + IndicatorPickerPort
         + RecordingPort
         + ToolRailPort
         + GatewayPort
@@ -121,6 +123,14 @@ pub(crate) trait PaperPort {
 /// The chart-layer owner.
 pub(crate) trait LayersPort {
     fn layer_wiring(&mut self) -> super::chart_layers_wiring::LayerWiring<'_>;
+}
+
+/// The searchable indicator dialog's shared state.
+pub(crate) trait IndicatorPickerPort {
+    fn indicator_picker(
+        &mut self,
+        input: quantick_control_schema::indicator_picker::PickerInput,
+    ) -> Result<quantick_control_schema::indicator_picker::PickerResult, String>;
 }
 
 /// Indicator scripts an operator attaches and detaches.
@@ -759,6 +769,21 @@ impl LayersPort for QuantickApp {
             footprint_config: &mut self.runtime.footprint_config,
             chart_settings: &mut self.surfaces.chart_settings,
         }
+    }
+}
+
+impl IndicatorPickerPort for QuantickApp {
+    fn indicator_picker(
+        &mut self,
+        input: quantick_control_schema::indicator_picker::PickerInput,
+    ) -> Result<quantick_control_schema::indicator_picker::PickerResult, String> {
+        let target = (self.runtime.tabs.active_id(), self.focused_pane().id);
+        quantick_control_schema::indicator_picker::apply(
+            &mut self.surfaces.indicator_picker.state,
+            self.runtime.indicators.script_library.entries(),
+            target,
+            input,
+        )
     }
 }
 

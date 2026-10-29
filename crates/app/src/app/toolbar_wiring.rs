@@ -92,29 +92,6 @@ impl QuantickApp {
             );
             toolbar::LayerToggleState { on, blocked }
         });
-        // The focused pane's slots (§11): the menu lists what a command from
-        // it would act on, and never the pane beside it.
-        let indicators: Vec<toolbar::IndicatorMenuEntry> = self
-            .focused_pane()
-            .indicators
-            .all()
-            .iter()
-            .map(|view| toolbar::IndicatorMenuEntry {
-                slot: view.slot.0,
-                label: view.label().to_owned(),
-                hidden: view.hidden,
-                errored: view.error.is_some(),
-                stale: view.stale.is_some(),
-            })
-            .collect();
-        let scripts: Vec<String> = self
-            .runtime
-            .indicators
-            .script_library
-            .entries()
-            .iter()
-            .map(|entry| entry.name.clone())
-            .collect();
         let dock_visible = self.dock.visible();
         let show_style = self.surfaces.chart_settings.is_open_on(Candles);
         // The History button names this tab's target and run.
@@ -182,8 +159,6 @@ impl QuantickApp {
             paper: tab
                 .paper
                 .trade_bar(&ctx.format_shortcut(&super::menu_bar::PAPER_REVERSE_SHORTCUT)),
-            indicators,
-            scripts,
         };
         let actions = toolbar::draw(ctx, &mut model);
         // The popover's own state, back where it lives. Without this the flag
@@ -241,6 +216,11 @@ impl QuantickApp {
     /// rules are unchanged.
     pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
+            ToolbarAction::OpenIndicatorPicker => self
+                .surfaces
+                .indicator_picker
+                .state
+                .open((self.runtime.tabs.active_id(), self.focused_pane().id)),
             ToolbarAction::LoadHistory(reach) => {
                 let active = self.runtime.tabs.active_index();
                 self.tabs_mut().press_history(active, reach);

@@ -317,19 +317,28 @@ pub struct PaperAccount {
 }
 impl PaperAccount {
     /// Take an entry at the market, protected by `ticket`.
-    pub fn market(&mut self, side: Side, reference: Decimal, ticket: Bracket, env: &AccountEnv) {
+    ///
+    /// `false` when the entry was refused before it reached the venue.
+    pub fn market(
+        &mut self,
+        side: Side,
+        reference: Decimal,
+        ticket: Bracket,
+        env: &AccountEnv,
+    ) -> bool {
         // The same three sources the aim reads, in the same order. A button
         // sitting directly under the Strategy row must not place a bare
         // order while that row says a ladder is armed. The size comes from
         // the same call, so the risk per trade governs a toolbar press as
         // much as it governs the aim.
         let Some((quantity, bracket)) = self.entry_size(side, reference, ticket, env) else {
-            return;
+            return false;
         };
         let events = self
             .venue
             .submit(OrderIntent::market(side, quantity).with_bracket(bracket));
         self.handle_events(events);
+        true
     }
 
     /// Feed one live print through the simulator and act on what it did.
