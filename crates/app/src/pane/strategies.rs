@@ -42,7 +42,7 @@ pub struct PaneStrategies {
     /// exist, drained by the tab in the same ingestion sweep — the slot
     /// and the drawings' anchors are therefore read against one cut of
     /// the series.
-    pub(super) pending: Vec<(quantick_engine::Bar, usize)>,
+    pub(crate) pending: Vec<(quantick_engine::Bar, usize)>,
     /// The drawing whose "Add strategy…" was clicked; the app drains it
     /// and opens the arming dialog over this pane.
     pub(crate) popup_request: Option<drawings::DrawingId>,

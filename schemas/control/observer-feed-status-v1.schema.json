@@ -90,6 +90,56 @@
       ],
       "type": "object"
     },
+    "FeedBackfillSnapshot": {
+      "description": "A feed's refill of a reconnect hole: what it asked for and how it ended.",
+      "properties": {
+        "remaining_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FeedGapSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The part no print covers, on a `partial` refill; it is also one of\n`tape_gaps`."
+        },
+        "requested_from_unix_ms": {
+          "description": "The last print the chart held before the source went away.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "requested_to_unix_ms": {
+          "description": "The oldest print the new session opened with.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "state": {
+          "description": "`filling`, `filled` or `partial`.",
+          "type": "string"
+        },
+        "stop_reason": {
+          "description": "Why a `partial` refill stopped: `session_lost`, `no_paging`, `reach`,\n`source_exhausted`, `nothing_found` or `held_too_long`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trades_received": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Prints received toward the refill, before the seams were deduplicated."
+        }
+      },
+      "required": [
+        "state",
+        "requested_from_unix_ms",
+        "requested_to_unix_ms",
+        "trades_received"
+      ],
+      "type": "object"
+    },
     "FeedCapabilitiesSnapshot": {
       "properties": {
         "book_capture": {
@@ -356,6 +406,17 @@
             "null"
           ],
           "x-unit": "milliseconds"
+        },
+        "tape_backfill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FeedBackfillSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The feed's refill of the hole its last reconnect left, while one runs\nand after it ends. Absent on a tab whose feed never refilled one,\nwhich is every feed but MetaTrader and every tab that never\nreconnected; optional, so additive to v1."
         },
         "tape_gaps": {
           "description": "Market-time bounds of source loss or a reconnect interruption.\nEqual bounds can bracket known missing messages. Bounded, oldest first.\n\nOmitted when there are none, so a reader written against the scope\nbefore this field existed keeps parsing every payload from a tab that\nnever reconnected — which is nearly all of them.",

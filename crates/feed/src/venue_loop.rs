@@ -114,6 +114,9 @@ pub(crate) fn plan_command(cmd: Option<FeedCommand>, book: Slot, ohlcv: Slot) ->
         // playhead to move. Ignored rather than refused — the UI only shows the
         // transport while a replay is the source.
         Some(FeedCommand::Replay(_)) => CommandPlan::Ignore,
+        // A venue that replays its own recent window has nothing to refill:
+        // the tab's resume floor already filters that window.
+        Some(FeedCommand::ResumeAfter(_)) => CommandPlan::Ignore,
     }
 }
 

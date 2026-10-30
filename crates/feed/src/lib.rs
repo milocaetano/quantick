@@ -58,7 +58,7 @@ pub use quantick_orderbook::DepthEvent;
 
 use crate::config::{FeedCapabilities, MetaTraderSettings, ProviderKind};
 
-pub use continuity::{FeedContinuity, FeedIntegrity};
+pub use continuity::{FeedContinuity, FeedIntegrity, ResumeSeam};
 pub use metatrader::forced_latency_split;
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
@@ -157,12 +157,32 @@ pub enum FeedEvent {
         /// Where this reply sits in the run answering the request.
         slice: OhlcvSlice,
     },
+    /// Prints a feed recovered for the hole a reconnect left in a chart it
+    /// already serves: newer than everything the chart holds, older than the
+    /// live tape that follows, ascending, both seams already deduplicated.
+    ///
+    /// History, not live: the market made them while nobody was listening.
+    /// They build bars and move the paper *mark* and nothing else — no fill,
+    /// no strategy, no alarm, no arrival-latency reading — exactly as
+    /// [`Backfilled`](Self::Backfilled) history does. The feed owns the seam,
+    /// so no resume floor applies to them. Only a feed that refills sends
+    /// this; see [`RefillStatus`](Self::RefillStatus).
+    Refilled(Vec<Trade>),
+    /// Where the feed's refill of a reconnect hole stands, ordered with the
+    /// prints it qualifies: `Filling` ahead of everything held behind it, the
+    /// final state after the refilled prints. Only a feed that refills sends
+    /// one; see [`config::TapeBackfill`].
+    RefillStatus(config::TapeBackfill),
 }
 
 /// A command from the UI to the feed thread.
 pub enum FeedCommand {
     /// Fetch `count` more trades older than the earliest one loaded.
     LoadOlder { count: usize },
+    /// The chart this fresh feed now serves already holds prints up to the seam:
+    /// a feed that can refill a reconnect hole starts from there instead of
+    /// from an empty chart. Ignored by feeds that cannot.
+    ResumeAfter(ResumeSeam),
     /// Enable or disable synchronized order-book capture.
     SetBookCapture {
         /// Whether capture should be running.
@@ -380,6 +400,12 @@ pub const MIN_MARKED_GAP_MS: i64 = 5_000;
 /// ones on screen, so the oldest is what falls off.
 pub const MAX_REMEMBERED_GAPS: usize = 32;
 
+/// The most refilled prints ([`FeedEvent::Refilled`]) a chart takes in one
+/// drain. A refill can bring hundreds of thousands of prints at once; taken
+/// in one frame they freeze the window, so the rest waits in the channel —
+/// in order, ahead of the live tape behind it — for the next frame.
+pub const REFILL_PRINTS_PER_DRAIN: usize = 16_384;
+
 /// The trades in `batch` the chart has not already seen, given the market time
 /// it had already reached.
 ///
@@ -399,6 +425,34 @@ pub const MAX_REMEMBERED_GAPS: usize = 32;
 #[must_use]
 pub fn past_resume_floor(batch: &[Trade], floor_ms: i64) -> &[Trade] {
     &batch[batch.partition_point(|trade| trade.timestamp_ms <= floor_ms)..]
+}
+
+/// [`past_resume_floor`] for `feed`'s `symbol`, with what it drops logged
+/// rather than silent, like the same rule inside `quantick-feed-mt5`: a print
+/// that was dropped is a print the chart chose not to count, and that choice
+/// is reviewable.
+#[must_use]
+pub fn past_resume_floor_logged<'a>(
+    batch: &'a [Trade],
+    floor_ms: i64,
+    feed: &str,
+    symbol: &str,
+) -> &'a [Trade] {
+    let fresh = past_resume_floor(batch, floor_ms);
+    let dropped = batch.len() - fresh.len();
+    if dropped > 0 {
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FEED_RESUME_OVERLAP_DROPPED",
+            feed = %feed,
+            symbol = %symbol,
+            dropped,
+            floor_ms,
+            "dropped the window a resumed session replayed"
+        );
+    }
+    fresh
 }
 
 /// What a feed wants the person watching the chart to know.

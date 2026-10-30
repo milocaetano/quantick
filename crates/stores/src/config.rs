@@ -29,8 +29,8 @@ use quantick_sources::history_reach;
 // produced and consumed entirely inside the feed host — and a re-export no
 // caller reads is a dead import the workspace lints reject.
 pub use quantick_sources::config::{
-    FeedCapabilities, HistoryBoundary, MetaTraderSettings, Mt5SideSource, ProviderKind,
-    split_host_port,
+    BackfillState, FeedCapabilities, HistoryBoundary, MetaTraderSettings, Mt5SideSource,
+    ProviderKind, TapeBackfill, split_host_port,
 };
 
 /// The built-in default configuration, compiled into the binary so the app runs

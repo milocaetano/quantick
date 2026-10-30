@@ -581,6 +581,7 @@ impl Tab {
             // its spinner for the rest of the session. Every outstanding one
             // belonged to the channel about to be dropped.
             self.loading.set_active(LoadingTask::History, false);
+            self.feed_integrity.feed_replaced();
         }
         self.feed_generation = self.feed_generation.saturating_add(1);
         self.events = handle.events;

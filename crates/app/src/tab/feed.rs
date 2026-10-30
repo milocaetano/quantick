@@ -28,7 +28,7 @@ use quantick_feed::history_run::{Cancelled, Press};
 use quantick_feed::stall::{self, Stall, StallInput};
 use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
-    MIN_MARKED_GAP_MS, past_resume_floor,
+    MIN_MARKED_GAP_MS, REFILL_PRINTS_PER_DRAIN, past_resume_floor_logged,
 };
 use quantick_layers::ChartLayer;
 use quantick_session::{
@@ -553,7 +553,7 @@ impl Tab {
     // The bool requests one final partial publication, not worker completion.
     fn receive_available(&mut self, tab_id: u64, mut wall_clock_ms: impl FnMut() -> i64) -> bool {
         let mut live = false;
-        let mut received_at_ms = None;
+        let (mut received_at_ms, mut refilled) = (None, 0);
         // Venue candles landing before the first print meet it at the seam.
         let printless = self.flow_pane.state.trades().is_empty();
         loop {
@@ -679,6 +679,15 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
+                Ok(FeedEvent::RefillStatus(fill)) => self.feed_integrity.last_refill = Some(fill),
+                Ok(FeedEvent::Refilled(trades)) => {
+                    self.resume_floor_ms = None; // the feed owns the seam
+                    live |= self.ingest_unheard(&trades, false);
+                    refilled += trades.len();
+                    if refilled >= REFILL_PRINTS_PER_DRAIN {
+                        break; // the rest waits, in order, for the next frame
+                    }
+                }
                 Ok(FeedEvent::Reset) => self.reset_market_state(true),
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
@@ -1120,6 +1129,10 @@ impl Tab {
         self.resume_floor_ms = self.latest_trade_ms;
         let handle = spawn(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach_resuming(handle);
+        // A feed that refills a reconnect hole starts from where the chart ends.
+        if let Some(seam) = feed::ResumeSeam::of_tape(self.flow_pane.state.trades()) {
+            let _ = self.commands.try_send(FeedCommand::ResumeAfter(seam));
+        }
         // The book from the dropped socket is gone with it. Nothing is reset
         // here on purpose: the new session opens with a complete snapshot, and
         // a snapshot is exactly what replaces a book wholesale.
@@ -1203,36 +1216,33 @@ impl Tab {
         let Some(floor) = self.resume_floor_ms.take() else {
             return false;
         };
-        let fresh = past_resume_floor(trades, floor);
-        let overlap = trades.len() - fresh.len();
-        if overlap > 0 {
-            // Logged rather than silent, like the same rule inside
-            // `quantick-feed-mt5`: a print that was dropped is a print the
-            // chart chose not to count, and that choice is reviewable.
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "FEED_RESUME_OVERLAP_DROPPED",
-                feed = %self.feed_id,
-                symbol = %self.symbol,
-                dropped = overlap,
-                floor_ms = floor,
-                "dropped the window a resumed session replayed"
-            );
-        }
+        let fresh = past_resume_floor_logged(trades, floor, &self.feed_id, &self.symbol);
         let Some(first) = fresh.first() else {
             return false;
         };
         self.record_gap(floor, first.timestamp_ms);
-        self.history_trades += fresh.len();
-        self.latest_trade_ms = Some(fresh[fresh.len() - 1].timestamp_ms);
-        for trade in fresh {
-            for pane in self.panes_mut() {
+        self.ingest_unheard(fresh, true)
+    }
+
+    /// Prints made while nobody listened, a resumed window or a refilled hole: the live
+    /// path's bars, tape and indicators, and the paper mark only (see [`Self::ingest_resumed`]).
+    /// Without `to_strategies` the bars they close never reach a strategy.
+    fn ingest_unheard(&mut self, trades: &[quantick_engine::Trade], to_strategies: bool) -> bool {
+        let Some(last) = trades.last() else {
+            return false;
+        };
+        self.history_trades += trades.len();
+        self.latest_trade_ms = Some(last.timestamp_ms);
+        for pane in self.panes_mut() {
+            let queued = pane.strategies.pending.len();
+            for trade in trades {
                 pane.ingest_live_trade(trade);
             }
+            if !to_strategies {
+                pane.strategies.pending.truncate(queued);
+            }
         }
-        // The mark, and only the mark — the same seeding `Backfilled` does.
-        self.paper.seed(&fresh[fresh.len() - 1]);
+        self.paper.seed(last);
         true
     }
 

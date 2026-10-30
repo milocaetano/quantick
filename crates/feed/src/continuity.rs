@@ -50,6 +50,9 @@ pub struct FeedIntegrity {
     pub unknown_loss: u64,
     /// Repeated or backwards source IDs.
     pub non_monotonic: u64,
+    /// The feed's refill of its last reconnect hole, as it last reported:
+    /// whether the hole was filled or how much of it stays a gap.
+    pub last_refill: Option<crate::config::TapeBackfill>,
 }
 
 impl FeedIntegrity {
@@ -64,6 +67,19 @@ impl FeedIntegrity {
         self.non_monotonic = self
             .non_monotonic
             .saturating_add(u64::from(event.non_monotonic));
+    }
+
+    /// The feed was replaced by a fresh one on the same chart. A refill the
+    /// old feed was running died with it and will never report again — the
+    /// new feed refills the hole from the chart's own seam — so `filling`
+    /// would be a promise nobody keeps. A finished report stays true.
+    pub fn feed_replaced(&mut self) {
+        if self
+            .last_refill
+            .is_some_and(|refill| refill.state == crate::config::BackfillState::Filling)
+        {
+            self.last_refill = None;
+        }
     }
 }
 
@@ -125,4 +141,39 @@ pub(crate) fn mt5_reconnect_gap(
         missing_messages: None,
         non_monotonic: false,
     })
+}
+
+/// Where a chart's tape ends, exactly enough to resume a source onto it.
+///
+/// MT5 prints share milliseconds and carry no stable id across sessions, so
+/// time alone cannot say which prints at the last millisecond the chart
+/// already holds. The count can: a refill that re-delivers that millisecond
+/// skips exactly the first `held_at_last` of its prints there and keeps the
+/// rest, which is what one continuous load would have charted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResumeSeam {
+    /// The newest print held, UTC ms.
+    pub last_ms: i64,
+    /// How many held prints share `last_ms`.
+    pub held_at_last: usize,
+    /// The oldest print held, UTC ms: where a *load older* pages from.
+    pub oldest_ms: i64,
+}
+
+impl ResumeSeam {
+    /// The seam of a held tape, or `None` for an empty one.
+    #[must_use]
+    pub fn of_tape(tape: &quantick_engine::trade_tape::TradeTape) -> Option<Self> {
+        let last_ms = tape.last()?.timestamp_ms;
+        let held_at_last = tape
+            .iter()
+            .rev()
+            .take_while(|trade| trade.timestamp_ms == last_ms)
+            .count();
+        Some(Self {
+            last_ms,
+            held_at_last,
+            oldest_ms: tape.first()?.timestamp_ms,
+        })
+    }
 }

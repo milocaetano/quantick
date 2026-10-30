@@ -26,6 +26,7 @@ from harness import (  # noqa: E402  (deliberately after the path insert)
     FakeTerminal,
     check,
     load_bridge,
+    patch_bridge,
     run_tests,
     session_at,
     tick_at,
@@ -66,6 +67,32 @@ def wired(bridge, term, now_s: int, **args):
     # silence. Restoring it is the point here.
     session.maybe_heartbeat = lambda: bridge.Session.maybe_heartbeat(session)
     return session, sock
+
+
+def test_a_terminal_that_goes_away_ends_the_session_and_says_so():
+    """Heartbeats outlive the terminal, so a session that kept going would
+    show the chart a healthy feed with nothing on it. It ends instead, under
+    the code the tab turns into "MetaTrader 5 is not running"."""
+    term = FakeTerminal(0, NOW)
+    term.ticks = [tick_at((NOW - 60 + i) * 1000) for i in range(60)]
+    bridge = load_bridge(term)
+    session, sock = wired(bridge, term, NOW)
+    session.cursor_msc = (NOW - 60) * 1000
+    logged: list[str] = []
+    patch_bridge("log", lambda code, **_fields: logged.append(code))
+
+    term.ticks = []
+    session.pump_ticks()
+    check("a quiet tape with the terminal up keeps the session", "BRIDGE_TERMINAL_LOST" not in logged, logged)
+
+    term.running = False
+    try:
+        session.pump_ticks()
+        ended = False
+    except bridge.BridgeExit:
+        ended = True
+    check("a closed terminal ends the session", ended)
+    check("and says why", logged[-1:] == ["BRIDGE_TERMINAL_LOST"], logged)
 
 
 def test_a_block_leaves_in_far_fewer_writes_than_it_has_ticks():

@@ -376,6 +376,11 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
         except KeyboardInterrupt:
             session.close("interrupted")
             raise
+        except BridgeExit:
+            # Fatal and already logged under its own code; the goodbye tells
+            # quantick the session ended on purpose rather than by silence.
+            session.close("bridge_exit")
+            raise
         except OSError as error:
             session.close("socket error")
             raise ConnectionError(str(error)) from error
@@ -495,6 +500,11 @@ def main() -> int:
                 return 2
             try:
                 run_session(args, offset_s)
+            except BridgeExit:
+                # Already logged, and fatal for this process: the supervisor
+                # starts a fresh bridge, whose attach says whether the
+                # terminal is back.
+                return 2
             except (ConnectionError, OSError, socket.timeout) as error:
                 log(
                     "BRIDGE_DISCONNECTED",

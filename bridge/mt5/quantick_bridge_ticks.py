@@ -15,6 +15,7 @@ from quantick_bridge_core import (
     MAX_TICKS_PER_REQUEST,
     TAPE_PROBE_DAYS,
     TICKS_PER_PUMP_ROUND,
+    BridgeExit,
     _volume_text,
     log,
     mt5,
@@ -177,6 +178,18 @@ class TicksMixin:
             ticks = mt5.copy_ticks_from(
                 self.symbol, self.cursor_msc // 1000, count, self.tick_flags()
             )
+            if ticks is None and mt5.terminal_info() is None:
+                # The terminal went away under a running session. Heartbeats
+                # would keep the socket alive and the chart would read a
+                # healthy feed with nothing on it, so the session ends here and
+                # the line below is what the tab shows.
+                log(
+                    "BRIDGE_TERMINAL_LOST",
+                    symbol=self.symbol,
+                    mt5_error=str(mt5.last_error()),
+                    hint="is the terminal running and logged in?",
+                )
+                raise BridgeExit
             if ticks is None or not len(ticks):
                 return
             # One reading per round, taken after the ticks it will stamp were
