@@ -125,41 +125,39 @@ impl Mt5Feed {
             } => ("partial", stop.wire_name(), Some(unfilled_to_ms)),
             state => (state.wire_name(), "none", None),
         };
-        let log_line = |forwarded: usize| {
-            if gap.is_some() {
-                warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "MT5_GAP_REFILL_FINISHED",
-                    symbol = %self.symbol,
-                    requested_from_ms = report.from_ms,
-                    requested_to_ms = report.to_ms,
-                    received = report.received,
-                    forwarded,
-                    outcome,
-                    stop,
-                    unfilled_to_ms = ?unfilled_to_ms,
-                    held = held.len(),
-                    "the refill stopped short; the rest of the hole is marked as a gap"
-                );
-            } else {
-                info!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "MT5_GAP_REFILL_FINISHED",
-                    symbol = %self.symbol,
-                    requested_from_ms = report.from_ms,
-                    requested_to_ms = report.to_ms,
-                    received = report.received,
-                    forwarded,
-                    outcome,
-                    stop,
-                    held = held.len(),
-                    "the hole is refilled; releasing the held live tape behind it"
-                );
-            }
-        };
-        log_line(trades.len());
+        let forwarded = trades.len();
+        if gap.is_some() {
+            warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_GAP_REFILL_FINISHED",
+                symbol = %self.symbol,
+                requested_from_ms = report.from_ms,
+                requested_to_ms = report.to_ms,
+                received = report.received,
+                forwarded,
+                outcome,
+                stop,
+                unfilled_to_ms = ?unfilled_to_ms,
+                held = held.len(),
+                "the refill stopped short; the rest of the hole is marked as a gap"
+            );
+        } else {
+            info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_GAP_REFILL_FINISHED",
+                symbol = %self.symbol,
+                requested_from_ms = report.from_ms,
+                requested_to_ms = report.to_ms,
+                received = report.received,
+                forwarded,
+                outcome,
+                stop,
+                held = held.len(),
+                "the hole is refilled; releasing the held live tape behind it"
+            );
+        }
         if let Some(gap) = gap {
             let event = FeedContinuity {
                 gap: Some(gap),
