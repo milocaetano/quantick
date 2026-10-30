@@ -679,6 +679,7 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
+                Ok(FeedEvent::Backfill(report)) => self.feed_integrity.last_refill = Some(report),
                 Ok(FeedEvent::Reset) => self.reset_market_state(true),
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
@@ -1120,6 +1121,10 @@ impl Tab {
         self.resume_floor_ms = self.latest_trade_ms;
         let handle = spawn(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach_resuming(handle);
+        // A feed that refills a reconnect hole starts from where the chart ends.
+        if let Some(seam) = feed::ResumeSeam::of_tape(self.flow_pane.state.trades()) {
+            let _ = self.commands.try_send(FeedCommand::ResumeAfter(seam));
+        }
         // The book from the dropped socket is gone with it. Nothing is reset
         // here on purpose: the new session opens with a complete snapshot, and
         // a snapshot is exactly what replaces a book wholesale.

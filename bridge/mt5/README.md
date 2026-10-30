@@ -289,8 +289,10 @@ Both sides speak structured logs:
 
 - **Python bridge (stderr)**: JSON lines with the same `event_code`
   vocabulary — `BRIDGE_STARTING`, `BRIDGE_TERMINAL_ATTACH_FAILED`,
-  `BRIDGE_UTC_OFFSET*`, `BRIDGE_SESSION_STARTED`, `BRIDGE_BOOK_STATS`,
-  `BRIDGE_DISCONNECTED`.
+  `BRIDGE_TERMINAL_LOST` (the terminal closed under a running session; the
+  bridge says `bye` and exits so the tab reads "MetaTrader 5 is not
+  running"), `BRIDGE_UTC_OFFSET*`, `BRIDGE_SESSION_STARTED`,
+  `BRIDGE_BOOK_STATS`, `BRIDGE_DISCONNECTED`.
 - **EA (Experts tab)**: JSON lines with `event_code` — `BRIDGE_STARTING`,
   `BRIDGE_CONNECT_FAILED` (feed not running / URL not allowed),
   `BRIDGE_SESSION_STARTED`, `BRIDGE_DISCONNECTED` (+ retry),

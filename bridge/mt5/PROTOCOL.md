@@ -375,6 +375,14 @@ The only message that travels this way. Sent when the trader asks the chart for
 more history than it holds, and only to a session whose hello declared
 `history_paging`.
 
+It is also sent unasked once per reconnect. A session that opens on a chart
+which already holds prints leaves a hole between the last of them and its own
+backfill block; the feed fills it from the opening slices and, when those do
+not reach back far enough, from `load_older` pages below them, holding the
+live tape until the hole is charted. A bridge answers these exactly like a
+click — nothing on the wire says who asked — and a bridge that does not page
+leaves the rest of the hole marked as a gap.
+
 Keep at most one request outstanding. The Python bridge logs and ignores an
 extra command while busy; it preserves the admitted request and its cursor.
 

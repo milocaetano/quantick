@@ -74,6 +74,76 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
 }
 
 #[test]
+fn a_reconnect_refill_reads_back_on_feed_status_with_its_remaining_gap() {
+    use quantick_feed::config::{BackfillState, BackfillStop, TapeBackfill};
+    let (mut app, _notices, (events, _book)) = test_app_with_notices();
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scopes = [observer_scope("feed.status")];
+    let mut tab_status = |app: &QuantickApp| {
+        registry
+            .capture(app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap()
+            .scopes[&scopes[0]]
+            .value["tabs"][0]
+            .clone()
+    };
+    assert!(
+        tab_status(&app).get("tape_backfill").is_none(),
+        "no refill yet"
+    );
+
+    let filling = TapeBackfill {
+        from_ms: 100,
+        to_ms: 900,
+        state: BackfillState::Filling,
+        received: 0,
+    };
+    let tab_id = app.tabs.active_id();
+    events.blocking_send(FeedEvent::Backfill(filling)).unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
+    assert_eq!(tab_status(&app)["tape_backfill"]["state"], "filling");
+
+    // The session died mid-refill: the unreached part is a gap, and the
+    // report names it and why.
+    let gap = quantick_feed::FeedGap {
+        from_ms: 100,
+        to_ms: 500,
+    };
+    events
+        .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+            gap: Some(gap),
+            missing_messages: None,
+            non_monotonic: false,
+        }))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::LiveBatch(vec![trade(500), trade(600)]))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::Backfill(TapeBackfill {
+            state: BackfillState::Partial {
+                unfilled_to_ms: 500,
+                stop: BackfillStop::SessionLost,
+            },
+            received: 2,
+            ..filling
+        }))
+        .unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
+    let status = tab_status(&app);
+    let refill = &status["tape_backfill"];
+    assert_eq!(refill["state"], "partial");
+    assert_eq!(refill["requested_from_unix_ms"], 100);
+    assert_eq!(refill["requested_to_unix_ms"], 900);
+    assert_eq!(refill["trades_received"], "2");
+    assert_eq!(refill["stop_reason"], "session_lost");
+    assert_eq!(refill["remaining_gap"]["to_unix_ms"], 500);
+    assert_eq!(status["tape_gaps"][0], refill["remaining_gap"]);
+}
+
+#[test]
 fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
     let (mut app, notices, _feed_ends) = test_app_with_notices();
     assert_eq!(

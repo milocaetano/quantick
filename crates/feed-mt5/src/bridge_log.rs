@@ -20,6 +20,15 @@
 
 use serde_json::Value;
 
+/// The headline every report of an unreachable terminal carries, word for
+/// word: the trader reads it on the tab, an operator matches it.
+pub const TERMINAL_NOT_RUNNING: &str = "MetaTrader 5 is not running";
+
+/// The bridge codes that mean the terminal itself cannot be reached: it
+/// would not attach at start, or it went away under a running session.
+pub const TERMINAL_DOWN_CODES: [&str; 2] =
+    ["BRIDGE_TERMINAL_ATTACH_FAILED", "BRIDGE_TERMINAL_LOST"];
+
 /// How much a bridge line matters to the person watching the chart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeSeverity {
@@ -147,10 +156,10 @@ pub fn report_for_line(line: &str) -> Option<BridgeReport> {
             "The MetaTrader 5 Python package is missing",
             "Install it once, then reconnect: pip install MetaTrader5",
         ),
-        "BRIDGE_TERMINAL_ATTACH_FAILED" => BridgeReport::fatal(
+        "BRIDGE_TERMINAL_ATTACH_FAILED" | "BRIDGE_TERMINAL_LOST" => BridgeReport::fatal(
             code,
-            "MetaTrader 5 is not running, or is not logged in",
-            "Open the MetaTrader 5 terminal and log in — quantick keeps retrying.",
+            TERMINAL_NOT_RUNNING,
+            "Open the MetaTrader 5 terminal and log in — quantick keeps retrying,              and fills in what the chart missed once it is back.",
         ),
         "BRIDGE_SYMBOL_NOT_FOUND" => BridgeReport::fatal(
             code,
@@ -282,6 +291,7 @@ mod tests {
         for line in [
             r#"{"event_code":"BRIDGE_NO_MT5_PACKAGE"}"#,
             r#"{"event_code":"BRIDGE_TERMINAL_ATTACH_FAILED"}"#,
+            r#"{"event_code":"BRIDGE_TERMINAL_LOST","symbol":"WINZ26"}"#,
             r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":"WINQ26"}"#,
             r#"{"event_code":"BRIDGE_SYMBOL_SELECT_FAILED","symbol":"WINQ26"}"#,
             r#"{"event_code":"BRIDGE_UTC_OFFSET_UNKNOWN"}"#,
@@ -398,6 +408,18 @@ mod tests {
             Some("BRIDGE_BOOK_STATS")
         );
         assert_eq!(event_code_of("not json"), None);
+    }
+
+    /// Whether it never started or went away mid-session, a closed terminal
+    /// reads the same on the tab — and the same words an operator matches.
+    #[test]
+    fn a_terminal_that_is_down_says_metatrader_is_not_running() {
+        for code in TERMINAL_DOWN_CODES {
+            let report = report_for_line(&format!(r#"{{"event_code":"{code}"}}"#))
+                .expect("a user-visible report");
+            assert_eq!(report.headline, TERMINAL_NOT_RUNNING);
+            assert_eq!(report.severity, BridgeSeverity::Attention);
+        }
     }
 
     #[test]

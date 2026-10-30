@@ -50,6 +50,9 @@ pub struct FeedIntegrity {
     pub unknown_loss: u64,
     /// Repeated or backwards source IDs.
     pub non_monotonic: u64,
+    /// The feed's refill of its last reconnect hole, as it last reported:
+    /// whether the hole was filled or how much of it stays a gap.
+    pub last_refill: Option<crate::config::TapeBackfill>,
 }
 
 impl FeedIntegrity {

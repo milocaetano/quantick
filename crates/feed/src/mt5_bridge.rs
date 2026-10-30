@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use quantick_feed_mt5::bridge_log::{BridgeSeverity, report_for_line};
+use quantick_feed_mt5::bridge_log::{BridgeSeverity, TERMINAL_DOWN_CODES, report_for_line};
 use quantick_feed_mt5::{BoundedLine, BoundedLineReader, MAX_LINE_BYTES};
 use tokio::process::{Child, ChildStderr, Command};
 use tokio::sync::mpsc;
@@ -611,6 +611,17 @@ async fn forward_bridge_line(line: &str, symbol: &str, notices: &mpsc::Sender<Fe
     let Some(report) = report_for_line(trimmed) else {
         return false;
     };
+    if TERMINAL_DOWN_CODES.contains(&report.event_code.as_str()) {
+        warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_TERMINAL_NOT_RUNNING",
+            symbol = %symbol,
+            bridge_code = %report.event_code,
+            action = "notify_user",
+            "the bridge cannot reach a running MetaTrader 5 terminal"
+        );
+    }
     let ends_session = report.ends_session;
     let notice = match report.severity {
         BridgeSeverity::Progress => FeedNotice::working(report.headline),

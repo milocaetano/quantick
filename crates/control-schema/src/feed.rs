@@ -108,6 +108,12 @@ pub struct FeedTabSnapshot {
     /// never reconnected — which is nearly all of them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tape_gaps: Vec<FeedGapSnapshot>,
+    /// The feed's refill of the hole its last reconnect left, while one runs
+    /// and after it ends. Absent on a tab whose feed never refilled one,
+    /// which is every feed but MetaTrader and every tab that never
+    /// reconnected; optional, so additive to v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tape_backfill: Option<FeedBackfillSnapshot>,
     /// The deal recorder, where the feed carries a deal counter; absent on
     /// a feed without one. The same view the REC control draws.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -147,6 +153,56 @@ pub struct FeedGapSnapshot {
     /// How long nothing was heard.
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub duration_ms: i64,
+}
+
+/// A feed's refill of a reconnect hole: what it asked for and how it ended.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FeedBackfillSnapshot {
+    /// `filling`, `filled` or `partial`.
+    pub state: String,
+    /// The last print the chart held before the source went away.
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub requested_from_unix_ms: i64,
+    /// The oldest print the new session opened with.
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub requested_to_unix_ms: i64,
+    /// Prints received toward the refill, before the seams were deduplicated.
+    pub trades_received: WireU64,
+    /// The part no print covers, on a `partial` refill; it is also one of
+    /// `tape_gaps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_gap: Option<FeedGapSnapshot>,
+    /// Why a `partial` refill stopped: `session_lost`, `no_paging`, `reach`,
+    /// `source_exhausted`, `nothing_found` or `held_too_long`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+}
+
+impl From<quantick_stores::config::TapeBackfill> for FeedBackfillSnapshot {
+    fn from(fill: quantick_stores::config::TapeBackfill) -> Self {
+        let (remaining_gap, stop_reason) = match fill.state {
+            quantick_stores::config::BackfillState::Partial {
+                unfilled_to_ms,
+                stop,
+            } => (
+                Some(FeedGapSnapshot {
+                    from_unix_ms: fill.from_ms,
+                    to_unix_ms: unfilled_to_ms,
+                    duration_ms: unfilled_to_ms - fill.from_ms,
+                }),
+                Some(stop.wire_name().to_owned()),
+            ),
+            _ => (None, None),
+        };
+        Self {
+            state: fill.state.wire_name().to_owned(),
+            requested_from_unix_ms: fill.from_ms,
+            requested_to_unix_ms: fill.to_ms,
+            trades_received: WireU64::new(fill.received),
+            remaining_gap,
+            stop_reason,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -196,6 +252,26 @@ pub struct FeedNoticeSnapshot {
     pub headline_present: bool,
     pub next_step_present: bool,
     pub text_availability: String,
+}
+
+impl FeedNoticeSnapshot {
+    /// The redacted view of a notice, from its kind and which of its two
+    /// texts it carries: the words name the venue and the terminal behind
+    /// it, and the observe tier does not publish them.
+    #[must_use]
+    pub fn from_summary((kind, headline_present, next_step_present): (&str, bool, bool)) -> Self {
+        Self {
+            kind: kind.to_owned(),
+            headline_present,
+            next_step_present,
+            text_availability: if headline_present {
+                "redacted_pending_attention_scope"
+            } else {
+                "not_applicable"
+            }
+            .to_owned(),
+        }
+    }
 }
 
 /// What a v1 payload recorded before `feed_generation` existed reads as: no

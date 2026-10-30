@@ -15,13 +15,14 @@
 //!   [`FeedEvent::HistoryPrepended`] — but only while no trade has been
 //!   forwarded yet; after that, recovered history is forwarded as live to
 //!   keep the retained stream ordered (logged as such, never silent).
-//! - **Reconnect overlap is dropped, not double-counted**: the bridge
-//!   re-sends its recent-history window on every session, and synthetic ids
-//!   restart, so the only stable cross-session key is time. Recovered trades
-//!   are forwarded only when strictly newer than the last forwarded trade;
-//!   the dropped overlap count is logged. (Trades sharing the last forwarded
-//!   millisecond are dropped too — losing a same-ms tick to a reconnect is
-//!   honest; silently inflating bars is not.)
+//! - **A reconnect refills its hole**: the bridge re-sends its session's
+//!   newest slice on every connection, and a chart that already holds prints
+//!   is missing everything between its last one and that slice. The feed
+//!   asks for it — opening slices, then `load_older` pages — holds the live
+//!   tape behind it and releases both in time order, deduplicating the old
+//!   seam by count at its millisecond since synthetic ids restart (see
+//!   `metatrader/gap_fill.rs`). What the bridge cannot reach stays a marked
+//!   gap with its reason, never silent space.
 //! - **"Load older" works when the bridge says it does.** The transport is
 //!   push-only for everything the terminal volunteers, and the one exception is
 //!   this: a bridge whose hello declares `history_paging` reads its socket, so
