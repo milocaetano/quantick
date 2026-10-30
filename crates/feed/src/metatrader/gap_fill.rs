@@ -25,7 +25,7 @@
 //! A refill that cannot reach the old end says so: the part it did not cover
 //! is handed back as a [`FeedGap`], which the chart marks, and the reason is
 //! a [`BackfillStop`]. Nothing here owns a channel, a clock or a log line —
-//! the driver in `refill.rs` does the sending, and keeps the hold's deadline.
+//! the driver in `refill.rs` does the sending, and keeps the hold's deadlines.
 //!
 //! A block that already reaches back to the chart's last print leaves no
 //! hole: [`closed_hole`] hands back its unseen tail and no refill opens.
@@ -64,11 +64,38 @@ pub(super) const REFILL_MAX_PAGES: u32 =
 /// the source stopped answering, not that the hole is large.
 pub(super) const MAX_HELD_EVENTS: usize = 1_000_000;
 
-/// The longest the live tape is held behind a refill. A hole of minutes is
-/// a page or two and fills in a second or so; one that takes longer is
-/// spending the trader's live tape on history, so it stops here with what it
-/// has, and the rest stays a marked gap ([`BackfillStop::HeldTooLong`]).
-pub(super) const REFILL_HOLD_LIMIT: Duration = Duration::from_secs(15);
+/// The longest a refill waits on the bridge with nothing arriving — no
+/// slice, no page. The bridge sends a slice about every third of a second
+/// and a page in seconds, so this long means it stopped answering: the
+/// refill stops with what it has, and the rest stays a marked gap
+/// ([`BackfillStop::HeldTooLong`]). A refill still receiving is never cut by
+/// it.
+pub(super) const REFILL_STALL_LIMIT: Duration = Duration::from_secs(20);
+
+/// The longest a refill holds the live tape however well it is going. Sized
+/// for the field case with room to spare: a B3 morning missed whole, about a
+/// million prints, is tens of slices or ten pages — tens of seconds. The
+/// trade-off is that the tape is frozen while it runs (the live prints are
+/// held, then released in order behind the hole), so past this the refill
+/// stops and what it never reached stays a marked gap
+/// ([`BackfillStop::HeldTooLong`]).
+pub(super) const REFILL_HARD_LIMIT: Duration = Duration::from_secs(180);
+
+/// How long a refill may hold the live tape: [`REFILL_STALL_LIMIT`] without
+/// progress, and [`REFILL_HARD_LIMIT`] in all.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RefillLimits {
+    pub(super) stall: Duration,
+    pub(super) hard: Duration,
+}
+
+impl RefillLimits {
+    /// The policy's limits; a test names shorter ones.
+    pub(super) const POLICY: Self = Self {
+        stall: REFILL_STALL_LIMIT,
+        hard: REFILL_HARD_LIMIT,
+    };
+}
 
 /// What the driver does next.
 pub(super) enum FillStep {
@@ -188,7 +215,7 @@ impl GapFill {
 
     /// A live event arrived while the refill runs: hold it. Returns whether
     /// the hold reached its bound; the driver then stops the refill with
-    /// [`BackfillStop::HeldTooLong`], as it does at [`REFILL_HOLD_LIMIT`].
+    /// [`BackfillStop::HeldTooLong`], as it does past its [`RefillLimits`].
     pub(super) fn hold(&mut self, event: FeedEvent) -> bool {
         self.held.push(event);
         self.held.len() >= MAX_HELD_EVENTS

@@ -9,9 +9,10 @@
 //! behind the refill goes out as live, because only it is.
 
 use quantick_engine::Trade;
+use tokio::time::Instant;
 use tracing::{info, warn};
 
-use super::gap_fill::{self, FillStep, GapFill, Release};
+use super::gap_fill::{self, FillStep, GapFill, RefillLimits, Release};
 use super::{EventFlow, Mt5Feed};
 use crate::config::{BackfillState, BackfillStop};
 use crate::{FeedContinuity, FeedEvent, FeedNotice, ResumeSeam};
@@ -19,6 +20,41 @@ use crate::{FeedContinuity, FeedEvent, FeedNotice, ResumeSeam};
 /// Prints per [`FeedEvent::Refilled`]: the bound on what one channel message
 /// hands a frame, the opening slice's order of magnitude.
 const RELEASE_BATCH_PRINTS: usize = 8_192;
+
+/// When a running refill must let the live tape go: [`RefillLimits`] read
+/// against the time it began and the last time the bridge answered it.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RefillDeadline {
+    /// The sooner of the two limits; what the feed loop sleeps until.
+    pub(super) at: Instant,
+    /// The hard cap, fixed when the refill began.
+    hard_at: Instant,
+}
+
+impl RefillDeadline {
+    fn begin(limits: RefillLimits, now: Instant) -> Self {
+        let hard_at = now + limits.hard;
+        Self {
+            at: (now + limits.stall).min(hard_at),
+            hard_at,
+        }
+    }
+
+    /// The bridge answered: the stall limit counts from `now` again; the hard
+    /// cap does not move.
+    fn progressed(&mut self, limits: RefillLimits, now: Instant) {
+        self.at = (now + limits.stall).min(self.hard_at);
+    }
+
+    /// Which limit the deadline that fired at `now` was.
+    fn cause(self, now: Instant) -> &'static str {
+        if now >= self.hard_at {
+            "hard_limit"
+        } else {
+            "no_progress"
+        }
+    }
+}
 
 impl Mt5Feed {
     /// Reconnect history landed on a chart that holds prints: chart its
@@ -57,7 +93,8 @@ impl Mt5Feed {
             held_at_last = seam.held_at_last,
             received = report.received,
             can_page,
-            hold_limit_ms = u64::try_from(self.refill_hold_limit.as_millis()).unwrap_or(u64::MAX),
+            stall_limit_ms = millis(self.refill_limits.stall),
+            hard_limit_ms = millis(self.refill_limits.hard),
             "the bridge came back after a hole; refilling it before the live tape resumes"
         );
         // The refill's notice is its own to clear only while nothing that
@@ -75,17 +112,21 @@ impl Mt5Feed {
             return EventFlow::UiGone;
         }
         self.refill = Some(fill);
-        self.refill_deadline = Some(tokio::time::Instant::now() + self.refill_hold_limit);
+        self.refill_deadline = Some(RefillDeadline::begin(self.refill_limits, Instant::now()));
         self.drive_refill().await
     }
 
     /// Ask, wait or release, as the refill decides. Called after anything
     /// that can change its answer — a slice, a page for it, and a page for
-    /// the chart, which frees a pager the refill was refused.
+    /// the chart, which frees a pager the refill was refused. Each is the
+    /// bridge answering, so each restarts the stall limit.
     pub(super) async fn drive_refill(&mut self) -> EventFlow {
         let Some(fill) = self.refill.as_mut() else {
             return EventFlow::Handled;
         };
+        if let Some(deadline) = self.refill_deadline.as_mut() {
+            deadline.progressed(self.refill_limits, Instant::now());
+        }
         match fill.step() {
             FillStep::Wait => EventFlow::Handled,
             FillStep::Ask {
@@ -127,14 +168,21 @@ impl Mt5Feed {
         }
     }
 
-    /// The hold's deadline passed: the live tape has waited long enough.
+    /// The hold's deadline passed: the bridge stopped answering, or the
+    /// refill reached its hard cap. Either way the live tape has waited long
+    /// enough.
     pub(super) async fn on_refill_deadline(&mut self) -> EventFlow {
+        let cause = self
+            .refill_deadline
+            .map_or("no_progress", |deadline| deadline.cause(Instant::now()));
         warn!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "MT5_GAP_REFILL_DEADLINE",
             symbol = %self.symbol,
-            hold_limit_ms = u64::try_from(self.refill_hold_limit.as_millis()).unwrap_or(u64::MAX),
+            cause,
+            stall_limit_ms = millis(self.refill_limits.stall),
+            hard_limit_ms = millis(self.refill_limits.hard),
             action = "release_live_tape",
             "the refill held the live tape too long; charting what it has"
         );
@@ -317,4 +365,8 @@ impl Mt5Feed {
     pub(super) fn refill_owns_pager(&self) -> bool {
         self.refill.is_some() || self.stray_refill_page
     }
+}
+
+fn millis(limit: std::time::Duration) -> u64 {
+    u64::try_from(limit.as_millis()).unwrap_or(u64::MAX)
 }

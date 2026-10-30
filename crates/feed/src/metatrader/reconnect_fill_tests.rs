@@ -16,6 +16,7 @@ use tokio::net::TcpStream;
 
 use quantick_engine::{Bar, Side, TickBarBuilder, TimeBarBuilder, Trade, golden};
 
+use super::gap_fill::RefillLimits;
 use super::{spawn, spawn_holding};
 use crate::config::{MetaTraderSettings, Mt5SideSource};
 use crate::{FeedEvent, FeedHandle, FeedNotice};
@@ -151,11 +152,16 @@ impl FakeBridge {
 
     /// The next line the feed wrote back, or `None` if it never asked.
     async fn request(&mut self) -> Option<String> {
+        self.request_within(Duration::from_secs(5)).await
+    }
+
+    /// [`Self::request`], waiting at most `wait` for each byte.
+    async fn request_within(&mut self, wait: Duration) -> Option<String> {
         use tokio::io::AsyncReadExt as _;
         let mut line = Vec::new();
         let mut byte = [0_u8; 1];
         loop {
-            let read = tokio::time::timeout(Duration::from_secs(5), self.sock.read(&mut byte))
+            let read = tokio::time::timeout(wait, self.sock.read(&mut byte))
                 .await
                 .ok()?
                 .ok()?;
@@ -174,9 +180,15 @@ fn feed_on(port: u16) -> FeedHandle {
     spawn("WIN$N", &settings_on(port), None)
 }
 
-/// A feed whose refill lets the live tape go after `hold`.
-fn feed_holding(port: u16, hold: Duration) -> FeedHandle {
-    spawn_holding("WIN$N", &settings_on(port), None, hold)
+/// A feed whose refill lets the live tape go after `stall` without
+/// progress, or `hard` in all.
+fn feed_holding(port: u16, stall: Duration, hard: Duration) -> FeedHandle {
+    spawn_holding(
+        "WIN$N",
+        &settings_on(port),
+        None,
+        RefillLimits { stall, hard },
+    )
 }
 
 fn settings_on(port: u16) -> MetaTraderSettings {
@@ -432,13 +444,15 @@ async fn second_session_asked(port: u16, prints: &[Print]) -> FakeBridge {
 
 /// Finding: the live tape was held for as long as the refill took, bounded
 /// only by a million events — minutes of a frozen tape while the book moved.
-/// Past its hold the refill charts what it has, marks the rest, and lets the
-/// live tape go while the session is still up.
+/// A bridge that stops answering is let go at the stall limit: the refill
+/// charts what it has, marks the rest, and lets the live tape go while the
+/// session is still up.
 #[tokio::test]
-async fn a_refill_that_outlives_its_hold_lets_the_live_tape_go_and_marks_the_rest() {
+async fn a_refill_the_bridge_stops_answering_lets_the_live_tape_go_and_marks_the_rest() {
     let prints = fixture();
     let expected = reference(&prints);
-    let mut feed = feed_holding(19_264, Duration::from_millis(400));
+    let stall = Duration::from_millis(400);
+    let mut feed = feed_holding(19_264, stall, Duration::from_secs(60));
     let mut chart = Chart::default();
     first_session(&mut feed, 19_264, &mut chart, &prints).await;
 
@@ -544,4 +558,123 @@ async fn a_refill_never_clears_a_notice_it_did_not_raise() {
     while let Ok(notice) = feed.notices.try_recv() {
         assert_ne!(notice, FeedNotice::Clear, "the attention must stay up");
     }
+}
+
+/// Finding (review round 2, B4): the hold was one fifteen-second limit on
+/// the whole refill, so a hole the bridge was still filling — a B3 morning
+/// is a million prints — was cut and left a gap. Only a bridge that stops
+/// answering trips the stall limit; one still sending pages goes on.
+#[tokio::test]
+async fn a_refill_still_receiving_pages_outlives_its_stall_limit() {
+    let prints = fixture();
+    let expected = reference(&prints);
+    let stall = Duration::from_millis(700);
+    let mut feed = feed_holding(19_267, stall, Duration::from_secs(60));
+    let mut chart = Chart::default();
+    first_session(&mut feed, 19_267, &mut chart, &prints).await;
+
+    // Three pages, each well inside the stall limit and all three past it.
+    let mut bridge = second_session_asked(19_267, &prints).await;
+    for (from, to) in [(300, 400), (230, 300), (150, 230)] {
+        tokio::time::sleep(stall * 2 / 3).await;
+        bridge.page(&prints[from..to], prints[from].time_ms).await;
+        if from > 150 {
+            assert!(
+                bridge.request().await.is_some(),
+                "the next page was asked for"
+            );
+        }
+    }
+    bridge.live(&prints[560..]).await;
+    chart.fill_to(&mut feed, 600).await;
+
+    assert!(chart.gaps.is_empty(), "{:?}", chart.gaps);
+    assert!(
+        same_prints(&chart.tape, &expected),
+        "{} prints",
+        chart.tape.len()
+    );
+    assert_eq!(
+        chart.reports.last().map(|report| report.state),
+        Some(crate::config::BackfillState::Filled)
+    );
+}
+
+/// The other half of B4: however steadily the bridge answers, the live tape
+/// is held no longer than the hard limit.
+#[tokio::test]
+async fn a_refill_is_cut_at_its_hard_limit_while_pages_still_arrive() {
+    let prints = fixture();
+    let expected = reference(&prints);
+    let page_every = Duration::from_millis(300);
+    let mut feed = feed_holding(19_268, page_every * 2, page_every * 4);
+    let mut chart = Chart::default();
+    first_session(&mut feed, 19_268, &mut chart, &prints).await;
+
+    // Pages of twenty, each answered 300 ms after it was asked: never late
+    // enough for the stall limit, never reaching the chart's seam, and with
+    // eight of them on offer, 2.4 s of pages against a 1.2 s cap.
+    let mut bridge = second_session_asked(19_268, &prints).await;
+    let mut from = 400;
+    while from > 240 {
+        tokio::time::sleep(page_every).await;
+        bridge
+            .page(&prints[from - 20..from], prints[from - 20].time_ms)
+            .await;
+        from -= 20;
+        if bridge.request_within(page_every).await.is_none() {
+            break; // the refill is over; nobody asks again
+        }
+    }
+    assert!(
+        from > 240,
+        "the cap cut the refill before the pages ran out"
+    );
+    bridge.live(&prints[560..570]).await;
+    let last = expected[569].timestamp_ms;
+    while chart
+        .tape
+        .last()
+        .is_none_or(|trade| trade.timestamp_ms != last)
+    {
+        match tokio::time::timeout(Duration::from_secs(5), feed.events.recv()).await {
+            Ok(Some(event)) => chart.take(event),
+            _ => panic!(
+                "the live tape never came through ({} prints)",
+                chart.tape.len()
+            ),
+        }
+    }
+
+    let Some(crate::config::BackfillState::Partial {
+        unfilled_to_ms,
+        stop,
+    }) = chart.reports.last().map(|report| report.state)
+    else {
+        panic!("the refill was not cut: {:?}", chart.reports.last());
+    };
+    assert_eq!(stop, crate::config::BackfillStop::HeldTooLong);
+    assert!(
+        unfilled_to_ms > expected[240].timestamp_ms,
+        "cut while pages were still arriving, not after they stopped"
+    );
+    assert_eq!(
+        chart.gaps,
+        [crate::FeedGap {
+            from_ms: expected[199].timestamp_ms,
+            to_ms: unfilled_to_ms
+        }]
+    );
+    let mut want = expected[..200].to_vec();
+    want.extend(
+        expected[200..570]
+            .iter()
+            .filter(|trade| trade.timestamp_ms >= unfilled_to_ms)
+            .cloned(),
+    );
+    assert!(
+        same_prints(&chart.tape, &want),
+        "{} prints",
+        chart.tape.len()
+    );
 }

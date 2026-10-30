@@ -77,9 +77,10 @@ mod listener;
 #[cfg(test)]
 mod reconnect_fill_tests;
 mod refill;
-use gap_fill::GapFill;
+use gap_fill::{GapFill, RefillLimits};
 use ledger::{CandleShelf, HistoryBlock, OpeningSlice, TapeLedger, Trimmed};
 use listener::{AfterExit, Listener, ListenerExit};
+use refill::RefillDeadline;
 
 /// Depth events are independent from the established trade channel. Sized like
 /// the Binance backend's: a B3 book republishes far faster than the UI drains,
@@ -113,21 +114,16 @@ pub fn spawn(
     settings: &MetaTraderSettings,
     clock_cache_dir: Option<PathBuf>,
 ) -> FeedHandle {
-    spawn_holding(
-        symbol,
-        settings,
-        clock_cache_dir,
-        gap_fill::REFILL_HOLD_LIMIT,
-    )
+    spawn_holding(symbol, settings, clock_cache_dir, RefillLimits::POLICY)
 }
 
-/// [`spawn`], with the longest a reconnect refill may hold the live tape
-/// named rather than the policy's: a test cannot wait the real one out.
+/// [`spawn`], with how long a reconnect refill may hold the live tape named
+/// rather than the policy's: a test cannot wait the real limits out.
 fn spawn_holding(
     symbol: &str,
     settings: &MetaTraderSettings,
     clock_cache_dir: Option<PathBuf>,
-    refill_hold_limit: Duration,
+    refill_limits: RefillLimits,
 ) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
     let (book_tx, book_rx) = mpsc::channel::<DepthEvent>(BOOK_EVENT_CHANNEL_CAPACITY);
@@ -154,7 +150,7 @@ fn spawn_holding(
                 symbol,
                 settings,
                 clock_cache_dir,
-                refill_hold_limit,
+                refill_limits,
                 tx,
                 book_tx,
                 notice_tx,
@@ -328,7 +324,7 @@ async fn feed_task(
     symbol: String,
     settings: MetaTraderSettings,
     clock_cache_dir: Option<PathBuf>,
-    refill_hold_limit: Duration,
+    refill_limits: RefillLimits,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
@@ -420,7 +416,7 @@ async fn feed_task(
         stray_refill_page: false,
         refill_deadline: None,
         refill_notice: None,
-        refill_hold_limit,
+        refill_limits,
         candles: CandleShelf::default(),
         listener: Listener::default(),
     };
@@ -460,7 +456,7 @@ async fn feed_task(
             }
             // The live tape is held behind a refill for a bounded time only.
             () = tokio::time::sleep_until(
-                feed.refill_deadline.unwrap_or_else(tokio::time::Instant::now)
+                feed.refill_deadline.map_or_else(tokio::time::Instant::now, |deadline| deadline.at)
             ), if feed.refill_deadline.is_some() => {
                 if let EventFlow::UiGone = feed.on_refill_deadline().await {
                     break;
@@ -524,12 +520,12 @@ struct Mt5Feed {
     /// A refill finished with its last page still on the wire: drop it.
     stray_refill_page: bool,
     /// When the running refill must let the live tape go.
-    refill_deadline: Option<tokio::time::Instant>,
+    refill_deadline: Option<RefillDeadline>,
     /// The latch's attention count when the running refill put its notice
     /// up; `None` when it put none up.
     refill_notice: Option<u64>,
     /// How long a refill may hold the live tape.
-    refill_hold_limit: Duration,
+    refill_limits: RefillLimits,
     candles: CandleShelf,
     listener: Listener,
 }
