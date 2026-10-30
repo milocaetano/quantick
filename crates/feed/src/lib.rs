@@ -58,7 +58,7 @@ pub use quantick_orderbook::DepthEvent;
 
 use crate::config::{FeedCapabilities, MetaTraderSettings, ProviderKind};
 
-pub use continuity::{FeedContinuity, FeedIntegrity};
+pub use continuity::{FeedContinuity, FeedIntegrity, ResumeSeam};
 pub use metatrader::forced_latency_split;
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
@@ -157,12 +157,21 @@ pub enum FeedEvent {
         /// Where this reply sits in the run answering the request.
         slice: OhlcvSlice,
     },
+    /// Where the feed's refill of a reconnect hole stands, ordered with the
+    /// prints it qualifies: `Filling` ahead of everything held behind it, the
+    /// final state after the refilled prints. Only a feed that refills sends
+    /// one; see [`config::TapeBackfill`].
+    Backfill(config::TapeBackfill),
 }
 
 /// A command from the UI to the feed thread.
 pub enum FeedCommand {
     /// Fetch `count` more trades older than the earliest one loaded.
     LoadOlder { count: usize },
+    /// The chart this fresh feed now serves already holds prints up to the seam:
+    /// a feed that can refill a reconnect hole starts from there instead of
+    /// from an empty chart. Ignored by feeds that cannot.
+    ResumeAfter(ResumeSeam),
     /// Enable or disable synchronized order-book capture.
     SetBookCapture {
         /// Whether capture should be running.

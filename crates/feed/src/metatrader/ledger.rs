@@ -13,7 +13,7 @@
 use quantick_engine::Trade;
 
 use super::OhlcvBlock;
-use crate::{FeedContinuity, OHLCV_BASE_INTERVAL_MS, OHLCV_DAILY_INTERVAL_MS};
+use crate::{FeedContinuity, OHLCV_BASE_INTERVAL_MS, OHLCV_DAILY_INTERVAL_MS, ResumeSeam};
 
 /// The earlier of two optional timestamps, treating `None` as "no opinion".
 ///
@@ -43,6 +43,9 @@ pub(super) struct TapeLedger {
     /// Newest trade timestamp forwarded to the UI. Reconnect history overlaps
     /// what was already streamed live; only strictly-newer trades pass.
     last_forwarded_ms: i64,
+    /// How many forwarded trades share `last_forwarded_ms`: the other half of
+    /// the seam a refill deduplicates against (see [`ResumeSeam`]).
+    at_last: usize,
     /// Where a lost session left the tape, owed as a continuity gap to the
     /// first trade forwarded after it.
     pending_gap: Option<i64>,
@@ -81,12 +84,9 @@ pub(super) enum HistoryBlock {
     Empty,
     /// The chart's first trades: prepend them whole.
     Opening(Vec<Trade>),
-    /// Reconnect history over a chart that already holds trades: only the
-    /// unseen tail goes on, as live, through [`TapeLedger::forward`].
-    Recovered {
-        fresh: Vec<Trade>,
-        overlap_dropped: usize,
-    },
+    /// Reconnect history over a chart that already holds trades: the block
+    /// opens a refill of the hole between `seam` and it.
+    Resumed { block: Vec<Trade>, seam: ResumeSeam },
 }
 
 /// What became of one slice of the opening session.
@@ -115,6 +115,7 @@ impl Default for TapeLedger {
             forwarded_any: false,
             opening_block_resent: false,
             last_forwarded_ms: i64::MIN,
+            at_last: 0,
             pending_gap: None,
             oldest_forwarded_ms: None,
             paging_floor_ms: None,
@@ -134,7 +135,12 @@ impl TapeLedger {
     /// session left owed, which goes out first.
     pub(super) fn forward(&mut self, trade: &Trade) -> Option<FeedContinuity> {
         self.forwarded_any = true;
-        self.last_forwarded_ms = self.last_forwarded_ms.max(trade.timestamp_ms);
+        if trade.timestamp_ms > self.last_forwarded_ms {
+            self.last_forwarded_ms = trade.timestamp_ms;
+            self.at_last = 1;
+        } else if trade.timestamp_ms == self.last_forwarded_ms {
+            self.at_last += 1;
+        }
         // A live print sets the floor only on a chart that has none: after
         // that the oldest trade is behind, not ahead, and `min` keeps it there.
         self.oldest_forwarded_ms = earlier(self.oldest_forwarded_ms, Some(trade.timestamp_ms));
@@ -148,19 +154,15 @@ impl TapeLedger {
             return HistoryBlock::Empty;
         }
         if self.forwarded_any {
-            // Reconnect history: forward only what the UI has not already
-            // seen. The opening slices that follow this block cover a session
-            // the chart already holds, so they are refused from now on.
+            // Reconnect history. The refill this opens owns the hole, and
+            // with it the decision whether a gap is marked; the opening
+            // slices it does not claim cover a session the chart already
+            // holds, so they are refused from now on.
             self.opening_block_resent = true;
-            let resent = batch.len();
-            let fresh: Vec<_> = batch
-                .into_iter()
-                .filter(|t| t.timestamp_ms > self.last_forwarded_ms)
-                .collect();
-            let overlap_dropped = resent - fresh.len();
-            return HistoryBlock::Recovered {
-                fresh,
-                overlap_dropped,
+            self.pending_gap = None;
+            return HistoryBlock::Resumed {
+                block: batch,
+                seam: self.seam(),
             };
         }
         self.forwarded_any = true;
@@ -169,6 +171,10 @@ impl TapeLedger {
             .map(|t| t.timestamp_ms)
             .max()
             .unwrap_or(self.last_forwarded_ms);
+        self.at_last = batch
+            .iter()
+            .filter(|t| t.timestamp_ms == self.last_forwarded_ms)
+            .count();
         self.oldest_forwarded_ms = earlier(
             self.oldest_forwarded_ms,
             batch.iter().map(|t| t.timestamp_ms).min(),
@@ -221,6 +227,30 @@ impl TapeLedger {
             scanned_to_utc_ms,
         );
         trimmed
+    }
+
+    /// Where the forwarded tape ends, for a refill to start from.
+    pub(super) fn seam(&self) -> ResumeSeam {
+        ResumeSeam {
+            last_ms: self.last_forwarded_ms,
+            held_at_last: self.at_last,
+            oldest_ms: self.oldest_forwarded_ms.unwrap_or(self.last_forwarded_ms),
+        }
+    }
+
+    /// A fresh feed took over a chart that already holds `seam`: behave as
+    /// the feed that forwarded it would, so the bridge's first block is read
+    /// as reconnect history rather than prepended over the chart. A feed
+    /// that already forwarded something keeps its own, truer seam.
+    pub(super) fn seed(&mut self, seam: ResumeSeam) {
+        if self.forwarded_any {
+            return;
+        }
+        self.forwarded_any = true;
+        self.last_forwarded_ms = seam.last_ms;
+        self.at_last = seam.held_at_last;
+        self.oldest_forwarded_ms = Some(seam.oldest_ms);
+        self.paging_floor_ms = Some(seam.oldest_ms);
     }
 
     /// A *load older* went on the wire; its reply is now owed.
@@ -391,20 +421,51 @@ mod ledger_tests {
     }
 
     #[test]
-    fn reconnect_history_forwards_only_the_unseen_tail() {
+    fn reconnect_history_opens_a_refill_from_the_forwarded_seam() {
         let mut ledger = TapeLedger::default();
-        let _ = ledger.history_block(vec![at(10), at(20)]);
+        let _ = ledger.history_block(vec![at(10), at(20), at(20)]);
         assert_eq!(ledger.forward(&at(30)), None);
-        let HistoryBlock::Recovered {
-            fresh,
-            overlap_dropped,
-        } = ledger.history_block(vec![at(20), at(30), at(40)])
+        assert_eq!(ledger.forward(&at(30)), None);
+        assert!(!ledger.session_lost());
+        let HistoryBlock::Resumed { block, seam } =
+            ledger.history_block(vec![at(20), at(30), at(40)])
         else {
             panic!("a second block is reconnect history");
         };
-        // Same millisecond as the last forwarded is dropped too.
-        assert_eq!(times(&fresh), [40]);
-        assert_eq!(overlap_dropped, 2);
+        assert_eq!(times(&block), [20, 30, 40], "the refill reads it whole");
+        assert_eq!(
+            seam,
+            ResumeSeam {
+                last_ms: 30,
+                held_at_last: 2,
+                oldest_ms: 10
+            }
+        );
+        // The refill owns the hole: no unknown-loss gap is owed any more.
+        assert_eq!(ledger.forward(&at(50)), None);
+    }
+
+    #[test]
+    fn a_seeded_ledger_reads_the_first_block_as_reconnect_history() {
+        let mut ledger = TapeLedger::default();
+        let seam = ResumeSeam {
+            last_ms: 500,
+            held_at_last: 3,
+            oldest_ms: 100,
+        };
+        ledger.seed(seam);
+        assert_eq!(ledger.paging_floor_ms(), Some(100));
+        assert!(matches!(
+            ledger.history_block(vec![at(600)]),
+            HistoryBlock::Resumed { seam: s, .. } if s == seam
+        ));
+        // A ledger with its own tape keeps it.
+        ledger.seed(ResumeSeam {
+            last_ms: 1,
+            held_at_last: 1,
+            oldest_ms: 1,
+        });
+        assert_eq!(ledger.seam(), seam);
     }
 
     #[test]

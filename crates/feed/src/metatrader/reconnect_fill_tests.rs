@@ -248,22 +248,8 @@ async fn a_reconnect_after_a_hole_charts_what_one_continuous_load_charts() {
     let expected = reference(&prints);
 
     let mut feed = feed_on(19_261);
-    let Some(FeedEvent::Backfilled(empty)) = feed.events.recv().await else {
-        panic!("expected the immediate empty backfill");
-    };
-    assert!(empty.is_empty());
     let mut chart = Chart::default();
-
-    // Session 1: the afternoon's first hundred prints as the opening block,
-    // then live prints until the terminal goes away in the middle of the
-    // three prints sharing one millisecond at 198..=200.
-    let mut bridge = FakeBridge::dial(19_261).await;
-    bridge.backfill(&prints[..100]).await;
-    bridge.live(&prints[100..200]).await;
-    chart.fill_to(&mut feed, 200).await;
-    assert_eq!(chart.tape.len(), 200, "session 1 charts what it streamed");
-    drop(bridge);
-    wait_for_notice(&mut feed, |n| matches!(n, FeedNotice::Reconnecting { .. })).await;
+    first_session(&mut feed, 19_261, &mut chart, &prints).await;
 
     // Session 2, the next morning: the newest slice of today's session, the
     // rest of today newest-first, and — once asked — the tail of yesterday
@@ -302,4 +288,109 @@ async fn a_reconnect_after_a_hole_charts_what_one_continuous_load_charts() {
     // Frozen so a change to the fixture or the builders is seen here.
     assert_eq!(want_tick.len(), 85);
     assert_eq!(want_time.len(), 112);
+}
+
+/// Session 1 of the fixture: the opening block, then live prints until the
+/// terminal goes away inside the same-millisecond group at 198..=200.
+async fn first_session(feed: &mut FeedHandle, port: u16, chart: &mut Chart, prints: &[Print]) {
+    let Some(FeedEvent::Backfilled(empty)) = feed.events.recv().await else {
+        panic!("expected the immediate empty backfill");
+    };
+    assert!(empty.is_empty());
+    let mut bridge = FakeBridge::dial(port).await;
+    bridge.backfill(&prints[..100]).await;
+    bridge.live(&prints[100..200]).await;
+    chart.fill_to(feed, 200).await;
+    assert_eq!(chart.tape.len(), 200, "session 1 charts what it streamed");
+    drop(bridge);
+    wait_for_notice(feed, |n| matches!(n, FeedNotice::Reconnecting { .. })).await;
+}
+
+#[tokio::test]
+async fn a_session_lost_mid_refill_marks_the_part_it_did_not_reach() {
+    let prints = fixture();
+    let expected = reference(&prints);
+    let mut feed = feed_on(19_262);
+    let mut chart = Chart::default();
+    let mut reports = Vec::new();
+    first_session(&mut feed, 19_262, &mut chart, &prints).await;
+
+    // The next morning's session sends one opening slice, is asked for the
+    // rest, streams a few live prints — and dies before answering.
+    let mut bridge = FakeBridge::dial(19_262).await;
+    bridge.backfill(&prints[500..560]).await;
+    bridge.opening(&prints[400..500], 1).await;
+    assert!(bridge.request().await.is_some(), "the hole was asked for");
+    bridge.live(&prints[560..580]).await;
+    // Give the feed time to hold the live prints before the socket closes.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drop(bridge);
+
+    while chart.tape.len() < 380 {
+        match tokio::time::timeout(Duration::from_secs(5), feed.events.recv()).await {
+            Ok(Some(FeedEvent::Backfill(report))) => reports.push(report),
+            Ok(Some(event)) => chart.take(event),
+            _ => break,
+        }
+    }
+    let to_ms = prints[400].time_ms + OFFSET_MS;
+    assert_eq!(
+        chart.gaps,
+        [crate::FeedGap {
+            from_ms: prints[199].time_ms + OFFSET_MS,
+            to_ms
+        }],
+        "the unreached part of the hole is marked, from the chart's last print"
+    );
+    let mut want = expected[..200].to_vec();
+    want.extend_from_slice(&expected[400..580]);
+    assert!(
+        same_prints(&chart.tape, &want),
+        "what arrived is charted in order ({} prints)",
+        chart.tape.len()
+    );
+    let last = reports.last().expect("the refill reported");
+    assert_eq!(
+        last.state,
+        crate::config::BackfillState::Partial {
+            unfilled_to_ms: to_ms,
+            stop: crate::config::BackfillStop::SessionLost
+        }
+    );
+    assert_eq!(last.received, 160);
+}
+
+#[tokio::test]
+async fn a_respawned_feed_told_where_the_chart_ends_refills_the_same_hole() {
+    // The tab's *reconnect* spawns a fresh feed: it has forwarded nothing,
+    // so the chart has to tell it where its tape ends.
+    let prints = fixture();
+    let expected = reference(&prints);
+    let mut feed = feed_on(19_263);
+    let Some(FeedEvent::Backfilled(empty)) = feed.events.recv().await else {
+        panic!("expected the immediate empty backfill");
+    };
+    assert!(empty.is_empty());
+    let mut chart = Chart {
+        tape: expected[..200].to_vec(),
+        gaps: Vec::new(),
+    };
+    let held: quantick_engine::trade_tape::TradeTape = chart.tape.iter().cloned().collect();
+    let seam = crate::ResumeSeam::of_tape(&held).expect("a held tape has a seam");
+    assert_eq!(seam.held_at_last, 2, "two of the three prints at 198..=200");
+    feed.commands
+        .send(crate::FeedCommand::ResumeAfter(seam))
+        .await
+        .expect("feed alive");
+
+    let mut bridge = FakeBridge::dial(19_263).await;
+    bridge.backfill(&prints[500..560]).await;
+    bridge.opening(&prints[330..500], 0).await;
+    assert!(bridge.request().await.is_some(), "the hole was asked for");
+    bridge.page(&prints[150..330], prints[150].time_ms).await;
+    bridge.live(&prints[560..]).await;
+    chart.fill_to(&mut feed, 600).await;
+
+    assert!(chart.gaps.is_empty(), "{:?}", chart.gaps);
+    assert!(same_prints(&chart.tape, &expected));
 }

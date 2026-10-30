@@ -126,3 +126,38 @@ pub(crate) fn mt5_reconnect_gap(
         non_monotonic: false,
     })
 }
+
+/// Where a chart's tape ends, exactly enough to resume a source onto it.
+///
+/// MT5 prints share milliseconds and carry no stable id across sessions, so
+/// time alone cannot say which prints at the last millisecond the chart
+/// already holds. The count can: a refill that re-delivers that millisecond
+/// skips exactly the first `held_at_last` of its prints there and keeps the
+/// rest, which is what one continuous load would have charted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResumeSeam {
+    /// The newest print held, UTC ms.
+    pub last_ms: i64,
+    /// How many held prints share `last_ms`.
+    pub held_at_last: usize,
+    /// The oldest print held, UTC ms: where a *load older* pages from.
+    pub oldest_ms: i64,
+}
+
+impl ResumeSeam {
+    /// The seam of a held tape, or `None` for an empty one.
+    #[must_use]
+    pub fn of_tape(tape: &quantick_engine::trade_tape::TradeTape) -> Option<Self> {
+        let last_ms = tape.last()?.timestamp_ms;
+        let held_at_last = tape
+            .iter()
+            .rev()
+            .take_while(|trade| trade.timestamp_ms == last_ms)
+            .count();
+        Some(Self {
+            last_ms,
+            held_at_last,
+            oldest_ms: tape.first()?.timestamp_ms,
+        })
+    }
+}
