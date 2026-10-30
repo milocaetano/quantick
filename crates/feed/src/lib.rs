@@ -427,6 +427,34 @@ pub fn past_resume_floor(batch: &[Trade], floor_ms: i64) -> &[Trade] {
     &batch[batch.partition_point(|trade| trade.timestamp_ms <= floor_ms)..]
 }
 
+/// [`past_resume_floor`] for `feed`'s `symbol`, with what it drops logged
+/// rather than silent, like the same rule inside `quantick-feed-mt5`: a print
+/// that was dropped is a print the chart chose not to count, and that choice
+/// is reviewable.
+#[must_use]
+pub fn past_resume_floor_logged<'a>(
+    batch: &'a [Trade],
+    floor_ms: i64,
+    feed: &str,
+    symbol: &str,
+) -> &'a [Trade] {
+    let fresh = past_resume_floor(batch, floor_ms);
+    let dropped = batch.len() - fresh.len();
+    if dropped > 0 {
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FEED_RESUME_OVERLAP_DROPPED",
+            feed = %feed,
+            symbol = %symbol,
+            dropped,
+            floor_ms,
+            "dropped the window a resumed session replayed"
+        );
+    }
+    fresh
+}
+
 /// What a feed wants the person watching the chart to know.
 ///
 /// A feed that cannot deliver trades knows *why* — the terminal is closed, a

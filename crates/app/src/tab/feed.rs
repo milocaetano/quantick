@@ -28,7 +28,7 @@ use quantick_feed::history_run::{Cancelled, Press};
 use quantick_feed::stall::{self, Stall, StallInput};
 use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
-    MIN_MARKED_GAP_MS, REFILL_PRINTS_PER_DRAIN, past_resume_floor,
+    MIN_MARKED_GAP_MS, REFILL_PRINTS_PER_DRAIN, past_resume_floor_logged,
 };
 use quantick_layers::ChartLayer;
 use quantick_session::{
@@ -568,7 +568,17 @@ impl Tab {
                         live |= self.ingest_resumed(&trades);
                         continue;
                     }
-                    self.ingest_history_tail(&trades);
+                    self.history_trades += trades.len();
+                    // History only seeds the simulator's mark — filling
+                    // against the past would be look-ahead.
+                    if let Some(last) = trades.last() {
+                        self.paper.seed(last);
+                    }
+                    // One tape, every pane: the split multiplies views of the
+                    // market, never the stream behind them.
+                    for pane in self.panes_mut() {
+                        pane.ingest_backfill(&trades);
+                    }
                 }
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
                     // The reply — even an empty one — answers exactly one
@@ -671,7 +681,9 @@ impl Tab {
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
                 Ok(FeedEvent::RefillStatus(fill)) => self.feed_integrity.last_refill = Some(fill),
                 Ok(FeedEvent::Refilled(trades)) => {
-                    refilled += self.ingest_history_tail(&trades);
+                    self.resume_floor_ms = None; // the feed owns the seam
+                    live |= self.ingest_unheard(&trades, false);
+                    refilled += trades.len();
                     if refilled >= REFILL_PRINTS_PER_DRAIN {
                         break; // the rest waits, in order, for the next frame
                     }
@@ -1204,51 +1216,34 @@ impl Tab {
         let Some(floor) = self.resume_floor_ms.take() else {
             return false;
         };
-        let fresh = past_resume_floor(trades, floor);
-        let overlap = trades.len() - fresh.len();
-        if overlap > 0 {
-            // Logged rather than silent, like the same rule inside
-            // `quantick-feed-mt5`: a print that was dropped is a print the
-            // chart chose not to count, and that choice is reviewable.
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "FEED_RESUME_OVERLAP_DROPPED",
-                feed = %self.feed_id,
-                symbol = %self.symbol,
-                dropped = overlap,
-                floor_ms = floor,
-                "dropped the window a resumed session replayed"
-            );
-        }
+        let fresh = past_resume_floor_logged(trades, floor, &self.feed_id, &self.symbol);
         let Some(first) = fresh.first() else {
             return false;
         };
         self.record_gap(floor, first.timestamp_ms);
-        self.history_trades += fresh.len();
-        self.latest_trade_ms = Some(fresh[fresh.len() - 1].timestamp_ms);
-        for trade in fresh {
-            for pane in self.panes_mut() {
-                pane.ingest_live_trade(trade);
-            }
-        }
-        // The mark, and only the mark — the same seeding `Backfilled` does.
-        self.paper.seed(&fresh[fresh.len() - 1]);
-        true
+        self.ingest_unheard(fresh, true)
     }
 
-    /// History behind the tape, a backfill or a refilled reconnect hole whose seam the
-    /// feed owns: bars and the paper mark only — a fill against the past is look-ahead.
-    fn ingest_history_tail(&mut self, trades: &[quantick_engine::Trade]) -> usize {
-        self.resume_floor_ms = None;
+    /// Prints made while nobody listened, a resumed window or a refilled hole: the live
+    /// path's bars, tape and indicators, and the paper mark only (see [`Self::ingest_resumed`]).
+    /// Without `to_strategies` the bars they close never reach a strategy.
+    fn ingest_unheard(&mut self, trades: &[quantick_engine::Trade], to_strategies: bool) -> bool {
+        let Some(last) = trades.last() else {
+            return false;
+        };
         self.history_trades += trades.len();
-        if let Some(last) = trades.last() {
-            self.paper.seed(last);
-        }
+        self.latest_trade_ms = Some(last.timestamp_ms);
         for pane in self.panes_mut() {
-            pane.ingest_backfill(trades);
+            let queued = pane.strategies.pending.len();
+            for trade in trades {
+                pane.ingest_live_trade(trade);
+            }
+            if !to_strategies {
+                pane.strategies.pending.truncate(queued);
+            }
         }
-        trades.len()
+        self.paper.seed(last);
+        true
     }
 
     /// Land the gap `QUANTICK_FEED_GAP` asked for, once the chart has bars for
