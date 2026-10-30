@@ -379,8 +379,9 @@ It is also sent unasked once per reconnect. A session that opens on a chart
 which already holds prints leaves a hole between the last of them and its own
 backfill block; the feed fills it from the opening slices and, when those do
 not reach back far enough, from `load_older` pages below them, holding the
-live tape until the hole is charted. A bridge answers these exactly like a
-click — nothing on the wire says who asked — and a bridge that does not page
+live tape until the hole is charted, for at most fifteen seconds. A bridge
+answers these exactly like a click — nothing on the wire says who asked, so
+the feed never has two requests out at once — and a bridge that does not page
 leaves the rest of the hole marked as a gap.
 
 Keep at most one request outstanding. The Python bridge logs and ignores an
