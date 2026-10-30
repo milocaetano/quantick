@@ -72,6 +72,8 @@ use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
 
 mod ledger;
 mod listener;
+#[cfg(test)]
+mod reconnect_fill_tests;
 use ledger::{CandleShelf, HistoryBlock, OpeningSlice, TapeLedger, Trimmed};
 use listener::{AfterExit, Listener, ListenerExit};
 
