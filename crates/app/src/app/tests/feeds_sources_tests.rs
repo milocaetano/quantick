@@ -1,4 +1,5 @@
 mod pane_model_tests;
+mod refill_ingest_tests;
 
 use super::*;
 use quantick_feed::history_reach;
