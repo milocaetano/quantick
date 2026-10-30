@@ -68,7 +68,7 @@ use crate::config::{
     BackfillStop, FeedCapabilities, MetaTraderSettings, Mt5Endpoint, Mt5SideSource, ProviderKind,
 };
 
-use super::mt5_bridge::{Supervision, supervise};
+use super::mt5_bridge::{NoticeLatch, Supervision, supervise};
 use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
 
 mod gap_fill;
@@ -113,6 +113,22 @@ pub fn spawn(
     settings: &MetaTraderSettings,
     clock_cache_dir: Option<PathBuf>,
 ) -> FeedHandle {
+    spawn_holding(
+        symbol,
+        settings,
+        clock_cache_dir,
+        gap_fill::REFILL_HOLD_LIMIT,
+    )
+}
+
+/// [`spawn`], with the longest a reconnect refill may hold the live tape
+/// named rather than the policy's: a test cannot wait the real one out.
+fn spawn_holding(
+    symbol: &str,
+    settings: &MetaTraderSettings,
+    clock_cache_dir: Option<PathBuf>,
+    refill_hold_limit: Duration,
+) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
     let (book_tx, book_rx) = mpsc::channel::<DepthEvent>(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel::<FeedNotice>(NOTICE_CHANNEL_CAPACITY);
@@ -138,6 +154,7 @@ pub fn spawn(
                 symbol,
                 settings,
                 clock_cache_dir,
+                refill_hold_limit,
                 tx,
                 book_tx,
                 notice_tx,
@@ -311,6 +328,7 @@ async fn feed_task(
     symbol: String,
     settings: MetaTraderSettings,
     clock_cache_dir: Option<PathBuf>,
+    refill_hold_limit: Duration,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
@@ -349,6 +367,7 @@ async fn feed_task(
     // afterwards was the second one this removes. The supervisor holds off
     // until it is sure nobody else is already feeding us.
     let bridge_connected = Arc::new(AtomicBool::new(false));
+    let latch = Arc::new(NoticeLatch::default());
     let autostart = settings.bridge_autostart.then(|| {
         tokio::spawn(supervise(
             settings.clone(),
@@ -357,6 +376,7 @@ async fn feed_task(
                 endpoint: endpoint.clone(),
                 connected: Arc::clone(&bridge_connected),
                 notices: notice_tx.clone(),
+                latch: Arc::clone(&latch),
                 clock_cache_dir,
             },
         ))
@@ -395,8 +415,12 @@ async fn feed_task(
         book_capture,
         history_pager,
         tape: TapeLedger::default(),
+        latch,
         refill: None,
         stray_refill_page: false,
+        refill_deadline: None,
+        refill_notice: None,
+        refill_hold_limit,
         candles: CandleShelf::default(),
         listener: Listener::default(),
     };
@@ -431,6 +455,14 @@ async fn feed_task(
             }
             maybe_cmd = cmd_rx.recv() => {
                 if feed.on_command(maybe_cmd).await.is_break() {
+                    break;
+                }
+            }
+            // The live tape is held behind a refill for a bounded time only.
+            () = tokio::time::sleep_until(
+                feed.refill_deadline.unwrap_or_else(tokio::time::Instant::now)
+            ), if feed.refill_deadline.is_some() => {
+                if let EventFlow::UiGone = feed.on_refill_deadline().await {
                     break;
                 }
             }
@@ -484,10 +516,20 @@ struct Mt5Feed {
     book_capture: BookCaptureSwitch,
     history_pager: HistoryPager,
     tape: TapeLedger,
+    /// What this feed and its bridge supervisor both know about the notice
+    /// on the tab.
+    latch: Arc<NoticeLatch>,
     /// The refill of a reconnect hole, while one runs (see `gap_fill.rs`).
     refill: Option<GapFill>,
     /// A refill finished with its last page still on the wire: drop it.
     stray_refill_page: bool,
+    /// When the running refill must let the live tape go.
+    refill_deadline: Option<tokio::time::Instant>,
+    /// The latch's attention count when the running refill put its notice
+    /// up; `None` when it put none up.
+    refill_notice: Option<u64>,
+    /// How long a refill may hold the live tape.
+    refill_hold_limit: Duration,
     candles: CandleShelf,
     listener: Listener,
 }
@@ -667,7 +709,10 @@ impl Mt5Feed {
                 FeedNotice::reconnecting("the MetaTrader bridge disconnected — reconnecting")
             }
         };
-        let _ = self.notice_tx.send(notice).await;
+        // A terminal that is down stays the notice until a session connects.
+        for notice in self.latch.admit(notice) {
+            let _ = self.notice_tx.send(notice).await;
+        }
         log_status(&self.symbol, &status);
         EventFlow::Handled
     }
@@ -688,7 +733,7 @@ impl Mt5Feed {
             }
             // Reconnect history: the hole between the chart and this block
             // is refilled before the live tape goes on (see `gap_fill.rs`).
-            HistoryBlock::Resumed { block, seam } => self.begin_refill(block, seam).await,
+            HistoryBlock::Resumed { block, seam } => self.on_resumed(block, seam).await,
         }
     }
 
@@ -810,7 +855,8 @@ impl Mt5Feed {
             );
             self.caps_tx.send_modify(|caps| caps.history_paging = false);
         }
-        EventFlow::Handled
+        // A refill refused the pager while this page travelled asks now.
+        self.drive_refill().await
     }
 
     fn on_session_busy(
@@ -847,6 +893,7 @@ impl Mt5Feed {
         // produces one per attempt. Awaiting a full channel would stall the
         // feed itself, and losing a duplicate of a message already on screen
         // costs nothing.
+        self.latch.raise(false);
         let _ = self
             .notice_tx
             .try_send(FeedNotice::attention(headline, advice));
@@ -2587,30 +2634,24 @@ mod tests {
         sock.flush().await.unwrap();
 
         // The re-sent window reaches back past the last print the chart holds,
-        // so the hole is closed by the bridge's own history: a refill opens
-        // and finishes at once, and no gap is marked for a tape that is whole.
-        async fn next(feed: &mut FeedHandle) -> Option<FeedEvent> {
+        // so there is no hole: no refill opens, none is reported, and the
+        // unseen tail goes out on the history path, never as live.
+        let Some(FeedEvent::Refilled(fresh)) =
             tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
                 .await
-                .expect("timed out waiting for the refill")
-        }
-        let Some(FeedEvent::Backfill(started)) = next(&mut feed).await else {
-            panic!("expected the refill to say it started");
+                .expect("timed out waiting for the unseen tail")
+        else {
+            panic!("expected the unseen tail as recovered history");
         };
-        assert_eq!(started.state, crate::config::BackfillState::Filling);
-        assert_eq!((started.from_ms, started.to_ms), (10_801_002, 10_801_001));
         // Only the unseen tail arrives; the overlap is dropped, not replayed.
-        let Some(FeedEvent::LiveBatch(fresh)) = next(&mut feed).await else {
-            panic!("expected the unseen tail as live prints");
-        };
         assert_eq!(fresh.len(), 1);
         let fresh = &fresh[0];
-        let Some(FeedEvent::Backfill(done)) = next(&mut feed).await else {
-            panic!("expected the refill to say how it ended");
-        };
-        assert_eq!(done.state, crate::config::BackfillState::Filled);
         assert_eq!(fresh.timestamp_ms, 1003 + 10_800_000);
         assert_eq!(fresh.agg_id, 4);
+        assert!(
+            feed.events.try_recv().is_err(),
+            "a reconnect with no hole reports no refill"
+        );
         let connected_again = notice_matching(&mut feed.notices, |notice| {
             matches!(notice, FeedNotice::Connected)
         })

@@ -258,6 +258,12 @@ impl TapeLedger {
         self.page_outstanding = true;
     }
 
+    /// Whether the chart's *load older* is still owed its reply. Replies
+    /// carry no request id, so nobody else may ask until it lands.
+    pub(super) fn page_owed(&self) -> bool {
+        self.page_outstanding
+    }
+
     /// The bridge session was lost. Arms the continuity gap when anything was
     /// forwarded, and returns whether a page request died with the session
     /// and must be answered empty here.

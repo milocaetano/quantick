@@ -157,11 +157,22 @@ pub enum FeedEvent {
         /// Where this reply sits in the run answering the request.
         slice: OhlcvSlice,
     },
+    /// Prints a feed recovered for the hole a reconnect left in a chart it
+    /// already serves: newer than everything the chart holds, older than the
+    /// live tape that follows, ascending, both seams already deduplicated.
+    ///
+    /// History, not live: the market made them while nobody was listening.
+    /// They build bars and move the paper *mark* and nothing else — no fill,
+    /// no strategy, no alarm, no arrival-latency reading — exactly as
+    /// [`Backfilled`](Self::Backfilled) history does. The feed owns the seam,
+    /// so no resume floor applies to them. Only a feed that refills sends
+    /// this; see [`RefillStatus`](Self::RefillStatus).
+    Refilled(Vec<Trade>),
     /// Where the feed's refill of a reconnect hole stands, ordered with the
     /// prints it qualifies: `Filling` ahead of everything held behind it, the
     /// final state after the refilled prints. Only a feed that refills sends
     /// one; see [`config::TapeBackfill`].
-    Backfill(config::TapeBackfill),
+    RefillStatus(config::TapeBackfill),
 }
 
 /// A command from the UI to the feed thread.
@@ -388,6 +399,12 @@ pub const MIN_MARKED_GAP_MS: i64 = 5_000;
 /// dead terminal could otherwise grow this list for hours. The newest are the
 /// ones on screen, so the oldest is what falls off.
 pub const MAX_REMEMBERED_GAPS: usize = 32;
+
+/// The most refilled prints ([`FeedEvent::Refilled`]) a chart takes in one
+/// drain. A refill can bring hundreds of thousands of prints at once; taken
+/// in one frame they freeze the window, so the rest waits in the channel —
+/// in order, ahead of the live tape behind it — for the next frame.
+pub const REFILL_PRINTS_PER_DRAIN: usize = 16_384;
 
 /// The trades in `batch` the chart has not already seen, given the market time
 /// it had already reached.

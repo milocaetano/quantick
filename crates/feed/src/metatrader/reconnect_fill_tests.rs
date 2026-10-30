@@ -16,7 +16,7 @@ use tokio::net::TcpStream;
 
 use quantick_engine::{Bar, Side, TickBarBuilder, TimeBarBuilder, Trade, golden};
 
-use super::spawn;
+use super::{spawn, spawn_holding};
 use crate::config::{MetaTraderSettings, Mt5SideSource};
 use crate::{FeedEvent, FeedHandle, FeedNotice};
 
@@ -171,21 +171,33 @@ impl FakeBridge {
 }
 
 fn feed_on(port: u16) -> FeedHandle {
-    let settings = MetaTraderSettings {
+    spawn("WIN$N", &settings_on(port), None)
+}
+
+/// A feed whose refill lets the live tape go after `hold`.
+fn feed_holding(port: u16, hold: Duration) -> FeedHandle {
+    spawn_holding("WIN$N", &settings_on(port), None, hold)
+}
+
+fn settings_on(port: u16) -> MetaTraderSettings {
+    MetaTraderSettings {
         listen_addr: format!("127.0.0.1:{port}"),
         // Exchange flags carry the side, so no print depends on its neighbour.
         side_source: Mt5SideSource::Flags,
         bridge_autostart: false,
         ..MetaTraderSettings::default()
-    };
-    spawn("WIN$N", &settings, None)
+    }
 }
 
-/// The tape a chart holds after these events, and the gaps it was told of.
+/// The tape a chart holds after these events, the gaps it was told of, and
+/// how the refill reported itself.
 #[derive(Default)]
 struct Chart {
     tape: Vec<Trade>,
     gaps: Vec<crate::FeedGap>,
+    reports: Vec<crate::config::TapeBackfill>,
+    /// Prints that arrived on the history path rather than as live.
+    refilled: usize,
 }
 
 impl Chart {
@@ -197,7 +209,12 @@ impl Chart {
             }
             FeedEvent::Live(trade) => self.tape.push(trade),
             FeedEvent::LiveBatch(trades) => self.tape.extend(trades),
+            FeedEvent::Refilled(trades) => {
+                self.refilled += trades.len();
+                self.tape.extend(trades);
+            }
             FeedEvent::Continuity(event) => self.gaps.extend(event.gap),
+            FeedEvent::RefillStatus(report) => self.reports.push(report),
             _ => {}
         }
     }
@@ -275,6 +292,8 @@ async fn a_reconnect_after_a_hole_charts_what_one_continuous_load_charts() {
         "a hole the terminal could fill is not a gap: {:?}",
         chart.gaps
     );
+    // The hole is history: 200..560 never reaches the chart as live.
+    assert_eq!(chart.refilled, 360, "the hole arrives on the history path");
     assert!(
         same_prints(&chart.tape, &expected),
         "the reconnected tape differs from one continuous load ({} prints vs {})",
@@ -328,7 +347,7 @@ async fn a_session_lost_mid_refill_marks_the_part_it_did_not_reach() {
 
     while chart.tape.len() < 380 {
         match tokio::time::timeout(Duration::from_secs(5), feed.events.recv()).await {
-            Ok(Some(FeedEvent::Backfill(report))) => reports.push(report),
+            Ok(Some(FeedEvent::RefillStatus(report))) => reports.push(report),
             Ok(Some(event)) => chart.take(event),
             _ => break,
         }
@@ -373,7 +392,7 @@ async fn a_respawned_feed_told_where_the_chart_ends_refills_the_same_hole() {
     assert!(empty.is_empty());
     let mut chart = Chart {
         tape: expected[..200].to_vec(),
-        gaps: Vec::new(),
+        ..Chart::default()
     };
     let held: quantick_engine::trade_tape::TradeTape = chart.tape.iter().cloned().collect();
     let seam = crate::ResumeSeam::of_tape(&held).expect("a held tape has a seam");
@@ -393,4 +412,136 @@ async fn a_respawned_feed_told_where_the_chart_ends_refills_the_same_hole() {
 
     assert!(chart.gaps.is_empty(), "{:?}", chart.gaps);
     assert!(same_prints(&chart.tape, &expected));
+}
+
+/// Session 2 of the fixture opens, sends the newest slice and one opening
+/// slice, and is asked for the rest of the hole.
+async fn second_session_asked(port: u16, prints: &[Print]) -> FakeBridge {
+    let mut bridge = FakeBridge::dial(port).await;
+    bridge.backfill(&prints[500..560]).await;
+    bridge.opening(&prints[400..500], 1).await;
+    let request = bridge.request().await;
+    assert!(
+        request
+            .as_deref()
+            .is_some_and(|r| r.contains("\"load_older\"")),
+        "the hole was asked for: {request:?}"
+    );
+    bridge
+}
+
+/// Finding: the live tape was held for as long as the refill took, bounded
+/// only by a million events — minutes of a frozen tape while the book moved.
+/// Past its hold the refill charts what it has, marks the rest, and lets the
+/// live tape go while the session is still up.
+#[tokio::test]
+async fn a_refill_that_outlives_its_hold_lets_the_live_tape_go_and_marks_the_rest() {
+    let prints = fixture();
+    let expected = reference(&prints);
+    let mut feed = feed_holding(19_264, Duration::from_millis(400));
+    let mut chart = Chart::default();
+    first_session(&mut feed, 19_264, &mut chart, &prints).await;
+
+    // The page is asked for and never answered; the tape runs on.
+    let mut bridge = second_session_asked(19_264, &prints).await;
+    bridge.live(&prints[560..580]).await;
+    chart.fill_to(&mut feed, 380).await;
+
+    let to_ms = prints[400].time_ms + OFFSET_MS;
+    assert_eq!(
+        chart.gaps,
+        [crate::FeedGap {
+            from_ms: prints[199].time_ms + OFFSET_MS,
+            to_ms
+        }],
+        "the part the refill never reached is marked"
+    );
+    let mut want = expected[..200].to_vec();
+    want.extend_from_slice(&expected[400..580]);
+    assert!(
+        same_prints(&chart.tape, &want),
+        "what arrived is charted in order ({} prints)",
+        chart.tape.len()
+    );
+    assert_eq!(
+        chart.reports.last().map(|report| report.state),
+        Some(crate::config::BackfillState::Partial {
+            unfilled_to_ms: to_ms,
+            stop: crate::config::BackfillStop::HeldTooLong
+        })
+    );
+    // The session lives on, and its tape is no longer held.
+    bridge.live(&prints[580..590]).await;
+    chart.fill_to(&mut feed, 390).await;
+    assert_eq!(chart.tape.len(), 390, "the live tape flows again");
+}
+
+/// Finding: a refill whose page the pager refused — a *load older* the
+/// chart sent first was still on the wire — was never asked again, and the
+/// tape stayed frozen. Settling the chart's page drives the refill.
+#[tokio::test]
+async fn a_refill_refused_the_pager_asks_again_once_the_charts_page_lands() {
+    let prints = fixture();
+    let expected = reference(&prints);
+    let mut feed = feed_on(19_265);
+    let mut chart = Chart::default();
+    first_session(&mut feed, 19_265, &mut chart, &prints).await;
+
+    let mut bridge = FakeBridge::dial(19_265).await;
+    wait_for_notice(&mut feed, |n| matches!(n, FeedNotice::Connected)).await;
+    feed.commands
+        .send(crate::FeedCommand::LoadOlder { count: 100 })
+        .await
+        .expect("feed alive");
+    let chart_ask = bridge.request().await;
+    assert!(
+        chart_ask.is_some_and(|r| r.contains("\"load_older\"")),
+        "the chart's page went out first"
+    );
+    // The refill opens while the chart's page is on the wire: refused.
+    bridge.backfill(&prints[500..560]).await;
+    bridge.opening(&prints[330..500], 0).await;
+    // Nothing is older than session 1's first print.
+    bridge.page(&[], prints[0].time_ms - 1).await;
+    let refill_ask = bridge.request().await;
+    assert!(
+        refill_ask.is_some_and(|r| r.contains("\"load_older\"")),
+        "the refill asked again once the pager was free"
+    );
+    bridge.page(&prints[150..330], prints[150].time_ms).await;
+    bridge.live(&prints[560..]).await;
+    chart.fill_to(&mut feed, 600).await;
+
+    assert!(chart.gaps.is_empty(), "{:?}", chart.gaps);
+    assert!(same_prints(&chart.tape, &expected));
+    // Nothing else was said meanwhile, so the refill clears its own notice.
+    wait_for_notice(&mut feed, |n| matches!(n, FeedNotice::Clear)).await;
+}
+
+/// Finding: a finished refill always cleared the notice, so whatever needed
+/// the trader meanwhile — here a second bridge dialing the same port — was
+/// wiped off the tab by a step that never raised it.
+#[tokio::test]
+async fn a_refill_never_clears_a_notice_it_did_not_raise() {
+    let prints = fixture();
+    let mut feed = feed_on(19_266);
+    let mut chart = Chart::default();
+    first_session(&mut feed, 19_266, &mut chart, &prints).await;
+
+    let mut bridge = second_session_asked(19_266, &prints).await;
+    let _intruder = FakeBridge::dial(19_266).await;
+    wait_for_notice(&mut feed, |n| matches!(n, FeedNotice::Attention { .. })).await;
+    bridge.page(&prints[150..400], prints[150].time_ms).await;
+    // A live print behind the refill: once it is charted, the release —
+    // and any clear it would send — is over.
+    bridge.live(&prints[560..561]).await;
+    chart.fill_to(&mut feed, 561).await;
+    assert_eq!(chart.tape.len(), 561);
+    assert_eq!(
+        chart.reports.last().map(|report| report.state),
+        Some(crate::config::BackfillState::Filled)
+    );
+    while let Ok(notice) = feed.notices.try_recv() {
+        assert_ne!(notice, FeedNotice::Clear, "the attention must stay up");
+    }
 }

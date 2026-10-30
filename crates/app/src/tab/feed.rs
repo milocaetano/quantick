@@ -28,7 +28,7 @@ use quantick_feed::history_run::{Cancelled, Press};
 use quantick_feed::stall::{self, Stall, StallInput};
 use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
-    MIN_MARKED_GAP_MS, past_resume_floor,
+    MIN_MARKED_GAP_MS, REFILL_PRINTS_PER_DRAIN, past_resume_floor,
 };
 use quantick_layers::ChartLayer;
 use quantick_session::{
@@ -553,7 +553,7 @@ impl Tab {
     // The bool requests one final partial publication, not worker completion.
     fn receive_available(&mut self, tab_id: u64, mut wall_clock_ms: impl FnMut() -> i64) -> bool {
         let mut live = false;
-        let mut received_at_ms = None;
+        let (mut received_at_ms, mut refilled) = (None, 0);
         // Venue candles landing before the first print meet it at the seam.
         let printless = self.flow_pane.state.trades().is_empty();
         loop {
@@ -568,17 +568,7 @@ impl Tab {
                         live |= self.ingest_resumed(&trades);
                         continue;
                     }
-                    self.history_trades += trades.len();
-                    // History only seeds the simulator's mark — filling
-                    // against the past would be look-ahead.
-                    if let Some(last) = trades.last() {
-                        self.paper.seed(last);
-                    }
-                    // One tape, every pane: the split multiplies views of the
-                    // market, never the stream behind them.
-                    for pane in self.panes_mut() {
-                        pane.ingest_backfill(&trades);
-                    }
+                    self.ingest_history_tail(&trades);
                 }
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
                     // The reply — even an empty one — answers exactly one
@@ -679,7 +669,13 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
-                Ok(FeedEvent::Backfill(report)) => self.feed_integrity.last_refill = Some(report),
+                Ok(FeedEvent::RefillStatus(fill)) => self.feed_integrity.last_refill = Some(fill),
+                Ok(FeedEvent::Refilled(trades)) => {
+                    refilled += self.ingest_history_tail(&trades);
+                    if refilled >= REFILL_PRINTS_PER_DRAIN {
+                        break; // the rest waits, in order, for the next frame
+                    }
+                }
                 Ok(FeedEvent::Reset) => self.reset_market_state(true),
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
@@ -1239,6 +1235,20 @@ impl Tab {
         // The mark, and only the mark — the same seeding `Backfilled` does.
         self.paper.seed(&fresh[fresh.len() - 1]);
         true
+    }
+
+    /// History behind the tape, a backfill or a refilled reconnect hole whose seam the
+    /// feed owns: bars and the paper mark only — a fill against the past is look-ahead.
+    fn ingest_history_tail(&mut self, trades: &[quantick_engine::Trade]) -> usize {
+        self.resume_floor_ms = None;
+        self.history_trades += trades.len();
+        if let Some(last) = trades.last() {
+            self.paper.seed(last);
+        }
+        for pane in self.panes_mut() {
+            pane.ingest_backfill(trades);
+        }
+        trades.len()
     }
 
     /// Land the gap `QUANTICK_FEED_GAP` asked for, once the chart has bars for

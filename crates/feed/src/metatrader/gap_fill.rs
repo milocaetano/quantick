@@ -25,7 +25,12 @@
 //! A refill that cannot reach the old end says so: the part it did not cover
 //! is handed back as a [`FeedGap`], which the chart marks, and the reason is
 //! a [`BackfillStop`]. Nothing here owns a channel, a clock or a log line —
-//! the driver in `refill.rs` does the sending.
+//! the driver in `refill.rs` does the sending, and keeps the hold's deadline.
+//!
+//! A block that already reaches back to the chart's last print leaves no
+//! hole: [`closed_hole`] hands back its unseen tail and no refill opens.
+
+use std::time::Duration;
 
 use quantick_engine::Trade;
 use quantick_sources::history_reach::{
@@ -59,6 +64,12 @@ pub(super) const REFILL_MAX_PAGES: u32 =
 /// the source stopped answering, not that the hole is large.
 pub(super) const MAX_HELD_EVENTS: usize = 1_000_000;
 
+/// The longest the live tape is held behind a refill. A hole of minutes is
+/// a page or two and fills in a second or so; one that takes longer is
+/// spending the trader's live tape on history, so it stops here with what it
+/// has, and the rest stays a marked gap ([`BackfillStop::HeldTooLong`]).
+pub(super) const REFILL_HOLD_LIMIT: Duration = Duration::from_secs(15);
+
 /// What the driver does next.
 pub(super) enum FillStep {
     /// Something is on its way; keep holding.
@@ -73,8 +84,10 @@ pub(super) enum FillStep {
 pub(super) struct Release {
     /// The part of the hole nothing covered, marked before the prints.
     pub(super) gap: Option<FeedGap>,
-    /// The refilled prints, ascending, both seams deduplicated.
-    pub(super) trades: Vec<Trade>,
+    /// The refilled prints, ascending — chunk by chunk and within each —
+    /// both seams deduplicated. Kept in the chunks they arrived in, so a
+    /// large refill is never copied into a second buffer of the same size.
+    pub(super) chunks: Vec<Vec<Trade>>,
     /// The final report.
     pub(super) report: TapeBackfill,
     /// The live events held behind the refill, in arrival order.
@@ -174,7 +187,8 @@ impl GapFill {
     }
 
     /// A live event arrived while the refill runs: hold it. Returns whether
-    /// the hold reached its bound.
+    /// the hold reached its bound; the driver then stops the refill with
+    /// [`BackfillStop::HeldTooLong`], as it does at [`REFILL_HOLD_LIMIT`].
     pub(super) fn hold(&mut self, event: FeedEvent) -> bool {
         self.held.push(event);
         self.held.len() >= MAX_HELD_EVENTS
@@ -216,8 +230,6 @@ impl GapFill {
             || self.pages >= REFILL_MAX_PAGES
         {
             Some(BackfillStop::Reach)
-        } else if self.held.len() >= MAX_HELD_EVENTS {
-            Some(BackfillStop::HeldTooLong)
         } else {
             None
         }
@@ -258,22 +270,10 @@ impl GapFill {
 
     fn finish(&mut self, stop: Option<BackfillStop>) -> Release {
         let covered = self.oldest_ms <= self.seam.last_ms;
-        let mut trades = Vec::with_capacity(self.received);
-        for chunk in self.chunks.drain(..).rev() {
-            trades.extend(chunk);
-        }
-        // The old seam: everything before the chart's last millisecond is
-        // held already, and so are the first `held_at_last` prints at it.
+        let mut chunks = std::mem::take(&mut self.chunks);
+        chunks.reverse();
+        past_seam(&mut chunks, self.seam);
         let last_ms = self.seam.last_ms;
-        let mut skip = self.seam.held_at_last;
-        trades.retain(|t| match t.timestamp_ms.cmp(&last_ms) {
-            std::cmp::Ordering::Less => false,
-            std::cmp::Ordering::Equal if skip > 0 => {
-                skip -= 1;
-                false
-            }
-            _ => true,
-        });
         let (state, gap) = match stop {
             Some(stop) if !covered => {
                 // Nothing in hand ends the hole at the new block.
@@ -293,12 +293,47 @@ impl GapFill {
         };
         Release {
             gap,
-            trades,
+            chunks,
             report: self.report_as(state),
             held: std::mem::take(&mut self.held),
             page_owed: self.page_owed,
         }
     }
+}
+
+/// `Ok` with the unseen tail of a reconnect block that already reaches back
+/// to the chart's last print; `Err` with the block untouched when it starts
+/// after it and leaves a hole to refill. A block that reaches back is the
+/// whole story: nothing is asked, nothing is held, and there is no refill to
+/// report.
+pub(super) fn closed_hole(block: Vec<Trade>, seam: ResumeSeam) -> Result<Vec<Trade>, Vec<Trade>> {
+    if block
+        .first()
+        .is_none_or(|first| first.timestamp_ms > seam.last_ms)
+    {
+        return Err(block);
+    }
+    let mut chunks = vec![block];
+    past_seam(&mut chunks, seam);
+    Ok(chunks.pop().unwrap_or_default())
+}
+
+/// Drop what the chart already holds from ascending `chunks`: everything
+/// before its last millisecond, and the first `held_at_last` prints at it.
+/// Chunks left empty go with it.
+fn past_seam(chunks: &mut Vec<Vec<Trade>>, seam: ResumeSeam) {
+    let mut skip = seam.held_at_last;
+    for chunk in chunks.iter_mut() {
+        chunk.retain(|t| match t.timestamp_ms.cmp(&seam.last_ms) {
+            std::cmp::Ordering::Less => false,
+            std::cmp::Ordering::Equal if skip > 0 => {
+                skip -= 1;
+                false
+            }
+            _ => true,
+        });
+    }
+    chunks.retain(|chunk| !chunk.is_empty());
 }
 
 #[cfg(test)]

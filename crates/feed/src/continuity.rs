@@ -68,6 +68,19 @@ impl FeedIntegrity {
             .non_monotonic
             .saturating_add(u64::from(event.non_monotonic));
     }
+
+    /// The feed was replaced by a fresh one on the same chart. A refill the
+    /// old feed was running died with it and will never report again — the
+    /// new feed refills the hole from the chart's own seam — so `filling`
+    /// would be a promise nobody keeps. A finished report stays true.
+    pub fn feed_replaced(&mut self) {
+        if self
+            .last_refill
+            .is_some_and(|refill| refill.state == crate::config::BackfillState::Filling)
+        {
+            self.last_refill = None;
+        }
+    }
 }
 
 /// The receiver outlives Binance's individual socket connections. Tracking

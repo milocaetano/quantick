@@ -24,6 +24,10 @@ use serde_json::Value;
 /// word: the trader reads it on the tab, an operator matches it.
 pub const TERMINAL_NOT_RUNNING: &str = "MetaTrader 5 is not running";
 
+/// The one next step that goes with [`TERMINAL_NOT_RUNNING`].
+pub const TERMINAL_NOT_RUNNING_NEXT_STEP: &str = "Open the MetaTrader 5 terminal and log in \u{2014} \
+     quantick keeps retrying, and fills in what the chart missed once it is back.";
+
 /// The bridge codes that mean the terminal itself cannot be reached: it
 /// would not attach at start, or it went away under a running session.
 pub const TERMINAL_DOWN_CODES: [&str; 2] =
@@ -156,11 +160,9 @@ pub fn report_for_line(line: &str) -> Option<BridgeReport> {
             "The MetaTrader 5 Python package is missing",
             "Install it once, then reconnect: pip install MetaTrader5",
         ),
-        "BRIDGE_TERMINAL_ATTACH_FAILED" | "BRIDGE_TERMINAL_LOST" => BridgeReport::fatal(
-            code,
-            TERMINAL_NOT_RUNNING,
-            "Open the MetaTrader 5 terminal and log in — quantick keeps retrying,              and fills in what the chart missed once it is back.",
-        ),
+        "BRIDGE_TERMINAL_ATTACH_FAILED" | "BRIDGE_TERMINAL_LOST" => {
+            BridgeReport::fatal(code, TERMINAL_NOT_RUNNING, TERMINAL_NOT_RUNNING_NEXT_STEP)
+        }
         "BRIDGE_SYMBOL_NOT_FOUND" => BridgeReport::fatal(
             code,
             format!("MetaTrader does not list {symbol}"),
@@ -419,6 +421,15 @@ mod tests {
                 .expect("a user-visible report");
             assert_eq!(report.headline, TERMINAL_NOT_RUNNING);
             assert_eq!(report.severity, BridgeSeverity::Attention);
+            // Word for word: a lost line continuation once left a run of
+            // spaces in the middle of this sentence.
+            assert_eq!(
+                report.next_step.as_deref(),
+                Some(
+                    "Open the MetaTrader 5 terminal and log in \u{2014} quantick keeps \
+                     retrying, and fills in what the chart missed once it is back."
+                )
+            );
         }
     }
 

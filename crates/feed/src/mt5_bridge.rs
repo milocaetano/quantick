@@ -27,10 +27,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use quantick_feed_mt5::bridge_log::{BridgeSeverity, TERMINAL_DOWN_CODES, report_for_line};
+use quantick_feed_mt5::bridge_log::{
+    BridgeSeverity, TERMINAL_DOWN_CODES, TERMINAL_NOT_RUNNING, TERMINAL_NOT_RUNNING_NEXT_STEP,
+    report_for_line,
+};
 use quantick_feed_mt5::{BoundedLine, BoundedLineReader, MAX_LINE_BYTES};
 use tokio::process::{Child, ChildStderr, Command};
 use tokio::sync::mpsc;
@@ -180,10 +183,81 @@ pub struct Supervision {
     pub connected: Arc<AtomicBool>,
     /// Where user-facing reports go.
     pub notices: mpsc::Sender<FeedNotice>,
+    /// What this supervisor and the feed both know about the notice on the
+    /// tab, so neither papers over what the other said.
+    pub latch: Arc<NoticeLatch>,
     /// The trader's own files directory, in which the broker's measured clock
     /// offset is remembered (see [`clock_cache_path`]). Handed in by the
     /// application; `None` where the platform reports no documents folder.
     pub clock_cache_dir: Option<PathBuf>,
+}
+
+/// What the bridge supervisor and the feed both know about the notice the
+/// tab shows, so that neither papers over what the other said.
+///
+/// The two speak on one channel and never see each other's lines. A closed
+/// terminal is the case that needs this: the bridge says so and exits, the
+/// feed then sees the session drop and says "reconnecting", and the
+/// supervisor launches a fresh bridge and says "starting" — each true, and
+/// each burying the one line that tells the trader what to do. So a terminal
+/// that is down stays the notice until a bridge attaches again, and a step
+/// that finishes clears only what it put up itself.
+#[derive(Debug, Default)]
+pub struct NoticeLatch {
+    /// The bridge reported the terminal unreachable, and no session has
+    /// connected since.
+    terminal_down: AtomicBool,
+    /// Attention notices raised so far: a step that wants to clear its own
+    /// notice reads this before and after to know whether it still owns it.
+    attentions: AtomicU64,
+}
+
+impl NoticeLatch {
+    /// An attention notice is going out; `terminal_down` when it says the
+    /// terminal cannot be reached.
+    pub(crate) fn raise(&self, terminal_down: bool) {
+        self.attentions.fetch_add(1, Ordering::AcqRel);
+        if terminal_down {
+            self.terminal_down.store(true, Ordering::Release);
+        }
+    }
+
+    /// Whether the terminal is down and its notice must stay up.
+    pub(crate) fn terminal_down(&self) -> bool {
+        self.terminal_down.load(Ordering::Acquire)
+    }
+
+    /// How many attention notices have been raised, for [`Self::raise`]'s
+    /// before-and-after reading.
+    pub(crate) fn attentions(&self) -> u64 {
+        self.attentions.load(Ordering::Acquire)
+    }
+
+    /// What reaches the tab for a connection or progress `notice` from
+    /// either speaker. A terminal that is down stays the notice until a
+    /// session connects — which a bridge only does once attached to a
+    /// running terminal: "reconnecting" still moves the transport state and
+    /// is put back under the one line the trader can act on, and progress
+    /// or a clear is not said at all. Attention notices go through
+    /// [`Self::raise`] instead.
+    pub(crate) fn admit(&self, notice: FeedNotice) -> Vec<FeedNotice> {
+        match notice {
+            FeedNotice::Connected => {
+                self.terminal_down.store(false, Ordering::Release);
+                vec![notice]
+            }
+            _ if !self.terminal_down() => vec![notice],
+            FeedNotice::Reconnecting { .. } => vec![notice, terminal_not_running()],
+            FeedNotice::Attention { .. } => vec![notice],
+            FeedNotice::Working { .. } | FeedNotice::Clear => Vec::new(),
+        }
+    }
+}
+
+/// The notice for a terminal that cannot be reached, word for word what the
+/// bridge's own report says.
+fn terminal_not_running() -> FeedNotice {
+    FeedNotice::attention(TERMINAL_NOT_RUNNING, TERMINAL_NOT_RUNNING_NEXT_STEP)
 }
 
 /// Launch a bridge when nothing else is feeding us, and keep it alive.
@@ -282,6 +356,7 @@ struct BridgeLauncher<'a> {
     /// export finds it whatever folder that export runs from.
     clock_cache: Option<PathBuf>,
     notices: &'a mpsc::Sender<FeedNotice>,
+    latch: &'a NoticeLatch,
 }
 
 impl<'a> BridgeLauncher<'a> {
@@ -336,16 +411,21 @@ impl<'a> BridgeLauncher<'a> {
             chosen: None,
             clock_cache: clock_cache_path(sup.clock_cache_dir.as_deref()),
             notices: &sup.notices,
+            latch: &sup.latch,
         })
     }
 
     /// One launch attempt, start to exit. Returns when the bridge could not be
     /// started or has exited — either way, a failure the supervisor counts.
     async fn run(&mut self, attempt: u32) {
-        let _ = self
-            .notices
-            .send(FeedNotice::working("starting the MetaTrader bridge"))
-            .await;
+        // A terminal that is down stays the notice: a fresh bridge's attach
+        // is what says whether it is back.
+        for notice in self
+            .latch
+            .admit(FeedNotice::working("starting the MetaTrader bridge"))
+        {
+            let _ = self.notices.send(notice).await;
+        }
         let Some(mut child) = self.spawn(attempt) else {
             self.report_no_interpreter().await;
             return;
@@ -464,7 +544,7 @@ impl<'a> BridgeLauncher<'a> {
         loop {
             match lines.next_line().await {
                 Ok(BoundedLine::Line(line)) => {
-                    if forward_bridge_line(&line, self.symbol, self.notices).await {
+                    if forward_bridge_line(&line, self.symbol, self.notices, self.latch).await {
                         explained = true;
                     }
                 }
@@ -593,7 +673,12 @@ fn exit_notice(explained: bool, code: Option<i32>) -> Option<FeedNotice> {
 /// Log one bridge stderr line and, when it means something to a person, send
 /// it on as a notice. Returns whether the line is one the bridge stops after —
 /// i.e. whether it explains an exit that follows.
-async fn forward_bridge_line(line: &str, symbol: &str, notices: &mpsc::Sender<FeedNotice>) -> bool {
+async fn forward_bridge_line(
+    line: &str,
+    symbol: &str,
+    notices: &mpsc::Sender<FeedNotice>,
+    latch: &NoticeLatch,
+) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return false;
@@ -611,7 +696,8 @@ async fn forward_bridge_line(line: &str, symbol: &str, notices: &mpsc::Sender<Fe
     let Some(report) = report_for_line(trimmed) else {
         return false;
     };
-    if TERMINAL_DOWN_CODES.contains(&report.event_code.as_str()) {
+    let terminal_down = TERMINAL_DOWN_CODES.contains(&report.event_code.as_str());
+    if terminal_down {
         warn!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -632,6 +718,9 @@ async fn forward_bridge_line(line: &str, symbol: &str, notices: &mpsc::Sender<Fe
                 .unwrap_or_else(|| "See bridge/mt5/README.md for this bridge's setup.".to_owned()),
         ),
     };
+    if matches!(notice, FeedNotice::Attention { .. }) {
+        latch.raise(terminal_down);
+    }
     let _ = notices.send(notice).await;
     // Not "did this need the user" — a symbol without a book needs the user
     // and keeps streaming. Only a line the bridge stops after can explain the
@@ -756,6 +845,7 @@ mod tests {
             r#"{"event_code":"BRIDGE_TERMINAL_ATTACH_FAILED","mt5_error":"(-10005)"}"#,
             "WINQ26",
             &tx,
+            &NoticeLatch::default(),
         )
         .await;
         assert!(produced, "a fatal line needs the user");
@@ -780,6 +870,7 @@ mod tests {
             r#"{"event_code":"BRIDGE_BOOK_SUBSCRIBE_FAILED","symbol":"WDO$"}"#,
             "WDO$",
             &tx,
+            &NoticeLatch::default(),
         )
         .await;
         assert!(!explains, "it needs the user, but it explains no exit");
@@ -796,6 +887,7 @@ mod tests {
                 r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":"WINZ99"}"#,
                 "WINZ99",
                 &tx,
+                &NoticeLatch::default()
             )
             .await
         );
@@ -804,8 +896,13 @@ mod tests {
     #[tokio::test]
     async fn progress_lines_do_not_count_as_an_explanation() {
         let (tx, mut rx) = mpsc::channel(4);
-        let produced =
-            forward_bridge_line(r#"{"event_code":"BRIDGE_STARTING"}"#, "WINQ26", &tx).await;
+        let produced = forward_bridge_line(
+            r#"{"event_code":"BRIDGE_STARTING"}"#,
+            "WINQ26",
+            &tx,
+            &NoticeLatch::default(),
+        )
+        .await;
         assert!(!produced, "progress is not the reason a bridge died");
         assert!(matches!(rx.recv().await, Some(FeedNotice::Working { .. })));
     }
@@ -867,6 +964,7 @@ mod tests {
                 clock_cache_dir: None,
                 connected: Arc::new(AtomicBool::new(false)),
                 notices: tx,
+                latch: Arc::default(),
             },
         )
         .await;
@@ -885,12 +983,57 @@ mod tests {
         );
     }
 
+    /// A closed terminal is said once by the bridge, and then the session
+    /// drops, the feed says "reconnecting" and a fresh bridge says
+    /// "starting" — each true, each burying the line the trader can act on.
+    /// It stays the notice until a session connects again.
+    #[tokio::test]
+    async fn a_terminal_that_is_down_stays_the_notice_until_a_session_connects() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let latch = NoticeLatch::default();
+        assert!(
+            forward_bridge_line(
+                r#"{"event_code":"BRIDGE_TERMINAL_LOST","symbol":"WINZ26"}"#,
+                "WINZ26",
+                &tx,
+                &latch,
+            )
+            .await
+        );
+        let down = rx.recv().await.expect("the bridge's own report");
+        assert_eq!(down, terminal_not_running());
+        assert!(latch.terminal_down());
+        assert_eq!(latch.attentions(), 1, "an attention was raised");
+
+        let lost = FeedNotice::reconnecting("the MetaTrader bridge disconnected — reconnecting");
+        assert_eq!(
+            latch.admit(lost.clone()),
+            [lost, terminal_not_running()],
+            "the transport moves, and the notice is put back"
+        );
+        for quiet in [
+            FeedNotice::working("starting the MetaTrader bridge"),
+            FeedNotice::working("waiting for the MetaTrader bridge to connect"),
+            FeedNotice::Clear,
+        ] {
+            assert_eq!(latch.admit(quiet), [], "nothing papers over it");
+        }
+
+        assert_eq!(latch.admit(FeedNotice::Connected), [FeedNotice::Connected]);
+        assert!(
+            !latch.terminal_down(),
+            "a session connects only once attached"
+        );
+        let starting = FeedNotice::working("starting the MetaTrader bridge");
+        assert_eq!(latch.admit(starting.clone()), [starting]);
+    }
+
     #[tokio::test]
     async fn unrecognized_output_is_logged_but_says_nothing_to_the_user() {
         let (tx, mut rx) = mpsc::channel(4);
         for line in ["", "   ", "Traceback (most recent call last):", "{}"] {
             assert!(
-                !forward_bridge_line(line, "WINQ26", &tx).await,
+                !forward_bridge_line(line, "WINQ26", &tx, &NoticeLatch::default()).await,
                 "line: {line}"
             );
         }

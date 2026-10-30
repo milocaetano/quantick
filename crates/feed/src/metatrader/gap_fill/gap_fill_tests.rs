@@ -38,7 +38,7 @@ fn a_block_reaching_the_seam_releases_at_once_skipping_exactly_the_held_prints()
     let block = vec![at(90, 1), at(100, 2), at(100, 3), at(100, 4), at(110, 5)];
     let mut fill = GapFill::begin(seam(100, 2), block, true);
     let release = released(fill.step());
-    assert_eq!(ids(&release.trades), [4, 5]);
+    assert_eq!(ids(&release.chunks.concat()), [4, 5]);
     assert_eq!(release.gap, None);
     assert_eq!(release.report.state, BackfillState::Filled);
     assert_eq!(release.report.received, 5);
@@ -69,7 +69,7 @@ fn slices_and_a_page_fill_the_hole_and_live_prints_wait_behind_them() {
         Some(90),
     );
     let release = released(fill.step());
-    assert_eq!(ids(&release.trades), [20, 30, 40, 50, 51]);
+    assert_eq!(ids(&release.chunks.concat()), [20, 30, 40, 50, 51]);
     assert_eq!(release.gap, None);
     let held: Vec<_> = release
         .held
@@ -93,7 +93,7 @@ fn a_refill_released_while_its_page_travels_says_the_page_is_owed() {
         release.page_owed,
         "its reply has to be dropped when it lands"
     );
-    assert_eq!(ids(&release.trades), [20, 50]);
+    assert_eq!(ids(&release.chunks.concat()), [20, 50]);
 }
 
 #[test]
@@ -114,7 +114,11 @@ fn a_session_that_cannot_page_leaves_the_rest_of_the_hole_marked() {
             stop: BackfillStop::NoPaging
         }
     );
-    assert_eq!(ids(&release.trades), [50], "what did arrive is charted");
+    assert_eq!(
+        ids(&release.chunks.concat()),
+        [50],
+        "what did arrive is charted"
+    );
 }
 
 #[test]
@@ -196,4 +200,32 @@ fn the_hold_reports_its_bound() {
     let release = fill.stop_with(BackfillStop::HeldTooLong);
     assert_eq!(release.held.len(), MAX_HELD_EVENTS);
     assert!(release.gap.is_some());
+}
+
+#[test]
+fn a_block_that_reaches_the_seam_is_no_hole_and_opens_no_refill() {
+    // Finding: every reconnect opened a refill, so a session that merely
+    // blinked said "filling in prints missed" and reported a refill whose
+    // end lay before its start.
+    let block = vec![at(90, 1), at(100, 2), at(100, 3), at(100, 4), at(110, 5)];
+    let Ok(tail) = closed_hole(block, seam(100, 2)) else {
+        panic!("a block reaching back past the seam leaves no hole");
+    };
+    assert_eq!(ids(&tail), [4, 5], "exactly the held prints are skipped");
+    // Starting after the seam, the block is handed back whole for a refill.
+    let Err(block) = closed_hole(vec![at(101, 6), at(120, 7)], seam(100, 2)) else {
+        panic!("a block after the seam leaves a hole");
+    };
+    assert_eq!(ids(&block), [6, 7]);
+}
+
+#[test]
+fn a_release_keeps_the_chunks_it_received_oldest_first() {
+    let mut fill = GapFill::begin(seam(100, 1), vec![at(500, 50), at(510, 51)], true);
+    fill.opening(vec![at(300, 30), at(400, 40)]);
+    fill.asked();
+    fill.page(vec![at(100, 10), at(200, 20)], false, Some(100));
+    let release = released(fill.step());
+    let chunks: Vec<Vec<u64>> = release.chunks.iter().map(|chunk| ids(chunk)).collect();
+    assert_eq!(chunks, [vec![20], vec![30, 40], vec![50, 51]]);
 }

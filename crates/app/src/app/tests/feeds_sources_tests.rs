@@ -101,7 +101,9 @@ fn a_reconnect_refill_reads_back_on_feed_status_with_its_remaining_gap() {
         received: 0,
     };
     let tab_id = app.tabs.active_id();
-    events.blocking_send(FeedEvent::Backfill(filling)).unwrap();
+    events
+        .blocking_send(FeedEvent::RefillStatus(filling))
+        .unwrap();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(tab_status(&app)["tape_backfill"]["state"], "filling");
 
@@ -119,10 +121,10 @@ fn a_reconnect_refill_reads_back_on_feed_status_with_its_remaining_gap() {
         }))
         .unwrap();
     events
-        .blocking_send(FeedEvent::LiveBatch(vec![trade(500), trade(600)]))
+        .blocking_send(FeedEvent::Refilled(vec![trade(500), trade(600)]))
         .unwrap();
     events
-        .blocking_send(FeedEvent::Backfill(TapeBackfill {
+        .blocking_send(FeedEvent::RefillStatus(TapeBackfill {
             state: BackfillState::Partial {
                 unfilled_to_ms: 500,
                 stop: BackfillStop::SessionLost,
@@ -141,6 +143,166 @@ fn a_reconnect_refill_reads_back_on_feed_status_with_its_remaining_gap() {
     assert_eq!(refill["stop_reason"], "session_lost");
     assert_eq!(refill["remaining_gap"]["to_unix_ms"], 500);
     assert_eq!(status["tape_gaps"][0], refill["remaining_gap"]);
+}
+
+/// Reconnect the active tab onto a fresh feed, as the Reconnect button
+/// does: the new feed's event sender and command receiver.
+fn reconnect_onto_fresh_feed(
+    app: &mut QuantickApp,
+) -> (mpsc::Sender<FeedEvent>, mpsc::Receiver<FeedCommand>) {
+    let (events, event_rx) = mpsc::channel(64);
+    let (_book, books) = mpsc::channel(64);
+    let (commands, command_rx) = mpsc::channel(16);
+    let mut handle = Some(FeedHandle {
+        events: event_rx,
+        book_events: books,
+        notices: feed::silent_notices(),
+        capabilities: feed::fixed_capabilities(ProviderKind::MetaTrader.capabilities()),
+        latency: feed::unsplit_latency(),
+        commands,
+        replay: None,
+    });
+    let mut spawn = |_, _: &str, _: &quantick_feed::config::MetaTraderSettings, _| {
+        handle.take().expect("spawned once")
+    };
+    let (tab, config) = app.active_with_config();
+    assert!(tab.reconnect_feed_with_spawn(config, &mut spawn));
+    (events, command_rx)
+}
+
+/// Finding: a Reconnect pressed while the old feed was refilling left
+/// `feed.status` reading `filling` for good — the feed that would have
+/// finished the report was gone with its channel.
+#[test]
+fn a_reconnect_mid_refill_drops_the_report_nobody_will_finish() {
+    use quantick_feed::config::{BackfillState, TapeBackfill};
+    let (mut app, _notices, (events, _book)) = test_app_with_notices();
+    let tab_id = app.tabs.active_id();
+    let filling = TapeBackfill {
+        from_ms: 1_100,
+        to_ms: 90_000,
+        state: BackfillState::Filling,
+        received: 10,
+    };
+    events
+        .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::RefillStatus(filling))
+        .unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
+    assert_eq!(app.active_tab().feed_integrity.last_refill, Some(filling));
+
+    let (events, _commands) = reconnect_onto_fresh_feed(&mut app);
+    assert_eq!(
+        app.active_tab().feed_integrity.last_refill,
+        None,
+        "the new feed refills from the chart's seam and reports for itself"
+    );
+
+    // A finished report is a fact about the chart, and survives one.
+    let filled = TapeBackfill {
+        state: BackfillState::Filled,
+        ..filling
+    };
+    events
+        .blocking_send(FeedEvent::RefillStatus(filled))
+        .unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
+    let _still_attached = reconnect_onto_fresh_feed(&mut app);
+    assert_eq!(app.active_tab().feed_integrity.last_refill, Some(filled));
+}
+
+/// Finding: the tab's one-event resume floor and the feed's refill both
+/// claimed the reconnect seam. Refill output meeting the floor lost the
+/// prints at the seam's millisecond beyond those the chart held, and the
+/// floor marked the hole it refilled as a gap. The feed owns the seam, so
+/// the refill is charted whole — whether or not the feed's immediate empty
+/// backfill reached the tab first.
+#[test]
+fn a_reconnect_refill_is_charted_whole_whatever_reaches_the_tab_first() {
+    use quantick_feed::config::{BackfillState, TapeBackfill};
+    let at = |agg_id: u64, timestamp_ms: i64| quantick_engine::Trade {
+        timestamp_ms,
+        ..trade(agg_id)
+    };
+    for empty_backfill_first in [false, true] {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        let tab_id = app.tabs.active_id();
+        // The chart holds two prints at its last millisecond.
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![
+                at(1, 1_000),
+                at(2, 5_000),
+                at(3, 5_000),
+            ]))
+            .unwrap();
+        app.active_tab_mut().drain_feed(tab_id);
+
+        let (events, mut commands) = reconnect_onto_fresh_feed(&mut app);
+        assert_eq!(app.active_tab().resume_floor_ms, Some(5_000));
+        let seam = loop {
+            match commands.try_recv() {
+                Ok(FeedCommand::ResumeAfter(seam)) => break seam,
+                Ok(_) => {}
+                Err(error) => panic!("the tab never told the feed its seam: {error:?}"),
+            }
+        };
+        assert_eq!((seam.last_ms, seam.held_at_last), (5_000, 2));
+
+        if empty_backfill_first {
+            events
+                .blocking_send(FeedEvent::Backfilled(Vec::new()))
+                .unwrap();
+        }
+        let report = TapeBackfill {
+            from_ms: 5_000,
+            to_ms: 30_000,
+            state: BackfillState::Filling,
+            received: 2,
+        };
+        events
+            .blocking_send(FeedEvent::RefillStatus(report))
+            .unwrap();
+        // The third print at the seam's millisecond, then a quiet stretch
+        // longer than a marked gap.
+        events
+            .blocking_send(FeedEvent::Refilled(vec![at(4, 5_000), at(5, 30_000)]))
+            .unwrap();
+        events
+            .blocking_send(FeedEvent::RefillStatus(TapeBackfill {
+                state: BackfillState::Filled,
+                ..report
+            }))
+            .unwrap();
+        events
+            .blocking_send(FeedEvent::Live(at(6, 60_000)))
+            .unwrap();
+        app.active_tab_mut()
+            .drain_feed_with_clock(tab_id, || 60_250);
+
+        let tab = app.active_tab();
+        let times: Vec<i64> = tab
+            .flow_pane
+            .state
+            .trades()
+            .iter()
+            .map(|trade| trade.timestamp_ms)
+            .collect();
+        assert_eq!(
+            times,
+            [1_000, 5_000, 5_000, 5_000, 30_000, 60_000],
+            "empty backfill first: {empty_backfill_first}"
+        );
+        assert!(tab.feed_gaps.is_empty(), "a refilled hole is not a gap");
+        assert_eq!(tab.resume_floor_ms, None);
+        assert_eq!((tab.history_trades, tab.live_trades), (2, 4));
+        assert_eq!(
+            tab.latest_trade_latency_ms,
+            Some(250),
+            "only the live print is an arrival"
+        );
+    }
 }
 
 #[test]
