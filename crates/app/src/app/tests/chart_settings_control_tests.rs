@@ -262,8 +262,15 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
         "one window, switched to the Footprint tab"
     );
     app.surfaces.chart_settings.close();
-    // The toolbar's footprint button.
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::OpenFootprintSettings);
+    // The footprint glyph's right click on the pane's header.
+    app.active_tab_mut().flow_pane.apply_header_intent(
+        quantick_chart::pane_header::HeaderIntent::OpenLayerSettings(
+            quantick_chart::pane_header::LayerToggle::Footprint,
+        ),
+        &mut quantick_layers::LayerActions::default(),
+    );
+    app.layer_wiring()
+        .open_settings(ChartSettingsTab::Footprint);
     assert!(
         app.surfaces
             .chart_settings

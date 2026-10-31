@@ -47,6 +47,8 @@ pub struct PaneFrame {
     /// catalogue once for each of them. Keeping the measured rectangle here
     /// makes the chart, overlays and strip agree about the same boundary.
     pub layout_strip: Option<egui::Rect>,
+    /// The controls the pane's header line painted last, for the scene.
+    pub header_controls: crate::pane_header::PaintedControls,
     /// The price gutter of the last draw, published for the same reason: the
     /// scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
     /// is really on the axis, not a guess about where the gutter probably is.
@@ -103,6 +105,7 @@ impl Default for PaneFrame {
             chart_rect: None,
             area: None,
             layout_strip: None,
+            header_controls: Default::default(),
             price_gutter: None,
             time_strip: None,
             lane_time_strip: None,
@@ -121,6 +124,7 @@ impl Default for PaneFrame {
 impl PaneFrame {
     /// Discard a pane's last draw when the canvas leaves only its rail visible.
     pub(crate) fn clear_hidden(&mut self) {
+        self.header_controls.clear();
         self.lane_divider_x = None;
         self.flow_legend = None;
         self.indicator_legend = None;

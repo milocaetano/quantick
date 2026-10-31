@@ -192,12 +192,8 @@ pub mod blocks {
     );
     pub const TAPE_OFF: LayerBlock = LayerBlock::new(
         "the_tape_is_off",
-        "the tape is off — the switch in the canvas's top-right corner puts it back, \
+        "the tape is off — the view button on the pane's header puts it back, \
          and this layer is waiting exactly as it was left",
-    );
-    pub const TAPE_ONLY_STRIP: LayerBlock = LayerBlock::new(
-        "live_strip_hidden_in_tape_only",
-        "the forming-bar profile is hidden while this pane shows only the tape",
     );
     pub const TAPE_ONLY_CANDLES: LayerBlock = LayerBlock::new(
         "candle_layer_hidden_in_tape_only",

@@ -416,6 +416,11 @@ pub struct BubblesStateSnapshot {
     /// tape's own switch win over it.
     #[serde(default)]
     pub tape_fold: crate::tape_fold::TapeFold,
+    /// Which view the tape's two switches ask for: `beside`, `candles` (alone)
+    /// or `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or
+    /// `orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it.
+    #[serde(default)]
+    pub tape_view: crate::tape_view_set::TapeView,
     /// Exclude the first recorded 100 ms burst from automatic tape-only
     /// sizing; its factual volume is retained and its drawn radius capped.
     #[serde(default)]
@@ -552,6 +557,7 @@ impl BubblesStateSnapshot {
             tape_viewport_scale: config.bubbles.viewport_scale.map(Into::into),
             tape_only: config.live_lane.tape_only,
             tape_fold: config.live_lane.fold.into(),
+            tape_view: config.live_lane.view().into(),
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
             volume_dots: dot_scale.map(Into::into),

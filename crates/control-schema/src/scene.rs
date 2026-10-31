@@ -12,7 +12,7 @@
 //!
 //! Nothing here declares a control of its own. Every entry resolves to the
 //! registry that already drives the interface: [`ChartLayer`] through
-//! [`LayerToggle`] for the toolbar's LAYERS group, [`DRAWING_TOOLS`] for the
+//! what each pane's header painted, [`DRAWING_TOOLS`] for the
 //! tool rail, [`DockTab::ALL`] for the dock, and the application's own tabs
 //! and panes for the rest. A hand-kept list beside those would drift the day
 //! someone adds a tool and forgets this file, and an operator would be told
@@ -43,7 +43,8 @@
 //! for its benefit but the rail's stage — one enum store per frame, which is
 //! what lets the rail be reported honestly instead of guessed at. The
 //! projection then reads state the frame already keeps: no rectangle is
-//! recorded, no hit test is run, no layout is measured. Note that a capture
+//! recorded beyond a pane header's painted controls, no hit test is run, no
+//! layout is measured. Note that a capture
 //! builds the list *twice* — once for the module revision and once for the
 //! scope — because module revisions are capture-derived across every module
 //! (PR 2's recorded deferral); this is the largest projection in the registry
@@ -66,9 +67,6 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// The identifier prefix of every control the tab strip owns.
 pub const TAB_STRIP_OWNER_ID: &str = "tab_strip";
-
-/// The LAYERS group of the context toolbar.
-pub const TOOLBAR_LAYERS_OWNER_ID: &str = "toolbar.layers";
 
 /// The drawing tool rail.
 pub const TOOL_RAIL_OWNER_ID: &str = "tool_rail";
@@ -117,7 +115,7 @@ pub struct SceneSnapshot {
     /// Whether `controls` is every control on screen. It never is yet.
     ///
     /// Two things cut it, and this says which. Each covered region is walked
-    /// only as far as one group of it — the toolbar's LAYERS, the rail's
+    /// only as far as one group of it — a pane header's controls, the rail's
     /// tools, the dock's tab strip, a tab's canvases — so a capture that has
     /// truncated nothing is still not the screen, and reports as much rather
     /// than letting a client read a short list as a complete one. Beyond

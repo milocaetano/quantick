@@ -370,7 +370,7 @@ pub(crate) fn registered() -> Vec<Registered> {
     for tab in crate::dock::DockTab::ALL {
         entries.push(Registered::new(Source::DockTab, tab.id()));
     }
-    for toggle in crate::toolbar::LayerToggle::ALL {
+    for toggle in quantick_chart::pane_header::LayerToggle::ALL {
         entries.push(Registered::new(Source::LayerToggle, format!("{toggle:?}")));
     }
     for tool in crate::drawings::DRAWING_TOOLS {

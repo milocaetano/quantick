@@ -378,16 +378,7 @@ impl OrderflowView {
         draw_compact_legend_avoiding(painter, &context, tick_regions)
     }
 
-    /// `right_inset_px` is the room another piece of chrome has already claimed
-    /// in this corner — the tape switch, which sits on the corner itself. The
-    /// badge steps left of it rather than under it: two labels on one pixel is
-    /// how a status message becomes unreadable exactly when it matters.
-    pub fn draw_status_badge(
-        &self,
-        painter: &egui::Painter,
-        chart_rect: egui::Rect,
-        right_inset_px: f32,
-    ) {
+    pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
         // Tied to the map, not to the recorder: a badge reporting on a book
         // nobody asked to see is just chrome. The trader can silence it on its
         // own too, from the canvas's right-click menu — but only while the
@@ -402,7 +393,7 @@ impl OrderflowView {
         let color = status_color(&self.published.status);
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), color);
         let pos = egui::pos2(
-            chart_rect.right() - galley.size().x - 10.0 - right_inset_px.max(0.0),
+            chart_rect.right() - galley.size().x - 10.0,
             chart_rect.top() + 4.0,
         );
         let rect = egui::Rect::from_min_size(

@@ -42,6 +42,9 @@ pub const DEFAULT_INTERVAL_MS: i64 = quantick_engine::DEFAULT_TIME_INTERVAL_MS;
 /// controls a hand has to hit.
 const MIN_LAYOUT_NAME_PX: f32 = 40.0;
 
+/// The free interval field's room; narrower, the chips already say enough.
+const MIN_INTERVAL_FIELD_PX: f32 = 44.0;
+
 /// What the header laid out this frame.
 pub struct HeaderLayout {
     /// Whether the interval changed — a chip click or a drag on the interval.
@@ -106,7 +109,11 @@ impl HeaderLayout {
 /// `layout_name` is the layout this pane shows, drawn at the strip's far end
 /// so a glance at a split says which chart carries which set.
 /// `bars` paints the pane's bars control at the head of the row; `presets` says
-/// whether the timeframe controls follow it.
+/// whether the timeframe controls follow it; `glyphs` paints what follows those,
+/// inside the `glyphs_px` a narrow strip takes from the presets, never from them.
+/// The indicators glyph holds the strip's right end before any of it paints, so
+/// the row and that reservation both end left of it.
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     ui: &mut egui::Ui,
     strip: egui::Rect,
@@ -114,7 +121,9 @@ pub fn draw(
     salt: u64,
     layout_name: &str,
     presets: bool,
+    glyphs_px: f32,
     bars: impl FnOnce(&mut egui::Ui),
+    glyphs: impl FnOnce(&mut egui::Ui),
 ) -> HeaderLayout {
     let mut changed = false;
     #[cfg(test)]
@@ -129,7 +138,8 @@ pub fn draw(
             .max_rect(rest)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    content.set_clip_rect(clip);
+    let row = content.max_rect();
+    content.set_clip_rect(clip.with_max_x(row.right() - glyphs_px));
     bars(&mut content);
     let interval_rect = if presets {
         for (label, preset_ms) in PRESETS {
@@ -147,18 +157,19 @@ pub fn draw(
         // A month is a calendar unit, not a duration: dragging its nominal
         // millisecond size would walk into values no chart accepts, and its
         // chip already names it, so nothing stands beside it.
-        let interval = quantick_engine::time_bucket::calendar_months(*interval_ms)
-            .is_none()
-            .then(|| {
-                content
-                    .add(interval_drag(
-                        interval_ms,
-                        crate::state::MIN_TIME_INTERVAL_MS as f64
-                            ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
-                        crate::state::TIME_INTERVAL_DRAG_SPEED,
-                    ))
-                    .on_hover_text("custom interval for this pane")
-            });
+        let fits = content.available_width() >= glyphs_px + MIN_INTERVAL_FIELD_PX;
+        let interval = (fits
+            && quantick_engine::time_bucket::calendar_months(*interval_ms).is_none())
+        .then(|| {
+            content
+                .add(interval_drag(
+                    interval_ms,
+                    crate::state::MIN_TIME_INTERVAL_MS as f64
+                        ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                    crate::state::TIME_INTERVAL_DRAG_SPEED,
+                ))
+                .on_hover_text("custom interval for this pane")
+        });
         changed |= interval.as_ref().is_some_and(egui::Response::changed);
         interval.map_or(egui::Rect::NOTHING, |interval| interval.rect)
     } else {
@@ -166,12 +177,21 @@ pub fn draw(
     };
     #[cfg(not(test))]
     let _ = interval_rect;
+    content.set_clip_rect(clip);
+    let row_used = content.cursor().left();
+    let glyphs_left = row_used.min(row.right() - glyphs_px);
+    let _ = content.allocate_new_ui(
+        egui::UiBuilder::new()
+            .max_rect(row.with_min_x(glyphs_left))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        glyphs,
+    );
     // The name takes the room the interval controls left and never more:
     // right-aligned in a `left_to_right` row, a label wider than what remains
     // is drawn back over the chips beside it, so it is bounded and elided
     // here rather than clipped by luck.
     let name_rect = (!layout_name.is_empty()
-        && content.available_width() >= MIN_LAYOUT_NAME_PX)
+        && row.right() - row_used - glyphs_px >= MIN_LAYOUT_NAME_PX)
         .then(|| {
             content
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -269,11 +289,72 @@ mod tests {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let strip =
                     egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(width, HEIGHT_PX));
-                let header = draw(ui, strip, &mut interval_ms, 0, layout_name, true, |_| {});
+                let header = draw(
+                    ui,
+                    strip,
+                    &mut interval_ms,
+                    0,
+                    layout_name,
+                    true,
+                    0.0,
+                    |_| {},
+                    |_| {},
+                );
                 seen = Some((header.interval(), header.name()));
             });
         });
         seen.expect("the header drew")
+    }
+
+    /// A strip too narrow for the presets cuts them and drops the free interval
+    /// field: the glyph after them stays whole, or a hand could not reach it.
+    #[test]
+    fn a_narrow_strip_keeps_the_glyph_whole() {
+        const GLYPHS_PX: f32 = 40.0;
+        let ctx = egui::Context::default();
+        let mut interval_ms = DEFAULT_INTERVAL_MS;
+        let mut seen = None;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(600.0, 200.0),
+            )),
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let strip =
+                    egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(200.0, HEIGHT_PX));
+                let header = draw(
+                    ui,
+                    strip,
+                    &mut interval_ms,
+                    0,
+                    "",
+                    true,
+                    GLYPHS_PX,
+                    |_| {},
+                    |ui| {
+                        let glyph = ui.allocate_space(egui::vec2(GLYPHS_PX - 4.0, 10.0)).1;
+                        seen = Some((strip, glyph, ui.clip_rect()));
+                    },
+                );
+                assert_eq!(
+                    header.interval(),
+                    egui::Rect::NOTHING,
+                    "no room for the field"
+                );
+            });
+        });
+        let (strip, glyph, clip) = seen.expect("the glyph drew");
+        assert!(
+            strip.contains_rect(glyph),
+            "{glyph:?} left the strip {strip:?}"
+        );
+        assert!(
+            clip.contains_rect(glyph),
+            "{glyph:?} was clipped by {clip:?}"
+        );
     }
 
     /// The layout's name is drawn where the interval controls are not, and is
@@ -359,7 +440,20 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let strip =
                         egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(600.0, HEIGHT_PX));
-                    changed = Some(draw(ui, strip, &mut interval_ms, 0, "", true, |_| {}).changed);
+                    changed = Some(
+                        draw(
+                            ui,
+                            strip,
+                            &mut interval_ms,
+                            0,
+                            "",
+                            true,
+                            0.0,
+                            |_| {},
+                            |_| {},
+                        )
+                        .changed,
+                    );
                 });
             });
         }

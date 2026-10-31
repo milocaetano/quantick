@@ -178,6 +178,11 @@
           "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
           "type": "boolean"
         },
+        "tape_view": {
+          "$ref": "#/$defs/TapeView",
+          "default": "beside",
+          "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or\n`orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it."
+        },
         "tape_viewport_scale": {
           "anyOf": [
             {
@@ -701,6 +706,26 @@
         {
           "const": "tape",
           "description": "The tape folds to a rail on the right; the candles take the pane.",
+          "type": "string"
+        }
+      ]
+    },
+    "TapeView": {
+      "description": "What the flow pane shows: names the side shown.",
+      "oneOf": [
+        {
+          "const": "beside",
+          "description": "Candles and tape side by side at the tape's width share.",
+          "type": "string"
+        },
+        {
+          "const": "candles",
+          "description": "The candles alone; the tape is switched off.",
+          "type": "string"
+        },
+        {
+          "const": "tape",
+          "description": "The tape alone; no candle is drawn.",
           "type": "string"
         }
       ]

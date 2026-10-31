@@ -8,7 +8,7 @@
 //! rule, the collapsed rail and the divider between the columns.
 
 use eframe::egui;
-use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
+use quantick_chart::pane_header::{HeaderIntent, PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
 use smallvec::SmallVec;
 
@@ -130,7 +130,7 @@ impl Tab {
         let monotonic_ms = (ui.input(|input| input.time).max(0.0) * 1_000.0) as u64;
         self.update_tape_clock_at(monotonic_ms);
         let frame = self.canvas_frame(area);
-        let rects = self.draw_context_column(ui, &frame, chrome.capabilities);
+        let rects = self.draw_context_column(ui, &frame, chrome);
 
         // Which shared mark the pointer is over, on each pane, against the
         // other pane's store. Answered here because answering it needs both
@@ -246,11 +246,13 @@ impl Tab {
         &mut self,
         ui: &mut egui::Ui,
         frame: &CanvasFrame,
-        capabilities: FeedCapabilities,
+        chrome: &mut CanvasChrome<'_>,
     ) -> PaneRects {
         let context_shown = frame.context_shown;
-        let bar_inputs =
-            crate::toolbar::available_bar_inputs(capabilities, self.deal_recording_view().as_ref());
+        let bar_inputs = crate::toolbar::available_bar_inputs(
+            chrome.capabilities,
+            self.deal_recording_view().as_ref(),
+        );
         let mut rects = PaneRects {
             context_charts: SmallVec::new(),
             context_dividers: SmallVec::new(),
@@ -304,7 +306,7 @@ impl Tab {
                 }
                 let pane_areas = split_pane_layout_strip(*band);
                 let areas = split_pane_header(pane_areas.body);
-                self.draw_time_header(ui, slot, areas.header, bar_inputs);
+                self.draw_time_header(ui, slot, areas.header, bar_inputs, chrome);
                 rects
                     .context_charts
                     .push(Some((areas.chart, pane_areas.layout_strip)));
@@ -313,7 +315,7 @@ impl Tab {
         rects.flow_areas = frame.show_flow.then(|| {
             let pane_areas = split_pane_layout_strip(frame.flow_band);
             let areas = split_pane_header(pane_areas.body);
-            self.draw_flow_header(ui, areas.header, bar_inputs);
+            self.draw_flow_header(ui, areas.header, bar_inputs, chrome);
             PaneAreas {
                 body: areas.chart,
                 layout_strip: pane_areas.layout_strip,
@@ -334,46 +336,74 @@ impl Tab {
             })
     }
 
-    /// The flow pane's header line: its mark and its own bars, read and changed
-    /// here wherever focus sits.
+    /// The flow pane's header line: its mark, its own bars, its view, its layers,
+    /// its bubble sizes and its indicators glyph, read and changed here wherever
+    /// focus sits.
     fn draw_flow_header(
         &mut self,
         ui: &mut egui::Ui,
         strip: egui::Rect,
         bar_inputs: BarInputAvailability,
+        chrome: &mut CanvasChrome<'_>,
     ) {
         let pane = &mut self.flow_pane;
-        let header = PaneHeader::of(PaneIdentity::OrderFlow, pane.spec.spec());
-        let indicators = crate::pane_header::draw_marked(
+        let identity = PaneIdentity::OrderFlow;
+        let header = PaneHeader::of(identity, pane.spec.spec());
+        let glyphs = pane.header_glyphs(identity, chrome.style, chrome.capabilities);
+        let row = crate::pane_header::FlowRow {
+            glyphs: &glyphs,
+            state: pane.flow_header_state(),
+        };
+        let (intent, indicators) = crate::pane_header::draw_marked(
             ui,
             strip,
             &header,
             pane.id,
             &mut pane.spec,
             bar_inputs,
+            row,
+            &mut pane.frame.header_controls,
         );
         if indicators {
             pane.request_indicator_picker();
         }
+        if let Some(intent) = intent {
+            // A settings window edits the focused chart, and this is the one
+            // the hand asked about.
+            if matches!(intent, HeaderIntent::OpenLayerSettings(_)) {
+                self.focus = PaneSide::Flow;
+            }
+            self.flow_pane.apply_header_intent(intent, chrome.layers);
+        }
     }
 
-    /// Each context chart carries its own bars control and timeframe selector
-    /// (§11), read and changed here wherever focus sits.
+    /// Each context chart carries its own bars control, timeframe selector
+    /// (§11), footprint glyph and indicators glyph, read and changed here wherever
+    /// focus sits.
     fn draw_time_header(
         &mut self,
         ui: &mut egui::Ui,
         slot: usize,
         strip: egui::Rect,
         bar_inputs: BarInputAvailability,
+        chrome: &mut CanvasChrome<'_>,
     ) {
         let pane = &mut self.time_panes[slot];
-        let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
+        let identity = PaneIdentity::Time;
+        let header = PaneHeader::of(identity, pane.spec.spec());
+        let glyphs = pane.header_glyphs(identity, chrome.style, chrome.capabilities);
         let mut interval_ms = pane
             .spec
             .retained(BarKind::Time)
             .time_interval_ms()
             .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
         let spec = &mut pane.spec;
+        let painted = &mut pane.frame.header_controls;
+        painted.clear();
+        let mut intent = None;
+        let glyphs_px = quantick_chart::pane_header::GROUP_GAP_PX
+            + glyphs.len() as f32
+                * (quantick_chart::pane_header::GLYPH_SLOT_PX + ui.spacing().item_spacing.x);
         let header_layout = crate::time_header::draw(
             ui,
             strip,
@@ -381,8 +411,23 @@ impl Tab {
             pane.id,
             &pane.layout.label,
             header.presets,
+            glyphs_px,
             |ui| crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs),
+            |ui| {
+                ui.add_space(quantick_chart::pane_header::GROUP_GAP_PX);
+                for glyph in &glyphs {
+                    crate::pane_header::layer_glyph(ui, *glyph, painted, &mut intent);
+                }
+            },
         );
+        if let Some(intent) = intent {
+            // A settings window edits the focused chart, and this is the one
+            // the hand asked about.
+            if matches!(intent, HeaderIntent::OpenLayerSettings(_)) {
+                self.focus = PaneSide::Time(slot);
+            }
+            self.time_panes[slot].apply_header_intent(intent, chrome.layers);
+        }
         #[cfg(test)]
         if slot == 0 {
             self.time_header_chips = header_layout.chips();
@@ -530,7 +575,6 @@ impl Tab {
             chrome.paper_hud_here = side == focused;
             chrome.shared_pick = picks.for_pane(side);
             chrome.shared = SharedInteraction::default();
-            crate::pane::bubble_scale_controls(pane, ui, rect, &chrome);
             pane.handle_navigation(ui, rect, &mut chrome);
             pane.draw_chart(ui.painter(), rect, &mut chrome);
             // Whatever this pane did to the other's marks travels out of the

@@ -348,7 +348,7 @@ pub(super) fn handle_axis_gestures(
     });
     // Jump-to-live (audit F6): panned into history, the way back is one click at the axis' live
     // end. Registered after the strip gesture so the click is the chip's, not a zoom-drag's.
-    if let Some(chip) = super::lane_rail::live_chip(pane, areas.time_strip) {
+    if let Some(chip) = pane.shown_live_chip(areas.time_strip) {
         let chip = ui.interact(
             chip,
             pane.interaction_id("jump_to_live"),
@@ -522,25 +522,28 @@ pub(super) fn handle_indicator_pane_gestures(
         }
     }
     // Time, once, whichever pane the pointer was over: the panes share the candles' x axis, so
-    // a sideways drag or scroll there must move the same viewport the candles do.
-    super::canvas_gestures::navigate(
-        pane,
-        Intent::Axis(AxisGesture::PaneBody {
-            slot: 0,
-            reset: false,
-            primary_free: true,
-            drag: [pane_time_gesture.pan_x, 0.0],
-            height: 0.0,
-            auto: None,
-            total,
-            scroll: if chrome.paper.consumed_scroll() {
-                0.0
-            } else {
-                pane_time_gesture.scroll_y
-            },
-            scroll_gain: SCROLL_ZOOM_PX,
-        }),
-    );
+    // a sideways drag or scroll there must move the same viewport the candles do. On a tape-only
+    // pane that viewport waits for them, so nothing here may move it.
+    if !pane.tape_modes().0 {
+        super::canvas_gestures::navigate(
+            pane,
+            Intent::Axis(AxisGesture::PaneBody {
+                slot: 0,
+                reset: false,
+                primary_free: true,
+                drag: [pane_time_gesture.pan_x, 0.0],
+                height: 0.0,
+                auto: None,
+                total,
+                scroll: if chrome.paper.consumed_scroll() {
+                    0.0
+                } else {
+                    pane_time_gesture.scroll_y
+                },
+                scroll_gain: SCROLL_ZOOM_PX,
+            }),
+        );
+    }
     // The dividers last of all: registered after every pane body so the grab band takes the
     // drag that would otherwise pan the pane behind it, as the canvas split's divider is
     // registered after both its panes.

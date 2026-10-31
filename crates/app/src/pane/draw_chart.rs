@@ -96,7 +96,7 @@ impl ChartPane {
             renderers,
             &frame,
             layout.lane_width_px(),
-            &self.model.viewport,
+            &frame.view,
             self.price_view.is_inverted(),
         );
         let demand = self.projection_demand();
@@ -161,7 +161,7 @@ impl ChartPane {
                 history: frame.history_rect,
                 total: frame.total,
                 candle_width: frame.cw,
-                viewport: &self.model.viewport,
+                viewport: &frame.view,
                 turns,
             });
         }
@@ -170,7 +170,7 @@ impl ChartPane {
             renderers,
             frame: &frame,
             clip: painter.with_clip_rect(layout.history_rect),
-            viewport: &self.model.viewport,
+            viewport: &frame.view,
             dress: CandleDress::resolve(&self.footprint, chrome, start.footprint_paints, frame.cw),
         };
         let mut carved = std::mem::take(&mut self.frame.bands);
@@ -368,10 +368,6 @@ impl ChartPane {
         // it, even before the tape has a live edge to run to. The native tape
         // beside the candles keeps its share and fits the shared price axis.
         let (tape_only, native_tape) = self.tape_modes();
-        if tape_only {
-            // No candles to have panned away from: the pane is the live tape.
-            self.model.viewport.snap_to_live();
-        }
         let candles_folded = super::lane_rail::shown_fold(self) == LaneFold::Candles;
         let live_lane = self.lay_out_lane(chart_rect);
         if total == 0 {
@@ -393,18 +389,19 @@ impl ChartPane {
         // rule holds — pushed fully left, the newest bar stops at the left
         // edge and the rest of the window is empty canvas to project into.
         //
-        // Folded to a rail, the candles keep the view the trader left for the
-        // unfold, unclamped, and the frame reads the live edge instead, as
-        // tape only does: the price axis fits the tape, not a stale window.
+        // Folded to a rail or hidden by tape only, the candles keep the view the
+        // trader left for their return, unclamped, and the frame reads the live
+        // edge instead: the price axis fits the tape, not a stale window.
         let width = history_rect.width();
-        if !candles_folded {
+        if !tape_only && !candles_folded {
             self.model.viewport.clamp_to_window(width, total);
         }
-        let mut view = self.model.viewport;
+        let view = self.shown_viewport();
+        let mut read_at = view;
         if candles_folded {
-            view.snap_to_live();
+            read_at.snap_to_live();
         }
-        let (start, end) = view.visible_range(width, total);
+        let (start, end) = read_at.visible_range(width, total);
         Some(FrameLayout {
             areas,
             chart_rect,
@@ -414,7 +411,8 @@ impl ChartPane {
             closed_total,
             start,
             end,
-            cw: self.model.viewport.candle_width(),
+            view,
+            cw: view.candle_width(),
             indicator_guide_x,
             tape_only,
             fits_tape: tape_only || candles_folded,
@@ -505,14 +503,6 @@ impl ChartPane {
                 rect: chart_rect,
             });
         }
-        self.layer_renderers.canvas(&mut CanvasPass {
-            painter,
-            rect: chart_rect,
-            tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
-            tape_hovered: self.tape_switch.hovered(),
-            state: &self.layers,
-            facts: self.layer_facts(Some(chrome.capabilities)),
-        });
     }
 
     /// The live lane's window as the indicator panes draw it, `None`

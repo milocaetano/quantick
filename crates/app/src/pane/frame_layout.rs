@@ -92,6 +92,8 @@ pub(super) struct FrameLayout {
     pub(super) closed_total: usize,
     pub(super) start: usize,
     pub(super) end: usize,
+    /// The candle view this frame reads ([`super::ChartPane::shown_viewport`]).
+    pub(super) view: crate::viewport::Viewport,
     /// One slot's width in pixels, read after the clamp.
     pub(super) cw: f32,
     /// Where the indicator panes' vertical guide goes: the pointer's x while
@@ -210,6 +212,7 @@ impl FrameLayout {
             visible_prefix,
             visible_state,
             canvas_background,
+            view: self.view,
             cw,
         };
         Some((frame, auto_range, flip_span))

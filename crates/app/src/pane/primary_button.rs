@@ -29,7 +29,6 @@ pub(super) struct PaperArbitration<'a> {
     pub(super) projection: &'a DrawingProjection<'a>,
     pub(super) drawings: &'a Drawings,
     pub(super) layer_visible: bool,
-    pub(super) tape_switch: egui::Rect,
     /// The lane divider's grip, or a folded side's rail: chrome, never an aim.
     pub(super) lane_handle: Option<egui::Rect>,
 }
@@ -77,16 +76,15 @@ impl PaperArbitration<'_> {
         // is armed: the button is handed out once, and a click meant to drop
         // an anchor must not also cancel the order under it.
         //
-        // The pane's chrome, floating (`over_chrome`: the tape's bubble-scale
-        // control, a flyout) or the canvas's own (the tape chip, the lane
-        // divider or its fold rail, an indicator pane's header or divider),
+        // The pane's chrome, floating (`over_chrome`: a flyout) or the canvas's
+        // own (the lane divider or its fold rail, an indicator pane's header or
+        // divider),
         // modifier or not: those pixels already mean something to a press,
         // so the desk starts no paper press and shows no paper cursor there
         // (`ChartFrame::on_chrome`).
         let on_chrome = over_chrome
             || pointer_position.is_some_and(|position| {
                 pane_chrome_hit(areas, position)
-                    || self.tape_switch.contains(position)
                     || self
                         .lane_handle
                         .is_some_and(|rect| rect.x_range().contains(position.x))

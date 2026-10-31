@@ -110,12 +110,13 @@ fn layer_visibility_survives_a_restart() {
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     switch_layer(&mut app, ChartLayer::PaperTrading, false);
     switch_layer(&mut app, ChartLayer::Grid, false);
-    // Switched through the toolbar's own action rather than the menu: the
-    // save must follow the state, not the widget that moved it.
-    app.apply_toolbar_action(ToolbarAction::SetLayer(
-        crate::toolbar::LayerToggle::Heatmap,
+    // Switched through the pane's own door rather than the menu: the save must
+    // follow the state, not the widget that moved it.
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::Heatmap,
         true,
-    ));
+        &mut Default::default(),
+    );
     // A market layer switched *on* has to come back on, which is why the
     // file records each layer's state instead of a list of hidden ones.
     switch_layer(&mut app, ChartLayer::Bubbles, true);
@@ -921,16 +922,18 @@ fn hiding_the_heatmap_never_stops_the_recorder() {
     take_capture_start(&mut cmd_rx);
     let gaps_before = app.active_tab_mut().tape_mut().health().gaps;
 
-    app.apply_toolbar_action(ToolbarAction::SetLayer(
-        crate::toolbar::LayerToggle::Heatmap,
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::Heatmap,
         true,
-    ));
+        &mut Default::default(),
+    );
     assert!(app.active_tab().tape().depth_visible());
 
-    app.apply_toolbar_action(ToolbarAction::SetLayer(
-        crate::toolbar::LayerToggle::Heatmap,
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::Heatmap,
         false,
-    ));
+        &mut Default::default(),
+    );
     assert!(
         !app.active_tab().tape().depth_visible(),
         "the map is hidden"
@@ -944,10 +947,11 @@ fn hiding_the_heatmap_never_stops_the_recorder() {
         "showing or hiding the map sends no feed command"
     );
 
-    app.apply_toolbar_action(ToolbarAction::SetLayer(
-        crate::toolbar::LayerToggle::Heatmap,
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::Heatmap,
         true,
-    ));
+        &mut Default::default(),
+    );
     app.active_tab_mut().tape_mut().flush_for_test();
     assert!(app.active_tab().tape().depth_visible());
     assert_eq!(
@@ -964,18 +968,21 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
 
-    app.apply_toolbar_action(ToolbarAction::SetLayer(
-        crate::toolbar::LayerToggle::LiveStrip,
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::LiveStrip,
         true,
-    ));
-    app.apply_toolbar_action(ToolbarAction::SetLayer(
-        crate::toolbar::LayerToggle::Heatmap,
+        &mut Default::default(),
+    );
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::Heatmap,
         true,
-    ));
-    app.apply_toolbar_action(ToolbarAction::SetLayer(
-        crate::toolbar::LayerToggle::Bubbles,
+        &mut Default::default(),
+    );
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::Bubbles,
         true,
-    ));
+        &mut Default::default(),
+    );
     run_frame(&mut app, &ctx);
 
     let time = app.active_tab().time_pane().expect("time pane");
@@ -1136,15 +1143,18 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
     );
     let _ends = (evt_tx, book_tx);
 
-    run_frame(&mut app, &egui::Context::default());
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let pane_id = app.active_tab().flow_pane.id;
+    let header_id = |control: &str| format!("pane.{pane_id}.header.{control}");
     let scene = observer_scene(&app);
-    let bubbles = scene_control(&scene, "toolbar.layers.bubbles");
+    let bubbles = scene_control(&scene, &header_id("layer.bubbles"));
     assert_eq!(bubbles["availability"]["available"], false);
     assert_eq!(
         bubbles["availability"]["reason"], "source_prints_no_traded_volume",
         "the reason is the code the gate declares"
     );
-    let heatmap = scene_control(&scene, "toolbar.layers.heatmap");
+    let heatmap = scene_control(&scene, &header_id("layer.heatmap"));
     assert_eq!(heatmap["availability"]["available"], false);
     assert_eq!(
         heatmap["availability"]["reason"],
@@ -1156,7 +1166,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
     // two above. A gate declared beside the button instead of read from
     // `ChartPane::layer_blocked` reported this one available, and the
     // trader saw a lit switch that reserved no width.
-    let strip = scene_control(&scene, "toolbar.layers.live_strip");
+    let strip = scene_control(&scene, &header_id("layer.live_strip"));
     assert_eq!(strip["availability"]["available"], false);
     assert_eq!(
         strip["availability"]["reason"],
@@ -1192,25 +1202,28 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
     );
 }
 
+/// The scene lists a pane's header left to right, as the eye meets it: an
+/// assistant asked about "the second glyph" has to count the way the trader does.
 #[test]
-fn the_layer_toggles_are_listed_the_way_the_trader_reads_them() {
+fn the_header_controls_are_listed_the_way_the_trader_reads_them() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(12);
     run_frame(&mut app, &ctx);
+    let pane_id = app.active_tab().flow_pane.id;
+    let prefix = format!("pane.{pane_id}.header.");
     let listed: Vec<String> = scene_control_ids(&observer_scene(&app))
         .into_iter()
-        .filter(|id| id.starts_with("toolbar.layers."))
+        .filter_map(|id| id.strip_prefix(&prefix).map(str::to_owned))
+        .filter(|id| !id.starts_with("sample."))
         .collect();
-    // The group draws right-to-left from `LayerToggle::ALL`, so the eye
-    // meets them in the reverse of call order. An assistant asked about
-    // "the second button from the left" has to count the way the eye does.
     assert_eq!(
         listed,
         vec![
-            "toolbar.layers.live_strip",
-            "toolbar.layers.footprint",
-            "toolbar.layers.heatmap",
-            "toolbar.layers.bubbles",
+            "view",
+            "layer.bubbles",
+            "layer.heatmap",
+            "layer.footprint",
+            "layer.live_strip",
         ]
     );
 }

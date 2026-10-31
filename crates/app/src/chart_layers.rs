@@ -65,7 +65,7 @@ const EMBEDDED_DEFAULT: &str = include_str!("../config/chart-layers.toml");
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const LAYERS_FILE: &str = "chart-layers.toml";
 
-pub(crate) use quantick_layers::{ChartLayer, LayerBlock};
+pub(crate) use quantick_layers::ChartLayer;
 mod session;
 pub(crate) mod shortcuts;
 pub(crate) use session::{maintain, restore};

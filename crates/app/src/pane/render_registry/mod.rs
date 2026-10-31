@@ -1,6 +1,5 @@
 //! Typed rendering registrations. Each pass borrows only the owner and geometry
 //! it consumes; no contribution can call back into QuantickApp.
-use eframe::egui;
 use quantick_layers::{ChartLayer, LayerRegistry, RegistrationError};
 mod candle_aggression;
 pub(super) mod candles;
@@ -35,26 +34,10 @@ pub(super) struct FootprintPass<'a> {
     pub native_grid: Option<quantick_orderflow::projection::CandleDotGrid>,
     pub current_partial: Option<&'a quantick_engine::BarFootprint>,
 }
-pub(super) struct CanvasPass<'a> {
-    pub painter: &'a egui::Painter,
-    pub rect: egui::Rect,
-    pub tape_on: Option<bool>,
-    pub tape_hovered: bool,
-    pub state: &'a quantick_layers::LayerState,
-    pub facts: quantick_layers::LayerFacts,
-}
-
-impl CanvasPass<'_> {
-    /// Otherwise unowned canvas layers use their own policy, not another
-    /// feature's switch. Owner-specific stages borrow that feature directly.
-    pub fn visible(&self, layer: ChartLayer, requested: bool) -> bool {
-        quantick_layers::LayerState::effective(layer, requested, self.facts)
-    }
-}
 
 /// Borrow and ordering boundaries, not layer identities. Multiple packages
-/// can contribute to one stage; an independent layer uses Canvas with its
-/// own policy. Owner-specific stages run only when that owner's view exists.
+/// can contribute to one stage. Owner-specific stages run only when that
+/// owner's view exists.
 #[derive(Clone, Copy)]
 pub(super) enum Contribution {
     Heatmap(for<'a> fn(&mut FlowPass<'a>)),
@@ -66,7 +49,6 @@ pub(super) enum Contribution {
     Aggressions(for<'a> fn(&mut FlowPass<'a>)),
     Legend(for<'a> fn(&mut LegendPass<'a>)),
     Strip(for<'a> fn(&mut StripPass<'a>)),
-    Canvas(for<'a> fn(&mut CanvasPass<'a>)),
     Status(for<'a> fn(&mut StatusPass<'a>)),
     Seam(for<'a> fn(&mut DividerPass<'a>)),
     Backfill(for<'a> fn(&mut DividerPass<'a>)),
@@ -140,7 +122,6 @@ pass!(indicator_pane, IndicatorPane, IndicatorPanePass<'_, '_>);
 pass!(aggressions, Aggressions, FlowPass<'_>);
 pass!(legend, Legend, LegendPass<'_>);
 pass!(strip, Strip, StripPass<'_>);
-pass!(canvas, Canvas, CanvasPass<'_>);
 pass!(status, Status, StatusPass<'_>);
 pass!(seam, Seam, DividerPass<'_>);
 pass!(backfill, Backfill, DividerPass<'_>);
@@ -174,22 +155,6 @@ const PACKAGES: &[Package] = &[
         })],
     },
     candle_aggression::PACKAGE,
-    Package {
-        layers: &[],
-        contributions: &[Contribution::Canvas(|pass| {
-            if pass.state.registry().contains(ChartLayer::TapeChart)
-                && let Some(on) = pass.tape_on
-            {
-                super::tape_switch::paint_switch(
-                    pass.painter,
-                    pass.rect,
-                    pass.visible(ChartLayer::TapeChart, on),
-                    pass.tape_hovered,
-                    pass.facts.tape_only,
-                );
-            }
-        })],
-    },
 ];
 pub(super) fn standard() -> &'static RenderRegistry {
     static REGISTRY: std::sync::OnceLock<RenderRegistry> = std::sync::OnceLock::new();
@@ -197,4 +162,73 @@ pub(super) fn standard() -> &'static RenderRegistry {
 }
 
 #[cfg(test)]
-pub(super) mod probe;
+pub(super) mod probe {
+    //! An additive package: no edits to built-in identities, policy or dispatch.
+    use super::*;
+    use crate::{pane::ChartPane, style::ChartStyle};
+    use quantick_engine::BarSpec;
+    use quantick_layers::LayerActions;
+    use quantick_layers::{
+        LayerDescriptor, LayerScope, LayerSource, LayerState, Persistence, Requirement,
+    };
+
+    static PROBE: LayerDescriptor = LayerDescriptor {
+        id: "test_probe",
+        label: "Probe",
+        hint: "An independently registered layer.",
+        source: LayerSource::Local,
+        scope: LayerScope::Pane,
+        persistence: Persistence::Layers,
+        requirement: Requirement::None,
+        on_tape: false,
+        needs_tape: false,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
+        projection_demand: false,
+    };
+    const LAYER: ChartLayer = ChartLayer(&PROBE);
+    const PACKAGE: Package = Package {
+        layers: &[LAYER],
+        contributions: &[],
+    };
+    fn installed() -> ChartPane {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(100), "TEST".to_owned());
+        install(&mut pane);
+        pane
+    }
+    pub(in crate::pane) fn install(pane: &mut ChartPane) {
+        let packages: Vec<_> = PACKAGES.iter().copied().chain([PACKAGE]).collect();
+        let registry = Box::leak(Box::new(RenderRegistry::new(&packages).unwrap()));
+        pane.layers = LayerState::new(registry.layers());
+        pane.layer_renderers = registry;
+    }
+    #[test]
+    fn new_package_reaches_production_discovery_operation_and_persistence() {
+        let mut pane = installed();
+        let style = ChartStyle::default();
+        let catalog = pane.layers.registry();
+        assert_eq!(catalog.layers().len(), 27);
+        let discovered = catalog.resolve("test_probe").unwrap();
+        assert_eq!(discovered.label(), "Probe");
+        assert!(!pane.layer_visible(discovered, &style));
+        pane.set_layer_visible(discovered, true, &mut LayerActions::default());
+        assert!(pane.layer_visible(discovered, &style));
+        let text = quantick_layers::LayerDocument::encode(&pane.layer_states(&style)).unwrap();
+        let restored = quantick_layers::LayerDocument::parse(&text)
+            .unwrap()
+            .resolve(pane.layers.registry());
+        let mut second = installed();
+        second.apply_layer_states(&restored);
+        assert!(second.layer_visible(discovered, &style));
+        second.set_layer_visible(discovered, false, &mut LayerActions::default());
+        assert!(!second.layer_visible(discovered, &style));
+    }
+    #[test]
+    fn registration_rejects_duplicate_packages_without_painting() {
+        assert!(matches!(
+            RenderRegistry::new(&[PACKAGE, PACKAGE]),
+            Err(RegistrationError::DuplicateId)
+        ));
+    }
+}

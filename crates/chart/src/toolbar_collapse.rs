@@ -14,8 +14,6 @@ const W_SOURCE_FULL: f32 = 350.0;
 const W_SOURCE_SHRUNK: f32 = 260.0;
 /// The `History: <target> ▾` split button.
 const W_HISTORY: f32 = 150.0;
-/// The LAYERS icon group (bubbles, heatmap, live strip, footprint).
-const W_LAYERS: f32 = 100.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
 /// Which groups stay inline at the current width. Everything folded is
@@ -58,7 +56,7 @@ impl CollapsePlan {
     /// parameter: TRADE reserves its open-state width (the toolbar's `W_TRADE`).
     #[must_use]
     pub fn width(self, trade_width: f32) -> f32 {
-        let mut width = W_SLACK + W_ICON + W_LAYERS;
+        let mut width = W_SLACK + W_ICON;
         width += if self.feed_full_name {
             W_SOURCE_FULL
         } else {
@@ -82,7 +80,7 @@ impl CollapsePlan {
 
 /// Decide what folds at `available` width, following the §6 collapse order.
 /// The last plan is accepted even when it still overflows — there is nothing
-/// left to fold, and the symbol and LAYERS are never candidates.
+/// left to fold, and the symbol is never a candidate.
 #[must_use]
 pub fn collapse_plan(available: f32, trade_width: f32) -> CollapsePlan {
     let mut plan = CollapsePlan::FULL;

@@ -58,25 +58,19 @@ impl QuantickApp {
     /// `disabled_explanation` — so the lamp beside it answers the only other
     /// question there is.
     ///
-    /// A named reading rather than an expression inside the toolbar's own
-    /// frame, so the rule can be asserted without painting a toolbar. What
+    /// A named reading rather than an expression inside the header's own
+    /// frame, so the rule can be asserted without painting a header. What
     /// reads it back without looking at the screen is the semantic scene,
-    /// which takes the same `Tab::layer_toggle_state` this delegates to.
+    /// which takes the same reading this delegates to.
     #[must_use]
     #[cfg(test)]
     pub(super) fn heatmap_lamp_on(&self) -> bool {
-        // Through the group's one reading, so this named rule and the lamp the
-        // toolbar actually paints cannot become two answers to one question.
-        // `#[cfg(test)]` because the toolbar now takes the group's reading
-        // directly: keeping a second production entry point to the same answer
-        // is how the two drift.
+        // `#[cfg(test)]` because the header takes the pane's reading directly:
+        // keeping a second production entry point to the same answer is how the
+        // two drift.
         self.active_tab()
-            .layer_toggle_state(
-                ChartLayer::Heatmap,
-                &self.runtime.style,
-                self.active_tab().capabilities(&self.config),
-            )
-            .0
+            .flow_pane
+            .layer_switched_on(ChartLayer::Heatmap, &self.runtime.style)
     }
 
     /// Every tab takes in what its feed sent this frame, on screen or not.
@@ -97,6 +91,7 @@ impl QuantickApp {
 
     /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
+        self.read_tape_view_key(ctx);
         // Focus-gated like `handle_drawing_keys` (audit MINOR-13): typing in
         // the source picker's field with Ctrl held must never close the tab
         // under it — closing is instant and currently irreversible.

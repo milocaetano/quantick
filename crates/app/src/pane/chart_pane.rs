@@ -3,8 +3,13 @@
 
 use eframe::egui;
 
+use quantick_chart::pane_header::{
+    BubbleSample, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle, PaneHeader, PaneIdentity,
+};
 use quantick_control_handlers::bubble_scale::BubbleScalePane;
-use quantick_layers::ChartLayer;
+use quantick_control_schema::bubble_scale::BubbleScaleTarget;
+use quantick_layers::{ChartLayer, LayerActions};
+use smallvec::SmallVec;
 
 use crate::bands;
 use crate::chart::PriceScale;
@@ -16,6 +21,7 @@ use crate::orderflow_view::OrderflowView;
 use crate::plot_area::{PlotAreas, plot_split};
 use crate::price_view::PriceView;
 use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
+use crate::style::ChartStyle;
 use crate::toolrail::Tool;
 
 use super::context_menu::ContextPress;
@@ -99,9 +105,6 @@ pub struct ChartPane {
     pub(super) price_band_label: std::sync::Arc<str>,
     // Pointer position over the plot this frame, for the crosshair.
     pub hover_pos: Option<egui::Pos2>,
-    /// The tape switch in the canvas's top-right corner — see
-    /// [`TapeSwitch`].
-    pub tape_switch: TapeSwitch,
 
     /// Venue candles in front of the trade-derived series, folded to this pane's interval.
     ///
@@ -141,6 +144,25 @@ impl ChartPane {
             let config = view.cached_config();
             (config.tape_only(), config.native_tape())
         })
+    }
+
+    /// The candle view on screen: the stored one, or on a tape-only pane the
+    /// live edge, a copy, so the stored one waits for the candles untouched.
+    pub(crate) fn shown_viewport(&self) -> crate::viewport::Viewport {
+        let mut view = self.model.viewport;
+        if self.tape_modes().0 {
+            view.snap_to_live();
+        }
+        view
+    }
+
+    /// The jump-to-live chip this pane offers on `strip`. On a tape-only pane
+    /// the stored view waits unseen, so there is no way back to offer.
+    pub(super) fn shown_live_chip(&self, strip: egui::Rect) -> Option<egui::Rect> {
+        if self.tape_modes().0 {
+            return None;
+        }
+        super::lane_rail::live_chip(self, strip)
     }
 
     /// What the bubble size rule reads about this pane, the facts its size
@@ -336,7 +358,6 @@ impl ChartPane {
             price_view: PriceView::new(),
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             hover_pos: None,
-            tape_switch: TapeSwitch::default(),
             history_prefix: quantick_chart::venue_history::VenueHistory::default(),
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
@@ -613,31 +634,6 @@ impl ChartPane {
         if !tool_armed {
             self.hover_pos = chart.hover_pos();
         }
-        // The tape switch, in the canvas's top-right corner. Registered after the chart body so the
-        // chip sits on top of it, and the *only* way back once the tape is off: with no band there
-        // is no tape to right-click, so a menu-only switch would be a one-way door.
-        let tape_only = self.tape_modes().0;
-        if self.orderflow.is_some() {
-            let on = self.layer_visible(ChartLayer::TapeChart, chrome.style);
-            let clicked = self.tape_switch.handle(
-                ui,
-                areas.chart,
-                self.interaction_id("tape_switch"),
-                on,
-                tape_only,
-            );
-            if self.tape_switch.hovered() {
-                // The chip is chrome on top of the canvas. A crosshair chasing
-                // the pointer underneath it would say the chart is being
-                // hovered while the pointer is reading a button.
-                self.hover_pos = None;
-            }
-            if clicked {
-                self.set_layer_visible(ChartLayer::TapeChart, !on, chrome.layers);
-            }
-        } else {
-            self.tape_switch.absent();
-        }
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
@@ -682,7 +678,6 @@ impl ChartPane {
             projection: &self.drawing_projection(),
             drawings: &self.drawings,
             layer_visible: paper_layer_visible,
-            tape_switch: super::tape_switch_rect(areas.chart, tape_only),
             lane_handle: super::lane_rail::lane_handle(self, areas.chart),
         }
         .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);
@@ -1048,6 +1043,82 @@ impl ChartPane {
                     ObjectAction::DeleteAll => ask.delete_all = true,
                 }
                 chrome.drawing_chrome.ask_from_menu(self.id, ask);
+            }
+        }
+    }
+}
+
+fn target(sample: BubbleSample) -> BubbleScaleTarget {
+    match sample {
+        BubbleSample::Candle => BubbleScaleTarget::Candle,
+        BubbleSample::Tape => BubbleScaleTarget::Tape,
+    }
+}
+
+impl ChartPane {
+    /// The pane's layer glyphs: every lamp the *switch*, not what the source
+    /// lets through it, with what blocks it beside it, read through the calls
+    /// the pane's layer menu and `layers.visibility.set` read.
+    pub(crate) fn header_glyphs(
+        &self,
+        identity: PaneIdentity,
+        style: &ChartStyle,
+        capabilities: FeedCapabilities,
+    ) -> SmallVec<[LayerGlyph; 4]> {
+        PaneHeader::toggles(identity)
+            .iter()
+            .map(|&toggle| LayerGlyph {
+                toggle,
+                on: self.layer_switched_on(toggle.layer(), style),
+                blocked: self.layer_blocked(toggle.layer(), capabilities),
+            })
+            .collect()
+    }
+
+    /// The view and sizes a flow pane's header shows; `None` without an
+    /// order-flow view. A sample is there only while its target is on, the one
+    /// size rule `orderflow.bubbles.size.set` judges by too; a folded side is
+    /// not off.
+    pub(crate) fn flow_header_state(&self) -> Option<FlowHeaderState> {
+        let owner = self.orderflow.as_ref()?;
+        let facts = self.bubble_scale_facts()?;
+        let scale = |sample: BubbleSample| {
+            let target = target(sample);
+            facts
+                .may_scale(target)
+                .then(|| owner.bubble_display_scale(target.into()))
+        };
+        let lane = &owner.cached_config().live_lane;
+        Some(FlowHeaderState {
+            view: lane.view(),
+            shown_view: lane.shown_view(),
+            candle_sample: scale(BubbleSample::Candle),
+            tape_sample: scale(BubbleSample::Tape),
+        })
+    }
+
+    /// Carry out a press on this pane's header, through the door each control
+    /// shares with its key, its menu and its named call.
+    pub(crate) fn apply_header_intent(&mut self, intent: HeaderIntent, actions: &mut LayerActions) {
+        match intent {
+            HeaderIntent::SetLayer(toggle, on) => {
+                self.set_layer_visible(toggle.layer(), on, actions);
+            }
+            HeaderIntent::OpenLayerSettings(LayerToggle::Footprint) => {
+                actions.open_footprint_settings = true;
+            }
+            HeaderIntent::OpenLayerSettings(toggle) => {
+                actions.open_layer_tab = Some(toggle.layer());
+            }
+            HeaderIntent::SetView(view) => {
+                if let Some(owner) = self.orderflow.as_mut() {
+                    owner.set_lane_view(view);
+                }
+            }
+            HeaderIntent::SetSample(sample, scale) => {
+                if let Some(owner) = self.orderflow.as_mut() {
+                    owner.set_bubble_display_scale(target(sample).into(), scale);
+                }
             }
         }
     }

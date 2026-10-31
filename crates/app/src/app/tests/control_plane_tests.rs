@@ -625,10 +625,11 @@ fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
         "aggregate trades already flow; no feed command is needed"
     );
 
-    app.apply_toolbar_action(ToolbarAction::SetLayer(
-        crate::toolbar::LayerToggle::Heatmap,
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::Heatmap,
         false,
-    ));
+        &mut Default::default(),
+    );
     assert!(
         app.active_tab().tape().bubbles_enabled(),
         "hiding the book must not stop the bubbles"
@@ -2097,24 +2098,22 @@ fn observer_per_scope_capture_cost() {
     }
 }
 
+/// Heap work one coherent capture of every scope may do on the loaded
+/// fixture. Readings: 1285 allocations, 67368 bytes on Windows, 67358 on Linux.
+const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 77500;
+
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
-    // The always-on guard judges the best batch median: a typical
-    // coherent capture of every scope must fit the budget, and that
-    // reading survives a loaded test runner. The tail is measured by the
-    // ignored sibling below, on a quiet machine, and recorded in
-    // `docs/control-plane/pr2-performance.md`.
-    let best = measure_core_capture_us();
-    let BatchReading {
-        median_us,
-        p99_us,
-        worst_us,
-    } = best.lowest_median;
-    let batches = best.batches;
-    assert!(
-        median_us <= quantick_control::limits::CONTROL_UI_BUDGET_US,
-        "core capture median {median_us} us (p99 {p99_us} us, worst {worst_us} us; best of {batches} batches) exceeds the {} us UI budget",
-        quantick_control::limits::CONTROL_UI_BUDGET_US
+    // The always-on guard counts the heap work the UI budget exists to
+    // bound, so the result cannot depend on the host. Time stays with the
+    // ignored sibling below, on a quiet machine, and with the gateway's
+    // elapsed guard in production: a slowdown that allocates nothing new
+    // does not fail this test.
+    measure_core_capture_heap().assert_within(
+        "core capture",
+        CORE_CAPTURE_MAX_ALLOCS,
+        CORE_CAPTURE_MAX_ALLOC_BYTES,
     );
 }
 
@@ -3928,24 +3927,18 @@ fn two_tabs_on_the_same_recording_share_one_trace_walk() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Heap work one capture of the largest allowed chart-window page may do.
+/// Readings: 481 allocations, 7973 bytes, on Windows and Linux.
+const MAX_CHART_WINDOW_CAPTURE_MAX_ALLOCS: u64 = 555;
+const MAX_CHART_WINDOW_CAPTURE_MAX_ALLOC_BYTES: u64 = 9200;
+
 #[test]
 fn observer_max_chart_window_capture_stays_within_the_ui_budget() {
-    // The always-on guard judges the median of the best batch: a typical
-    // capture of the largest allowed page must fit the budget, and that
-    // reading survives a loaded test runner. The tail is measured by the
-    // ignored sibling below, on a quiet machine, and recorded in the
-    // evidence document.
-    let best = measure_max_chart_window_capture_us();
-    let BatchReading {
-        median_us,
-        p99_us,
-        worst_us,
-    } = best.lowest_median;
-    let batches = best.batches;
-    assert!(
-        median_us <= quantick_control::limits::CONTROL_UI_BUDGET_US,
-        "maximum chart-window capture median {median_us} us (p99 {p99_us} us, worst {worst_us} us; best of {batches} batches) exceeds the {} us UI budget",
-        quantick_control::limits::CONTROL_UI_BUDGET_US
+    // Counted heap work, for the reason the core capture guard gives.
+    measure_max_chart_window_capture_heap().assert_within(
+        "maximum chart-window capture",
+        MAX_CHART_WINDOW_CAPTURE_MAX_ALLOCS,
+        MAX_CHART_WINDOW_CAPTURE_MAX_ALLOC_BYTES,
     );
 }
 

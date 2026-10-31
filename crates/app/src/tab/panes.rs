@@ -7,12 +7,9 @@ use smallvec::SmallVec;
 use super::Tab;
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::canvas_layout::PaneKind;
-use crate::config::FeedCapabilities;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{ChartPane, PaneIndex, PaneSide};
-use crate::style::ChartStyle;
 use quantick_feed::{FeedConnectionState, FeedNotice};
-use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_session::{PaneView, SeamTrace};
 
 impl Tab {
@@ -266,49 +263,6 @@ impl Tab {
         match side {
             PaneSide::Time(slot) => self.time_panes.get(slot).unwrap_or(&self.flow_pane),
             PaneSide::Flow => &self.flow_pane,
-        }
-    }
-
-    /// Whether a LAYERS lamp reads as on, and what blocks it if anything.
-    ///
-    /// One reading, two callers: the toolbar model built each frame and the
-    /// semantic scene an operator captures on demand. A lamp that told the
-    /// trader one thing and an assistant another would be worse than no scene
-    /// at all, so neither side gets its own copy of the question — both come
-    /// here, and here asks [`ChartPane::layer_switched_on`] and
-    /// [`ChartPane::layer_blocked`], which already resolve every layer to the
-    /// one field and the one gate that own it.
-    ///
-    /// The reading is the *switch*, not what the source lets through it: a
-    /// lamp lit from `layer_visible` reads dark while book capture is starting
-    /// and forever on a source with no book, so the trader presses an unlit
-    /// button and switches the layer they wanted off. The block beside it is
-    /// what says the source cannot fill it.
-    pub(crate) fn layer_toggle_state(
-        &self,
-        layer: ChartLayer,
-        style: &ChartStyle,
-        capabilities: FeedCapabilities,
-    ) -> (bool, Option<LayerBlock>) {
-        let pane = self.pane(self.layer_toggle_side(layer));
-        (
-            pane.layer_switched_on(layer, style),
-            pane.layer_blocked(layer, capabilities),
-        )
-    }
-
-    /// Which pane a LAYERS button speaks for.
-    ///
-    /// The footprint folds the pane's *own* retained trades, so its lamp
-    /// answers for the pane with focus: one lit from the flow pane while the
-    /// time pane has focus would report a layer the trader is not looking at.
-    /// The other three read the tape, and only the flow pane has one.
-    fn layer_toggle_side(&self, layer: ChartLayer) -> PaneSide {
-        match layer.0.scope {
-            quantick_layers::LayerScope::FlowPane => PaneSide::Flow,
-            quantick_layers::LayerScope::Pane | quantick_layers::LayerScope::Window => {
-                self.focused_side()
-            }
         }
     }
 

@@ -41,6 +41,7 @@ pub mod script;
 pub mod session;
 pub mod tape_fold;
 pub mod tape_view;
+pub mod tape_view_set;
 pub mod tick_bubbles;
 pub mod time_axis;
 pub mod trace_replay;

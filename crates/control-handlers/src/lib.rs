@@ -32,6 +32,7 @@ pub mod pnl_display;
 pub mod recovery;
 mod tabs;
 pub mod tape_fold;
+pub mod tape_view_set;
 pub mod ticket_money;
 
 pub use tabs::{TabDirectory, tab_index};

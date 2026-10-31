@@ -15,6 +15,7 @@ crates/app/src/control/drawing_magnet.rs the registered action flips the app-own
 crates/app/src/control/analysis.rs snapshots live app panes and indicator views, which no headless crate owns.
 crates/app/src/candle_view.rs a facade of re-exports: it names no library because every leaf it addresses does.
 crates/app/src/indicators/mod.rs a facade of re-exports: its one local leaf names the library, and the rest is `quantick_chart::indicator_views` re-addressed.
+crates/app/src/pane/render_registry/mod.rs the paint stages' dispatch table: every pass it lists paints app-owned panes and names the library in its own leaf.
 crates/app/src/pane.rs a facade of re-exports: it names no library because every leaf it addresses does.
 crates/app/src/pane/chrome.rs what one frame hands a pane around its plot area: the tool rail, the drawings and the paper account, all app-owned.
 crates/app/src/theme.rs a facade of re-exports: it names no library because every leaf it addresses does.
