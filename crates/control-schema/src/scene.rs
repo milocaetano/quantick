@@ -29,7 +29,7 @@
 //! ## What it does not cover yet
 //!
 //! The scene enumerates the regions listed in [`SceneOwnerKindDto`] and no
-//! others: the SOURCE, BARS, HISTORY and TRADE toolbar groups, the window
+//! others: the SOURCE, HISTORY and TRADE toolbar groups, the window
 //! menus, the rail's trailing cluster and every dialog are still unnamed. A
 //! capture says so in [`SceneSnapshot::coverage`], which is never `available`
 //! for that reason, rather than reporting a short list as the whole screen
@@ -248,9 +248,11 @@ pub struct SceneBoundsSnapshot {
     pub height_pt: CanonicalDecimal,
 }
 
-/// A pane header line's two controls, each named for the call that does what its
-/// click does. Owned by the tab, which owns its panes; `no_bounds` says why they
-/// carry no rectangle.
+/// A pane header line's two controls, each named for the call behind its click.
+/// The bars call takes the pane. The library call acts on the focused pane, so the
+/// indicators label says to focus this one first (`layout.focus.set`), which the
+/// click does itself. Owned by the tab, which owns its panes; `no_bounds` says why
+/// they carry no rectangle.
 #[must_use]
 pub fn pane_header_controls(
     pane_id: u64,
@@ -258,9 +260,9 @@ pub fn pane_header_controls(
     tab_owner_id: String,
     no_bounds: AvailabilitySnapshot,
 ) -> [SceneControlSnapshot; 2] {
-    let control = |what: &str, capability_id: &str| SceneControlSnapshot {
+    let control = |what: &str, note: &str, capability_id: &str| SceneControlSnapshot {
         control_id: format!("pane_header.{pane_id}.{what}"),
-        label: format!("{pane_title} {what}"),
+        label: format!("{pane_title} {what}{note}"),
         role: SceneRoleDto::Action,
         owner: SceneOwnerSnapshot {
             kind: SceneOwnerKindDto::Tab,
@@ -273,7 +275,11 @@ pub fn pane_header_controls(
         capability_id: Some(capability_id.to_owned()),
     };
     [
-        control("bars", crate::layout::BAR_SPEC_CAPABILITY_ID),
-        control("indicators", crate::indicator_picker::PICKER_CAPABILITY_ID),
+        control("bars", "", crate::layout::BAR_SPEC_CAPABILITY_ID),
+        control(
+            "indicators",
+            " (focus this pane first)",
+            crate::indicator_picker::PICKER_CAPABILITY_ID,
+        ),
     ]
 }

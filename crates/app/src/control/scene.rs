@@ -29,7 +29,7 @@
 //! ## What it does not cover yet
 //!
 //! The scene enumerates the regions listed in [`SceneOwnerKindDto`] and no
-//! others: the SOURCE, BARS, HISTORY and TRADE toolbar groups, the window
+//! others: the SOURCE, HISTORY and TRADE toolbar groups, the window
 //! menus, the rail's trailing cluster and every dialog are still unnamed. A
 //! capture says so in [`SceneSnapshot::coverage`], which is never `available`
 //! for that reason, rather than reporting a short list as the whole screen

@@ -372,7 +372,7 @@ impl ChartPane {
     /// a frame yet; a live change goes through [`SpecSelector::pending`] so the frame carrying it
     /// paints the loading overlay before the rebuild replays the tape.
     ///
-    /// The selectors move with the spec because the BARS group reads them: setting the state alone
+    /// The selectors move with the spec because the header's bars menu reads them: setting the state alone
     /// would restore a chart whose own controls disagreed with it, and the first touch of the
     /// parameter would snap it back to a rule the trader never chose.
     pub fn set_spec(&mut self, spec: impl Into<BarConfiguration>) {

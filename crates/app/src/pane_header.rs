@@ -31,9 +31,13 @@ pub fn paint_rule(ui: &egui::Ui, strip: egui::Rect) {
     );
 }
 
-/// Paint the indicators glyph at the strip's right end. Returns the strip left
-/// for the rest of the line, and whether the glyph was clicked this frame.
-pub fn indicators_glyph(ui: &mut egui::Ui, strip: egui::Rect, salt: u64) -> (egui::Rect, bool) {
+/// Paint the indicators glyph at the strip's right end. Returns the padded room
+/// left for the rest of the line, its clip, and whether the glyph was clicked.
+pub fn indicators_glyph(
+    ui: &mut egui::Ui,
+    strip: egui::Rect,
+    salt: u64,
+) -> (egui::Rect, egui::Rect, bool) {
     let inner = strip.shrink2(CONTENT_PADDING);
     let slot_left = (inner.right() - INDICATORS_SLOT_PX).max(inner.left());
     let slot = egui::Rect::from_x_y_ranges(slot_left..=inner.right(), inner.y_range());
@@ -49,9 +53,9 @@ pub fn indicators_glyph(ui: &mut egui::Ui, strip: egui::Rect, salt: u64) -> (egu
     #[cfg(test)]
     ui.ctx()
         .data_mut(|data| data.insert_temp(indicators_id(salt), glyph.rect));
-    let mut rest = strip;
-    rest.set_right(slot_left);
-    (rest, glyph.clicked())
+    let rest = inner.with_max_x(slot_left);
+    let clip = strip.with_max_x(slot_left).intersect(ui.clip_rect());
+    (rest, clip, glyph.clicked())
 }
 
 /// The flow pane's header line. Returns whether its indicators glyph was clicked.
@@ -64,14 +68,14 @@ pub fn draw_marked(
     inputs: BarInputAvailability,
 ) -> bool {
     paint_rule(ui, strip);
-    let (rest, indicators) = indicators_glyph(ui, strip, salt);
+    let (rest, clip, indicators) = indicators_glyph(ui, strip, salt);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(("pane_header", salt))
-            .max_rect(rest.shrink2(CONTENT_PADDING))
+            .max_rect(rest)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    content.set_clip_rect(rest.intersect(ui.clip_rect()));
+    content.set_clip_rect(clip);
     if let Some(mark) = header.mark.filter(|_| strip.width() >= MIN_MARK_STRIP_PX) {
         content.label(
             egui::RichText::new(mark)

@@ -918,6 +918,20 @@ mod tests {
         }
     }
 
+    /// With bars and indicators gone from the row, every group fits a 1280 px
+    /// window at TRADE's reserved width. REC needs more: beside it, 1280 px folds
+    /// LOOK, PANELS and HISTORY into the overflow, and 1920 px folds nothing.
+    #[test]
+    fn nothing_folds_at_the_common_window_widths() {
+        let rec = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX;
+        let margins = 16.0;
+        for available in [1280.0 - margins, 1920.0 - margins, 1920.0 - margins - rec] {
+            assert_eq!(collapse_plan(available, W_TRADE), CollapsePlan::FULL);
+        }
+        let with_rec = collapse_plan(1280.0 - margins - rec, W_TRADE);
+        assert!(!with_rec.history_inline && with_rec.trade_inline);
+    }
+
     /// Opening a position never changes what folds: at every window width,
     /// flat or open, the real toolbar paints BUY and SELL on the same
     /// pixels, so the history group left of TRADE cannot fold out from

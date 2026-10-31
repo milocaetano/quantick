@@ -175,16 +175,6 @@ mod tests {
         assert!(plan.overflow_needed());
     }
 
-    /// With bars and indicators gone from the row, every group fits a 1280 px
-    /// window, even beside the open-position TRADE width.
-    #[test]
-    fn nothing_folds_at_the_common_window_widths() {
-        const OPEN_TRADE_W: f32 = 300.0;
-        for width in [1280.0, 1920.0] {
-            assert_eq!(collapse_plan(width, OPEN_TRADE_W), CollapsePlan::FULL);
-        }
-    }
-
     #[test]
     fn a_shrunk_feed_name_alone_never_requires_the_overflow_menu() {
         let plan = CollapsePlan {

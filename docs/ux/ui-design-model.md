@@ -461,10 +461,10 @@ startup-scoped like `default_feed`); the factory default stays Flow.
 - **Time pane header** carries an inline timeframe selector — `1m 5m 15m 1h
   1d 1w 1mo` presets plus the existing custom interval drag (a calendar month
   shows its name instead: it has no fixed length to drag). Days open at 00:00
-  UTC, weeks on Monday, months on the 1st. The toolbar's BARS group
-  governs the *focused* pane — the same pane the status bar reads and
-  indicator commands land on, so the chrome never disagrees with itself
-  about which chart a command describes.
+  UTC, weeks on Monday, months on the 1st. Each pane's bars control governs
+  that pane wherever focus sits. Indicator commands land on the *focused* pane,
+  the one the status bar reads, so `ƒx` focuses its own pane before it opens the
+  library.
 - **Focus follows the switch.** Changing layout focuses the pane the switch
   reveals, so the first command after it already lands on the chart that
   just appeared.

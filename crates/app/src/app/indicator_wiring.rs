@@ -91,9 +91,6 @@ impl QuantickApp {
         for (side, slot) in requests {
             self.apply_indicator_legend_action(tab_id, side, LegendAction::OpenSettings(slot));
         }
-        if let Some(side) = self.active_tab_mut().take_indicator_picker_request() {
-            self.open_indicator_picker_on(side);
-        }
         #[cfg(any(feature = "scenario-harness", test))]
         if let Some(index) = self.chrome.harness.indicator_mouse_line() {
             let target = self

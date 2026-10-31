@@ -322,7 +322,9 @@ impl Tab {
         rects
     }
 
-    /// The pane whose header asked for the indicator library this frame.
+    /// The pane whose header asked for the indicator library this frame. Taken in
+    /// the frame of the click: a tab key on the next one would strand the request
+    /// on a tab left behind.
     pub(crate) fn take_indicator_picker_request(&mut self) -> Option<PaneSide> {
         self.panes_with_sides_mut()
             .fold(None, |asked, (pane, side)| {

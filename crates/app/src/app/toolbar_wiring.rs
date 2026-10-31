@@ -118,7 +118,7 @@ impl QuantickApp {
         #[cfg(not(any(feature = "scenario-harness", test)))]
         let deal_recording_menu = false;
         #[cfg(any(feature = "scenario-harness", test))]
-        if std::mem::take(self.chrome.harness.bars_menu_mut()) {
+        if self.chrome.harness.take_bars_menu() {
             let popup = crate::pane_header::menu_id(self.focused_pane().id);
             ctx.memory_mut(|memory| memory.open_popup(popup));
         }

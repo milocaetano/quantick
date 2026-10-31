@@ -434,7 +434,7 @@ impl Tab {
         // switch revealed, which is right for a menu click — the trader asked
         // for that pane. On a tab that has never been on screen there was no
         // gesture and nothing was revealed, and leaving the focus there put a
-        // fresh window's BARS group and status line on the *context* chart:
+        // fresh window's status line and commands on the *context* chart:
         // the first thing a trader touched changed the timeframe pane instead
         // of the flow chart quantick exists to show. So the flow pane takes
         // the focus whenever this layout draws it.

@@ -527,8 +527,8 @@ impl Harness {
     }
 
     /// The launch's one-shot request for the focused pane's bars menu.
-    pub(crate) fn bars_menu_mut(&mut self) -> &mut bool {
-        &mut self.bars_menu
+    pub(crate) fn take_bars_menu(&mut self) -> bool {
+        std::mem::take(&mut self.bars_menu)
     }
 
     /// Whether the launch asked for the REC popover, once.
