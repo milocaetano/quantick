@@ -1,8 +1,6 @@
 //! Indicator runtime: bounded admission, lifecycle and synchronous effects.
 //! The headless session owns source binding, batch reduction and publication.
 use crate::live_envelope::{INDICATOR_COMMAND_QUEUE, INDICATOR_EVENT_QUEUE};
-#[cfg(test)]
-use crate::worker_progress::WORKER_REPLY_WAIT;
 use crate::worker_progress::{
     Coalescing, ObservedOutput, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
 };
@@ -21,9 +19,12 @@ use quantick_indicator_session::{IndicatorSession, InputsRebound, SessionEffects
 #[cfg(test)]
 use quantick_indicators::{IndicatorHost, InputValue, Rgba8};
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 #[cfg(test)]
-use std::sync::mpsc::{RecvTimeoutError, channel};
+#[path = "indicator_worker/tests/barrier.rs"]
+pub(crate) mod barrier;
 #[cfg(test)]
 #[path = "indicator_worker/tests/event_fixture.rs"]
 pub(crate) mod event_fixture;
@@ -235,41 +236,6 @@ impl IndicatorWorker {
         self.send(WorkerCommand::InspectLane(tx));
         self.await_reply(&rx)
             .expect("the worker reports retained lane storage")
-    }
-
-    /// Wait for a reply to a command just sent, pumping any parked commands
-    /// meanwhile — a test is its own UI frame loop, and a parked barrier
-    /// would otherwise wait on a queue nobody refills. `None` when the worker
-    /// is gone, or after [`WORKER_REPLY_WAIT`]: a bound against a hung
-    /// worker, not a budget — the worker is counted on, never timed.
-    #[cfg(test)]
-    pub(crate) fn await_reply<T>(&self, rx: &Receiver<T>) -> Option<T> {
-        let deadline = std::time::Instant::now() + WORKER_REPLY_WAIT;
-        while std::time::Instant::now() < deadline {
-            self.commands.pump();
-            match rx.recv_timeout(std::time::Duration::from_millis(5)) {
-                Ok(reply) => return Some(reply),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return None,
-            }
-        }
-        None
-    }
-
-    /// Block until every command sent before this call has been applied and
-    /// its events published. Tests use this to make the pipeline
-    /// deterministic (pattern: `BookWorker::flush`).
-    ///
-    /// A flush the worker never acknowledged is this call's failure, named
-    /// here; returning quietly left the caller asserting on a pipeline that
-    /// had not finished, and a loaded host then failed some unrelated
-    /// assertion a few lines on.
-    #[cfg(test)]
-    pub(crate) fn flush(&self) {
-        let (ack_tx, ack_rx) = channel();
-        self.send(WorkerCommand::Flush(ack_tx));
-        self.await_reply(&ack_rx)
-            .expect("the indicator worker acknowledged its flush within WORKER_REPLY_WAIT");
     }
 }
 

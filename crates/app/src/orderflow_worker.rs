@@ -8,8 +8,6 @@
 //! The worker blocks on `recv` while idle and exits with the last sender.
 
 use crate::live_envelope::BOOK_COMMAND_QUEUE;
-#[cfg(test)]
-use crate::worker_progress::WORKER_REPLY_WAIT;
 use crate::worker_progress::{
     Coalescing, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
 };
@@ -169,35 +167,6 @@ impl BookWorker {
             .book
             .base_price_grouping
     }
-
-    /// Block until every command sent before this call has been applied and
-    /// published. Tests use this to make the async pipeline deterministic.
-    ///
-    /// A flush the worker never acknowledged is this call's failure, named
-    /// here; returning quietly left the caller asserting on a pipeline that
-    /// had not finished, and a loaded host then failed some unrelated
-    /// assertion a few lines on. The wait is a bound against a hung worker,
-    /// not a budget: the worker is counted on, never timed.
-    #[cfg(test)]
-    pub(crate) fn flush(&self) {
-        use std::sync::mpsc::RecvTimeoutError;
-        let (ack_tx, ack_rx) = std::sync::mpsc::channel();
-        self.send(BookCommand::Flush(ack_tx));
-        // A test is its own frame loop: pump what a full queue parked, or a
-        // parked barrier would wait on a queue nobody refills.
-        let deadline = Instant::now() + WORKER_REPLY_WAIT;
-        while Instant::now() < deadline {
-            self.commands.pump();
-            match ack_rx.recv_timeout(std::time::Duration::from_millis(5)) {
-                Ok(()) => return,
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("the book worker went away before acknowledging its flush")
-                }
-            }
-        }
-        panic!("the book worker did not acknowledge its flush within {WORKER_REPLY_WAIT:?}");
-    }
 }
 
 /// The superseding rule for commands parked behind a full queue: only a layout
@@ -327,6 +296,9 @@ fn run(
     }
 }
 
+#[cfg(test)]
+#[path = "orderflow_worker/tests/barrier.rs"]
+mod barrier;
 #[cfg(test)]
 mod fold_tests;
 
