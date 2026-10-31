@@ -298,14 +298,10 @@ impl BarRegistry {
             }
             if definition.quick_alias.is_some_and(|alias| {
                 !alias.suffix.is_ascii_alphabetic()
-                    || definitions[..i].iter().any(|other| {
-                        other
-                            .quick_alias
-                            .is_some_and(|taken| taken.suffix.eq_ignore_ascii_case(&alias.suffix))
-                    })
+                    || definition.parameter.kind == NumberKind::Duration
             }) {
                 return Err(invalid(
-                    "a quick-switch suffix is one letter no other kind declares",
+                    "a quick-switch suffix is one letter, on a kind that is no duration",
                 ));
             }
             if definitions[..i]

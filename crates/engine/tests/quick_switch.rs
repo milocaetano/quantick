@@ -58,8 +58,6 @@ fn fifty_r_lists_renko_alone_by_its_own_name() {
 fn a_bare_number_offers_renko_among_its_other_readings() {
     assert_eq!(matches("50"), configs(50));
     assert!(configs(50).contains(&"renko:50".to_owned()));
-    let tick = BUILTIN_BARS.parse("tick:50").unwrap();
-    assert_eq!(tick.quick_label(), "tick(50)", "a kind without a noun");
 }
 
 #[test]
@@ -122,8 +120,6 @@ fn every_candidate_round_trips_through_the_parser() {
 #[test]
 fn a_unit_letter_lists_time_bars_in_that_unit() {
     for (query, listed) in [
-        ("1d", "time:1d"),
-        ("2d", "time:2d"),
         ("1w", "time:1w"),
         ("1mo", "time:1mo"),
         ("3MO", "time:3mo"),
@@ -134,13 +130,114 @@ fn a_unit_letter_lists_time_bars_in_that_unit() {
     ] {
         assert_eq!(matches(query), [listed], "{query}");
     }
-    let month = BUILTIN_BARS.quick_matches("1mo");
-    assert_eq!(month[0].quick_label(), "time(1mo)");
+}
+
+#[test]
+fn a_shared_letter_lists_every_kind_declaring_it_durations_first() {
+    for (query, listed) in [
+        ("2000t", &["tick:2000", "trades:2000"][..]),
+        ("2000T", &["tick:2000", "trades:2000"][..]),
+        ("1d", &["time:1d", "dollar:1"][..]),
+        ("2D", &["time:2d", "dollar:2"][..]),
+        ("10v", &["volume:10"][..]),
+        ("15r", &["renko:15"][..]),
+        (
+            "20i",
+            &["imbalance:20", "imbalance:volume:20", "imbalance:dollar:20"][..],
+        ),
+    ] {
+        assert_eq!(matches(query), listed, "{query}");
+    }
+}
+
+#[test]
+fn a_reading_its_definition_rejects_stays_left_out() {
+    assert_eq!(matches("29d"), ["dollar:29"]);
+    assert!(matches("0t").is_empty());
+}
+
+fn labels(query: &str) -> Vec<String> {
+    BUILTIN_BARS
+        .quick_matches(query)
+        .into_iter()
+        .map(BarConfiguration::quick_label)
+        .collect()
+}
+
+#[test]
+fn every_row_reads_as_words() {
+    for (query, rows) in [
+        ("2000t", &["2000 Ticks", "2000 Trades"][..]),
+        ("1t", &["1 Tick", "1 Trade"][..]),
+        ("1d", &["1 Day", "1 Dollar"][..]),
+        ("29d", &["29 Dollars"][..]),
+        ("10v", &["10 Volume"][..]),
+        ("15m", &["15 Minutes"][..]),
+        ("1m", &["1 Minute"][..]),
+        ("15s", &["15 Seconds"][..]),
+        ("1s", &["1 Second"][..]),
+        ("4h", &["4 Hours"][..]),
+        ("1w", &["1 Week"][..]),
+        ("1mo", &["1 Month"][..]),
+        ("3mo", &["3 Months"][..]),
+        ("15r", &["15 Ticks (Renko)"][..]),
+        (
+            "20i",
+            &[
+                "20 Imbalance (Trades)",
+                "20 Imbalance (Volume)",
+                "20 Imbalance (Dollar)",
+            ][..],
+        ),
+    ] {
+        assert_eq!(labels(query), rows, "{query}");
+    }
+}
+
+#[test]
+fn a_time_row_names_the_rule_in_its_largest_exact_unit() {
+    assert_eq!(labels("60m"), ["1 Hour"]);
+    assert_eq!(labels("7d"), ["1 Week", "7 Dollars"]);
+    assert_eq!(labels("60")[..3], ["1 Hour", "1 Minute", "60 Hours"]);
+}
+
+#[test]
+fn a_kind_without_an_alias_shows_its_summary() {
+    use quantick_engine::bar_registry::{BarDefinition, definitions::TICK};
+    static PLAIN: BarDefinition = BarDefinition {
+        id: "plain",
+        quick_alias: None,
+        ..TICK
+    };
+    let config = PLAIN
+        .configure(rust_decimal::Decimal::from(50), None)
+        .unwrap();
+    assert_eq!(config.quick_label(), "plain(50)");
+}
+
+#[test]
+fn a_bare_number_keeps_its_order_with_the_same_row_text() {
+    assert_eq!(
+        labels("15"),
+        [
+            "15 Minutes",
+            "15 Seconds",
+            "15 Hours",
+            "15 Ticks",
+            "15 Volume",
+            "15 Dollars",
+            "15 Imbalance (Trades)",
+            "15 Imbalance (Volume)",
+            "15 Imbalance (Dollar)",
+            "15 Trades",
+            "15 Ticks (Renko)",
+        ]
+    );
 }
 
 #[test]
 fn a_unit_past_the_interval_range_lists_nothing() {
-    for query in ["13mo", "5w", "29d", "0d"] {
+    for query in ["13mo", "5w", "0d"] {
         assert!(matches(query).is_empty(), "{query}");
     }
 }

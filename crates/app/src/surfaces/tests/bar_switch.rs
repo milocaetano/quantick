@@ -247,9 +247,63 @@ fn a_typed_unit_lists_the_day_week_and_month_bars() {
             .map(|request| request.config.to_config_string()),
         Some("time:1mo".to_owned())
     );
-    for (typed, spec) in [("2d", "time:2d"), ("1w", "time:1w")] {
+    for (typed, specs) in [
+        ("2d", &["time:2d", "dollar:2"][..]),
+        ("1w", &["time:1w"][..]),
+    ] {
         let mut surface = BarSwitchSurface::default();
         surface.open(0, crate::pane::PaneSide::Flow, typed);
-        assert_eq!(listed(&surface), [spec], "{typed}");
+        assert_eq!(listed(&surface), specs, "{typed}");
     }
+}
+
+/// `typed` opened and answered with `keys`; the rule it asked for.
+fn chosen_after(typed: &str, keys: &[egui::Key]) -> Option<String> {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, typed);
+    frame(&mut surface, &ctx, Vec::new());
+    frame(&mut surface, &ctx, Vec::new());
+    for pressed in keys {
+        frame(&mut surface, &ctx, vec![key(*pressed)]);
+    }
+    frame(&mut surface, &ctx, vec![key(egui::Key::Enter)])
+        .bar_switch
+        .map(|request| request.config.to_config_string())
+}
+
+#[test]
+fn a_letter_and_enter_in_one_frame_answer_the_lettered_list() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, "2000");
+    frame(&mut surface, &ctx, Vec::new());
+    frame(&mut surface, &ctx, Vec::new());
+    let response = frame(
+        &mut surface,
+        &ctx,
+        vec![egui::Event::Text("t".into()), key(egui::Key::Enter)],
+    );
+    assert_eq!(
+        response
+            .bar_switch
+            .map(|request| request.config.to_config_string())
+            .as_deref(),
+        Some("tick:2000")
+    );
+}
+
+#[test]
+fn enter_takes_the_first_reading_and_the_arrow_the_next() {
+    use egui::Key::ArrowDown;
+    assert_eq!(chosen_after("2000t", &[]).as_deref(), Some("tick:2000"));
+    assert_eq!(
+        chosen_after("2000t", &[ArrowDown]).as_deref(),
+        Some("trades:2000")
+    );
+    assert_eq!(chosen_after("1d", &[]).as_deref(), Some("time:1d"));
+    assert_eq!(
+        chosen_after("1d", &[ArrowDown]).as_deref(),
+        Some("dollar:1")
+    );
 }
