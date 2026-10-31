@@ -391,6 +391,9 @@ impl Tab {
             pane.id,
             &pane.layout.label,
             header.presets,
+            quantick_chart::pane_header::GROUP_GAP_PX
+                + glyphs.len() as f32
+                    * (quantick_chart::pane_header::GLYPH_SLOT_PX + ui.spacing().item_spacing.x),
             |ui| crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs),
             |ui| {
                 ui.add_space(quantick_chart::pane_header::GROUP_GAP_PX);
