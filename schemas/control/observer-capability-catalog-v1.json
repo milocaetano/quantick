@@ -13448,6 +13448,86 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Requests normal, maximized or minimized presentation state for the single native window. Application exit is excluded from agent authority.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "layout.window.state.set",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WindowState": {
+            "enum": [
+              "normal",
+              "maximized",
+              "minimized"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "$ref": "#/$defs/WindowState"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "WindowInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WindowState": {
+            "enum": [
+              "normal",
+              "maximized",
+              "minimized"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "requested": {
+            "$ref": "#/$defs/WindowState",
+            "description": "Accepted for the next native frame; this is not an OS acknowledgement."
+          }
+        },
+        "required": [
+          "requested"
+        ],
+        "title": "WindowResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Explicit states never toggle. A required idempotency key replays the accepted request without minimizing twice.",
+      "title": "Set native window state",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Opens a small window over the chart carrying one message, attributed to whoever asked for it, dismissed by the trader.",
       "destructive": false,
       "dry_run_supported": false,

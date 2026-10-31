@@ -94,7 +94,9 @@ pub(crate) trait TabsMutPort {
 }
 
 /// Chrome and layout: what the window drew around the tab on screen.
-pub(crate) trait ChromePort {
+pub(crate) trait ChromePort:
+    quantick_control_handlers::native_window::NativeWindowHost
+{
     fn chrome_reads(&self) -> ChromeReads<'_>;
 }
 
@@ -440,6 +442,7 @@ pub(crate) struct ChromeReads<'a> {
     tz: TzOffset,
     drawing_chrome: &'a crate::surfaces::drawing_chrome::DrawingChromeSurface,
     drawn: ChromeDrawn,
+    title_bar: Option<&'a super::title_bar::TitleBarState>,
 }
 
 /// What the last frame published about the window chrome.
@@ -454,6 +457,10 @@ pub(crate) struct ChromeDrawn {
 }
 
 impl<'a> ChromeReads<'a> {
+    pub(crate) fn title_bar(self) -> Option<&'a super::title_bar::TitleBarState> {
+        self.title_bar
+    }
+
     /// The view over the window's own roots, as [`TabReads::new`].
     pub(crate) fn new(
         tabs: &'a ArrangementHost,
@@ -472,6 +479,7 @@ impl<'a> ChromeReads<'a> {
             tz,
             drawing_chrome,
             drawn,
+            title_bar: None,
         }
     }
 
@@ -685,6 +693,15 @@ impl TabsMutPort for QuantickApp {
     }
 }
 
+impl quantick_control_handlers::native_window::NativeWindowHost for QuantickApp {
+    fn request_native_window(
+        &mut self,
+        state: quantick_control_schema::native_window::WindowState,
+    ) -> Result<(), quantick_control::error::ControlError> {
+        self.chrome.title_bar.requests.request(state)
+    }
+}
+
 impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
@@ -693,7 +710,7 @@ impl ChromePort for QuantickApp {
             replay_day_before: self.replay_view.day_before(),
         };
         let (rail, chrome) = (&self.toolrail, &self.drawings.chrome);
-        ChromeReads::new(
+        let mut reads = ChromeReads::new(
             &self.runtime.tabs,
             &self.runtime.style,
             rail,
@@ -701,7 +718,9 @@ impl ChromePort for QuantickApp {
             self.runtime.tz,
             chrome,
             drawn,
-        )
+        );
+        reads.title_bar = Some(&self.chrome.title_bar);
+        reads
     }
 }
 

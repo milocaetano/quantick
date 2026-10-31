@@ -1,0 +1,3 @@
+# Issue #735: native title-strip egui layout/input, bounded overflow painting, and scene geometry adapters. Native request policy and handlers live in headless crates.
+crates/app +291
+!budget +291

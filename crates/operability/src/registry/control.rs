@@ -9,6 +9,39 @@ use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 /// The window and its market tabs.
 pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "layout.window.state.set",
+        title: "Set native window presentation",
+        reach: "title-strip minimize and maximize controls; double-click free title-strip space",
+        keys: &[(
+            Source::Authored,
+            "native title-strip minimize/maximize buttons and free-space double-click",
+        )],
+        mapping: capability!("layout.window.state.set"),
+    },
+    UiBehaviour {
+        id: "window.move",
+        title: "Move or resize the native window",
+        reach: "free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface",
+        keys: &[(
+            Source::Authored,
+            "native title-strip drag and window-edge resize gestures",
+        )],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "docs/ux/native-market-titlebar.md keeps desktop movement under OS authority; scene bounds identify the native gesture target but do not execute it"
+        ),
+    },
+    UiBehaviour {
+        id: "window.snap",
+        title: "Snap the native window",
+        reach: "Windows+Left/Right and the operating system's native window snapping",
+        keys: &[(Source::Authored, "native Windows snapping")],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "docs/ux/native-market-titlebar.md keeps window snapping as an OS gesture rather than granting arbitrary desktop positioning through the app API"
+        ),
+    },
+    UiBehaviour {
         id: "app.exit",
         title: "Close the application",
         reach: "File menu, and the window's own close button",
@@ -23,7 +56,7 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.market.activate",
         title: "Switch to another market tab",
-        reach: "tab strip in the menu row; Ctrl+Tab and Ctrl+Shift+Tab",
+        reach: "market title strip and its overflow menu; Ctrl+Tab and Ctrl+Shift+Tab",
         keys: &[
             (Source::TabAction, "Activate"),
             (Source::Hotkey, "NEXT_TAB_SHORTCUT"),

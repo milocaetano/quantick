@@ -1,11 +1,8 @@
-//! The workspace tab strip and the source picker behind its `+`
+//! The market tab strip and the source picker behind its `+`
 //! (`docs/ux/ui-design-model.md` §11).
 //!
-//! One chip per open market, `SYMBOL · venue`, sitting in zone 1 to the right
-//! of the menus — the row already had the horizontal room, so tabs cost no
-//! chrome budget. The picker reads the same config catalog the toolbar's
-//! SOURCE group does; there is one list of what quantick can open, and both
-//! surfaces show it.
+//! One chip per open market in the native title strip. The picker shares the
+//! toolbar's configured source catalog.
 
 use eframe::egui;
 
@@ -13,10 +10,15 @@ use crate::config::AppConfig;
 use crate::symbols_file::AddedSymbols;
 use crate::theme;
 
+const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
+const CHIP_PREFERRED_WIDTH_PX: f32 = 120.0;
+const CHIP_MAX_WIDTH_PX: f32 = 150.0;
+const CHIP_MIN_WIDTH_PX: f32 = 30.0;
+const CHIP_CLOSE_RESERVE_PX: f32 = 32.0;
+const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
+
 /// Radius of the amber dot marking a background tab whose feed is in trouble.
 const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
-/// Gap between a chip's label and its close affordance.
-const CHIP_GAP_PX: f32 = 6.0;
 /// How far below a chip's top edge the attention dot sits, so it clears the
 /// selection outline instead of riding it.
 const ATTENTION_DOT_INSET_PX: f32 = 1.0;
@@ -26,6 +28,7 @@ const SYMBOL_FIELD_WIDTH_PX: f32 = 120.0;
 
 /// What one tab looks like on the strip this frame.
 pub struct TabChip<'a> {
+    pub id: u64,
     /// `SYMBOL · venue`, composed by the tab when its market last changed.
     pub label: &'a str,
     /// Whether this tab is playing a recording rather than streaming.
@@ -50,52 +53,132 @@ pub enum TabAction {
 /// `closable` is false for the last tab: closing it would leave the window
 /// with no market and nothing to draw, so the affordance is disabled and says
 /// why rather than vanishing.
-pub fn draw(ui: &mut egui::Ui, chips: &[TabChip<'_>], active: usize) -> Option<TabAction> {
+#[derive(Default)]
+pub(crate) struct StripDrawn {
+    pub(crate) tabs: Vec<(usize, egui::Rect)>,
+    pub(crate) add: Option<egui::Rect>,
+    pub(crate) overflow: Option<egui::Rect>,
+}
+
+pub(crate) fn draw(
+    ui: &mut egui::Ui,
+    chips: &[TabChip<'_>],
+    active: usize,
+    drawn: &mut StripDrawn,
+) -> Option<TabAction> {
+    drawn.tabs.clear();
+    drawn.add = None;
+    drawn.overflow = None;
+    ui.spacing_mut().item_spacing.x = 4.0;
     let mut action = None;
     let closable = chips.len() > 1;
-    for (index, chip) in chips.iter().enumerate() {
-        let selected = index == active;
-        let mut text = egui::RichText::new(chip.label);
-        if chip.replaying {
-            text = text.color(theme::AMBER);
-        }
-        let response = ui.selectable_label(selected, text);
-        if response.clicked() && !selected {
-            action = Some(TabAction::Activate(index));
-        }
-        // The dot rides the chip's own rect so it moves with the layout.
-        if chip.needs_attention && !selected {
-            let center = egui::pos2(
-                response.rect.right() - ATTENTION_DOT_RADIUS_PX,
-                response.rect.top() + ATTENTION_DOT_RADIUS_PX + ATTENTION_DOT_INSET_PX,
-            );
-            ui.painter()
-                .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::AMBER);
-        }
-        // The close affordance shows on hover, and on the active chip so a
-        // keyboard-only path to it is never the only one.
-        let show_close = selected || response.hovered() || !closable;
-        if show_close {
-            ui.add_space(-CHIP_GAP_PX / 2.0);
-            let close = ui.add_enabled(closable, egui::Button::new("×").frame(false));
-            let close = if closable {
-                close.on_hover_text("Close tab (Ctrl+W)")
-            } else {
-                close.on_disabled_hover_text(
-                    "The last tab stays open — a window with no market has nothing to show",
-                )
-            };
-            if close.clicked() {
-                action = Some(TabAction::Close(index));
-            }
-        }
-        ui.add_space(CHIP_GAP_PX);
-    }
-    if ui
-        .button("+")
-        .on_hover_text("Open another market (Ctrl+T)")
-        .clicked()
+    let slots = ((ui.available_width() - STRIP_CONTROLS_WIDTH_PX).max(0.0)
+        / CHIP_PREFERRED_WIDTH_PX)
+        .floor() as usize;
+    let visible =
+        quantick_workspace::arrangement::strip::visible_tabs(chips.len(), active, slots.max(1));
+    let chip_width = ((ui.available_width() - STRIP_CONTROLS_WIDTH_PX)
+        / visible.len().max(1) as f32)
+        .clamp(CHIP_MIN_WIDTH_PX, CHIP_MAX_WIDTH_PX);
+    for (index, chip) in chips
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| visible.contains(index))
     {
+        ui.push_id(("market_tab", chip.id), |ui| {
+            let selected = index == active;
+            let mut text = egui::RichText::new(chip.label);
+            if chip.replaying {
+                text = text.color(theme::AMBER);
+            }
+            let response = ui
+                .add_sized(
+                    [(chip_width - CHIP_CLOSE_RESERVE_PX).max(0.0), 24.0],
+                    egui::Button::new(text).selected(selected).truncate(),
+                )
+                .on_hover_text(if chip.replaying {
+                    format!("{} (replay)", chip.label)
+                } else {
+                    chip.label.to_owned()
+                });
+            if response.clicked() && !selected {
+                action = Some(TabAction::Activate(index));
+            }
+            let bounds = response.rect.intersect(ui.clip_rect());
+            if bounds.is_positive() {
+                drawn.tabs.push((index, bounds));
+            }
+            // The dot rides the chip's own rect so it moves with the layout.
+            if chip.needs_attention && !selected {
+                let center = egui::pos2(
+                    response.rect.right() - ATTENTION_DOT_RADIUS_PX,
+                    response.rect.top() + ATTENTION_DOT_RADIUS_PX + ATTENTION_DOT_INSET_PX,
+                );
+                ui.painter()
+                    .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::AMBER);
+            }
+            // Reserve a stable close target so hover never shifts adjacent controls.
+            {
+                let close_target = egui::Rect::from_min_size(
+                    ui.next_widget_position(),
+                    egui::vec2(CLOSE_HIT_WIDTH_PX, 24.0),
+                );
+                let show_close = selected
+                    || response.hovered()
+                    || ui.rect_contains_pointer(close_target)
+                    || !closable;
+                let close = ui
+                    .add_enabled_ui(closable, |ui| {
+                        ui.add_visible(show_close, egui::Button::new("\u{00d7}").frame(false))
+                    })
+                    .inner;
+                let close = if closable {
+                    close.on_hover_text("Close tab (Ctrl+W)")
+                } else {
+                    close.on_disabled_hover_text(
+                        "The last tab stays open — a window with no market has nothing to show",
+                    )
+                };
+                if close.clicked() {
+                    action = Some(TabAction::Close(index));
+                }
+            }
+        });
+    }
+    if visible.len() < chips.len() {
+        let overflow = ui.push_id("market_overflow", |ui| {
+            ui.menu_button("...", |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for (index, chip) in chips.iter().enumerate() {
+                            let mut text = egui::RichText::new(chip.label);
+                            if chip.replaying {
+                                text = text.color(theme::AMBER);
+                            }
+                            if ui
+                                .push_id(chip.id, |ui| ui.selectable_label(index == active, text))
+                                .inner
+                                .clicked()
+                            {
+                                action = Some(TabAction::Activate(index));
+                                ui.close_menu();
+                            }
+                        }
+                    });
+            })
+        });
+        let bounds = overflow.inner.response.rect.intersect(ui.clip_rect());
+        drawn.overflow = bounds.is_positive().then_some(bounds);
+    }
+    let add = ui
+        .push_id("market_new", |ui| {
+            ui.button("+").on_hover_text("Open another market (Ctrl+T)")
+        })
+        .inner;
+    let bounds = add.rect.intersect(ui.clip_rect());
+    drawn.add = bounds.is_positive().then_some(bounds);
+    if add.clicked() {
         action = Some(TabAction::New);
     }
     action
@@ -231,7 +314,7 @@ impl SourcePicker {
     /// would leave a tab streaming an instrument the catalog no longer offers,
     /// and the next SOURCE correction would silently retarget it, so the
     /// affordance says so instead of doing it.
-    pub fn draw(
+    pub(crate) fn draw(
         &mut self,
         ctx: &egui::Context,
         config: &AppConfig,

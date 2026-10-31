@@ -39,16 +39,10 @@
 //!
 //! ## Cost
 //!
-//! Nothing here runs unless a client asks, and the frame writes down nothing
-//! for its benefit but the rail's stage — one enum store per frame, which is
-//! what lets the rail be reported honestly instead of guessed at. The
-//! projection then reads state the frame already keeps: no rectangle is
-//! recorded, no hit test is run, no layout is measured. Note that a capture
-//! builds the list *twice* — once for the module revision and once for the
-//! scope — because module revisions are capture-derived across every module
-//! (PR 2's recorded deferral); this is the largest projection in the registry
-//! and the first that would benefit from the journal-driven change counters
-//! that replace it.
+//! Projection runs only when requested. The title strip publishes the visible
+//! market and native-control rectangles that its drawing pass already computes;
+//! other regions read their existing frame state. A capture builds the list for
+//! both module revision and scope, as the other capture-derived projections do.
 
 pub(crate) use quantick_control_schema::scene::*;
 
@@ -192,7 +186,13 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     // stop. Cutting a finished list would still have built it: an implausible
     // number of open charts must cost a truncated answer, not an unbounded
     // allocation on the application thread.
-    let strip_complete = push_tab_strip(&mut controls, tabs, tabs.active_id());
+    let strip_complete = push_tab_strip(
+        &mut controls,
+        tabs,
+        tabs.active_id(),
+        app.chrome_reads().title_bar(),
+    );
+    push_title_bar(&mut controls, app);
 
     let coverage = if !strip_complete || controls.len() > CONTROL_SCENE_MAX_CONTROLS {
         controls.truncate(CONTROL_SCENE_MAX_CONTROLS);
@@ -201,7 +201,8 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
         // Never `available()`. A region in `covered_regions` was *walked*,
         // not exhausted: the toolbar contributes its LAYERS group and not the
         // SOURCE, HISTORY or TRADE groups beside it, the rail its tools
-        // and not its trailing cluster, the strip its chips and not the `+`.
+        // and not its trailing cluster. The title strip contributes its visible
+        // chips and window controls, but not an open overflow popup's entries.
         // Reporting completeness here would tell a client the controls this
         // walk does not reach are not on screen, which is the one lie the
         // module cannot tolerate.
@@ -325,8 +326,20 @@ fn push_tab_strip(
     controls: &mut Vec<SceneControlSnapshot>,
     tabs: &crate::app::arrangement_host::ArrangementHost,
     active_id: u64,
+    title: Option<&crate::app::title_bar::TitleBarState>,
 ) -> bool {
-    for (tab_id, tab) in tabs.iter_with_ids() {
+    for (index, (tab_id, tab)) in tabs.iter_with_ids().enumerate() {
+        let rect = title.and_then(|title| {
+            title
+                .strip
+                .tabs
+                .iter()
+                .find(|(visible, _)| *visible == index)
+                .map(|(_, rect)| *rect)
+        });
+        if title.is_some() && rect.is_none() {
+            continue;
+        }
         if controls.len() >= CONTROL_SCENE_MAX_CONTROLS {
             return false;
         }
@@ -343,12 +356,61 @@ fn push_tab_strip(
             },
             selected: tab_id == active_id,
             availability: available(),
-            bounds: None,
-            bounds_availability: bounds_not_recorded(),
+            bounds: rect.and_then(|rect| rect_bounds(rect).into_snapshot()),
+            bounds_availability: rect.map_or_else(bounds_not_recorded, |_| available()),
             capability_id: None,
         });
     }
     true
+}
+
+fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+    let Some(title) = app.chrome_reads().title_bar() else {
+        return;
+    };
+    for (id, label, rect, capability) in title
+        .controls
+        .iter()
+        .map(|(id, rect)| {
+            (
+                *id,
+                match *id {
+                    "drag" => "Move window (native OS gesture)",
+                    "minimize" => "Minimize window",
+                    "maximize" if title.maximized => "Restore window",
+                    "maximize" => "Maximize window",
+                    "close" => "Close window",
+                    _ => unreachable!("the title strip publishes registered controls"),
+                },
+                Some(*rect),
+                (!matches!(*id, "drag" | "close"))
+                    .then_some(quantick_control_schema::native_window::WINDOW_STATE_CAPABILITY_ID),
+            )
+        })
+        .chain([
+            ("new", "Open another market", title.strip.add, None),
+            ("overflow", "All markets", title.strip.overflow, None),
+        ])
+    {
+        let Some(rect) = rect else {
+            continue;
+        };
+        controls.push(SceneControlSnapshot {
+            control_id: format!("tab_strip.{id}"),
+            label: label.to_owned(),
+            role: SceneRoleDto::Action,
+            owner: SceneOwnerSnapshot {
+                kind: SceneOwnerKindDto::TabStrip,
+                id: TAB_STRIP_OWNER_ID.to_owned(),
+            },
+            selected: (id == "maximize" && title.maximized)
+                || (id == "minimize" && title.minimized),
+            availability: available(),
+            bounds: rect_bounds(rect).into_snapshot(),
+            bounds_availability: available(),
+            capability_id: capability.map(str::to_owned),
+        });
+    }
 }
 
 /// The toolbar's LAYERS group: one toggle per visual layer, each answering

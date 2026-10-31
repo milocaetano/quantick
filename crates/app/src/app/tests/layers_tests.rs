@@ -1108,7 +1108,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, _cmd_rx) = mpsc::channel(16);
-    let app = QuantickApp::new(
+    let mut app = QuantickApp::new(
         test_config(),
         "binance",
         "TESTUSDT",
@@ -1136,6 +1136,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
     );
     let _ends = (evt_tx, book_tx);
 
+    run_frame(&mut app, &egui::Context::default());
     let scene = observer_scene(&app);
     let bubbles = scene_control(&scene, "toolbar.layers.bubbles");
     assert_eq!(bubbles["availability"]["available"], false);

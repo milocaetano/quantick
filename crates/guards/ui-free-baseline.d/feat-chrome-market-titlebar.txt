@@ -1,0 +1,3 @@
+# Issue #735: app-only ChromeReads title geometry plumbing and the native window host adapter holding the UI command queue; policy and dispatch validation are headless.
+crates/app +7
+!budget +7
