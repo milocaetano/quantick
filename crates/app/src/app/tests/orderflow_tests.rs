@@ -372,13 +372,7 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
 /// The gesture itself: a right-click on the canvas opens the menu, and the
 /// primary button — which pans, zooms and places drawings — never does.
 ///
-/// The tape switch in the canvas's top-right corner: one click takes the
-/// band away, another brings it back.
-///
-/// It is the only way back, too — with no band there is nothing to
-/// right-click — so this drives the real pointer through
-/// `handle_navigation` rather than calling the setter, and checks the
-/// corner it lands in.
+/// The tape's view: candles only takes the band away, beside brings it back.
 #[test]
 fn the_tape_view_takes_the_band_away_and_gives_it_back() {
     use quantick_orderflow::LaneView;

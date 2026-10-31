@@ -134,7 +134,13 @@ pub fn draw_marked(
     let mut intent = None;
     if let Some(state) = row.state {
         content.add_space(GROUP_GAP_PX);
-        view_button(&mut content, state.view, painted, &mut intent);
+        view_button(
+            &mut content,
+            state.view,
+            state.shown_view,
+            painted,
+            &mut intent,
+        );
         content.add_space(GROUP_GAP_PX);
         for glyph in row.glyphs {
             layer_glyph(&mut content, *glyph, painted, &mut intent);
@@ -291,10 +297,11 @@ pub fn layer_glyph(
     });
 }
 
-/// The button that walks the three views; its glyph is the view on screen.
+/// The button that walks the stored views; its glyph is the side on screen.
 fn view_button(
     ui: &mut egui::Ui,
-    view: LaneView,
+    stored: LaneView,
+    shown: LaneView,
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
 ) {
@@ -303,13 +310,13 @@ fn view_button(
         egui::Sense::click(),
     );
     if response.clicked() {
-        *intent = Some(HeaderIntent::SetView(view.next()));
+        *intent = Some(HeaderIntent::SetView(stored.next()));
     }
-    paint_view(ui.painter(), rect, view, theme::ACCENT);
+    paint_view(ui.painter(), rect, shown, theme::ACCENT);
     record(ui, HeaderControl::View, rect, painted);
     response.on_hover_ui(|ui| {
         let key = Some(shortcuts::TAPE_VIEW_SHORTCUT);
-        ui.label(with_key(ui.ctx(), view_name(view), key));
+        ui.label(with_key(ui.ctx(), view_name(shown), key));
     });
 }
 

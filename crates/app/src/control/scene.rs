@@ -363,19 +363,19 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
         for &(control, rect) in &pane.frame.header_controls {
             let (label, role, selected, blocked, capability) = match control {
                 HeaderControl::View => (
-                    pane.orderflow
-                        .as_ref()
-                        .map_or("", |tape| view_name(tape.cached_config().live_lane.view())),
+                    pane.orderflow.as_ref().map_or("", |tape| {
+                        view_name(tape.cached_config().live_lane.shown_view())
+                    }),
                     SceneRoleDto::Action,
                     false,
                     None,
-                    quantick_control_schema::tape_fold::TAPE_VIEW_CAPABILITY_ID,
+                    quantick_control_schema::tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
                 ),
                 HeaderControl::Layer(toggle) => (
                     toggle.name(),
                     SceneRoleDto::Toggle,
                     pane.layer_switched_on(toggle.layer(), style),
-                    pane.layer_blocked(toggle.layer(), capabilities),
+                    pane.header_block(toggle.layer(), capabilities),
                     quantick_control_schema::layers::SET_VISIBILITY_CAPABILITY_ID,
                 ),
                 HeaderControl::Sample(sample) => (

@@ -308,3 +308,40 @@ fn the_lane_divider_resizes_under_an_armed_ticket_and_over_a_line() {
         );
     }
 }
+
+/// A folded side's rail is chrome like the divider: Shift on it rests
+/// nothing. Folded candles leave the aim the tape, and a folded tape leaves
+/// it the candles, each resting at the pointer's price.
+#[test]
+fn a_fold_rail_is_chrome_and_the_open_side_still_aims() {
+    use quantick_orderflow::{LANE_FOLD_RAIL_PX, LaneFold};
+    for fold in [LaneFold::Candles, LaneFold::Tape] {
+        let ctx = egui::Context::default();
+        let mut app = tape_app(&ctx, TapeMode::Chart);
+        app.active_tab_mut()
+            .tape_mut()
+            .edit_config(|config| _ = config.live_lane.set_fold(fold));
+        run_frame(&mut app, &ctx);
+        let chart = app
+            .active_tab()
+            .flow_pane
+            .frame
+            .chart_area
+            .expect("laid out");
+        let rail = match fold {
+            LaneFold::Candles => chart.left() + LANE_FOLD_RAIL_PX / 2.0,
+            _ => chart.right() - LANE_FOLD_RAIL_PX / 2.0,
+        };
+        let on_rail = at_x(&app, rail);
+        click_chart_with(&mut app, &ctx, on_rail, egui::Modifiers::SHIFT);
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "{fold:?}: the rail is chrome, not a price"
+        );
+        let at = at_x(&app, chart.center().x);
+        let price = pointer_price(&app, at);
+        click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
+        let order = (quantick_engine::Side::Buy, price);
+        assert_eq!(the_order(&app), order, "{fold:?}: the open side aims");
+    }
+}

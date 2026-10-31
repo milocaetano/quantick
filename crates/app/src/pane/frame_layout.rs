@@ -101,6 +101,8 @@ pub(super) struct FrameLayout {
     pub(super) indicator_guide_x: Option<f32>,
     /// The pane shows the tape alone: no candles, the tape full width.
     pub(super) tape_only: bool,
+    /// The price axis fits the tape alone: tape only, or candles folded.
+    pub(super) fits_tape: bool,
     /// The native tape fits the one price axis, padded by `tape_padding_px`.
     pub(super) native_tape: bool,
     pub(super) tape_padding_px: f32,
@@ -179,7 +181,7 @@ impl FrameLayout {
         let newest = partial.or_else(|| closed.last());
         let (auto_range, flip_span) = quantick_chart::price_axis_fit::PriceAxisFit {
             native_tape: self.native_tape,
-            tape_only: self.tape_only,
+            tape_only: self.fits_tape,
             tape_range,
             previous_auto: last_auto_range,
             bounds: (chart_rect.top(), chart_rect.bottom()),

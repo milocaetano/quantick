@@ -171,7 +171,7 @@
         "tape_fold": {
           "$ref": "#/$defs/TapeFold",
           "default": "open",
-          "description": "The same view by the side it hides, as `orderflow.tape.fold.set` names\nit: `open`, `candles` (the tape alone) or `tape` (the candles alone)."
+          "description": "Which side of the pane is folded to a rail: `open`, `candles` (the\ntape takes the pane) or `tape` (the candles do). Set by dragging the\ndivider to an edge or by `orderflow.tape.fold.set`; tape only and the\ntape's own switch win over it."
         },
         "tape_only": {
           "default": false,
@@ -181,7 +181,7 @@
         "tape_view": {
           "$ref": "#/$defs/TapeView",
           "default": "beside",
-          "description": "What the pane shows: `beside`, `candles` (alone) or `tape` (alone).\nRead from the tape's own switch and `tape_only`; set by the pane\nheader's view button, Ctrl+Shift+T, the divider let go at an edge or\n`orderflow.tape.view.set`."
+          "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or\n`orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it."
         },
         "tape_viewport_scale": {
           "anyOf": [
@@ -691,21 +691,21 @@
       "type": "object"
     },
     "TapeFold": {
-      "description": "The fold call's words: names the side hidden, so `candles` is a pane of tape.",
+      "description": "Which side of the pane is folded to a rail.",
       "oneOf": [
         {
           "const": "open",
-          "description": "Nothing hidden: candles and tape side by side.",
+          "description": "Candles and tape side by side at the tape's width share.",
           "type": "string"
         },
         {
           "const": "candles",
-          "description": "The candles hidden: the pane shows the tape alone.",
+          "description": "The candles fold to a rail on the left; the tape takes the pane.",
           "type": "string"
         },
         {
           "const": "tape",
-          "description": "The tape hidden: the pane shows the candles alone.",
+          "description": "The tape folds to a rail on the right; the candles take the pane.",
           "type": "string"
         }
       ]

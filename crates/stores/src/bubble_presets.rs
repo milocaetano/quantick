@@ -166,6 +166,9 @@ impl BubblePreset {
                 enabled: LiveLaneStyle::default().enabled,
                 show_depth: LiveLaneStyle::default().show_depth,
                 show_aggressions: LiveLaneStyle::default().show_aggressions,
+                // Nor where the pane's lane sits: a fold is the pane's, and
+                // its asset files it beside the look (`AssetBubbles::fold`).
+                fold: LiveLaneStyle::default().fold,
                 ..config.live_lane.clone()
             },
         }
@@ -192,17 +195,19 @@ impl BubblePreset {
         // The lane's visibility is not the preset's to carry: choosing a look
         // may not blank the tape, take it off the canvas, or put it back, and
         // a preset file edited by hand may not switch layers on behind the
-        // trader. Everything else in the lane's
+        // trader, nor fold the pane's lane. Everything else in the lane's
         // style is exactly what the preset stored.
         let visibility = (
             config.live_lane.enabled,
             config.live_lane.show_depth,
             config.live_lane.show_aggressions,
+            config.live_lane.fold,
         );
         config.live_lane = self.live_lane.clone();
         config.live_lane.enabled = visibility.0;
         config.live_lane.show_depth = visibility.1;
         config.live_lane.show_aggressions = visibility.2;
+        config.live_lane.fold = visibility.3;
     }
 }
 
@@ -903,6 +908,26 @@ name = "old"
         preset.apply_to(&mut cleared);
         assert!(!cleared.live_lane.enabled);
         assert!(!cleared.live_lane.show_depth);
+    }
+
+    /// A fold is where the pane's lane sits, not a look: a preset records the
+    /// lane open and choosing one leaves the target pane's fold alone.
+    #[test]
+    fn a_preset_never_carries_the_lanes_fold() {
+        use quantick_orderflow::LaneFold;
+        let mut config = HeatmapConfig::default();
+        config.live_lane.fold = LaneFold::Candles;
+        let mut preset = BubblePreset::capture("mine", &config);
+        assert_eq!(preset.live_lane.fold, LaneFold::Open, "captured open");
+
+        // Even a hand-edited fold in the file never moves a pane's lane.
+        preset.live_lane.fold = LaneFold::Tape;
+        for kept in [LaneFold::Open, LaneFold::Candles] {
+            let mut other = HeatmapConfig::default();
+            other.live_lane.fold = kept;
+            preset.apply_to(&mut other);
+            assert_eq!(other.live_lane.fold, kept);
+        }
     }
 
     #[test]

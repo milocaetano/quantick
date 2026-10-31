@@ -484,13 +484,12 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   cannot move stays in place, greyer, and its tooltip says why.
 - **Three views of one pane.** `Beside`, `CandlesOnly`, `TapeOnly`, derived from
   the tape's own switch and `tape_only`: no third state to disagree with them.
-  One button walks them in that order and its glyph is the view on screen.
+  One button walks them in that order and its glyph is the side on screen.
   `Ctrl+Shift+T`, on a focused flow pane, goes to tape only and from there back
-  beside the candles. Letting the divider go within 120 px of the left edge
-  lands on tape only, of the right edge on candles only; the share does not
-  move, so coming back returns the same band. Nothing is left on the canvas in
-  place of the hidden side, and a saved fold from when a rail stood there opens
-  beside the candles. `orderflow.tape.view.set` names the same three.
+  beside the candles. `orderflow.tape.view.set` names the same three. A view
+  writes no fold: a side the divider folded to its rail is still folded on the
+  way back beside the candles, the header reads it as the side on screen, and
+  the rail stays the way back.
 - **Candles hidden keeps their look.** With only the tape on the pane, bubbles,
   L2 and footprint grey out in place and keep their state; `Ctrl+B` and `Ctrl+F`
   do nothing there. The strip stays live. The tape holds its own switches for

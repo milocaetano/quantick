@@ -56,6 +56,7 @@ fn a_native_split_pane_fits_the_shared_axis_to_visible_candles_and_tape() {
         cw: 8.0,
         indicator_guide_x: None,
         tape_only: false,
+        fits_tape: false,
         native_tape,
         tape_padding_px: 0.0,
     };

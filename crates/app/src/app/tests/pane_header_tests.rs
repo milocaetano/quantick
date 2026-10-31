@@ -7,7 +7,7 @@ use crate::dock::DockTab;
 use crate::state::BarSpec;
 use quantick_chart::pane_header::{BubbleSample, HeaderControl, LayerToggle};
 use quantick_engine::bar_selection::{BarInputAvailability, SelectionCommand};
-use quantick_orderflow::LaneView;
+use quantick_orderflow::{LaneFold, LaneView};
 
 /// Where the bars control of the pane at `side` landed last frame.
 fn control_of(app: &QuantickApp, ctx: &egui::Context, side: PaneSide) -> egui::Rect {
@@ -789,31 +789,161 @@ fn a_panned_view_survives_tape_only_and_the_way_back() {
         assert_eq!(view_of(&app), LaneView::Beside);
         assert_eq!(candle_viewport(&app), placed, "pan {pan}: the button");
     }
+}
 
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = charted_fixture(&ctx);
-    let pane = &mut app.active_tab_mut().flow_pane;
-    pane.model.viewport.pan_pixels(400.0, pane.slots());
-    run_frame(&mut app, &ctx);
-    let placed = candle_viewport(&app);
-    let flow = &app.active_tab().flow_pane;
-    let chart = flow.frame.chart_rect.expect("the canvas laid out");
-    let divider = flow.frame.lane_divider_x.expect("the divider");
-    let y = chart.center().y;
-    drag(
-        &mut app,
-        &ctx,
-        egui::pos2(divider, y),
-        egui::pos2(chart.left() + 30.0, y),
-    );
-    run_frame(&mut app, &ctx);
-    assert_eq!(view_of(&app), LaneView::TapeOnly);
-    assert_eq!(candle_viewport(&app), placed, "the divider let go");
+/// Fold a side of the lane as the divider does.
+fn set_fold(app: &mut QuantickApp, fold: LaneFold) {
     app.active_tab_mut()
         .tape_mut()
-        .set_lane_view(LaneView::Beside);
+        .edit_config(|config| _ = config.live_lane.set_fold(fold));
+}
+
+fn flow_fold(app: &QuantickApp) -> LaneFold {
+    app.active_tab().tape().cached_config().live_lane.fold
+}
+
+/// Candles folded to their rail: the header reads the tape on screen, so the
+/// view glyph is the tape's, the candles' glyphs stand greyed in place and the
+/// candle sample goes. The named layer call keeps its own rule, and the stored
+/// view is what the button walks.
+#[test]
+fn candles_folded_read_as_the_tape_on_the_header() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let candle = HeaderControl::Sample(BubbleSample::Candle);
+    let tape = HeaderControl::Sample(BubbleSample::Tape);
+    let heatmap = HeaderControl::Layer(LayerToggle::Heatmap);
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.show_aggressions = true);
     run_frame(&mut app, &ctx);
-    assert_eq!(candle_viewport(&app), placed, "and back beside");
+    let glyph = flow_control(&app, heatmap);
+
+    set_fold(&mut app, LaneFold::Candles);
+    run_frame(&mut app, &ctx);
+    assert_eq!(view_of(&app), LaneView::Beside, "the stored view stays");
+    assert_eq!(flow_control(&app, heatmap), glyph, "nothing shifted");
+    assert!(control_rect(&app, PaneSide::Flow, candle).is_none());
+    flow_control(&app, tape);
+
+    let caps = app.active_tab().capabilities(&app.config);
+    let flow = &app.active_tab().flow_pane;
+    for toggle in [
+        LayerToggle::Bubbles,
+        LayerToggle::Heatmap,
+        LayerToggle::Footprint,
+    ] {
+        let layer = toggle.layer();
+        assert!(flow.header_block(layer, caps).is_some(), "{toggle:?}");
+        assert_ne!(
+            flow.layer_blocked(layer, caps),
+            Some(quantick_layers::blocks::TAPE_ONLY_CANDLES),
+            "{toggle:?}: the named call keeps its own rule"
+        );
+    }
+    assert_eq!(flow.header_block(ChartLayer::LiveStrip, caps), None);
+
+    let pane_id = flow.id;
+    let scene = observer_scene(&app);
+    let id = |control: &str| format!("pane.{pane_id}.header.{control}");
+    assert_eq!(scene_control(&scene, &id("view"))["label"], "Tape only");
+    assert_eq!(
+        scene_control(&scene, &id("layer.heatmap"))["availability"]["reason"],
+        "candle_layer_hidden_in_tape_only"
+    );
+
+    let states = |app: &QuantickApp| {
+        [
+            ChartLayer::Bubbles,
+            ChartLayer::Heatmap,
+            ChartLayer::Footprint,
+        ]
+        .map(|layer| on(app, layer))
+    };
+    let before = states(&app);
+    click_chart(&mut app, &ctx, glyph.center());
+    run_frame(&mut app, &ctx);
+    press_key(&mut app, &ctx, egui::Key::B, egui::Modifiers::CTRL);
+    assert_eq!(states(&app), before, "the glyph and its key refuse");
+
+    let button = flow_control(&app, HeaderControl::View);
+    click_chart(&mut app, &ctx, button.center());
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        view_of(&app),
+        LaneView::CandlesOnly,
+        "the stored view walks"
+    );
+}
+
+/// The tape folded to its rail: the header reads the candles on screen, so the
+/// view glyph is theirs and the tape sample goes, and nothing else is greyed.
+#[test]
+fn a_tape_folded_reads_as_the_candles_on_the_header() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let candle = HeaderControl::Sample(BubbleSample::Candle);
+    let tape = HeaderControl::Sample(BubbleSample::Tape);
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.show_aggressions = true);
+    run_frame(&mut app, &ctx);
+    flow_control(&app, tape);
+
+    set_fold(&mut app, LaneFold::Tape);
+    run_frame(&mut app, &ctx);
+    assert_eq!(view_of(&app), LaneView::Beside, "the stored view stays");
+    assert!(control_rect(&app, PaneSide::Flow, tape).is_none());
+    flow_control(&app, candle);
+
+    let caps = app.active_tab().capabilities(&app.config);
+    let flow = &app.active_tab().flow_pane;
+    for toggle in LayerToggle::ALL {
+        let layer = toggle.layer();
+        assert_eq!(
+            flow.header_block(layer, caps),
+            flow.layer_blocked(layer, caps),
+            "{toggle:?}"
+        );
+    }
+    let pane_id = flow.id;
+    let scene = observer_scene(&app);
+    let view = scene_control(&scene, &format!("pane.{pane_id}.header.view"));
+    assert_eq!(view["label"], "Candles only");
+}
+
+/// A fold outlives the whole view cycle, on the header too, and on the way back
+/// beside the candles its rail is still the way out of it.
+#[test]
+fn a_fold_survives_the_view_cycle_and_its_rail_still_opens_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    set_fold(&mut app, LaneFold::Candles);
+    run_frame(&mut app, &ctx);
+
+    for view in [LaneView::CandlesOnly, LaneView::TapeOnly, LaneView::Beside] {
+        let button = flow_control(&app, HeaderControl::View);
+        click_chart(&mut app, &ctx, button.center());
+        run_frame(&mut app, &ctx);
+        assert_eq!(view_of(&app), view);
+        assert_eq!(flow_fold(&app), LaneFold::Candles, "{view:?}");
+    }
+
+    let flow = &app.active_tab().flow_pane;
+    let pane_id = flow.id;
+    let chart = flow.frame.chart_rect.expect("the canvas laid out");
+    let scene = observer_scene(&app);
+    let shown = scene_control(&scene, &format!("pane.{pane_id}.header.view"));
+    assert_eq!(shown["label"], "Tape only", "folded again on the way back");
+
+    click_chart(
+        &mut app,
+        &ctx,
+        egui::pos2(chart.left() + 4.0, chart.center().y),
+    );
+    run_frame(&mut app, &ctx);
+    assert_eq!(flow_fold(&app), LaneFold::Open, "the rail opened it");
+    assert_eq!(view_of(&app), LaneView::Beside);
 }
 
 /// An indicator pane shares the candles' time axis, but with the candles hidden

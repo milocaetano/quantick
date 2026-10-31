@@ -8,7 +8,8 @@ use quantick_chart::pane_header::{
 };
 use quantick_control_handlers::bubble_scale::BubbleScalePane;
 use quantick_control_schema::bubble_scale::BubbleScaleTarget;
-use quantick_layers::{ChartLayer, LayerActions};
+use quantick_layers::{ChartLayer, LayerActions, LayerBlock};
+use quantick_orderflow::LaneView;
 use smallvec::SmallVec;
 
 use crate::bands;
@@ -146,8 +147,8 @@ impl ChartPane {
         })
     }
 
-    /// The candle view on screen: the stored one, or with the candles hidden
-    /// the live edge, a copy, so the stored one waits for them untouched.
+    /// The candle view on screen: the stored one, or on a tape-only pane the
+    /// live edge, a copy, so the stored one waits for the candles untouched.
     pub(crate) fn shown_viewport(&self) -> crate::viewport::Viewport {
         let mut view = self.model.viewport;
         if self.tape_modes().0 {
@@ -1061,14 +1062,39 @@ impl ChartPane {
             .map(|&toggle| LayerGlyph {
                 toggle,
                 on: self.layer_switched_on(toggle.layer(), style),
-                blocked: self.layer_blocked(toggle.layer(), capabilities),
+                blocked: self.header_block(toggle.layer(), capabilities),
             })
             .collect()
     }
 
+    /// What greys a layer's glyph and silences its key: what blocks the layer,
+    /// and with the candles folded to their rail what tape only says of the
+    /// candles' layers, since the header reads the side on screen. The named
+    /// call still reads [`Self::layer_blocked`], so a fold moves no rule.
+    pub(crate) fn header_block(
+        &self,
+        layer: ChartLayer,
+        capabilities: FeedCapabilities,
+    ) -> Option<LayerBlock> {
+        // Ahead of the layer's own blocks, as tape only is.
+        let tape_shown = self
+            .orderflow
+            .as_ref()
+            .is_some_and(|tape| tape.cached_config().live_lane.shown_view() == LaneView::TapeOnly);
+        let candle_layers = [
+            ChartLayer::Bubbles,
+            ChartLayer::Heatmap,
+            ChartLayer::Footprint,
+        ];
+        if tape_shown && candle_layers.contains(&layer) {
+            return Some(quantick_layers::blocks::TAPE_ONLY_CANDLES);
+        }
+        self.layer_blocked(layer, capabilities)
+    }
+
     /// The view and sizes a flow pane's header shows; `None` without an
     /// order-flow view. A sample is there only while its target is: the one
-    /// size rule `orderflow.bubbles.size.set` judges by too.
+    /// size rule `orderflow.bubbles.size.set` judges by too, and on screen.
     pub(crate) fn flow_header_state(&self) -> Option<FlowHeaderState> {
         let owner = self.orderflow.as_ref()?;
         let facts = self.bubble_scale_facts()?;
@@ -1078,10 +1104,13 @@ impl ChartPane {
                 .may_scale(target)
                 .then(|| owner.bubble_display_scale(target.into()))
         };
+        let lane = &owner.cached_config().live_lane;
+        let shown_view = lane.shown_view();
         Some(FlowHeaderState {
-            view: owner.cached_config().live_lane.view(),
-            candle_sample: scale(BubbleSample::Candle),
-            tape_sample: scale(BubbleSample::Tape),
+            view: lane.view(),
+            shown_view,
+            candle_sample: scale(BubbleSample::Candle).filter(|_| shown_view != LaneView::TapeOnly),
+            tape_sample: scale(BubbleSample::Tape).filter(|_| shown_view != LaneView::CandlesOnly),
         })
     }
 

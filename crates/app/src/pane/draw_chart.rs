@@ -33,7 +33,7 @@ use crate::plot_area::split_time_strip;
 use crate::theme;
 use quantick_layers::ChartLayer;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
-use quantick_orderflow::reserved_span_ms;
+use quantick_orderflow::{LaneFold, reserved_span_ms};
 
 use super::draw_frame::{AxisChips, DrawFrame};
 use super::frame_layout::{
@@ -236,6 +236,7 @@ impl ChartPane {
             self.paint_trade_marks(&frame, chrome);
         }
         self.frame.bands = carved;
+        super::lane_rail::paint_lane_rail(self, painter, chart_rect);
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
         let turns = day_turns.as_deref();
         self.paint_axis_marks(&frame, axis_x, &levels, time_chip, turns, chrome);
@@ -367,6 +368,7 @@ impl ChartPane {
         // it, even before the tape has a live edge to run to. The native tape
         // beside the candles keeps its share and fits the shared price axis.
         let (tape_only, native_tape) = self.tape_modes();
+        let candles_folded = super::lane_rail::shown_fold(self) == LaneFold::Candles;
         let live_lane = self.lay_out_lane(chart_rect);
         if total == 0 {
             self.paint_empty_pane(painter, area, chart_rect, chrome);
@@ -387,14 +389,19 @@ impl ChartPane {
         // rule holds — pushed fully left, the newest bar stops at the left
         // edge and the rest of the window is empty canvas to project into.
         //
-        // With the candles hidden the view the trader left waits for them,
-        // unclamped, and the frame reads the live edge instead.
+        // Folded to a rail or hidden by tape only, the candles keep the view the
+        // trader left for their return, unclamped, and the frame reads the live
+        // edge instead: the price axis fits the tape, not a stale window.
         let width = history_rect.width();
-        if !tape_only {
+        if !tape_only && !candles_folded {
             self.model.viewport.clamp_to_window(width, total);
         }
         let view = self.shown_viewport();
-        let (start, end) = view.visible_range(width, total);
+        let mut read_at = view;
+        if candles_folded {
+            read_at.snap_to_live();
+        }
+        let (start, end) = read_at.visible_range(width, total);
         Some(FrameLayout {
             areas,
             chart_rect,
@@ -408,6 +415,7 @@ impl ChartPane {
             cw: view.candle_width(),
             indicator_guide_x,
             tape_only,
+            fits_tape: tape_only || candles_folded,
             native_tape,
             // The lane setting's band, on screen yet or not.
             tape_padding_px: self.orderflow.as_ref().map_or(0.0, |view| {
@@ -438,7 +446,7 @@ impl ChartPane {
             .orderflow
             .as_mut()
             .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
-        // Tape only included: the band is the lane's own.
+        // Tape only and a folded side included: the band is the lane's own.
         let lane_width_px = self
             .orderflow
             .as_ref()
@@ -702,7 +710,10 @@ impl ChartPane {
         clock: Option<(i64, crate::timezone::TzOffset)>,
     ) -> Option<i64> {
         let orderflow = self.orderflow.as_ref()?;
+        // A tape folded to a rail leaves its strip to the rail: no labels.
+        let tape_folded = super::lane_rail::shown_fold(self) == LaneFold::Tape;
         let lane_strip = split_time_strip(frame.areas.time_strip, self.frame.lane_divider_x).1;
+        let lane_strip = lane_strip.filter(|_| !tape_folded);
         let clock = clock.map(|(end_ms, tz)| {
             let geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
                 lane_strip.map_or(0.0, |strip| strip.width()),

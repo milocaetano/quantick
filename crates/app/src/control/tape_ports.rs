@@ -1,11 +1,13 @@
 //! The order-flow pane facts the bubble and tape rules read, and keeping what
-//! they admit: bubble size, the tape view and the opening-burst scale.
+//! they admit: bubble size, the tape fold, the view and the opening-burst scale.
 use super::price_axis::{invalid, pane};
 use crate::{app::control_host::ControlPort, orderflow_view::OrderflowView};
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::bubble_scale::{BubbleScalePane, BubbleScalePort};
+use quantick_control_handlers::tape_view_set::TapeViewPort;
 use quantick_control_handlers::{opening_scale::OpeningScalePort, tape_fold::*};
-use quantick_control_schema::tape_fold::TapeView;
+use quantick_control_schema::tape_fold::TapeFold;
+use quantick_control_schema::tape_view_set::TapeView;
 use quantick_control_schema::{bubble_scale::BubbleScaleTarget, opening_scale::OpeningScaleTarget};
 use quantick_orderflow::HeatmapConfig;
 const NO_VIEW: &str = "the requested pane has no order-flow view";
@@ -31,6 +33,18 @@ impl BubbleScalePort for dyn ControlPort {
             view.set_bubble_display_scale(target, scale),
             view.bubble_display_scale(target),
         ))
+    }
+}
+impl TapeFoldPort for dyn ControlPort {
+    fn tape_fold_pane(&mut self, tab: u64, id: u64) -> Result<TapeFoldPane, ControlError> {
+        let lane = &tape(self, tab, id)?.cached_config().live_lane;
+        Ok(TapeFoldPane {
+            beside_candles: lane.beside_candles(),
+        })
+    }
+    fn set_tape_fold(&mut self, tab: u64, id: u64, fold: TapeFold) -> Result<bool, ControlError> {
+        let set = |config: &mut HeatmapConfig| _ = config.live_lane.set_fold(fold.into());
+        Ok(tape(self, tab, id)?.edit_config(set))
     }
 }
 impl TapeViewPort for dyn ControlPort {

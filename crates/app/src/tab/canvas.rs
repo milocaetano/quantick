@@ -1025,7 +1025,7 @@ impl Tab {
     }
 }
 
-/// A collapsed pane's rail: chrome, the inner edge
+/// A folded side's rail, one look for every fold: chrome, the inner edge
 /// where it meets the open side (so it reads as chrome rather than a stripe
 /// the chart starts after), and a grip in the colour a reader knows means
 /// "chrome you can take hold of", lit while `hot`.

@@ -103,11 +103,21 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: LAYER_SWITCH,
     },
     UiBehaviour {
+        id: "orderflow.tape.fold.set",
+        title: "Fold the candles or the tape to a rail, or bring it back",
+        reach: "drag the tape lane's divider to the left or right edge of the pane; click the rail it leaves",
+        keys: &[(
+            Source::Authored,
+            "the tape lane's divider and rail the pane handles directly",
+        )],
+        mapping: capability!("orderflow.tape.fold.set"),
+    },
+    UiBehaviour {
         id: "orderflow.tape.view.set",
         title: "Show the candles and tape, the candles alone or the tape alone",
-        reach: "pane header's view button; Ctrl+Shift+T on a focused flow pane; let go of the tape lane's divider at the left or right edge of the pane",
+        reach: "pane header's view button; Ctrl+Shift+T on a focused flow pane",
         keys: &[(Source::Hotkey, "TAPE_VIEW_SHORTCUT")],
-        mapping: capability!("orderflow.tape.view.set", "orderflow.tape.fold.set"),
+        mapping: capability!("orderflow.tape.view.set"),
     },
     UiBehaviour {
         id: "orderflow.tape.opening_scale.set",

@@ -1,107 +1,103 @@
-//! `orderflow.tape.view.set` and its older fold name through a fake pane: both
-//! reach the same port, from any view, and a refused call keeps nothing.
+//! The fold rule and `orderflow.tape.fold.set` through a fake pane: the rule
+//! decides before anything is kept, and a refused call keeps nothing.
 
 use super::*;
-use quantick_control_schema::tape_fold::TapeView;
 use serde_json::json;
 
 struct Pane {
-    refuse: Option<ControlError>,
-    view: TapeView,
+    facts: Result<TapeFoldPane, ControlError>,
+    fold: TapeFold,
     sets: usize,
 }
 
-impl TapeViewPort for Pane {
-    fn set_tape_view(
+impl TapeFoldPort for Pane {
+    fn tape_fold_pane(&mut self, _tab: u64, _pane: u64) -> Result<TapeFoldPane, ControlError> {
+        self.facts.clone()
+    }
+    fn set_tape_fold(
         &mut self,
         _tab: u64,
         _pane: u64,
-        view: TapeView,
+        fold: TapeFold,
     ) -> Result<bool, ControlError> {
-        if let Some(error) = self.refuse.clone() {
-            return Err(error);
-        }
         self.sets += 1;
-        let changed = self.view != view;
-        self.view = view;
+        let changed = self.fold != fold;
+        self.fold = fold;
         Ok(changed)
     }
 }
 
-fn pane(view: TapeView) -> Pane {
+const BESIDE: TapeFoldPane = TapeFoldPane {
+    beside_candles: true,
+};
+/// No divider to fold: the tape off, or alone on the pane (one fact,
+/// read from the lane's own rule).
+const ALONE: TapeFoldPane = TapeFoldPane {
+    beside_candles: false,
+};
+
+fn pane(facts: TapeFoldPane) -> Pane {
     Pane {
-        refuse: None,
-        view,
+        facts: Ok(facts),
+        fold: TapeFold::Open,
         sets: 0,
     }
 }
 
-fn view(pane: &mut Pane, view: Value) -> Result<Value, ControlError> {
-    let actor = crate::test_support::FakeWindow::assistant();
-    let input = json!({"tab_id": "1", "pane_id": "0", "view": view});
-    set_view(pane, &mut (), &actor, &input)
-}
-
-fn fold(pane: &mut Pane, fold: Value) -> Result<Value, ControlError> {
+fn call(pane: &mut Pane, fold: Value) -> Result<Value, ControlError> {
     let actor = crate::test_support::FakeWindow::assistant();
     let input = json!({"tab_id": "1", "pane_id": "0", "fold": fold});
-    set_fold(pane, &mut (), &actor, &input)
+    set(pane, &mut (), &actor, &input)
 }
 
-const VIEWS: [(&str, TapeView); 3] = [
-    ("beside", TapeView::Beside),
-    ("candles", TapeView::Candles),
-    ("tape", TapeView::Tape),
-];
-
-/// Every view is reachable from every view, and repeating one changes nothing.
+/// Either side folds beside the candles; repeating a fold changes nothing
+/// more, and open always returns the lane.
 #[test]
-fn a_view_is_allowed_from_any_view_and_idempotent() {
-    for (_, from) in VIEWS {
-        for (word, to) in VIEWS {
-            let mut on = pane(from);
-            let answer = view(&mut on, json!(word)).unwrap();
-            assert_eq!(answer["view"], word);
-            assert_eq!(answer["changed"], from != to, "{from:?} to {to:?}");
-            assert_eq!(on.view, to);
-            let again = view(&mut on, json!(word)).unwrap();
-            assert_eq!(again["changed"], false);
-        }
+fn a_side_folds_beside_the_candles_and_open_always_unfolds() {
+    let mut beside = pane(BESIDE);
+    let folded = call(&mut beside, json!("candles")).unwrap();
+    assert_eq!(folded["fold"], "candles");
+    assert_eq!(folded["changed"], true);
+    assert_eq!(
+        call(&mut beside, json!("candles")).unwrap()["changed"],
+        false
+    );
+    assert_eq!(call(&mut beside, json!("tape")).unwrap()["changed"], true);
+    assert_eq!(beside.fold, TapeFold::Tape);
+
+    beside.facts = Ok(ALONE);
+    let opened = call(&mut beside, json!("open")).unwrap();
+    assert_eq!(opened["fold"], "open");
+}
+
+/// A fold without a divider to fold is refused by name, before the pane
+/// keeps anything; malformed input and a missing pane are refused too.
+#[test]
+fn folding_without_a_lane_beside_the_candles_is_refused_by_name() {
+    let mut refused = pane(ALONE);
+    for fold in ["candles", "tape"] {
+        let error = call(&mut refused, json!(fold)).unwrap_err();
+        let named = error.context.violated_precondition.as_ref();
+        assert_eq!(
+            named.map(|id| id.as_str()),
+            Some(BESIDE_CANDLES_PRECONDITION)
+        );
+        assert!(!error.retryable);
+        assert_eq!(error.context.next_steps.len(), 1);
     }
-}
-
-/// The fold call is the view call by the side it hides, and answers in its own
-/// word: it has no precondition any more, from any view.
-#[test]
-fn a_fold_is_the_view_of_the_other_side() {
-    for (word, to) in [
-        ("open", TapeView::Beside),
-        ("candles", TapeView::Tape),
-        ("tape", TapeView::Candles),
-    ] {
-        for (_, from) in VIEWS {
-            let mut on = pane(from);
-            let answer = fold(&mut on, json!(word)).unwrap();
-            assert_eq!(answer["fold"], word);
-            assert_eq!(answer["changed"], from != to, "{word} from {from:?}");
-            assert_eq!(on.view, to, "{word}");
-        }
-    }
-    assert!(descriptor().preconditions.is_empty());
-    assert!(view_descriptor().preconditions.is_empty());
-}
-
-/// Malformed input and a pane without a view are refused and keep nothing.
-#[test]
-fn what_cannot_be_applied_is_refused() {
-    let mut on = pane(TapeView::Beside);
+    assert_eq!(refused.sets, 0);
+    let mut beside = pane(BESIDE);
     for bad in [json!("left"), json!(1), Value::Null] {
-        assert!(view(&mut on, bad.clone()).is_err());
-        assert!(fold(&mut on, bad).is_err());
+        assert!(call(&mut beside, bad).is_err());
     }
-    assert_eq!(on.sets, 0);
-    on.refuse = Some(ControlError::invalid_request("no order-flow view"));
-    assert!(view(&mut on, json!("tape")).is_err());
-    assert!(fold(&mut on, json!("open")).is_err());
-    assert_eq!(on.sets, 0, "every refusal came before any set");
+    beside.facts = Err(ControlError::invalid_request("no order-flow view"));
+    assert!(call(&mut beside, json!("open")).is_err());
+    assert_eq!(beside.sets, 0, "every refusal came before any set");
+
+    let declared: Vec<String> = descriptor()
+        .preconditions
+        .iter()
+        .map(|declared| declared.id.as_str().to_owned())
+        .collect();
+    assert_eq!(declared, [BESIDE_CANDLES_PRECONDITION]);
 }

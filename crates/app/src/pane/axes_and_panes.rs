@@ -348,7 +348,9 @@ pub(super) fn handle_axis_gestures(
     });
     // Jump-to-live (audit F6): panned into history, the way back is one click at the axis' live
     // end. Registered after the strip gesture so the click is the chip's, not a zoom-drag's.
-    if let Some(chip) = super::lane_rail::live_chip(pane, areas.time_strip) {
+    let chip = super::lane_rail::live_chip(pane, areas.time_strip);
+    // On a tape-only pane the stored view waits unseen: no way back to offer.
+    if let Some(chip) = chip.filter(|_| !pane.tape_modes().0) {
         let chip = ui.interact(
             chip,
             pane.interaction_id("jump_to_live"),
@@ -522,8 +524,8 @@ pub(super) fn handle_indicator_pane_gestures(
         }
     }
     // Time, once, whichever pane the pointer was over: the panes share the candles' x axis, so
-    // a sideways drag or scroll there must move the same viewport the candles do. With the
-    // candles hidden that viewport waits for them, so nothing here may move it.
+    // a sideways drag or scroll there must move the same viewport the candles do. On a tape-only
+    // pane that viewport waits for them, so nothing here may move it.
     if !pane.tape_modes().0 {
         super::canvas_gestures::navigate(
             pane,

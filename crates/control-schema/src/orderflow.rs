@@ -410,16 +410,17 @@ pub struct BubblesStateSnapshot {
     /// `tape_only`, switched by `layers.visibility.set` as layer `tape_only`.
     #[serde(default)]
     pub tape_only: bool,
-    /// What the pane shows: `beside`, `candles` (alone) or `tape` (alone).
-    /// Read from the tape's own switch and `tape_only`; set by the pane
-    /// header's view button, Ctrl+Shift+T, the divider let go at an edge or
-    /// `orderflow.tape.view.set`.
-    #[serde(default)]
-    pub tape_view: crate::tape_fold::TapeView,
-    /// The same view by the side it hides, as `orderflow.tape.fold.set` names
-    /// it: `open`, `candles` (the tape alone) or `tape` (the candles alone).
+    /// Which side of the pane is folded to a rail: `open`, `candles` (the
+    /// tape takes the pane) or `tape` (the candles do). Set by dragging the
+    /// divider to an edge or by `orderflow.tape.fold.set`; tape only and the
+    /// tape's own switch win over it.
     #[serde(default)]
     pub tape_fold: crate::tape_fold::TapeFold,
+    /// Which view the tape's two switches ask for: `beside`, `candles` (alone)
+    /// or `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or
+    /// `orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it.
+    #[serde(default)]
+    pub tape_view: crate::tape_view_set::TapeView,
     /// Exclude the first recorded 100 ms burst from automatic tape-only
     /// sizing; its factual volume is retained and its drawn radius capped.
     #[serde(default)]
@@ -555,8 +556,8 @@ impl BubblesStateSnapshot {
                 .map(canonical_decimal),
             tape_viewport_scale: config.bubbles.viewport_scale.map(Into::into),
             tape_only: config.live_lane.tape_only,
+            tape_fold: config.live_lane.fold.into(),
             tape_view: config.live_lane.view().into(),
-            tape_fold: crate::tape_fold::TapeView::from(config.live_lane.view()).into(),
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
             volume_dots: dot_scale.map(Into::into),

@@ -216,7 +216,10 @@ pub fn sample_value_text(scale: f32) -> String {
 /// sample's scale while its target is there to scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlowHeaderState {
+    /// The stored view, which the button walks.
     pub view: LaneView,
+    /// The side on screen, which the button's glyph and name read.
+    pub shown_view: LaneView,
     pub candle_sample: Option<f32>,
     pub tape_sample: Option<f32>,
 }

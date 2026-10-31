@@ -29,7 +29,7 @@ pub(super) struct PaperArbitration<'a> {
     pub(super) projection: &'a DrawingProjection<'a>,
     pub(super) drawings: &'a Drawings,
     pub(super) layer_visible: bool,
-    /// The lane divider's grip: chrome, never an aim.
+    /// The lane divider's grip, or a folded side's rail: chrome, never an aim.
     pub(super) lane_handle: Option<egui::Rect>,
 }
 
@@ -77,7 +77,8 @@ impl PaperArbitration<'_> {
         // an anchor must not also cancel the order under it.
         //
         // The pane's chrome, floating (`over_chrome`: a flyout) or the canvas's
-        // own (the lane divider, an indicator pane's header or divider),
+        // own (the lane divider or its fold rail, an indicator pane's header or
+        // divider),
         // modifier or not: those pixels already mean something to a press,
         // so the desk starts no paper press and shows no paper cursor there
         // (`ChartFrame::on_chrome`).
