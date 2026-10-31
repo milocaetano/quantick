@@ -168,6 +168,9 @@ fn holds_to_budget(budget: Budget, mut builder: Box<dyn BarBuilder>) {
     let mut closed: Vec<Bar> = Vec::with_capacity(4);
     let mut bars = 0_usize;
     let mut work = Tally::default();
+    // The first counted push that did any heap work, and what it did, so a
+    // red run names the trade.
+    let mut first_moved: Option<(usize, Tally)> = None;
     for (index, trade) in trades.iter().enumerate() {
         if index % TRADES_PER_READING == 0
             && let Some(input) = builder.deal_counter_input()
@@ -183,6 +186,9 @@ fn holds_to_budget(budget: Budget, mut builder: Box<dyn BarBuilder>) {
         if index >= WARMUP_TRADES {
             work = add(work, spent);
             bars += closed.len();
+            if first_moved.is_none() && (spent.allocs > 0 || spent.realloc_copy_bytes > 0) {
+                first_moved = Some((index, spent));
+            }
         }
         closed.clear();
     }
@@ -202,7 +208,8 @@ fn holds_to_budget(budget: Budget, mut builder: Box<dyn BarBuilder>) {
             && measured.1 <= budget.bytes
             && measured.2 <= budget.copy_bytes,
         "{} over budget per trade: {:.4} allocs (budget {}), {:.2} bytes (budget {}), \
-         {:.2} copy bytes (budget {}); totals over {MEASURED_TRADES} trades: {work:?}",
+         {:.2} copy bytes (budget {}); totals over {MEASURED_TRADES} trades: {work:?}; \
+         first push with heap work: {}",
         budget.path,
         measured.0,
         budget.allocs,
@@ -210,6 +217,13 @@ fn holds_to_budget(budget: Budget, mut builder: Box<dyn BarBuilder>) {
         budget.bytes,
         measured.2,
         budget.copy_bytes,
+        first_moved.map_or_else(
+            || "none".to_owned(),
+            |(index, spent)| format!(
+                "{} at trade {index} (agg_id {}, price {}, quantity {}): {spent:?}",
+                budget.path, trades[index].agg_id, trades[index].price, trades[index].quantity
+            )
+        ),
     );
 }
 
