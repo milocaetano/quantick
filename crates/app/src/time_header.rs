@@ -178,7 +178,8 @@ pub fn draw(
     #[cfg(not(test))]
     let _ = interval_rect;
     content.set_clip_rect(clip);
-    let glyphs_left = content.cursor().left().min(row.right() - glyphs_px);
+    let row_used = content.cursor().left();
+    let glyphs_left = row_used.min(row.right() - glyphs_px);
     let _ = content.allocate_new_ui(
         egui::UiBuilder::new()
             .max_rect(row.with_min_x(glyphs_left))
@@ -190,7 +191,7 @@ pub fn draw(
     // is drawn back over the chips beside it, so it is bounded and elided
     // here rather than clipped by luck.
     let name_rect = (!layout_name.is_empty()
-        && content.available_width() >= MIN_LAYOUT_NAME_PX)
+        && row.right() - row_used - glyphs_px >= MIN_LAYOUT_NAME_PX)
         .then(|| {
             content
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
