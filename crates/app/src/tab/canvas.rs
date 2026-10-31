@@ -384,6 +384,9 @@ impl Tab {
         let painted = &mut pane.frame.header_controls;
         painted.clear();
         let mut intent = None;
+        let glyphs_px = quantick_chart::pane_header::GROUP_GAP_PX
+            + glyphs.len() as f32
+                * (quantick_chart::pane_header::GLYPH_SLOT_PX + ui.spacing().item_spacing.x);
         let header_layout = crate::time_header::draw(
             ui,
             strip,
@@ -391,9 +394,7 @@ impl Tab {
             pane.id,
             &pane.layout.label,
             header.presets,
-            quantick_chart::pane_header::GROUP_GAP_PX
-                + glyphs.len() as f32
-                    * (quantick_chart::pane_header::GLYPH_SLOT_PX + ui.spacing().item_spacing.x),
+            glyphs_px,
             |ui| crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs),
             |ui| {
                 ui.add_space(quantick_chart::pane_header::GROUP_GAP_PX);

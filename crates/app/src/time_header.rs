@@ -176,7 +176,7 @@ pub fn draw(
     let _ = interval_rect;
     content.set_clip_rect(whole_clip);
     let glyphs_left = content.cursor().left().min(row.right() - glyphs_px);
-    content.allocate_new_ui(
+    let _ = content.allocate_new_ui(
         egui::UiBuilder::new()
             .max_rect(row.with_min_x(glyphs_left))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
