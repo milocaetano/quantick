@@ -14,7 +14,8 @@ pub(super) struct FrameTailOwners<'a> {
     pub popup_tab: &'a mut Option<u64>,
 }
 pub(super) struct FrameTailInput<'a> {
-    pub ctx: &'a egui::Context,
+    /// Available only for the workspace's currently bound native view.
+    pub presentation: Option<&'a egui::Context>,
     pub now: Instant,
     pub tz: TzOffset,
     pub notice_action: feed_notice::NoticeAction,
@@ -32,6 +33,9 @@ impl FrameTailOwners<'_> {
         stages: impl IntoIterator<Item = FrameTailStage>,
     ) {
         for stage in stages {
+            if stage.needs_presentation() && input.presentation.is_none() {
+                continue;
+            }
             match stage {
                 FrameTailStage::ApplyNoticeAction => {
                     let active = self.tabs.active_index();
@@ -51,10 +55,12 @@ impl FrameTailOwners<'_> {
                 }
                 FrameTailStage::DrawPaperReport => {
                     let active = self.tabs.active_index();
-                    self.tabs
-                        .runtime_mut(active)
-                        .paper
-                        .draw_report_window(input.ctx, input.tz);
+                    self.tabs.runtime_mut(active).paper.draw_report_window(
+                        input
+                            .presentation
+                            .expect("presentation-dependent tail stage"),
+                        input.tz,
+                    );
                 }
                 FrameTailStage::PublishFeedPopup => {
                     *self.chip_rect = input.chip_rect;

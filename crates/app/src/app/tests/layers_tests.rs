@@ -104,9 +104,9 @@ fn layer_visibility_survives_a_restart() {
     let _ = std::fs::remove_file(&path);
 
     let (mut app, _events, _commands, _book) = test_app();
-    app.workspace.set_chart_layers_path(path.clone());
-    let mask = app.active_tab().flow_pane.layer_mask(&app.style);
-    app.workspace.layers_mut().record(mask);
+    app.runtime.workspace.set_chart_layers_path(path.clone());
+    let mask = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    app.runtime.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     switch_layer(&mut app, ChartLayer::PaperTrading, false);
     switch_layer(&mut app, ChartLayer::Grid, false);
@@ -126,13 +126,16 @@ fn layer_visibility_survives_a_restart() {
     switch_layer(&mut app, ChartLayer::TapeChart, false);
     app.layer_wiring().maintain(&egui::Context::default());
     assert_eq!(
-        app.workspace.layers().mask(),
-        app.active_tab().flow_pane.layer_mask(&app.style),
+        app.runtime.workspace.layers().mask(),
+        app.active_tab().flow_pane.layer_mask(&app.runtime.style),
         "a settled canvas writes nothing further"
     );
 
     let (mut restored, _events, _commands, _book) = test_app();
-    restored.workspace.set_chart_layers_path(path.clone());
+    restored
+        .runtime
+        .workspace
+        .set_chart_layers_path(path.clone());
     restored.layer_wiring().restore();
     for (layer, expected) in [
         (ChartLayer::Crosshair, false),
@@ -172,14 +175,17 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
     let _ = std::fs::remove_file(&path);
 
     let (mut app, _events, _commands, _book) = test_app();
-    app.workspace.set_chart_layers_path(path.clone());
-    let mask = app.active_tab().flow_pane.layer_mask(&app.style);
-    app.workspace.layers_mut().record(mask);
+    app.runtime.workspace.set_chart_layers_path(path.clone());
+    let mask = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    app.runtime.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     app.layer_wiring().maintain(&egui::Context::default());
     // A fresh app reads the file, then opens a second market.
     let (mut restored, _events, _commands, _book) = test_app();
-    restored.workspace.set_chart_layers_path(path.clone());
+    restored
+        .runtime
+        .workspace
+        .set_chart_layers_path(path.clone());
     restored.layer_wiring().restore();
     let (_evt_tx, evt_rx) = mpsc::channel(4);
     let (_book_tx, book_rx) = mpsc::channel(4);
@@ -198,7 +204,7 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
         },
         None,
     );
-    assert_eq!(restored.tabs.len(), 2, "the second market opened");
+    assert_eq!(restored.runtime.tabs.len(), 2, "the second market opened");
     assert!(
         !layer_on(&restored, ChartLayer::Crosshair),
         "the new tab brought back a layer the user had switched off"
@@ -269,7 +275,7 @@ fn a_new_tab_inherits_the_live_layers_not_the_startup_file() {
     let _ = std::fs::remove_file(&path);
 
     let (mut app, _events, _commands, _book) = test_app();
-    app.workspace.set_chart_layers_path(path.clone());
+    app.runtime.workspace.set_chart_layers_path(path.clone());
     // Boot on a file that says the crosshair is off...
     std::fs::write(
         &path,
@@ -319,7 +325,7 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     let ctx = egui::Context::default();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0));
     let (mut app, _events, _commands, _book) = test_app();
-    app.workspace.set_chart_layers_path(path.clone());
+    app.runtime.workspace.set_chart_layers_path(path.clone());
 
     let menu_frame = |ctx: &egui::Context, app: &mut QuantickApp, events: Vec<egui::Event>| {
         with_flow_pane(app, |pane, chrome| {
@@ -561,7 +567,7 @@ fn the_time_pane_offers_the_flow_layers_as_drawn_elsewhere() {
             "{} has no machinery on a time pane",
             layer.id()
         );
-        assert!(!time.layer_visible(layer, &app.style));
+        assert!(!time.layer_visible(layer, &app.runtime.style));
     }
     for layer in [
         ChartLayer::Grid,
@@ -666,15 +672,15 @@ fn the_trade_paint_layer_switch_stops_the_marks() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(
         app.active_tab().paper.session_trades().len(),
@@ -728,7 +734,7 @@ fn the_trade_paint_layer_switch_stops_the_marks() {
     assert!(
         app.active_tab()
             .flow_pane
-            .layer_visible(ChartLayer::PaperTrading, &app.style),
+            .layer_visible(ChartLayer::PaperTrading, &app.runtime.style),
         "hiding closed-trade history leaves the live paper layer alone"
     );
     let _ = std::fs::remove_dir_all(&dir);

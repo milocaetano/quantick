@@ -302,14 +302,15 @@ fn only_an_edit_that_happened_makes_the_ledgers_read_again() {
         session: SessionKey::parse("WINJ26/missing.csv").expect("a key"),
         name: "x".to_owned(),
     };
-    let refused = crate::app::paper_wiring::apply_journal_edit_across(&mut app.tabs, &missing);
+    let refused =
+        crate::app::paper_wiring::apply_journal_edit_across(&mut app.runtime.tabs, &missing);
     assert!(refused.is_err());
     assert!(loaded(&app), "nothing changed, nothing to re-read");
     let rename = JournalEdit::Rename {
         session: SessionKey::parse(&session).expect("a key"),
         name: "x".to_owned(),
     };
-    let done = crate::app::paper_wiring::apply_journal_edit_across(&mut app.tabs, &rename);
+    let done = crate::app::paper_wiring::apply_journal_edit_across(&mut app.runtime.tabs, &rename);
     assert!(done.is_ok());
     assert!(
         !loaded(&app),

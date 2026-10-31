@@ -24,7 +24,7 @@ fn fake(symbol: &'static str) -> Fake {
     }
 }
 fn three() -> Arrangement<Fake> {
-    let mut tabs = Arrangement::new(TabId(7), fake("A"));
+    let mut tabs = Arrangement::new(crate::lifetime::WorkspaceId(0), TabId(7), fake("A"));
     for symbol in ["B", "C"] {
         let plan = tabs.plan_open();
         tabs.append(plan, fake(symbol));
@@ -64,7 +64,7 @@ fn selection_and_cycle_wrap_while_a_single_tab_ignores_cycling() {
     assert_eq!(tabs.active_index(), 0);
     tabs.select(99);
     assert_eq!(tabs.active_index(), 0, "an out-of-range select is ignored");
-    let mut single = Arrangement::new(TabId(0), fake("A"));
+    let mut single = Arrangement::new(crate::lifetime::WorkspaceId(0), TabId(0), fake("A"));
     single.cycle(1);
     assert_eq!(single.active_index(), 0);
 }
@@ -85,7 +85,7 @@ fn closing_removes_closes_and_hands_back_the_runtime() {
 
 #[test]
 fn the_last_tab_cannot_be_closed_and_a_stale_plan_is_refused() {
-    let single = Arrangement::new(TabId(0), fake("A"));
+    let single = Arrangement::new(crate::lifetime::WorkspaceId(0), TabId(0), fake("A"));
     assert_eq!(single.plan_close(0).err(), Some(ArrangementError::LastTab));
     let mut tabs = three();
     let stale = tabs.plan_close(0).unwrap();
@@ -120,7 +120,7 @@ fn mutable_borrows_reach_runtimes_but_not_identity_or_order() {
 
 #[test]
 fn named_restore_opens_the_saved_market_and_closes_the_stale_one() {
-    let mut tabs = Arrangement::new(TabId(0), fake("old"));
+    let mut tabs = Arrangement::new(crate::lifetime::WorkspaceId(0), TabId(0), fake("old"));
     tabs.begin_restore(RestoreMode::Named, 1, Some(("feed", "new")), 0)
         .unwrap();
     let mut closed = Vec::new();
@@ -146,10 +146,46 @@ fn named_restore_opens_the_saved_market_and_closes_the_stale_one() {
 
 #[test]
 fn fixture_helpers_rebuild_a_single_tab_owner() {
-    let tabs = Arrangement::new(TabId(0), fake("A")).with_fixture_identity(41);
+    let tabs = Arrangement::new(crate::lifetime::WorkspaceId(0), TabId(0), fake("A"))
+        .with_fixture_identity(41);
     assert_eq!(
         (tabs.active_id(), tabs.last().map(|tab| tab.symbol)),
         (41, Some("A"))
     );
     assert_eq!(tabs.into_single_runtime(), fake("A"));
+}
+
+#[test]
+fn colliding_local_ids_and_generations_cannot_accept_foreign_transitions() {
+    let mut first = Arrangement::new(crate::lifetime::WorkspaceId(7), TabId(0), fake("A"));
+    let mut second = Arrangement::new(crate::lifetime::WorkspaceId(8), TabId(0), fake("A"));
+    for tabs in [&mut first, &mut second] {
+        let plan = tabs.plan_open();
+        tabs.append(plan, fake("B"));
+    }
+    let foreign = first.plan_close(0).unwrap();
+    assert!(matches!(
+        second.close_planned(foreign),
+        Err(ArrangementError::ForeignOwner)
+    ));
+    assert_eq!(second.len(), 2);
+    assert!(second.iter().all(|tab| !tab.closed));
+    let append = first.plan_open();
+    assert_eq!(
+        second.validate_transition(&append),
+        Err(ArrangementError::ForeignOwner)
+    );
+    first
+        .begin_restore(RestoreMode::Named, 1, Some(("feed", "C")), 0)
+        .unwrap();
+    second
+        .begin_restore(RestoreMode::Named, 1, Some(("feed", "C")), 0)
+        .unwrap();
+    let step = first.restore_step();
+    // Independent restore epochs and equal market IDs are still foreign.
+    let facts = Entries(&second.runtimes);
+    assert!(matches!(
+        second.lifecycle.plan_restore(&step, &facts),
+        Err(ArrangementError::ForeignOwner)
+    ));
 }

@@ -15,7 +15,7 @@ impl Topology for Facts {
 }
 fn boot() -> (ArrangementLifecycle, Facts) {
     (
-        ArrangementLifecycle::new(TabId(0)),
+        ArrangementLifecycle::new(crate::lifetime::WorkspaceId(0), TabId(0)),
         Facts(vec![(TabId(0), "feed", "A")]),
     )
 }

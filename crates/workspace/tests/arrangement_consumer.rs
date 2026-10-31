@@ -52,7 +52,7 @@ impl CliWorkspace {
 #[test]
 fn a_cli_host_restores_documents_using_the_same_ordered_core_decisions() {
     let mut host = CliWorkspace {
-        model: ArrangementLifecycle::new(TabId(0)),
+        model: ArrangementLifecycle::new(quantick_workspace::lifetime::WorkspaceId(0), TabId(0)),
         entries: vec![Entry {
             id: TabId(0),
             symbol: "boot".to_owned(),

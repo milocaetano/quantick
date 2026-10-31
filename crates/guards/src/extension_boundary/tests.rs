@@ -64,11 +64,11 @@ fn nested_const_blocks_count_explicit_root_items() {
 
 #[test]
 fn lexical_lifetimes_characters_and_nested_type_delimiters_are_supported() {
-    let source = "pub(super) struct IndicatorSlots<'a> { pub values: &'a mut Vec<(usize, Option<&'a str>)>, }\n";
+    let source = "pub struct IndicatorRegistry { values: Vec<(usize, Option<&'static str>)>, }\n";
     let scan = scan::scan(source).unwrap();
     assert_eq!(
         scan.shapes[0].1,
-        "pub ( super )|struct < 'a >|pub values : & 'a mut Vec < ( usize , Option < & 'a str > ) >"
+        "pub|struct |values : Vec < ( usize , Option < & 'static str > ) >"
     );
     for literal in [
         "\"} {\"",

@@ -377,7 +377,7 @@ impl ControlAccess {
             let was = stored.iter().find(|key| key.pane_id == pane.id);
             let previous_indicators = was.map(|key| key.indicators.as_slice()).unwrap_or(&[]);
             let previous_drawings = was.map(|key| key.drawings.as_slice()).unwrap_or(&[]);
-            let side = crate::control::PaneSideDto::from(side);
+            let side = crate::control::pane_side_dto(side);
             let pane_id = pane.id.to_string();
 
             let indicators = pane.indicators.all();
@@ -501,7 +501,7 @@ impl ControlAccess {
             if analysis_panes(tab).any(|(pane, _side)| pane.id == key.pane_id) {
                 continue;
             }
-            let side = crate::control::PaneSideDto::from(key.side);
+            let side = crate::control::pane_side_dto(key.side);
             let pane_id = key.pane_id.to_string();
             for indicator in &key.indicators {
                 self.record_indicator_detached(

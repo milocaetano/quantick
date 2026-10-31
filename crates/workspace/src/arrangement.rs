@@ -5,6 +5,8 @@
 //! decisions store no runtime, clock, worker or UI type; [`Arrangement`] owns
 //! the runtimes in physical order and applies the decided effects to them.
 
+use crate::lifetime::WorkspaceId;
+
 mod host;
 mod restore;
 pub use host::{Arrangement, ClosedTab, TabRuntime};
@@ -52,6 +54,7 @@ pub enum ArrangementError {
     LastTab,
     StaleTransition,
     IdentityExhausted,
+    ForeignOwner,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +71,7 @@ struct ActiveSelection {
 /// ```
 #[derive(Debug)]
 pub struct Transition {
+    owner: WorkspaceId,
     generation: u64,
     previous_len: usize,
     next: ActiveSelection,
@@ -83,6 +87,7 @@ impl Transition {
 
 #[derive(Debug)]
 pub struct ArrangementLifecycle {
+    owner: WorkspaceId,
     active: ActiveSelection,
     next_id: Option<u64>,
     generation: u64,
@@ -93,8 +98,9 @@ pub struct ArrangementLifecycle {
 impl ArrangementLifecycle {
     /// Register the host's single boot entry. Subsequent insertion is planned.
     #[must_use]
-    pub const fn new(first: TabId) -> Self {
+    pub const fn new(owner: WorkspaceId, first: TabId) -> Self {
         Self {
+            owner,
             active: ActiveSelection {
                 id: first,
                 index: 0,
@@ -153,6 +159,7 @@ impl ArrangementLifecycle {
             }
         };
         Ok(Transition {
+            owner: self.owner,
             generation: self.generation,
             previous_len: count,
             next: ActiveSelection { id, index },
@@ -168,6 +175,9 @@ impl ArrangementLifecycle {
         plan: &Transition,
         facts: &impl Topology,
     ) -> Result<(), ArrangementError> {
+        if plan.owner != self.owner {
+            return Err(ArrangementError::ForeignOwner);
+        }
         self.validate_current(facts)?;
         if plan.generation != self.generation || plan.previous_len != facts.len() {
             return Err(ArrangementError::StaleTransition);
@@ -202,6 +212,9 @@ impl ArrangementLifecycle {
         plan: Transition,
         facts: &impl Topology,
     ) -> Result<(), ArrangementError> {
+        if plan.owner != self.owner {
+            return Err(ArrangementError::ForeignOwner);
+        }
         if plan.generation != self.generation {
             return Err(ArrangementError::StaleTransition);
         }

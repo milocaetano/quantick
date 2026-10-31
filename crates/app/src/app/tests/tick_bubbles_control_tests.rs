@@ -34,7 +34,7 @@ fn tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings() {
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
     let payload = json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "preset": "Binance BTC Spot spheres",
     });
@@ -127,7 +127,7 @@ fn a_whole_preset_and_tick_set_agree_on_spheres() {
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
     let payload = json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "preset": "Binance BTC Spot spheres",
     });

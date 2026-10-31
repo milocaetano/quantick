@@ -12,29 +12,26 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use super::indicator_operations::{IndicatorAttachment, IndicatorHost};
 use crate::indicator_legend;
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorWorker, SlotId};
 use crate::indicators::IndicatorView;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
-use crate::indicators::state_file::{SavedInput, SavedInputExt, SavedKind};
+use crate::indicators::state_file::{SavedInput, SavedInputExt};
 use crate::pane::ChartPane;
 use crate::pane::PaneSide;
+use quantick_chart::indicator_registry::{IndicatorAttachment, IndicatorHost, IndicatorRegistry};
 
 use super::TabSlot;
 
 /// How often the hot-reload poll checks script files for changes.
 const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
 
-/// The indicator persistence layer: what may be loaded, what is on screen,
-/// what a layout still owes the slots it placed, and who put each there.
-///
-/// Owned by this module. `layout_wiring` places slots and drains the two
-/// `pending_*` queues, `tabs` mirrors the live set onto a new tab, and
-/// `workspace_save` persists it; nothing else names the group.
+/// The indicator feature adapter: library, settings, presets and polling clock.
+/// The headless registry owns identities, provenance and deferred view state.
 pub(super) struct IndicatorState {
+    pub(super) registry: IndicatorRegistry,
     /// Loadable `.pine` scripts (embedded + indicators dir), scanned at
     /// startup. A file-backed script then follows its file: `poll_script_files`
     /// checks mtimes on a debounce and reloads on a save.
@@ -47,85 +44,34 @@ pub(super) struct IndicatorState {
     /// pane changing under it cannot retarget its Apply.
     pub(super) indicator_settings_target: TabSlot,
 
-    /// File-backed script slots: (slot, library index, last seen mtime) —
-    /// what the hot-reload poll walks.
-    pub(super) script_files: Vec<(TabSlot, usize, std::time::SystemTime)>,
-
-    /// How each live slot restores (the persistence identity per slot).
-    ///
-    /// Stays beside the library and the state file rather than moving into the
-    /// panes with the slots themselves: one file records what the window had
-    /// open, so one list records what is in it.
-    pub(super) slot_kinds: Vec<(TabSlot, SavedKind)>,
-
-    /// Slots placed hidden by a layout, applied when their Rebuilt lands —
-    /// the view a hide acts on is born from the worker's first answer.
-    pub(super) pending_hidden: Vec<TabSlot>,
-
-    /// Per-plot style layers placed by a layout, applied when their Rebuilt
-    /// lands — the same deferral [`Self::pending_hidden`] performs, for the
-    /// same reason.
-    pub(super) pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
-    /// Saved mouse guides waiting for their worker-created view.
-    pub(super) pending_mouse_vertical_lines: Vec<TabSlot>,
-
     /// Last hot-reload poll instant (the poll runs about once a second;
     /// file metadata every frame would be waste).
     pub(super) last_script_poll: Instant,
     // Named input setups per indicator kind, offered by the settings
     // dialog's preset picker.
     pub(super) indicator_presets: preset_file::PresetStore,
-
-    /// The indicator slots an operator other than the trader attached — the
-    /// only ones the annotate tier may take back off the chart. Keyed by the
-    /// whole [`TabSlot`]: a slot number is allocated per pane and is reused
-    /// by every other pane, so the number alone would mark one tab's slot 0
-    /// as an operator's because another tab's slot 0 was.
-    pub(super) operator_slots: std::collections::BTreeSet<TabSlot>,
 }
 
 impl IndicatorState {
     /// Initialize the feature at its existing startup phase: scan, clock, presets.
-    pub(super) fn new(first_tab: u64, presets_path: &std::path::Path) -> Self {
+    pub(super) fn new(
+        workspace: quantick_workspace::lifetime::WorkspaceId,
+        first_tab: u64,
+        presets_path: &std::path::Path,
+    ) -> Self {
         Self {
+            registry: IndicatorRegistry::new(workspace),
             script_library: crate::indicators::library::scan(),
             indicator_settings: None,
             indicator_settings_target: TabSlot {
+                workspace,
+                pane: 0,
                 tab: first_tab,
                 side: PaneSide::Flow,
                 slot: SlotId(0),
             },
-            script_files: Vec::new(),
-            slot_kinds: Vec::new(),
-            pending_hidden: Vec::new(),
-            pending_styles: Vec::new(),
-            pending_mouse_vertical_lines: Vec::new(),
             last_script_poll: Instant::now(),
-            operator_slots: std::collections::BTreeSet::new(),
             indicator_presets: preset_file::PresetStore::load(presets_path),
-        }
-    }
-
-    /// A closed tab cannot leave persistence or deferred slot work behind.
-    /// Slot numbers may be reused on other tabs, so the tab is the identity.
-    pub(super) fn forget_tab(&mut self, tab: u64) {
-        self.slot_kinds.retain(|(owner, _)| owner.tab != tab);
-        self.operator_slots.retain(|owner| owner.tab != tab);
-        self.script_files.retain(|(owner, ..)| owner.tab != tab);
-        self.pending_hidden.retain(|owner| owner.tab != tab);
-        self.pending_styles.retain(|(owner, _)| owner.tab != tab);
-        self.pending_mouse_vertical_lines
-            .retain(|owner| owner.tab != tab);
-    }
-
-    /// Lend only slot bookkeeping to operations; UI/library/poll state stays here.
-    pub(super) fn slots_mut(&mut self) -> super::indicator_operations::IndicatorSlots<'_> {
-        super::indicator_operations::IndicatorSlots {
-            slot_kinds: &mut self.slot_kinds,
-            operator_slots: &mut self.operator_slots,
-            script_files: &mut self.script_files,
-            pending_hidden: &mut self.pending_hidden,
-            pending_styles: &mut self.pending_styles,
         }
     }
 }
@@ -137,6 +83,18 @@ pub(super) enum IndicatorEdit {
     Remove(TabSlot),
     Inputs(TabSlot, Vec<quantick_indicators::InputValue>),
     Style(TabSlot),
+}
+
+impl IndicatorEdit {
+    pub(super) fn target(&self) -> TabSlot {
+        match self {
+            Self::Attached(attachment) => attachment.target,
+            Self::Hidden(target)
+            | Self::Remove(target)
+            | Self::Inputs(target, _)
+            | Self::Style(target) => *target,
+        }
+    }
 }
 
 /// The settings owner distinguishes a worker preview from a persisted edit.
@@ -152,6 +110,12 @@ pub(super) enum SettingsChange {
 }
 
 impl SettingsChange {
+    pub(super) fn target(&self) -> Option<TabSlot> {
+        match self {
+            Self::None => None,
+            Self::Inputs { target, .. } | Self::Style(target) => Some(*target),
+        }
+    }
     pub(super) fn worker_target(&self) -> Option<TabSlot> {
         match self {
             Self::Inputs { target, .. } => Some(*target),
@@ -206,7 +170,7 @@ impl IndicatorState {
         text: String,
         by_operator: bool,
     ) -> IndicatorAttachment {
-        self.slots_mut()
+        self.registry
             .attach_script(pane, target, name, text, by_operator)
     }
 
@@ -216,16 +180,16 @@ impl IndicatorState {
         target: (u64, PaneSide),
         id: &str,
     ) -> IndicatorAttachment {
-        self.slots_mut().attach_native(pane, target, id)
+        self.registry.attach_native(pane, target, id)
     }
 
     pub(super) fn operator_target(&mut self, slot: u64) -> Result<Option<TabSlot>, ()> {
-        self.slots_mut().operator_target(slot)
+        self.registry.operator_target(slot).map_err(|_| ())
     }
 
     /// Called only after the layout mirror has read this slot's position.
     pub(super) fn remove(&mut self, pane: Option<&mut impl IndicatorHost>, target: TabSlot) {
-        self.slots_mut().remove(pane, target);
+        self.registry.remove(pane, target);
     }
 
     pub(super) fn open_settings(&mut self, target: TabSlot, view: Option<&IndicatorView>) {
@@ -251,21 +215,23 @@ impl IndicatorState {
     pub(super) fn open_autostart(
         &mut self,
         tab: u64,
-        focused: (PaneSide, &[IndicatorView]),
-        flow: &[IndicatorView],
+        focused: (PaneSide, u64, &[IndicatorView]),
+        flow: (u64, &[IndicatorView]),
         request: Option<(usize, indicator_panel::SettingsTab)>,
     ) -> bool {
         let Some((index, settings_tab)) = request else {
             return false;
         };
-        let Some((side, view)) = [focused, (PaneSide::Flow, flow)]
+        let Some((side, pane, view)) = [focused, (PaneSide::Flow, flow.0, flow.1)]
             .into_iter()
-            .find_map(|(side, views)| views.get(index).map(|view| (side, view)))
+            .find_map(|(side, pane, views)| views.get(index).map(|view| (side, pane, view)))
         else {
             return false;
         };
         self.open_settings(
             TabSlot {
+                workspace: self.registry.workspace(),
+                pane,
                 tab,
                 side,
                 slot: view.slot,
@@ -283,17 +249,19 @@ impl IndicatorState {
     pub(super) fn open_first_editable(
         &mut self,
         tab: u64,
-        flow: &[IndicatorView],
+        flow: (u64, &[IndicatorView]),
         requested: bool,
     ) -> bool {
         if !requested || self.indicator_settings.is_some() {
             return false;
         }
-        let Some(view) = flow.iter().find(|view| !view.input_values.is_empty()) else {
+        let Some(view) = flow.1.iter().find(|view| !view.input_values.is_empty()) else {
             return false;
         };
         self.open_settings(
             TabSlot {
+                workspace: self.registry.workspace(),
+                pane: flow.0,
                 tab,
                 side: PaneSide::Flow,
                 slot: view.slot,
@@ -318,7 +286,15 @@ impl IndicatorState {
         (tab, side): (u64, PaneSide),
         action: indicator_legend::LegendAction,
     ) -> Option<IndicatorEdit> {
-        let at = |slot| TabSlot { tab, side, slot };
+        let workspace = self.registry.workspace();
+        let pane_id = pane.id;
+        let at = |slot| TabSlot {
+            workspace,
+            pane: pane_id,
+            tab,
+            side,
+            slot,
+        };
         match action {
             indicator_legend::LegendAction::OpenSettings(slot) => {
                 self.open_settings(
@@ -384,16 +360,12 @@ impl IndicatorState {
         presets_path: &std::path::Path,
     ) -> SettingsChange {
         let target = self.indicator_settings_target;
-        let preset_names: Option<Vec<String>> = self
-            .slot_kinds
-            .iter()
-            .find(|(owner, _)| *owner == target)
-            .map(|(_, kind)| {
-                self.indicator_presets
-                    .names_for(kind)
-                    .map(str::to_owned)
-                    .collect()
-            });
+        let preset_names: Option<Vec<String>> = self.registry.kind(target).map(|kind| {
+            self.indicator_presets
+                .names_for(kind)
+                .map(str::to_owned)
+                .collect()
+        });
         let Some(dialog) = self.indicator_settings.as_mut() else {
             return SettingsChange::None;
         };
@@ -478,18 +450,12 @@ impl IndicatorState {
         }
     }
 
-    /// Legacy launch indicators remain live but do not join the saved set.
-    #[cfg(any(feature = "scenario-harness", test))]
-    pub(super) fn forget_last_indicator_state_change(&mut self) {
-        self.slot_kinds.pop();
-    }
-
     /// Preserve peer-before-origin watch registration after layout mirroring.
     pub(super) fn watch_attachment(&mut self, watch: Option<(TabSlot, usize)>) {
         if let Some((owner, index)) = watch
             && let Some((_, mtime)) = self.script_library.file_info(index)
         {
-            self.script_files.push((owner, index, mtime));
+            self.registry.watch_script(owner, index, mtime);
         }
     }
     pub(super) fn load_preset(
@@ -501,12 +467,7 @@ impl IndicatorState {
         let saved: Option<Vec<Option<quantick_indicators::InputValue>>> = match &name {
             None => Some(Vec::new()),
             Some(name) => {
-                let Some(kind) = self
-                    .slot_kinds
-                    .iter()
-                    .find(|(owner, _)| *owner == target)
-                    .map(|(_, kind)| kind)
-                else {
+                let Some(kind) = self.registry.kind(target) else {
                     return SettingsChange::None;
                 };
                 self.indicator_presets
@@ -551,12 +512,7 @@ impl IndicatorState {
     }
     fn save_indicator_preset(&mut self, name: &str, presets_path: &std::path::Path) {
         let target = self.indicator_settings_target;
-        let Some(kind) = self
-            .slot_kinds
-            .iter()
-            .find(|(owner, _)| *owner == target)
-            .map(|(_, kind)| kind.clone())
-        else {
+        let Some(kind) = self.registry.kind(target).cloned() else {
             return;
         };
         let Some(dialog) = self.indicator_settings.as_mut() else {
@@ -571,12 +527,7 @@ impl IndicatorState {
     }
     fn delete_indicator_preset(&mut self, name: &str, presets_path: &std::path::Path) {
         let target = self.indicator_settings_target;
-        let Some(kind) = self
-            .slot_kinds
-            .iter()
-            .find(|(owner, _)| *owner == target)
-            .map(|(_, kind)| kind.clone())
-        else {
+        let Some(kind) = self.registry.kind(target).cloned() else {
             return;
         };
         if self.indicator_presets.remove(&kind, name) {
@@ -669,28 +620,29 @@ impl IndicatorState {
     }
 
     pub(super) fn poll_script_files(&mut self) -> Vec<(TabSlot, String, String)> {
-        if self.script_files.is_empty()
+        if self.registry.script_files().is_empty()
             || self.last_script_poll.elapsed() < SCRIPT_RELOAD_POLL_INTERVAL
         {
             return Vec::new();
         }
         self.last_script_poll = Instant::now();
         let mut reloads: Vec<(TabSlot, String, String)> = Vec::new();
-        for (owner, index, seen_mtime) in &mut self.script_files {
-            let Some((path, mtime)) = self.script_library.file_info(*index) else {
+        for watch in 0..self.registry.script_files().len() {
+            let (owner, index, seen_mtime) = self.registry.script_files()[watch];
+            let Some((path, mtime)) = self.script_library.file_info(index) else {
                 continue;
             };
-            if mtime == *seen_mtime {
+            if mtime == seen_mtime {
                 continue;
             }
-            *seen_mtime = mtime;
+            self.registry.observe_script(owner, mtime);
             match std::fs::read_to_string(&path) {
                 Ok(text) => {
                     let name = path
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| path.display().to_string());
-                    reloads.push((*owner, name, text));
+                    reloads.push((owner, name, text));
                 }
                 Err(error) => tracing::warn!(
                     target: "quantick::app",

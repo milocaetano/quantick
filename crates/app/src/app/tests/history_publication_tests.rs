@@ -4,7 +4,7 @@ use super::*;
 fn the_load_older_hook_keeps_its_action_while_opening_history_is_publishing() {
     let (mut app, events, mut commands, _book) = test_app();
     while commands.try_recv().is_ok() {}
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     for pane in app.active_tab_mut().panes_mut() {
         pane.hold_history_publication(true);
     }
@@ -29,7 +29,7 @@ fn the_load_older_hook_keeps_its_action_while_opening_history_is_publishing() {
     app.chrome.harness.arm_load_older(1, 10);
     app.chrome
         .harness
-        .apply_load_older(&mut app.tabs, &app.config);
+        .apply_load_older(&mut app.runtime.tabs, &app.config);
     assert!(commands.try_recv().is_err());
     assert_eq!(
         app.chrome.harness.load_older_remaining(),
@@ -48,7 +48,7 @@ fn the_load_older_hook_keeps_its_action_while_opening_history_is_publishing() {
     }
     app.chrome
         .harness
-        .apply_load_older(&mut app.tabs, &app.config);
+        .apply_load_older(&mut app.runtime.tabs, &app.config);
     assert!(matches!(
         commands.try_recv(),
         Ok(FeedCommand::LoadOlder { .. })
@@ -116,7 +116,7 @@ fn benchmark_history_frame_work() {
 fn repeated_history_requests_are_coalesced_while_one_reply_is_outstanding() {
     let (mut app, events, mut commands, _book) = test_app();
     let config = app.tab_reads().config().clone();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     events
         .try_send(FeedEvent::Backfilled((1..=10).map(trade).collect()))
         .unwrap();
@@ -140,7 +140,7 @@ fn large_history_publishes_coherent_panes_and_preserves_the_live_tail() {
     app.active_tab_mut()
         .time_panes
         .push(crate::pane::ChartPane::time(999, 60_000));
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     events
         .try_send(FeedEvent::Backfilled(
             (50_000..100_000).map(trade).collect(),
@@ -191,7 +191,7 @@ fn mixed_size_panes_share_admission_and_settle_the_history_reply_once() {
         .ingest_backfill(&(100..105).map(trade).collect::<Vec<_>>());
     tab.time_panes[0].ingest_backfill(&(100..60_100).map(trade).collect::<Vec<_>>());
     tab.loading.set_active(LoadingTask::History, true);
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     events
         .try_send(FeedEvent::HistoryPrepended((0..100).map(trade).collect()))
         .unwrap();

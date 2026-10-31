@@ -161,8 +161,8 @@ impl QuantickApp {
     /// state it shows.
     fn draw_menus(&mut self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
         menus::FileMenu {
-            tab_count: self.tabs.len(),
-            active_index: self.tabs.active_index(),
+            tab_count: self.runtime.tabs.len(),
+            active_index: self.runtime.tabs.active_index(),
             replaying: self.active_tab().replay.is_some(),
         }
         .show(ui, commands);
@@ -172,8 +172,8 @@ impl QuantickApp {
             dock_visible: self.dock.visible(),
             toolrail: &self.toolrail,
             show_perf: self.health.show_perf,
-            history: &self.history,
-            tz: self.tz,
+            history: &self.runtime.history,
+            tz: self.runtime.tz,
         }
         .show(ui, commands);
         let workspace_menu = menus::WorkspaceMenu {
@@ -223,7 +223,7 @@ impl QuantickApp {
                 let pane = self.focused_pane();
                 let capabilities = self.active_tab().capabilities(&self.config);
                 if pane.layer_blocked(layer, capabilities).is_none() {
-                    let visible = !pane.layer_visible(layer, &self.style);
+                    let visible = !pane.layer_visible(layer, &self.runtime.style);
                     self.focused_pane_mut().set_layer_visible(
                         layer,
                         visible,
@@ -245,7 +245,7 @@ impl QuantickApp {
             }
             MenuCommand::Strip(action) => self.layout_adapter().apply_strip_action(action),
             MenuCommand::MoveContextChart { from, to } => {
-                let tab_id = self.tabs.active_id();
+                let tab_id = self.runtime.tabs.active_id();
                 self.layout_adapter().move_context_pane_at(tab_id, from, to);
             }
             MenuCommand::ToggleLegend => {
@@ -268,7 +268,10 @@ impl QuantickApp {
                 self.workspace_save_adapter().delete_named_workspace(&name);
             }
             MenuCommand::SetSaveOnExit(save_on_exit) => {
-                self.workspace.session_mut().set_save_on_exit(save_on_exit);
+                self.runtime
+                    .workspace
+                    .session_mut()
+                    .set_save_on_exit(save_on_exit);
                 self.workspace_save_adapter()
                     .save_workspace("save_on_exit_toggled");
             }
@@ -285,9 +288,9 @@ impl QuantickApp {
             MenuCommand::ToggleToolbox => self.toolrail.toggle_visible(),
             MenuCommand::OpenDockTab(tab) => self.dock.open_tab(tab),
             MenuCommand::SetShowPerf(show) => self.health.show_perf = show,
-            MenuCommand::SetProgressiveHistory(on) => self.history.progressive_history = on,
-            MenuCommand::SetVenueLeadIn(on) => self.history.venue_lead_in = on,
-            MenuCommand::SetTimezone(tz) => self.tz = tz,
+            MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,
+            MenuCommand::SetVenueLeadIn(on) => self.runtime.history.venue_lead_in = on,
+            MenuCommand::SetTimezone(tz) => self.runtime.tz = tz,
             MenuCommand::OpenAppearance => self.layer_wiring().open_settings(Candles),
             MenuCommand::OpenAgentAccess => {
                 if let Some(access) = self.control.control_access.as_mut() {
@@ -301,6 +304,7 @@ impl QuantickApp {
     /// The chips, built from what each tab actually is right now.
     pub(super) fn draw_tab_strip(&self, ui: &mut egui::Ui) -> Option<TabAction> {
         let chips: Vec<tabstrip::TabChip<'_>> = self
+            .runtime
             .tabs
             .iter()
             .map(|tab| tabstrip::TabChip {
@@ -309,6 +313,6 @@ impl QuantickApp {
                 needs_attention: tab.needs_attention(),
             })
             .collect();
-        tabstrip::draw(ui, &chips, self.tabs.active_index())
+        tabstrip::draw(ui, &chips, self.runtime.tabs.active_index())
     }
 }

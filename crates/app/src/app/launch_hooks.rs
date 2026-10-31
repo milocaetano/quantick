@@ -62,7 +62,7 @@ pub(super) fn apply_launch_phase(
     app.control.apply_launch(control_launch);
     #[cfg(any(feature = "drawing-harness", test))]
     if app.toolrail.apply_launch(rail_launch).favorites_staged {
-        app.workspace.session_mut().stage_favorites();
+        app.runtime.workspace.session_mut().stage_favorites();
     }
     #[cfg(any(feature = "scenario-harness", test))]
     history(app, env);
@@ -91,8 +91,8 @@ pub(super) fn apply_launch_phase(
     // An env var is not a user edit: what the autostart hooks switched on
     // must not be written back as though the user had asked for it every
     // launch from now on. Same rule the indicator state follows.
-    let staged_layers = app.active_tab().flow_pane.layer_mask(&app.style);
-    app.workspace.layers_mut().record(staged_layers);
+    let staged_layers = app.active_tab().flow_pane.layer_mask(&app.runtime.style);
+    app.runtime.workspace.layers_mut().record(staged_layers);
     #[cfg(any(feature = "scenario-harness", test))]
     toast(app, env);
 }
@@ -141,7 +141,7 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
         // Read before `QUANTICK_HISTORY_REACH`: it is what that hook's legacy
         // `span` token means, as it is in a saved workspace.
         match raw.trim().parse::<u32>() {
-            Ok(minutes) => app.history.set_span_minutes(minutes),
+            Ok(minutes) => app.runtime.history.set_span_minutes(minutes),
             Err(_) => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -157,9 +157,9 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
     // validation run must be able to pin what it photographs. An unknown
     // token is refused out loud with the grammar, never silently defaulted.
     if let Some(token) = env.var("QUANTICK_HISTORY_REACH") {
-        let span = app.history.history_reach_span_minutes;
+        let span = app.runtime.history.history_reach_span_minutes;
         match history_reach::HistoryReach::from_legacy_span(&token, span) {
-            Some(reach) => app.history.history_reach = reach,
+            Some(reach) => app.runtime.history.history_reach = reach,
             None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -178,8 +178,8 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
         // the workspace saved, and a capture run would photograph the off
         // state while reporting it as on.
         match value.trim() {
-            "1" => app.history.venue_lead_in = true,
-            "0" => app.history.venue_lead_in = false,
+            "1" => app.runtime.history.venue_lead_in = true,
+            "0" => app.runtime.history.venue_lead_in = false,
             other => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -192,8 +192,8 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
     }
     if let Some(value) = env.var("QUANTICK_PROGRESSIVE_HISTORY") {
         match value.trim() {
-            "1" => app.history.progressive_history = true,
-            "0" => app.history.progressive_history = false,
+            "1" => app.runtime.history.progressive_history = true,
+            "0" => app.runtime.history.progressive_history = false,
             // Nonsense is refused rather than guessed: a typo leaves the
             // trader's own setting alone instead of silently flipping it.
             _ => {}
@@ -294,7 +294,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // more list to keep in step by hand.
     if let Some(value) = env.var("QUANTICK_FOOTPRINT_STYLE") {
         match crate::footprint_config::FootprintStyle::from_id(value.trim()) {
-            Some(style) => app.footprint_config.style = style,
+            Some(style) => app.runtime.footprint_config.style = style,
             // Named and unknown is a typo in a validation script, and a
             // silent fallback to the default would have it photograph the
             // wrong style and call it a pass.
@@ -327,7 +327,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
         && let Ok(budget) = value.trim().parse::<usize>()
         && budget > 0
     {
-        for tab in app.tabs.iter_mut() {
+        for tab in app.runtime.tabs.iter_mut() {
             tab.tape_mut().set_primitive_budget(budget);
         }
     }
@@ -343,7 +343,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
         && let Ok(after_ms) = value.trim().parse::<i64>()
         && after_ms >= 0
     {
-        for tab in app.tabs.iter_mut() {
+        for tab in app.runtime.tabs.iter_mut() {
             tab.tape_mut().set_starve_tape_after_ms(after_ms);
         }
     }
@@ -441,6 +441,7 @@ fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
     if let Some(names) = env.var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
         for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
             match app
+                .runtime
                 .indicators
                 .script_library
                 .entries()
@@ -456,18 +457,36 @@ fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
                     // something, which the rules forbid. The natives hook
                     // above never registers a kind, so it is already inert.
                     let (tab, side) = {
-                        let tab_id = app.tabs.active_id();
+                        let tab_id = app.runtime.tabs.active_id();
                         let tab = app.active_tab();
                         (tab_id, tab.focused_side())
                     };
-                    app.layout_adapter().add_indicator_at(
+                    let slot = app.layout_adapter().add_indicator_at(
                         tab,
                         side,
                         &SavedKind::Script {
                             name: name.to_owned(),
                         },
                     );
-                    app.indicators.forget_last_indicator_state_change();
+                    if let Some(slot) = slot {
+                        let pane = app
+                            .runtime
+                            .tabs
+                            .by_id(tab)
+                            .expect("launch tab")
+                            .pane(side)
+                            .id;
+                        app.runtime
+                            .indicators
+                            .registry
+                            .exclude_from_layout(super::TabSlot {
+                                workspace: app.runtime.id(),
+                                pane,
+                                tab,
+                                side,
+                                slot,
+                            });
+                    }
                 }
                 None => tracing::warn!(
                     target: "quantick::app",
@@ -718,7 +737,7 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
         .var("QUANTICK_LEDGER_FOLD")
         .is_some_and(|value| value == "1")
     {
-        let tz = app.tz;
+        let tz = app.runtime.tz;
         app.active_tab_mut()
             .paper
             .account_mut()
@@ -836,7 +855,8 @@ fn toast(app: &mut QuantickApp, env: &ScenarioInputs) {
         .var("QUANTICK_TOAST")
         .is_some_and(|value| value == "paper")
     {
-        app.tabs
+        app.runtime
+            .tabs
             .runtime_mut(0)
             .paper
             .show_toast("SIM: stop filled at 169 790 — flat.".to_owned());

@@ -1,5 +1,15 @@
 # Native indicator boundary
 
+Current owner update (#717 / #721): the historical `IndicatorSlots` context
+below is now `quantick-chart::indicator_registry::IndicatorRegistry`, owning
+private collections. The protected declaration contract follows that owner;
+`IndicatorHost` retains the pane identity, allocation and removal methods.
+The shape scanner and independent fixtures now reject registry field exposure
+and broad root authority as well as changed host effects. Root size caps remain
+unchanged. Runtime styles and deferred application stay in chart; app resolves
+the existing view and retains worker effects, clocks and file I/O.
+
+
 Issue: https://github.com/milocaetano/quantick/issues/338 (campaign #330, Q6).
 
 ## Revision and evidence status

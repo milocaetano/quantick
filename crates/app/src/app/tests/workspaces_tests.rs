@@ -4,32 +4,35 @@ use super::*;
 fn bundle_baseline_refused_import_still_flushes_pending_layouts() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let layout = crate::scratch::ScratchFile::new("bundle-preflush", "layouts.toml");
-    app.workspace.set_layouts_path(layout.to_path_buf());
-    app.workspace.layouts_mut().set_blocked(false);
-    app.workspace
+    app.runtime.workspace.set_layouts_path(layout.to_path_buf());
+    app.runtime.workspace.layouts_mut().set_blocked(false);
+    app.runtime
+        .workspace
         .layouts_mut()
         .mark_changed(std::time::Instant::now());
     let input = crate::scratch::ScratchFile::new("bundle-invalid", "future.qws.toml");
     std::fs::write(&input, "version = 99\n").unwrap();
     assert!(!layout.exists());
-    let recent = app.workspace.session().recent().to_vec();
+    let recent = app.runtime.workspace.session().recent().to_vec();
     app.workspace_bundle_adapter().import_workspace_from(&input);
     assert!(layout.is_file());
-    assert!(!app.workspace.layouts().is_dirty());
-    assert_eq!(app.workspace.session().recent(), recent);
+    assert!(!app.runtime.workspace.layouts().is_dirty());
+    assert_eq!(app.runtime.workspace.session().recent(), recent);
 }
 
 #[test]
 fn bundle_baseline_export_continues_after_workspace_save_fails() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let blocker = crate::scratch::ScratchDir::new("bundle-save-blocker");
-    app.workspace.set_ui_state_path(blocker.to_path_buf());
+    app.runtime
+        .workspace
+        .set_ui_state_path(blocker.to_path_buf());
     let output = crate::scratch::ScratchFile::new("bundle-best-effort", "export.qws.toml");
     app.workspace_bundle_adapter().export_workspace_to(&output);
     assert!(blocker.is_dir());
     assert!(output.is_file());
     assert_eq!(
-        app.workspace.session().recent(),
+        app.runtime.workspace.session().recent(),
         [output.to_string_lossy().into_owned()]
     );
 }
@@ -46,7 +49,8 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     // A cockpit worth keeping: a layer off, a symbol added, a rail
     // favourite — three different stores.
     app.added_symbols.add("binance", "WINQ26");
-    symbols_file::save(app.workspace.symbols_path(), &app.added_symbols).expect("symbols written");
+    symbols_file::save(app.runtime.workspace.symbols_path(), &app.added_symbols)
+        .expect("symbols written");
     app.toolrail.set_favorites(&["measure".to_owned()]);
     app.workspace_save_adapter().save_workspace("test");
 
@@ -54,14 +58,15 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.workspace_bundle_adapter().export_workspace_to(&file);
     assert!(file.is_file(), "the export reached the disk");
     assert_eq!(
-        app.workspace.session().recent().len(),
+        app.runtime.workspace.session().recent().len(),
         1,
         "and the file joined the Open-recent menu"
     );
 
     // Now undo all of it, the way a trader rearranging their screen would.
     app.added_symbols.remove("binance", "WINQ26");
-    symbols_file::save(app.workspace.symbols_path(), &app.added_symbols).expect("symbols written");
+    symbols_file::save(app.runtime.workspace.symbols_path(), &app.added_symbols)
+        .expect("symbols written");
     app.toolrail.set_favorites(&[]);
     app.workspace_save_adapter().save_workspace("test");
     assert!(!app.added_symbols.contains("binance", "WINQ26"));
@@ -92,7 +97,7 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
-    assert_eq!(app.tabs.len(), 2, "the trader has two markets open");
+    assert_eq!(app.runtime.tabs.len(), 2, "the trader has two markets open");
 
     // A saved workspace naming one market, and not the one on screen.
     let config = app.config.clone();
@@ -126,13 +131,13 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
     );
 
     assert_eq!(
-        app.tabs.len(),
+        app.runtime.tabs.len(),
         1,
         "the strip is the workspace's, not the workspace on top of what was there"
     );
-    assert_eq!(app.tabs[0].symbol, "TESTUSDT");
+    assert_eq!(app.runtime.tabs[0].symbol, "TESTUSDT");
     assert!(
-        app.tabs.active_index() < app.tabs.len(),
+        app.runtime.tabs.active_index() < app.runtime.tabs.len(),
         "and the active index points at a tab that exists"
     );
 }
@@ -141,7 +146,8 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
 fn saved_workspace_restores_both_right_and_vertical_rails() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("pane-rails"));
     app.active_tab_mut()
         .set_layout(CanvasLayout::TimeTimeAndFlow);
@@ -158,7 +164,7 @@ fn saved_workspace_restores_both_right_and_vertical_rails() {
     assert!(app.active_tab_mut().set_flow_collapsed(true));
     run_frame(&mut app, &ctx);
     app.workspace_save_adapter().save_workspace("test");
-    let saved = ui_state::load(app.workspace.ui_state_path());
+    let saved = ui_state::load(app.runtime.workspace.ui_state_path());
     assert!(saved.tabs[0].flow_collapsed);
     assert_eq!(saved.tabs[0].context_panes_collapsed, vec![true, false]);
     let config = app.config.clone();
@@ -280,8 +286,9 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
     form.window = 3;
     form.min_range = "0".to_owned();
     form.on_break = "retest_limit".to_owned();
-    app.tabs
-        .runtime_mut(app.tabs.active_index())
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
         .arm_strategy_instance(
             &mut *app.audio.alerts,
             pane::PaneSide::Flow,
@@ -385,7 +392,7 @@ fn parking_the_properties_popup_autosaves_it_to_the_workspace() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     with_a_saved_workspace(&mut app, &ctx, "popup-parked");
-    let tabs_when_saved = ui_state::load(app.workspace.ui_state_path()).tabs;
+    let tabs_when_saved = ui_state::load(app.runtime.workspace.ui_state_path()).tabs;
     // Drift away from the saved cockpit, the way a session does — a bar
     // rule, which is recorded per tab, so a full capture would show here.
     app.active_tab_mut().flow_pane.set_spec(BarSpec::Tick(500));
@@ -394,7 +401,7 @@ fn parking_the_properties_popup_autosaves_it_to_the_workspace() {
 
     let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
 
-    let file = ui_state::load(app.workspace.ui_state_path());
+    let file = ui_state::load(app.runtime.workspace.ui_state_path());
     assert_eq!(
         file.chrome
             .expect("the chrome is still there")
@@ -413,7 +420,7 @@ fn parking_the_properties_popup_autosaves_it_to_the_workspace() {
             .is_some_and(|message| message.contains("Workspace saved")),
         "an autosave nobody asked for by name does not talk over the trader"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// A workspace with no chrome section is left alone rather than grown one.
@@ -423,7 +430,8 @@ fn parking_the_properties_popup_autosaves_it_to_the_workspace() {
 fn parking_the_popup_never_recreates_a_workspace_that_was_reset() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("popup-after-reset"));
     run_frame(&mut app, &ctx);
     draw_horizontal_line(&mut app, &ctx, 300.0);
@@ -431,7 +439,7 @@ fn parking_the_popup_never_recreates_a_workspace_that_was_reset() {
     park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
 
     assert!(
-        !app.workspace.ui_state_path().exists(),
+        !app.runtime.workspace.ui_state_path().exists(),
         "no startup workspace is conjured out of a window drag"
     );
 }
@@ -675,7 +683,7 @@ fn a_restored_workspace_puts_the_window_back() {
         Some(BarSpec::Time(300_000).into()),
         "and the time pane on its saved interval, not the header default"
     );
-    assert_eq!(app.tz.minutes(), 330);
+    assert_eq!(app.runtime.tz.minutes(), 330);
     assert!(
         !app.dock.visible(),
         "a dock the trader hid stays hidden, tab remembered underneath"
@@ -685,11 +693,12 @@ fn a_restored_workspace_puts_the_window_back() {
     assert_eq!(app.toolrail.dock(), ToolboxDock::Bottom);
     assert!(!app.health.show_perf);
     assert!(
-        !app.history.progressive_history,
+        !app.runtime.history.progressive_history,
         "a trader who chose the single-request fetch reopens on it"
     );
     assert!(
-        app.tabs
+        app.runtime
+            .tabs
             .iter()
             .all(|tab| !tab.session.progressive_history()),
         "and every tab phrases its request that way"
@@ -717,20 +726,26 @@ fn a_background_tabs_acknowledgement_travels_and_names_its_market() {
     let (mut app, _commands) = app_with_history(50);
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
-    assert!(app.tabs.len() >= 2, "a second market is open");
-    let watched = app.tabs.active_index();
+    assert!(app.runtime.tabs.len() >= 2, "a second market is open");
+    let watched = app.runtime.tabs.active_index();
     let background = app
+        .runtime
         .tabs
         .iter()
-        .position(|tab| tab.symbol != app.tabs[watched].symbol)
+        .position(|tab| tab.symbol != app.runtime.tabs[watched].symbol)
         .expect("the two tabs are on different markets");
-    let symbol = app.tabs[background].symbol.clone();
+    let symbol = app.runtime.tabs[background].symbol.clone();
 
-    app.tabs
+    app.runtime
+        .tabs
         .runtime_mut(background)
         .paper
         .show_toast("SIM: stop filled".to_owned());
-    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
+    frame_tail::settle_paper_panels(
+        &mut app.runtime.tabs,
+        &mut app.surfaces.toast,
+        Instant::now(),
+    );
 
     let toast = app
         .surfaces
@@ -755,7 +770,9 @@ fn a_background_tabs_acknowledgement_travels_and_names_its_market() {
 #[test]
 fn saving_the_workspace_acknowledges_itself() {
     let (mut app, _commands) = app_with_history(50);
-    app.workspace.set_ui_state_path(scratch_ui_state("notice"));
+    app.runtime
+        .workspace
+        .set_ui_state_path(scratch_ui_state("notice"));
     assert!(app.surfaces.toast.message().is_none());
 
     app.workspace_save_adapter().save_workspace("test");
@@ -774,10 +791,10 @@ fn saving_the_workspace_acknowledges_itself() {
         "the file it replaced is gone; an Undo button here would lie"
     );
     assert!(
-        app.workspace.ui_state_path().exists(),
+        app.runtime.workspace.ui_state_path().exists(),
         "and the file it claims to have written is on disk"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Naming an arrangement keeps it without touching what the app opens on.
@@ -787,19 +804,20 @@ fn saving_the_workspace_acknowledges_itself() {
 fn naming_an_arrangement_does_not_change_what_opens() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("named-startup"));
     app.active_tab_mut().set_layout(CanvasLayout::Single);
     run_frame(&mut app, &ctx);
     app.workspace_save_adapter().save_workspace("test");
-    let startup_before = ui_state::load(app.workspace.ui_state_path()).tabs;
+    let startup_before = ui_state::load(app.runtime.workspace.ui_state_path()).tabs;
 
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     app.workspace_save_adapter().save_named_workspace("scalp");
 
-    let file = ui_state::load(app.workspace.ui_state_path());
+    let file = ui_state::load(app.runtime.workspace.ui_state_path());
     assert_eq!(
         file.tabs, startup_before,
         "the startup arrangement is untouched by a bookmark"
@@ -810,7 +828,7 @@ fn naming_an_arrangement_does_not_change_what_opens() {
         Some(crate::config::DeclaredLayout::TimeAndFlow),
         "and the bookmark holds the arrangement that was on screen"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Saving the startup screen must not throw the bookmarks away: every
@@ -818,19 +836,20 @@ fn naming_an_arrangement_does_not_change_what_opens() {
 #[test]
 fn saving_the_startup_screen_keeps_the_bookmarks() {
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("bookmarks-survive"));
     app.workspace_save_adapter().save_named_workspace("scalp");
 
     app.workspace_save_adapter().save_workspace("test");
 
     assert!(
-        ui_state::load(app.workspace.ui_state_path())
+        ui_state::load(app.runtime.workspace.ui_state_path())
             .named("scalp")
             .is_some(),
         "a bookmark cannot be collateral damage of saving the startup screen"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// The same name twice replaces, so the menu never grows five entries
@@ -839,7 +858,9 @@ fn saving_the_startup_screen_keeps_the_bookmarks() {
 fn saving_over_a_name_replaces_that_bookmark() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace.set_ui_state_path(scratch_ui_state("replace"));
+    app.runtime
+        .workspace
+        .set_ui_state_path(scratch_ui_state("replace"));
     app.active_tab_mut().set_layout(CanvasLayout::Single);
     run_frame(&mut app, &ctx);
     app.workspace_save_adapter().save_named_workspace("scalp");
@@ -850,7 +871,7 @@ fn saving_over_a_name_replaces_that_bookmark() {
     app.workspace_save_adapter()
         .save_named_workspace("  scalp  ");
 
-    let file = ui_state::load(app.workspace.ui_state_path());
+    let file = ui_state::load(app.runtime.workspace.ui_state_path());
     assert_eq!(file.saved.len(), 1, "one name, one bookmark");
     assert_eq!(
         file.named("scalp")
@@ -859,7 +880,7 @@ fn saving_over_a_name_replaces_that_bookmark() {
         Some(crate::config::DeclaredLayout::Time),
         "and it holds the newer arrangement"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Opening a bookmark replaces the whole tab strip — which is only
@@ -868,11 +889,13 @@ fn saving_over_a_name_replaces_that_bookmark() {
 fn opening_a_bookmark_replaces_what_is_on_screen() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace.set_ui_state_path(scratch_ui_state("open"));
+    app.runtime
+        .workspace
+        .set_ui_state_path(scratch_ui_state("open"));
     app.active_tab_mut().set_layout(CanvasLayout::Time);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.tz = TzOffset::new(0);
+    app.runtime.tz = TzOffset::new(0);
     // The properties popup is part of an arrangement like the dock and the
     // rail are, so a bookmark carries where it was parked.
     app.drawings
@@ -882,7 +905,7 @@ fn opening_a_bookmark_replaces_what_is_on_screen() {
 
     // Drift away from it, then come back.
     app.active_tab_mut().set_layout(CanvasLayout::Single);
-    app.tz = TzOffset::new(-180);
+    app.runtime.tz = TzOffset::new(-180);
     app.drawings
         .chrome
         .place_inspector_by_hand(egui::pos2(120.0, 640.0));
@@ -892,15 +915,19 @@ fn opening_a_bookmark_replaces_what_is_on_screen() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
-    assert_eq!(app.tabs.len(), 1, "the strip is replaced, not appended to");
+    assert_eq!(
+        app.runtime.tabs.len(),
+        1,
+        "the strip is replaced, not appended to"
+    );
     assert_eq!(app.active_tab().layout, CanvasLayout::Time);
-    assert_eq!(app.tz.minutes(), 0, "the chrome comes back with it");
+    assert_eq!(app.runtime.tz.minutes(), 0, "the chrome comes back with it");
     assert_eq!(
         app.drawings.chrome.inspector_pos(),
         Some(egui::pos2(510.0, 240.0)),
         "including where the popup was parked when the bookmark was named"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Deleting a bookmark throws away a way back, not the place you are.
@@ -908,7 +935,9 @@ fn opening_a_bookmark_replaces_what_is_on_screen() {
 fn deleting_a_bookmark_leaves_the_window_alone() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace.set_ui_state_path(scratch_ui_state("delete"));
+    app.runtime
+        .workspace
+        .set_ui_state_path(scratch_ui_state("delete"));
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -917,7 +946,7 @@ fn deleting_a_bookmark_leaves_the_window_alone() {
     app.workspace_save_adapter().delete_named_workspace("scalp");
 
     assert!(
-        ui_state::load(app.workspace.ui_state_path())
+        ui_state::load(app.runtime.workspace.ui_state_path())
             .named("scalp")
             .is_none()
     );
@@ -926,7 +955,7 @@ fn deleting_a_bookmark_leaves_the_window_alone() {
         CanvasLayout::TimeAndFlow,
         "the charts on screen are not what was deleted"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// The reason the user asked for named workspaces: a way back after a
@@ -936,7 +965,8 @@ fn deleting_a_bookmark_leaves_the_window_alone() {
 fn resetting_the_startup_layout_keeps_the_bookmarks() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("reset-keeps"));
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
@@ -947,7 +977,7 @@ fn resetting_the_startup_layout_keeps_the_bookmarks() {
 
     app.workspace_save_adapter().forget_workspace();
 
-    let file = ui_state::load(app.workspace.ui_state_path());
+    let file = ui_state::load(app.runtime.workspace.ui_state_path());
     assert!(
         file.tabs.is_empty(),
         "the startup arrangement is what Reset clears"
@@ -956,34 +986,37 @@ fn resetting_the_startup_layout_keeps_the_bookmarks() {
         file.named("before the mess").is_some(),
         "the way back survives the reset it exists for"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// With nothing named, Reset still removes the file outright.
 #[test]
 fn resetting_with_no_bookmarks_removes_the_file() {
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("reset-removes"));
     app.workspace_save_adapter().save_workspace("test");
-    assert!(app.workspace.ui_state_path().exists());
+    assert!(app.runtime.workspace.ui_state_path().exists());
 
     app.workspace_save_adapter().forget_workspace();
 
-    assert!(!app.workspace.ui_state_path().exists());
+    assert!(!app.runtime.workspace.ui_state_path().exists());
 }
 
 /// A name that is only whitespace is not a name.
 #[test]
 fn a_blank_name_saves_nothing_and_says_so() {
     let (mut app, _commands) = app_with_history(50);
-    app.workspace.set_ui_state_path(scratch_ui_state("blank"));
+    app.runtime
+        .workspace
+        .set_ui_state_path(scratch_ui_state("blank"));
 
     app.workspace_save_adapter().save_named_workspace("   ");
 
-    assert!(app.workspace.session().bookmarks().is_empty());
+    assert!(app.runtime.workspace.session().bookmarks().is_empty());
     assert!(
-        !app.workspace.ui_state_path().exists(),
+        !app.runtime.workspace.ui_state_path().exists(),
         "a refused save must not write the file either"
     );
     assert!(
@@ -1002,21 +1035,22 @@ fn a_blank_name_saves_nothing_and_says_so() {
 fn closing_the_window_keeps_the_arrangement_when_autosave_is_on() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("exit-save"));
-    app.workspace.session_mut().set_save_on_exit(true);
+    app.runtime.workspace.session_mut().set_save_on_exit(true);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
 
     close_requested_frame(&mut app, &ctx);
 
-    let saved = ui_state::load(app.workspace.ui_state_path());
+    let saved = ui_state::load(app.runtime.workspace.ui_state_path());
     assert_eq!(
         saved.tabs.first().map(|tab| tab.layout),
         Some(crate::config::DeclaredLayout::TimeAndFlow),
         "the window that closed is the window that reopens"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// And switching it off means exactly that: the trader who curates their
@@ -1026,15 +1060,16 @@ fn closing_the_window_keeps_the_arrangement_when_autosave_is_on() {
 fn closing_the_window_writes_nothing_when_autosave_is_off() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("exit-no-save"));
-    app.workspace.session_mut().set_save_on_exit(false);
+    app.runtime.workspace.session_mut().set_save_on_exit(false);
     run_frame(&mut app, &ctx);
 
     close_requested_frame(&mut app, &ctx);
 
     assert!(
-        !app.workspace.ui_state_path().exists(),
+        !app.runtime.workspace.ui_state_path().exists(),
         "autosave off must leave the saved workspace untouched"
     );
 }
@@ -1045,17 +1080,18 @@ fn closing_the_window_writes_nothing_when_autosave_is_off() {
 #[test]
 fn switching_autosave_off_is_itself_saved() {
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("autosave"));
-    app.workspace.session_mut().set_save_on_exit(false);
+    app.runtime.workspace.session_mut().set_save_on_exit(false);
     app.workspace_save_adapter()
         .save_workspace("save_on_exit_toggled");
 
     assert!(
-        !ui_state::load(app.workspace.ui_state_path()).save_on_exit,
+        !ui_state::load(app.runtime.workspace.ui_state_path()).save_on_exit,
         "a trader who switched autosave off must not find it back on"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// A file this build cannot read is not this build's to rewrite.
@@ -1069,21 +1105,22 @@ fn switching_autosave_off_is_itself_saved() {
 fn a_workspace_this_build_cannot_read_survives_a_star() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("star-unreadable"));
     // A workspace from a version this build does not know.
     let from_tomorrow = "version = 99\nsaved = []\nkeep_me = true\n";
-    std::fs::write(app.workspace.ui_state_path(), from_tomorrow).unwrap();
+    std::fs::write(app.runtime.workspace.ui_state_path(), from_tomorrow).unwrap();
 
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        std::fs::read_to_string(app.workspace.ui_state_path()).expect("still there"),
+        std::fs::read_to_string(app.runtime.workspace.ui_state_path()).expect("still there"),
         from_tomorrow,
         "a file this build cannot parse is left byte for byte alone"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Picking a replay folder must not switch autosave back on.
@@ -1095,20 +1132,21 @@ fn a_workspace_this_build_cannot_read_survives_a_star() {
 #[test]
 fn picking_a_replay_folder_does_not_switch_autosave_back_on() {
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("folder-autosave"));
-    app.workspace.session_mut().set_save_on_exit(false);
+    app.runtime.workspace.session_mut().set_save_on_exit(false);
 
     app.workspace_save_adapter()
         .write_replay_folder(Some("D:/tape"));
 
-    let file = ui_state::load(app.workspace.ui_state_path());
+    let file = ui_state::load(app.runtime.workspace.ui_state_path());
     assert_eq!(file.replay_folder.as_deref(), Some("D:/tape"));
     assert!(
         !file.save_on_exit,
         "a folder pick is not a request to switch autosave on"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// The layouts are one shared library, whatever each pane is showing:
@@ -1126,7 +1164,7 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
     let first = app.layout_state().layouts().active_id();
     assert_eq!(
         app.layout_state()
-            .pane_layout(app.tabs.active_id(), PaneSide::Time(0)),
+            .pane_layout(app.runtime.tabs.active_id(), PaneSide::Time(0)),
         first,
         "both panes open on the one layout there is"
     );

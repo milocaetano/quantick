@@ -16,6 +16,55 @@ mod guide;
 pub(crate) use guide::set_indicator_mouse_vertical_line;
 
 impl LayoutAdapter<'_> {
+    /// Apply an owner-validated edit through the same layout and worker ports.
+    pub(in crate::app) fn apply_indicator_edit(
+        &mut self,
+        edit: super::super::indicator_manager::IndicatorEdit,
+    ) {
+        use super::super::indicator_manager::IndicatorEdit;
+        let target = match edit {
+            IndicatorEdit::Attached(attached) => {
+                if let Some(kind) = attached.layout_entry {
+                    self.mirror_add(attached.target, &kind);
+                }
+                attached.target
+            }
+            IndicatorEdit::Hidden(target) => {
+                self.mirror_hidden(target);
+                target
+            }
+            IndicatorEdit::Remove(target) => {
+                // Read its layout position before either mirror or origin cleanup.
+                self.mirror_remove(target);
+                let Some(tab) = self.tabs.by_id_mut(target.tab) else {
+                    return;
+                };
+                self.indicators
+                    .remove(Some(tab.pane_mut(target.side)), target);
+                target
+            }
+            IndicatorEdit::Inputs(target, values) => {
+                self.mirror_inputs(target, &values);
+                target
+            }
+            IndicatorEdit::Style(target) => {
+                self.mirror_style(target);
+                target
+            }
+        };
+        self.note_indicator_edit_at(target.tab, target.side);
+    }
+
+    fn slot_at(&self, tab: u64, side: PaneSide, slot: SlotId) -> Option<TabSlot> {
+        Some(TabSlot {
+            workspace: self.tabs.owner(),
+            pane: self.pane_at(tab, side)?.id,
+            tab,
+            side,
+            slot,
+        })
+    }
+
     /// Where a slot sits in its pane's layout, or `None` for a slot the
     /// layout does not carry — an operator's, or one a validation hook added.
     fn layout_index_of(&self, target: TabSlot) -> Option<usize> {
@@ -119,25 +168,34 @@ impl LayoutAdapter<'_> {
                     }
                     None => return None,
                 };
-                let owner = TabSlot { tab, side, slot };
-                self.indicators.slot_kinds.push((owner, kind.clone()));
+                let owner = self
+                    .slot_at(tab, side, slot)
+                    .expect("existing indicator pane");
+                self.indicators
+                    .registry
+                    .register_restored(owner, kind.clone());
                 if let (Some(index), Some((_, mtime))) = (index, file_info) {
-                    self.indicators.script_files.push((owner, index, mtime));
+                    self.indicators.registry.watch_script(owner, index, mtime);
                 }
                 return Some(slot);
             }
         };
         let slot = self.pane_mut_at(tab, side)?.add_indicator(source);
-        self.indicators
-            .slot_kinds
-            .push((TabSlot { tab, side, slot }, kind.clone()));
+        self.indicators.registry.register_restored(
+            self.slot_at(tab, side, slot)
+                .expect("existing indicator pane"),
+            kind.clone(),
+        );
         Some(slot)
     }
 
     /// Take every layout slot off one pane, view and worker alike.
     pub(super) fn remove_layout_indicators_at(&mut self, tab: u64, side: PaneSide) {
         for slot in self.layout_slots_at(tab, side) {
-            self.remove_indicator_silently(TabSlot { tab, side, slot });
+            self.remove_indicator_silently(
+                self.slot_at(tab, side, slot)
+                    .expect("existing indicator pane"),
+            );
         }
     }
 
@@ -147,7 +205,7 @@ impl LayoutAdapter<'_> {
             .tabs
             .by_id_mut(target.tab)
             .and_then(|tab| tab.pane_at_mut(target.side.index()));
-        self.indicators.slots_mut().remove(pane, target);
+        self.indicators.registry.remove(pane, target);
     }
 
     /// Put a whole saved set on one pane: add, bind inputs, queue the hide
@@ -162,7 +220,9 @@ impl LayoutAdapter<'_> {
             let Some(slot) = self.add_indicator_at(tab, side, &entry.kind) else {
                 continue;
             };
-            let owner = TabSlot { tab, side, slot };
+            let owner = self
+                .slot_at(tab, side, slot)
+                .expect("existing indicator pane");
             self.apply_saved_entry(owner, entry);
         }
     }
@@ -194,11 +254,11 @@ impl LayoutAdapter<'_> {
             );
         }
         if entry.hidden {
-            self.indicators.pending_hidden.push(owner);
+            self.indicators.registry.defer_hidden(owner);
         }
         guide::queue_saved(self, owner, entry);
         if !entry.plot_styles.is_empty() {
-            self.indicators.pending_styles.push((
+            self.indicators.registry.defer_style(
                 owner,
                 StyleOverride::from_plots(
                     entry
@@ -208,7 +268,7 @@ impl LayoutAdapter<'_> {
                         .map(SavedPlotStyle::to_override)
                         .collect(),
                 ),
-            ));
+            );
         }
     }
 
@@ -218,54 +278,19 @@ impl LayoutAdapter<'_> {
     /// visible, so applying it is a toggle. Whoever queues one dequeues it
     /// again on the matching unhide ([`Self::mirror_hidden`]).
     pub(in crate::app) fn apply_pending_indicator_state(&mut self) {
-        if !self.indicators.pending_hidden.is_empty() {
-            let pending = std::mem::take(&mut self.indicators.pending_hidden);
-            for owner in pending {
-                let applied = self
-                    .pane_mut_at(owner.tab, owner.side)
-                    .filter(|pane| {
-                        pane.indicators
-                            .all()
-                            .iter()
-                            .any(|view| view.slot == owner.slot)
-                    })
-                    .map(|pane| pane.indicators.toggle_hidden(owner.slot))
-                    .is_some();
-                if !applied
-                    && self
-                        .indicators
-                        .slot_kinds
-                        .iter()
-                        .any(|(candidate, _)| *candidate == owner)
-                {
-                    self.indicators.pending_hidden.push(owner);
-                }
-            }
-        }
-        if !self.indicators.pending_styles.is_empty() {
-            let pending = std::mem::take(&mut self.indicators.pending_styles);
-            for (owner, style) in pending {
-                let known = self
-                    .indicators
-                    .slot_kinds
-                    .iter()
-                    .any(|(candidate, _)| *candidate == owner);
-                match self
-                    .pane_mut_at(owner.tab, owner.side)
-                    .and_then(|pane| pane.indicators.view_mut(owner.slot))
-                {
-                    Some(view) => view.style = style,
-                    None if known => self.indicators.pending_styles.push((owner, style)),
-                    None => {}
-                }
-            }
-        }
-        guide::apply_pending(self);
+        self.indicators.registry.apply_pending(
+            &mut super::super::indicator_operations::IndicatorViewAdapter(self.tabs),
+        );
     }
 
     /// The origin pane's layout and the index of the slot in it — the two
     /// coordinates every mirror writes to.
     fn edit_coordinates(&self, origin: TabSlot) -> Option<(LayoutId, usize)> {
+        if origin.workspace != self.tabs.owner()
+            || self.pane_at(origin.tab, origin.side)?.id != origin.pane
+        {
+            return None;
+        }
         let index = self.layout_index_of(origin)?;
         Some((self.pane_layout(origin.tab, origin.side), index))
     }
@@ -329,7 +354,10 @@ impl LayoutAdapter<'_> {
         }
         for (tab, side) in self.mirror_targets(origin, layout) {
             if let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() {
-                self.remove_indicator_silently(TabSlot { tab, side, slot });
+                self.remove_indicator_silently(
+                    self.slot_at(tab, side, slot)
+                        .expect("existing indicator pane"),
+                );
             }
         }
     }
@@ -359,7 +387,9 @@ impl LayoutAdapter<'_> {
             let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() else {
                 continue;
             };
-            let owner = TabSlot { tab, side, slot };
+            let owner = self
+                .slot_at(tab, side, slot)
+                .expect("existing indicator pane");
             let Some(pane) = self.pane_mut_at(tab, side) else {
                 continue;
             };
@@ -376,12 +406,7 @@ impl LayoutAdapter<'_> {
                     // Unborn: the queue says what its first frame should
                     // be. An unhide takes a queued hide back out, or the
                     // view would be born and hidden a moment later.
-                    self.indicators
-                        .pending_hidden
-                        .retain(|candidate| *candidate != owner);
-                    if hidden {
-                        self.indicators.pending_hidden.push(owner);
-                    }
+                    self.indicators.registry.set_deferred_hidden(owner, hidden);
                 }
             }
         }
@@ -449,7 +474,9 @@ impl LayoutAdapter<'_> {
             let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() else {
                 continue;
             };
-            let owner = TabSlot { tab, side, slot };
+            let owner = self
+                .slot_at(tab, side, slot)
+                .expect("existing indicator pane");
             match self
                 .pane_mut_at(tab, side)
                 .and_then(|pane| pane.indicators.view_mut(slot))
@@ -457,9 +484,8 @@ impl LayoutAdapter<'_> {
                 Some(view) => view.style = style.clone(),
                 None => {
                     self.indicators
-                        .pending_styles
-                        .retain(|(candidate, _)| *candidate != owner);
-                    self.indicators.pending_styles.push((owner, style.clone()));
+                        .registry
+                        .replace_deferred_style(owner, style.clone());
                 }
             }
         }

@@ -58,9 +58,8 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     {
         let QuantickApp {
-            tabs,
+            runtime: workspace_runtime::WorkspaceRuntime { tabs, style, .. },
             config,
-            style,
             pane_ids,
             ..
         } = &mut app;

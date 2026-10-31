@@ -81,7 +81,7 @@ fn idle_arrangement_selection_and_borrowed_order_allocate_nothing() {
             })
         }
     }
-    let model = ArrangementLifecycle::new(TabId(0));
+    let model = ArrangementLifecycle::new(quantick_workspace::lifetime::WorkspaceId(0), TabId(0));
     let facts = Facts(vec![(TabId(0), "TEST".to_owned())]);
     ALLOCATIONS.with(|n| n.set(0));
     TRACK.with(|track| track.set(true));

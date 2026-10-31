@@ -19,7 +19,7 @@ fn two_win_tabs() -> QuantickApp {
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "BTCUSDT".to_owned(), None);
     select_market(&mut app, "metatrader-b3", "WIN$N");
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     app
 }
 
@@ -45,7 +45,7 @@ fn stored_win() -> Option<AssetBubbles> {
 /// One control action on the active tab's flow pane, through the registry
 /// every caller's action goes through, and its result.
 fn act(app: &mut QuantickApp, action: &str, mut input: Value) -> Value {
-    input["tab_id"] = json!(app.tabs.active_id().to_string());
+    input["tab_id"] = json!(app.runtime.tabs.active_id().to_string());
     input["pane_id"] = json!(app.active_tab().flow_pane.id.to_string());
     app.control_action(action, 1, ActionOrigin::Human, input)
         .unwrap_or_else(|error| panic!("{action}: {error:?}"))
@@ -85,7 +85,9 @@ fn ctrl_b_on_win_is_wins_alone_and_the_old_global_switch_is_ignored() {
     let layers_path = dir.join("chart-layers.toml");
     std::fs::write(&layers_path, "version = 1\n[layers]\nbubbles = false\n").expect("a file");
     let mut app = two_win_tabs();
-    app.workspace.set_chart_layers_path(layers_path.clone());
+    app.runtime
+        .workspace
+        .set_chart_layers_path(layers_path.clone());
     app.layer_wiring().restore();
     assert!(
         layer_on(&app, ChartLayer::Bubbles),
@@ -101,7 +103,7 @@ fn ctrl_b_on_win_is_wins_alone_and_the_old_global_switch_is_ignored() {
         written, "version = 1\n[layers]\nbubbles = false\n",
         "not written"
     );
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     assert!(
         !layer_on(&app, ChartLayer::Bubbles),
         "the other WIN tab wears it"
@@ -125,7 +127,7 @@ fn ctrl_b_on_win_is_wins_alone_and_the_old_global_switch_is_ignored() {
         Some(false),
         "held, not saved"
     );
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     assert!(
         !layer_on(&app, ChartLayer::Bubbles),
         "the first tab shows what is saved"
@@ -171,13 +173,13 @@ fn with_saving_off_a_win_edit_stays_on_its_tab_until_the_tab_shows_win_again() {
     assert!(why.expect("not saved").contains("saving is off"));
     assert_eq!(stored_win(), None, "nothing is written for WIN");
 
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     assert!(
         !opening_excluded(&app),
         "the other WIN tab shows what is stored"
     );
     assert!(!saves_changes(&app), "the switch is WIN's, in every tab");
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     assert!(
         opening_excluded(&app),
         "selecting a tab keeps the session's edit"
@@ -214,7 +216,7 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
     tape.set_save_asset_changes(false);
     assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true));
     maintain(&mut app);
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     let other = app.active_tab_mut().tape_mut();
     assert!(
         other.set_ignore_flow_opening(true),
@@ -222,7 +224,7 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
     );
     maintain(&mut app);
 
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     let tape = app.active_tab_mut().tape_mut();
     assert_eq!(
         tape.set_save_asset_changes(true),
@@ -238,7 +240,7 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
         None
     );
 
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     assert!(opening_excluded(&app), "the other tab wears what was saved");
     assert!(
         !app.active_tab().tape().ignore_flow_opening(),
@@ -253,7 +255,7 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
 #[test]
 fn switching_saving_on_says_whether_the_screen_was_stored_or_gave_way() {
     let mut app = two_win_tabs();
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     let off = save_switch(&mut app, false);
     assert_eq!(
         (&off["changed"], &off["screen"]),
@@ -271,7 +273,7 @@ fn switching_saving_on_says_whether_the_screen_was_stored_or_gave_way() {
     assert_eq!(tape.set_save_asset_changes(false), Some(SaveSwitch::Off));
 
     // An edit there, then saving on: the other tab's filing is newer.
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     let tape = app.active_tab_mut().tape_mut();
     assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true));
     let on = save_switch(&mut app, true);
@@ -542,7 +544,7 @@ fn win(app: &QuantickApp) -> (BubblePreset, bool, bool, bool) {
     (
         look(app),
         tab.flow_pane
-            .layer_switched_on(ChartLayer::CandleAggression, &app.style),
+            .layer_switched_on(ChartLayer::CandleAggression, &app.runtime.style),
         tab.tape().ignore_flow_opening(),
         layer_on(app, ChartLayer::Bubbles),
     )
@@ -554,14 +556,14 @@ fn btc(
     app: &mut QuantickApp,
     presets: &BubblePresetFile,
 ) -> (BubblePreset, bool, bool, AssetBubbles) {
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     let shown = (
         look(app),
         layer_on(app, ChartLayer::CandleAggression),
         layer_on(app, ChartLayer::Bubbles),
     );
     assert!(saves_changes(app), "BTC's own switch");
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     let store = AssetBubblesStore::load(crate::bubble_presets::assets_path()).shared();
     let (_, reopened) = bind_btc(store, presets);
     (shown.0, shown.1, shown.2, reopened)
@@ -614,13 +616,17 @@ fn no_bubble_edit_on_win_reaches_btc_or_a_file_every_market_reads() {
             include_str!("../../../config/chart-layers.toml"),
         )
         .expect("a chart-layers file");
-        app.workspace.set_chart_layers_path(layers_path.clone());
-        app.workspace.set_ui_state_path(dir.join("ui-state.toml"));
+        app.runtime
+            .workspace
+            .set_chart_layers_path(layers_path.clone());
+        app.runtime
+            .workspace
+            .set_ui_state_path(dir.join("ui-state.toml"));
         app.layer_wiring().restore();
         app.arrangement_adapter()
             .open_tab("binance".to_owned(), "BTCUSDT".to_owned(), None);
         maintain(&mut app);
-        app.tabs.select(0);
+        app.runtime.tabs.select(0);
         // A first frame lays out the panes the feed declares, which the
         // cockpit records; a hotkey row needs a frame, so every row has one.
         run_frame(&mut app, &egui::Context::default());
@@ -633,7 +639,10 @@ fn no_bubble_edit_on_win_reaches_btc_or_a_file_every_market_reads() {
         );
         app.workspace_save_adapter().save_workspace("audit");
         let read = |path: &Path| std::fs::read(path).unwrap_or_default();
-        let (layers, cockpit) = (read(&layers_path), read(app.workspace.ui_state_path()));
+        let (layers, cockpit) = (
+            read(&layers_path),
+            read(app.runtime.workspace.ui_state_path()),
+        );
         let shown = win(&app);
 
         (edit.apply)(&mut app, &presets_path);
@@ -644,7 +653,7 @@ fn no_bubble_edit_on_win_reaches_btc_or_a_file_every_market_reads() {
         assert_eq!(read(&layers_path), layers, "{at}: chart-layers.toml moved");
         app.workspace_save_adapter().save_workspace("audit");
         assert!(
-            read(app.workspace.ui_state_path()) == cockpit,
+            read(app.runtime.workspace.ui_state_path()) == cockpit,
             "{at}: the cockpit file moved"
         );
         let written = edit.presets == Presets::Written;

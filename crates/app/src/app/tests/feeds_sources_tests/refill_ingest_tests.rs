@@ -10,7 +10,7 @@ fn tape(ids: std::ops::RangeInclusive<u64>) -> Vec<quantick_engine::Trade> {
 }
 
 fn drain(app: &mut QuantickApp) {
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut()
         .drain_feed_with_clock(tab_id, || NOW_MS);
 }

@@ -6,7 +6,7 @@
 //! decides *which* tab, and what happens to the window when the set of them
 //! changes — plus the two owners the window mirrors onto every tab: the
 //! history reach ([`HistorySettings`]) and the symbol catalog
-//! ([`SymbolCatalog`]).
+//! ([`quantick_stores::symbol_catalog::SymbolCatalog`]).
 
 use eframe::egui;
 
@@ -15,41 +15,19 @@ use eframe::egui;
 #[cfg(test)]
 use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
-use crate::symbols_file;
 use crate::tabstrip::TabAction;
-
-use crate::config::AppConfig;
 
 use super::menu_bar::{
     CLOSE_TAB_SHORTCUT, NEW_TAB_SHORTCUT, NEXT_TAB_SHORTCUT, PREVIOUS_TAB_SHORTCUT,
 };
 use super::{QuantickApp, TabSlot};
 
-/// The interval a saved bar rule names, when it is a time rule at all — a
-/// workspace that recorded `tick:50` for a context chart is a file written by
-/// hand, and the chart opens on the default rather than on a guess.
-fn saved_time_interval(text: Option<&str>) -> Option<i64> {
-    text.and_then(|text| {
-        quantick_engine::bar_registry::BUILTIN_BARS
-            .parse(text)
-            .ok()?
-            .time_interval_ms()
-    })
-}
-
-/// Every context chart's opening interval, top to bottom, from the rules a
-/// workspace saved. A rule that is not a time rule keeps the default for its
-/// slot so the slots after it still line up with their charts. A file written
-/// before the stack existed carries only `time_bars`, which is the top chart's.
 pub(super) fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64> {
-    if bars.is_empty() {
-        return saved_time_interval(time_bars).into_iter().collect();
-    }
-    bars.iter()
-        .map(|text| {
-            saved_time_interval(Some(text)).unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS)
-        })
-        .collect()
+    quantick_stores::ui_state::saved_context_intervals(
+        bars,
+        time_bars,
+        crate::time_header::DEFAULT_INTERVAL_MS,
+    )
 }
 
 /// The window's history choices; see [`quantick_session::HistorySettings`].
@@ -60,7 +38,9 @@ impl QuantickApp {
     /// focused pane, that slot.
     pub(super) fn target_slot(&self, slot: SlotId) -> TabSlot {
         TabSlot {
-            tab: self.tabs.active_id(),
+            workspace: self.runtime.id(),
+            pane: self.active_tab().focused_pane().id,
+            tab: self.runtime.tabs.active_id(),
             side: self.active_tab().focused_side(),
             slot,
         }
@@ -93,7 +73,7 @@ impl QuantickApp {
         self.active_tab()
             .layer_toggle_state(
                 ChartLayer::Heatmap,
-                &self.style,
+                &self.runtime.style,
                 self.active_tab().capabilities(&self.config),
             )
             .0
@@ -110,14 +90,7 @@ impl QuantickApp {
         // Before the drain: a reading that arrives this frame lands on a
         // recorder built for the market it belongs to.
         super::deal_recording_wiring::ensure(self);
-        let (config, active) = (&self.config, self.tabs.active_id());
-        let mut trades = 0_u64;
-        for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
-            let before = tab.live_trades;
-            let policy = self.history.policy(self.tz, tab_id == active);
-            tab.drain_frame(tab_id, config, policy);
-            trades += tab.live_trades - before;
-        }
+        let trades = self.runtime.drain_tabs(&self.config);
         // What the window ingested, across every market it is holding.
         self.health.trades_since_summary += trades;
     }
@@ -142,7 +115,7 @@ impl QuantickApp {
             self.surfaces.source_picker.open(&self.config);
         }
         if close_tab {
-            let index = self.tabs.active_index();
+            let index = self.runtime.tabs.active_index();
             self.arrangement_adapter().close_tab(index);
         }
         if next {
@@ -182,105 +155,12 @@ impl QuantickApp {
     pub(super) fn apply_tab_action(&mut self, action: TabAction) {
         match action {
             TabAction::Activate(index) => {
-                if index < self.tabs.len() {
-                    self.tabs.select(index);
+                if index < self.runtime.tabs.len() {
+                    self.runtime.tabs.select(index);
                 }
             }
             TabAction::Close(index) => self.arrangement_adapter().close_tab(index),
             TabAction::New => self.surfaces.source_picker.open(&self.config),
         }
-    }
-}
-
-/// The instruments the picker can add to a feed: the running config, the
-/// user's own additions kept apart from it, and the sidecar they persist in.
-///
-/// The config file itself is never written: it is hand-written, comments
-/// and all, and a program that rewrote it would eat them. An addition lives
-/// in its own sidecar, which the next launch folds back in before the config
-/// is validated (see [`crate::symbols_file`]).
-pub(crate) struct SymbolCatalog<'a> {
-    pub(super) config: &'a mut AppConfig,
-    pub(super) added: &'a mut symbols_file::AddedSymbols,
-    pub(super) path: &'a std::path::Path,
-}
-
-impl SymbolCatalog<'_> {
-    /// Put `symbol` in feed `feed_id`'s catalog and remember it across
-    /// restarts. Reports whether the catalog took it.
-    pub(crate) fn add(&mut self, feed_id: &str, symbol: &str) -> Result<(), String> {
-        // Against the *whole* config, on a copy. A symbol is not just a name
-        // in a list: it takes part in every cross-check the config has, and
-        // the MetaTrader port map is one where a single mapped symbol offered
-        // by two feeds is a configuration the app refuses to load. Persisting
-        // one of those would write a file that kills the next launch — and the
-        // error would name the config, which is not the file that broke.
-        let mut candidate = self.config.clone();
-        if !candidate.add_symbol(feed_id, symbol) {
-            return Err(format!(
-                "{} already offers {symbol}",
-                self.config.feed_name(feed_id)
-            ));
-        }
-        candidate.validate()?;
-        *self.config = candidate;
-        self.added.add(feed_id, symbol);
-        if let Err(error) = symbols_file::save(self.path, self.added) {
-            // The catalog took it for this session either way; what is lost is
-            // the next launch, and the user is told which file did not take it.
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                path = %self.path.display(),
-                error = %error,
-                action = "addition_is_session_only",
-                "cannot write the added-symbols file"
-            );
-        }
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "SYMBOL_ADDED",
-            feed = %feed_id,
-            symbol = %symbol,
-            path = %self.path.display(),
-            action = "open_in_new_tab",
-            "a symbol was added from the source picker"
-        );
-        Ok(())
-    }
-
-    /// Take a user-added `symbol` back out of feed `feed_id`'s catalog.
-    ///
-    /// Only ever a catalog edit: a tab already showing that market keeps
-    /// streaming it. The picker will not offer this for a market a tab is on,
-    /// which is what stops the selection correction from retargeting it.
-    pub(crate) fn remove(&mut self, feed_id: &str, symbol: &str) {
-        if !self.config.remove_symbol(feed_id, symbol) {
-            return;
-        }
-        self.added.remove(feed_id, symbol);
-        if let Err(error) = symbols_file::save(self.path, self.added) {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                path = %self.path.display(),
-                error = %error,
-                action = "removal_is_session_only",
-                "cannot write the added-symbols file"
-            );
-        }
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "SYMBOL_REMOVED",
-            feed = %feed_id,
-            symbol = %symbol,
-            path = %self.path.display(),
-            action = "leave_open_tabs_alone",
-            "a user-added symbol left the catalog"
-        );
     }
 }

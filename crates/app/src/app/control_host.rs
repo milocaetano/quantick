@@ -662,15 +662,26 @@ impl<'a> Alerts<'a> {
 
 impl TabsPort for QuantickApp {
     fn tab_reads(&self) -> TabReads<'_> {
+        self.runtime
+            .resolve(&self.presentation.binding)
+            .expect("bound workspace");
         let presets = &self.drawings.presets;
-        TabReads::new(&self.tabs, &self.config, &self.footprint_config, presets)
+        TabReads::new(
+            &self.runtime.tabs,
+            &self.config,
+            &self.runtime.footprint_config,
+            presets,
+        )
     }
 }
 
 impl TabsMutPort for QuantickApp {
     fn tabs_mut(&mut self) -> TabsMut<'_> {
-        let reach = &mut self.history.history_reach;
-        TabsMut::new(&mut self.tabs, &self.config, reach)
+        self.runtime
+            .resolve(&self.presentation.binding)
+            .expect("bound workspace");
+        let reach = &mut self.runtime.history.history_reach;
+        TabsMut::new(&mut self.runtime.tabs, &self.config, reach)
     }
 }
 
@@ -683,11 +694,11 @@ impl ChromePort for QuantickApp {
         };
         let (rail, chrome) = (&self.toolrail, &self.drawings.chrome);
         ChromeReads::new(
-            &self.tabs,
-            &self.style,
+            &self.runtime.tabs,
+            &self.runtime.style,
             rail,
             &self.dock,
-            self.tz,
+            self.runtime.tz,
             chrome,
             drawn,
         )
@@ -696,8 +707,8 @@ impl ChromePort for QuantickApp {
 
 impl HealthPort for QuantickApp {
     fn health_reads(&self) -> HealthReads<'_> {
-        let save_on_exit = self.workspace.session().save_on_exit();
-        HealthReads::new(save_on_exit, &self.health, &self.history)
+        let save_on_exit = self.runtime.workspace.session().save_on_exit();
+        HealthReads::new(save_on_exit, &self.health, &self.runtime.history)
     }
 }
 
@@ -714,20 +725,23 @@ impl AlertsPort for QuantickApp {
 
 impl LayoutPort for QuantickApp {
     fn layout_state(&self) -> LayoutRead<'_> {
-        let session = self.workspace.layouts().session();
+        let session = self.runtime.workspace.layouts().session();
         LayoutRead {
-            tabs: &self.tabs,
-            active: self.tabs.active_index(),
+            tabs: &self.runtime.tabs,
+            active: self.runtime.tabs.active_index(),
             session,
         }
     }
 
     fn layout_adapter(&mut self) -> LayoutAdapter<'_> {
+        self.runtime
+            .resolve(&self.presentation.binding)
+            .expect("bound workspace");
         LayoutAdapter {
-            active: self.tabs.active_index(),
-            tabs: &mut self.tabs,
-            indicators: &mut self.indicators,
-            store: self.workspace.layouts_mut(),
+            active: self.runtime.tabs.active_index(),
+            tabs: &mut self.runtime.tabs,
+            indicators: &mut self.runtime.indicators,
+            store: self.runtime.workspace.layouts_mut(),
             drawing_chrome: &mut self.drawings.chrome,
             toast: &mut self.surfaces.toast,
             rename: &mut self.chrome.layout_rename,
@@ -739,8 +753,8 @@ impl LayoutPort for QuantickApp {
 impl PaperPort for QuantickApp {
     fn paper_settings(&mut self) -> PaperSettingsAdapter<'_> {
         PaperSettingsAdapter {
-            tabs: &mut self.tabs,
-            workspace: &mut self.workspace,
+            tabs: &mut self.runtime.tabs,
+            workspace: &mut self.runtime.workspace,
         }
     }
 }
@@ -748,11 +762,11 @@ impl PaperPort for QuantickApp {
 impl LayersPort for QuantickApp {
     fn layer_wiring(&mut self) -> LayerWiring<'_> {
         LayerWiring {
-            tabs: &mut self.tabs,
-            workspace: &mut self.workspace,
-            style: &mut self.style,
-            style_revision: &mut self.style_revision,
-            footprint_config: &mut self.footprint_config,
+            tabs: &mut self.runtime.tabs,
+            workspace: &mut self.runtime.workspace,
+            style: &mut self.runtime.style,
+            style_revision: &mut self.runtime.style_revision,
+            footprint_config: &mut self.runtime.footprint_config,
             chart_settings: &mut self.surfaces.chart_settings,
         }
     }
@@ -763,10 +777,10 @@ impl IndicatorPickerPort for QuantickApp {
         &mut self,
         input: quantick_control_schema::indicator_picker::PickerInput,
     ) -> Result<quantick_control_schema::indicator_picker::PickerResult, String> {
-        let target = (self.tabs.active_id(), self.focused_pane().id);
+        let target = (self.runtime.tabs.active_id(), self.focused_pane().id);
         quantick_control_schema::indicator_picker::apply(
             &mut self.surfaces.indicator_picker.state,
-            self.indicators.script_library.entries(),
+            self.runtime.indicators.script_library.entries(),
             target,
             input,
         )
@@ -775,12 +789,17 @@ impl IndicatorPickerPort for QuantickApp {
 
 impl ScriptsPort for QuantickApp {
     fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot {
-        let target = (self.tabs.active_id(), self.active_tab().focused_side());
-        let pane = self
-            .tabs
-            .runtime_mut(self.tabs.active_index())
-            .pane_mut(target.1);
-        let attached = self
+        let runtime = self
+            .runtime
+            .resolve_mut(&self.presentation.binding)
+            .expect("bound workspace");
+        let active = runtime.tabs.active_index();
+        let target = (
+            runtime.tabs.active_id(),
+            runtime.tabs[active].focused_side(),
+        );
+        let pane = runtime.tabs.runtime_mut(active).pane_mut(target.1);
+        let attached = runtime
             .indicators
             .attach_script(pane, target, name, source, by_operator);
         let owner = attached.target;
@@ -789,11 +808,11 @@ impl ScriptsPort for QuantickApp {
     }
 
     fn detach_operator_script(&mut self, slot: u64) -> Result<bool, ()> {
-        let Some(target) = self.indicators.operator_target(slot)? else {
+        let Some(target) = self.runtime.indicators.operator_target(slot)? else {
             return Ok(false);
         };
+        self.runtime.validate_target(target).map_err(|_| ())?;
         self.apply_indicator_edit(IndicatorEdit::Remove(target));
-        self.indicators.operator_slots.remove(&target);
         Ok(true)
     }
 }
@@ -841,7 +860,7 @@ pub(crate) fn control_quick_range(
     app.drawings
         .chrome
         .quick_range
-        .control(app.tabs.id_at(app.tabs.active_index()))
+        .control(app.runtime.tabs.id_at(app.runtime.tabs.active_index()))
 }
 
 /// Control-only launch inputs, captured before owner construction.

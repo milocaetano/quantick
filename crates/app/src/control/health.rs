@@ -127,7 +127,7 @@ fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
 fn pane_health(pane: &ChartPane, side: PaneSide) -> PaneHealthSnapshot {
     PaneHealthSnapshot::from_indicators(
         pane.id,
-        side.into(),
+        crate::control::pane_side_dto(side),
         pane.indicators
             .all()
             .iter()

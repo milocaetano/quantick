@@ -4,7 +4,7 @@ use super::*;
 fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
     let (mut app, events, _commands, _book) = test_app();
     let ctx = egui::Context::default();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     events
         .try_send(FeedEvent::Backfilled(
             (350_000..400_000).map(trade).collect(),
@@ -102,7 +102,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
 fn a_held_chart_drag_survives_repeated_history_publications() {
     let (mut app, events, _commands, _book) = test_app();
     let ctx = egui::Context::default();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     events
         .try_send(FeedEvent::Backfilled(
             (350_000..400_000).map(trade).collect(),

@@ -60,7 +60,7 @@ fn profile_fixture_unadopted(ctx: &egui::Context, collapsed: bool) -> QuantickAp
         })
         .collect();
     events.try_send(FeedEvent::Backfilled(prints)).unwrap();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab_mut()

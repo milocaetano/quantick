@@ -2996,6 +2996,7 @@ dependencies = [
  "quantick-indicators",
  "quantick-orderbook",
  "quantick-orderflow",
+ "quantick-workspace",
  "rust_decimal",
 ]
 

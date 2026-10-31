@@ -470,6 +470,49 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
     effects
 }
 
+/// A positional address within the flow chart and context stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum PaneSide {
+    #[default]
+    Flow,
+    Time(usize),
+}
+
+impl PaneSide {
+    /// This side as a [`usize`] address: `0` is the flow pane, `1..` the
+    /// context stack in display order.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Flow => 0,
+            Self::Time(slot) => slot + 1,
+        }
+    }
+
+    /// The side a [`usize`] address names. The inverse of [`Self::index`].
+    #[must_use]
+    pub const fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::Flow,
+            slot => Self::Time(slot - 1),
+        }
+    }
+
+    /// What the chrome calls this pane: "Flow", "Timeframe", "Timeframe 2".
+    ///
+    /// The top context chart keeps the bare name every menu and status line
+    /// showed while it was the only one; the number appears only where there
+    /// is a second chart to tell it from.
+    #[must_use]
+    pub fn title(self) -> String {
+        match self {
+            Self::Flow => "Flow".to_owned(),
+            Self::Time(0) => "Timeframe".to_owned(),
+            Self::Time(slot) => format!("Timeframe {}", slot + 1),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

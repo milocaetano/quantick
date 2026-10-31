@@ -19,6 +19,9 @@ use eframe::egui;
 use crate::canvas_layout::PaneIdAllocator;
 
 mod arrangement_adapter;
+mod workspace_runtime;
+use quantick_workspace::lifetime::{WorkspaceId, WorkspaceLifetime};
+const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
 pub(crate) mod arrangement_host;
 use arrangement_host::ArrangementHost;
 mod chart_layers_wiring;
@@ -76,10 +79,8 @@ use crate::drawings;
 use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::{Harness, ScriptedMenu};
-use crate::indicator_worker::SlotId;
 use crate::indicators::preset_file;
 use crate::indicators::state_file;
-use crate::pane::PaneSide;
 use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
@@ -205,88 +206,25 @@ pub(crate) struct ControlFrameMetrics {
 /// one dock, one appearance, one status line — plus the indicator persistence
 /// layer, which describes a workspace rather than a market.
 pub struct QuantickApp {
-    /// The open markets, left to right as the strip shows them (§11).
-    ///
-    /// Retained trades are O(trades × panes × open tabs): every tab keeps its
-    /// own history and a split tab keeps it twice. Nothing caps the count —
-    /// the strip is as long as the user makes it.
-    tabs: ArrangementHost,
-    /// The window chrome's transient state — see [`chrome::ChromeState`].
+    /// One process-owned workspace; a window binding never owns its sessions.
+    runtime: workspace_runtime::WorkspaceRuntime,
+    presentation: workspace_runtime::WindowPresentation,
     chrome: chrome::ChromeState,
-    /// The window's one source of pane ids. Pane ids namespace egui
-    /// interaction state across the whole window rather than within a tab, so
-    /// this may not be per-tab state: two panes sharing an id share a drag.
+    /// Allocated process-wide, independent of presentation placement.
     pane_ids: PaneIdAllocator,
-    /// The instruments the user added from the picker, already folded into
-    /// `config`'s catalog. Kept apart from it so the picker can tell an
-    /// addition — which it may take back out — from a shipped entry, which is
-    /// the config file's and not the app's to touch.
     added_symbols: AddedSymbols,
-
     config: AppConfig,
-
-    /// The observer gateway and its launch hooks — see [`control_host::ControlState`].
     control: control_host::ControlState,
-
-    /// The indicator persistence layer — see [`indicator_manager::IndicatorState`].
-    indicators: indicator_manager::IndicatorState,
-
-    /// The browser window and, while the active tab replays, the transport.
     replay_view: ReplayView,
-
-    // External chart chrome: the tabbed right dock and the edge-docked
-    // drawing rail. Neither is painted over the chart canvas.
     dock: Dock,
     toolrail: ToolRail,
-
-    /// Floating chrome that owns the state it draws: the assistant's popup,
-    /// the acknowledgement toast. One field for the whole set, one module
-    /// per surface — see [`crate::surfaces::Surfaces`].
     surfaces: crate::surfaces::Surfaces,
-    /// Drawing commands, shared chrome/editor state and persistent defaults.
     drawings: drawing_controller::DrawingController,
-    /// The footprint layer's signal tunables — resolved at boot (env >
-    /// `config/footprint.toml` preset > saved edits > defaults), edited live
-    /// by the layer menu's controls.
-    footprint_config: crate::footprint_config::FootprintConfig,
-    /// Where a signal alarm is played — see [`replay_and_history::AlertState`].
     audio: replay_and_history::AlertState,
-
-    /// The chart appearance every renderer reads. The window that edits it
-    /// is `surfaces::chart_settings`, which hands back a copy rather than
-    /// holding a reference to this one.
-    style: ChartStyle,
-    style_revision: u64,
-    /// What the window measures about itself — see [`health::HealthCounters`].
     health: health::HealthCounters,
-    /// The window-wide history reach — see [`tabs::HistorySettings`].
-    history: tabs::HistorySettings,
-
-    // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
-    tz: TzOffset,
-    /// Where the workspace lives on disk, and whether what is on screen has
-    /// reached it: the six store paths, the layout book with the one rule that
-    /// decides when it is written, the chart-layer baseline, and what the
-    /// Workspace menu knows without asking the filesystem.
-    ///
-    /// One field where there were twenty-one. See [`crate::workspace_store`]
-    /// for why the owner is a new type rather than a home inside `ui_state`,
-    /// `layouts` or `workspace_bundle` — none of which holds session state —
-    /// and for the invariant the layout trio could not carry apart.
-    workspace: crate::workspace_store::WorkspaceStore,
 }
 
-/// An indicator slot together with the tab and pane that own it.
-///
-/// Slot ids are allocated per pane, so the id alone identifies nothing once
-/// there are two panes, let alone two tabs: without the rest, removing one
-/// tab's slot 0 would drop another's bookkeeping for its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct TabSlot {
-    tab: u64,
-    side: PaneSide,
-    slot: SlotId,
-}
+use quantick_chart::indicator_registry::TabSlot;
 
 /// Constructor-only inputs, consumed at the owners' existing launch phases.
 /// This value is never retained on the app or used as a frame context.
@@ -309,26 +247,29 @@ pub(crate) struct AppLaunch {
 /// The arrangement ports over `$app`'s own fields, borrowed one by one so a
 /// caller can lend a sibling field (the replay view) beside them.
 macro_rules! arrangement_adapter {
-    ($app:expr) => {
+    ($app:expr) => {{
+        $app.runtime
+            .resolve(&$app.presentation.binding)
+            .expect("bound workspace");
         arrangement_adapter::ArrangementAdapter {
-            tabs: &mut $app.tabs,
+            tabs: &mut $app.runtime.tabs,
             config: &$app.config,
-            style: &mut $app.style,
+            style: &mut $app.runtime.style,
             pane_ids: &mut $app.pane_ids,
-            workspace: &mut $app.workspace,
-            indicators: &mut $app.indicators,
+            workspace: &mut $app.runtime.workspace,
+            indicators: &mut $app.runtime.indicators,
             #[cfg(any(feature = "scenario-harness", test))]
             harness: &$app.chrome.harness,
             toolrail: &mut $app.toolrail,
-            tz: &mut $app.tz,
+            tz: &mut $app.runtime.tz,
             dock: &mut $app.dock,
             show_perf: &mut $app.health.show_perf,
             record_deals: &mut $app.chrome.record_deals,
-            history: &mut $app.history,
+            history: &mut $app.runtime.history,
             drawing_chrome: &mut $app.drawings.chrome,
             toast: &mut $app.surfaces.toast,
         }
-    };
+    }};
 }
 
 impl QuantickApp {
@@ -342,7 +283,7 @@ impl QuantickApp {
             layout_delete_confirm: &mut self.chrome.layout_delete_confirm,
             added_symbols: &mut self.added_symbols,
             drawing_presets: &mut self.drawings.presets,
-            footprint_config: &mut self.footprint_config,
+            footprint_config: &mut self.runtime.footprint_config,
             chart_settings: &mut self.surfaces.chart_settings,
         }
     }
@@ -352,14 +293,14 @@ impl QuantickApp {
     #[cfg(test)]
     pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
         arrangement_adapter::ArrangementRead {
-            tabs: &self.tabs,
+            tabs: &self.runtime.tabs,
             config: &self.config,
             toolrail: &self.toolrail,
-            tz: &self.tz,
+            tz: &self.runtime.tz,
             dock: &self.dock,
             show_perf: self.health.show_perf,
             record_deals: self.chrome.record_deals,
-            history: &self.history,
+            history: &self.runtime.history,
             drawing_chrome: &self.drawings.chrome,
         }
     }
@@ -368,7 +309,7 @@ impl QuantickApp {
     pub(crate) fn workspace_state(&self) -> workspace_save_adapter::WorkspaceRead<'_> {
         workspace_save_adapter::WorkspaceRead {
             arrangement: self.arrangement_state(),
-            session: self.workspace.session(),
+            session: self.runtime.workspace.session(),
             replay_view: &self.replay_view,
         }
     }
@@ -378,33 +319,41 @@ impl QuantickApp {
         arrangement_adapter!(self).into_save(&self.replay_view)
     }
 
-    pub(crate) fn symbol_catalog(&mut self) -> tabs::SymbolCatalog<'_> {
-        tabs::SymbolCatalog {
+    pub(crate) fn symbol_catalog(&mut self) -> quantick_stores::symbol_catalog::SymbolCatalog<'_> {
+        quantick_stores::symbol_catalog::SymbolCatalog {
             config: &mut self.config,
             added: &mut self.added_symbols,
-            path: self.workspace.symbols_path(),
+            path: self.runtime.workspace.symbols_path(),
         }
     }
 
     /// The active tab beside the config it reads.
     ///
     /// Split here, once, because almost every tab operation needs both and
-    /// `self.tabs[i].f(&self.config)` is a borrow error at every call site.
+    /// `self.runtime.tabs[i].f(&self.config)` is a borrow error at every call site.
     pub(super) fn active_with_config(&mut self) -> (&mut Tab, &AppConfig) {
-        (
-            self.tabs.runtime_mut(self.tabs.active_index()),
-            &self.config,
-        )
+        let tabs = &mut self.runtime.tabs;
+        (tabs.runtime_mut(tabs.active_index()), &self.config)
     }
 
     /// The tab on screen.
     pub(super) fn active_tab(&self) -> &Tab {
-        &self.tabs[self.tabs.active_index()]
+        let tabs = &self
+            .runtime
+            .resolve(&self.presentation.binding)
+            .expect("bound workspace")
+            .tabs;
+        &tabs[tabs.active_index()]
     }
 
     /// See [`Self::active_tab`].
     pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
-        self.tabs.runtime_mut(self.tabs.active_index())
+        let tabs = &mut self
+            .runtime
+            .resolve_mut(&self.presentation.binding)
+            .expect("bound workspace")
+            .tabs;
+        tabs.runtime_mut(tabs.active_index())
     }
 
     /// The pane the chrome speaks for: the active tab's focused pane (§11).
@@ -595,53 +544,22 @@ impl QuantickApp {
         let symbols_path = symbols_file::default_path();
         let footprint_settings_path = crate::footprint_config::settings_path();
         let indicator_presets_path = preset_file::default_path();
-        let mut app = Self {
-            tabs: ArrangementHost::new(quantick_workspace::arrangement::TabId(FIRST_TAB_ID), tab),
-            chrome: chrome::ChromeState {
-                #[cfg(any(feature = "scenario-harness", test))]
-                harness: Harness::capture(&launch.scenario),
-                #[cfg(any(feature = "scenario-harness", test))]
-                window_startup: launch.window,
-                record_deals: None,
-                layout_picker_open: false,
-                layout_rename: None,
-                layout_delete_confirm: None,
-                surface: None,
-                workspace_menu_rect: None,
-                history_menu_rect: None,
-                feed_chip_rect: None,
-                // The hook stands in for a click on the opening tab's chip, which
-                // is the first tab there is.
-                feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
-            },
-            pane_ids,
-            added_symbols: symbols_file::load(&symbols_path),
-            config,
-            control: control_host::ControlState {
-                control_access: Some(crate::control::ControlAccess::new()),
-                #[cfg(any(feature = "control-harness", test))]
-                scenarios: Default::default(),
-            },
+        let added_symbols = symbols_file::load(&symbols_path);
+        let mut runtime = workspace_runtime::WorkspaceRuntime {
+            lifetime: WorkspaceLifetime::new(WORKSPACE_ID),
+            tabs: ArrangementHost::new(
+                WORKSPACE_ID,
+                quantick_workspace::arrangement::TabId(FIRST_TAB_ID),
+                tab,
+            ),
             indicators: indicator_manager::IndicatorState::new(
+                WORKSPACE_ID,
                 FIRST_TAB_ID,
                 &indicator_presets_path,
             ),
-            replay_view: ReplayView::new(
-                workspace.replay_folder.as_deref(),
-                workspace.replay_day_before,
-            ),
-            dock: Dock::new(),
-            toolrail: ToolRail::new(),
-            surfaces: crate::surfaces::Surfaces::default(),
-            drawings: drawing_controller::DrawingController::new(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
-            audio: replay_and_history::AlertState {
-                alerts: Box::new(crate::audio::Speaker::default()),
-                alert_failure: None,
-            },
             style: ChartStyle::default(),
             style_revision: 0,
-            health: health::HealthCounters::new(),
             history: tabs::HistorySettings {
                 progressive_history: true,
                 history_reach: history_reach::HistoryReach::default(),
@@ -666,12 +584,55 @@ impl QuantickApp {
                 trades_dir,
             ),
         };
+        let presentation = workspace_runtime::WindowPresentation::new(&mut runtime);
+        let mut app = Self {
+            runtime,
+            presentation,
+            chrome: chrome::ChromeState {
+                #[cfg(any(feature = "scenario-harness", test))]
+                harness: Harness::capture(&launch.scenario),
+                #[cfg(any(feature = "scenario-harness", test))]
+                window_startup: launch.window,
+                record_deals: None,
+                layout_picker_open: false,
+                layout_rename: None,
+                layout_delete_confirm: None,
+                surface: None,
+                workspace_menu_rect: None,
+                history_menu_rect: None,
+                feed_chip_rect: None,
+                // The hook stands in for a click on the opening tab's chip, which
+                // is the first tab there is.
+                feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
+            },
+            pane_ids,
+            added_symbols,
+            config,
+            control: control_host::ControlState {
+                control_access: Some(crate::control::ControlAccess::new()),
+                #[cfg(any(feature = "control-harness", test))]
+                scenarios: Default::default(),
+            },
+            replay_view: ReplayView::new(
+                workspace.replay_folder.as_deref(),
+                workspace.replay_day_before,
+            ),
+            dock: Dock::new(),
+            toolrail: ToolRail::new(),
+            surfaces: crate::surfaces::Surfaces::default(),
+            drawings: drawing_controller::DrawingController::new(),
+            audio: replay_and_history::AlertState {
+                alerts: Box::new(crate::audio::Speaker::default()),
+                alert_failure: None,
+            },
+            health: health::HealthCounters::new(),
+        };
         // Recording is not a display choice: it starts with the feed, so
         // hiding the map later never leaves a hole in what was captured.
         let config = app.config.clone();
         app.active_tab_mut().refresh_chip_label(&config);
         app.active_tab_mut().ensure_book_capture(&config);
-        let assets = open_asset_bubbles(app.workspace.bubble_assets(), &config);
+        let assets = open_asset_bubbles(app.runtime.workspace.bubble_assets(), &config);
         app.active_tab_mut().bind_asset_bubbles(&config, &assets);
         // A feed read by timeframe can open straight on the timeframe chart.
         app.active_tab_mut().apply_feed_declared_layout(&config);
@@ -711,14 +672,15 @@ impl QuantickApp {
             launch.toolrail,
         );
         if let Some(notice) = crate::store_home::rescue_notice() {
-            app.tabs.runtime_mut(0).paper.show_toast(notice);
+            app.runtime.tabs.runtime_mut(0).paper.show_toast(notice);
         }
         if let Some(summary) = consolidated
             && summary.imported() > 0
         {
             // A silent rescue would look like the app moved files on its
             // own; the toast says what happened and that copies were made.
-            app.tabs
+            app.runtime
+                .tabs
                 .runtime_mut(0)
                 .paper
                 .show_toast(crate::paper_home::import_toast(&summary));
@@ -747,6 +709,9 @@ impl eframe::App for QuantickApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if !self.runtime.lifetime.begin_shutdown() {
+            return;
+        }
         // Whatever the debounce was still holding: a level drawn a moment
         // before closing is a level the trader expects back.
         self.layout_adapter().flush_layouts();
@@ -810,7 +775,7 @@ impl eframe::App for QuantickApp {
         // down with it: the capture showed no compass, no crosshair and no
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
-        let flow = &self.tabs[self.tabs.active_index()].flow_pane;
+        let flow = &self.runtime.tabs[self.runtime.tabs.active_index()].flow_pane;
         self.chrome.harness.push_scripted_input(flow, raw_input);
         let Some(pane) = self.chrome.harness.context_menu() else {
             return;

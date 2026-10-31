@@ -229,7 +229,7 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
                 pane.ingest_backfill(&prints);
             }
             run_frame(&mut app, &ctx);
-            let tab_id = app.tabs.active_id();
+            let tab_id = app.runtime.tabs.active_id();
             let tab = app.active_tab();
             let pane = &tab.flow_pane;
             let future = pane.slots() as f32 - 0.4996;
@@ -262,7 +262,7 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
             assert!(request.anchors[1].time_ms.is_none());
             let mut input = quantick_control_handlers::annotate::quick_range_input(
                 &request,
-                crate::pane::PaneSide::Flow.into(),
+                crate::control::annotated_side(crate::pane::PaneSide::Flow),
             )
             .unwrap();
             if action.arms_placement() {

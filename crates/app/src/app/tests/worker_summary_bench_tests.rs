@@ -41,30 +41,32 @@ fn worker_summary_cadence_cost() {
     const MEASURED: usize = 600;
     let (mut app, _events, _commands, _book) = test_app();
     let (other, _other_events, _other_commands, _other_book) = test_app();
-    app.tabs = app.tabs.with_fixture_identity(41);
+    app.runtime.tabs = app.runtime.tabs.with_fixture_identity(41);
 
-    app.tabs.runtime_mut(0).flow_pane.id = 901;
-    app.tabs.runtime_mut(0).time_panes.clear();
-    let mut tab = other.tabs.into_single_runtime();
+    app.runtime.tabs.runtime_mut(0).flow_pane.id = 901;
+    app.runtime.tabs.runtime_mut(0).time_panes.clear();
+    let mut tab = other.runtime.tabs.into_single_runtime();
 
     tab.flow_pane.id = 902;
     tab.time_panes.clear();
     tab.time_panes
         .push(crate::pane::ChartPane::time(900, 60_000));
-    let opening = app.tabs.plan_open();
-    app.tabs.append(opening, tab);
-    app.tabs.select(0);
-    assert_eq!(app.tabs.active_index(), 0);
-    assert_eq!(app.tabs.len(), 2);
+    let opening = app.runtime.tabs.plan_open();
+    app.runtime.tabs.append(opening, tab);
+    app.runtime.tabs.select(0);
+    assert_eq!(app.runtime.tabs.active_index(), 0);
+    assert_eq!(app.runtime.tabs.len(), 2);
     assert_eq!(
-        app.tabs
+        app.runtime
+            .tabs
             .iter()
             .map(|tab| tab.panes().count())
             .sum::<usize>(),
         3
     );
     assert_eq!(
-        app.tabs
+        app.runtime
+            .tabs
             .iter()
             .flat_map(|tab| tab.panes())
             .filter(|(pane, _)| pane.orderflow.is_some())

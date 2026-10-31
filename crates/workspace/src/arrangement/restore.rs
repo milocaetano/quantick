@@ -20,6 +20,7 @@ pub enum RestoreEffect {
 }
 #[derive(Debug)]
 pub struct RestoreStep {
+    owner: WorkspaceId,
     epoch: u64,
     sequence: usize,
     effect: RestoreEffect,
@@ -151,6 +152,7 @@ impl ArrangementLifecycle {
             Phase::Finish => RestoreEffect::Finish,
         };
         Ok(RestoreStep {
+            owner: self.owner,
             epoch: state.epoch,
             sequence: state.sequence,
             effect,
@@ -245,6 +247,9 @@ impl ArrangementLifecycle {
         Ok(())
     }
     fn validate_restore_step(&self, step: &RestoreStep) -> Result<(), ArrangementError> {
+        if step.owner != self.owner {
+            return Err(ArrangementError::ForeignOwner);
+        }
         if self
             .restore
             .as_ref()

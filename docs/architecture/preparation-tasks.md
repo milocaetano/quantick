@@ -91,6 +91,28 @@ queueing. Do not claim a bounded queue bounds one handler's execution time.
 stop that expansion, document the concrete dependency and split a prerequisite.
 Do not hand the context `&mut QuantickApp` under another name.
 
+### Implemented registry boundary in #717 / #721
+
+`quantick-chart::indicator_registry::IndicatorRegistry` now owns registered
+indicator identities, operator provenance, script-watch metadata, layout slot
+ordering, tab retirement, pane-position remapping and deferred view state.
+`TabSlot` retains the workspace, tab and stable pane identity alongside its
+positional `PaneSide`; that vocabulary belongs to `chart-interaction`.
+The explicit `chart -> workspace` edge supplies document kinds and resource
+addresses; runtime styles remain the exact chart `StyleOverride` value.
+
+The registry applies pending hide/style/mouse-guide work through the existing
+headless indicator view, deciding retry and stale-work cleanup itself. Its
+worker host port keeps allocation, render removal and worker-command ordering
+in the app adapter. Fake hosts test these policies without a window. App tests
+still exercise the actual worker, mirroring, file-watch and native rebind paths.
+
+Compilation, authority, file I/O and polling clocks, settings dialogs, layout
+mirroring and dirty effects remain in their current app adapters. This does not
+move `ChartPane`, market workers or the full `WorkspaceRuntime` below app, and
+does not implement detached-window UI or alter the legacy numeric detach wire
+contract. The runtime migration remains single-window preparation.
+
 ## F2 - Project indicator state from its owner
 
 **Priority:** P1. **Depends on:** F1.

@@ -364,7 +364,7 @@ fn a_drag_far_into_the_past_stops_at_the_retained_tape() {
 
 fn input(app: &QuantickApp, fields: Value) -> Value {
     let mut payload = json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
     });
     for (key, value) in fields.as_object().unwrap() {

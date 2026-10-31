@@ -216,7 +216,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
         // shows no flow pane at all, so naming a focused pane there would
         // name a canvas this capture does not list.
         focused_pane_id: focused_pane_id.map(WireU64::new),
-        focused_pane_side: focused_side.into(),
+        focused_pane_side: crate::control::pane_side_dto(focused_side),
         controls,
         covered_regions: COVERED_REGIONS.to_vec(),
         coverage,

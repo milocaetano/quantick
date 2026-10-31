@@ -896,18 +896,18 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     .tape_mut()
                     .bind_asset(binding, &settings);
                 json!({
-                    "tab_id": app.tabs.active_id().to_string(),
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": app.active_tab().flow_pane.id.to_string(),
                     "preset": "Binance BTC Spot spheres",
                 })
             }
             "feed.source.set" => json!({
-                "tab_id": app.tabs.active_id().to_string(),
+                "tab_id": app.runtime.tabs.active_id().to_string(),
                 "feed_id": app.active_tab().active.0,
                 "symbol": app.active_tab().active.1,
             }),
             "chart.price_axis.set" => json!({
-                "tab_id": app.tabs.active_id().to_string(),
+                "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "mode": { "kind": "manual", "low": "80", "high": "120" },
             }),
@@ -916,7 +916,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 let tape = app.active_tab_mut().tape_mut();
                 assert!(tape.apply_preset("mini index regions", false));
                 json!({
-                    "tab_id": app.tabs.active_id().to_string(),
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": app.active_tab().flow_pane.id.to_string(),
                     "window": { "kind": "fixed", "ms": 7_000 },
                 })
@@ -926,7 +926,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 let pane = &mut app.active_tab_mut().flow_pane;
                 pane.model.viewport.zoom(3.0);
                 json!({
-                    "tab_id": app.tabs.active_id().to_string(),
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": app.active_tab().flow_pane.id.to_string(),
                     "axis": "candles",
                 })
@@ -934,17 +934,17 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "indicator.picker.set" => json!({ "operation": { "action": "open" } }),
             "chart.settings.set" => json!({ "action": "open", "tab": "candles" }),
             "orderflow.tape.opening_scale.set" => json!({
-                "tab_id": app.tabs.active_id().to_string(),
+                "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "ignore_opening_burst_in_scale": true,
             }),
             "orderflow.tape.fold.set" => json!({
-                "tab_id": app.tabs.active_id().to_string(),
+                "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "fold": "candles",
             }),
             "orderflow.bubbles.save_changes.set" => json!({
-                "tab_id": app.tabs.active_id().to_string(),
+                "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "save_changes": false,
             }),
@@ -953,16 +953,16 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 assert!(tape.apply_preset("mini index regions", false));
                 tape.set_bubbles_enabled(true);
                 json!({
-                    "tab_id": app.tabs.active_id().to_string(),
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": app.active_tab().flow_pane.id.to_string(),
                     "target": "tape",
                     "scale": "2",
                 })
             }
             "layers.visibility.set" => json!({
-                "tab_id": app.tabs.active_id().to_string(),
+                "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
-                "layer_id": "grid", "visible": !app.style.canvas.grid_enabled,
+                "layer_id": "grid", "visible": !app.runtime.style.canvas.grid_enabled,
             }),
             "layout.tab.switch" => json!({ "name": first_layout }),
             "layout.pane.resize_pair" => json!({
@@ -971,7 +971,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "fraction": "0.4"
             }),
             "indicator.mouse_vertical_line.set" => {
-                let tab_id = app.tabs.active_id();
+                let tab_id = app.runtime.tabs.active_id();
                 let tab = app.active_tab();
                 let view = &tab.flow_pane.indicators.all()[0];
                 json!({
@@ -995,7 +995,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 let index = place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
                 let pane = app.active_tab().drawing_pane();
                 json!({
-                    "tab_id": app.tabs.active_id().to_string(),
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": pane.id.to_string(),
                     "drawing_id": pane.drawings.items()[index].id.0.to_string(),
                     "enabled": true,

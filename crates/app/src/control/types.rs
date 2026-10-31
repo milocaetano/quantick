@@ -9,12 +9,10 @@ use crate::{
 
 pub(crate) use quantick_control_host::wire::*;
 
-impl From<PaneSide> for PaneSideDto {
-    fn from(side: PaneSide) -> Self {
-        match side {
-            PaneSide::Flow => Self::Flow,
-            PaneSide::Time(_) => Self::Time,
-        }
+pub(crate) fn pane_side_dto(side: PaneSide) -> PaneSideDto {
+    match side {
+        PaneSide::Flow => PaneSideDto::Flow,
+        PaneSide::Time(_) => PaneSideDto::Time,
     }
 }
 

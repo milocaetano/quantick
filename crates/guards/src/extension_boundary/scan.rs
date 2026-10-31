@@ -8,7 +8,7 @@ pub(super) const ROOTS: [&str; 2] = ["QuantickApp", "ChartState"];
 pub(super) const TARGETS: [&str; 4] = [
     "QuantickApp",
     "ChartState",
-    "IndicatorSlots",
+    "IndicatorRegistry",
     "IndicatorHost",
 ];
 
@@ -150,12 +150,7 @@ pub(super) fn scan(source: &str) -> Result<FileScan, String> {
                 return Err(fail(name, "target requires a named brace body"));
             }
             let header = normalized(&tokens[at + 2..open]);
-            let expected = if name.text == "IndicatorSlots" {
-                "< 'a >"
-            } else {
-                ""
-            };
-            if header != expected || (token.text == "trait") != (name.text == "IndicatorHost") {
+            if !header.is_empty() || (token.text == "trait") != (name.text == "IndicatorHost") {
                 return Err(fail(name, "unsupported protected declaration header"));
             }
             let end = tokens[open].pair.unwrap();

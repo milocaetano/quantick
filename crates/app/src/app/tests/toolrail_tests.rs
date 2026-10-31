@@ -7,17 +7,18 @@ use super::*;
 fn starring_a_tool_reaches_the_disk_on_the_spot() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("star-written"));
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        ui_state::load(app.workspace.ui_state_path()).favorite_tools,
+        ui_state::load(app.runtime.workspace.ui_state_path()).favorite_tools,
         vec!["measure".to_owned()],
         "the star is on disk with nobody having saved the workspace"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Unstarring is a choice too — it must reach the disk exactly as starring
@@ -26,7 +27,8 @@ fn starring_a_tool_reaches_the_disk_on_the_spot() {
 fn unstarring_a_tool_reaches_the_disk_too() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("star-removed"));
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
@@ -34,12 +36,12 @@ fn unstarring_a_tool_reaches_the_disk_too() {
     run_frame(&mut app, &ctx);
 
     assert!(
-        ui_state::load(app.workspace.ui_state_path())
+        ui_state::load(app.runtime.workspace.ui_state_path())
             .favorite_tools
             .is_empty(),
         "the rail the trader emptied stays empty"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Autosave governs the arrangement, never the rail: a trader who switched
@@ -50,13 +52,14 @@ fn unstarring_a_tool_reaches_the_disk_too() {
 fn starring_a_tool_is_written_with_autosave_off_and_drags_nothing_along() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("star-no-autosave"));
-    app.workspace.session_mut().set_save_on_exit(false);
+    app.runtime.workspace.session_mut().set_save_on_exit(false);
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
-    let file = ui_state::load(app.workspace.ui_state_path());
+    let file = ui_state::load(app.runtime.workspace.ui_state_path());
     assert_eq!(
         file.favorite_tools,
         vec!["measure".to_owned()],
@@ -70,7 +73,7 @@ fn starring_a_tool_is_written_with_autosave_off_and_drags_nothing_along() {
         !file.save_on_exit,
         "and the trader's autosave switch stayed off"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Restoring a saved list is not the trader making a choice, so it must
@@ -80,13 +83,14 @@ fn starring_a_tool_is_written_with_autosave_off_and_drags_nothing_along() {
 fn restoring_the_saved_stars_writes_nothing() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("star-restore"));
     app.toolrail.set_favorites(&["measure".to_owned()]);
     run_frame(&mut app, &ctx);
 
     assert!(
-        !app.workspace.ui_state_path().exists(),
+        !app.runtime.workspace.ui_state_path().exists(),
         "a restore is not a save: nothing was written"
     );
 }
@@ -98,7 +102,8 @@ fn restoring_the_saved_stars_writes_nothing() {
 fn opening_a_bookmark_leaves_the_starred_tools_alone() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("bookmark-stars"));
     // Named while the rail was empty, which is the case that used to hurt.
     app.workspace_save_adapter().save_named_workspace("scalp");
@@ -112,7 +117,7 @@ fn opening_a_bookmark_leaves_the_starred_tools_alone() {
         vec!["measure".to_owned()],
         "the tools the trader keeps at hand outlive the arrangement"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Reset throws away the *startup arrangement*. The stars were never part
@@ -122,7 +127,8 @@ fn opening_a_bookmark_leaves_the_starred_tools_alone() {
 fn resetting_the_startup_layout_keeps_the_starred_tools() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("reset-stars"));
     app.workspace_save_adapter().save_workspace("test");
     app.toolrail.toggle_favorite(starrable_tool());
@@ -130,14 +136,14 @@ fn resetting_the_startup_layout_keeps_the_starred_tools() {
 
     app.workspace_save_adapter().forget_workspace();
 
-    let file = ui_state::load(app.workspace.ui_state_path());
+    let file = ui_state::load(app.runtime.workspace.ui_state_path());
     assert_eq!(
         file.favorite_tools,
         vec!["measure".to_owned()],
         "resetting a layout is not asking to rebuild the rail"
     );
     assert!(file.tabs.is_empty(), "and the arrangement really was reset");
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// The rail a validation run wears is a costume, not a choice.
@@ -151,15 +157,16 @@ fn resetting_the_startup_layout_keeps_the_starred_tools() {
 fn a_staged_rail_is_never_written_down() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("star-staged"));
-    app.workspace.session_mut().stage_favorites();
+    app.runtime.workspace.session_mut().stage_favorites();
 
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert!(
-        !app.workspace.ui_state_path().exists(),
+        !app.runtime.workspace.ui_state_path().exists(),
         "a staged rail leaves no trace in the trader's workspace"
     );
 }
@@ -174,18 +181,19 @@ fn a_staged_rail_is_never_written_down() {
 fn starring_a_tool_does_not_pretend_a_layout_was_saved() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("star-not-a-layout"));
-    app.workspace.session_mut().set_saved(false);
+    app.runtime.workspace.session_mut().set_saved(false);
 
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     assert!(
-        !app.workspace.session().saved(),
+        !app.runtime.workspace.session().saved(),
         "a star is a standing choice, not a saved arrangement"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// An empty list in a file is silence, not an order to empty the rail.
@@ -219,16 +227,19 @@ fn a_restored_workspace_with_no_stars_leaves_the_rail_alone() {
 fn the_next_session_opens_on_the_stars_the_last_one_left() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("star-next-session"));
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     // A second session reading the same file, restoring as startup does.
     let (mut next, _commands) = app_with_history(50);
-    next.workspace
-        .set_ui_state_path(app.workspace.ui_state_path().to_path_buf());
-    let saved = ui_state::load(next.workspace.ui_state_path()).restore(&next.config.clone());
+    next.runtime
+        .workspace
+        .set_ui_state_path(app.runtime.workspace.ui_state_path().to_path_buf());
+    let saved =
+        ui_state::load(next.runtime.workspace.ui_state_path()).restore(&next.config.clone());
     next.arrangement_adapter().restore_workspace(saved);
 
     assert_eq!(
@@ -236,7 +247,7 @@ fn the_next_session_opens_on_the_stars_the_last_one_left() {
         vec!["measure".to_owned()],
         "the rail opens on what the trader starred"
     );
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 #[test]

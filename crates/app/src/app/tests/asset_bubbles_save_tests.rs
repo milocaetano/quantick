@@ -11,7 +11,7 @@ fn maintain(app: &mut QuantickApp) {
 
 fn input(app: &QuantickApp, save_changes: bool) -> Value {
     json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "save_changes": save_changes,
     })

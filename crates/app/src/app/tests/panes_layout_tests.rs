@@ -831,10 +831,10 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     let ctx = egui::Context::default();
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
-    for tab in app.tabs.iter_mut() {
+    for tab in app.runtime.tabs.iter_mut() {
         tab.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     }
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     run_frame(&mut app, &ctx);
     let chip = app
         .chrome_reads()
@@ -846,7 +846,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
         "opened on the first chart"
     );
 
-    app.tabs.select(1);
+    app.runtime.tabs.select(1);
     run_frame(&mut app, &ctx);
     assert!(
         app.chrome_reads().feed_chip_rect().is_some(),
@@ -857,7 +857,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
         "but nobody pressed that corner"
     );
 
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     run_frame(&mut app, &ctx);
     assert!(
         !app.chrome_reads().feed_popup_open(),
@@ -1277,7 +1277,7 @@ fn a_batch_of_prints_publishes_one_forming_bar_per_pane() {
         .collect();
     evt_tx.try_send(FeedEvent::LiveBatch(batch)).unwrap();
 
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
 
     for (side, before) in [PaneSide::Flow, PaneSide::Time(0)].into_iter().zip(before) {
@@ -1621,7 +1621,7 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
     let scene = observer_scene(&app);
     let id = format!(
         "tab.{}.context_divider.{upper}.{lower}",
-        app.tabs.active_id()
+        app.runtime.tabs.active_id()
     );
     let divider = scene["controls"]
         .as_array()
@@ -1667,11 +1667,15 @@ fn the_watched_market_wins_the_slot() {
     let (mut app, _commands) = app_with_history(50);
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
-    let watched = app.tabs.active_index();
-    for (index, tab) in app.tabs.iter_mut().enumerate() {
+    let watched = app.runtime.tabs.active_index();
+    for (index, tab) in app.runtime.tabs.iter_mut().enumerate() {
         tab.paper.show_toast(format!("message from tab {index}"));
     }
-    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
+    frame_tail::settle_paper_panels(
+        &mut app.runtime.tabs,
+        &mut app.surfaces.toast,
+        Instant::now(),
+    );
     assert_eq!(
         app.surfaces.toast.message(),
         Some(format!("message from tab {watched}").as_str()),
@@ -1685,16 +1689,18 @@ fn the_watched_market_wins_the_slot() {
 fn resetting_the_startup_layout_leaves_this_session_alone() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.workspace.set_ui_state_path(scratch_ui_state("reset"));
+    app.runtime
+        .workspace
+        .set_ui_state_path(scratch_ui_state("reset"));
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     app.workspace_save_adapter().save_workspace("test");
-    assert!(app.workspace.ui_state_path().exists());
+    assert!(app.runtime.workspace.ui_state_path().exists());
 
     app.workspace_save_adapter().forget_workspace();
 
     assert!(
-        !app.workspace.ui_state_path().exists(),
+        !app.runtime.workspace.ui_state_path().exists(),
         "the next launch opens on config"
     );
     assert_eq!(
@@ -1759,23 +1765,25 @@ fn a_window_that_opens_on_the_split_focuses_the_flow_chart() {
 #[test]
 fn resetting_the_startup_layout_keeps_the_other_standing_choices() {
     let (mut app, _commands) = app_with_history(50);
-    app.workspace
+    app.runtime
+        .workspace
         .set_ui_state_path(scratch_ui_state("reset-standing"));
-    app.workspace
+    app.runtime
+        .workspace
         .session_mut()
         .adopt_recent(vec!["D:/desk/scalp.qws.toml".to_owned()]);
     app.workspace_save_adapter().save_workspace("test");
 
     app.workspace_save_adapter().forget_workspace();
 
-    let file = ui_state::load(app.workspace.ui_state_path());
+    let file = ui_state::load(app.runtime.workspace.ui_state_path());
     assert_eq!(
         file.recent_workspaces,
         vec!["D:/desk/scalp.qws.toml".to_owned()],
         "the Open-recent menu is not part of the layout being reset"
     );
     assert!(file.tabs.is_empty(), "and the layout really was reset");
-    let _ = std::fs::remove_file(app.workspace.ui_state_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
 /// Switching layouts focuses the pane the switch reveals, so the first
@@ -2240,10 +2248,10 @@ fn a_divider_drag_does_not_follow_a_tab_switch() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let untouched = app.tabs[1].split_fraction;
+    let untouched = app.runtime.tabs[1].split_fraction;
 
     // Back to the first tab, and press its divider.
-    app.tabs.select(0);
+    app.runtime.tabs.select(0);
     run_frame(&mut app, &ctx);
     let grab = app
         .active_tab()
@@ -2263,7 +2271,7 @@ fn a_divider_drag_does_not_follow_a_tab_switch() {
     run_frame_with_events(&mut app, &ctx, vec![pointer_button(moved, false)]);
 
     assert_eq!(
-        app.tabs[1].split_fraction, untouched,
+        app.runtime.tabs[1].split_fraction, untouched,
         "the second tab's divider must not inherit the first tab's drag"
     );
 }
@@ -2380,7 +2388,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     assert_eq!(app.layout_state().focused_pane_layout(), second);
     assert_eq!(
         app.layout_state()
-            .pane_layout(app.tabs.active_id(), PaneSide::Flow),
+            .pane_layout(app.runtime.tabs.active_id(), PaneSide::Flow),
         first,
         "the flow pane kept its layout"
     );
@@ -2398,7 +2406,7 @@ fn two_panes_show_two_layouts_side_by_side() {
         "and the flow pane still shows layout 1's EMA"
     );
     assert_eq!(
-        app.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         1,
         "the time pane's registration went with the layout it left, and              only the flow pane's is left"
     );
@@ -2442,7 +2450,7 @@ fn two_panes_show_two_layouts_side_by_side() {
         1
     );
     assert_eq!(
-        app.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         2,
         "one registration per pane, and no leak from the switch"
     );
@@ -2451,7 +2459,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
     run_frame(&mut app, &ctx);
-    let opened = app.tabs.active_id();
+    let opened = app.runtime.tabs.active_id();
     assert_eq!(
         app.layout_state().pane_layout(opened, PaneSide::Flow),
         second
@@ -2492,12 +2500,13 @@ fn two_panes_show_two_layouts_side_by_side() {
     // count but shifts every later edit's layout index by one, so a
     // mirrored remove would take the wrong indicator on the other panes.
     assert_eq!(
-        app.indicators
-            .slot_kinds
+        app.runtime
+            .indicators
+            .registry
+            .slot_kinds()
             .iter()
-            .filter(
-                |(owner, _)| owner.tab == app.tabs.active_id() && owner.side == PaneSide::Time(0)
-            )
+            .filter(|(owner, _)| owner.tab == app.runtime.tabs.active_id()
+                && owner.side == PaneSide::Time(0))
             .count(),
         1,
         "the time pane holds one registration after two switches, not two"
@@ -2511,7 +2520,7 @@ fn two_panes_show_two_layouts_side_by_side() {
 fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let tab = app.tabs.active_id();
+    let tab = app.runtime.tabs.active_id();
     let first = app.layout_state().pane_layout(tab, PaneSide::Flow);
 
     let time_point = pane_point(&app, PaneSide::Time(0));
@@ -2581,7 +2590,7 @@ fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
 fn pane_local_strip_actions_target_the_footer_that_raised_them() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let tab = app.tabs.active_id();
+    let tab = app.runtime.tabs.active_id();
     let first = app.layout_state().layouts().active_id();
     app.active_tab_mut().focus = PaneSide::Flow;
     let second = app
@@ -2666,9 +2675,9 @@ fn per_pane_layouts_are_recorded_and_restored() {
     assert_eq!(tabs[0].flow_layout, Some(first.0));
     assert_eq!(tabs[0].context_layouts, vec![second.0]);
 
-    let path = app.workspace.layouts().path().to_path_buf();
+    let path = app.runtime.workspace.layouts().path().to_path_buf();
     let (mut again, _commands2) = split_app(&ctx, 200);
-    again.workspace.set_layouts_path(path.to_path_buf());
+    again.runtime.workspace.set_layouts_path(path.to_path_buf());
     again
         .active_tab_mut()
         .flow_pane
@@ -2682,7 +2691,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
     assert_eq!(
         again
             .layout_state()
-            .pane_layout(again.tabs.active_id(), PaneSide::Time(0)),
+            .pane_layout(again.runtime.tabs.active_id(), PaneSide::Time(0)),
         second
     );
     assert_eq!(
@@ -2726,7 +2735,7 @@ fn layouts_come_back_after_a_restart() {
         .expect("renamed");
     app.layout_adapter().flush_layouts();
 
-    let path = app.workspace.layouts().path().to_path_buf();
+    let path = app.runtime.workspace.layouts().path().to_path_buf();
     let crate::layouts::Loaded::Book(book) = crate::layouts::load(&path) else {
         panic!("the book was written");
     };
@@ -2742,7 +2751,7 @@ fn layouts_come_back_after_a_restart() {
 
     // A second app on the same home — the same file — opens on the book.
     let (mut again, _commands2) = split_app(&ctx, 200);
-    again.workspace.set_layouts_path(path.to_path_buf());
+    again.runtime.workspace.set_layouts_path(path.to_path_buf());
     again.layout_adapter().reload_layouts(&[]);
     assert_eq!(again.layout_state().layouts().active().name, "open");
     again
@@ -2774,7 +2783,9 @@ fn a_previewed_input_never_reaches_the_layout() {
     settle_indicators(&mut app);
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     let target = TabSlot {
-        tab: app.tabs.active_id(),
+        workspace: crate::app::WORKSPACE_ID,
+        pane: app.active_tab().flow_pane.id,
+        tab: app.runtime.tabs.active_id(),
         side: PaneSide::Flow,
         slot,
     };
@@ -2783,7 +2794,8 @@ fn a_previewed_input_never_reaches_the_layout() {
         target.side,
         crate::indicator_legend::LegendAction::OpenSettings(target.slot),
     );
-    app.indicators
+    app.runtime
+        .indicators
         .indicator_settings
         .as_mut()
         .expect("dialog")
@@ -2791,7 +2803,7 @@ fn a_previewed_input_never_reaches_the_layout() {
         quantick_indicators::InputValue::Int(50),
         quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
     ];
-    let change = app.indicators.preview_settings();
+    let change = app.runtime.indicators.preview_settings();
     app.apply_indicator_settings_change(change);
     assert!(
         app.layout_state().layouts().active().indicators[0]
@@ -2799,7 +2811,7 @@ fn a_previewed_input_never_reaches_the_layout() {
             .is_empty(),
         "a preview is not a commit"
     );
-    let change = app.indicators.apply_settings();
+    let change = app.runtime.indicators.apply_settings();
     app.apply_indicator_settings_change(change);
     assert_eq!(
         app.layout_state().layouts().active().indicators[0].inputs[0],
@@ -3299,7 +3311,7 @@ fn a_tab_repeats_its_own_target_and_a_fresh_one_the_windows() {
         history_reach::HistoryReach::Sessions(1),
         "yesterday is what a chart opens on"
     );
-    app.history.history_reach = history_reach::HistoryReach::Sessions(3);
+    app.runtime.history.history_reach = history_reach::HistoryReach::Sessions(3);
     app.drain_tabs();
     assert_eq!(
         app.active_tab().session.main_history_reach(),
@@ -3309,7 +3321,7 @@ fn a_tab_repeats_its_own_target_and_a_fresh_one_the_windows() {
     let config = app.config.clone();
     app.active_tab_mut()
         .load_history(&config, history_reach::HistoryReach::Hours(4));
-    app.history.history_reach = history_reach::HistoryReach::Sessions(5);
+    app.runtime.history.history_reach = history_reach::HistoryReach::Sessions(5);
     app.drain_tabs();
     assert_eq!(
         app.active_tab().session.main_history_reach(),
@@ -3326,7 +3338,7 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let path = symbols_scratch("removed");
     let _ = std::fs::remove_file(&path);
-    app.workspace.set_symbols_path(path.clone());
+    app.runtime.workspace.set_symbols_path(path.clone());
     app.symbol_catalog()
         .add("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
@@ -3337,7 +3349,7 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
         None,
     );
     run_frame(&mut app, &ctx);
-    let open_tabs = app.tabs.len();
+    let open_tabs = app.runtime.tabs.len();
 
     app.symbol_catalog().remove("binance", "WINQ26");
 
@@ -3355,7 +3367,7 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
         !crate::symbols_file::load(&path).contains("binance", "WINQ26"),
         "and so did the file"
     );
-    assert_eq!(app.tabs.len(), open_tabs, "no tab was closed");
+    assert_eq!(app.runtime.tabs.len(), open_tabs, "no tab was closed");
     assert_eq!(
         app.active_tab().symbol,
         "WINQ26",
@@ -3371,8 +3383,10 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
 fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
-    app.workspace.set_symbols_path(symbols_scratch("guard"));
-    let _ = std::fs::remove_file(app.workspace.symbols_path());
+    app.runtime
+        .workspace
+        .set_symbols_path(symbols_scratch("guard"));
+    let _ = std::fs::remove_file(app.runtime.workspace.symbols_path());
     app.symbol_catalog()
         .add("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
@@ -3386,6 +3400,7 @@ fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
 
     // What the picker is handed, and what it does with it.
     let open: Vec<(String, String)> = app
+        .runtime
         .tabs
         .iter()
         .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
@@ -3404,7 +3419,7 @@ fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
         "WINQ26",
         "removing a symbol never moves a tab off its market"
     );
-    let _ = std::fs::remove_file(app.workspace.symbols_path());
+    let _ = std::fs::remove_file(app.runtime.workspace.symbols_path());
 }
 
 /// (a) The `+` opens the picker, and choosing a market adds a tab that
@@ -3413,26 +3428,29 @@ fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
 fn the_plus_opens_a_picker_and_its_choice_becomes_the_active_tab() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(100);
-    assert_eq!(app.tabs.len(), 1, "quantick opens on one tab");
+    assert_eq!(app.runtime.tabs.len(), 1, "quantick opens on one tab");
     assert_eq!(app.active_tab().symbol, "TESTUSDT");
 
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
 
-    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.runtime.tabs.len(), 2);
     assert_eq!(
-        app.tabs.active_index(),
+        app.runtime.tabs.active_index(),
         1,
         "the new tab is the one you land on"
     );
     assert_eq!(app.active_tab().symbol, "ETHUSDT");
     assert_ne!(
-        app.tabs.id_at(0),
-        app.tabs.id_at(1),
+        app.runtime.tabs.id_at(0),
+        app.runtime.tabs.id_at(1),
         "ids are handed out, never reused"
     );
     // Pane ids namespace egui state; two tabs sharing one would share a
     // drag the moment both had been on screen.
-    assert_ne!(app.tabs[0].flow_pane.id, app.tabs[1].flow_pane.id);
+    assert_ne!(
+        app.runtime.tabs[0].flow_pane.id,
+        app.runtime.tabs[1].flow_pane.id
+    );
     // The picker's choice is honoured, not the config default.
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
@@ -3451,9 +3469,9 @@ fn a_background_tab_keeps_ingesting() {
     let ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     // Leave the new market in the background.
     app.apply_tab_action(TabAction::Activate(0));
-    assert_eq!(app.tabs.active_index(), 0);
+    assert_eq!(app.runtime.tabs.active_index(), 0);
 
-    let before = app.tabs[1].flow_pane.state.trades().len();
+    let before = app.runtime.tabs[1].flow_pane.state.trades().len();
     // Push into the background tab's own channel, then run the window's
     // drain — not that tab's, which would prove nothing about the loop.
     for id in 900..905 {
@@ -3462,7 +3480,7 @@ fn a_background_tab_keeps_ingesting() {
     app.drain_tabs();
 
     assert_eq!(
-        app.tabs[1].flow_pane.state.trades().len(),
+        app.runtime.tabs[1].flow_pane.state.trades().len(),
         before + 5,
         "a tab off screen still takes in what its feed sent"
     );
@@ -3478,33 +3496,41 @@ fn a_background_tab_keeps_ingesting() {
 fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
-    let first = app.tabs.active_id();
+    let first = app.runtime.tabs.active_id();
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    let second = app.tabs.active_id();
+    let second = app.runtime.tabs.active_id();
     // Register a slot on the tab about to close, so the bookkeeping has
     // something to lose with it.
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     assert!(
-        app.indicators
-            .slot_kinds
+        app.runtime
+            .indicators
+            .registry
+            .slot_kinds()
             .iter()
             .any(|(owner, _)| owner.tab == second)
     );
 
     app.apply_tab_action(TabAction::Close(1));
 
-    assert_eq!(app.tabs.len(), 1);
-    assert_eq!(app.tabs.active_id(), first, "a neighbour takes over");
+    assert_eq!(app.runtime.tabs.len(), 1);
+    assert_eq!(
+        app.runtime.tabs.active_id(),
+        first,
+        "a neighbour takes over"
+    );
     assert!(
-        !app.indicators
-            .slot_kinds
+        !app.runtime
+            .indicators
+            .registry
+            .slot_kinds()
             .iter()
             .any(|(owner, _)| owner.tab == second),
         "its indicator bookkeeping went with it"
     );
     // The last tab stays: a window with no market has nothing to draw.
     app.apply_tab_action(TabAction::Close(0));
-    assert_eq!(app.tabs.len(), 1, "the last tab is not closable");
+    assert_eq!(app.runtime.tabs.len(), 1, "the last tab is not closable");
     run_frame(&mut app, &ctx);
 }
 
@@ -3538,7 +3564,7 @@ fn the_source_combo_changes_only_the_active_tab() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    let untouched = app.tabs[0].symbol.clone();
+    let untouched = app.runtime.tabs[0].symbol.clone();
 
     // What the combo does: write the selection, then let the frame switch.
     app.active_tab_mut().symbol = "TESTUSDT".to_owned();
@@ -3548,10 +3574,10 @@ fn the_source_combo_changes_only_the_active_tab() {
     assert_eq!(app.active_tab().symbol, "TESTUSDT");
     assert_eq!(app.active_tab().active.1, "TESTUSDT", "its feed followed");
     assert_eq!(
-        app.tabs[0].symbol, untouched,
+        app.runtime.tabs[0].symbol, untouched,
         "the other tab kept its market"
     );
-    assert_eq!(app.tabs[0].active.1, untouched);
+    assert_eq!(app.runtime.tabs[0].active.1, untouched);
 }
 
 /// (f) The transport speaks for one tab at a time (§11). A recording in a
@@ -3592,7 +3618,7 @@ fn the_transport_shows_only_while_the_active_tab_replays() {
     // its own tab, but the transport belongs to whoever is on screen.
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     assert!(
-        app.tabs[0].replay.is_some(),
+        app.runtime.tabs[0].replay.is_some(),
         "the background tab is still the one holding the recording"
     );
     assert!(
@@ -3613,19 +3639,19 @@ fn the_cycle_shortcuts_walk_the_strip_and_wrap() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     let _ends = open_second_tab(&mut app, &ctx, "TESTUSDT");
-    assert_eq!(app.tabs.len(), 3);
-    assert_eq!(app.tabs.active_index(), 2);
+    assert_eq!(app.runtime.tabs.len(), 3);
+    assert_eq!(app.runtime.tabs.active_index(), 2);
 
     app.arrangement_adapter().cycle_tab(1);
     assert_eq!(
-        app.tabs.active_index(),
+        app.runtime.tabs.active_index(),
         0,
         "forward from the last wraps to the first"
     );
     app.arrangement_adapter().cycle_tab(-1);
-    assert_eq!(app.tabs.active_index(), 2, "and back again");
+    assert_eq!(app.runtime.tabs.active_index(), 2, "and back again");
     app.arrangement_adapter().cycle_tab(-1);
-    assert_eq!(app.tabs.active_index(), 1);
+    assert_eq!(app.runtime.tabs.active_index(), 1);
 
     // Through the real key path, so the shortcut itself is covered.
     run_frame_with_modifiers(
@@ -3634,7 +3660,11 @@ fn the_cycle_shortcuts_walk_the_strip_and_wrap() {
         vec![key_press_with(egui::Key::Tab, egui::Modifiers::CTRL)],
         egui::Modifiers::CTRL,
     );
-    assert_eq!(app.tabs.active_index(), 2, "Ctrl+Tab moves forward one");
+    assert_eq!(
+        app.runtime.tabs.active_index(),
+        2,
+        "Ctrl+Tab moves forward one"
+    );
 }
 
 /// Ctrl+W closes, Ctrl+T opens the picker — and neither collides with a
@@ -3644,7 +3674,7 @@ fn the_tab_shortcuts_open_and_close() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.runtime.tabs.len(), 2);
 
     run_frame_with_modifiers(
         &mut app,
@@ -3652,7 +3682,7 @@ fn the_tab_shortcuts_open_and_close() {
         vec![key_press_with(egui::Key::W, egui::Modifiers::CTRL)],
         egui::Modifiers::CTRL,
     );
-    assert_eq!(app.tabs.len(), 1, "Ctrl+W closes the active tab");
+    assert_eq!(app.runtime.tabs.len(), 1, "Ctrl+W closes the active tab");
 
     run_frame_with_modifiers(
         &mut app,

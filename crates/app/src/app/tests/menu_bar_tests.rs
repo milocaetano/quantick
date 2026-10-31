@@ -32,10 +32,10 @@ fn file_close_tab_closes_the_active_tab() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.runtime.tabs.len(), 2);
     click_file_entry(&mut app, &ctx, "Close Tab");
     assert_eq!(
-        app.tabs.len(),
+        app.runtime.tabs.len(),
         1,
         "File > Close Tab closes the active tab, like Ctrl+W and the chip's ×"
     );

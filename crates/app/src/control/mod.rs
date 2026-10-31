@@ -79,13 +79,14 @@ pub(crate) fn journal_test_event(index: usize) -> journal::NewEvent {
         payload: serde_json::json!({ "index": index }),
     }
 }
+pub(crate) use annotate::annotated_side;
 #[cfg(test)]
 pub(crate) use gateway::RecordedActor;
 #[cfg(test)]
 pub(crate) use gateway::ServedRequest;
 pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};
 pub(crate) use notify::AgentPopup;
-pub(crate) use types::PaneSideDto;
+pub(crate) use types::{PaneSideDto, pane_side_dto};
 
 /// Where the control trace sits beside a recording. Re-exported for the tests
 /// that check the file the session scope names is the file the gateway writes.

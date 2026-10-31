@@ -496,9 +496,10 @@ impl DrawingController {
             .place_quick_range
             .take_if(|placement| !placement.conversion.request().action.arms_placement())?;
         let operation = request.conversion.request();
-        let Some(input) =
-            quantick_control_handlers::annotate::quick_range_input(operation, request.side.into())
-        else {
+        let Some(input) = quantick_control_handlers::annotate::quick_range_input(
+            operation,
+            crate::control::annotated_side(request.side),
+        ) else {
             self.chrome.quick_range.finish_conversion(
                 request.conversion,
                 quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::InputInvalid,

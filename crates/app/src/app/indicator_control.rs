@@ -36,7 +36,7 @@ pub(crate) fn attach_script<P: ScriptsPort + ?Sized>(
     let by_operator = attached_by != quantick_control::wire::ActorKind::HumanUi;
     let (tab_id, pane_side, slot) =
         app.attach_script(input.name.clone(), input.source, by_operator);
-    let pane_side = pane_side.into();
+    let pane_side = crate::control::pane_side_dto(pane_side);
     let result = AttachResult {
         slot_id: WireU64::new(slot.0),
         tab_id: WireU64::new(tab_id),

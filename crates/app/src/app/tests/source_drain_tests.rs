@@ -16,7 +16,7 @@ fn anchor(app: &QuantickApp) -> (f32, Option<i64>, bool) {
 #[test]
 fn source_drain_reset_retains_empty_anchor_debt_then_settles_populated_series() {
     let (mut app, events, _commands, _book) = test_app();
-    let tab_id = app.tabs.active_id();
+    let tab_id = app.runtime.tabs.active_id();
     events
         .try_send(FeedEvent::Backfilled(prints(100, 250)))
         .unwrap();
@@ -133,7 +133,7 @@ fn source_drain_intrinsic_and_final_publication_counts_are_literal() {
     ];
     for (label, queued, expected, expected_clock) in cases {
         let (mut app, events, _commands, _book) = test_app();
-        let tab_id = app.tabs.active_id();
+        let tab_id = app.runtime.tabs.active_id();
         let ctx = egui::Context::default();
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         run_frame(&mut app, &ctx);
@@ -174,7 +174,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
     use quantick_chart_interaction::source_drain_plan::{SourceDrainPlan, SourceDrainStage::*};
     for early in [false, true] {
         let (mut app, events, _commands, _book) = test_app();
-        let tab_id = app.tabs.active_id();
+        let tab_id = app.runtime.tabs.active_id();
         events
             .try_send(FeedEvent::Backfilled(prints(100, 250)))
             .unwrap();
@@ -248,7 +248,7 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
     use quantick_chart_interaction::source_drain_plan::{SourceDrainPlan, SourceDrainStage::*};
     for early in [false, true] {
         let (mut app, events, _commands, _book) = test_app();
-        let tab_id = app.tabs.active_id();
+        let tab_id = app.runtime.tabs.active_id();
         let pane = &mut app.active_tab_mut().flow_pane;
         pane.add_indicator(crate::indicator_worker::IndicatorSource::Script {
             name: "Drain close".to_owned(),
@@ -335,7 +335,7 @@ fn the_source_drain_plan_adds_no_heap_work_to_a_dense_drain() {
 
     let drain_work = |planned: bool| {
         let (mut app, events, _commands, _book) = test_app();
-        let tab_id = app.tabs.active_id();
+        let tab_id = app.runtime.tabs.active_id();
         events
             .try_send(FeedEvent::Backfilled(prints(1, 8_001)))
             .unwrap();

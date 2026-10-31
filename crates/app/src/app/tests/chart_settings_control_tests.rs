@@ -27,7 +27,7 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let original = app.style;
+    let original = app.runtime.style;
 
     for invalid in [
         json!({"action": "open"}),
@@ -46,7 +46,10 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
             Some(codes::INVALID_REQUEST),
             "{invalid}"
         );
-        assert_eq!(app.style, original, "a refused call changes nothing");
+        assert_eq!(
+            app.runtime.style, original,
+            "a refused call changes nothing"
+        );
         assert!(!app.surfaces.chart_settings.is_open());
     }
 
@@ -79,17 +82,17 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
         &mut client,
         json!({"action": "apply_candle_preset", "name": "glass"}),
     ));
-    assert_eq!(app.style.candles, CandlePreset::Glass.style());
+    assert_eq!(app.runtime.style.candles, CandlePreset::Glass.style());
     assert_eq!(
-        app.style.canvas, original.canvas,
+        app.runtime.style.canvas, original.canvas,
         "a built-in keeps the canvas"
     );
     assert_eq!(glass["candle_preset"], "Glass");
 
     // A look of the trader's own, saved and brought back.
-    app.style.candles.gap_px = 4.5;
-    app.style.canvas.grid_enabled = !original.canvas.grid_enabled;
-    let night: ChartStyle = app.style;
+    app.runtime.style.candles.gap_px = 4.5;
+    app.runtime.style.canvas.grid_enabled = !original.canvas.grid_enabled;
+    let night: ChartStyle = app.runtime.style;
     let saved = success_result(&settings_call(
         &mut app,
         &mut client,
@@ -119,13 +122,16 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
         &mut client,
         json!({"action": "apply_candle_preset", "name": "Classic"}),
     );
-    assert_eq!(app.style.candles, CandlePreset::Classic.style());
+    assert_eq!(app.runtime.style.candles, CandlePreset::Classic.style());
     settings_call(
         &mut app,
         &mut client,
         json!({"action": "apply_candle_preset", "name": "night"}),
     );
-    assert_eq!(app.style, night, "a saved look brings candles and canvas");
+    assert_eq!(
+        app.runtime.style, night,
+        "a saved look brings candles and canvas"
+    );
 
     let reset = success_result(&settings_call(
         &mut app,
@@ -133,7 +139,7 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
         json!({"action": "reset_candles"}),
     ));
     assert_eq!(
-        app.style, original,
+        app.runtime.style, original,
         "reset returns to the look the window opened on"
     );
     assert_eq!(reset["changed"], true);
@@ -145,7 +151,7 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
     std::fs::create_dir_all(unwritable.parent().unwrap()).unwrap();
     let mut held =
         crate::surfaces::chart_settings::CandlesTab::with_presets_path(unwritable.clone());
-    held.save("dawn", app.style)
+    held.save("dawn", app.runtime.style)
         .expect("written while the path is a file");
     std::fs::remove_file(&unwritable).unwrap();
     std::fs::create_dir_all(&unwritable).unwrap();
@@ -241,9 +247,13 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
     let (mut app, _commands) = app_with_history(20);
     app.surfaces
         .chart_settings
-        .open(ChartSettingsTab::Candles, app.style);
+        .open(ChartSettingsTab::Candles, app.runtime.style);
     // The pane's layer menu, drained by the window.
-    app.workspace.layers_mut().actions.open_footprint_settings = true;
+    app.runtime
+        .workspace
+        .layers_mut()
+        .actions
+        .open_footprint_settings = true;
     app.layer_wiring().apply_actions();
     assert!(
         app.surfaces
@@ -301,7 +311,7 @@ fn a_named_style_change_leaves_the_appearance_log_line() {
         let lines = recorded.named("CANDLE_STYLE_CHANGED");
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert_eq!(lines[0]["preset"], CandlePreset::Glass.log_value());
-        assert_eq!(lines[0]["revision"], app.style_revision.to_string());
+        assert_eq!(lines[0]["revision"], app.runtime.style_revision.to_string());
         call(&mut app, ChartSettingsInput::ResetCandles);
         assert_eq!(
             recorded.named("CANDLE_STYLE_CHANGED").len(),

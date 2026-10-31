@@ -5,7 +5,7 @@ const ACTION: &str = "orderflow.bubbles.size.set";
 
 fn input(app: &QuantickApp, target: &str, scale: f32) -> Value {
     json!({
-        "tab_id": app.tabs.active_id().to_string(),
+        "tab_id": app.runtime.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
         "target": target,
         "scale": scale.to_string(),

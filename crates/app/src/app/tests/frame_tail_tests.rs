@@ -118,8 +118,9 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
         drawing = pane.drawings.items().last().unwrap().id;
     }
     let form = crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
-    app.tabs
-        .runtime_mut(app.tabs.active_index())
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
         .arm_strategy_instance(
             &mut *app.audio.alerts,
             pane::PaneSide::Flow,
@@ -147,7 +148,7 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
     }
     app.active_tab_mut().notice =
         FeedNotice::attention("Fixture transport is paused", "Choose how to recover.");
-    app.chrome.feed_popup_tab = Some(app.tabs.active_id());
+    app.chrome.feed_popup_tab = Some(app.runtime.tabs.active_id());
     for _ in 0..3 {
         let _ = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     }
@@ -391,18 +392,22 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
     let (mut app, _commands) = app_with_history(50);
     let (other, _events, _commands2, _book) = test_app();
     let (third, _events3, _commands3, _book3) = test_app();
-    let opening = app.tabs.plan_open();
-    app.tabs.append(opening, other.tabs.into_single_runtime());
-    let opening = app.tabs.plan_open();
-    app.tabs.append(opening, third.tabs.into_single_runtime());
-    app.tabs.select(0);
-    app.tabs.runtime_mut(1).symbol = "BACKGROUND".to_owned();
+    let opening = app.runtime.tabs.plan_open();
+    app.runtime
+        .tabs
+        .append(opening, other.runtime.tabs.into_single_runtime());
+    let opening = app.runtime.tabs.plan_open();
+    app.runtime
+        .tabs
+        .append(opening, third.runtime.tabs.into_single_runtime());
+    app.runtime.tabs.select(0);
+    app.runtime.tabs.runtime_mut(1).symbol = "BACKGROUND".to_owned();
     let run = |app: &mut QuantickApp| {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             let mut chip = None;
             let mut popup = None;
             super::super::frame_tail::FrameTailOwners {
-                tabs: &mut app.tabs,
+                tabs: &mut app.runtime.tabs,
                 config: &app.config,
                 toast: &mut app.surfaces.toast,
                 chip_rect: &mut chip,
@@ -410,9 +415,9 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
             }
             .execute(
                 super::super::frame_tail::FrameTailInput {
-                    ctx,
+                    presentation: Some(ctx),
                     now: Instant::now(),
-                    tz: app.tz,
+                    tz: app.runtime.tz,
                     notice_action: feed_notice::NoticeAction::None,
                     popup_tab: 7,
                     popup_open: true,
@@ -430,18 +435,24 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
             assert_eq!(popup, Some(7));
         });
     };
-    for (index, tab) in app.tabs.iter_mut().enumerate() {
+    for (index, tab) in app.runtime.tabs.iter_mut().enumerate() {
         tab.paper.show_toast(format!("message{index}"));
     }
     run(&mut app);
     assert_eq!(app.surfaces.toast.message(), Some("message0"));
     assert!(
-        app.tabs
+        app.runtime
+            .tabs
             .iter_mut()
             .all(|tab| tab.paper.take_toast().is_none())
     );
-    app.tabs.runtime_mut(1).paper.show_toast("first".to_owned());
-    app.tabs
+    app.runtime
+        .tabs
+        .runtime_mut(1)
+        .paper
+        .show_toast("first".to_owned());
+    app.runtime
+        .tabs
         .runtime_mut(2)
         .paper
         .show_toast("second".to_owned());

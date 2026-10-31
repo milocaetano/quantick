@@ -123,7 +123,7 @@ impl LayoutAdapter<'_> {
     /// Straight off each pane's own collection rather than by walking
     /// `slot_kinds`: that list is bookkeeping for the state *file*, and an
     /// indicator can be on a pane without being in it — the autostart hooks
-    /// add without registering, and `forget_last_indicator_state_change` pops
+    /// add without registering, and `exclude_from_layout` removes
     /// an entry while leaving the indicator on screen. Clearing the list
     /// would have left those behind for the imported set to stack on top of.
     pub(super) fn clear_indicators(&mut self) {
@@ -146,12 +146,7 @@ impl LayoutAdapter<'_> {
                 strip(pane);
             }
         }
-        self.indicators.slot_kinds.clear();
-        self.indicators.operator_slots.clear();
-        self.indicators.script_files.clear();
-        self.indicators.pending_hidden.clear();
-        self.indicators.pending_styles.clear();
-        self.indicators.pending_mouse_vertical_lines.clear();
+        self.indicators.registry.clear();
         self.mark_layouts_dirty();
     }
 
@@ -590,61 +585,14 @@ impl LayoutAdapter<'_> {
         if !tab.move_context_pane(tab_id, from, to) {
             return false;
         }
-        // Where each old address now sits: the moved pane at `to`, the ones
-        // between shifted one step towards `from`.
-        let rekey = |index: PaneIndex| -> PaneIndex {
-            if index == from {
-                to
-            } else if from < to && index > from && index <= to {
-                index - 1
-            } else if to < from && index >= to && index < from {
-                index + 1
-            } else {
-                index
-            }
-        };
-        let reside = |side: PaneSide| PaneSide::from_index(rekey(side.index()));
-        for (owner, _) in &mut self.indicators.slot_kinds {
-            if owner.tab == tab_id {
-                owner.side = reside(owner.side);
-            }
-        }
-        for (owner, _) in &mut self.indicators.pending_styles {
-            if owner.tab == tab_id {
-                owner.side = reside(owner.side);
-            }
-        }
-        for owner in &mut self.indicators.pending_hidden {
-            if owner.tab == tab_id {
-                owner.side = reside(owner.side);
-            }
-        }
-        for owner in &mut self.indicators.pending_mouse_vertical_lines {
-            if owner.tab == tab_id {
-                owner.side = reside(owner.side);
-            }
-        }
-        for (owner, ..) in &mut self.indicators.script_files {
-            if owner.tab == tab_id {
-                owner.side = reside(owner.side);
-            }
-        }
-        let operator: Vec<TabSlot> = self
-            .indicators
-            .operator_slots
-            .iter()
-            .copied()
-            .map(|mut owner| {
-                if owner.tab == tab_id {
-                    owner.side = reside(owner.side);
-                }
-                owner
-            })
-            .collect();
-        self.indicators.operator_slots = operator.into_iter().collect();
+        self.indicators.registry.move_context_pane(tab_id, from, to);
         if self.indicators.indicator_settings_target.tab == tab_id {
             self.indicators.indicator_settings_target.side =
-                reside(self.indicators.indicator_settings_target.side);
+                quantick_chart::indicator_registry::remap_side(
+                    self.indicators.indicator_settings_target.side,
+                    from,
+                    to,
+                );
         }
         // The drawings travel with the pane; their key follows its address.
         if let Some(tab) = self.tabs.by_id_mut(tab_id) {
@@ -693,14 +641,7 @@ impl LayoutAdapter<'_> {
     /// The layout's slots on one pane, in layout order: every slot the
     /// bookkeeping knows for the pane, minus the operator's overlays.
     fn layout_slots_at(&self, tab: u64, side: PaneSide) -> Vec<SlotId> {
-        self.indicators
-            .slot_kinds
-            .iter()
-            .map(|(owner, _)| *owner)
-            .filter(|owner| owner.tab == tab && owner.side == side)
-            .filter(|owner| !self.indicators.operator_slots.contains(owner))
-            .map(|owner| owner.slot)
-            .collect()
+        self.indicators.registry.layout_slots_at(tab, side)
     }
 
     /// Panes that appeared since last frame — a tab opened, a split built —

@@ -85,9 +85,11 @@ impl QuantickApp {
         // what the source lets through it — the rule `heatmap_lamp_on` names,
         // now the whole group's.
         let layers = toolbar::LayerToggle::ALL.map(|toggle| {
-            let (on, blocked) =
-                self.active_tab()
-                    .layer_toggle_state(toggle.layer(), &self.style, capabilities);
+            let (on, blocked) = self.active_tab().layer_toggle_state(
+                toggle.layer(),
+                &self.runtime.style,
+                capabilities,
+            );
             toolbar::LayerToggleState { on, blocked }
         });
         let dock_visible = self.dock.visible();
@@ -96,7 +98,7 @@ impl QuantickApp {
         let history = toolbar::HistoryButton {
             main: self.active_tab().session.main_history_reach(),
             status: self.active_tab().session.history_status(),
-            tz: self.tz,
+            tz: self.runtime.tz,
         };
         let mut history_menu_rect = self.chrome.history_menu_rect;
         // The SOURCE group writes straight into the active tab: a feed or
@@ -218,9 +220,9 @@ impl QuantickApp {
                 .surfaces
                 .indicator_picker
                 .state
-                .open((self.tabs.active_id(), self.focused_pane().id)),
+                .open((self.runtime.tabs.active_id(), self.focused_pane().id)),
             ToolbarAction::LoadHistory(reach) => {
-                let active = self.tabs.active_index();
+                let active = self.runtime.tabs.active_index();
                 self.tabs_mut().press_history(active, reach);
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
@@ -228,9 +230,13 @@ impl QuantickApp {
                 self.active_tab_mut().apply_deal_recording(action);
             }
             ToolbarAction::LoadOlderCandles => {
-                let (active, tab_id) = (self.tabs.active_index(), self.tabs.active_id());
+                let (active, tab_id) = (
+                    self.runtime.tabs.active_index(),
+                    self.runtime.tabs.active_id(),
+                );
                 let act = quantick_session::Act::LoadOlderCandles { tab_id };
-                self.tabs
+                self.runtime
+                    .tabs
                     .runtime_mut(active)
                     .run_session(Some(&self.config), act);
             }
@@ -263,10 +269,14 @@ impl QuantickApp {
                     self.focused_pane_mut(),
                     false,
                 );
-                let target = (self.tabs.active_id(), self.active_tab().focused_side());
-                let attached = self.indicators.attach_native(
-                    self.tabs
-                        .runtime_mut(self.tabs.active_index())
+                let target = (
+                    self.runtime.tabs.active_id(),
+                    self.active_tab().focused_side(),
+                );
+                let attached = self.runtime.indicators.attach_native(
+                    self.runtime
+                        .tabs
+                        .runtime_mut(self.runtime.tabs.active_index())
                         .pane_mut(target.1),
                     target,
                     id,
@@ -292,10 +302,14 @@ impl QuantickApp {
                     self.focused_pane_mut(),
                     false,
                 );
-                let target = (self.tabs.active_id(), self.active_tab().focused_side());
-                if let Some((_, added)) = self.indicators.add_library(
-                    self.tabs
-                        .runtime_mut(self.tabs.active_index())
+                let target = (
+                    self.runtime.tabs.active_id(),
+                    self.active_tab().focused_side(),
+                );
+                if let Some((_, added)) = self.runtime.indicators.add_library(
+                    self.runtime
+                        .tabs
+                        .runtime_mut(self.runtime.tabs.active_index())
                         .pane_mut(target.1),
                     target,
                     index,
@@ -305,7 +319,7 @@ impl QuantickApp {
                             super::indicator_manager::IndicatorEdit::Attached(attached),
                         );
                     }
-                    self.indicators.watch_attachment(added.watch);
+                    self.runtime.indicators.watch_attachment(added.watch);
                 }
             }
             ToolbarAction::OpenIndicatorSettings(slot) => {

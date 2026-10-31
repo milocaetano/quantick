@@ -185,25 +185,29 @@ fn indicator_preview_area(
     dialog: Option<&SettingsDialog>,
     target: TabSlot,
 ) -> Option<egui::Rect> {
-    if !dialog.is_some_and(|dialog| dialog.previewed) {
+    if target.workspace != tabs.owner() || !dialog.is_some_and(|dialog| dialog.previewed) {
         return None;
     }
     tabs.by_id(target.tab)
-        .map(|tab| tab.pane(target.side))
+        .and_then(|tab| tab.pane_at(target.side.index()))
+        .filter(|pane| pane.id == target.pane)
         .and_then(|pane| pane.frame.chart_area)
 }
 
 /// Hand every script file that changed on disk to the pane that runs it.
 pub(super) fn reload_changed_scripts(indicators: &mut IndicatorState, tabs: &mut ArrangementHost) {
     for (owner, name, text) in indicators.poll_script_files() {
-        IndicatorState::log_reload(owner, &name);
-        if let Some(tab) = tabs.by_id_mut(owner.tab) {
-            tab.pane_mut(owner.side).indicator_worker.send(
-                crate::indicator_worker::IndicatorCommand::Reload {
+        if owner.workspace == tabs.owner()
+            && let Some(tab) = tabs.by_id_mut(owner.tab)
+            && let Some(pane) = tab.pane_at_mut(owner.side.index())
+            && pane.id == owner.pane
+        {
+            IndicatorState::log_reload(owner, &name);
+            pane.indicator_worker
+                .send(crate::indicator_worker::IndicatorCommand::Reload {
                     slot: owner.slot,
                     source: crate::indicator_worker::IndicatorSource::Script { name, text },
-                },
-            );
+                });
         }
     }
 }

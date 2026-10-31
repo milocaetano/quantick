@@ -4,29 +4,7 @@ use super::*;
 
 pub(super) fn queue_saved(app: &mut LayoutAdapter<'_>, owner: TabSlot, entry: &SavedIndicator) {
     if entry.mouse_vertical_line {
-        app.indicators.pending_mouse_vertical_lines.push(owner);
-    }
-}
-
-pub(super) fn apply_pending(app: &mut LayoutAdapter<'_>) {
-    if app.indicators.pending_mouse_vertical_lines.is_empty() {
-        return;
-    }
-    let pending = std::mem::take(&mut app.indicators.pending_mouse_vertical_lines);
-    for owner in pending {
-        let known = app
-            .indicators
-            .slot_kinds
-            .iter()
-            .any(|(candidate, _)| *candidate == owner);
-        match app
-            .pane_mut_at(owner.tab, owner.side)
-            .and_then(|pane| pane.indicators.view_mut(owner.slot))
-        {
-            Some(view) if !view.descriptor.overlay => view.mouse_vertical_line = true,
-            None if known => app.indicators.pending_mouse_vertical_lines.push(owner),
-            Some(_) | None => {}
-        }
+        app.indicators.registry.defer_mouse_vertical_line(owner);
     }
 }
 
@@ -46,11 +24,8 @@ pub(crate) fn set_indicator_mouse_vertical_line(
     side.is_some_and(|side| {
         set_at(
             app,
-            TabSlot {
-                tab: tab_id,
-                side,
-                slot,
-            },
+            app.slot_at(tab_id, side, slot)
+                .expect("addressed indicator pane"),
             enabled,
         )
     })

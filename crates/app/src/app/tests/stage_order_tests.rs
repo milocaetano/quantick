@@ -134,8 +134,8 @@ fn the_capture_heartbeat_before_the_source_drain_leaves_a_reset_market_unrecorde
         let _ = take_capture_start(&mut commands);
         assert!(app.active_tab().tape().enabled());
         events.try_send(FeedEvent::Reset).unwrap();
-        let tab_id = app.tabs.active_id();
-        let policy = app.history.policy(app.tz, true);
+        let tab_id = app.runtime.tabs.active_id();
+        let policy = app.runtime.history.policy(app.runtime.tz, true);
         with_config(&mut app, |tab, config| {
             tab.drain_frame_test_order(tab_id, config, policy, order.iter().copied());
         });
@@ -184,7 +184,8 @@ fn the_pinned_inspector_before_the_demo_misses_the_selection_it_made() {
     let canvas_width_on_the_demo_frame = |order: &[FrameStage]| {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(500);
-        app.workspace
+        app.runtime
+            .workspace
             .set_ui_state_path(scratch_ui_state("stage-order-demo-inspector"));
         app.drawings.chrome.set_inspector_pinned(true);
         app.drawings.chrome.set_inspector_pin_touched(true);
@@ -262,7 +263,7 @@ fn the_frame_and_tab_drain_plans_add_no_heap_work_to_a_dense_intake() {
 
     let intake_work = |planned: bool| {
         let (mut app, events, _commands, _book) = test_app();
-        let tab_id = app.tabs.active_id();
+        let tab_id = app.runtime.tabs.active_id();
         events
             .try_send(FeedEvent::Backfilled(dense_prints(1, 8_001)))
             .unwrap();
@@ -271,7 +272,7 @@ fn the_frame_and_tab_drain_plans_add_no_heap_work_to_a_dense_intake() {
             .try_send(FeedEvent::LiveBatch(dense_prints(8_001, 8_513)))
             .unwrap();
         let slots = app.active_tab().flow_pane.slots();
-        let policy = app.history.policy(app.tz, true);
+        let policy = app.runtime.history.policy(app.runtime.tz, true);
         let before = crate::work_meter::tally();
         with_config(&mut app, |tab, config| {
             if planned {
@@ -414,14 +415,19 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
         settle_indicators(&mut app);
         let side = PaneSide::Time(0);
         let slot = app.active_tab().pane(side).indicators.all()[0].slot;
-        let tab = app.tabs.active_id();
+        let tab = app.runtime.tabs.active_id();
         app.apply_indicator_legend_action(
             tab,
             side,
             crate::indicator_legend::LegendAction::OpenSettings(slot),
         );
-        app.indicators.indicator_settings.as_mut().unwrap().draft[0] = InputValue::Int(37);
-        let change = app.indicators.preview_settings();
+        app.runtime
+            .indicators
+            .indicator_settings
+            .as_mut()
+            .unwrap()
+            .draft[0] = InputValue::Int(37);
+        let change = app.runtime.indicators.preview_settings();
         app.apply_indicator_settings_change(change);
         settle_indicators(&mut app);
         assert!(

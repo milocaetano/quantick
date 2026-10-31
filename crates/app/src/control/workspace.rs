@@ -102,7 +102,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                         };
                         WorkspacePane {
                             pane_id: WireU64::new(pane.id),
-                            side: side.into(),
+                            side: crate::control::pane_side_dto(side),
                             pane_index: wire_usize(side.index()),
                             layout_id: WireU64::new(
                                 app.layout_state().pane_layout(tabs.id_at(index), side).0,
@@ -121,7 +121,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     symbol: tab.symbol.clone(),
                     active,
                     layout: tab.layout.into(),
-                    focused_pane: focused.into(),
+                    focused_pane: crate::control::pane_side_dto(focused),
                     split_fraction: canonical_f32(
                         tab.split_fraction,
                         SPLIT_FRACTION_DECIMAL_PLACES,
