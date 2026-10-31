@@ -1331,7 +1331,7 @@ fn read_view(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
     let pane_id = app.active_tab().flow_pane.id.to_string();
     let scopes = json!({"scopes":["orderflow.bubbles"]});
     let (response, _) = unkeyed_call(app, client, "snapshot.read", scopes);
-    success_result(&response)["scopes"]["orderflow.bubbles"]["tabs"]
+    success_result(&response)["scopes"]["orderflow.bubbles"]["value"]["tabs"]
         .as_array()
         .unwrap()
         .iter()

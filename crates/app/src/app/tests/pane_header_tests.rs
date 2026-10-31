@@ -802,69 +802,56 @@ fn flow_fold(app: &QuantickApp) -> LaneFold {
     app.active_tab().tape().cached_config().live_lane.fold
 }
 
-/// Candles folded to their rail: the header reads the tape on screen, so the
-/// view glyph is the tape's, the candles' glyphs stand greyed in place and the
-/// candle sample goes. The named layer call keeps its own rule, and the stored
-/// view is what the button walks.
+/// Candles folded to their rail: only the view glyph reads the side on screen.
+/// A fold moves no layer gate, so the glyphs and their keys stay live and both
+/// samples stay. The stored view is what the button walks, and stored tape only
+/// is what greys the glyphs.
 #[test]
-fn candles_folded_read_as_the_tape_on_the_header() {
+fn candles_folded_turn_only_the_view_glyph_to_the_tape() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    let candle = HeaderControl::Sample(BubbleSample::Candle);
-    let tape = HeaderControl::Sample(BubbleSample::Tape);
     let heatmap = HeaderControl::Layer(LayerToggle::Heatmap);
+    let toggles = [
+        LayerToggle::Bubbles,
+        LayerToggle::Heatmap,
+        LayerToggle::Footprint,
+    ];
+    let gates = |app: &QuantickApp| {
+        let caps = app.active_tab().capabilities(&app.config);
+        let flow = &app.active_tab().flow_pane;
+        toggles.map(|toggle| flow.layer_blocked(toggle.layer(), caps))
+    };
+    let pane_id = app.active_tab().flow_pane.id;
+    let id = |control: &str| format!("pane.{pane_id}.header.{control}");
+    let l2_gate = |app: &QuantickApp| {
+        scene_control(&observer_scene(app), &id("layer.heatmap"))["availability"].clone()
+    };
     app.active_tab_mut()
         .tape_mut()
         .edit_config(|config| config.show_aggressions = true);
     run_frame(&mut app, &ctx);
     let glyph = flow_control(&app, heatmap);
+    let open_gates = gates(&app);
+    let open_l2 = l2_gate(&app);
 
     set_fold(&mut app, LaneFold::Candles);
     run_frame(&mut app, &ctx);
     assert_eq!(view_of(&app), LaneView::Beside, "the stored view stays");
     assert_eq!(flow_control(&app, heatmap), glyph, "nothing shifted");
-    assert!(control_rect(&app, PaneSide::Flow, candle).is_none());
-    flow_control(&app, tape);
-
-    let caps = app.active_tab().capabilities(&app.config);
-    let flow = &app.active_tab().flow_pane;
-    for toggle in [
-        LayerToggle::Bubbles,
-        LayerToggle::Heatmap,
-        LayerToggle::Footprint,
-    ] {
-        let layer = toggle.layer();
-        assert!(flow.header_block(layer, caps).is_some(), "{toggle:?}");
-        assert_ne!(
-            flow.layer_blocked(layer, caps),
-            Some(quantick_layers::blocks::TAPE_ONLY_CANDLES),
-            "{toggle:?}: the named call keeps its own rule"
-        );
-    }
-    assert_eq!(flow.header_block(ChartLayer::LiveStrip, caps), None);
-
-    let pane_id = flow.id;
+    flow_control(&app, HeaderControl::Sample(BubbleSample::Candle));
+    flow_control(&app, HeaderControl::Sample(BubbleSample::Tape));
+    assert_eq!(gates(&app), open_gates, "a fold moves no gate");
+    assert_eq!(l2_gate(&app), open_l2, "and the scene reads that gate");
     let scene = observer_scene(&app);
-    let id = |control: &str| format!("pane.{pane_id}.header.{control}");
     assert_eq!(scene_control(&scene, &id("view"))["label"], "Tape only");
-    assert_eq!(
-        scene_control(&scene, &id("layer.heatmap"))["availability"]["reason"],
-        "candle_layer_hidden_in_tape_only"
-    );
 
-    let states = |app: &QuantickApp| {
-        [
-            ChartLayer::Bubbles,
-            ChartLayer::Heatmap,
-            ChartLayer::Footprint,
-        ]
-        .map(|layer| on(app, layer))
-    };
-    let before = states(&app);
-    click_chart(&mut app, &ctx, glyph.center());
+    let bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
+    let before = on(&app, ChartLayer::Bubbles);
+    click_chart(&mut app, &ctx, bubbles.center());
     run_frame(&mut app, &ctx);
+    assert_ne!(on(&app, ChartLayer::Bubbles), before, "the glyph answers");
     press_key(&mut app, &ctx, egui::Key::B, egui::Modifiers::CTRL);
-    assert_eq!(states(&app), before, "the glyph and its key refuse");
+    assert_eq!(on(&app, ChartLayer::Bubbles), before, "and so does its key");
 
     let button = flow_control(&app, HeaderControl::View);
     click_chart(&mut app, &ctx, button.center());
@@ -874,39 +861,37 @@ fn candles_folded_read_as_the_tape_on_the_header() {
         LaneView::CandlesOnly,
         "the stored view walks"
     );
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        gates(&app),
+        [Some(quantick_layers::blocks::TAPE_ONLY_CANDLES); 3],
+        "stored tape only greys them"
+    );
+    assert_eq!(l2_gate(&app)["reason"], "candle_layer_hidden_in_tape_only");
 }
 
-/// The tape folded to its rail: the header reads the candles on screen, so the
-/// view glyph is theirs and the tape sample goes, and nothing else is greyed.
+/// The tape folded to its rail: only the view glyph reads the side on screen,
+/// and a folded side is not off, so both samples stay.
 #[test]
-fn a_tape_folded_reads_as_the_candles_on_the_header() {
+fn a_tape_folded_turns_only_the_view_glyph_to_the_candles() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    let candle = HeaderControl::Sample(BubbleSample::Candle);
-    let tape = HeaderControl::Sample(BubbleSample::Tape);
     app.active_tab_mut()
         .tape_mut()
         .edit_config(|config| config.show_aggressions = true);
     run_frame(&mut app, &ctx);
-    flow_control(&app, tape);
 
     set_fold(&mut app, LaneFold::Tape);
     run_frame(&mut app, &ctx);
     assert_eq!(view_of(&app), LaneView::Beside, "the stored view stays");
-    assert!(control_rect(&app, PaneSide::Flow, tape).is_none());
-    flow_control(&app, candle);
+    flow_control(&app, HeaderControl::Sample(BubbleSample::Candle));
+    flow_control(&app, HeaderControl::Sample(BubbleSample::Tape));
 
-    let caps = app.active_tab().capabilities(&app.config);
-    let flow = &app.active_tab().flow_pane;
-    for toggle in LayerToggle::ALL {
-        let layer = toggle.layer();
-        assert_eq!(
-            flow.header_block(layer, caps),
-            flow.layer_blocked(layer, caps),
-            "{toggle:?}"
-        );
-    }
-    let pane_id = flow.id;
+    let pane_id = app.active_tab().flow_pane.id;
     let scene = observer_scene(&app);
     let view = scene_control(&scene, &format!("pane.{pane_id}.header.view"));
     assert_eq!(view["label"], "Candles only");

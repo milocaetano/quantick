@@ -362,8 +362,7 @@ impl ChartPane {
         } = frame;
         // The way back from history (audit F6), painted over the strip's
         // labels on the same geometry the input path registered.
-        let chip = super::lane_rail::live_chip(self, areas.time_strip);
-        if let Some(chip) = chip.filter(|_| !self.tape_modes().0) {
+        if let Some(chip) = self.shown_live_chip(areas.time_strip) {
             draw_live_chip(painter, chip);
         }
         // Panned off the data (or a rebuild re-cut the series under the

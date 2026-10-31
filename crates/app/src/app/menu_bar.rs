@@ -238,7 +238,7 @@ impl QuantickApp {
             MenuCommand::ToggleLayer(layer) => {
                 let pane = self.focused_pane();
                 let capabilities = self.active_tab().capabilities(&self.config);
-                if pane.header_block(layer, capabilities).is_none() {
+                if pane.layer_blocked(layer, capabilities).is_none() {
                     let visible = !pane.layer_visible(layer, &self.runtime.style);
                     self.focused_pane_mut().set_layer_visible(
                         layer,

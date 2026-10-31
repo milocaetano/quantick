@@ -348,9 +348,7 @@ pub(super) fn handle_axis_gestures(
     });
     // Jump-to-live (audit F6): panned into history, the way back is one click at the axis' live
     // end. Registered after the strip gesture so the click is the chip's, not a zoom-drag's.
-    let chip = super::lane_rail::live_chip(pane, areas.time_strip);
-    // On a tape-only pane the stored view waits unseen: no way back to offer.
-    if let Some(chip) = chip.filter(|_| !pane.tape_modes().0) {
+    if let Some(chip) = pane.shown_live_chip(areas.time_strip) {
         let chip = ui.interact(
             chip,
             pane.interaction_id("jump_to_live"),

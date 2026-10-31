@@ -488,11 +488,12 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   `Ctrl+Shift+T`, on a focused flow pane, goes to tape only and from there back
   beside the candles. `orderflow.tape.view.set` names the same three. A view
   writes no fold: a side the divider folded to its rail is still folded on the
-  way back beside the candles, the header reads it as the side on screen, and
-  the rail stays the way back.
-- **Candles hidden keeps their look.** With only the tape on the pane, bubbles,
-  L2 and footprint grey out in place and keep their state; `Ctrl+B` and `Ctrl+F`
-  do nothing there. The strip stays live. The tape holds its own switches for
+  way back beside the candles, the view glyph alone reads it as the side on
+  screen, and the rail stays the way back.
+- **Candles hidden keeps their look.** In tape only, bubbles, L2 and footprint
+  grey out in place and keep their state; `Ctrl+B` and `Ctrl+F` do nothing
+  there. A fold is not tape only: they stay live with the candles folded to
+  their rail. The strip stays live. The tape holds its own switches for
   book and bubbles, reached by right-clicking it; the header's L2 and bubbles
   govern the *candles* and never the tape, in either direction — one pane's
   switch may not move another pane's pixels.
@@ -500,8 +501,8 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   across 0.25x to 3x: drag up to grow at 1x per 40 px, double-click for 1x, and
   the value shows only while dragging. The blue sample beside the bubbles glyph
   sizes the candles', the tape-coloured one at the far end the tape's. Each is
-  gone while its target is off; the candle sample's slot stays, so no glyph
-  shifts.
+  gone while its target is off, and a folded side is not off; the candle
+  sample's slot stays, so no glyph shifts.
 - **A narrow line drops, then clips.** The mark goes first, then the samples;
   what still does not fit is clipped by the strip, and nothing overlaps.
 - **Focus**: clicking a pane focuses it; the focused pane drives the status

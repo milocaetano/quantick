@@ -375,7 +375,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                     toggle.name(),
                     SceneRoleDto::Toggle,
                     pane.layer_switched_on(toggle.layer(), style),
-                    pane.header_block(toggle.layer(), capabilities),
+                    pane.layer_blocked(toggle.layer(), capabilities),
                     quantick_control_schema::layers::SET_VISIBILITY_CAPABILITY_ID,
                 ),
                 HeaderControl::Sample(sample) => (
