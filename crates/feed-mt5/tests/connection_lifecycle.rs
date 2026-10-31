@@ -379,6 +379,34 @@ async fn depth_capture_loss_reconnect_and_terminal_deal_flush_are_ordered() {
 }
 
 #[tokio::test]
+async fn teardown_answers_the_page_then_flushes_deals_then_closes_depth() {
+    let mut b = Bridge::new().await;
+    b.capture.enable(100);
+    b.connect().await;
+    b.request().await;
+    b.send(&book(1)).await;
+    snapshot(&mut b, 101).await;
+    b.send(&(deal_tick(1, 10000, 100, 7, 11000) + "{\"type\":\"bye\",\"reason\":\"all\"}\n"))
+        .await;
+    assert!(
+        matches!(event(&mut b.rx).await, Mt5Event::HistoryPage { trades, exhausted: false, scanned_to_utc_ms: None } if trades.is_empty())
+    );
+    assert!(
+        matches!(event(&mut b.rx).await, Mt5Event::DealCounter(d) if d.time_ms == 8000 && d.session_deals == 7)
+    );
+    depth_status(
+        &mut b,
+        101,
+        DepthStatus::Disconnected {
+            error_class: "bridge_lost",
+        },
+    )
+    .await;
+    b.lost("bye: all").await;
+    b.server.abort();
+}
+
+#[tokio::test]
 async fn a_closed_consumer_completes_the_server_during_dispatch() {
     let mut b = Bridge::new().await;
     b.connect().await;
@@ -434,8 +462,7 @@ async fn a_history_page_is_bounded_at_250000_mapped_trades() {
 mod deadline {
     // Public TCP silence and pager-order characterization.
     //
-    // These tests do not assume a TCP write equals one reader fill. Controlled
-    // private wait tests separately pin ready-input versus expired-timer priority.
+    // These tests do not assume a TCP write equals one reader fill.
 
     use std::time::Duration;
 
@@ -710,7 +737,14 @@ mod gaps {
             tokio::time::sleep(SEND_GAP).await;
         }
         assert_eq!(lost_reason(&mut rx).await, "silent");
-        assert!(started.elapsed() >= READ_TIMEOUT);
+        // A refreshed deadline would only fire a full timeout after the last
+        // send, well past this.
+        let elapsed = started.elapsed();
+        assert!(elapsed >= READ_TIMEOUT, "fired early: {elapsed:?}");
+        assert!(
+            elapsed < READ_TIMEOUT * 2,
+            "a bad line refreshed it: {elapsed:?}"
+        );
     }
 
     #[tokio::test]
