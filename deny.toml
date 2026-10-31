@@ -23,7 +23,7 @@ all-features = true
 
 [advisories]
 version = 2
-# One entry, and it is meant to be deleted. An ignore is a decision to keep
+# Every entry is meant to be deleted. An ignore is a decision to keep
 # something the database has flagged, so each one states what it is, why it
 # could not be fixed where it was found, and the issue that removes it. An
 # entry without those three is how a policy file turns into a list of things
@@ -38,6 +38,18 @@ ignore = [
     # there is no exploit and no patched version to move to.
     # Removed by https://github.com/milocaetano/quantick/issues/283.
     { id = "RUSTSEC-2026-0192", reason = "transitive, via eframe 0.29's font stack; no fix exists short of a major egui upgrade — see issue #283" },
+    # `zvariant`, `zbus_names` and `zvariant_derive` are unmaintained because
+    # upstream merged them into `zbus` 6. They arrive only on the Linux
+    # file-dialog path, as
+    # `quantick-app → rfd 0.15 → ashpd 0.11 → zbus 5 → zbus_names, zvariant → zvariant_derive`.
+    # `zbus` 5 needs them and they have no patched release, so no lockfile bump
+    # clears them; `rfd` 0.17 drops `ashpd` and `zbus`, and that is a manifest
+    # upgrade touching every file dialog, not part of a lockfile fix. There is no
+    # exploit and no patched version to move to.
+    # Removed by https://github.com/milocaetano/quantick/issues/728.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained, transitive via rfd 0.15, ashpd and zbus 5; removed by the rfd 0.17 upgrade — see issue #728" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained, transitive via rfd 0.15, ashpd and zbus 5; removed by the rfd 0.17 upgrade — see issue #728" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained, transitive via rfd 0.15, ashpd and zbus 5; removed by the rfd 0.17 upgrade — see issue #728" },
 ]
 
 [licenses]
