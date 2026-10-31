@@ -149,9 +149,9 @@ Icons (§6–§7 use them):
 | # | Zone | Size | Owns |
 |---|---|---|---|
 | 1 | Menu bar + workspace tabs | 28 px | menus left (§10); one tab per open market right (§11) |
-| 2 | Context toolbar | 44 px | source · bars · history · layers · look · panels (§6) |
+| 2 | Context toolbar | 44 px | tab scope: source · history · trade · layers · look · panels (§6) |
 | 3 | Drawing toolbar | 44 px rail, edge-docked (default left) | cursor, crosshair, drawings (§7) |
-| 4 | Chart canvas | elastic | candles, flow layers, overlay legends, drawings |
+| 4 | Chart canvas | elastic | header line (mark · bars · `ƒx`, per pane), candles, flow layers, overlay legends, drawings |
 | 5 | Sub-panes | ≤ 40% of 4, max 3 | pane indicators: CVD, delta… (§9) |
 | 6 | Time axis | 24 px | time labels, x-zoom drag |
 | 7 | Status bar | 28 px (+30 transport) | provenance · content · machinery (§8) |
@@ -183,7 +183,6 @@ Left, *what am I looking at*:
 - **SOURCE** — feed combo, symbol combo (from config, as today). During
   replay the group is replaced by the amber session label; you cannot pick a
   venue without closing the recording first (existing behaviour, kept).
-- **BARS** — bar-kind combo + its one parameter drag (as today).
 - **HISTORY** — one `+ older ▾` split button; the page size moves into its
   menu. Gated by the `history_paging` capability.
 
@@ -196,11 +195,15 @@ Right, *what is drawn on it*:
 - **LOOK** — opens the appearance dialog (candles, canvas, grid).
 - **PANELS** — shows/hides the dock.
 - **⋯ overflow** — collapse target; the toolbar never wraps. Collapse order:
-  LOOK → PANELS → HISTORY → bar parameter merges into the kind combo → feed
-  name shrinks to its initial. Never folded: the symbol and LAYERS.
+  LOOK → PANELS → HISTORY → TRADE → feed name shrinks to its initial. Never
+  folded: the symbol and LAYERS.
 
 Leaving the toolbar: the perf checkbox (a *reading*, moves to the status
 bar §8) and both panel-opening buttons (the dock's tab strip replaces them).
+Bars and indicators belong to one pane, not the tab, so they sit on each pane's
+header line in zone 4: the bars control changes that pane wherever focus sits,
+and `ƒx` at the line's right end focuses that pane and opens the indicator
+library on it.
 
 ## 7. Tool rail and dock
 

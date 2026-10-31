@@ -83,6 +83,7 @@ pub struct Model {
     pub price_axis_mode: (bool, bool),
     pub strip_expanded: Option<u64>,
     pub pending_settings: Option<u64>,
+    pub pending_indicator_picker: bool,
     pub pending_indicator_guide: Option<(u64, bool)>,
     pub history: super::pane_history::HistoryState,
     pub viewport: Viewport,

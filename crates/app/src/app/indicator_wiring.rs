@@ -10,6 +10,15 @@ use eframe::egui;
 use smallvec::SmallVec;
 
 impl QuantickApp {
+    /// Open the indicator library on the pane at `side`. Focus moves there first:
+    /// every indicator command lands on the focused pane (§11), so the library
+    /// and what it attaches can only agree if the pane it was opened for has focus.
+    pub(crate) fn open_indicator_picker_on(&mut self, side: PaneSide) {
+        self.active_tab_mut().focus = side;
+        let target = (self.runtime.tabs.active_id(), self.focused_pane().id);
+        self.surfaces.indicator_picker.state.open(target);
+    }
+
     /// Execute persistence only after the owner has prepared the indicator edit.
     pub(super) fn apply_indicator_edit(&mut self, edit: IndicatorEdit) {
         if self.runtime.validate_target(edit.target()).is_err() {
@@ -81,6 +90,9 @@ impl QuantickApp {
             .collect();
         for (side, slot) in requests {
             self.apply_indicator_legend_action(tab_id, side, LegendAction::OpenSettings(slot));
+        }
+        if let Some(side) = self.active_tab_mut().take_indicator_picker_request() {
+            self.open_indicator_picker_on(side);
         }
         #[cfg(any(feature = "scenario-harness", test))]
         if let Some(index) = self.chrome.harness.indicator_mouse_line() {

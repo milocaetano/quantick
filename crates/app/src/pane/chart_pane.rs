@@ -464,6 +464,16 @@ impl ChartPane {
         self.model.pending_settings.take().map(SlotId)
     }
 
+    /// Ask for the indicator library on this pane; the app acts on it once.
+    pub(crate) fn request_indicator_picker(&mut self) {
+        self.model.pending_indicator_picker = true;
+    }
+
+    /// Whether this pane's header asked for the indicator library, once.
+    pub(crate) fn take_indicator_picker_request(&mut self) -> bool {
+        std::mem::take(&mut self.model.pending_indicator_picker)
+    }
+
     pub(crate) fn take_indicator_guide_request(&mut self) -> Option<(SlotId, bool)> {
         self.model
             .pending_indicator_guide

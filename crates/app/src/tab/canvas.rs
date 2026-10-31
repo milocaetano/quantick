@@ -322,6 +322,16 @@ impl Tab {
         rects
     }
 
+    /// The pane whose header asked for the indicator library this frame.
+    pub(crate) fn take_indicator_picker_request(&mut self) -> Option<PaneSide> {
+        self.panes_with_sides_mut()
+            .fold(None, |asked, (pane, side)| {
+                pane.take_indicator_picker_request()
+                    .then_some(side)
+                    .or(asked)
+            })
+    }
+
     /// The flow pane's header line: its mark and its own bars, read and changed
     /// here wherever focus sits.
     fn draw_flow_header(
@@ -332,7 +342,17 @@ impl Tab {
     ) {
         let pane = &mut self.flow_pane;
         let header = PaneHeader::of(PaneIdentity::OrderFlow, pane.spec.spec());
-        crate::pane_header::draw_marked(ui, strip, &header, pane.id, &mut pane.spec, bar_inputs);
+        let indicators = crate::pane_header::draw_marked(
+            ui,
+            strip,
+            &header,
+            pane.id,
+            &mut pane.spec,
+            bar_inputs,
+        );
+        if indicators {
+            pane.request_indicator_picker();
+        }
     }
 
     /// Each context chart carries its own bars control and timeframe selector
@@ -364,6 +384,9 @@ impl Tab {
         #[cfg(test)]
         if slot == 0 {
             self.time_header_chips = header_layout.chips();
+        }
+        if header_layout.indicators {
+            self.time_panes[slot].request_indicator_picker();
         }
         if header_layout.changed {
             let pane = &mut self.time_panes[slot];

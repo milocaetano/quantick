@@ -247,3 +247,33 @@ pub struct SceneBoundsSnapshot {
     #[schemars(extend("x-unit" = "logical_points"))]
     pub height_pt: CanonicalDecimal,
 }
+
+/// A pane header line's two controls, each named for the call that does what its
+/// click does. Owned by the tab, which owns its panes; `no_bounds` says why they
+/// carry no rectangle.
+#[must_use]
+pub fn pane_header_controls(
+    pane_id: u64,
+    pane_title: &str,
+    tab_owner_id: String,
+    no_bounds: AvailabilitySnapshot,
+) -> [SceneControlSnapshot; 2] {
+    let control = |what: &str, capability_id: &str| SceneControlSnapshot {
+        control_id: format!("pane_header.{pane_id}.{what}"),
+        label: format!("{pane_title} {what}"),
+        role: SceneRoleDto::Action,
+        owner: SceneOwnerSnapshot {
+            kind: SceneOwnerKindDto::Tab,
+            id: tab_owner_id.clone(),
+        },
+        selected: false,
+        availability: quantick_control_host::wire::available(),
+        bounds: None,
+        bounds_availability: no_bounds.clone(),
+        capability_id: Some(capability_id.to_owned()),
+    };
+    [
+        control("bars", crate::layout::BAR_SPEC_CAPABILITY_ID),
+        control("indicators", crate::indicator_picker::PICKER_CAPABILITY_ID),
+    ]
+}

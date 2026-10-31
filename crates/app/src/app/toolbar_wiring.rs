@@ -10,7 +10,6 @@ use eframe::egui;
 use quantick_engine::Side;
 
 use crate::indicator_worker::SlotId;
-use crate::pane::PaneSide;
 use crate::surfaces::ChartSettingsTab::{Candles, Footprint};
 use crate::tab::CanvasLayout;
 use crate::toolbar::{self, ToolbarAction};
@@ -102,11 +101,7 @@ impl QuantickApp {
         };
         let mut history_menu_rect = self.chrome.history_menu_rect;
         // The SOURCE group writes straight into the active tab: a feed or
-        // symbol change is that tab's market switch. The BARS group writes
-        // into the *focused pane* — the pane the status bar reads and every
-        // indicator command lands on (§11) — so the three chrome surfaces
-        // can never disagree about which chart a command describes, and in
-        // the Time layout the group governs the chart actually on screen.
+        // symbol change is that tab's market switch.
         // Split off the picker's flags before the tab borrow: the model wants
         // both, and they live on the same struct.
         let mut layout_picker_open = self.chrome.layout_picker_open;
@@ -123,15 +118,12 @@ impl QuantickApp {
         #[cfg(not(any(feature = "scenario-harness", test)))]
         let deal_recording_menu = false;
         #[cfg(any(feature = "scenario-harness", test))]
-        let mut bars_menu = self.chrome.harness.bars_menu_pending();
-        #[cfg(not(any(feature = "scenario-harness", test)))]
-        let mut bars_menu = false;
+        if std::mem::take(self.chrome.harness.bars_menu_mut()) {
+            let popup = crate::pane_header::menu_id(self.focused_pane().id);
+            ctx.memory_mut(|memory| memory.open_popup(popup));
+        }
         let tab = self.active_tab_mut();
-        let focused = tab.focused_side();
-        let pane = match focused {
-            PaneSide::Time(slot) => tab.time_panes.get_mut(slot).unwrap_or(&mut tab.flow_pane),
-            PaneSide::Flow => &mut tab.flow_pane,
-        };
+        let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {
             layout_preset: Some(tab.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
@@ -142,10 +134,9 @@ impl QuantickApp {
             symbols,
             symbol: &mut tab.symbol,
             replay,
-            spec: &mut pane.spec,
             deal_recording,
             deal_recording_menu,
-            bars_menu: &mut bars_menu,
+            focused_bars,
             history_menu_rect: &mut history_menu_rect,
             history,
             history_candles: candles_held,
@@ -165,10 +156,6 @@ impl QuantickApp {
         // resets every frame and the button never reads as open.
         drop(model);
         self.chrome.layout_picker_open = layout_picker_open;
-        #[cfg(any(feature = "scenario-harness", test))]
-        if !bars_menu {
-            self.chrome.harness.clear_bars_menu();
-        }
         self.chrome.history_menu_rect = history_menu_rect;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
@@ -216,11 +203,6 @@ impl QuantickApp {
     /// rules are unchanged.
     pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
-            ToolbarAction::OpenIndicatorPicker => self
-                .surfaces
-                .indicator_picker
-                .state
-                .open((self.runtime.tabs.active_id(), self.focused_pane().id)),
             ToolbarAction::LoadHistory(reach) => {
                 let active = self.runtime.tabs.active_index();
                 self.tabs_mut().press_history(active, reach);

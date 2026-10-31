@@ -47,6 +47,8 @@ const MIN_LAYOUT_NAME_PX: f32 = 40.0;
 pub struct HeaderLayout {
     /// Whether the interval changed — a chip click or a drag on the interval.
     pub changed: bool,
+    /// Whether the indicators glyph was clicked this frame.
+    pub indicators: bool,
     /// Where each preset's chip landed, in [`PRESETS`] order — see
     /// [`Self::chips`].
     #[cfg(test)]
@@ -121,13 +123,14 @@ pub fn draw(
     #[cfg(test)]
     let mut recorded = chips.iter_mut();
     crate::pane_header::paint_rule(ui, strip);
+    let (rest, indicators) = crate::pane_header::indicators_glyph(ui, strip, salt);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(("time_header", salt))
-            .max_rect(strip.shrink2(crate::pane_header::CONTENT_PADDING))
+            .max_rect(rest.shrink2(crate::pane_header::CONTENT_PADDING))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    content.set_clip_rect(strip.intersect(ui.clip_rect()));
+    content.set_clip_rect(rest.intersect(ui.clip_rect()));
     bars(&mut content);
     let interval_rect = if presets {
         for (label, preset_ms) in PRESETS {
@@ -192,6 +195,7 @@ pub fn draw(
     let _ = name_rect;
     HeaderLayout {
         changed,
+        indicators,
         #[cfg(test)]
         chips,
         #[cfg(test)]

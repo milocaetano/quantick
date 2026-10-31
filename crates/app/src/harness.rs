@@ -319,7 +319,7 @@ pub(crate) struct Harness {
     /// `QUANTICK_DEAL_RECORDING`: `on`/`off` override the default a tab's
     /// deal recorder opens on; `menu` opens the REC popover once.
     deal_recording: Option<crate::deal_recording::RecordingHook>,
-    /// `QUANTICK_BARS_MENU`: open the bar-kind combo on the first frame,
+    /// `QUANTICK_BARS_MENU`: open the focused pane's bars menu on the first frame,
     /// once, for a capture of the entries a source cannot offer.
     bars_menu: bool,
     /// `QUANTICK_FOOTPRINT_AUTOSTART`, kept rather than applied and forgotten,
@@ -526,15 +526,9 @@ impl Harness {
         self.deal_recording.and_then(|hook| hook.default_override())
     }
 
-    /// Whether the launch asked for the bar-kind combo open and the combo
-    /// has not opened yet.
-    pub(crate) fn bars_menu_pending(&self) -> bool {
-        self.bars_menu
-    }
-
-    /// The combo opened: the request is spent.
-    pub(crate) fn clear_bars_menu(&mut self) {
-        self.bars_menu = false;
+    /// The launch's one-shot request for the focused pane's bars menu.
+    pub(crate) fn bars_menu_mut(&mut self) -> &mut bool {
+        &mut self.bars_menu
     }
 
     /// Whether the launch asked for the REC popover, once.

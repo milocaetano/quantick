@@ -195,6 +195,27 @@ mod tests {
         }
     }
 
+    /// A venue that prints no volume still draws every kind: one it cannot back
+    /// can arrive from config or a previous session.
+    #[test]
+    fn a_quote_driven_feed_draws_the_menu_of_every_kind() {
+        let inputs = BarInputAvailability {
+            traded_volume: false,
+            deal_counter: false,
+            deal_count: false,
+        };
+        for definition in BUILTIN_BARS.definitions() {
+            let mut selection = BarSelection::new(definition.default_config());
+            let ctx = egui::Context::default();
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    draw_kinds(ui, &mut selection, inputs);
+                    draw(ui, &mut selection, inputs);
+                });
+            });
+        }
+    }
+
     #[test]
     fn seventh_kind_reaches_real_editor_and_chart() {
         let registry = BarRegistry::new(

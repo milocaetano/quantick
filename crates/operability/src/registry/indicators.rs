@@ -10,8 +10,11 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "indicator.picker.open",
         title: "Open and search the indicator library",
-        reach: "left toolbar Indicators button, searchable centered modal",
-        keys: &[(Source::ToolbarAction, "OpenIndicatorPicker")],
+        reach: "the ƒx glyph on each pane header, searchable centered modal",
+        keys: &[(
+            Source::Authored,
+            "the glyph is a pane header widget, not an entry in the toolbar's action enum",
+        )],
         mapping: capability!("indicator.picker.set"),
     },
     UiBehaviour {
