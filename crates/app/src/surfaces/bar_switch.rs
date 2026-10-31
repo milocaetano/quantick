@@ -18,7 +18,7 @@ use crate::theme;
 
 /// How far below the chart's top edge the list opens.
 const TOP_MARGIN_PX: f32 = 24.0;
-/// Wide enough for the longest summary, `imbalance(dollar 100000)`.
+/// Wide enough for the longest row, `123456789 Imbalance (Dollar)`.
 const WIDTH_PX: f32 = 260.0;
 
 /// One bar change the trader chose: which pane, and the rule.
@@ -90,6 +90,7 @@ impl BarSwitchSurface {
     }
 
     /// What the typed text offers, in the order shown.
+    #[cfg(test)]
     pub fn candidates(&self) -> Vec<BarConfiguration> {
         self.open
             .as_ref()
@@ -121,7 +122,6 @@ impl Surface for BarSwitchSurface {
         if self.open.is_none() {
             self.open_on_digit(ctx, env);
         }
-        let candidates = self.candidates();
         let id = self.id();
         let Some(open) = self.open.as_mut() else {
             return SurfaceResponse::default();
@@ -145,14 +145,7 @@ impl Surface for BarSwitchSurface {
                 typing && input.key_pressed(egui::Key::ArrowUp),
             )
         });
-        let last = candidates.len().saturating_sub(1);
-        if down {
-            open.selected = (open.selected + 1).min(last);
-        }
-        if up {
-            open.selected = open.selected.saturating_sub(1);
-        }
-        open.selected = open.selected.min(last);
+        let mut candidates = Vec::new();
         let mut clicked = None;
         let mut window = egui::Window::new("Bars")
             .id(egui::Id::new(id))
@@ -198,15 +191,23 @@ impl Surface for BarSwitchSurface {
                     },
                 );
             });
-            let kept = quick_query_text(&open.query);
-            if kept != open.query {
-                open.query = kept;
-            }
+            open.query = quick_query_text(&open.query);
+            // Read after the edit: a letter and Enter in one frame answer the
+            // list the letter asked for.
+            candidates = BUILTIN_BARS.quick_matches(&open.query);
             // A new query is a new list: a highlight kept by index would land
             // on a different kind (15's fourth row is tick, 150's is volume).
             if open.query != asked {
                 open.selected = 0;
             }
+            let last = candidates.len().saturating_sub(1);
+            if down {
+                open.selected = (open.selected + 1).min(last);
+            }
+            if up {
+                open.selected = open.selected.saturating_sub(1);
+            }
+            open.selected = open.selected.min(last);
             if candidates.is_empty() {
                 ui.label(egui::RichText::new("no bar at this size").color(theme::TEXT_SUPPORT));
             }

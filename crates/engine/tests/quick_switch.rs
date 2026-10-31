@@ -195,6 +195,27 @@ fn every_row_reads_as_words() {
 }
 
 #[test]
+fn a_time_row_names_the_rule_in_its_largest_exact_unit() {
+    assert_eq!(labels("60m"), ["1 Hour"]);
+    assert_eq!(labels("7d"), ["1 Week", "7 Dollars"]);
+    assert_eq!(labels("60")[..3], ["1 Hour", "1 Minute", "60 Hours"]);
+}
+
+#[test]
+fn a_kind_without_an_alias_shows_its_summary() {
+    use quantick_engine::bar_registry::{BarDefinition, definitions::TICK};
+    static PLAIN: BarDefinition = BarDefinition {
+        id: "plain",
+        quick_alias: None,
+        ..TICK
+    };
+    let config = PLAIN
+        .configure(rust_decimal::Decimal::from(50), None)
+        .unwrap();
+    assert_eq!(config.quick_label(), "plain(50)");
+}
+
+#[test]
 fn a_bare_number_keeps_its_order_with_the_same_row_text() {
     assert_eq!(
         labels("15"),

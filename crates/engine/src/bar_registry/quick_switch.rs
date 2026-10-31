@@ -112,10 +112,11 @@ impl BarRegistry {
                 .flat_map(move |definition| scaled_readings(definition, number, &[scale]))
         });
         let aliased = self.quick_candidates(number).into_iter().filter(|config| {
-            config
-                .definition()
-                .quick_alias
-                .is_some_and(|alias| alias.suffix.eq_ignore_ascii_case(&letter))
+            suffix.len() == 1
+                && config
+                    .definition()
+                    .quick_alias
+                    .is_some_and(|alias| alias.suffix.eq_ignore_ascii_case(&letter))
         });
         durations.chain(aliased).collect()
     }

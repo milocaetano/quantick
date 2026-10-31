@@ -273,6 +273,27 @@ fn chosen_after(typed: &str, keys: &[egui::Key]) -> Option<String> {
 }
 
 #[test]
+fn a_letter_and_enter_in_one_frame_answer_the_lettered_list() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, "2000");
+    frame(&mut surface, &ctx, Vec::new());
+    frame(&mut surface, &ctx, Vec::new());
+    let response = frame(
+        &mut surface,
+        &ctx,
+        vec![egui::Event::Text("t".into()), key(egui::Key::Enter)],
+    );
+    assert_eq!(
+        response
+            .bar_switch
+            .map(|request| request.config.to_config_string())
+            .as_deref(),
+        Some("tick:2000")
+    );
+}
+
+#[test]
 fn enter_takes_the_first_reading_and_the_arrow_the_next() {
     use egui::Key::ArrowDown;
     assert_eq!(chosen_after("2000t", &[]).as_deref(), Some("tick:2000"));

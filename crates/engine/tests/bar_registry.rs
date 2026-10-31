@@ -200,7 +200,25 @@ fn every_family_member_exposes_the_same_parameter_contract() {
 fn a_quick_switch_suffix_is_one_letter_kinds_may_share() {
     use quantick_engine::bar_registry::{
         BarConfigurationError, BarDefinition, QuickAlias,
-        definitions::{RENKO, TICK},
+        definitions::{RENKO, TICK, TIME},
+    };
+    static LETTERED_TIME: BarDefinition = BarDefinition {
+        id: "lettered_time",
+        quick_alias: Some(QuickAlias {
+            suffix: 'x',
+            singular: "Time",
+            plural: "Times",
+        }),
+        ..TIME
+    };
+    static MINUTELY: BarDefinition = BarDefinition {
+        id: "minutely",
+        quick_alias: Some(QuickAlias {
+            suffix: 'm',
+            singular: "Minutely",
+            plural: "Minutely",
+        }),
+        ..TICK
     };
     static DIGIT: BarDefinition = BarDefinition {
         id: "digit",
@@ -226,6 +244,17 @@ fn a_quick_switch_suffix_is_one_letter_kinds_may_share() {
     ));
     let shared = BarRegistry::new([&RENKO, &TWIN]).unwrap();
     assert_eq!(shared.quick_matches("50r").len(), 2);
+    assert!(matches!(
+        BarRegistry::new([&LETTERED_TIME]),
+        Err(BarConfigurationError::InvalidDefinition { .. })
+    ));
+    let month_suffix = BarRegistry::new([&TIME, &MINUTELY]).unwrap();
+    let month: Vec<_> = month_suffix
+        .quick_matches("1mo")
+        .into_iter()
+        .map(|config| config.to_config_string())
+        .collect();
+    assert_eq!(month, ["time:1mo"], "`mo` is not the letter `m`");
 }
 
 #[test]

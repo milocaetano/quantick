@@ -296,11 +296,13 @@ impl BarRegistry {
                     return Err(invalid("duplicate parameter choice"));
                 }
             }
-            if definition
-                .quick_alias
-                .is_some_and(|alias| !alias.suffix.is_ascii_alphabetic())
-            {
-                return Err(invalid("a quick-switch suffix is one letter"));
+            if definition.quick_alias.is_some_and(|alias| {
+                !alias.suffix.is_ascii_alphabetic()
+                    || definition.parameter.kind == NumberKind::Duration
+            }) {
+                return Err(invalid(
+                    "a quick-switch suffix is one letter, on a kind that is no duration",
+                ));
             }
             if definitions[..i]
                 .iter()
