@@ -649,21 +649,19 @@ impl<'a> Connection<'a> {
     /// Route one decoded message to the arm that owns it.
     async fn on_message(&mut self, message: BridgeMsg) -> ControlFlow<ConnEnd> {
         match message {
-            BridgeMsg::Tick(tick) => return self.on_tick(&tick).await,
-            BridgeMsg::Book(image) => {
-                return delivered(
-                    self.depth
-                        .observe(
-                            image,
-                            &self.config.book_capture,
-                            self.generation_offset,
-                            self.tx,
-                            tokio::time::Instant::now(),
-                        )
-                        .await,
-                );
-            }
-            BridgeMsg::Heartbeat(hb) => return self.on_heartbeat(&hb).await,
+            BridgeMsg::Tick(tick) => self.on_tick(&tick).await,
+            BridgeMsg::Book(image) => delivered(
+                self.depth
+                    .observe(
+                        image,
+                        &self.config.book_capture,
+                        self.generation_offset,
+                        self.tx,
+                        tokio::time::Instant::now(),
+                    )
+                    .await,
+            ),
+            BridgeMsg::Heartbeat(hb) => self.on_heartbeat(&hb).await,
             BridgeMsg::BackfillStart { count_hint } => {
                 info!(
                     target: "quantick::feed",
@@ -673,6 +671,7 @@ impl<'a> Connection<'a> {
                     "bridge is sending history"
                 );
                 self.backfill = Some(Vec::new());
+                ControlFlow::Continue(())
             }
             BridgeMsg::BackfillEnd {} => {
                 let batch = self.backfill.take().unwrap_or_default();
@@ -683,39 +682,47 @@ impl<'a> Connection<'a> {
                     trades = batch.len(),
                     "history block complete"
                 );
-                return delivered(self.tx.send(Mt5Event::Backfilled(batch)).await);
+                delivered(self.tx.send(Mt5Event::Backfilled(batch)).await)
             }
             BridgeMsg::HistoryStart {
                 count_hint,
                 opening,
-            } => self.on_history_start(count_hint, opening),
+            } => {
+                self.on_history_start(count_hint, opening);
+                ControlFlow::Continue(())
+            }
             BridgeMsg::HistoryEnd {
                 exhausted,
                 scanned_to_ms,
                 remaining,
             } => {
-                return self
-                    .on_history_end(exhausted, scanned_to_ms, remaining)
-                    .await;
+                self.on_history_end(exhausted, scanned_to_ms, remaining)
+                    .await
             }
             BridgeMsg::RatesStart {
                 interval_ms,
                 count_hint,
-            } => self.on_rates_start(interval_ms, count_hint),
-            BridgeMsg::Rate(chunk) => match self.candles.as_mut() {
-                Some(block) => block.absorb(&chunk),
-                // A batch outside a block has no interval to be measured in,
-                // and guessing one would misdate every bar in it.
-                None => warn!(
-                    target: "quantick::feed",
-                    schema_version = 1_u8,
-                    event_code = "MT5_PROTOCOL_VIOLATION",
-                    bars = chunk.bars.len(),
-                    action = "drop_chunk",
-                    "candles arrived outside a rates block; dropping them"
-                ),
-            },
-            BridgeMsg::RatesEnd { partial } => return self.on_rates_end(partial).await,
+            } => {
+                self.on_rates_start(interval_ms, count_hint);
+                ControlFlow::Continue(())
+            }
+            BridgeMsg::Rate(chunk) => {
+                match self.candles.as_mut() {
+                    Some(block) => block.absorb(&chunk),
+                    // A batch outside a block has no interval to be measured in,
+                    // and guessing one would misdate every bar in it.
+                    None => warn!(
+                        target: "quantick::feed",
+                        schema_version = 1_u8,
+                        event_code = "MT5_PROTOCOL_VIOLATION",
+                        bars = chunk.bars.len(),
+                        action = "drop_chunk",
+                        "candles arrived outside a rates block; dropping them"
+                    ),
+                }
+                ControlFlow::Continue(())
+            }
+            BridgeMsg::RatesEnd { partial } => self.on_rates_end(partial).await,
             BridgeMsg::Bye { reason } => {
                 info!(
                     target: "quantick::feed",
@@ -724,7 +731,7 @@ impl<'a> Connection<'a> {
                     reason = %reason,
                     "bridge said goodbye"
                 );
-                return ControlFlow::Break(ConnEnd::BridgeGone(format!("bye: {reason}")));
+                ControlFlow::Break(ConnEnd::BridgeGone(format!("bye: {reason}")))
             }
             BridgeMsg::Hello(_) => {
                 warn!(
@@ -733,9 +740,9 @@ impl<'a> Connection<'a> {
                     event_code = "MT5_PROTOCOL_VIOLATION",
                     "second hello mid-session; ignoring it"
                 );
+                ControlFlow::Continue(())
             }
         }
-        ControlFlow::Continue(())
     }
 
     /// One tick: its sequence anomaly, then its deal reading, then its print.
