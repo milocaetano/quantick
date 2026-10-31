@@ -99,7 +99,7 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     let replay = app.active_tab().replay.clone().unwrap();
     let paper = app.active_tab().paper.position_summary();
     let drawings = app.active_tab().flow_pane.drawings.items().len();
-    app.apply_toolbar_action(ToolbarAction::OpenIndicatorPicker);
+    app.open_indicator_picker_on(app.active_tab().focused_side());
     app.surfaces.indicator_picker.state.query = "owned".into();
     let picker = app.surfaces.indicator_picker.state.clone();
     let destination = egui::ViewportId::from_hash_of("rebound-workspace");

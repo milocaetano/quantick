@@ -419,6 +419,9 @@ fn delayed_bar_response_fixture(unwind: bool) {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
     run_frame(&mut app, &ctx);
+    // The open bars menu draws the editor whose range clamps the value below.
+    let menu = crate::pane_header::menu_id(app.active_tab().flow_pane.id);
+    ctx.memory_mut(|memory| memory.open_popup(menu));
     let directory = gateway_test_directory("bar-registry-delayed-response");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     let gate = BarResponseGate::install(&mut app, &ctx, &directory);
@@ -445,6 +448,9 @@ fn delayed_bar_response_fixture(unwind: bool) {
             .completed_for_test(&request_id)
     );
     gate.wait_until_held(&request_id);
+    // The header draws before the gateway runs, so its editor sees the value the
+    // frame after the call landed.
+    run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().flow_pane.state.spec(), &config);
     assert_eq!(
         app.active_tab().flow_pane.spec.pending(),

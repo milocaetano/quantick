@@ -306,9 +306,8 @@ impl Tab {
     /// parameter) keeps pushing the pending spec forward, which also debounces
     /// the rebuild to one per gesture.
     ///
-    /// The two panes run this independently: the toolbar's BARS group governs
-    /// the focused pane and the time pane's own header governs the time pane
-    /// (§11), so a change to one pane must not rebuild the chart beside it.
+    /// The panes run this independently: each pane's own header governs that
+    /// pane (§11), so a change to one must not rebuild the chart beside it.
     fn apply_spec_change_at(&mut self, index: PaneIndex) {
         let Some(pane) = self.pane_at_mut(index) else {
             return;

@@ -35,7 +35,7 @@ fn indicator_picker_control_opens_searches_inspects_and_closes_without_attaching
     let call = |app: &mut QuantickApp, client: &mut LocalClient, operation| {
         unkeyed_call(app, client, CAPABILITY, json!({ "operation": operation })).0
     };
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::OpenIndicatorPicker);
+    app.open_indicator_picker_on(app.active_tab().focused_side());
     let initial = success_result(&call(&mut app, &mut client, json!({"action": "inspect"})));
     assert_eq!(initial["open"], true);
     assert_eq!(initial["pane_id"], app.focused_pane().id.to_string());
@@ -72,7 +72,7 @@ fn indicator_picker_owns_keys_before_chrome_and_chart() {
     let dock = app.dock.visible();
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::OpenIndicatorPicker);
+    app.open_indicator_picker_on(app.active_tab().focused_side());
     run_frame_with_events(
         &mut app,
         &ctx,
@@ -95,4 +95,52 @@ fn indicator_picker_owns_keys_before_chrome_and_chart() {
         app.toolrail.tool(),
         Tool::Drawing(drawing_tool("horizontal-line"))
     );
+}
+
+/// `layout.focus.set` then an open reaches the state a click on a pane's `ƒx` does.
+#[test]
+fn focusing_a_pane_then_opening_the_picker_matches_its_glyph() {
+    let ctx = egui::Context::default();
+    let (mut app, _events, _commands) = super::candle_aggression::context_fixture(&ctx);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("indicator-picker-pane");
+    grant_annotate_for_test(
+        &mut app,
+        "all-reads,cockpit,cockpit.layout,observe.user_text",
+    );
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options(
+            "cockpit",
+            &["cockpit", "cockpit.layout", "observe.user_text"],
+        ),
+    );
+    app.control_action(
+        "layout.focus.set",
+        2,
+        crate::control::ActionOrigin::Human,
+        json!({"pane": "1"}),
+    )
+    .unwrap();
+    let opened = success_result(
+        &unkeyed_call(
+            &mut app,
+            &mut client,
+            CAPABILITY,
+            json!({"operation": {"action": "open"}}),
+        )
+        .0,
+    );
+    let time_pane = app.active_tab().pane(PaneSide::Time(0)).id;
+    assert_eq!(opened["pane_id"], time_pane.to_string());
+
+    let by_script = app.surfaces.indicator_picker.state.target;
+    app.surfaces.indicator_picker.state.close();
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.active_tab_mut().time_panes[0].request_indicator_picker();
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
+    assert_eq!(app.surfaces.indicator_picker.state.target, by_script);
 }

@@ -595,7 +595,7 @@ fn set_interval<P: TabsPort + TabsMutPort + ?Sized>(
     let pane = input.pane.get() as usize;
     if pane == 0 {
         return Err(ControlError::invalid_request(
-            "the flow pane's bars are set by the toolbar's BARS group, not by an interval"
+            "the flow pane's bars are set by its header's bars control or layout.pane.set_bar_spec, not by an interval"
                 .to_owned(),
         ));
     }

@@ -184,7 +184,7 @@ mod tests {
         ] {
             let mut selection = BarSelection::new(BUILTIN_BARS.parse(text).unwrap());
             let ctx = egui::Context::default();
-            // The focused toolbar draws this control even without input.
+            // An open bars menu draws this control even without input.
             // Its historical widget range is narrower than parser acceptance.
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
@@ -192,6 +192,57 @@ mod tests {
                 });
             });
             assert_eq!(selection.spec().parameter(), expected, "{text}");
+        }
+    }
+
+    /// The menu's time editor offers the presets, and a frame without a click
+    /// leaves the selection as it found it.
+    #[test]
+    fn the_time_kind_paints_the_preset_chips_and_an_idle_frame_changes_nothing() {
+        let config = BUILTIN_BARS.parse("time:60000").unwrap();
+        let mut selection = BarSelection::new(config);
+        let ctx = egui::Context::default();
+        let mut painted = String::new();
+        for _ in 0..2 {
+            painted.clear();
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.set_min_width(800.0);
+                    ui.horizontal(|ui| draw(ui, &mut selection, BarInputAvailability::PRINTS));
+                });
+            });
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape {
+                    painted.push_str(text.galley.text());
+                    painted.push(' ');
+                }
+            }
+        }
+        for chip in ["1m", "5m", "15m", "1h"] {
+            assert!(painted.contains(chip), "{chip} missing from: {painted}");
+        }
+        assert_eq!(selection.spec(), config);
+        assert_eq!(selection.pending(), None);
+    }
+
+    /// A venue that prints no volume still draws every kind: one it cannot back
+    /// can arrive from config or a previous session.
+    #[test]
+    fn a_quote_driven_feed_draws_the_menu_of_every_kind() {
+        let inputs = BarInputAvailability {
+            traded_volume: false,
+            deal_counter: false,
+            deal_count: false,
+        };
+        for definition in BUILTIN_BARS.definitions() {
+            let mut selection = BarSelection::new(definition.default_config());
+            let ctx = egui::Context::default();
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    draw_kinds(ui, &mut selection, inputs);
+                    draw(ui, &mut selection, inputs);
+                });
+            });
         }
     }
 

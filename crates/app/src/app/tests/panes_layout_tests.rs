@@ -1326,7 +1326,7 @@ fn a_pane_opened_late_keeps_the_backfill_boundary_honest() {
 }
 
 /// (c) The time pane's header governs the time pane and nothing else; the
-/// toolbar's BARS group keeps governing the flow pane (§11).
+/// flow pane keeps its own bars (§11).
 #[test]
 fn a_timeframe_chip_moves_only_the_time_panes_spec() {
     let ctx = egui::Context::default();
@@ -1818,8 +1818,8 @@ fn switching_layouts_focuses_the_pane_the_switch_reveals() {
     );
 }
 
-/// The BARS group edits the focused pane — the same pane the status bar
-/// reads and indicator commands land on. In the Time layout that is the
+/// The selector of the focused pane — the pane the status bar reads and
+/// indicator commands land on — edits that pane. In the Time layout that is the
 /// timeframe chart on screen; the hidden flow pane is untouched.
 #[test]
 fn the_bars_selectors_govern_the_focused_pane() {
@@ -1831,8 +1831,8 @@ fn the_bars_selectors_govern_the_focused_pane() {
     run_frame(&mut app, &ctx);
     let flow_spec = *app.active_tab().flow_pane.state.spec();
 
-    // The exact selector fields the toolbar's BARS group borrows for the
-    // focused pane, written through the same deferred-spec path.
+    // The exact selector fields the pane's bars menu edits, written through
+    // the same deferred-spec path.
     let pane = app.active_tab_mut().focused_pane_mut();
     pane.spec
         .update(

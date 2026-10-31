@@ -29,7 +29,7 @@
 //! ## What it does not cover yet
 //!
 //! The scene enumerates the regions listed in [`SceneOwnerKindDto`] and no
-//! others: the SOURCE, BARS, HISTORY and TRADE toolbar groups, the window
+//! others: the SOURCE, HISTORY and TRADE toolbar groups, the window
 //! menus, the rail's trailing cluster and every dialog are still unnamed. A
 //! capture says so in [`SceneSnapshot::coverage`], which is never `available`
 //! for that reason, rather than reporting a short list as the whole screen
@@ -200,7 +200,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     } else {
         // Never `available()`. A region in `covered_regions` was *walked*,
         // not exhausted: the toolbar contributes its LAYERS group and not the
-        // SOURCE, BARS, HISTORY or TRADE groups beside it, the rail its tools
+        // SOURCE, HISTORY or TRADE groups beside it, the rail its tools
         // and not its trailing cluster, the strip its chips and not the `+`.
         // Reporting completeness here would tell a client the controls this
         // walk does not reach are not on screen, which is the one lie the
@@ -562,6 +562,12 @@ fn push_panes(
             bounds: bounds.into_snapshot(),
             capability_id: None,
         });
+        controls.extend(pane_header_controls(
+            pane.id,
+            &side.title(),
+            tab_control_id(tab_id),
+            bounds_not_recorded(),
+        ));
     }
     focused_pane_id
 }

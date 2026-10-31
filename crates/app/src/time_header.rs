@@ -1,14 +1,13 @@
 //! The time pane's inline timeframe selector
 //! (`docs/ux/ui-design-model.md` §11).
 //!
-//! This row governs the time pane and nothing else, wherever focus sits; the
-//! toolbar's BARS group governs the *focused* pane, which may be the same
-//! one. It sits in a strip carved off the top of the pane rather than
+//! This row governs the time pane and nothing else, wherever focus sits. It
+//! sits in a strip carved off the top of the pane rather than
 //! floating over it, so nothing is ever painted across market data.
 //!
 //! The presets are the timeframes a context chart is actually read at, from a
 //! minute to a calendar month; the drag beside them accepts the same fixed
-//! interval domain the BARS group does
+//! interval domain the pane's bars menu does
 //! ([`crate::state::MIN_TIME_INTERVAL_MS`]..=[`crate::state::MAX_TIME_INTERVAL_MS`]),
 //! so a timeframe this row does not name is still one gesture away — and every
 //! preset it does name is a value the other control accepts. A calendar month
@@ -47,6 +46,8 @@ const MIN_LAYOUT_NAME_PX: f32 = 40.0;
 pub struct HeaderLayout {
     /// Whether the interval changed — a chip click or a drag on the interval.
     pub changed: bool,
+    /// Whether the indicators glyph was clicked this frame.
+    pub indicators: bool,
     /// Where each preset's chip landed, in [`PRESETS`] order — see
     /// [`Self::chips`].
     #[cfg(test)]
@@ -121,13 +122,14 @@ pub fn draw(
     #[cfg(test)]
     let mut recorded = chips.iter_mut();
     crate::pane_header::paint_rule(ui, strip);
+    let (rest, clip, indicators) = crate::pane_header::indicators_glyph(ui, strip, salt);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(("time_header", salt))
-            .max_rect(strip.shrink2(crate::pane_header::CONTENT_PADDING))
+            .max_rect(rest)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    content.set_clip_rect(strip.intersect(ui.clip_rect()));
+    content.set_clip_rect(clip);
     bars(&mut content);
     let interval_rect = if presets {
         for (label, preset_ms) in PRESETS {
@@ -192,6 +194,7 @@ pub fn draw(
     let _ = name_rect;
     HeaderLayout {
         changed,
+        indicators,
         #[cfg(test)]
         chips,
         #[cfg(test)]
@@ -301,7 +304,7 @@ mod tests {
 
     /// Every preset has to be reachable by *both* time-bar controls: the two
     /// set the same `BarSpec::Time`, and 1h used to sit outside what the
-    /// toolbar's BARS group would accept.
+    /// bars menu would accept.
     #[test]
     fn every_preset_lies_inside_the_shared_interval_domain() {
         for (label, ms) in PRESETS {

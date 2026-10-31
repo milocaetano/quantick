@@ -372,7 +372,7 @@ impl ChartPane {
     /// a frame yet; a live change goes through [`SpecSelector::pending`] so the frame carrying it
     /// paints the loading overlay before the rebuild replays the tape.
     ///
-    /// The selectors move with the spec because the BARS group reads them: setting the state alone
+    /// The selectors move with the spec because the header's bars menu reads them: setting the state alone
     /// would restore a chart whose own controls disagreed with it, and the first touch of the
     /// parameter would snap it back to a rule the trader never chose.
     pub fn set_spec(&mut self, spec: impl Into<BarConfiguration>) {
@@ -462,6 +462,16 @@ impl ChartPane {
     /// on exactly once.
     pub fn take_settings_request(&mut self) -> Option<SlotId> {
         self.model.pending_settings.take().map(SlotId)
+    }
+
+    /// Ask for the indicator library on this pane; the app acts on it once.
+    pub(crate) fn request_indicator_picker(&mut self) {
+        self.model.pending_indicator_picker = true;
+    }
+
+    /// Whether this pane's header asked for the indicator library, once.
+    pub(crate) fn take_indicator_picker_request(&mut self) -> bool {
+        std::mem::take(&mut self.model.pending_indicator_picker)
     }
 
     pub(crate) fn take_indicator_guide_request(&mut self) -> Option<(SlotId, bool)> {

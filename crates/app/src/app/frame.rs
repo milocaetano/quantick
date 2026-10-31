@@ -601,6 +601,9 @@ impl QuantickApp {
                     .tabs
                     .runtime_mut(self.runtime.tabs.active_index())
                     .draw_canvas(tab_id, ui, area, &mut chrome);
+                if let Some(side) = self.active_tab_mut().take_indicator_picker_request() {
+                    self.open_indicator_picker_on(side);
+                }
                 // Each visible pane published its own reserved footer during
                 // the canvas split. Draw the shared catalogue into every one
                 // now, while their exact same-frame rectangles are available.
