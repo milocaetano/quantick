@@ -12,7 +12,8 @@
 //! paints from.
 //!
 //! [`work_meter`] is the test instrument the budgets in this crate and in
-//! `app` are held with: a counting allocator, installed by each test binary.
+//! `app` are held with: the engine's counting allocator, re-exported here and
+//! installed by each test binary.
 
 mod constants;
 pub mod day_turn;
@@ -36,7 +37,7 @@ pub mod tick_membership;
 pub mod toolbar_collapse;
 pub mod venue_history;
 pub mod viewport;
-pub mod work_meter;
+pub use quantick_engine::work_meter;
 
 #[cfg(test)]
 #[global_allocator]
