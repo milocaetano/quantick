@@ -3,8 +3,8 @@
 //! | Path | Unit | What runs |
 //! | --- | --- | --- |
 //! | `orderflow.trade.book` | print | `BookEngine::record_trade` |
-//! | `orderflow.depth.book` | depth update | `BookEngine::handle_depth_event_at` |
-//! | `orderflow.frame.book` | frame | `BookEngine::project_at` over the newest 120 bars, heatmap and bubbles on |
+//! | `orderflow.depth.book` | depth update | `BookEngine::handle_depth_event_at`, interleaved with the prints that advance the clock and close bars |
+//! | `orderflow.frame.book` | frame | `BookEngine::project_at` over the newest 120 bars, heatmap and bubbles on; every counted frame a rebuild, one projection interval after the last |
 //! | `orderflow.trade.flow.regions` / `.spheres` | print | one live FLOW frame of five prints: `FlowSession::project`, its capture and an inline worker's append and publication, divided by the prints; regional FLOW and typed-reference tick spheres |
 //!
 //! The prints are the recorded WIN slice under `tests/fixtures`, replayed in
@@ -75,24 +75,31 @@ const TRADE_BOOK: Budget = Budget {
     bytes: 16.0,
     copy_bytes: 400.0,
 };
-/// One delta applied and its runs recorded. Calibrated at `3f9380bd`: 16.1
-/// allocations, 6,648.6 bytes and 0 copy bytes per update.
+/// One delta applied and its runs recorded, interleaved with the prints that
+/// move the clock. Calibrated at `53266e52`: 16.11 allocations, 6,648.6 bytes
+/// and 0 copy bytes per update over 6,000 updates. The copy bytes measured
+/// zero, so they get a small absolute allowance of 64 bytes per update
+/// (384 KiB over the window): one buffer starting to grow per update crosses
+/// it.
 const DEPTH_BOOK: Budget = Budget {
     path: "orderflow.depth.book",
     unit: "depth update",
     allocs: 32.0,
     bytes: 12_288.0,
-    copy_bytes: 0.0,
+    copy_bytes: 64.0,
 };
-/// One heatmap projection of the visible window. Calibrated at `3f9380bd`:
-/// 1,057.4 allocations, 1,398,065 bytes (1.33 MiB) and 481,038 copy bytes per
-/// frame.
+/// One heatmap projection of the visible window, rebuilt: the counted frames
+/// are a projection interval apart, so the cache serves none. Calibrated at
+/// `53266e52`: 3,642.7 allocations, 5,728,389 bytes (5.46 MiB) and 2,327,929
+/// copy bytes (2.22 MiB) per rebuild. Bytes are declared at 1.46x, not 2x: a
+/// copy of the liquidity history per projection adds 4.45 MB a rebuild here
+/// (10,179,414 bytes, 1.78x), and the budget must catch it.
 const FRAME_BOOK: Budget = Budget {
     path: "orderflow.frame.book",
     unit: "frame",
-    allocs: 2_000.0,
-    bytes: 2.5 * MIB,
-    copy_bytes: 900.0 * KIB,
+    allocs: 7_000.0,
+    bytes: 8.0 * MIB,
+    copy_bytes: 4.25 * MIB,
 };
 /// A live regional FLOW frame, per print. Calibrated at `3f9380bd`: 1,161.1
 /// allocations, 813,776 bytes and 991,557 copy bytes per print — about 4 MB
@@ -124,11 +131,19 @@ const TRADE_FLOW_SPHERES: Budget = Budget {
 const SESSION_PRINTS: usize = 6_000;
 /// Prints counted on the book's print path.
 const MEASURED_PRINTS: usize = 3_000;
-/// Depth updates counted on the book's depth path.
+/// Depth updates counted on the book's depth path, as the prints between
+/// them bring them due: about 1,800 prints.
 const MEASURED_DEPTH_UPDATES: usize = 6_000;
 /// Projections run before the counted ones, and the projections counted.
 const WARMUP_FRAMES: usize = 10;
 const MEASURED_FRAMES: usize = 30;
+/// The clock between two projections: past orderflow's 220 ms
+/// `PROJECTION_INTERVAL` (crate-private), so the cache never serves a counted
+/// frame and each one is a rebuild.
+const PROJECTION_STEP: Duration = Duration::from_millis(250);
+/// Prints between two projections: the envelope's 300 a second over
+/// [`PROJECTION_STEP`].
+const PRINTS_PER_PROJECTION: usize = 75;
 /// Prints per live frame: the envelope's 300 prints a second at 60 frames.
 const PRINTS_PER_FRAME: usize = 5;
 /// Depth updates per print, as the envelope's 1,000 to 300.
@@ -288,6 +303,15 @@ fn holds_to_budget(budget: Budget, work: Tally, units: usize) {
     );
 }
 
+/// The book's heap work for one print and the depth updates that follow it.
+struct PrintWork {
+    /// `record_trade`.
+    record: Tally,
+    /// Every `handle_depth_event_at` the print brought due.
+    depth: Tally,
+    depth_updates: usize,
+}
+
 /// The book after a session of prints and the depth that comes with them,
 /// plus the tick:50 bars a chart would cut from the same prints.
 struct Book {
@@ -309,7 +333,7 @@ impl Book {
             ..HeatmapConfig::default()
         });
         engine.set_enabled(true, GENERATION);
-        let mut tape = Tape::new();
+        let tape = Tape::new();
         let start_ms = tape.recording[0].timestamp_ms;
         let bids = (0..20).map(|n| level(187_440 - n * 5, 5)).collect();
         let asks = (0..20).map(|n| level(187_540 + n * 5, 6)).collect();
@@ -331,7 +355,6 @@ impl Book {
             },
             start_ms,
         );
-        tape.next = 0;
         let mut book = Self {
             engine,
             tape,
@@ -347,21 +370,26 @@ impl Book {
         book
     }
 
-    /// One print and the depth updates due before the next; returns the
-    /// work of `record_trade` alone.
-    fn print(&mut self) -> Tally {
+    /// One print and the depth updates due before the next, at the print's
+    /// time; returns the work of each path apart.
+    fn print(&mut self) -> PrintWork {
         let trade = self.tape.next();
         self.prints += 1;
         self.clock_ms = trade.timestamp_ms;
         let engine = &mut self.engine;
-        let ((), work) = counted(|| engine.record_trade(&trade));
+        let ((), record) = counted(|| engine.record_trade(&trade));
         self.bars.push_into(&trade, &mut self.closed);
         let due = (self.prints * DEPTH_UPDATES_PER_S / TRADES_PER_S)
             .saturating_sub((self.next_depth - GENERATION - 1) as usize);
+        let mut depth = Tally::default();
         for _ in 0..due {
-            self.depth();
+            depth = add(depth, self.depth());
         }
-        work
+        PrintWork {
+            record,
+            depth,
+            depth_updates: due,
+        }
     }
 
     /// One depth update; returns its work.
@@ -396,34 +424,44 @@ fn book_print_path_holds_to_budget() {
     let mut book = Book::after(SESSION_PRINTS);
     let mut work = Tally::default();
     for _ in 0..MEASURED_PRINTS {
-        work = add(work, book.print());
+        work = add(work, book.print().record);
     }
     holds_to_budget(TRADE_BOOK, work, MEASURED_PRINTS);
 }
 
+/// The depth updates the envelope sends between prints, each at the time of
+/// the print before it, so the clock moves and bars close as live.
 #[test]
 fn book_depth_path_holds_to_budget() {
     let mut book = Book::after(SESSION_PRINTS);
     let mut work = Tally::default();
-    for _ in 0..MEASURED_DEPTH_UPDATES {
-        work = add(work, book.depth());
+    let mut updates = 0;
+    while updates < MEASURED_DEPTH_UPDATES {
+        let print = book.print();
+        work = add(work, print.depth);
+        updates += print.depth_updates;
     }
-    holds_to_budget(DEPTH_BOOK, work, MEASURED_DEPTH_UPDATES);
+    holds_to_budget(DEPTH_BOOK, work, updates);
 }
 
+/// One rebuild a frame: the test's clock moves [`PROJECTION_STEP`] between
+/// projections, so none is served from the cache.
 #[test]
 fn book_projection_holds_to_budget() {
     let mut book = Book::after(SESSION_PRINTS);
-    // The test's clock for the projection cache: one 60 Hz frame a step.
     let base = Instant::now();
     let mut work = Tally::default();
     let mut projected = 0;
+    let mut builds_before = 0;
     for frame in 0..WARMUP_FRAMES + MEASURED_FRAMES {
-        for _ in 0..PRINTS_PER_FRAME {
+        for _ in 0..PRINTS_PER_PROJECTION {
             book.print();
         }
         let request = book.request();
-        let now = base + Duration::from_micros(16_667 * frame as u64);
+        let now = base + PROJECTION_STEP * frame as u32;
+        if frame == WARMUP_FRAMES {
+            builds_before = book.engine.health().projection_builds;
+        }
         let engine = &mut book.engine;
         let (visible, spent) = counted(|| engine.project_at(&request, now));
         if frame >= WARMUP_FRAMES {
@@ -432,6 +470,11 @@ fn book_projection_holds_to_budget() {
         }
     }
     assert_eq!(projected, MEASURED_FRAMES, "every counted frame projects");
+    assert_eq!(
+        book.engine.health().projection_builds - builds_before,
+        MEASURED_FRAMES as u64,
+        "every counted frame rebuilds the projection"
+    );
     holds_to_budget(FRAME_BOOK, work, MEASURED_FRAMES);
 }
 
