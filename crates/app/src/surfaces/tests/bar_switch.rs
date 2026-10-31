@@ -281,5 +281,8 @@ fn enter_takes_the_first_reading_and_the_arrow_the_next() {
         Some("trades:2000")
     );
     assert_eq!(chosen_after("1d", &[]).as_deref(), Some("time:1d"));
-    assert_eq!(chosen_after("1d", &[ArrowDown]).as_deref(), Some("dollar:1"));
+    assert_eq!(
+        chosen_after("1d", &[ArrowDown]).as_deref(),
+        Some("dollar:1")
+    );
 }
