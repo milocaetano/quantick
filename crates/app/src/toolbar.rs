@@ -25,9 +25,9 @@ use crate::dock::DockTab;
 use crate::state::SpecSelector;
 #[cfg(test)]
 use crate::state::{BarKind, BarSpec};
-use quantick_engine::bar_registry::BarDefinition;
-use quantick_engine::bar_selection::{BarInputAvailability, SelectionCommand};
-mod bar_parameters;
+use quantick_chart::toolbar_collapse::{CollapsePlan, collapse_plan, param_width};
+use quantick_engine::bar_selection::BarInputAvailability;
+pub(crate) mod bar_parameters;
 use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use quantick_feed::history_reach::HistoryReach;
@@ -52,33 +52,6 @@ const LAYER_STRIP_ICON: &str = icons::CHART_BAR_HORIZONTAL;
 /// the chart, never a metaphor for it.
 const LAYER_FOOTPRINT_ICON: &str = icons::GRID_NINE;
 
-// Width estimates for the overflow rule, in pixels. egui sizes widgets while
-// drawing them, so the plan is decided up front from these; they only need to
-// be right enough that folding starts before clipping does.
-/// Margins, separators and inter-group spacing.
-const W_SLACK: f32 = 90.0;
-/// SOURCE with the full feed name.
-const W_SOURCE_FULL: f32 = 350.0;
-/// SOURCE with the feed shrunk to its initial.
-const W_SOURCE_SHRUNK: f32 = 260.0;
-/// BARS without the parameter widget.
-const W_BARS: f32 = 160.0;
-/// The bar-parameter label + drag value (every kind but time).
-const W_BAR_PARAM: f32 = 150.0;
-/// The time kind's parameter row: seven preset chips (1m to 1mo) plus the
-/// custom drag.
-const W_TIME_PARAM: f32 = 365.0;
-/// The imbalance kind's parameter row: three unit chips plus the target
-/// label and drag. Underestimating this makes the collapse plan draw a row
-/// wider than it budgeted instead of folding it.
-const W_IMBALANCE_PARAM: f32 = 330.0;
-/// The `History: <target> ▾` split button.
-const W_HISTORY: f32 = 150.0;
-/// The LAYERS icon group (bubbles, heatmap, live strip, footprint).
-const W_LAYERS: f32 = 100.0;
-const W_INDICATORS: f32 = 110.0;
-/// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
-const W_ICON: f32 = 28.0;
 /// One TRADE button's own horizontal padding, in pixels.
 const TRADE_BUTTON_PAD_PX: f32 = 16.0;
 /// Estimated width of one strong glyph in a TRADE button, in pixels: upper
@@ -106,117 +79,6 @@ const TRADE_REVERSE_WIDTH_PX: f32 =
 /// never changes what folds, so nothing left of TRADE - and nothing in it -
 /// moves when a fill lands.
 const W_TRADE: f32 = 2.0 * TRADE_ENTRY_WIDTH_PX + TRADE_CLOSE_WIDTH_PX + TRADE_REVERSE_WIDTH_PX;
-
-/// Which groups stay inline at the current width. Everything folded is
-/// reachable through the `⋯` overflow menu instead — never hidden.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollapsePlan {
-    /// LOOK renders as its own icon.
-    pub look_inline: bool,
-    /// PANELS renders as its own icon.
-    pub panels_inline: bool,
-    /// HISTORY renders as the split button.
-    pub history_inline: bool,
-    /// TRADE renders as the BUY/SELL pair.
-    pub trade_inline: bool,
-    /// The bar parameter renders next to the kind combo.
-    pub param_inline: bool,
-    /// The feed combo shows its full display name.
-    pub feed_full_name: bool,
-}
-
-impl CollapsePlan {
-    /// Nothing folded.
-    const FULL: Self = Self {
-        look_inline: true,
-        panels_inline: true,
-        history_inline: true,
-        trade_inline: true,
-        param_inline: true,
-        feed_full_name: true,
-    };
-
-    /// Whether the `⋯` menu is needed to reach a folded group. A shrunk feed
-    /// name loses no affordance, so it alone needs no overflow.
-    #[must_use]
-    pub fn overflow_needed(self) -> bool {
-        !(self.look_inline
-            && self.panels_inline
-            && self.history_inline
-            && self.trade_inline
-            && self.param_inline)
-    }
-
-    /// Estimated width of the toolbar under this plan. The `⋯` slot is
-    /// always reserved: it appears exactly when something folds, so counting
-    /// it conditionally would make the first fold width-neutral and leave
-    /// the planner skipping straight past it. `trade_width` and
-    /// `param_width` come in as parameters: TRADE reserves its open-state
-    /// width ([`W_TRADE`]), and the time kind's chip row is wider than the
-    /// other kinds' single drag.
-    fn width(self, trade_width: f32, param_width: f32) -> f32 {
-        let mut width = W_SLACK + W_ICON + W_BARS + W_LAYERS + W_INDICATORS;
-        width += if self.feed_full_name {
-            W_SOURCE_FULL
-        } else {
-            W_SOURCE_SHRUNK
-        };
-        if self.param_inline {
-            width += param_width;
-        }
-        if self.history_inline {
-            width += W_HISTORY;
-        }
-        if self.trade_inline {
-            width += trade_width;
-        }
-        if self.look_inline {
-            width += W_ICON;
-        }
-        if self.panels_inline {
-            width += W_ICON;
-        }
-        width
-    }
-}
-
-/// Decide what folds at `available` width, following the §6 collapse order.
-/// The last plan is accepted even when it still overflows — there is nothing
-/// left to fold, and the symbol and LAYERS are never candidates.
-#[must_use]
-pub fn collapse_plan(available: f32, trade_width: f32, param_width: f32) -> CollapsePlan {
-    let mut plan = CollapsePlan::FULL;
-    let steps: [fn(&mut CollapsePlan); 6] = [
-        |plan| plan.look_inline = false,
-        |plan| plan.panels_inline = false,
-        |plan| plan.history_inline = false,
-        |plan| plan.trade_inline = false,
-        |plan| plan.param_inline = false,
-        |plan| plan.feed_full_name = false,
-    ];
-    for fold in steps {
-        if plan.width(trade_width, param_width) <= available {
-            return plan;
-        }
-        fold(&mut plan);
-    }
-    plan
-}
-
-/// Estimated width of the selected kind's parameter row, for the collapse
-/// plan: the time kind carries the preset chips (audit QW1), so its row is
-/// wider than the single label + drag every other kind shows.
-#[must_use]
-pub fn param_width(kind: impl Into<&'static BarDefinition>) -> f32 {
-    let kind = kind.into();
-    if !kind.parameter.editor.presets.is_empty() {
-        W_TIME_PARAM
-    } else if !kind.choices.is_empty() {
-        W_IMBALANCE_PARAM
-    } else {
-        W_BAR_PARAM
-    }
-}
 
 /// The amber label that replaces SOURCE while a recording plays.
 pub struct ReplaySource {
@@ -526,7 +388,7 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
         format!(
             "{} · {}",
             model.spec.spec().definition().label(),
-            param_summary(model)
+            model.spec.spec().parameter_summary()
         )
     };
     if std::mem::take(model.bars_menu) {
@@ -538,30 +400,8 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
     egui::ComboBox::from_id_salt("bar_kind")
         .selected_text(selected)
         .show_ui(ui, |ui| {
-            let mut selected = None;
-            for definition in model.spec.registry().definitions() {
-                let reason = model
-                    .spec
-                    .availability(definition.id, bar_inputs(model))
-                    .expect("registered kind");
-                let item = ui.add_enabled(
-                    reason.is_none(),
-                    egui::SelectableLabel::new(
-                        model.spec.selected_id() == definition.id,
-                        definition.label(),
-                    ),
-                );
-                if item.clicked() {
-                    selected = Some(definition.id);
-                }
-                if let Some(reason) = reason {
-                    item.on_disabled_hover_text(reason.reason());
-                }
-            }
-            if let Some(id) = selected {
-                let inputs = bar_inputs(model);
-                let _ = model.spec.update(SelectionCommand::Select(id), inputs);
-            }
+            let inputs = bar_inputs(model);
+            bar_parameters::draw_kinds(ui, model.spec, inputs);
         });
     if plan.param_inline {
         draw_bar_param(ui, model);
@@ -576,18 +416,21 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
 }
 
 fn bar_inputs(model: &ToolbarModel) -> BarInputAvailability {
-    BarInputAvailability {
-        traded_volume: model.capabilities.traded_volume,
-        deal_counter: model.capabilities.deal_counter,
-        deal_count: model
-            .deal_recording
-            .as_ref()
-            .is_some_and(crate::deal_recording::RecordingView::deal_count_available),
-    }
+    available_bar_inputs(model.capabilities, model.deal_recording.as_ref())
 }
 
-fn param_summary(model: &ToolbarModel) -> String {
-    model.spec.spec().parameter_summary()
+/// What the running source can build bars from: the one answer every bars menu
+/// reads, the toolbar's and each pane header's.
+pub(crate) fn available_bar_inputs(
+    capabilities: FeedCapabilities,
+    deal_recording: Option<&crate::deal_recording::RecordingView>,
+) -> BarInputAvailability {
+    BarInputAvailability {
+        traded_volume: capabilities.traded_volume,
+        deal_counter: capabilities.deal_counter,
+        deal_count: deal_recording
+            .is_some_and(crate::deal_recording::RecordingView::deal_count_available),
+    }
 }
 
 /// HISTORY: the `History` split button. The main click repeats this tab's
@@ -1117,10 +960,6 @@ mod tests {
 
     use super::*;
 
-    /// The flat TRADE pair's width — the old `W_TRADE` constant, kept as the
-    /// tests' baseline now that the group is measured from its labels.
-    const FLAT_TRADE_W: f32 = 110.0;
-
     /// The LAYERS group speaks one visual language: each glyph is the shape
     /// its layer draws, and a layer that also has a dock tab wears the tab's
     /// glyph rather than a second one of its own. The depth map in particular
@@ -1151,73 +990,6 @@ mod tests {
         }
     }
 
-    /// How many §6 collapse steps a plan has taken. `None` when the plan is
-    /// not one of the seven canonical states — folding out of order.
-    fn stage(plan: CollapsePlan) -> Option<usize> {
-        let states = [
-            (true, true, true, true, true, true),
-            (false, true, true, true, true, true),
-            (false, false, true, true, true, true),
-            (false, false, false, true, true, true),
-            (false, false, false, false, true, true),
-            (false, false, false, false, false, true),
-            (false, false, false, false, false, false),
-        ];
-        states.iter().position(|&state| {
-            state
-                == (
-                    plan.look_inline,
-                    plan.panels_inline,
-                    plan.history_inline,
-                    plan.trade_inline,
-                    plan.param_inline,
-                    plan.feed_full_name,
-                )
-        })
-    }
-
-    #[test]
-    fn a_wide_toolbar_folds_nothing() {
-        let plan = collapse_plan(10_000.0, FLAT_TRADE_W, W_BAR_PARAM);
-        assert_eq!(stage(plan), Some(0));
-        assert!(!plan.overflow_needed());
-    }
-
-    #[test]
-    fn a_hopeless_width_ends_fully_folded() {
-        let plan = collapse_plan(0.0, FLAT_TRADE_W, W_BAR_PARAM);
-        assert_eq!(stage(plan), Some(6));
-        assert!(plan.overflow_needed());
-    }
-
-    #[test]
-    fn folding_follows_the_documented_order_and_never_skips() {
-        let mut last_stage = 6;
-        // Sweep from narrow to wide: the collapse stage must only decrease,
-        // and every plan must be one of the canonical §6 states.
-        let mut width = 100.0;
-        while width <= 2000.0 {
-            let plan = collapse_plan(width, FLAT_TRADE_W, W_BAR_PARAM);
-            let stage = stage(plan).expect("plans fold strictly in the §6 order");
-            assert!(
-                stage <= last_stage,
-                "widening from {width} px must never fold more"
-            );
-            last_stage = stage;
-            width += 10.0;
-        }
-        assert_eq!(last_stage, 0, "the sweep must reach the unfolded plan");
-    }
-
-    #[test]
-    fn look_folds_first_and_alone_at_a_mildly_tight_width() {
-        // One pixel short of the full plan: exactly LOOK moves to overflow.
-        let full_width = CollapsePlan::FULL.width(FLAT_TRADE_W, W_BAR_PARAM);
-        let plan = collapse_plan(full_width - 1.0, FLAT_TRADE_W, W_BAR_PARAM);
-        assert_eq!(stage(plan), Some(1));
-        assert!(plan.overflow_needed());
-    }
-
     /// Opening a position never changes what folds: at every window width,
     /// flat or open, the real toolbar paints BUY and SELL on the same
     /// pixels, so the history group left of TRADE cannot fold out from
@@ -1228,7 +1000,7 @@ mod tests {
             close: Some("Close 88888 SHORT".to_owned()),
             ..flat_trade(true)
         };
-        let full = CollapsePlan::FULL.width(W_TRADE, W_BAR_PARAM);
+        let full = CollapsePlan::FULL.width(W_TRADE, quantick_chart::toolbar_collapse::W_BAR_PARAM);
         for width in [full + 200.0, full, full - 40.0, full - 200.0, full - 400.0] {
             let flat_rects = entry_rects(&toolbar_shapes(flat_trade(true), width));
             let open_rects = entry_rects(&toolbar_shapes(open.clone(), width));
@@ -1237,42 +1009,6 @@ mod tests {
                 assert!(flat_rects.0.is_some(), "TRADE is inline at {width}");
             }
         }
-    }
-
-    /// The time kind's chip row widens the parameter slot, and the plan
-    /// reads that width: what exactly fits a drag-only kind folds once the
-    /// chips are on screen.
-    #[test]
-    fn the_time_kind_widens_the_param_slot_and_folds_sooner() {
-        assert!(param_width(BarKind::Time) > param_width(BarKind::Tick));
-        let exactly_drag = CollapsePlan::FULL.width(FLAT_TRADE_W, param_width(BarKind::Tick));
-        assert_eq!(
-            stage(collapse_plan(
-                exactly_drag,
-                FLAT_TRADE_W,
-                param_width(BarKind::Tick)
-            )),
-            Some(0)
-        );
-        assert!(
-            stage(collapse_plan(
-                exactly_drag,
-                FLAT_TRADE_W,
-                param_width(BarKind::Time)
-            ))
-            .expect("canonical")
-                > 0,
-            "the wider chip row must fold something at the same window width"
-        );
-    }
-
-    #[test]
-    fn a_shrunk_feed_name_alone_never_requires_the_overflow_menu() {
-        let plan = CollapsePlan {
-            feed_full_name: false,
-            ..CollapsePlan::FULL
-        };
-        assert!(!plan.overflow_needed());
     }
 
     /// Lay the toolbar out for real, off-screen, live and replaying — a

@@ -2,7 +2,7 @@
 //! between the flow chart and the context stack.
 //!
 //! `PaneSide` is the address every reader of the split uses; the two
-//! constants and `split_time_pane` are the geometry the divider drags against.
+//! constants and `split_pane_header` are the geometry the divider drags against.
 //! Cut out of `pane.rs` as a pure move: the pane struct never reads these, the
 //! tab and the layout code do.
 
@@ -23,9 +23,9 @@ pub const CANVAS_DIVIDER_HANDLE_PX: f32 = 5.0;
 /// anything — a default is an argument about what matters.
 pub const DEFAULT_PANE_FRACTION: f32 = 0.35;
 
-/// A time pane's area, split into the strip its selector sits in and the
-/// chart below it.
-pub struct TimePaneAreas {
+/// A pane's area, split into the strip its header sits in and the chart below
+/// it.
+pub struct PaneHeaderAreas {
     pub header: egui::Rect,
     pub chart: egui::Rect,
 }
@@ -56,13 +56,13 @@ pub fn clamp_pane_fraction(fraction: f32) -> f32 {
     }
 }
 
-/// Carve the time pane's header strip off the top of its area (§11); the rest
-/// is the chart. The header is a strip rather than an overlay so the selector
-/// is never painted across market data.
+/// Carve a pane's header strip off the top of its area (§11); the rest is the
+/// chart. The header is a strip rather than an overlay so it is never painted
+/// across market data.
 #[must_use]
-pub fn split_time_pane(area: egui::Rect) -> TimePaneAreas {
+pub fn split_pane_header(area: egui::Rect) -> PaneHeaderAreas {
     let split_y = (area.top() + crate::time_header::HEIGHT_PX).min(area.bottom());
-    TimePaneAreas {
+    PaneHeaderAreas {
         header: egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),
         chart: egui::Rect::from_min_max(egui::pos2(area.left(), split_y), area.max),
     }

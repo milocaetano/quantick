@@ -12,7 +12,7 @@ fn print(id: u64, timestamp_ms: i64, price: i64, quantity: i64, side: Side) -> T
     }
 }
 
-fn context_fixture(
+pub(super) fn context_fixture(
     ctx: &egui::Context,
 ) -> (
     QuantickApp,
@@ -325,7 +325,7 @@ fn a_tick_context_header_names_the_applied_bars_and_time_controls_return_for_tim
     let (mut app, _events, _commands) = context_fixture(&ctx);
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
-        texts.iter().any(|text| text == "tick(4)"),
+        texts.iter().any(|text| text.starts_with("Tick · 4")),
         "the left header must report its applied tick bars: {texts:?}"
     );
     assert!(

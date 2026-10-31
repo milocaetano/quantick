@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flow pane header variants</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { color-scheme: dark; --panel:#131722; --panel-2:#1a1f2c; --line:#2a3040; --ink:#e8eaf0; --ink-2:#aab0bf; --faint:#79808f; --accent:#5b8def; --gold:#e0b84a; }
+body { margin:0; background:#0b0e14; color:var(--ink-2); font:12px/1.3 "IBM Plex Sans", system-ui, sans-serif; padding:16px; display:flex; flex-direction:column; gap:18px; }
+h2 { margin:0 0 6px; font-size:13px; color:var(--ink); font-weight:600; }
+h2 small { color:var(--faint); font-weight:400; margin-left:8px; }
+.pane { width:700px; height:150px; background:var(--panel); border:1px solid var(--line); position:relative; display:flex; flex-direction:column; }
+.ph { display:flex; align-items:center; gap:5px; height:28px; padding:0 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+.plot { flex:1; position:relative; }
+canvas { position:absolute; inset:0; width:100%; height:100%; }
+.chip { color:var(--ink-2); border:1px solid transparent; border-radius:4px; padding:2px 6px; }
+.kind { font-weight:600; color:var(--ink); border-color:var(--line); background:var(--panel-2); font-size:13px; padding:2px 8px; }
+.badge { font:600 11px "IBM Plex Mono", monospace; letter-spacing:.05em; color:#10131a; background:var(--gold); border-radius:3px; padding:2px 6px; }
+.gap { width:1px; height:14px; background:var(--line); margin:0 3px; }
+.right { margin-left:auto; display:flex; gap:4px; align-items:center; }
+svg { width:14px; height:14px; display:block; fill:none; stroke:currentColor; stroke-width:1.4; stroke-linecap:round; }
+.on svg .f { fill:currentColor; }
+/* V1: bordered icon buttons, segmented switch */
+.v1 .ib { display:inline-flex; padding:2px 5px; border:1px solid var(--line); border-radius:4px; color:var(--faint); }
+.v1 .ib.on { color:#fff; background:#2f4f8f; border-color:var(--accent); }
+.v1 .ib.off { opacity:.38; }
+.v1 .seg { display:inline-flex; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+.v1 .seg span { padding:2px 6px; border-right:1px solid var(--line); color:var(--faint); display:inline-flex; }
+.v1 .seg span:last-child { border-right:0; }
+.v1 .seg span.on { background:#2f4f8f; color:#fff; }
+.v1 .seg svg { width:16px; }
+/* V2: borderless glyphs, lit = accent, one view glyph */
+.v2 .ph { gap:2px; }
+.v2 .ib { display:inline-flex; padding:3px 4px; color:var(--faint); }
+.v2 .ib.on { color:var(--accent); }
+.v2 .ib.off { opacity:.3; }
+.v2 .kind { background:none; border-color:transparent; padding:2px 4px; font-weight:600; }
+.v2 .tag { font:500 10px "IBM Plex Mono", monospace; letter-spacing:.08em; color:var(--gold); padding:0 4px 0 0; }
+.v2 .gap { margin:0 6px; }
+/* V3: one line, bars + a single Layers glyph; everything else in a click menu */
+.v3 .ib { display:inline-flex; padding:3px 4px; color:var(--faint); }
+.v3 .ib.on { color:var(--accent); }
+.v3 .kind { background:none; border-color:transparent; padding:2px 4px; font-weight:600; }
+.v3 .tag { font:500 10px "IBM Plex Mono", monospace; letter-spacing:.08em; color:var(--gold); padding:0 4px 0 0; }
+.v3 .count { font:11px "IBM Plex Mono", monospace; color:var(--faint); margin-left:-2px; }
+/* V4: no header; everything in a hover corner like today, but with the view glyph and a FLOW watermark */
+.v4 .ph { display:none; }
+.v4 .corner { position:absolute; top:6px; right:60px; display:flex; gap:2px; padding:2px 4px; border-radius:10px; background:rgba(13,16,24,.85); border:1px solid var(--line); }
+.v4 .ib { display:inline-flex; padding:2px 3px; color:var(--faint); }
+.v4 .ib.on { color:var(--accent); }
+.v4 .wm { position:absolute; left:8px; top:6px; font:500 10px "IBM Plex Mono", monospace; letter-spacing:.08em; color:var(--gold); opacity:.8; }
+.v4 .wm b { color:var(--ink); font-weight:600; margin-left:8px; font: 600 12px "IBM Plex Sans", sans-serif; }
+</style>
+</head>
+<body>
+<script>
+const I = {
+  bubbles: '<svg viewBox="0 0 14 14"><circle class="f" cx="4" cy="9" r="2.6"/><circle class="f" cx="9.5" cy="4.5" r="1.9"/><circle class="f" cx="10.5" cy="10.5" r="1.3"/></svg>',
+  heatmap: '<svg viewBox="0 0 14 14"><rect class="f" x="1.5" y="2" width="11" height="2"/><rect class="f" x="1.5" y="6" width="7" height="2"/><rect class="f" x="1.5" y="10" width="9" height="2"/></svg>',
+  footprint: '<svg viewBox="0 0 14 14"><path d="M7 1.5v2M7 10.5v2"/><rect class="f" x="4" y="3.5" width="6" height="7"/><path d="M4 7h6" stroke="#131722" stroke-width="1.2"/></svg>',
+  strip: '<svg viewBox="0 0 14 14"><path d="M2 3h8M2 6h4M2 9h10M2 12h6"/></svg>',
+  beside: '<svg viewBox="0 0 16 14"><path d="M4 1v2M4 11v2"/><rect class="f" x="2" y="3" width="4" height="8"/><circle class="f" cx="12" cy="3.5" r="1.1"/><circle class="f" cx="12" cy="7" r="1.5"/><circle class="f" cx="12" cy="10.5" r="1"/></svg>',
+  candles: '<svg viewBox="0 0 16 14"><path d="M5 1v2M5 11v2M11 2v1.5M11 9.5v2"/><rect class="f" x="3" y="3" width="4" height="8"/><rect class="f" x="9" y="3.5" width="4" height="6"/></svg>',
+  tape: '<svg viewBox="0 0 16 14"><circle class="f" cx="5" cy="3" r="1.2"/><circle class="f" cx="8" cy="7" r="1.7"/><circle class="f" cx="11" cy="4.5" r="1"/><circle class="f" cx="6" cy="11" r="1.3"/><circle class="f" cx="11.5" cy="10.5" r="1.1"/></svg>',
+  layers: '<svg viewBox="0 0 14 14"><path d="M7 2l5 2.5L7 7 2 4.5z"/><path d="M2 7.5L7 10l5-2.5M2 10.5L7 13l5-2.5"/></svg>',
+  ind: '<svg viewBox="0 0 14 14"><path d="M1.5 10l3-4 3 2.5 4.5-6"/></svg>',
+};
+const ib = (k, cls) => `<span class="ib ${cls || ""}">${I[k]}</span>`;
+const V = [
+  ["V1 · bordered buttons, segmented view switch", "the current mock", "v1",
+    `<span class="badge">FLOW</span><span class="chip kind">Tick · 2000 ▾</span><span class="gap"></span>
+     <span class="seg"><span class="on">${I.beside}</span><span>${I.candles}</span><span>${I.tape}</span></span><span class="gap"></span>
+     ${ib("bubbles","on")}${ib("heatmap","on")}${ib("footprint","on")}<span class="gap"></span>${ib("strip","on")}
+     <span class="right"><span class="chip">Indicators</span></span>`],
+  ["V2 · borderless glyphs, lit in accent, one view glyph that cycles", "least ink", "v2",
+    `<span class="tag">FLOW</span><span class="chip kind">Tick · 2000</span><span class="gap"></span>
+     ${ib("beside","on")}<span class="gap"></span>${ib("bubbles","on")}${ib("heatmap","on")}${ib("footprint","on")}${ib("strip","")}
+     <span class="right">${ib("ind","")}</span>`],
+  ["V3 · bars plus one Layers glyph; view and layers in a click menu", "fewest controls", "v3",
+    `<span class="tag">FLOW</span><span class="chip kind">Tick · 2000</span>
+     <span class="right">${ib("layers","on")}<span class="count">4</span>${ib("ind","")}</span>`],
+  ["V4 · no header line; a corner cluster over the canvas, FLOW and bars as a watermark", "no height cost", "v4",
+    ``],
+];
+function candles(c, w, h, seed) {
+  let x = seed; const r = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const n = Math.floor((w - 52 - 90) / 9), bw = (w - 52 - 90) / n; let p = .5;
+  c.strokeStyle = "#1e2432"; for (let i = 1; i < 4; i++) { const yy = Math.round(h * i / 4) + .5; c.beginPath(); c.moveTo(0, yy); c.lineTo(w - 52, yy); c.stroke(); c.fillStyle = "#79808f"; c.font = "10px 'IBM Plex Mono'"; c.fillText(String(170600 - i * 100), w - 47, yy + 3); }
+  for (let i = 0; i < n; i++) { const o = p; p = Math.min(.88, Math.max(.12, p + (r() - .5) * .11)); const up = p >= o; const col = up ? "#26a69a" : "#ef5350"; const y = v => 8 + (1 - v) * (h - 16); const xx = i * bw + bw / 2;
+    c.strokeStyle = col; c.beginPath(); c.moveTo(xx, y(Math.max(o, p) + r() * .05)); c.lineTo(xx, y(Math.min(o, p) - r() * .05)); c.stroke();
+    c.fillStyle = col; const t = y(Math.max(o, p)); c.fillRect(xx - bw * .32, t, bw * .64, Math.max(1, y(Math.min(o, p)) - t)); }
+  for (let i = 0; i < 8; i++) { c.fillStyle = `rgba(91,141,239,${.08 + r() * .2})`; c.fillRect(0, r() * h, w - 52 - 90, 4 + r() * 7); }
+  const x0 = w - 52 - 90; c.strokeStyle = "#2a3040"; c.beginPath(); c.moveTo(x0 + .5, 0); c.lineTo(x0 + .5, h); c.stroke();
+  let v = p; for (let i = 0; i < 20; i++) { v = Math.min(.9, Math.max(.1, v + (r() - .5) * .05)); c.fillStyle = r() > .5 ? "rgba(38,166,154,.7)" : "rgba(239,83,80,.7)"; c.beginPath(); c.arc(x0 + 6 + i / 20 * 78, 8 + (1 - v) * (h - 16), 1.5 + r() * 3, 0, 7); c.fill(); }
+}
+V.forEach(([title, note, cls, header], i) => {
+  const s = document.createElement("section");
+  s.innerHTML = `<h2>${title}<small>${note}</small></h2><div class="pane ${cls}"><div class="ph">${header}</div><div class="plot"><canvas></canvas>${cls === "v4" ? `<span class="wm">FLOW<b>Tick · 2000</b></span><span class="corner">${ib("beside","on")}${ib("bubbles","on")}${ib("heatmap","on")}${ib("footprint","on")}${ib("strip","")}</span>` : ""}</div></div>`;
+  document.body.append(s);
+  const cv = s.querySelector("canvas"), dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr; const c = cv.getContext("2d"); c.scale(dpr, dpr); candles(c, w, h, 47 + i);
+});
+</script>
+</body>
+</html>

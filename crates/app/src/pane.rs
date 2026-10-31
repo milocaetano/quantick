@@ -40,10 +40,10 @@ mod bubble_scale_controls;
 pub(crate) use bubble_scale_controls::show as bubble_scale_controls;
 mod canvas_gestures;
 mod constants;
-// `pub(crate)`, like `app::launch_hooks`: `split_time_pane` returns
-// `TimePaneAreas`, which nothing outside names yet, so a `pub use` of it is an
+// `pub(crate)`, like `app::launch_hooks`: `split_pane_header` returns
+// `PaneHeaderAreas`, which nothing outside names yet, so a `pub use` of it is an
 // unused import under the workspace's deny-warnings policy while a public
-// module keeps it nameable as `pane::canvas_split::TimePaneAreas`.
+// module keeps it nameable as `pane::canvas_split::PaneHeaderAreas`.
 pub(crate) mod canvas_split;
 mod context_menu;
 mod draw_chart;
@@ -84,7 +84,8 @@ pub(crate) use canvas_split::split_pane_layout_strip;
 /// The canvas split and the shared-mark contract keep their public paths
 /// here: the tab, the layouts and the control plane name them as `pane::`.
 pub use canvas_split::{
-    CANVAS_DIVIDER_HANDLE_PX, DEFAULT_PANE_FRACTION, PaneSide, clamp_pane_fraction, split_time_pane,
+    CANVAS_DIVIDER_HANDLE_PX, DEFAULT_PANE_FRACTION, PaneSide, clamp_pane_fraction,
+    split_pane_header,
 };
 pub(crate) use pointer_hit::PaneHitTest;
 pub(crate) use pointer_hit::{ControlDrawingHit, ControlPointerHit};

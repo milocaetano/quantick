@@ -45,6 +45,17 @@ pub const MAX_CALENDAR_MONTHS: i64 = 12;
 /// How far 1970-01-01 (a Thursday) sits after the Monday that opened its week.
 const MONDAY_ANCHOR_MS: i64 = -3 * DAY_MS;
 
+/// What an interval control sets from `ms`: a calendar month as itself, and any
+/// other value held inside `min..=max`.
+#[must_use]
+pub fn admit_interval(ms: i64, min: i64, max: i64) -> i64 {
+    if calendar_months(ms).is_some() {
+        ms
+    } else {
+        ms.clamp(min, max)
+    }
+}
+
 /// The number of calendar months `interval_ms` names, if it names any.
 #[must_use]
 pub fn calendar_months(interval_ms: i64) -> Option<i64> {

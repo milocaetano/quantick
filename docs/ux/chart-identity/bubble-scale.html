@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bubble scale</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: today's floating box first, then four live replacements, each a header line over the same chart. Single dark look: the app's own world. */
+:root { color-scheme: dark; --page:#0b0e14; --panel:#131722; --panel-2:#1a1f2c; --line:#2a3040; --ink:#e8eaf0; --ink-2:#aab0bf; --faint:#79808f; --accent:#5b8def; --gold:#e0b84a; --mono:"IBM Plex Mono", monospace; --sans:"IBM Plex Sans", system-ui, sans-serif; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--page); color:var(--ink); font:16px/1.5 var(--sans); }
+main { max-width:980px; margin:0 auto; padding:28px 20px 48px; display:flex; flex-direction:column; gap:30px; }
+h1 { margin:0; font-size:28px; font-weight:600; line-height:1.2; text-wrap:balance; }
+h2 { margin:0 0 8px; font-size:18px; font-weight:600; }
+p { margin:0; color:var(--ink-2); max-width:62ch; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap:22px; }
+.pane { background:var(--panel); border:1px solid var(--line); border-radius:6px; overflow:hidden; display:flex; flex-direction:column; height:230px; user-select:none; position:relative; }
+.ph { display:flex; align-items:center; gap:4px; height:36px; padding:0 10px; border-bottom:1px solid var(--line); white-space:nowrap; font-size:13px; }
+.tag { font:500 11px var(--mono); letter-spacing:.08em; color:var(--gold); opacity:.85; margin-right:6px; }
+.bars { font-weight:600; color:var(--ink); }
+.bars i { font-style:normal; color:var(--faint); opacity:.6; font-size:10px; margin-left:3px; }
+.sep { width:1px; height:16px; background:var(--line); margin:0 10px; }
+.b { background:none; border:0; border-radius:5px; padding:4px 5px; cursor:pointer; color:var(--accent); display:inline-flex; }
+.b svg { width:22px; height:22px; display:block; fill:currentColor; }
+.b.dim { color:var(--faint); opacity:.5; }
+.b.dim svg { fill:none; stroke:currentColor; stroke-width:1.5; }
+.plot { flex:1; position:relative; }
+canvas { position:absolute; inset:0; width:100%; height:100%; }
+/* today */
+.old { position:absolute; right:64px; top:40px; background:rgba(0,0,0,.65); border-radius:3px; padding:4px; display:flex; align-items:center; gap:8px; font:12px var(--mono); color:#ddd; }
+.old .tr { width:100px; height:4px; background:#555; border-radius:2px; position:relative; }
+.old .tr::after { content:""; position:absolute; left:30%; top:-5px; width:14px; height:14px; border-radius:50%; background:#aaa; }
+.old2 { right:8px; top:40px; }
+.old2 .tr { width:40px; }
+/* A: scrub value */
+.scrub { font:500 12px var(--mono); color:var(--ink-2); padding:3px 6px; border-radius:4px; cursor:ew-resize; min-width:48px; text-align:right; }
+.scrub:hover, .scrub.on { background:var(--panel-2); color:var(--ink); }
+.scrub::after { content:"×"; color:var(--faint); margin-left:1px; }
+/* B: hairline track */
+.track { position:relative; width:72px; height:20px; cursor:pointer; margin-left:4px; }
+.track::before { content:""; position:absolute; left:0; right:0; top:9px; height:2px; border-radius:1px; background:var(--line); }
+.track .fill { position:absolute; left:0; top:9px; height:2px; border-radius:1px; background:var(--accent); opacity:.6; }
+.track .knob { position:absolute; top:4px; width:12px; height:12px; margin-left:-6px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 2px var(--panel); }
+.track .tick { position:absolute; left:calc(27.27% - 1px); top:7px; width:2px; height:6px; background:var(--faint); opacity:.6; }
+.track .val { position:absolute; top:-18px; transform:translateX(-50%); font:500 11px var(--mono); color:var(--ink); background:var(--panel-2); padding:1px 5px; border-radius:3px; opacity:0; transition:opacity .12s; pointer-events:none; }
+.track.on .val { opacity:1; }
+/* C: wheel pill */
+.pill { position:absolute; right:68px; top:10px; font:500 12px var(--mono); color:var(--ink); background:rgba(26,31,44,.92); border:1px solid var(--line); padding:3px 8px; border-radius:12px; opacity:0; transition:opacity .15s; pointer-events:none; }
+.pill.on { opacity:1; }
+.hintc { position:absolute; left:10px; bottom:8px; font:500 11px var(--mono); letter-spacing:.06em; color:var(--faint); }
+/* D: sample bubble */
+.sample { width:34px; height:28px; display:grid; place-items:center; cursor:ns-resize; margin-left:4px; }
+.sample i { display:block; border-radius:50%; background:var(--accent); opacity:.85; }
+.sample:hover i { opacity:1; }
+.sample .v { position:absolute; margin-top:-40px; font:500 11px var(--mono); color:var(--ink); background:var(--panel-2); padding:1px 5px; border-radius:3px; opacity:0; pointer-events:none; }
+.sample.on .v { opacity:1; }
+.note { font-size:14px; color:var(--ink-2); display:flex; flex-direction:column; gap:6px; margin:0; padding-left:18px; }
+.note b { color:var(--ink); }
+code { font:12.5px var(--mono); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Bubble size: getting the black box off the chart</h1>
+    <p>Today there are two black boxes floating over the candles and over the tape, each with a grey slider. The scale runs from 0,25× to 3×, default 1×, visual only. Four nice ways to do it; try each one.</p>
+  </header>
+
+  <section>
+    <h2>Today</h2>
+    <div class="pane" id="today"></div>
+  </section>
+
+  <section class="grid">
+    <div><h2>A · draggable number</h2><p>Next to the bubbles icon, the value. Drag sideways; double-click returns to 1×. No track.</p><div class="pane" id="A"></div></div>
+    <div><h2>B · thin track</h2><p>A 2 px line with a dot. The value only shows while you drag. The tick mark is 1×.</p><div class="pane" id="B"></div></div>
+    <div><h2>C · mouse wheel on the icon</h2><p>No control in sight. Scroll the wheel over the bubbles icon; the value flashes for a second and disappears.</p><div class="pane" id="C"></div></div>
+    <div><h2>D · the sample bubble</h2><p>The control is a bubble at the current size. Drag up and it grows, drag down and it shrinks. What you see is what you get.</p><div class="pane" id="D"></div></div>
+  </section>
+
+  <section>
+    <h2>How each one behaves</h2>
+    <ul class="note">
+      <li><b>Where it lives:</b> on the chart line, right after the bubbles icon, not over the candles. The black box goes away.</li>
+      <li><b>Two targets:</b> today there is one slider for the candle bubbles and another for the tape bubbles. The line holds just one, which scales the candle bubbles; in the tape-only view, it scales the tape ones. The tape keeps its own on right-click.</li>
+      <li><b>Back to 1×:</b> double-click in A, B and D; in C, click the wheel.</li>
+      <li><b>A</b> and <b>C</b> are the cleanest. <b>B</b> is the most familiar. <b>D</b> is the clearest about what it does, and the most unusual.</li>
+      <li>In all of them, the <code>bubble_scale.set</code> command stays the same.</li>
+    </ul>
+  </section>
+</main>
+<script>
+const MIN = .25, MAX = 3, DEF = 1;
+const ICON = {
+  bubbles: '<svg viewBox="0 0 22 22"><circle cx="7" cy="14" r="4.6"/><circle cx="15" cy="7" r="3.1"/><circle cx="16.5" cy="16" r="1.9"/></svg>',
+  view: '<svg viewBox="0 0 30 22"><path d="M7 2v3M7 16v4" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="5" width="6" height="11" rx="1"/><path d="M15 2v18" stroke="currentColor" stroke-width="1.5" stroke-dasharray="1.5 2"/><circle cx="23" cy="4" r="1.5"/><circle cx="23" cy="9.5" r="2.4"/><circle cx="23" cy="15.5" r="1.8"/><circle cx="23" cy="19.5" r="1.1"/></svg>',
+};
+const fmt = (s) => s.toFixed(2).replace(".", ",");
+const clamp = (s) => Math.max(MIN, Math.min(MAX, s));
+function rng(seed) { let x = seed; return () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296; }
+function draw(cv, scale, tapeScale) {
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const c = cv.getContext("2d"); c.scale(dpr, dpr);
+  const r = rng(47), axis = 56, tapeW = Math.min(110, w * .2), pw = w - axis - tapeW;
+  const y = (q) => 10 + (1 - q) * (h - 24);
+  c.strokeStyle = "#1e2432"; c.fillStyle = "#79808f"; c.font = "10px 'IBM Plex Mono'";
+  for (let i = 1; i < 5; i++) { const yy = Math.round(h * i / 5) + .5; c.beginPath(); c.moveTo(0, yy); c.lineTo(w - axis, yy); c.stroke(); c.fillText(String(170600 - i * 100), w - axis + 6, yy + 3); }
+  const n = Math.floor(pw / 9), bw = pw / n; let p = .5; const bars = [];
+  for (let i = 0; i < n; i++) { const o = p; p = Math.min(.88, Math.max(.12, p + (r() - .5) * .11)); bars.push({ o, c: p }); }
+  bars.forEach((b, i) => { const col = b.c >= b.o ? "#26a69a" : "#ef5350", x = i * bw + bw / 2; c.strokeStyle = col; c.beginPath(); c.moveTo(x, y(Math.max(b.o, b.c) + r() * .05)); c.lineTo(x, y(Math.min(b.o, b.c) - r() * .05)); c.stroke(); c.fillStyle = col; const t = y(Math.max(b.o, b.c)); c.fillRect(x - bw * .32, t, bw * .64, Math.max(1, y(Math.min(b.o, b.c)) - t)); });
+  const br = rng(13);
+  for (let i = 0; i < n / 3; i++) { const k = Math.floor(br() * n), b = bars[k]; c.fillStyle = br() > .5 ? "rgba(38,166,154,.5)" : "rgba(239,83,80,.5)"; c.beginPath(); c.arc(k * bw + bw / 2, y(b.c), (2 + br() * 6) * scale, 0, 7); c.fill(); }
+  const x0 = pw; c.strokeStyle = "#2a3040"; c.beginPath(); c.moveTo(x0 + .5, 0); c.lineTo(x0 + .5, h); c.stroke();
+  let q = p; const tr = rng(33);
+  for (let i = 0; i < 22; i++) { q = Math.min(.9, Math.max(.1, q + (tr() - .5) * .05)); c.fillStyle = tr() > .5 ? "rgba(38,166,154,.75)" : "rgba(239,83,80,.75)"; c.beginPath(); c.arc(x0 + 6 + i / 22 * (tapeW - 12), y(q), (1.5 + tr() * 3) * (tapeScale ?? 1), 0, 7); c.fill(); }
+}
+const head = (extra) => `<span class="tag">ORDER FLOW</span><span class="bars">Tick · 2000<i>▾</i></span><span class="sep"></span><button class="b" title="View">${ICON.view}</button><span class="sep"></span><button class="b" data-bub title="Bubbles (Ctrl+B)">${ICON.bubbles}</button>${extra}`;
+function pane(id, extra, setup) {
+  const el = document.getElementById(id);
+  el.innerHTML = `<div class="ph">${head(extra)}</div><div class="plot"><canvas></canvas></div>`;
+  const cv = el.querySelector("canvas");
+  const st = { scale: DEF, tape: DEF };
+  const re = () => draw(cv, st.scale, st.tape);
+  setup(el, st, re);
+  re(); new ResizeObserver(re).observe(el);
+}
+// Today: two black boxes over the chart.
+pane("today", "", (el) => {
+  el.querySelector(".plot").insertAdjacentHTML("beforeend", `<div class="old"><span class="tr"></span>1.00x</div><div class="old old2"><span class="tr"></span></div>`);
+});
+// A: scrub the number.
+pane("A", `<span class="scrub" data-scrub title="Bubble size: drag; double-click returns to 1×">1,00</span>`, (el, st, re) => {
+  const s = el.querySelector("[data-scrub]"); let drag = null;
+  const show = () => { s.textContent = fmt(st.scale); re(); };
+  s.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, v: st.scale }; s.setPointerCapture(e.pointerId); s.classList.add("on"); });
+  s.addEventListener("pointermove", (e) => { if (!drag) return; st.scale = clamp(drag.v + (e.clientX - drag.x) / 60); show(); });
+  s.addEventListener("pointerup", () => { drag = null; s.classList.remove("on"); });
+  s.addEventListener("dblclick", () => { st.scale = DEF; show(); });
+});
+// B: hairline track.
+pane("B", `<span class="track" data-track title="Bubble size"><span class="fill"></span><span class="tick"></span><span class="knob"></span><span class="val"></span></span>`, (el, st, re) => {
+  const t = el.querySelector("[data-track]"), fill = t.querySelector(".fill"), knob = t.querySelector(".knob"), val = t.querySelector(".val"); let drag = false;
+  const pos = () => (st.scale - MIN) / (MAX - MIN);
+  const show = () => { const pc = pos() * 100 + "%"; fill.style.width = pc; knob.style.left = pc; val.style.left = pc; val.textContent = fmt(st.scale) + "×"; re(); };
+  const at = (e) => { const r = t.getBoundingClientRect(); st.scale = clamp(MIN + (e.clientX - r.left) / r.width * (MAX - MIN)); show(); };
+  t.addEventListener("pointerdown", (e) => { drag = true; t.setPointerCapture(e.pointerId); t.classList.add("on"); at(e); });
+  t.addEventListener("pointermove", (e) => { if (drag) at(e); });
+  t.addEventListener("pointerup", () => { drag = false; t.classList.remove("on"); });
+  t.addEventListener("dblclick", () => { st.scale = DEF; show(); });
+  show();
+});
+// C: wheel over the bubbles icon.
+pane("C", "", (el, st, re) => {
+  const b = el.querySelector("[data-bub]"); b.title = "Bubbles (Ctrl+B). Wheel: size; wheel click: 1×";
+  el.querySelector(".plot").insertAdjacentHTML("beforeend", `<span class="pill"></span><span class="hintc">SCROLL THE WHEEL OVER THE BUBBLES ICON</span>`);
+  const pill = el.querySelector(".pill"); let t = null;
+  const show = () => { pill.textContent = "bubbles " + fmt(st.scale) + "×"; pill.classList.add("on"); clearTimeout(t); t = setTimeout(() => pill.classList.remove("on"), 900); re(); };
+  b.addEventListener("wheel", (e) => { e.preventDefault(); st.scale = clamp(st.scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); show(); }, { passive: false });
+  b.addEventListener("auxclick", (e) => { if (e.button === 1) { st.scale = DEF; show(); } });
+});
+// D: the sample bubble.
+pane("D", `<span class="sample" data-sample title="Bubble size: drag up or down; double-click returns to 1×"><i></i><span class="v"></span></span>`, (el, st, re) => {
+  const s = el.querySelector("[data-sample]"), dot = s.querySelector("i"), v = s.querySelector(".v"); let drag = null;
+  const show = () => { const d = 6 + (st.scale - MIN) / (MAX - MIN) * 18; dot.style.width = dot.style.height = d + "px"; v.textContent = fmt(st.scale) + "×"; re(); };
+  s.addEventListener("pointerdown", (e) => { drag = { y: e.clientY, v: st.scale }; s.setPointerCapture(e.pointerId); s.classList.add("on"); });
+  s.addEventListener("pointermove", (e) => { if (!drag) return; st.scale = clamp(drag.v - (e.clientY - drag.y) / 40); show(); });
+  s.addEventListener("pointerup", () => { drag = null; s.classList.remove("on"); });
+  s.addEventListener("dblclick", () => { st.scale = DEF; show(); });
+  show();
+});
+</script>
+</body>
+</html>

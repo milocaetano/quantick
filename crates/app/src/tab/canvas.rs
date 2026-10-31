@@ -8,6 +8,8 @@
 //! rule, the collapsed rail and the divider between the columns.
 
 use eframe::egui;
+use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
+use quantick_engine::bar_selection::BarInputAvailability;
 use smallvec::SmallVec;
 
 use super::{FOCUS_RULE_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
@@ -16,7 +18,7 @@ use crate::config::FeedCapabilities;
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
-    SharedPick, clamp_pane_fraction, split_pane_layout_strip, split_time_pane,
+    SharedPick, clamp_pane_fraction, split_pane_header, split_pane_layout_strip,
 };
 use crate::state::BarKind;
 use crate::style::ChartStyle;
@@ -128,7 +130,7 @@ impl Tab {
         let monotonic_ms = (ui.input(|input| input.time).max(0.0) * 1_000.0) as u64;
         self.update_tape_clock_at(monotonic_ms);
         let frame = self.canvas_frame(area);
-        let rects = self.draw_context_column(ui, &frame);
+        let rects = self.draw_context_column(ui, &frame, chrome.capabilities);
 
         // Which shared mark the pointer is over, on each pane, against the
         // other pane's store. Answered here because answering it needs both
@@ -240,8 +242,15 @@ impl Tab {
     /// The context column, carved into one band per chart it shows, top to
     /// bottom. Each band spends its own header strip and hands back the
     /// chart rect below it.
-    fn draw_context_column(&mut self, ui: &mut egui::Ui, frame: &CanvasFrame) -> PaneRects {
+    fn draw_context_column(
+        &mut self,
+        ui: &mut egui::Ui,
+        frame: &CanvasFrame,
+        capabilities: FeedCapabilities,
+    ) -> PaneRects {
         let context_shown = frame.context_shown;
+        let bar_inputs =
+            crate::toolbar::available_bar_inputs(capabilities, self.deal_recording_view().as_ref());
         let mut rects = PaneRects {
             context_charts: SmallVec::new(),
             context_dividers: SmallVec::new(),
@@ -294,39 +303,63 @@ impl Tab {
                     continue;
                 }
                 let pane_areas = split_pane_layout_strip(*band);
-                let areas = split_time_pane(pane_areas.body);
-                self.draw_time_header(ui, slot, areas.header);
+                let areas = split_pane_header(pane_areas.body);
+                self.draw_time_header(ui, slot, areas.header, bar_inputs);
                 rects
                     .context_charts
                     .push(Some((areas.chart, pane_areas.layout_strip)));
             }
         }
-        rects.flow_areas = frame
-            .show_flow
-            .then(|| split_pane_layout_strip(frame.flow_band));
+        rects.flow_areas = frame.show_flow.then(|| {
+            let pane_areas = split_pane_layout_strip(frame.flow_band);
+            let areas = split_pane_header(pane_areas.body);
+            self.draw_flow_header(ui, areas.header, bar_inputs);
+            PaneAreas {
+                body: areas.chart,
+                layout_strip: pane_areas.layout_strip,
+            }
+        });
         rects
     }
 
-    /// Each context chart carries its own timeframe selector (§11): its BARS
-    /// group, beside the toolbar's, which keeps governing the flow pane.
-    fn draw_time_header(&mut self, ui: &mut egui::Ui, slot: usize, header: egui::Rect) {
-        let applied = self.time_panes[slot].state.spec();
-        let active_bar = applied
-            .time_interval_ms()
-            .is_none()
-            .then(|| applied.summary());
-        let mut interval_ms = self.time_panes[slot]
+    /// The flow pane's header line: its mark and its own bars, read and changed
+    /// here wherever focus sits.
+    fn draw_flow_header(
+        &mut self,
+        ui: &mut egui::Ui,
+        strip: egui::Rect,
+        bar_inputs: BarInputAvailability,
+    ) {
+        let pane = &mut self.flow_pane;
+        let header = PaneHeader::of(PaneIdentity::OrderFlow, pane.spec.spec());
+        crate::pane_header::draw_marked(ui, strip, &header, pane.id, &mut pane.spec, bar_inputs);
+    }
+
+    /// Each context chart carries its own bars control and timeframe selector
+    /// (§11), read and changed here wherever focus sits.
+    fn draw_time_header(
+        &mut self,
+        ui: &mut egui::Ui,
+        slot: usize,
+        strip: egui::Rect,
+        bar_inputs: BarInputAvailability,
+    ) {
+        let pane = &mut self.time_panes[slot];
+        let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
+        let mut interval_ms = pane
             .spec
             .retained(BarKind::Time)
             .time_interval_ms()
             .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
+        let spec = &mut pane.spec;
         let header_layout = crate::time_header::draw(
             ui,
-            header,
+            strip,
             &mut interval_ms,
-            self.time_panes[slot].id,
-            &self.time_panes[slot].layout.label,
-            active_bar.as_deref(),
+            pane.id,
+            &pane.layout.label,
+            header.presets,
+            |ui| crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs),
         );
         #[cfg(test)]
         if slot == 0 {
@@ -695,6 +728,12 @@ impl Tab {
                 .flatten()
         });
         let Some(position) = pressed else { return };
+        // A header line governs its own pane wherever focus sits: changing a
+        // pane's bars from there never moves focus. Only the chart below takes it.
+        let on_header = |band: &egui::Rect| split_pane_header(*band).header.contains(position);
+        if context_bands.iter().chain([&flow_area]).any(on_header) {
+            return;
+        }
         // A press egui routed to another layer belongs to whatever floats
         // there — the toast, the object manager, the inspector — not to the
         // pane it happens to cover. Taking those as pane clicks made the
