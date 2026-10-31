@@ -216,7 +216,7 @@ fn a_bare_number_keeps_its_order_with_the_same_row_text() {
 
 #[test]
 fn a_unit_past_the_interval_range_lists_nothing() {
-    for query in ["13mo", "5w", "29d", "0d"] {
+    for query in ["13mo", "5w", "0d"] {
         assert!(matches(query).is_empty(), "{query}");
     }
 }

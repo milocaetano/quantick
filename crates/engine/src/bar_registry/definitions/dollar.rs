@@ -1,6 +1,6 @@
 use crate::{
     DollarBarBuilder,
-    bar_registry::{BarDefinition, NumberEditor, NumberKind, ParameterDescriptor},
+    bar_registry::{BarDefinition, NumberEditor, NumberKind, ParameterDescriptor, QuickAlias},
 };
 use rust_decimal::Decimal;
 pub static DOLLAR: BarDefinition = BarDefinition {
@@ -26,7 +26,11 @@ pub static DOLLAR: BarDefinition = BarDefinition {
     requirements: super::VOLUME_INPUT,
     progress_unit: "notional",
     fixed_time_interval: false,
-    quick_alias: None,
+    quick_alias: Some(QuickAlias {
+        suffix: 'd',
+        singular: "Dollar",
+        plural: "Dollars",
+    }),
     path_dependent: false,
     factory: |value, _| Box::new(DollarBarBuilder::new(value)),
 };

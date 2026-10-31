@@ -3,8 +3,8 @@
 //!
 //! A bare digit typed over the focused chart opens a list of every bar the
 //! number can mean (`15` minutes, seconds, hours, ticks, volume, dollar,
-//! imbalance, trades, Renko); a letter after it (`50R`) keeps the kind that
-//! declares it. The engine's registry reads the query and writes the list;
+//! imbalance, trades, Renko); a letter after it (`2000t`, `1d`) keeps the kinds
+//! that declare it. The engine's registry reads the query and writes the list;
 //! this file only reads keys and draws it. Enter applies the highlighted row
 //! to the pane it opened over through `layout.pane.set_bar_spec`'s own path,
 //! so an agent reaches the same outcome by that capability.

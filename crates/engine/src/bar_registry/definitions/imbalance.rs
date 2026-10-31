@@ -2,6 +2,7 @@ use crate::{
     ImbalanceBarBuilder, ImbalanceUnit,
     bar_registry::{
         BarDefinition, ChoiceDescriptor, NumberEditor, NumberKind, ParameterDescriptor,
+        QuickAlias,
     },
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -44,7 +45,11 @@ pub static IMBALANCE: BarDefinition = BarDefinition {
     requirements: super::PRINTS,
     progress_unit: "ticks",
     fixed_time_interval: false,
-    quick_alias: None,
+    quick_alias: Some(QuickAlias {
+        suffix: 'i',
+        singular: "Imbalance",
+        plural: "Imbalance",
+    }),
     path_dependent: false,
     factory: |value, choice| {
         Box::new(ImbalanceBarBuilder::with_unit(

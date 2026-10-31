@@ -296,17 +296,11 @@ impl BarRegistry {
                     return Err(invalid("duplicate parameter choice"));
                 }
             }
-            if definition.quick_alias.is_some_and(|alias| {
-                !alias.suffix.is_ascii_alphabetic()
-                    || definitions[..i].iter().any(|other| {
-                        other
-                            .quick_alias
-                            .is_some_and(|taken| taken.suffix.eq_ignore_ascii_case(&alias.suffix))
-                    })
-            }) {
-                return Err(invalid(
-                    "a quick-switch suffix is one letter no other kind declares",
-                ));
+            if definition
+                .quick_alias
+                .is_some_and(|alias| !alias.suffix.is_ascii_alphabetic())
+            {
+                return Err(invalid("a quick-switch suffix is one letter"));
             }
             if definitions[..i]
                 .iter()

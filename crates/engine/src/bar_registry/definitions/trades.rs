@@ -2,6 +2,7 @@ use crate::{
     DealBarBuilder,
     bar_registry::{
         BarDefinition, InputRequirements, NumberEditor, NumberKind, ParameterDescriptor,
+        QuickAlias,
     },
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -29,7 +30,11 @@ pub static TRADES: BarDefinition = BarDefinition {
     },
     progress_unit: "deals",
     fixed_time_interval: false,
-    quick_alias: None,
+    quick_alias: Some(QuickAlias {
+        suffix: 't',
+        singular: "Trade",
+        plural: "Trades",
+    }),
     path_dependent: false,
     factory: |value, _| {
         Box::new(DealBarBuilder::new(
