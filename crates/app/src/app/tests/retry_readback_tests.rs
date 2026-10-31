@@ -71,14 +71,14 @@ mod history_control_tests;
 mod indicator_picker_control;
 #[path = "journal_sessions_control_tests.rs"]
 mod journal_sessions_control_tests;
-#[path = "pane_header_tests.rs"]
-mod pane_header;
 #[path = "layer_control_tests.rs"]
 mod layer_control;
 #[path = "native_tape_readback_tests.rs"]
 mod native_tape_readback_tests;
 #[path = "opening_scale_control_tests.rs"]
 mod opening_scale_control;
+#[path = "pane_header_tests.rs"]
+mod pane_header_tests;
 #[path = "price_axis_control_tests.rs"]
 mod price_axis_control;
 #[path = "tape_navigation_tests.rs"]

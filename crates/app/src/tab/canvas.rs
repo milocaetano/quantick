@@ -18,7 +18,7 @@ use crate::config::FeedCapabilities;
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
-    SharedPick, clamp_pane_fraction, split_pane_layout_strip, split_time_pane,
+    SharedPick, clamp_pane_fraction, split_pane_header, split_pane_layout_strip,
 };
 use crate::state::BarKind;
 use crate::style::ChartStyle;
@@ -303,7 +303,7 @@ impl Tab {
                     continue;
                 }
                 let pane_areas = split_pane_layout_strip(*band);
-                let areas = split_time_pane(pane_areas.body);
+                let areas = split_pane_header(pane_areas.body);
                 self.draw_time_header(ui, slot, areas.header, bar_inputs);
                 rects
                     .context_charts
@@ -312,7 +312,7 @@ impl Tab {
         }
         rects.flow_areas = frame.show_flow.then(|| {
             let pane_areas = split_pane_layout_strip(frame.flow_band);
-            let areas = split_time_pane(pane_areas.body);
+            let areas = split_pane_header(pane_areas.body);
             self.draw_flow_header(ui, areas.header, bar_inputs);
             PaneAreas {
                 body: areas.chart,
@@ -730,7 +730,7 @@ impl Tab {
         let Some(position) = pressed else { return };
         // A header line governs its own pane wherever focus sits: changing a
         // pane's bars from there never moves focus. Only the chart below takes it.
-        let on_header = |band: &egui::Rect| split_time_pane(*band).header.contains(position);
+        let on_header = |band: &egui::Rect| split_pane_header(*band).header.contains(position);
         if context_bands.iter().chain([&flow_area]).any(on_header) {
             return;
         }

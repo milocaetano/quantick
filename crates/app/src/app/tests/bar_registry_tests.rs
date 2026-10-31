@@ -174,6 +174,40 @@ fn bar_registry_commands_match_admitted_remote_changes_and_refuse_missing_inputs
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// A pane header reads the selection `layout.pane.set_bar_spec` writes, on the
+/// pane the call named.
+#[test]
+fn a_remote_bar_change_shows_on_that_panes_header() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("bar-registry-header");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+    let response = remote_bar_call(
+        &mut app,
+        &ctx,
+        &mut client,
+        serde_json::json!({"pane":"0", "spec":"tick:777"}),
+    );
+    assert!(matches!(
+        response.outcome,
+        quantick_control::wire::ResponseOutcome::Success { .. }
+    ));
+    let texts = painted_text(&run_frame(&mut app, &ctx));
+    assert!(
+        texts.iter().any(|text| text.starts_with("Tick · 777")),
+        "{texts:?}"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn bar_registry_remote_changes_still_require_the_granted_layout_scope() {
     let ctx = egui::Context::default();

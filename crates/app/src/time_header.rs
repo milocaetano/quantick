@@ -127,6 +127,7 @@ pub fn draw(
             .max_rect(strip.shrink2(crate::pane_header::CONTENT_PADDING))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
+    content.set_clip_rect(strip.intersect(ui.clip_rect()));
     bars(&mut content);
     let interval_rect = if presets {
         for (label, preset_ms) in PRESETS {
@@ -207,7 +208,7 @@ pub fn draw(
 /// A typed `1mo` sets the month — the setting its chip sets — rather than
 /// being clamped to the drag's four weeks, which would silently make 28-day
 /// bars: the drag's own range reaches the longest calendar interval so the
-/// typed value arrives whole, and [`admit_interval`] keeps everything else
+/// typed value arrives whole, and `admit_interval` keeps everything else
 /// inside `range`.
 pub(crate) fn interval_drag(
     interval_ms: &mut i64,
@@ -224,7 +225,7 @@ pub(crate) fn interval_drag(
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     egui::DragValue::from_get_set(move |new| {
         if let Some(new) = new {
-            *interval_ms = admit_interval(new as i64, min, max);
+            *interval_ms = quantick_engine::time_bucket::admit_interval(new as i64, min, max);
         }
         *interval_ms as f64
     })
@@ -235,16 +236,6 @@ pub(crate) fn interval_drag(
         #[allow(clippy::cast_precision_loss)]
         quantick_engine::parse_time_interval(text).map(|ms| ms as f64)
     })
-}
-
-/// What the interval drag sets from `ms`: a calendar month as itself, and
-/// any other value held inside `min..=max`.
-fn admit_interval(ms: i64, min: i64, max: i64) -> i64 {
-    if quantick_engine::time_bucket::calendar_months(ms).is_some() {
-        ms
-    } else {
-        ms.clamp(min, max)
-    }
 }
 
 #[cfg(test)]
@@ -330,6 +321,7 @@ mod tests {
     /// four weeks stops there, and below the shortest interval at it.
     #[test]
     fn a_typed_month_sets_the_month_and_never_four_weeks() {
+        use quantick_engine::time_bucket::admit_interval;
         let (min, max) = (
             crate::state::MIN_TIME_INTERVAL_MS,
             crate::state::MAX_TIME_INTERVAL_MS,

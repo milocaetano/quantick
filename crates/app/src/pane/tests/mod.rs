@@ -2463,7 +2463,7 @@ fn the_live_chip_sits_inside_the_strips_right_end() {
 #[test]
 fn the_time_pane_header_costs_the_chart_its_own_height() {
     let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 600.0));
-    let areas = split_time_pane(area);
+    let areas = split_pane_header(area);
     assert_eq!(areas.header.height(), crate::time_header::HEIGHT_PX);
     assert_eq!(
         areas.header.bottom(),

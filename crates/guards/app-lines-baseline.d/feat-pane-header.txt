@@ -1,6 +1,0 @@
-# feat/pane-header: the per-pane header line. The model and its goldens live in
-# quantick-chart's pane_header; this is the egui painter, the bars popup and the
-# flow pane's strip wiring through Tab's canvas, all of which need egui and the
-# pane owners. Measured.
-crates/app +144
-!budget +144

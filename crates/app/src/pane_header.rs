@@ -43,6 +43,7 @@ pub fn draw_marked(
             .max_rect(strip.shrink2(CONTENT_PADDING))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
+    content.set_clip_rect(strip.intersect(ui.clip_rect()));
     if let Some(mark) = header.mark.filter(|_| strip.width() >= MIN_MARK_STRIP_PX) {
         content.label(
             egui::RichText::new(mark)

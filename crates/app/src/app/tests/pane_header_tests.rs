@@ -71,6 +71,7 @@ fn the_bars_control_changes_only_its_own_pane_and_leaves_focus_alone() {
     app.active_tab_mut().focus = PaneSide::Time(0);
     run_frame(&mut app, &ctx);
     let time_before = *app.active_tab().time_panes[0].state.spec();
+    let time_selected = app.active_tab().time_panes[0].spec.selected_id();
 
     let control = control_of(&app, &ctx, PaneSide::Flow);
     click_chart(&mut app, &ctx, control.center());
@@ -79,65 +80,59 @@ fn the_bars_control_changes_only_its_own_pane_and_leaves_focus_alone() {
         PaneSide::Time(0),
         "opening the flow pane's menu keeps focus where it was"
     );
-    let open = painted_text(&run_frame(&mut app, &ctx));
-    assert!(
-        open.iter().any(|text| text == "volume"),
-        "the menu offers the registered kinds: {open:?}"
-    );
-
-    // The list sits below the control, the kinds in registry order at one row
-    // each; a real click on a real row is what this asserts.
-    let rows = app.active_tab().flow_pane.spec.registry().definitions();
-    let volume = rows.iter().position(|row| row.label() == "volume").unwrap();
-    let row_height = ctx.style().spacing.interact_size.y;
-    let row = egui::pos2(
-        control.left() + 20.0,
-        control.bottom() + 10.0 + row_height * (volume as f32 + 0.5),
-    );
+    let open = run_frame(&mut app, &ctx);
+    let row = painted_text_center(&open, "volume").expect("the menu offers the registered kinds");
     click_chart(&mut app, &ctx, row);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
-    assert_eq!(
-        tab.flow_pane.spec.selected_id(),
-        "volume",
-        "the click landed on this pane's list"
+    assert_eq!(tab.flow_pane.spec.selected_id(), "volume");
+    assert!(
+        tab.flow_pane.state.spec().id() == "volume",
+        "the chart rebuilt on what the header says"
     );
     assert_eq!(tab.time_panes[0].state.spec(), &time_before);
+    assert_eq!(tab.time_panes[0].spec.selected_id(), time_selected);
     assert_eq!(tab.focus, PaneSide::Time(0));
 }
 
-/// A second pane's control opens its own menu, not the first's.
+/// Stacked time panes answer to their own controls: the lower pane's menu drives
+/// the lower pane, with focus on the flow pane throughout.
 #[test]
-fn each_pane_owns_its_menu() {
+fn stacked_panes_each_own_their_menu_and_focus_never_moves() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = context_fixture(&ctx);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    app.active_tab_mut().focus = PaneSide::Flow;
     run_frame(&mut app, &ctx);
-    let time = control_of(&app, &ctx, PaneSide::Time(0));
-    let flow = control_of(&app, &ctx, PaneSide::Flow);
-    assert_ne!(time, flow);
+    run_frame(&mut app, &ctx);
+    let upper = *app.active_tab().time_panes[0].state.spec();
+    let flow = *app.active_tab().flow_pane.state.spec();
 
-    click_chart(&mut app, &ctx, time.center());
-    let ids = [
-        app.active_tab().time_panes[0].id,
-        app.active_tab().flow_pane.id,
-    ];
-    assert_ne!(ids[0], ids[1], "panes key their menus by their own id");
-    let time_open = ctx.memory(|memory| memory.is_popup_open(crate::pane_header::menu_id(ids[0])));
-    let flow_open = ctx.memory(|memory| memory.is_popup_open(crate::pane_header::menu_id(ids[1])));
-    assert!(time_open && !flow_open);
-}
+    let control = control_of(&app, &ctx, PaneSide::Time(1));
+    assert_ne!(control, control_of(&app, &ctx, PaneSide::Time(0)));
+    click_chart(&mut app, &ctx, control.center());
+    let open = run_frame(&mut app, &ctx);
+    let ids: Vec<u64> = (0..2)
+        .map(|slot| app.active_tab().time_panes[slot].id)
+        .chain([app.active_tab().flow_pane.id])
+        .collect();
+    let opened: Vec<bool> = ids
+        .iter()
+        .map(|id| ctx.memory(|memory| memory.is_popup_open(crate::pane_header::menu_id(*id))))
+        .collect();
+    assert_eq!(opened, [false, true, false]);
 
-/// `layout.pane.set_bar_spec` writes the same selection the header reads.
-#[test]
-fn a_spec_set_off_the_header_shows_on_it() {
-    let ctx = egui::Context::default();
-    let (mut app, _events, _commands) = context_fixture(&ctx);
-    set_flow_bars(&mut app, BarSpec::Tick(777));
-    let texts = painted_text(&run_frame(&mut app, &ctx));
-    assert!(
-        texts.iter().any(|text| text.starts_with("Tick · 777")),
-        "{texts:?}"
-    );
+    let row = painted_text_center(&open, "volume").expect("the menu offers the registered kinds");
+    click_chart(&mut app, &ctx, row);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let tab = app.active_tab();
+    assert_eq!(tab.time_panes[1].state.spec().id(), "volume");
+    assert_eq!(tab.time_panes[0].state.spec(), &upper);
+    assert_eq!(tab.flow_pane.state.spec(), &flow);
+    assert_eq!(tab.focus, PaneSide::Flow);
 }

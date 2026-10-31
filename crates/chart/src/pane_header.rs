@@ -3,7 +3,6 @@
 //! Built from that pane's own bar selection and nothing else, so the line reads
 //! the same wherever focus sits. The window only paints the result.
 
-use quantick_chart_interaction::pane::PaneSide;
 use quantick_engine::bar_registry::BarConfiguration;
 
 /// The mark naming the order-flow pane.
@@ -16,15 +15,6 @@ pub enum PaneIdentity {
     OrderFlow,
     /// A timeframe pane: candles, indicators and drawings.
     Time,
-}
-
-impl From<PaneSide> for PaneIdentity {
-    fn from(side: PaneSide) -> Self {
-        match side {
-            PaneSide::Flow => Self::OrderFlow,
-            PaneSide::Time(_) => Self::Time,
-        }
-    }
 }
 
 /// One pane's header line.
@@ -120,11 +110,5 @@ mod tests {
             header(PaneIdentity::Time, BarSpec::Tick(4)),
             expected(None, "Tick · 4", false)
         );
-    }
-
-    #[test]
-    fn identity_follows_the_pane_address() {
-        assert_eq!(PaneIdentity::from(PaneSide::Flow), PaneIdentity::OrderFlow);
-        assert_eq!(PaneIdentity::from(PaneSide::Time(2)), PaneIdentity::Time);
     }
 }
