@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use super::bubbles::{
     BubbleStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
-use super::lane_fold::LaneFold;
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
 
@@ -26,8 +25,8 @@ pub const DEFAULT_LIVE_LANE_SHARE: f32 = 0.35;
 /// Narrowest live lane accepted, as a share of the chart.
 pub const MIN_LIVE_LANE_SHARE: f32 = 0.05;
 /// Widest live lane accepted. The divider travels the whole chart, so the
-/// tape may take nearly all of it; a lane that wants the rest folds the
-/// candles to a rail instead ([`LaneFold`]).
+/// tape may take nearly all of it; a lane that wants the rest lets go near
+/// the edge and the pane shows the tape alone ([`crate::LaneView`]).
 pub const MAX_LIVE_LANE_SHARE: f32 = 1.0 - MIN_LIVE_LANE_SHARE;
 /// Narrowest lane the layout will draw, in pixels. A floor rather than a
 /// setting: below this the band stops being a tape whatever share was asked
@@ -427,10 +426,6 @@ pub struct LiveLaneStyle {
     /// only, and always on the native tape. Off by default, so every other
     /// pane keeps its candles.
     pub tape_only: bool,
-    /// Which side the divider folded to a rail, if any. The share stays
-    /// where it was, so unfolding returns the band the lane had; `tape_only`
-    /// and the tape's own switch win over it.
-    pub fold: LaneFold,
 }
 
 impl Default for LiveLaneStyle {
@@ -449,7 +444,6 @@ impl Default for LiveLaneStyle {
             forward_book_preview: false,
             stable_size: false,
             tape_only: false,
-            fold: LaneFold::Open,
         }
     }
 }
@@ -499,9 +493,6 @@ struct LiveLaneStyleRepr {
     /// Written only when on, like `native_tape`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     tape_only: bool,
-    /// Written only when folded, so an open lane keeps its file.
-    #[serde(skip_serializing_if = "LaneFold::is_open")]
-    fold: LaneFold,
 }
 
 impl Default for LiveLaneStyleRepr {
@@ -537,7 +528,6 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
                 .unwrap_or(repr.depth_time_averaging),
             stable_size: repr.stable_size,
             tape_only: repr.tape_only,
-            fold: repr.fold,
         }
     }
 }
@@ -567,7 +557,6 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
                 .then_some(style.forward_book_preview),
             stable_size: style.stable_size,
             tape_only: style.tape_only,
-            fold: style.fold,
         }
     }
 }
@@ -625,9 +614,6 @@ impl LiveLaneStyle {
         }
         if self.tape_only {
             return chart_width;
-        }
-        if let Some(folded) = self.folded_width_px(chart_width) {
-            return folded;
         }
         // The floor yields on a narrow window: half a small chart beats a
         // fixed band that would eat all of it.

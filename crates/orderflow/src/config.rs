@@ -38,9 +38,7 @@ pub use lane::{
     MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_lag_label, lane_time_ticks,
     lane_window_label, same_lane_window,
 };
-pub use lane_fold::{
-    FoldRail, LANE_FOLD_AT_PX, LANE_FOLD_HIT_PX, LANE_FOLD_RAIL_PX, LaneDividerDrag, LaneFold,
-};
+pub use lane_fold::{LANE_FOLD_AT_PX, LaneDividerDrag, LaneView};
 
 /// Contracts a volume dot holds at the largest radius, by default: a dot
 /// sums many prints, so it is drawn on a scale of its own, not on the
@@ -883,7 +881,6 @@ mod tests {
                 forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
-                fold: LaneFold::Open,
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,
