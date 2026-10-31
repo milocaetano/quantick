@@ -1370,6 +1370,25 @@ mod tests {
         );
     }
 
+    /// A preset can save a tape-only mode with the tape off. Asking for the
+    /// view it already shows commits nothing, so the preset stays unedited, and
+    /// the tape's switch lands on the mode it saved.
+    #[test]
+    fn a_saved_tape_only_is_kept_by_a_no_op_view_and_returned_by_the_switch() {
+        use quantick_orderflow::LaneView;
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.config.enabled = true;
+        view.config.live_lane.enabled = false;
+        view.config.live_lane.tape_only = true;
+        let saved = view.config.clone();
+
+        assert!(!view.set_lane_view(LaneView::CandlesOnly));
+        assert_eq!(view.config, saved, "nothing to mark edited");
+
+        view.set_lane_enabled(true);
+        assert_eq!(view.config.live_lane.view(), LaneView::TapeOnly);
+    }
+
     /// Hiding the map over the candles must not delete the tape. The lane is
     /// anchored on the live instant, and that instant used to be answered from
     /// the candles' switch alone — so clearing them took the band, its bubbles

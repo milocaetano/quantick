@@ -809,6 +809,92 @@ fn a_panned_view_survives_tape_only_and_the_way_back() {
     assert_eq!(candle_viewport(&app), placed, "and back beside");
 }
 
+/// An indicator pane shares the candles' time axis, but with the candles hidden
+/// a drag or a scroll there has no candles to move: they come back following
+/// live, at their zoom, rather than parked in the past.
+#[test]
+fn an_indicator_pane_gesture_in_tape_only_leaves_the_candles_following_live() {
+    let add_a_pane = |app: &mut QuantickApp, ctx: &egui::Context| {
+        add_pane_indicator(app, "CVD", vec![1.0; 200]);
+        run_frame(app, ctx);
+        run_frame(app, ctx);
+    };
+    // The same gesture beside the candles does move them, or this proves nothing.
+    let beside = egui::Context::default();
+    let (mut control, _control_ends) = charted_fixture(&beside);
+    add_a_pane(&mut control, &beside);
+    let body = pane_body(&control, 0);
+    let start = egui::pos2(body.center().x, body.bottom() - 8.0);
+    drag(
+        &mut control,
+        &beside,
+        start,
+        start + egui::vec2(-120.0, 0.0),
+    );
+    assert!(
+        !control.active_tab().flow_pane.model.viewport.follows_live(),
+        "the fixture's drag lands on the indicator pane"
+    );
+
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = charted_fixture(&ctx);
+    add_a_pane(&mut app, &ctx);
+    assert!(app.active_tab().flow_pane.model.viewport.follows_live());
+    let placed = candle_viewport(&app);
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    run_frame(&mut app, &ctx);
+    let body = pane_body(&app, 0);
+    let start = egui::pos2(body.center().x, body.bottom() - 8.0);
+    drag(&mut app, &ctx, start, start + egui::vec2(-120.0, 0.0));
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 240.0),
+                modifiers: egui::Modifiers::default(),
+            },
+        ],
+    );
+    assert_eq!(candle_viewport(&app), placed, "tape only moved nothing");
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::Beside);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().flow_pane.model.viewport.follows_live());
+    assert_eq!(candle_viewport(&app), placed, "and back beside");
+}
+
+/// A snapshot describes the view on screen: with panned candles hidden it says
+/// following live, and the slots it names are the live edge's, not the place
+/// the stored view is waiting at.
+#[test]
+fn a_snapshot_in_tape_only_names_the_slots_on_screen() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = charted_fixture(&ctx);
+    let pane = &mut app.active_tab_mut().flow_pane;
+    pane.model.viewport.pan_pixels(400.0, pane.slots());
+    run_frame(&mut app, &ctx);
+    let total = app.active_tab().flow_pane.slots();
+    let panned = crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane);
+    assert!(panned.visible_end_slot_exclusive.0 < total as u64, "panned");
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    run_frame(&mut app, &ctx);
+    let flow = &app.active_tab().flow_pane;
+    assert!(!flow.model.viewport.follows_live(), "the stored view waits");
+    let snapshot = crate::control::chart::viewport_snapshot(flow);
+    assert!(snapshot.follows_live);
+    assert_eq!(snapshot.visible_end_slot_exclusive.0, total as u64);
+}
+
 /// A control the strip clips, even by a pixel, is not listed: what the scene
 /// names is whole, at every width a narrowing window walks through.
 #[test]

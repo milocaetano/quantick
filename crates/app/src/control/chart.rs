@@ -173,8 +173,7 @@ fn visible_slots(pane: &ChartPane) -> (usize, usize) {
         return (0, 0);
     };
     let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
-    pane.model
-        .viewport
+    pane.shown_viewport()
         .visible_range((right - chart.left()).max(0.0), total)
 }
 

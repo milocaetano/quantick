@@ -78,15 +78,18 @@ impl LiveLaneStyle {
         }
     }
 
-    /// Show `view`, the one write every view goes through; answers whether
-    /// either switch moved, so a stale `tape_only` cleared here is saved. The
-    /// share stays. Candles only clears `tape_only` too, so the tape's own
-    /// switch brings back a tape beside the candles.
+    /// Show `view`, the one write every view goes through; answers whether the
+    /// view changed. A view already showing writes nothing, so a `tape_only` a
+    /// preset saved with the tape off stays and the preset reads unedited. The
+    /// share stays. Moving to candles only clears `tape_only`, so the tape's
+    /// own switch brings back a tape beside the candles.
     pub fn set_view(&mut self, view: LaneView) -> bool {
-        let before = (self.enabled, self.tape_only);
+        if self.view() == view {
+            return false;
+        }
         self.enabled = view != LaneView::CandlesOnly;
         self.tape_only = view == LaneView::TapeOnly;
-        before != (self.enabled, self.tape_only)
+        true
     }
 
     /// Whether the tape sits beside the candles, so a divider exists.
@@ -95,14 +98,11 @@ impl LiveLaneStyle {
         self.view() == LaneView::Beside
     }
 
-    /// Switch the tape on or off; answers whether it changed. A tape switched
-    /// on lands beside the candles, whatever `tape_only` a preset or the layer
-    /// setter left behind while it was off.
+    /// Switch the tape on or off; answers whether it changed. `tape_only` stays,
+    /// so switching it back on returns the tape switched off: one a preset
+    /// saved as tape only lands tape only.
     pub fn set_enabled(&mut self, enabled: bool) -> bool {
         let changed = self.enabled != enabled;
-        if changed && enabled {
-            self.tape_only = false;
-        }
         self.enabled = enabled;
         changed
     }

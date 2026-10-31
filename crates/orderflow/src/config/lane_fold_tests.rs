@@ -328,35 +328,31 @@ fn a_lane_kept_outside_the_open_range_drags_from_where_it_is() {
     }
 }
 
-/// A switched-off tape can carry a stale `tape_only` (a preset, the layer's
-/// setter): it reads candles only, clearing it counts as a change, and turning
-/// the tape on lands beside the candles rather than silently on tape only.
+/// A tape-only mode a preset saved with the tape off is a real state: it reads
+/// candles only, asking for candles only changes nothing, so the preset stays
+/// unedited, and the tape's switch returns the tape it switched off.
 #[test]
-fn a_stale_tape_only_never_decides_a_view() {
-    let stale = || LiveLaneStyle {
+fn a_saved_tape_only_survives_the_tape_switch_and_a_view_already_shown() {
+    let saved = || LiveLaneStyle {
         enabled: false,
         tape_only: true,
         ..LiveLaneStyle::default()
     };
-    assert_eq!(stale().view(), LaneView::CandlesOnly);
+    assert_eq!(saved().view(), LaneView::CandlesOnly);
 
-    let mut cleared = stale();
-    assert!(cleared.set_view(LaneView::CandlesOnly), "a field moved");
-    assert!(!cleared.tape_only);
-    assert!(
-        !cleared.set_view(LaneView::CandlesOnly),
-        "and now none does"
-    );
+    let mut asked = saved();
+    assert!(!asked.set_view(LaneView::CandlesOnly), "already showing");
+    assert_eq!(asked, saved(), "and nothing was written");
 
-    let mut switched = stale();
+    let mut switched = saved();
     assert!(switched.set_enabled(true));
-    assert_eq!(switched.view(), LaneView::Beside);
+    assert_eq!(switched.view(), LaneView::TapeOnly);
 
     // Off from tape only and on again is the same path.
     let mut alone = lane(LaneView::TapeOnly);
     assert!(alone.set_enabled(false));
     assert!(alone.set_enabled(true));
-    assert_eq!(alone.view(), LaneView::Beside);
+    assert_eq!(alone.view(), LaneView::TapeOnly);
     // A tape already on keeps its view.
     let mut on = lane(LaneView::TapeOnly);
     assert!(!on.set_enabled(true));

@@ -40,8 +40,12 @@ fn side_key(side: AggressorSide) -> u8 {
 /// The split is the tape's own width share ([`LiveLaneStyle::width_share`]),
 /// not a number of its own: marks need room to be read, so the pane with a
 /// third of the canvas gets a third of the marks, and a trader who drags the
-/// divider moves both together. A tape alone on the pane has the whole canvas,
-/// so it spends the whole budget.
+/// divider moves both together.
+///
+/// A tape alone on the pane has the whole canvas, so it spends the whole budget
+/// but the two a pane always keeps. The hidden candles' marks do not pay for
+/// that: the live strip still reads the forming bar from them, so they keep the
+/// whole budget too, and the two shares may overspend it.
 ///
 /// With the tape switched off there is no second pane, and the candles get the
 /// whole budget — reserving a share for a band nobody is drawing would fold the
@@ -50,15 +54,12 @@ fn side_key(side: AggressorSide) -> u8 {
 /// Both shares are at least two whenever the tape is on, which is what lets a
 /// pane always fit: two marks is one per side, and a fold never crosses sides.
 pub(super) fn pane_budgets(limit: usize, lane: &LiveLaneStyle) -> (usize, usize) {
-    if !lane.enabled {
-        return (limit, 0);
+    match lane.view() {
+        LaneView::CandlesOnly => return (limit, 0),
+        LaneView::TapeOnly => return (limit.max(2), limit.saturating_sub(2).max(2)),
+        LaneView::Beside => {}
     }
-    let share = if lane.view() == LaneView::TapeOnly {
-        1.0
-    } else {
-        lane.open_share()
-    };
-    let lane_budget = ((limit as f32) * share).round().max(0.0) as usize;
+    let lane_budget = ((limit as f32) * lane.open_share()).round().max(0.0) as usize;
     let lane_budget = lane_budget.clamp(2, limit.saturating_sub(2).max(2));
     (limit.saturating_sub(lane_budget).max(2), lane_budget)
 }
@@ -362,7 +363,8 @@ mod tests {
     }
 
     /// A tape alone on the pane has all of the room, so all of the marks but
-    /// the two a pane always keeps, wherever the share was left.
+    /// the two a pane always keeps, wherever the share was left. The candles
+    /// are hidden but the live strip reads their marks, so they are not starved.
     #[test]
     fn a_tape_alone_spends_the_whole_budget() {
         for share in [MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE] {
@@ -372,7 +374,8 @@ mod tests {
                 width_share: share,
                 ..LiveLaneStyle::default()
             };
-            assert_eq!(pane_budgets(100, &lane), (2, 98), "share {share}");
+            assert_eq!(pane_budgets(100, &lane), (100, 98), "share {share}");
+            assert_eq!(pane_budgets(1, &lane), (2, 2), "both sides fit");
         }
         // Switched off it is candles only, whatever `tape_only` was left at.
         let off = LiveLaneStyle {
