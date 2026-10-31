@@ -6,6 +6,10 @@ use std::time::Instant;
 
 pub(crate) use quantick_backpressure::progress::*;
 
+#[cfg(test)]
+#[path = "worker_progress/tests/barrier.rs"]
+pub(crate) mod barrier;
+
 /// Elapsed time since the worker started: bounded, nonblocking, and never a
 /// wall-clock reading.
 struct Monotonic(Instant);

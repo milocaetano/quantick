@@ -240,6 +240,14 @@ impl Rig {
         self.book.progress().counts
     }
 
+    /// Both workers have taken every command sent so far into a batch:
+    /// nothing queued, nothing parked. The one meaning of "caught up" that
+    /// `await_admitted` and `settle` share.
+    fn workers_idle(&self) -> bool {
+        let (indicator, book) = (self.indicator_counts(), self.book_counts());
+        indicator.queued + indicator.parked + book.queued + book.parked == 0
+    }
+
     /// Wait, bounded, until both workers have taken every command sent so
     /// far into a batch, counting the frame as late if it had to.
     ///
@@ -248,16 +256,12 @@ impl Rig {
     /// and the dense replay rather than asserted here: a descheduled test
     /// thread would otherwise fail the queue for the machine's sake.
     fn await_admitted(&mut self) {
-        let admitted = |rig: &Self| {
-            let (indicator, book) = (rig.indicator_counts(), rig.book_counts());
-            indicator.queued + indicator.parked + book.queued + book.parked == 0
-        };
-        if admitted(self) {
+        if self.workers_idle() {
             return;
         }
         self.late_frames += 1;
         let deadline = Instant::now() + Duration::from_secs(30);
-        while !admitted(self) {
+        while !self.workers_idle() {
             assert!(Instant::now() < deadline, "the workers never caught up");
             std::thread::sleep(Duration::from_micros(200));
             self.read();
@@ -273,13 +277,12 @@ impl Rig {
     /// caller took its snapshot. That read as "counts are not cumulative" on a
     /// loaded CI host whose worker had not yet taken its next batch.
     pub(super) fn settle(&mut self) {
-        let drained = |rig: &Self| {
-            let (indicator, book) = (rig.indicator_counts(), rig.book_counts());
-            indicator.queued + indicator.parked + book.queued + book.parked == 0
-        };
         let deadline = Instant::now() + Duration::from_secs(30);
-        while !drained(self) {
-            assert!(Instant::now() < deadline, "parked commands never drained");
+        while !self.workers_idle() {
+            assert!(
+                Instant::now() < deadline,
+                "the workers never drained their queues"
+            );
             std::thread::sleep(Duration::from_millis(1));
             self.read();
         }
