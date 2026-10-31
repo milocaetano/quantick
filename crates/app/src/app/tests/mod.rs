@@ -88,7 +88,7 @@ mod workspaces_tests;
 
 use super::*;
 use crate::chart::PriceScale;
-use bench_batches::{BatchReading, BestBatches};
+use bench_batches::{BatchReading, BestBatches, CaptureHeap};
 use settled_frame::{frame_instant, pin_frame_clock, settle_workers, settled_frame};
 
 use rust_decimal::Decimal;
@@ -2361,6 +2361,28 @@ const BENCH_DRAWINGS_PER_PANE: usize = 40;
 const BENCH_BOOK_LEVELS_PER_SIDE: i64 = 128;
 const BENCH_CLOSED_TRADES: usize = 120;
 
+/// Count the core capture's heap work on the fixture its bench times.
+fn measure_core_capture_heap() -> CaptureHeap {
+    const WARMUP_CAPTURES: usize = 25;
+    const MEASURED_CAPTURES: usize = 50;
+
+    let (app, _commands) = loaded_observer_workspace(2_000);
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scopes = registry
+        .descriptors()
+        .map(|descriptor| descriptor.scope_id.clone())
+        .collect::<Vec<_>>();
+    let instance = observer_instance();
+    for _ in 0..WARMUP_CAPTURES {
+        drop(registry.capture(&app, &instance, &scopes).unwrap());
+    }
+    let heap = CaptureHeap::least_of(MEASURED_CAPTURES, || {
+        drop(registry.capture(&app, &instance, &scopes).unwrap());
+    });
+    println!("CONTROL_CORE_CAPTURE_HEAP {heap:?}");
+    heap
+}
+
 /// Measure the core capture in batches; see [`BestBatches`].
 fn measure_core_capture_us() -> BestBatches {
     const WARMUP_CAPTURES: usize = 25;
@@ -2401,15 +2423,30 @@ fn measure_core_capture_us() -> BestBatches {
     BestBatches::of(&readings)
 }
 
-/// Measure the maximum chart-window capture (the reviewed 32-bar page) in
-/// batches; see [`BestBatches`].
-fn measure_max_chart_window_capture_us() -> BestBatches {
-    use crate::control::chart::{ChartWindowQuery, ChartWindowRange, chart_window};
-    use quantick_control::{limits::CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS, wire::WireU64};
+/// Count the maximum chart-window capture's heap work on the fixture its
+/// bench times.
+fn measure_max_chart_window_capture_heap() -> CaptureHeap {
+    use crate::control::chart::chart_window;
 
     const WARMUP_CAPTURES: usize = 10;
-    const MEASURED_CAPTURES: usize = 100;
-    const BATCHES: usize = 3;
+    const MEASURED_CAPTURES: usize = 20;
+
+    let (app, query) = max_chart_window_fixture();
+    let instance = observer_instance();
+    for _ in 0..WARMUP_CAPTURES {
+        drop(chart_window(&app, &instance, &query, None).unwrap());
+    }
+    let heap = CaptureHeap::least_of(MEASURED_CAPTURES, || {
+        drop(chart_window(&app, &instance, &query, None).unwrap());
+    });
+    println!("CONTROL_MAX_CHART_WINDOW_CAPTURE_HEAP {heap:?}");
+    heap
+}
+
+/// The workspace and the query of the largest allowed chart-window page.
+fn max_chart_window_fixture() -> (QuantickApp, crate::control::chart::ChartWindowQuery) {
+    use crate::control::chart::{ChartWindowQuery, ChartWindowRange};
+    use quantick_control::{limits::CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS, wire::WireU64};
 
     let max_page_items = u64::try_from(CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS)
         .expect("the reviewed page limit fits in the wire integer");
@@ -2423,6 +2460,20 @@ fn measure_max_chart_window_capture_us() -> BestBatches {
         },
         page_size: CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS,
     };
+    (app, query)
+}
+
+/// Measure the maximum chart-window capture (the reviewed 32-bar page) in
+/// batches; see [`BestBatches`].
+fn measure_max_chart_window_capture_us() -> BestBatches {
+    use crate::control::chart::chart_window;
+    use quantick_control::limits::CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS;
+
+    const WARMUP_CAPTURES: usize = 10;
+    const MEASURED_CAPTURES: usize = 100;
+    const BATCHES: usize = 3;
+
+    let (app, query) = max_chart_window_fixture();
     let instance = observer_instance();
     for _ in 0..WARMUP_CAPTURES {
         drop(chart_window(&app, &instance, &query, None).unwrap());
