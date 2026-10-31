@@ -23,6 +23,7 @@ pub mod footprint_projection;
 pub mod footprint_series;
 pub mod geometry;
 pub mod history_publication;
+pub mod indicator_registry;
 pub mod indicator_style;
 pub mod indicator_views;
 pub mod live_strip;

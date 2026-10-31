@@ -15,13 +15,14 @@
 //!   [`FeedEvent::HistoryPrepended`] — but only while no trade has been
 //!   forwarded yet; after that, recovered history is forwarded as live to
 //!   keep the retained stream ordered (logged as such, never silent).
-//! - **Reconnect overlap is dropped, not double-counted**: the bridge
-//!   re-sends its recent-history window on every session, and synthetic ids
-//!   restart, so the only stable cross-session key is time. Recovered trades
-//!   are forwarded only when strictly newer than the last forwarded trade;
-//!   the dropped overlap count is logged. (Trades sharing the last forwarded
-//!   millisecond are dropped too — losing a same-ms tick to a reconnect is
-//!   honest; silently inflating bars is not.)
+//! - **A reconnect refills its hole**: the bridge re-sends its session's
+//!   newest slice on every connection, and a chart that already holds prints
+//!   is missing everything between its last one and that slice. The feed
+//!   asks for it — opening slices, then `load_older` pages — holds the live
+//!   tape behind it and releases both in time order, deduplicating the old
+//!   seam by count at its millisecond since synthetic ids restart (see
+//!   `metatrader/gap_fill.rs`). What the bridge cannot reach stays a marked
+//!   gap with its reason, never silent space.
 //! - **"Load older" works when the bridge says it does.** The transport is
 //!   push-only for everything the terminal volunteers, and the one exception is
 //!   this: a bridge whose hello declares `history_paging` reads its socket, so
@@ -64,16 +65,22 @@ use quantick_feed_mt5::{
 
 use crate::FeedLatency;
 use crate::config::{
-    FeedCapabilities, MetaTraderSettings, Mt5Endpoint, Mt5SideSource, ProviderKind,
+    BackfillStop, FeedCapabilities, MetaTraderSettings, Mt5Endpoint, Mt5SideSource, ProviderKind,
 };
 
-use super::mt5_bridge::{Supervision, supervise};
+use super::mt5_bridge::{NoticeLatch, Supervision, supervise};
 use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
 
+mod gap_fill;
 mod ledger;
 mod listener;
+#[cfg(test)]
+mod reconnect_fill_tests;
+mod refill;
+use gap_fill::{GapFill, RefillLimits};
 use ledger::{CandleShelf, HistoryBlock, OpeningSlice, TapeLedger, Trimmed};
 use listener::{AfterExit, Listener, ListenerExit};
+use refill::RefillDeadline;
 
 /// Depth events are independent from the established trade channel. Sized like
 /// the Binance backend's: a B3 book republishes far faster than the UI drains,
@@ -107,6 +114,17 @@ pub fn spawn(
     settings: &MetaTraderSettings,
     clock_cache_dir: Option<PathBuf>,
 ) -> FeedHandle {
+    spawn_holding(symbol, settings, clock_cache_dir, RefillLimits::POLICY)
+}
+
+/// [`spawn`], with how long a reconnect refill may hold the live tape named
+/// rather than the policy's: a test cannot wait the real limits out.
+fn spawn_holding(
+    symbol: &str,
+    settings: &MetaTraderSettings,
+    clock_cache_dir: Option<PathBuf>,
+    refill_limits: RefillLimits,
+) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
     let (book_tx, book_rx) = mpsc::channel::<DepthEvent>(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel::<FeedNotice>(NOTICE_CHANNEL_CAPACITY);
@@ -132,6 +150,7 @@ pub fn spawn(
                 symbol,
                 settings,
                 clock_cache_dir,
+                refill_limits,
                 tx,
                 book_tx,
                 notice_tx,
@@ -305,6 +324,7 @@ async fn feed_task(
     symbol: String,
     settings: MetaTraderSettings,
     clock_cache_dir: Option<PathBuf>,
+    refill_limits: RefillLimits,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
@@ -343,6 +363,7 @@ async fn feed_task(
     // afterwards was the second one this removes. The supervisor holds off
     // until it is sure nobody else is already feeding us.
     let bridge_connected = Arc::new(AtomicBool::new(false));
+    let latch = Arc::new(NoticeLatch::default());
     let autostart = settings.bridge_autostart.then(|| {
         tokio::spawn(supervise(
             settings.clone(),
@@ -351,6 +372,7 @@ async fn feed_task(
                 endpoint: endpoint.clone(),
                 connected: Arc::clone(&bridge_connected),
                 notices: notice_tx.clone(),
+                latch: Arc::clone(&latch),
                 clock_cache_dir,
             },
         ))
@@ -389,6 +411,12 @@ async fn feed_task(
         book_capture,
         history_pager,
         tape: TapeLedger::default(),
+        latch,
+        refill: None,
+        stray_refill_page: false,
+        refill_deadline: None,
+        refill_notice: None,
+        refill_limits,
         candles: CandleShelf::default(),
         listener: Listener::default(),
     };
@@ -423,6 +451,14 @@ async fn feed_task(
             }
             maybe_cmd = cmd_rx.recv() => {
                 if feed.on_command(maybe_cmd).await.is_break() {
+                    break;
+                }
+            }
+            // The live tape is held behind a refill for a bounded time only.
+            () = tokio::time::sleep_until(
+                feed.refill_deadline.map_or_else(tokio::time::Instant::now, |deadline| deadline.at)
+            ), if feed.refill_deadline.is_some() => {
+                if let EventFlow::UiGone = feed.on_refill_deadline().await {
                     break;
                 }
             }
@@ -476,6 +512,20 @@ struct Mt5Feed {
     book_capture: BookCaptureSwitch,
     history_pager: HistoryPager,
     tape: TapeLedger,
+    /// What this feed and its bridge supervisor both know about the notice
+    /// on the tab.
+    latch: Arc<NoticeLatch>,
+    /// The refill of a reconnect hole, while one runs (see `gap_fill.rs`).
+    refill: Option<GapFill>,
+    /// A refill finished with its last page still on the wire: drop it.
+    stray_refill_page: bool,
+    /// When the running refill must let the live tape go.
+    refill_deadline: Option<RefillDeadline>,
+    /// The latch's attention count when the running refill put its notice
+    /// up; `None` when it put none up.
+    refill_notice: Option<u64>,
+    /// How long a refill may hold the live tape.
+    refill_limits: RefillLimits,
     candles: CandleShelf,
     listener: Listener,
 }
@@ -546,12 +596,24 @@ impl Mt5Feed {
                 to_ms,
             } => {
                 let event = crate::FeedContinuity::mt5(anomaly, from_ms, to_ms);
-                self.send(FeedEvent::Continuity(event)).await
+                self.live_event(FeedEvent::Continuity(event)).await
             }
             // Ahead of the prints it stamps, in the same channel, so the
             // consumer holds the reading before the print.
-            Mt5Event::DealCounter(sample) => self.send(FeedEvent::DealCounter(sample)).await,
-            Mt5Event::Live(trade) => self.forward_live(trade).await,
+            Mt5Event::DealCounter(sample) => self.live_event(FeedEvent::DealCounter(sample)).await,
+            Mt5Event::Live(trade) => self.live_event(FeedEvent::Live(trade)).await,
+        }
+    }
+
+    /// One event of the live tape: held behind a running refill, else sent.
+    async fn live_event(&mut self, event: FeedEvent) -> EventFlow {
+        let event = match self.hold_behind_refill(event).await {
+            Ok(flow) => return flow,
+            Err(event) => event,
+        };
+        match event {
+            FeedEvent::Live(trade) => self.forward_live(trade).await,
+            other => self.send(other).await,
         }
     }
 
@@ -607,6 +669,13 @@ impl Mt5Feed {
             // terminal that restarts mid-session gets picked back up — without
             // this, "reconnecting" is a promise nobody keeps.
             Mt5Status::Lost { .. } => {
+                // A refill the session died in ends here, with the part it
+                // did not reach marked, before the loss is recorded against
+                // the tape it released.
+                if let EventFlow::UiGone = self.abort_refill(BackfillStop::SessionLost).await {
+                    return EventFlow::UiGone;
+                }
+                self.stray_refill_page = false;
                 let page_owed = self.tape.session_lost();
                 self.bridge_connected.store(false, Ordering::Relaxed);
                 // A click can land in the gap between a session clearing its
@@ -636,7 +705,10 @@ impl Mt5Feed {
                 FeedNotice::reconnecting("the MetaTrader bridge disconnected — reconnecting")
             }
         };
-        let _ = self.notice_tx.send(notice).await;
+        // A terminal that is down stays the notice until a session connects.
+        for notice in self.latch.admit(notice) {
+            let _ = self.notice_tx.send(notice).await;
+        }
         log_status(&self.symbol, &status);
         EventFlow::Handled
     }
@@ -655,28 +727,9 @@ impl Mt5Feed {
                 );
                 self.send(FeedEvent::HistoryPrepended(batch)).await
             }
-            // Reconnect history: forward only what the UI has not already
-            // seen. Labelled, not hidden.
-            HistoryBlock::Recovered {
-                fresh,
-                overlap_dropped,
-            } => {
-                info!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "MT5_RECOVERED_HISTORY_AS_LIVE",
-                    symbol = %self.symbol,
-                    count = fresh.len(),
-                    overlap_dropped,
-                    "bridge re-sent history after a reconnect; forwarding the unseen tail as live"
-                );
-                for trade in fresh {
-                    if let EventFlow::UiGone = self.forward_live(trade).await {
-                        return EventFlow::UiGone;
-                    }
-                }
-                EventFlow::Handled
-            }
+            // Reconnect history: the hole between the chart and this block
+            // is refilled before the live tape goes on (see `gap_fill.rs`).
+            HistoryBlock::Resumed { block, seam } => self.on_resumed(block, seam).await,
         }
     }
 
@@ -685,6 +738,11 @@ impl Mt5Feed {
         trades: Vec<quantick_engine::Trade>,
         remaining: Option<u64>,
     ) -> EventFlow {
+        // The session a running refill reads: part of the hole, not a prepend.
+        if let Some(fill) = self.refill.as_mut() {
+            fill.opening(trades);
+            return self.drive_refill().await;
+        }
         match self.tape.opening_slice(trades) {
             // A reconnect re-runs the bridge's whole opening block, so these
             // slices cover a session the chart already holds. Every trade in
@@ -739,6 +797,11 @@ impl Mt5Feed {
         exhausted: bool,
         scanned_to_utc_ms: Option<i64>,
     ) -> EventFlow {
+        if self.refill_wants_page() {
+            return self
+                .take_refill_page(trades, exhausted, scanned_to_utc_ms)
+                .await;
+        }
         // The answer to one click. Empty is a legitimate answer and still has
         // to be forwarded: `HistoryPrepended` is what stops the chart's loading
         // indicator, so an empty block swallowed here would be a spinner that
@@ -788,7 +851,8 @@ impl Mt5Feed {
             );
             self.caps_tx.send_modify(|caps| caps.history_paging = false);
         }
-        EventFlow::Handled
+        // A refill refused the pager while this page travelled asks now.
+        self.drive_refill().await
     }
 
     fn on_session_busy(
@@ -825,6 +889,7 @@ impl Mt5Feed {
         // produces one per attempt. Awaiting a full channel would stall the
         // feed itself, and losing a duplicate of a message already on screen
         // costs nothing.
+        self.latch.raise(false);
         let _ = self
             .notice_tx
             .try_send(FeedNotice::attention(headline, advice));
@@ -893,6 +958,7 @@ impl Mt5Feed {
                     &self.symbol,
                     count,
                     self.tape.paging_floor_ms(),
+                    self.refill_owns_pager(),
                     &self.history_pager,
                     self.bridge_connected.load(Ordering::Relaxed),
                     &self.tx,
@@ -905,8 +971,12 @@ impl Mt5Feed {
                 }
             }
             Some(cmd) => {
-                let candles = &self.candles;
-                if !answer_command(&self.symbol, cmd, &self.tx, &self.book_capture, candles).await {
+                let held = Held {
+                    book_capture: &self.book_capture,
+                    candles: &self.candles,
+                    tape: &mut self.tape,
+                };
+                if !answer_command(&self.symbol, cmd, &self.tx, held).await {
                     return ControlFlow::Break(()); // UI gone
                 }
             }
@@ -975,7 +1045,11 @@ impl Mt5Feed {
                 (ListenerExit::Panicked, None)
             }
         };
-        let candles = &self.candles;
+        let held = Held {
+            book_capture: &self.book_capture,
+            candles: &self.candles,
+            tape: &mut self.tape,
+        };
         match self.listener.exited(exit) {
             AfterExit::RetryBind { report } => {
                 // A port already taken is the ordinary failure once several
@@ -989,15 +1063,8 @@ impl Mt5Feed {
                         .send(bind_failure_notice(&self.symbol, &e))
                         .await;
                 }
-                let served = serve_commands_for(
-                    BIND_RETRY,
-                    &self.symbol,
-                    &self.tx,
-                    cmd_rx,
-                    &self.book_capture,
-                    candles,
-                )
-                .await;
+                let served =
+                    serve_commands_for(BIND_RETRY, &self.symbol, &self.tx, cmd_rx, held).await;
                 if served {
                     Relisten::Rebind
                 } else {
@@ -1005,8 +1072,7 @@ impl Mt5Feed {
                 }
             }
             AfterExit::ServeUntilGone => {
-                idle_serve_commands(&self.symbol, &self.tx, cmd_rx, &self.book_capture, candles)
-                    .await;
+                idle_serve_commands(&self.symbol, &self.tx, cmd_rx, held).await;
                 Relisten::Dead
             }
         }
@@ -1049,8 +1115,7 @@ async fn serve_commands_for(
     symbol: &str,
     tx: &mpsc::Sender<FeedEvent>,
     cmd_rx: &mut mpsc::Receiver<FeedCommand>,
-    book_capture: &BookCaptureSwitch,
-    candles: &CandleShelf,
+    mut held: Held<'_>,
 ) -> bool {
     let deadline = tokio::time::Instant::now() + duration;
     loop {
@@ -1058,7 +1123,7 @@ async fn serve_commands_for(
             () = tokio::time::sleep_until(deadline) => return true,
             maybe_cmd = cmd_rx.recv() => match maybe_cmd {
                 Some(cmd) => {
-                    if !answer_command(symbol, cmd, tx, book_capture, candles).await {
+                    if !answer_command(symbol, cmd, tx, held.reborrow()).await {
                         return false;
                     }
                 }
@@ -1074,12 +1139,28 @@ async fn idle_serve_commands(
     symbol: &str,
     tx: &mpsc::Sender<FeedEvent>,
     cmd_rx: &mut mpsc::Receiver<FeedCommand>,
-    book_capture: &BookCaptureSwitch,
-    candles: &CandleShelf,
+    mut held: Held<'_>,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
-        if !answer_command(symbol, cmd, tx, book_capture, candles).await {
+        if !answer_command(symbol, cmd, tx, held.reborrow()).await {
             return;
+        }
+    }
+}
+
+/// What the command paths without a session still answer from.
+struct Held<'a> {
+    book_capture: &'a BookCaptureSwitch,
+    candles: &'a CandleShelf,
+    tape: &'a mut TapeLedger,
+}
+
+impl Held<'_> {
+    fn reborrow(&mut self) -> Held<'_> {
+        Held {
+            book_capture: self.book_capture,
+            candles: self.candles,
+            tape: self.tape,
         }
     }
 }
@@ -1118,12 +1199,16 @@ async fn request_older_history(
     symbol: &str,
     count: usize,
     paging_floor_ms: Option<i64>,
+    refilling: bool,
     pager: &HistoryPager,
     bridge_connected: bool,
     tx: &mpsc::Sender<FeedEvent>,
 ) -> RequestOutcome {
     let (before_utc_ms, refusal) = match paging_floor_ms {
         _ if !bridge_connected => (0, Some("no_bridge_session")),
+        // The pager is the refill's until its last page lands, and the chart
+        // gets its tape back in order before it pages further.
+        _ if refilling => (0, Some("gap_refill_running")),
         // Nothing has been charted, so there is no "older" to name. This is the
         // ordinary state of a chart between opening and the bridge's first
         // block, not an error.
@@ -1168,10 +1253,31 @@ async fn answer_command(
     symbol: &str,
     cmd: FeedCommand,
     tx: &mpsc::Sender<FeedEvent>,
-    book_capture: &BookCaptureSwitch,
-    candles: &CandleShelf,
+    held: Held<'_>,
 ) -> bool {
+    let Held {
+        book_capture,
+        candles,
+        tape,
+    } = held;
     match cmd {
+        // Answered wherever the command lands — including the bind retry a
+        // respawned feed spends while the old one lets go of the port — so
+        // the first block of the first session already knows the chart.
+        FeedCommand::ResumeAfter(seam) => {
+            tape.seed(seam);
+            info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_RESUME_SEAM_SET",
+                symbol,
+                last_ms = seam.last_ms,
+                held_at_last = seam.held_at_last,
+                oldest_ms = seam.oldest_ms,
+                "this feed takes over a chart that already holds prints"
+            );
+            true
+        }
         // Reached only from the paths with no listener behind them — a bind
         // that keeps failing, a server that died. The live path handles this
         // command in `request_older_history`, where a bridge session exists to
@@ -2523,32 +2629,25 @@ mod tests {
         sock.write_all(script.as_bytes()).await.unwrap();
         sock.flush().await.unwrap();
 
-        // Session IDs reset, so missing messages cannot be counted even when
-        // the new history overlaps. Admit unknown continuity before the tail.
-        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
-            .await
-            .unwrap();
-        assert!(matches!(
-            event,
-            Some(FeedEvent::Continuity(crate::FeedContinuity {
-                gap: Some(crate::FeedGap {
-                    from_ms: 10_801_002,
-                    to_ms: 10_801_003
-                }),
-                missing_messages: None,
-                non_monotonic: false,
-            }))
-        ));
-        // Only the unseen tail arrives; the overlap is dropped, not replayed.
-        let Some(FeedEvent::Live(fresh)) =
+        // The re-sent window reaches back past the last print the chart holds,
+        // so there is no hole: no refill opens, none is reported, and the
+        // unseen tail goes out on the history path, never as live.
+        let Some(FeedEvent::Refilled(fresh)) =
             tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
                 .await
-                .expect("timed out waiting for the post-reconnect trade")
+                .expect("timed out waiting for the unseen tail")
         else {
-            panic!("expected the unseen tail as a live trade");
+            panic!("expected the unseen tail as recovered history");
         };
+        // Only the unseen tail arrives; the overlap is dropped, not replayed.
+        assert_eq!(fresh.len(), 1);
+        let fresh = &fresh[0];
         assert_eq!(fresh.timestamp_ms, 1003 + 10_800_000);
         assert_eq!(fresh.agg_id, 4);
+        assert!(
+            feed.events.try_recv().is_err(),
+            "a reconnect with no hole reports no refill"
+        );
         let connected_again = notice_matching(&mut feed.notices, |notice| {
             matches!(notice, FeedNotice::Connected)
         })

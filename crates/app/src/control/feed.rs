@@ -9,8 +9,6 @@ use quantick_control::{
     wire::WireU64,
 };
 
-use crate::feed::FeedNotice;
-
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
 /// The wire word for a feed's connection state.
@@ -87,7 +85,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     feed_display_name: tab.feed_display_name(config).to_owned(),
                     source_mode: if replay { "replay" } else { "live" }.to_owned(),
                     connection_state: connection_state(tab.feed_connection).to_owned(),
-                    notice: notice(&tab.notice),
+                    notice: FeedNoticeSnapshot::from_summary(tab.notice.summary()),
                     capabilities: FeedCapabilitiesSnapshot {
                         book_capture: capabilities.book_capture,
                         history_paging: capabilities.history_paging,
@@ -132,6 +130,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                             duration_ms: gap.duration_ms(),
                         })
                         .collect(),
+                    tape_backfill: tab.feed_integrity.last_refill.map(Into::into),
                     deal_recording: tab
                         .deal_recording_view()
                         .as_ref()
@@ -139,21 +138,6 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                 }
             })
             .collect(),
-    }
-}
-
-fn notice(notice: &FeedNotice) -> FeedNoticeSnapshot {
-    let (kind, headline_present, next_step_present) = notice.summary();
-    FeedNoticeSnapshot {
-        kind: kind.to_owned(),
-        headline_present,
-        next_step_present,
-        text_availability: if headline_present {
-            "redacted_pending_attention_scope"
-        } else {
-            "not_applicable"
-        }
-        .to_owned(),
     }
 }
 

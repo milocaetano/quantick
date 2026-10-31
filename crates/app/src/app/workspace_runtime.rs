@@ -81,11 +81,7 @@ impl WorkspaceRuntime {
             .pane_at(target.side.index())
             .filter(|pane| pane.id == address.pane)
             .ok_or(ResourceError::MissingPane)?;
-        if !self
-            .indicators
-            .slot_kinds
-            .iter()
-            .any(|(owner, _)| *owner == target)
+        if !self.indicators.registry.contains(target)
             && !pane
                 .indicators
                 .all()

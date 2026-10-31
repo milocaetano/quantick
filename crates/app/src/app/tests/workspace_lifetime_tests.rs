@@ -51,8 +51,15 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     app.active_tab_mut().replay = Some(quantick_feed::replay::test_support::detached_link(
         recording_at(&scratch.join("replay")),
     ));
-    let target = *app.runtime.indicators.operator_slots.iter().next().unwrap();
-    app.runtime.indicators.pending_hidden.push(target);
+    let target = *app
+        .runtime
+        .indicators
+        .registry
+        .operator_slots()
+        .iter()
+        .next()
+        .unwrap();
+    app.runtime.indicators.registry.defer_hidden(target);
     let owner = app.runtime.id();
     let view = app.presentation.binding.id();
     let commands: Vec<_> = app
@@ -88,7 +95,7 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
     };
     let before = identities(&app);
     let saved = toml::to_string(&app.workspace_state().capture_workspace()).unwrap();
-    let kinds = format!("{:?}", app.runtime.indicators.slot_kinds);
+    let kinds = format!("{:?}", app.runtime.indicators.registry.slot_kinds());
     let replay = app.active_tab().replay.clone().unwrap();
     let paper = app.active_tab().paper.position_summary();
     let drawings = app.active_tab().flow_pane.drawings.items().len();
@@ -112,9 +119,21 @@ fn workspace_lifetime_native_rebind_retains_the_full_runtime_and_drains_without_
         saved,
         toml::to_string(&app.workspace_state().capture_workspace()).unwrap()
     );
-    assert_eq!(kinds, format!("{:?}", app.runtime.indicators.slot_kinds));
-    assert_eq!(app.runtime.indicators.pending_hidden, vec![target]);
-    assert!(app.runtime.indicators.operator_slots.contains(&target));
+    assert_eq!(
+        kinds,
+        format!("{:?}", app.runtime.indicators.registry.slot_kinds())
+    );
+    assert_eq!(
+        app.runtime.indicators.registry.pending_hidden(),
+        vec![target]
+    );
+    assert!(
+        app.runtime
+            .indicators
+            .registry
+            .operator_slots()
+            .contains(&target)
+    );
     assert_eq!(paper, app.active_tab().paper.position_summary());
     assert_eq!(drawings, app.active_tab().flow_pane.drawings.items().len());
     let retained = app.active_tab().replay.as_ref().unwrap();
@@ -245,7 +264,14 @@ fn workspace_lifetime_refuses_foreign_missing_and_replaced_targets_before_detach
         "indicator(\"owned\")\nplot(close)".into(),
         true,
     );
-    let target = *app.runtime.indicators.operator_slots.iter().next().unwrap();
+    let target = *app
+        .runtime
+        .indicators
+        .registry
+        .operator_slots()
+        .iter()
+        .next()
+        .unwrap();
     for (invalid, reason) in [
         (
             TabSlot {
@@ -277,34 +303,43 @@ fn workspace_lifetime_refuses_foreign_missing_and_replaced_targets_before_detach
         ),
     ] {
         assert_eq!(app.runtime.validate_target(invalid), Err(reason));
-        app.runtime.indicators.operator_slots.remove(&target);
-        app.runtime.indicators.operator_slots.insert(invalid);
         if reason == ResourceError::MissingSlot {
             assert_eq!(app.detach_operator_script(invalid.slot.0), Ok(false));
-        } else {
-            let owner = &mut app
-                .runtime
-                .indicators
-                .slot_kinds
-                .iter_mut()
-                .find(|(owner, _)| *owner == target)
-                .unwrap()
-                .0;
-            *owner = invalid;
-            assert_eq!(app.detach_operator_script(invalid.slot.0), Err(()));
-            let owner = &mut app
-                .runtime
-                .indicators
-                .slot_kinds
-                .iter_mut()
-                .find(|(owner, _)| *owner == invalid)
-                .unwrap()
-                .0;
-            *owner = target;
+            continue;
         }
-        assert!(app.runtime.indicators.operator_slots.contains(&invalid));
-        app.runtime.indicators.operator_slots.remove(&invalid);
-        app.runtime.indicators.operator_slots.insert(target);
+        // Construct another ordinary owner to exercise stale/foreign dispatch;
+        // production registry collections are never exposed for mutation.
+        struct CapturedHost(TabSlot);
+        impl quantick_chart::indicator_registry::IndicatorHost for CapturedHost {
+            fn pane_id(&self) -> u64 {
+                self.0.pane
+            }
+            fn add(&mut self, _: crate::indicator_worker::IndicatorSource) -> SlotId {
+                self.0.slot
+            }
+            fn remove(&mut self, _: SlotId) {
+                panic!("invalid target reached worker removal");
+            }
+        }
+        let mut registry =
+            quantick_chart::indicator_registry::IndicatorRegistry::new(invalid.workspace);
+        registry.attach_script(
+            &mut CapturedHost(invalid),
+            (invalid.tab, invalid.side),
+            "owned".into(),
+            "indicator(\"owned\")\nplot(close)".into(),
+            true,
+        );
+        let original = std::mem::replace(&mut app.runtime.indicators.registry, registry);
+        assert_eq!(app.detach_operator_script(invalid.slot.0), Err(()));
+        assert!(
+            app.runtime
+                .indicators
+                .registry
+                .operator_slots()
+                .contains(&invalid)
+        );
+        app.runtime.indicators.registry = original;
     }
     let ctx = egui::Context::default();
     let _other = open_second_tab(&mut app, &ctx, "ETHUSDT");
@@ -315,7 +350,8 @@ fn workspace_lifetime_refuses_foreign_missing_and_replaced_targets_before_detach
     assert!(
         !app.runtime
             .indicators
-            .slot_kinds
+            .registry
+            .slot_kinds()
             .iter()
             .any(|(owner, _)| *owner == target)
     );
@@ -409,7 +445,8 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
     let target = *app
         .runtime
         .indicators
-        .slot_kinds
+        .registry
+        .slot_kinds()
         .iter()
         .map(|(target, _)| target)
         .find(|target| target.side == PaneSide::Time(0))
@@ -428,13 +465,102 @@ fn workspace_lifetime_reordered_pane_never_retargets_a_captured_slot() {
     assert_eq!(moved.pane, target.pane);
     assert_eq!(moved.side, PaneSide::Time(1));
     assert_eq!(app.runtime.validate_target(moved), Ok(()));
-    let before = app.runtime.indicators.slot_kinds.len();
+    let before = app.runtime.indicators.registry.slot_kinds().len();
     app.apply_indicator_edit(super::super::indicator_manager::IndicatorEdit::Remove(
         target,
     ));
-    assert_eq!(app.runtime.indicators.slot_kinds.len(), before);
+    assert_eq!(app.runtime.indicators.registry.slot_kinds().len(), before);
     app.apply_indicator_edit(super::super::indicator_manager::IndicatorEdit::Remove(
         moved,
     ));
     assert!(app.runtime.validate_target(moved).is_err());
+}
+
+#[test]
+fn workspace_lifetime_deferred_state_waits_for_its_stable_pane_not_a_replacement() {
+    let (mut app, _events, _commands, _book) = test_app();
+    app.attach_script(
+        "pending".into(),
+        "indicator(\"pending\")\nplot(close)".into(),
+        true,
+    );
+    settle_indicators(&mut app);
+    let target = *app
+        .runtime
+        .indicators
+        .registry
+        .operator_slots()
+        .iter()
+        .next()
+        .unwrap();
+    let mut style = crate::indicator_style::StyleOverride::default();
+    style.set(
+        0,
+        crate::indicator_style::PlotOverride {
+            width: Some(0.75),
+            ..Default::default()
+        },
+    );
+    app.runtime.indicators.registry.defer_hidden(target);
+    app.runtime
+        .indicators
+        .registry
+        .defer_style(target, style.clone());
+    app.runtime
+        .indicators
+        .registry
+        .defer_mouse_vertical_line(target);
+    app.runtime
+        .tabs
+        .by_id_mut(target.tab)
+        .unwrap()
+        .pane_mut(target.side)
+        .id = target.pane + 1000;
+    app.layout_adapter().apply_pending_indicator_state();
+    let view = app
+        .runtime
+        .tabs
+        .by_id(target.tab)
+        .unwrap()
+        .pane(target.side)
+        .indicators
+        .all()
+        .iter()
+        .find(|view| view.slot == target.slot)
+        .unwrap();
+    assert!(!view.hidden);
+    assert!(view.style.is_default());
+    assert!(!view.mouse_vertical_line);
+    assert_eq!(app.runtime.indicators.registry.pending_hidden(), [target]);
+    // Foreign deferred work must not reach an otherwise matching view either.
+    let foreign = TabSlot {
+        workspace: WorkspaceId(999),
+        pane: target.pane + 1000,
+        ..target
+    };
+    app.runtime.indicators.registry.defer_hidden(foreign);
+    app.layout_adapter().apply_pending_indicator_state();
+    assert_eq!(app.runtime.indicators.registry.pending_hidden(), [target]);
+    app.runtime
+        .tabs
+        .by_id_mut(target.tab)
+        .unwrap()
+        .pane_mut(target.side)
+        .id = target.pane;
+    app.layout_adapter().apply_pending_indicator_state();
+    let view = app
+        .runtime
+        .tabs
+        .by_id(target.tab)
+        .unwrap()
+        .pane(target.side)
+        .indicators
+        .all()
+        .iter()
+        .find(|view| view.slot == target.slot)
+        .unwrap();
+    assert!(view.hidden);
+    assert_eq!(view.style, style);
+    assert!(view.mouse_vertical_line);
+    assert!(app.runtime.indicators.registry.pending_hidden().is_empty());
 }

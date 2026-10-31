@@ -813,7 +813,6 @@ impl ScriptsPort for QuantickApp {
         };
         self.runtime.validate_target(target).map_err(|_| ())?;
         self.apply_indicator_edit(IndicatorEdit::Remove(target));
-        self.runtime.indicators.operator_slots.remove(&target);
         Ok(true)
     }
 }

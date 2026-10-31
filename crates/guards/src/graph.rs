@@ -64,6 +64,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // geometry, style and strip the window paints from. `indicator-session`
     // for the slot ids and event deltas the UI's copy of indicator state is
     // applied from; the session reaches `pine` and `indicators`, never back.
+    // `workspace` supplies saved kinds and stable resource addresses to the
+    // owned indicator registry; runtime styles stay in chart.
     (
         "chart",
         &[
@@ -74,6 +76,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "indicators",
             "orderbook",
             "orderflow",
+            "workspace",
         ],
     ),
     ("chart-interaction", &["layers", "orderflow"]),

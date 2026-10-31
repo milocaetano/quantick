@@ -183,7 +183,8 @@ fn missing_ticks_and_unknown_interruptions_have_distinct_saturating_counters() {
             anomalies: 2,
             missing_messages: 4,
             unknown_loss: 1,
-            non_monotonic: 0
+            non_monotonic: 0,
+            last_refill: None,
         }
     );
     integrity.missing_messages = u64::MAX;

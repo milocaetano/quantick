@@ -139,7 +139,7 @@ fn project_tape<P: TabsPort + ?Sized>(app: &P, context: CaptureContext) -> TapeS
                     .panes()
                     .map(|(pane, side)| PaneTapeSnapshot {
                         pane_id: WireU64::new(pane.id),
-                        side: side.into(),
+                        side: crate::control::pane_side_dto(side),
                         engine: engine_availability(pane),
                         tape: pane
                             .orderflow
@@ -177,7 +177,7 @@ fn project_footprint<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) ->
                     .panes()
                     .map(|(pane, side)| PaneFootprintSnapshot {
                         pane_id: WireU64::new(pane.id),
-                        side: side.into(),
+                        side: crate::control::pane_side_dto(side),
                         visible: pane.footprint.visible,
                         overridden: pane.footprint.config.is_some(),
                         setup: pane.footprint_config(window).into(),
@@ -206,7 +206,7 @@ fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> B
                             })
                         }),
                         pane_id: WireU64::new(pane.id),
-                        side: side.into(),
+                        side: crate::control::pane_side_dto(side),
                         engine: engine_availability(pane),
                         bubbles: pane.orderflow.as_ref().map(OrderflowView::bubbles_snapshot),
                     })
@@ -228,7 +228,7 @@ fn project_heatmap<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> H
                     .panes()
                     .map(|(pane, side)| PaneHeatmapSnapshot {
                         pane_id: WireU64::new(pane.id),
-                        side: side.into(),
+                        side: crate::control::pane_side_dto(side),
                         engine: engine_availability(pane),
                         heatmap: pane.orderflow.as_ref().map(heatmap_state),
                     })
@@ -255,7 +255,7 @@ fn project_l2<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> L2Snap
                     .panes()
                     .map(|(pane, side)| PaneL2Snapshot {
                         pane_id: WireU64::new(pane.id),
-                        side: side.into(),
+                        side: crate::control::pane_side_dto(side),
                         engine: engine_availability(pane),
                         book: pane.orderflow.as_ref().map(book_snapshot),
                     })

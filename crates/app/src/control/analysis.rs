@@ -231,7 +231,7 @@ fn pane_indicators(pane: &ChartPane, side: PaneSide) -> PaneIndicatorsSnapshot {
     let views = pane.indicators.all();
     PaneIndicatorsSnapshot {
         pane_id: WireU64::new(pane.id),
-        side: side.into(),
+        side: crate::control::pane_side_dto(side),
         indicators: views
             .iter()
             .take(CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE)
@@ -315,7 +315,7 @@ fn pane_drawings(pane: &ChartPane, side: PaneSide) -> PaneDrawingsSnapshot {
     let items = pane.drawings.items();
     PaneDrawingsSnapshot {
         pane_id: WireU64::new(pane.id),
-        side: side.into(),
+        side: crate::control::pane_side_dto(side),
         drawings: items
             .iter()
             .take(CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE)

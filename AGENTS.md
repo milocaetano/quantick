@@ -26,7 +26,7 @@ leaves; `guards` has no edges either way.
 | `control-handlers` | control-schema, control-host, control, chart, sources, engine | Control handlers over headless ports. |
 | `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
 | `stores` | chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
-| `chart` | chart-interaction, civil, orderflow, indicator-session, indicators, engine | State/geometry/viewport/style, indicator views |
+| `chart` | chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model, indicator registry |
 | `indicator-session` | pine, indicators, engine | Source binding, batches, deltas. |
 | `anchored-studies` | indicators, engine | Resumable profile and anchored-average state; the caller schedules and paints. |
 | `pine` | indicators | "Quantick Pine", a Pine v5 subset; zero external dependencies. |

@@ -577,7 +577,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
     assert!(
         quantick_control_handlers::annotate::quick_range_input(
             placement.conversion.request(),
-            placement.side.into(),
+            crate::control::annotated_side(placement.side),
         )
         .is_none()
     );
@@ -4991,7 +4991,8 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     assert!(
         app.runtime
             .indicators
-            .slot_kinds
+            .registry
+            .slot_kinds()
             .iter()
             .filter(|(owner, _)| owner.tab == tab_id && owner.side == PaneSide::Time(1))
             .count()

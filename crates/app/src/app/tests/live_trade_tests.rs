@@ -335,6 +335,73 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
     ));
 }
 
+/// Finding (blocker): a reconnect refill's prints went out as live, so a
+/// resting order filled at a price nobody could have traded, a strategy
+/// fired on a bar that closed while the terminal was away, and the outage
+/// read as this feed's latency. A refill is history: bars and the mark.
+#[test]
+fn a_refill_feeds_the_bars_and_the_mark_never_a_fill_a_strategy_or_the_latency() {
+    use quantick_feed::config::{BackfillState, TapeBackfill};
+    let trades = scenario();
+    let (mut app, events, drawing) = armed_app();
+    ingest(&mut app, &trades[..150]);
+    // Settles the anchor as the resume test does, so the hole's bar is in
+    // the strategy's region and would fire it if handed over.
+    app.active_tab_mut()
+        .flow_pane
+        .drawings
+        .set_times(0, &[Some(trades[0].timestamp_ms), None]);
+    assert!(
+        crate::pane::strategies::drawing_region(&app.active_tab().flow_pane.drawings, drawing, 3)
+            .unwrap()
+            .1
+    );
+    let latency = app.active_tab().latest_trade_latency_ms;
+    let report = TapeBackfill {
+        from_ms: trades[149].timestamp_ms,
+        to_ms: trades[199].timestamp_ms,
+        state: BackfillState::Filling,
+        received: 50,
+    };
+    events
+        .blocking_send(FeedEvent::RefillStatus(report))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::Refilled(trades[150..200].to_vec()))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::RefillStatus(TapeBackfill {
+            state: BackfillState::Filled,
+            ..report
+        }))
+        .unwrap();
+    let tab_id = app.runtime.tabs.active_id();
+    app.active_tab_mut()
+        .drain_feed_with_clock(tab_id, || panic!("refilled history is not live arrival"));
+
+    let tab = app.active_tab();
+    assert_eq!(tab.flow_pane.state.bars().len(), 4, "the hole builds bars");
+    assert_eq!((tab.live_trades, tab.history_trades), (150, 50));
+    assert_eq!(
+        tab.paper.account().mark_price(),
+        Some(trades[199].price),
+        "the mark moves"
+    );
+    assert!(tab.paper.is_flat(), "no strategy command from the hole");
+    assert!(position(&app).is_none(), "nothing fills against the hole");
+    assert_eq!(tab.latest_trade_latency_ms, latency, "no arrival reading");
+    assert!(tab.pending_alarm_sounds.is_empty(), "no alarm sounds");
+
+    // The next live print does not evaluate the bar the hole closed, where
+    // the resume path's queued evaluation would.
+    ingest(&mut app, &trades[200..]);
+    assert!(
+        app.active_tab().paper.is_flat(),
+        "a bar closed inside the hole never reaches the strategy"
+    );
+    assert!(position(&app).is_none());
+}
+
 #[test]
 fn live_trade_clock_is_read_only_when_an_alarm_is_present() {
     let (mut app, _events, drawing) = armed_app();

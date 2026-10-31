@@ -68,6 +68,12 @@ Raw command logs and frozen baseline executable:
 
 ## Delivered boundary and regression evidence
 
+The original F1 delivery below used a borrowed `IndicatorSlots` context. The
+#717 / #721 followup replaces it with the owned, private
+`quantick-chart::indicator_registry::IndicatorRegistry`; see the implemented
+boundary in [preparation tasks](preparation-tasks.md#implemented-registry-boundary-in-717--721).
+The following evidence describes the original F1 delivery, not its current owner.
+
 `app/indicator_operations.rs` introduces `IndicatorSlots`, which borrows exactly
 five collections from the existing `IndicatorState`. `IndicatorHost` supplies
 only `add(IndicatorSource)` and `remove(SlotId)`, using the existing ChartPane

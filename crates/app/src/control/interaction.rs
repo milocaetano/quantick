@@ -121,7 +121,7 @@ pub(crate) fn cursor_snapshot<P: TabsPort + ?Sized>(app: &P) -> CursorSnapshot {
     CursorSnapshot {
         active_tab_id: WireU64::new(app.tab_reads().tabs().active_id()),
         focused_pane_id: WireU64::new(focused_pane.id),
-        focused_pane_side: focused_side.into(),
+        focused_pane_side: crate::control::pane_side_dto(focused_side),
         pointer,
         pointer_availability,
         semantic_scene: available(),
@@ -155,7 +155,7 @@ fn pointer_snapshot<P: TabsPort + ?Sized>(
     PointerSnapshot {
         tab_id: WireU64::new(tab_id),
         pane_id: WireU64::new(pane.id),
-        pane_side: side.into(),
+        pane_side: crate::control::pane_side_dto(side),
         pane_focused: tab.focused_side() == side,
         feed_id: tab.feed_id.clone(),
         symbol: tab.symbol.clone(),
@@ -231,7 +231,7 @@ pub(crate) fn selection_snapshot<P: TabsPort + ?Sized>(app: &P) -> SelectionSnap
     SelectionSnapshot {
         active_tab_id: WireU64::new(app.tab_reads().tabs().active_id()),
         focused_pane_id: WireU64::new(focused_pane.id),
-        focused_pane_side: focused_side.into(),
+        focused_pane_side: crate::control::pane_side_dto(focused_side),
         drawing,
         paper_trade_row: tab.paper.account().selected_trade_index().map(|row_index| {
             PaperTradeSelectionSnapshot {
@@ -251,7 +251,7 @@ fn drawing_selection(
 ) -> DrawingSelectionSnapshot {
     DrawingSelectionSnapshot {
         pane_id: WireU64::new(pane.id),
-        pane_side: side.into(),
+        pane_side: crate::control::pane_side_dto(side),
         drawing_id: WireU64::new(drawing.id.0),
         tool_id: drawing.tool.id().to_owned(),
         label: format!("{} {}", drawing.tool.name(), index + 1),
@@ -278,7 +278,7 @@ fn drawing_hit_snapshot(
 ) -> DrawingHitSnapshot {
     DrawingHitSnapshot {
         owner_pane_id: WireU64::new(owner.id),
-        owner_pane_side: owner_side.into(),
+        owner_pane_side: crate::control::pane_side_dto(owner_side),
         mirrored,
         drawing_id: WireU64::new(hit.id.0),
         tool_id: hit.tool_id.to_owned(),

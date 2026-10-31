@@ -50,7 +50,8 @@ fn human_script_operations_mirror_two_panes_and_save_once() {
     let targets: Vec<_> = app
         .runtime
         .indicators
-        .slot_kinds
+        .registry
+        .slot_kinds()
         .iter()
         .map(|(target, _)| *target)
         .collect();
@@ -84,7 +85,7 @@ fn human_script_operations_mirror_two_panes_and_save_once() {
             .indicators
             .is_empty()
     );
-    assert!(app.runtime.indicators.slot_kinds.is_empty());
+    assert!(app.runtime.indicators.registry.slot_kinds().is_empty());
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
         assert!(app.active_tab().pane(side).indicators.all().is_empty());
     }
@@ -97,7 +98,7 @@ fn operator_script_operations_preserve_human_mirrors_and_saved_content() {
     app.apply_toolbar_action(ToolbarAction::AddScriptIndicator(0));
     settle_indicators(&mut app);
     let saved = app.layout_state().layouts().clone();
-    let human_targets = app.runtime.indicators.slot_kinds.clone();
+    let human_targets = app.runtime.indicators.registry.slot_kinds().to_vec();
     app.runtime.workspace.layouts_mut().take_flush();
     let attached = app
         .run_agent_action(
@@ -115,7 +116,7 @@ fn operator_script_operations_preserve_human_mirrors_and_saved_content() {
         "operator source never enters saved layouts"
     );
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         human_targets.len() + 1
     );
     let slot = attached["slot_id"].as_str().unwrap();
@@ -128,7 +129,7 @@ fn operator_script_operations_preserve_human_mirrors_and_saved_content() {
     assert_eq!(detached["detached"], true);
     settle_indicators(&mut app);
     assert_one_indicator_save(&mut app);
-    assert_eq!(app.runtime.indicators.slot_kinds, human_targets);
+    assert_eq!(app.runtime.indicators.registry.slot_kinds(), human_targets);
     assert_eq!(*app.layout_state().layouts(), saved);
     let refused = app
         .run_agent_action(
@@ -146,7 +147,7 @@ fn operator_script_operations_preserve_human_mirrors_and_saved_content() {
         app.runtime.workspace.layouts_mut().take_flush(),
         LayoutSave::Wait
     );
-    assert_eq!(app.runtime.indicators.slot_kinds, human_targets);
+    assert_eq!(app.runtime.indicators.registry.slot_kinds(), human_targets);
     assert_eq!(*app.layout_state().layouts(), saved);
 }
 
@@ -157,8 +158,8 @@ fn invalid_control_script_leaves_both_panes_layout_and_save_intent_unchanged() {
     app.apply_toolbar_action(ToolbarAction::AddScriptIndicator(0));
     settle_indicators(&mut app);
     let before = app.layout_state().layouts().clone();
-    let slots = app.runtime.indicators.slot_kinds.clone();
-    let owners = app.runtime.indicators.operator_slots.clone();
+    let slots = app.runtime.indicators.registry.slot_kinds().to_vec();
+    let owners = app.runtime.indicators.registry.operator_slots().clone();
     app.runtime.workspace.layouts_mut().take_flush();
     let input = serde_json::json!({
         "name": "broken", "source": "//@version=5\nindicator(\"broken\")\nplot(\n"
@@ -180,8 +181,8 @@ fn invalid_control_script_leaves_both_panes_layout_and_save_intent_unchanged() {
         );
         settle_indicators(&mut app);
         assert_eq!(*app.layout_state().layouts(), before);
-        assert_eq!(app.runtime.indicators.slot_kinds, slots);
-        assert_eq!(app.runtime.indicators.operator_slots, owners);
+        assert_eq!(app.runtime.indicators.registry.slot_kinds(), slots);
+        assert_eq!(*app.runtime.indicators.registry.operator_slots(), owners);
         assert_eq!(
             app.runtime.workspace.layouts_mut().take_flush(),
             LayoutSave::Wait
@@ -217,11 +218,11 @@ fn invalid_library_script_retains_mirrored_error_slots_for_repair() {
     settle_indicators(&mut app);
     assert_one_indicator_save(&mut app);
     assert_eq!(
-        app.runtime.indicators.script_files.len(),
+        app.runtime.indicators.registry.script_files().len(),
         2,
         "both slots still follow the source file"
     );
-    assert_eq!(app.runtime.indicators.slot_kinds.len(), 2);
+    assert_eq!(app.runtime.indicators.registry.slot_kinds().len(), 2);
     let layout = app.layout_state().focused_pane_layout();
     assert_eq!(
         app.layout_state().layouts().get(layout).unwrap().indicators[0].kind,
@@ -254,8 +255,8 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
         app.apply_toolbar_action(ToolbarAction::AddNative(id));
         settle_indicators(&mut app);
         assert_one_indicator_save(&mut app);
-        assert!(app.runtime.indicators.operator_slots.is_empty());
-        let targets = app.runtime.indicators.slot_kinds.clone();
+        assert!(app.runtime.indicators.registry.operator_slots().is_empty());
+        let targets = app.runtime.indicators.registry.slot_kinds().to_vec();
         assert_eq!(targets.len(), 2);
         for (target, kind) in &targets {
             assert_eq!(target.tab, tab);
@@ -283,7 +284,7 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
         app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Remove(other));
         settle_indicators(&mut app);
         assert_one_indicator_save(&mut app);
-        assert!(app.runtime.indicators.slot_kinds.is_empty());
+        assert!(app.runtime.indicators.registry.slot_kinds().is_empty());
         assert!(
             app.layout_state()
                 .layouts()

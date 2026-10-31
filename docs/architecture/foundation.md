@@ -11,7 +11,9 @@ and current behavior. The implementation sequence is in
 [preparation-tasks.md](preparation-tasks.md), with evidence in
 [baseline.md](baseline.md). Existing repository rules in `CLAUDE.md` and the
 [control contract](../control-plane/control-contract.md) remain authoritative.
-This proposal does not change the crate graph or public protocol.
+This proposal does not change the public protocol. The implemented indicator
+registry boundary and its `chart -> workspace` edge are recorded in
+[preparation tasks](preparation-tasks.md#implemented-registry-boundary-in-717--721).
 
 ## What exists, and where preparation is needed
 

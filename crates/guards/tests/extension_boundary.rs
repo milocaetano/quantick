@@ -21,14 +21,14 @@ pub struct ChartState { bars: usize, }
 impl ChartState {
     fn existing(&self) {}
 }
-pub(super) struct IndicatorSlots<'a> {
-    pub kinds: &'a mut Vec<Kind>,
-    pub operators: &'a mut Set<Target>,
-    pub files: &'a mut Vec<File>,
-    pub hidden: &'a mut Vec<Target>,
-    pub styles: &'a mut Vec<Style>,
+pub struct IndicatorRegistry {
+    kinds: Vec<Kind>,
+    operators: Set<Target>,
+    files: Vec<File>,
+    hidden: Vec<Target>,
+    styles: Vec<Style>,
 }
-pub(super) trait IndicatorHost {
+pub trait IndicatorHost {
     fn add(&mut self, source: IndicatorSource) -> SlotId;
     fn remove(&mut self, slot: SlotId);
 }
@@ -39,8 +39,8 @@ pub(super) trait IndicatorHost {
 const SHAPES: &str = "\
 QuantickApp\tpub|struct |window : usize
 ChartState\tpub|struct |bars : usize
-IndicatorSlots\tpub ( super )|struct < 'a >|pub kinds : &'a mut Vec < Kind >|pub operators : &'a mut Set < Target >|pub files : &'a mut Vec < File >|pub hidden : &'a mut Vec < Target >|pub styles : &'a mut Vec < Style >
-IndicatorHost\tpub ( super )|trait |fn add ( & mut self , source : IndicatorSource ) -> SlotId ;|fn remove ( & mut self , slot : SlotId ) ;
+IndicatorRegistry\tpub|struct |kinds : Vec < Kind >|operators : Set < Target >|files : Vec < File >|hidden : Vec < Target >|styles : Vec < Style >
+IndicatorHost\tpub|trait |fn add ( & mut self , source : IndicatorSource ) -> SlotId ;|fn remove ( & mut self , slot : SlotId ) ;
 ";
 
 fn fixture() -> ScratchDir {
@@ -172,15 +172,16 @@ fn field_visibility_authority_and_host_effect_changes_are_rejected() {
             "QuantickApp shape differs",
         ),
         (
-            SOURCE.replace(
-                "pub kinds: &'a mut Vec<Kind>",
-                "pub kinds: &'a mut QuantickApp",
-            ),
-            "IndicatorSlots shape differs",
+            SOURCE.replace("kinds: Vec<Kind>", "kinds: QuantickApp"),
+            "IndicatorRegistry shape differs",
         ),
         (
             SOURCE.replace("window: usize", "pub window: usize"),
             "QuantickApp shape differs",
+        ),
+        (
+            SOURCE.replace("kinds: Vec<Kind>", "pub kinds: Vec<Kind>"),
+            "IndicatorRegistry shape differs",
         ),
         (
             SOURCE.replace(
@@ -296,7 +297,7 @@ fn cross_root_shrink_cannot_buy_growth_and_tighten_only_lowers() {
 }
 
 const OWNED_NATIVE: &str = "\
-impl IndicatorSlots<'_> {
+impl IndicatorRegistry {
     fn native(&mut self, host: &mut impl IndicatorHost, target: (u64, PaneSide), id: &str) -> TabSlot {
         let slot = host.add(IndicatorSource::Native { id: id.to_owned(), values: Vec::new() });
         let owner = TabSlot { tab: target.0, side: target.1, slot };
@@ -338,7 +339,7 @@ fn realistic_native_owner_grows_in_same_or_new_file_but_root_deposit_fails() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let broad = OWNED_NATIVE.replace("impl IndicatorSlots<'_>", "impl QuantickApp");
+    let broad = OWNED_NATIVE.replace("impl IndicatorRegistry", "impl QuantickApp");
     assert_rejected(&format!("{SOURCE}{broad}"), "QuantickApp:");
 }
 
@@ -445,7 +446,7 @@ fn malformed_missing_and_unsupported_source_never_clear() {
         "named brace body",
     );
     assert_rejected(
-        &SOURCE.replace("pub kinds:", "#[cfg(feature = \"wide\")] pub kinds:"),
+        &SOURCE.replace("kinds:", "#[cfg(feature = \"wide\")] kinds:"),
         "attributed protected fields",
     );
 }

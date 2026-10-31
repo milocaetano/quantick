@@ -21,7 +21,7 @@ impl AnnotatePort for dyn ControlPort {
         self.tab_reads().tabs().len()
     }
     fn drawing_side(&self, index: usize) -> AnnotatedSide {
-        self.tab_reads().tabs()[index].drawing_side().into()
+        annotated_side(self.tab_reads().tabs()[index].drawing_side())
     }
     fn time_pane_count(&self, index: usize) -> usize {
         self.tab_reads().tabs()[index].time_panes.len()
@@ -29,14 +29,14 @@ impl AnnotatePort for dyn ControlPort {
     fn sides(&self, index: usize) -> Vec<AnnotatedSide> {
         self.tab_reads().tabs()[index]
             .sides()
-            .map(Into::into)
+            .map(annotated_side)
             .collect()
     }
     fn new_drawing(&self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
         self.tab_reads().new_drawing(tool)
     }
     fn pane_mut(&mut self, index: usize, side: AnnotatedSide) -> &mut dyn AnnotatedPane {
-        self.tabs_mut().pane_mut(index, side.into())
+        self.tabs_mut().pane_mut(index, pane_side(side))
     }
 }
 
@@ -86,20 +86,16 @@ impl AnnotateAccess for ControlAccess {
     }
 }
 
-impl From<PaneSide> for AnnotatedSide {
-    fn from(side: PaneSide) -> Self {
-        match side {
-            PaneSide::Flow => Self::Flow,
-            PaneSide::Time(slot) => Self::Time(slot),
-        }
+pub(crate) fn annotated_side(side: PaneSide) -> AnnotatedSide {
+    match side {
+        PaneSide::Flow => AnnotatedSide::Flow,
+        PaneSide::Time(slot) => AnnotatedSide::Time(slot),
     }
 }
 
-impl From<AnnotatedSide> for PaneSide {
-    fn from(side: AnnotatedSide) -> Self {
-        match side {
-            AnnotatedSide::Flow => Self::Flow,
-            AnnotatedSide::Time(slot) => Self::Time(slot),
-        }
+fn pane_side(side: AnnotatedSide) -> PaneSide {
+    match side {
+        AnnotatedSide::Flow => PaneSide::Flow,
+        AnnotatedSide::Time(slot) => PaneSide::Time(slot),
     }
 }

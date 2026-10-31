@@ -101,7 +101,8 @@ fn i1_preset_keeps_an_invalid_cell_position_before_a_valid_neighbor() {
     let kind = app
         .runtime
         .indicators
-        .slot_kinds
+        .registry
+        .slot_kinds()
         .iter()
         .find(|(at, _)| *at == target)
         .unwrap()
@@ -175,16 +176,20 @@ fn i1_failed_file_reread_advances_seen_mtime_without_changing_live_slots() {
         .collect();
     std::fs::write(&file, [0xff, 0xfe]).unwrap();
     let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
-    for (_, _, seen) in &mut app.runtime.indicators.script_files {
-        *seen = std::time::SystemTime::UNIX_EPOCH;
+    for (owner, _, _) in app.runtime.indicators.registry.script_files().to_vec() {
+        app.runtime
+            .indicators
+            .registry
+            .observe_script(owner, std::time::SystemTime::UNIX_EPOCH);
     }
     app.runtime.indicators.last_script_poll = Instant::now() - Duration::from_secs(2);
     assert!(app.runtime.indicators.poll_script_files().is_empty());
-    assert!(!app.runtime.indicators.script_files.is_empty());
+    assert!(!app.runtime.indicators.registry.script_files().is_empty());
     assert!(
         app.runtime
             .indicators
-            .script_files
+            .registry
+            .script_files()
             .iter()
             .all(|(_, _, seen)| *seen == modified)
     );
@@ -244,20 +249,21 @@ fn i1_origin_watch_observes_file_time_only_after_layout_mirroring() {
         .unwrap();
     app.apply_indicator_edit(IndicatorEdit::Attached(added.attachment.unwrap()));
     assert_eq!(
-        app.runtime.indicators.script_files.len(),
+        app.runtime.indicators.registry.script_files().len(),
         1,
         "only the mirrored peer watches before the origin is registered"
     );
     app.runtime.indicators.watch_attachment(added.watch);
     assert_eq!(
-        app.runtime.indicators.script_files.len(),
+        app.runtime.indicators.registry.script_files().len(),
         2,
         "one peer and one origin registration"
     );
     assert!(
         app.runtime
             .indicators
-            .script_files
+            .registry
+            .script_files()
             .iter()
             .all(|(_, _, seen)| *seen == observed_after_read)
     );

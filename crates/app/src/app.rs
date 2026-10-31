@@ -79,10 +79,8 @@ use crate::drawings;
 use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::{Harness, ScriptedMenu};
-use crate::indicator_worker::SlotId;
 use crate::indicators::preset_file;
 use crate::indicators::state_file;
-use crate::pane::PaneSide;
 use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
@@ -226,30 +224,7 @@ pub struct QuantickApp {
     health: health::HealthCounters,
 }
 
-/// An indicator slot together with the tab and pane that own it.
-///
-/// Slot ids are allocated per pane, so the id alone identifies nothing once
-/// there are two panes, let alone two tabs: without the rest, removing one
-/// tab's slot 0 would drop another's bookkeeping for its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct TabSlot {
-    workspace: WorkspaceId,
-    pane: u64,
-    tab: u64,
-    side: PaneSide,
-    slot: SlotId,
-}
-
-impl TabSlot {
-    fn address(self) -> quantick_workspace::lifetime::ResourceAddress {
-        quantick_workspace::lifetime::ResourceAddress {
-            workspace: self.workspace,
-            tab: self.tab,
-            pane: self.pane,
-            slot: self.slot.0,
-        }
-    }
-}
+use quantick_chart::indicator_registry::TabSlot;
 
 /// Constructor-only inputs, consumed at the owners' existing launch phases.
 /// This value is never retained on the app or used as a frame context.

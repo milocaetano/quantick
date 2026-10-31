@@ -271,6 +271,85 @@ pub enum HistoryBoundary {
     VenueRetention,
 }
 
+/// A feed's refill of the hole a reconnect left in a chart that already
+/// holds prints: what it asked its source for and how that ended.
+///
+/// Reported, never inferred, so a reader can tell a filled hole from one the
+/// source could not reach — the second stays a marked gap on the chart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TapeBackfill {
+    /// The last print the chart held before the source went away, UTC ms.
+    pub from_ms: i64,
+    /// The oldest print the new session opened with, UTC ms.
+    pub to_ms: i64,
+    /// Where the refill stands.
+    pub state: BackfillState,
+    /// Prints received toward the refill, before either seam was deduplicated.
+    pub received: u64,
+}
+
+/// Where a [`TapeBackfill`] stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackfillState {
+    /// Asking the source. Live prints wait behind the refill so the tape
+    /// stays in time order.
+    Filling,
+    /// Every print between the two ends arrived.
+    Filled,
+    /// The source stopped short: `from_ms..unfilled_to_ms` holds no print
+    /// and is marked on the chart as a gap.
+    Partial {
+        /// The oldest print the refill did deliver, or `to_ms` when none.
+        unfilled_to_ms: i64,
+        /// Why it stopped there.
+        stop: BackfillStop,
+    },
+}
+
+/// Why a refill stopped before it reached the last print the chart held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackfillStop {
+    /// The new session ended mid-refill.
+    SessionLost,
+    /// This session's source cannot be asked for older prints.
+    NoPaging,
+    /// The hole is deeper than the reach a refill may spend.
+    Reach,
+    /// The source has nothing older to give.
+    SourceExhausted,
+    /// Several answers in a row brought nothing.
+    NothingFound,
+    /// The live prints held behind the refill reached their bound.
+    HeldTooLong,
+}
+
+impl BackfillState {
+    /// The control plane's name for this state.
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Filling => "filling",
+            Self::Filled => "filled",
+            Self::Partial { .. } => "partial",
+        }
+    }
+}
+
+impl BackfillStop {
+    /// The control plane's and the log's name for this reason.
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::SessionLost => "session_lost",
+            Self::NoPaging => "no_paging",
+            Self::Reach => "reach",
+            Self::SourceExhausted => "source_exhausted",
+            Self::NothingFound => "nothing_found",
+            Self::HeldTooLong => "held_too_long",
+        }
+    }
+}
+
 impl FeedCapabilities {
     /// Nothing is available — the honest answer for a feed that does not
     /// resolve to a provider.

@@ -461,14 +461,32 @@ fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
                         let tab = app.active_tab();
                         (tab_id, tab.focused_side())
                     };
-                    app.layout_adapter().add_indicator_at(
+                    let slot = app.layout_adapter().add_indicator_at(
                         tab,
                         side,
                         &SavedKind::Script {
                             name: name.to_owned(),
                         },
                     );
-                    app.runtime.indicators.forget_last_indicator_state_change();
+                    if let Some(slot) = slot {
+                        let pane = app
+                            .runtime
+                            .tabs
+                            .by_id(tab)
+                            .expect("launch tab")
+                            .pane(side)
+                            .id;
+                        app.runtime
+                            .indicators
+                            .registry
+                            .exclude_from_layout(super::TabSlot {
+                                workspace: app.runtime.id(),
+                                pane,
+                                tab,
+                                side,
+                                slot,
+                            });
+                    }
                 }
                 None => tracing::warn!(
                     target: "quantick::app",

@@ -2303,7 +2303,7 @@ fn removing_a_slot_on_one_pane_removes_its_layout_position_everywhere() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         4,
         "two indicators, mirrored onto two panes"
     );
@@ -2322,7 +2322,7 @@ fn removing_a_slot_on_one_pane_removes_its_layout_position_everywhere() {
     app.apply_toolbar_action(ToolbarAction::RemoveIndicator(time_cvd.0));
 
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         2,
         "one registration per pane went with it"
     );

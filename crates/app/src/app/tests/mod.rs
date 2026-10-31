@@ -29,6 +29,8 @@
 // `CandlePreset` and `IndicatorEvent` are here for the same reason one cut
 // later: the indicator manager took the last production reader of each out of
 // `app.rs`, and the tests that still name them are the only ones left.
+use crate::indicator_worker::SlotId;
+use crate::pane::PaneSide;
 use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
 use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
@@ -2729,7 +2731,11 @@ fn attach_script_for_test(
     app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
         attached,
     ));
-    (owner.tab, owner.side.into(), owner.slot)
+    (
+        owner.tab,
+        crate::control::pane_side_dto(owner.side),
+        owner.slot,
+    )
 }
 fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
     let target = (

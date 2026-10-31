@@ -120,71 +120,6 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
     }
 }
 
-#[test]
-fn forgetting_a_tab_clears_all_slot_collections_without_touching_other_tabs() {
-    let (mut app, _commands) = app_with_history(1);
-    let owners = [7, 9].map(|tab| super::super::TabSlot {
-        workspace: crate::app::WORKSPACE_ID,
-        pane: 0,
-        tab,
-        side: PaneSide::Flow,
-        slot: SlotId(0),
-    });
-    let state = &mut app.runtime.indicators;
-    for owner in owners {
-        state.slot_kinds.push((
-            owner,
-            crate::indicators::state_file::SavedKind::native("cvd"),
-        ));
-        state.operator_slots.insert(owner);
-        state
-            .script_files
-            .push((owner, 0, std::time::SystemTime::UNIX_EPOCH));
-        state.pending_hidden.push(owner);
-        state.pending_mouse_vertical_lines.push(owner);
-        state
-            .pending_styles
-            .push((owner, crate::indicator_style::StyleOverride::default()));
-    }
-    state.forget_tab(7);
-    assert_eq!(
-        state
-            .slot_kinds
-            .iter()
-            .map(|(owner, _)| *owner)
-            .collect::<Vec<_>>(),
-        [owners[1]]
-    );
-    assert_eq!(
-        state.operator_slots.iter().copied().collect::<Vec<_>>(),
-        [owners[1]]
-    );
-    assert_eq!(
-        state
-            .script_files
-            .iter()
-            .map(|(owner, ..)| *owner)
-            .collect::<Vec<_>>(),
-        [owners[1]]
-    );
-    assert_eq!(state.pending_hidden, [owners[1]]);
-    assert_eq!(state.pending_mouse_vertical_lines, [owners[1]]);
-    assert_eq!(
-        state
-            .pending_styles
-            .iter()
-            .map(|(owner, _)| *owner)
-            .collect::<Vec<_>>(),
-        [owners[1]]
-    );
-    state.forget_tab(7);
-    assert_eq!(
-        state.pending_hidden,
-        [owners[1]],
-        "repeated close notification is harmless"
-    );
-}
-
 /// An anchor dropped in an indicator pane belongs to that pane.
 #[test]
 fn a_click_in_an_indicator_pane_draws_on_that_band() {
@@ -292,20 +227,20 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         "the old set migrated into the first layout"
     );
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         3,
         "a script the library lacks takes an error slot saying so, keeping the layout's positions aligned"
     );
     assert_eq!(
-        app.runtime.indicators.slot_kinds[0].1,
+        app.runtime.indicators.registry.slot_kinds()[0].1,
         SavedKind::native("native.ema")
     );
     assert_eq!(
-        app.runtime.indicators.slot_kinds[1].1,
+        app.runtime.indicators.registry.slot_kinds()[1].1,
         SavedKind::native("native.cvd")
     );
     assert_eq!(
-        app.runtime.indicators.pending_hidden.len(),
+        app.runtime.indicators.registry.pending_hidden().len(),
         1,
         "the hidden flag survived"
     );
@@ -337,7 +272,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         "the whole migrated set is written — the script the library lacks stays in the layout, waiting for its file"
     );
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         3,
         "and every entry has its slot on the chart"
     );
@@ -458,14 +393,15 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
         "the pane beside the focused one gained the same indicator"
     );
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         2,
         "one registration per pane, each on its own slot"
     );
     assert_eq!(
         app.runtime
             .indicators
-            .slot_kinds
+            .registry
+            .slot_kinds()
             .iter()
             .filter(|(owner, _)| owner.side == PaneSide::Time(0))
             .count(),
@@ -819,7 +755,8 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
     assert!(
         app.runtime
             .indicators
-            .slot_kinds
+            .registry
+            .slot_kinds()
             .iter()
             .any(|(owner, _)| owner.side == PaneSide::Time(1)),
         "the bottom chart's own registration is the one the command made"
@@ -979,7 +916,7 @@ fn a_workspace_naming_a_native_this_build_lacks_restores_an_error_slot() {
     settle_indicators(&mut app);
 
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         1,
         "the slot is kept so the layout's positions stay aligned"
     );

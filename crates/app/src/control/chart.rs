@@ -74,7 +74,7 @@ fn entry<'a>(
 ) -> ChartPaneEntry<'a> {
     ChartPaneEntry {
         tab_id,
-        side: side.into(),
+        side: crate::control::pane_side_dto(side),
         pane_index: side.index(),
         feed_id: &tab.feed_id,
         symbol: &tab.symbol,

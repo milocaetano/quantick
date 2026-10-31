@@ -171,19 +171,21 @@ impl LayoutAdapter<'_> {
                 let owner = self
                     .slot_at(tab, side, slot)
                     .expect("existing indicator pane");
-                self.indicators.slot_kinds.push((owner, kind.clone()));
+                self.indicators
+                    .registry
+                    .register_restored(owner, kind.clone());
                 if let (Some(index), Some((_, mtime))) = (index, file_info) {
-                    self.indicators.script_files.push((owner, index, mtime));
+                    self.indicators.registry.watch_script(owner, index, mtime);
                 }
                 return Some(slot);
             }
         };
         let slot = self.pane_mut_at(tab, side)?.add_indicator(source);
-        self.indicators.slot_kinds.push((
+        self.indicators.registry.register_restored(
             self.slot_at(tab, side, slot)
                 .expect("existing indicator pane"),
             kind.clone(),
-        ));
+        );
         Some(slot)
     }
 
@@ -203,7 +205,7 @@ impl LayoutAdapter<'_> {
             .tabs
             .by_id_mut(target.tab)
             .and_then(|tab| tab.pane_at_mut(target.side.index()));
-        self.indicators.slots_mut().remove(pane, target);
+        self.indicators.registry.remove(pane, target);
     }
 
     /// Put a whole saved set on one pane: add, bind inputs, queue the hide
@@ -252,11 +254,11 @@ impl LayoutAdapter<'_> {
             );
         }
         if entry.hidden {
-            self.indicators.pending_hidden.push(owner);
+            self.indicators.registry.defer_hidden(owner);
         }
         guide::queue_saved(self, owner, entry);
         if !entry.plot_styles.is_empty() {
-            self.indicators.pending_styles.push((
+            self.indicators.registry.defer_style(
                 owner,
                 StyleOverride::from_plots(
                     entry
@@ -266,7 +268,7 @@ impl LayoutAdapter<'_> {
                         .map(SavedPlotStyle::to_override)
                         .collect(),
                 ),
-            ));
+            );
         }
     }
 
@@ -276,49 +278,9 @@ impl LayoutAdapter<'_> {
     /// visible, so applying it is a toggle. Whoever queues one dequeues it
     /// again on the matching unhide ([`Self::mirror_hidden`]).
     pub(in crate::app) fn apply_pending_indicator_state(&mut self) {
-        if !self.indicators.pending_hidden.is_empty() {
-            let pending = std::mem::take(&mut self.indicators.pending_hidden);
-            for owner in pending {
-                let applied = self
-                    .pane_mut_at(owner.tab, owner.side)
-                    .filter(|pane| {
-                        pane.indicators
-                            .all()
-                            .iter()
-                            .any(|view| view.slot == owner.slot)
-                    })
-                    .map(|pane| pane.indicators.toggle_hidden(owner.slot))
-                    .is_some();
-                if !applied
-                    && self
-                        .indicators
-                        .slot_kinds
-                        .iter()
-                        .any(|(candidate, _)| *candidate == owner)
-                {
-                    self.indicators.pending_hidden.push(owner);
-                }
-            }
-        }
-        if !self.indicators.pending_styles.is_empty() {
-            let pending = std::mem::take(&mut self.indicators.pending_styles);
-            for (owner, style) in pending {
-                let known = self
-                    .indicators
-                    .slot_kinds
-                    .iter()
-                    .any(|(candidate, _)| *candidate == owner);
-                match self
-                    .pane_mut_at(owner.tab, owner.side)
-                    .and_then(|pane| pane.indicators.view_mut(owner.slot))
-                {
-                    Some(view) => view.style = style,
-                    None if known => self.indicators.pending_styles.push((owner, style)),
-                    None => {}
-                }
-            }
-        }
-        guide::apply_pending(self);
+        self.indicators.registry.apply_pending(
+            &mut super::super::indicator_operations::IndicatorViewAdapter(self.tabs),
+        );
     }
 
     /// The origin pane's layout and the index of the slot in it — the two
@@ -444,12 +406,7 @@ impl LayoutAdapter<'_> {
                     // Unborn: the queue says what its first frame should
                     // be. An unhide takes a queued hide back out, or the
                     // view would be born and hidden a moment later.
-                    self.indicators
-                        .pending_hidden
-                        .retain(|candidate| *candidate != owner);
-                    if hidden {
-                        self.indicators.pending_hidden.push(owner);
-                    }
+                    self.indicators.registry.set_deferred_hidden(owner, hidden);
                 }
             }
         }
@@ -527,9 +484,8 @@ impl LayoutAdapter<'_> {
                 Some(view) => view.style = style.clone(),
                 None => {
                     self.indicators
-                        .pending_styles
-                        .retain(|(candidate, _)| *candidate != owner);
-                    self.indicators.pending_styles.push((owner, style.clone()));
+                        .registry
+                        .replace_deferred_style(owner, style.clone());
                 }
             }
         }

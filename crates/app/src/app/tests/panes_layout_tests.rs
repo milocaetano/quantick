@@ -2406,7 +2406,7 @@ fn two_panes_show_two_layouts_side_by_side() {
         "and the flow pane still shows layout 1's EMA"
     );
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         1,
         "the time pane's registration went with the layout it left, and              only the flow pane's is left"
     );
@@ -2450,7 +2450,7 @@ fn two_panes_show_two_layouts_side_by_side() {
         1
     );
     assert_eq!(
-        app.runtime.indicators.slot_kinds.len(),
+        app.runtime.indicators.registry.slot_kinds().len(),
         2,
         "one registration per pane, and no leak from the switch"
     );
@@ -2502,7 +2502,8 @@ fn two_panes_show_two_layouts_side_by_side() {
     assert_eq!(
         app.runtime
             .indicators
-            .slot_kinds
+            .registry
+            .slot_kinds()
             .iter()
             .filter(|(owner, _)| owner.tab == app.runtime.tabs.active_id()
                 && owner.side == PaneSide::Time(0))
@@ -3504,7 +3505,8 @@ fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     assert!(
         app.runtime
             .indicators
-            .slot_kinds
+            .registry
+            .slot_kinds()
             .iter()
             .any(|(owner, _)| owner.tab == second)
     );
@@ -3520,7 +3522,8 @@ fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     assert!(
         !app.runtime
             .indicators
-            .slot_kinds
+            .registry
+            .slot_kinds()
             .iter()
             .any(|(owner, _)| owner.tab == second),
         "its indicator bookkeeping went with it"

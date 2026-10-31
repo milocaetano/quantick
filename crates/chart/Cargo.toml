@@ -13,6 +13,7 @@ quantick-engine = { path = "../engine" }
 quantick-indicator-session = { path = "../indicator-session" }
 quantick-indicators = { path = "../indicators" }
 quantick-orderflow = { path = "../orderflow" }
+quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }
 
 [dev-dependencies]

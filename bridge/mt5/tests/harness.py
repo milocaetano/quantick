@@ -56,6 +56,12 @@ class FakeTerminal:
         # The venue's session deal counter, as `symbol_info` reports it.
         # `None` is a terminal that has no such field.
         self.session_deals: int | None = None
+        # Whether the terminal process is up. A closed one answers every call
+        # with `None`, as the real package does once its IPC link is gone.
+        self.running = True
+
+    def terminal_info(self):
+        return types.SimpleNamespace(connected=True) if self.running else None
 
     def symbol_info(self, _symbol):
         """The one field of `symbol_info` the deal stamp reads."""
@@ -77,6 +83,9 @@ class FakeTerminal:
 
     def copy_ticks_from(self, _symbol, from_s, count, flags):
         """The oldest tick held, and the live pump's own request."""
+        if not self.running:
+            self.error = (-10004, "No IPC connection")
+            return None
         self.error = (0, "ok")
         self.from_calls.append((int(from_s), int(count), int(flags)))
         lo = int(from_s) * 1000
@@ -127,6 +136,7 @@ def load_bridge(terminal: FakeTerminal):
     module.COPY_TICKS_ALL = COPY_TICKS_ALL
     module.COPY_TICKS_TRADE = COPY_TICKS_TRADE
     module.last_error = terminal.last_error
+    module.terminal_info = terminal.terminal_info
     sys.modules["MetaTrader5"] = module
     sys.path.insert(0, str(BRIDGE_DIR))
     # Every bridge module, not just the entry point: the session's behaviour
