@@ -2,8 +2,8 @@
 //! formatting either: floats and decimals compare by representation.
 use super::{
     BubbleDisplayScale, BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark,
-    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, LaneWindow,
-    LiveLaneStyle, TickBubbleStyle, TickReferenceMode, ViewportBubbleScale, VolumeDotStyle,
+    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, LaneWindow, LiveLaneStyle,
+    TickBubbleStyle, TickReferenceMode, ViewportBubbleScale, VolumeDotStyle,
 };
 use rust_decimal::Decimal;
 

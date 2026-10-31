@@ -282,7 +282,7 @@ fn the_tape_key_toggles_tape_only_and_never_opens_a_tab() {
 fn a_glyph_switches_its_own_pane_wherever_focus_sits() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    let style = app.runtime.style.clone();
+    let style = app.runtime.style;
     let footprint = ChartLayer::Footprint;
     let side = PaneSide::Time(0);
     let time_before = app
@@ -401,6 +401,12 @@ fn candles_hidden_grey_their_glyphs_keep_their_state_and_the_strip_stays_live() 
         states,
         "the look returns"
     );
+    press_key(&mut app, &ctx, egui::Key::B, egui::Modifiers::CTRL);
+    assert_ne!(
+        on(&app, ChartLayer::Bubbles),
+        states[0],
+        "the key works again, so its silence above was the gate's"
+    );
 }
 
 /// A sample grows as it is dragged up, reads back through the named call's
@@ -424,6 +430,9 @@ fn a_dragged_sample_sizes_its_bubbles_and_a_double_click_returns_to_one() {
     let far = sample.center() - egui::vec2(0.0, 4_000.0);
     drag(&mut app, &ctx, sample.center(), far);
     assert_eq!(size(&app), 3.0, "the range holds");
+    let center = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape)).center();
+    drag(&mut app, &ctx, center, center + egui::vec2(0.0, 4_000.0));
+    assert_eq!(size(&app), 0.25, "both ways");
 
     let center = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape)).center();
     click_chart(&mut app, &ctx, center);
@@ -469,6 +478,180 @@ fn a_sample_hides_with_its_target_and_its_slot_stays() {
     let ids = scene_control_ids(&observer_scene(&app));
     assert!(!ids.contains(&format!("pane.{pane_id}.header.sample.tape")));
     assert!(ids.contains(&format!("pane.{pane_id}.header.view")));
+
+    // Each sample goes with its own target only: candles hidden, the tape's stays.
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.show_aggressions = true);
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    run_frame(&mut app, &ctx);
+    assert!(control_rect(&app, PaneSide::Flow, candle).is_none());
+    flow_control(&app, tape);
+    assert_eq!(flow_control(&app, heatmap), glyph, "nothing shifted");
+}
+
+/// The header is painted whichever side is on show, and the view button is what
+/// takes the tape's band away and gives it back.
+#[test]
+fn the_header_is_painted_in_all_three_views() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    for (view, lane) in [
+        (LaneView::CandlesOnly, false),
+        (LaneView::TapeOnly, true),
+        (LaneView::Beside, true),
+    ] {
+        let button = flow_control(&app, HeaderControl::View);
+        click_chart(&mut app, &ctx, button.center());
+        run_frame(&mut app, &ctx);
+        assert_eq!(view_of(&app), view);
+        assert_eq!(flow_control(&app, HeaderControl::View), button, "{view:?}");
+        for toggle in LayerToggle::ALL {
+            flow_control(&app, HeaderControl::Layer(toggle));
+        }
+        let flow = &app.active_tab().flow_pane;
+        let chart = flow.frame.area.expect("flow chart");
+        assert!(button.bottom() <= chart.top(), "{view:?}: off the chart");
+        assert_eq!(flow.frame.lane_divider_x.is_some(), lane, "{view:?}");
+    }
+}
+
+/// A flow pane with candles to pan and zoom, laid out.
+fn charted_fixture(ctx: &egui::Context) -> (QuantickApp, impl Sized) {
+    let (mut app, commands) = app_with_history(200);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    for _ in 0..2 {
+        run_frame(&mut app, ctx);
+    }
+    (app, commands)
+}
+
+/// What the candles show: their zoom and where their right edge is.
+fn candle_viewport(app: &QuantickApp) -> (f32, f32) {
+    let pane = &app.active_tab().flow_pane;
+    let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+    (
+        pane.model.viewport.px_per_bar(),
+        pane.model.viewport.right_edge_bar(total),
+    )
+}
+
+/// A dragged sample owns its pointer: its own target moves, the other sample's
+/// does not and the candles neither pan nor zoom.
+#[test]
+fn dragging_a_sample_moves_its_own_target_and_never_the_chart() {
+    use quantick_control_schema::bubble_scale::BubbleScaleTarget;
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = charted_fixture(&ctx);
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.show_aggressions = true);
+    run_frame(&mut app, &ctx);
+    let size = |app: &QuantickApp, target: BubbleScaleTarget| {
+        app.active_tab().tape().bubble_display_scale(target.into())
+    };
+    let before = candle_viewport(&app);
+    let candle = flow_control(&app, HeaderControl::Sample(BubbleSample::Candle)).center();
+    drag(&mut app, &ctx, candle, candle - egui::vec2(30.0, 40.0));
+    assert!((size(&app, BubbleScaleTarget::Candle) - 2.0).abs() < 0.01);
+    assert_eq!(size(&app, BubbleScaleTarget::Tape), 1.0);
+    assert_eq!(candle_viewport(&app), before);
+
+    let tape = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape)).center();
+    drag(&mut app, &ctx, tape, tape + egui::vec2(-30.0, 20.0));
+    assert!((size(&app, BubbleScaleTarget::Tape) - 0.5).abs() < 0.01);
+    assert!((size(&app, BubbleScaleTarget::Candle) - 2.0).abs() < 0.01);
+    assert_eq!(candle_viewport(&app), before);
+
+    let chart = app.active_tab().flow_pane.frame.area.expect("flow chart");
+    let bare = egui::pos2(chart.left() + 100.0, chart.center().y);
+    drag(&mut app, &ctx, bare, bare + egui::vec2(60.0, 0.0));
+    assert_ne!(
+        candle_viewport(&app),
+        before,
+        "the same drag pans the chart"
+    );
+}
+
+/// The wheel over the header reaches neither the sample nor the chart beneath
+/// it; on the bare chart it zooms the candles.
+#[test]
+fn a_wheel_over_the_header_is_private_and_the_chart_below_it_still_zooms() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = charted_fixture(&ctx);
+    let wheel = |app: &mut QuantickApp, at| {
+        run_frame_with_events(
+            app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 80.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        run_frame(app, &ctx);
+    };
+    let before = candle_viewport(&app);
+    let sample = flow_control(&app, HeaderControl::Sample(BubbleSample::Tape)).center();
+    wheel(&mut app, sample);
+    let view = flow_control(&app, HeaderControl::View).center();
+    wheel(&mut app, view);
+    assert_eq!(candle_viewport(&app), before);
+    assert_eq!(
+        app.active_tab().tape().bubble_display_scale(
+            quantick_control_schema::bubble_scale::BubbleScaleTarget::Tape.into()
+        ),
+        1.0
+    );
+
+    let flow = &app.active_tab().flow_pane;
+    let chart = flow.frame.area.expect("flow chart");
+    let below = egui::pos2(chart.left() + 100.0, chart.center().y);
+    wheel(&mut app, below);
+    assert_ne!(candle_viewport(&app).0, before.0, "the bare chart zooms");
+}
+
+/// A hovered or resized header raises no widget id clash at any display density.
+#[test]
+fn the_header_hovers_and_resizes_without_id_diagnostics_at_each_density() {
+    fn has_diagnostic(shape: &egui::Shape) -> bool {
+        match shape {
+            egui::Shape::Text(text) => text.galley.job.text.contains("widget ID"),
+            egui::Shape::Rect(rect) => rect.stroke.color == egui::Color32::RED,
+            egui::Shape::Vec(shapes) => shapes.iter().any(has_diagnostic),
+            _ => false,
+        }
+    }
+    for density in [1.0, 1.25, 1.5, 2.0] {
+        let ctx = egui::Context::default();
+        ctx.options_mut(|options| options.warn_on_id_clash = true);
+        ctx.set_zoom_factor(density);
+        let (mut app, _ends) = flow_fixture(&ctx);
+        run_frame(&mut app, &ctx);
+        let controls = app.active_tab().flow_pane.frame.header_controls.clone();
+        assert!(!controls.is_empty(), "density {density}");
+        for (control, rect) in controls {
+            for _ in 0..2 {
+                let output = run_frame_with_events(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::PointerMoved(rect.center())],
+                );
+                assert!(
+                    !output
+                        .shapes
+                        .iter()
+                        .any(|shape| has_diagnostic(&shape.shape)),
+                    "{control:?} at density {density}"
+                );
+            }
+        }
+    }
 }
 
 /// The scene names every painted control with the capability that does what the
@@ -487,7 +670,7 @@ fn the_scene_names_each_header_control_and_its_call() {
     let view = scene_control(&scene, &id("view"));
     assert_eq!(view["capability_id"], "orderflow.tape.view.set");
     assert_eq!(view["label"], "Tape only");
-    assert_eq!(view["owner"]["kind"], "pane_header");
+    assert_eq!(view["owner"]["kind"], "tab");
     let l2 = scene_control(&scene, &id("layer.heatmap"));
     assert_eq!(l2["capability_id"], "layers.visibility.set");
     assert_eq!(

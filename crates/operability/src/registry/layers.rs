@@ -5,7 +5,7 @@
 
 use super::{Mapping, PENDING_SURFACE, Source, UiBehaviour};
 
-/// A chart layer switch: the toolbar button and the pane's layer menu both set
+/// A chart layer switch: the header glyph and the pane's layer menu both set
 /// one pane's layer, which `layers.visibility.set` does by stable pane ID.
 const LAYER_SWITCH: Mapping = capability!("layers.visibility.set");
 
@@ -14,9 +14,8 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "dock.tab.open",
         title: "Open a panel — L2, bubbles, session, trading or trades",
-        reach: "View menu, the dock's own strip, a layer button's right-click",
+        reach: "View menu, the dock's own strip, a header glyph's right-click",
         keys: &[
-            (Source::ToolbarAction, "OpenDockTab"),
             (Source::DockTab, "l2"),
             (Source::DockTab, "bubbles"),
             (Source::DockTab, "session"),

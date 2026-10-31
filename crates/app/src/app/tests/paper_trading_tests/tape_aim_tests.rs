@@ -1,6 +1,6 @@
 //! Shift/Alt order entry over the tape. The flow pane's tape lane shares the
 //! pane's price axis, so the aim and its press work there exactly as they do
-//! over candles, in every tape mode. The tape chip keeps its own press.
+//! over candles, in every tape mode. The pane header keeps its own press.
 use super::*;
 
 /// The tape modes a flow pane offers, and how a test enters each.
@@ -57,7 +57,7 @@ fn at_x(app: &QuantickApp, x: f32) -> egui::Pos2 {
     egui::pos2(x, chart.top() + chart.height() * 0.25)
 }
 
-/// The middle of the tape lane, a quarter down the plot, clear of the chip.
+/// The middle of the tape lane, a quarter down the plot.
 fn on_the_tape(app: &QuantickApp) -> egui::Pos2 {
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_area.expect("the pane laid out");
@@ -128,6 +128,39 @@ fn tape_only_aims_across_the_whole_plot() {
     let price = pointer_price(&app, at);
     click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
     assert_eq!(the_order(&app), (quantick_engine::Side::Buy, price));
+}
+
+/// The header's view button is chrome, not a price: with the buy key down or a
+/// ticket armed, a press on it walks the views, raises no aim and rests nothing.
+#[test]
+fn the_view_button_keeps_its_press_with_shift_down_and_under_an_armed_ticket() {
+    use quantick_chart::pane_header::HeaderControl;
+    use quantick_orderflow::LaneView;
+    let view_button = |app: &QuantickApp| {
+        let controls = &app.active_tab().flow_pane.frame.header_controls;
+        controls
+            .iter()
+            .find_map(|(control, rect)| (*control == HeaderControl::View).then_some(rect.center()))
+            .expect("the header painted its view button")
+    };
+    let view = |app: &QuantickApp| app.active_tab().tape().cached_config().live_lane.view();
+
+    let ctx = egui::Context::default();
+    let mut app = tape_app(&ctx, TapeMode::Chart);
+    let at = view_button(&app);
+    move_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
+    assert!(!app.active_tab().paper.aiming(), "Shift on it aims nowhere");
+    click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
+    assert!(app.active_tab().paper.working_orders().is_empty());
+    assert_eq!(view(&app), LaneView::CandlesOnly);
+
+    let ctx = egui::Context::default();
+    let mut app = tape_app(&ctx, TapeMode::Chart);
+    arm_a_sell(&mut app);
+    let at = view_button(&app);
+    click_chart_with(&mut app, &ctx, at, egui::Modifiers::NONE);
+    assert!(app.active_tab().paper.working_orders().is_empty());
+    assert_eq!(view(&app), LaneView::CandlesOnly);
 }
 
 /// The lane's divider keeps its drag with the buy key down: Shift on it

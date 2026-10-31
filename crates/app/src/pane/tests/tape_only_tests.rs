@@ -155,13 +155,20 @@ fn tape_only_reserves_no_forming_candle_volume_profile_strip() {
         "ordinary charts retain their live profile"
     );
     pane.set_layer_visible(ChartLayer::TapeOnly, true, &mut effects);
-    assert_eq!(pane.live_strip_width(capabilities), 0.0);
-    let rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1_000.0, 600.0));
-    assert!(pane.plot_areas(rect, capabilities).live_strip.is_none());
-    assert!(
-        pane.layers.requested(ChartLayer::LiveStrip),
-        "the user's ordinary setting is retained"
+    assert_eq!(
+        pane.live_strip_width(capabilities),
+        ordinary_width,
+        "the strip reads the book, so it stays with the candles hidden"
     );
+    let rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1_000.0, 600.0));
+    assert!(pane.plot_areas(rect, capabilities).live_strip.is_some());
+    pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut effects);
+    assert_eq!(
+        pane.live_strip_width(capabilities),
+        0.0,
+        "and it still answers to its own switch"
+    );
+    pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut effects);
     pane.set_layer_visible(ChartLayer::TapeOnly, false, &mut effects);
     assert_eq!(pane.live_strip_width(capabilities), ordinary_width);
 }

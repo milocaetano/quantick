@@ -8,14 +8,9 @@ use crate::orderflow_view::layers::{layer_facts, layer_switch, set_layer_switch}
 use crate::state::ChartState;
 use crate::style::ChartStyle;
 use crate::toolrail::Tool;
-use quantick_chart::pane_header::{
-    BubbleSample, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle, PaneHeader, PaneIdentity,
-};
 use quantick_chart::tick_membership::TickMembership;
-use quantick_control_schema::bubble_scale::BubbleScaleTarget;
 use quantick_layers::{ChartLayer, LayerActions, LayerBlock};
 use quantick_layers::{LayerEffect, LayerFacts, LayerSource, LayerState, VisibilityWrite};
-use smallvec::SmallVec;
 
 /// The fields every layer answer reads, borrowed one by one so a menu can
 /// hold them beside its own state while the pane lends both out.
@@ -175,79 +170,6 @@ impl ChartPane {
         };
         if !self.layer_visible(layer, chrome.style) {
             self.set_layer_visible(layer, true, chrome.layers);
-        }
-    }
-}
-
-fn target(sample: BubbleSample) -> BubbleScaleTarget {
-    match sample {
-        BubbleSample::Candle => BubbleScaleTarget::Candle,
-        BubbleSample::Tape => BubbleScaleTarget::Tape,
-    }
-}
-
-impl ChartPane {
-    /// The pane's layer glyphs: every lamp the *switch*, not what the source
-    /// lets through it, with what blocks it beside it, read through the calls
-    /// the pane's layer menu and `layers.visibility.set` read.
-    pub(crate) fn header_glyphs(
-        &self,
-        identity: PaneIdentity,
-        style: &ChartStyle,
-        capabilities: FeedCapabilities,
-    ) -> SmallVec<[LayerGlyph; 4]> {
-        PaneHeader::toggles(identity)
-            .iter()
-            .map(|&toggle| LayerGlyph {
-                toggle,
-                on: self.layer_switched_on(toggle.layer(), style),
-                blocked: self.layer_blocked(toggle.layer(), capabilities),
-            })
-            .collect()
-    }
-
-    /// The view and sizes a flow pane's header shows; `None` without an
-    /// order-flow view. A sample is there only while its target is: the one
-    /// size rule `orderflow.bubbles.size.set` judges by too.
-    pub(crate) fn flow_header_state(&self) -> Option<FlowHeaderState> {
-        let owner = self.orderflow.as_ref()?;
-        let facts = self.bubble_scale_facts()?;
-        let scale = |sample: BubbleSample| {
-            let target = target(sample);
-            facts
-                .may_scale(target)
-                .then(|| owner.bubble_display_scale(target.into()))
-        };
-        Some(FlowHeaderState {
-            view: owner.cached_config().live_lane.view(),
-            candle_sample: scale(BubbleSample::Candle),
-            tape_sample: scale(BubbleSample::Tape),
-        })
-    }
-
-    /// Carry out a press on this pane's header, through the door each control
-    /// shares with its key, its menu and its named call.
-    pub(crate) fn apply_header_intent(&mut self, intent: HeaderIntent, actions: &mut LayerActions) {
-        match intent {
-            HeaderIntent::SetLayer(toggle, on) => {
-                self.set_layer_visible(toggle.layer(), on, actions);
-            }
-            HeaderIntent::OpenLayerSettings(LayerToggle::Footprint) => {
-                actions.open_footprint_settings = true;
-            }
-            HeaderIntent::OpenLayerSettings(toggle) => {
-                actions.open_layer_tab = Some(toggle.layer());
-            }
-            HeaderIntent::SetView(view) => {
-                if let Some(owner) = self.orderflow.as_mut() {
-                    owner.set_lane_view(view);
-                }
-            }
-            HeaderIntent::SetSample(sample, scale) => {
-                if let Some(owner) = self.orderflow.as_mut() {
-                    owner.set_bubble_display_scale(target(sample).into(), scale);
-                }
-            }
         }
     }
 }

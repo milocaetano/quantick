@@ -172,7 +172,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     let focused_pane_id = push_panes(&mut controls, tabs.active_id(), active, focused_side);
     push_context_dividers(&mut controls, tabs.active_id(), active);
     push_quick_range(&mut controls, app);
-    push_pane_headers(&mut controls, app, active);
+    push_pane_headers(&mut controls, app, tabs.active_id(), active);
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
     // With the other fixed-size regions, ahead of the strip. At most three
@@ -224,9 +224,8 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
 /// The list a capture publishes as its own bound. Adding a region here without
 /// adding the walk that fills it would be the one lie this module cannot
 /// tolerate, so the two live one above the other.
-const COVERED_REGIONS: [SceneOwnerKindDto; 7] = [
+const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
     SceneOwnerKindDto::Tab,
-    SceneOwnerKindDto::PaneHeader,
     SceneOwnerKindDto::Toolbar,
     SceneOwnerKindDto::ToolRail,
     SceneOwnerKindDto::Dock,
@@ -350,10 +349,12 @@ fn push_tab_strip(
 
 /// Every pane's header line, as painted: a narrow pane that dropped its samples
 /// or clipped a glyph lists neither. The state is read now, through the calls
-/// the header drew from.
+/// the header drew from. The tab owns them, as it owns its panes; the control's
+/// own id, `pane.<id>.header.*`, says which pane.
 fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     controls: &mut Vec<SceneControlSnapshot>,
     app: &P,
+    tab_id: u64,
     tab: &Tab,
 ) {
     let capabilities = tab.capabilities(app.tab_reads().config());
@@ -385,15 +386,14 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                     quantick_control_schema::bubble_scale::BUBBLE_SCALE_CAPABILITY_ID,
                 ),
             };
-            let owner = format!("pane.{}.header", pane.id);
             let bounds = rect_bounds(rect);
             controls.push(SceneControlSnapshot {
-                control_id: format!("{owner}.{}", control.id_in_header()),
+                control_id: format!("pane.{}.header.{}", pane.id, control.id_in_header()),
                 label: label.to_owned(),
                 role,
                 owner: SceneOwnerSnapshot {
-                    kind: SceneOwnerKindDto::PaneHeader,
-                    id: owner,
+                    kind: SceneOwnerKindDto::Tab,
+                    id: tab_control_id(tab_id),
                 },
                 selected,
                 // The very gate the glyph reads, in its coded rendering: one

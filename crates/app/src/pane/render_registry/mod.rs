@@ -35,6 +35,13 @@ pub(super) struct FootprintPass<'a> {
     pub native_grid: Option<quantick_orderflow::projection::CandleDotGrid>,
     pub current_partial: Option<&'a quantick_engine::BarFootprint>,
 }
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the extension port: no shipped package docks on Canvas since the tape chip left"
+    )
+)]
 pub(super) struct CanvasPass<'a> {
     pub painter: &'a egui::Painter,
     pub rect: egui::Rect,
@@ -43,6 +50,13 @@ pub(super) struct CanvasPass<'a> {
 }
 
 impl CanvasPass<'_> {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the extension port: no shipped package docks on Canvas since the tape chip left"
+        )
+    )]
     /// Otherwise unowned canvas layers use their own policy, not another
     /// feature's switch. Owner-specific stages borrow that feature directly.
     pub fn visible(&self, layer: ChartLayer, requested: bool) -> bool {
@@ -64,6 +78,13 @@ pub(super) enum Contribution {
     Aggressions(for<'a> fn(&mut FlowPass<'a>)),
     Legend(for<'a> fn(&mut LegendPass<'a>)),
     Strip(for<'a> fn(&mut StripPass<'a>)),
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the extension port: no shipped package docks on Canvas since the tape chip left"
+        )
+    )]
     Canvas(for<'a> fn(&mut CanvasPass<'a>)),
     Status(for<'a> fn(&mut StatusPass<'a>)),
     Seam(for<'a> fn(&mut DividerPass<'a>)),

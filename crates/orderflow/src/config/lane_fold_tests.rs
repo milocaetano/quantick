@@ -39,16 +39,8 @@ fn the_view_is_derived_from_the_two_switches() {
 /// anything changed, and leaves the share alone.
 #[test]
 fn setting_a_view_is_idempotent_and_keeps_the_share() {
-    for view in [
-        LaneView::Beside,
-        LaneView::CandlesOnly,
-        LaneView::TapeOnly,
-    ] {
-        for from in [
-            LaneView::Beside,
-            LaneView::CandlesOnly,
-            LaneView::TapeOnly,
-        ] {
+    for view in [LaneView::Beside, LaneView::CandlesOnly, LaneView::TapeOnly] {
+        for from in [LaneView::Beside, LaneView::CandlesOnly, LaneView::TapeOnly] {
             let mut style = LiveLaneStyle {
                 width_share: 0.42,
                 ..lane(from)
@@ -158,7 +150,7 @@ fn the_divider_travels_the_whole_chart_short_of_the_threshold() {
     let mut edge = LiveLaneStyle::default();
     let mut drag = LaneDividerDrag::begin(&edge, CHART);
     drag.drag(&mut edge, 350.0 - LANE_FOLD_AT_PX, CHART);
-    assert!(!drag.clone().release(&mut edge.clone()), "at it holds");
+    assert!(!drag.release(&mut edge.clone()), "at it holds");
     drag.drag(&mut edge, 1.0, CHART);
     assert!(drag.release(&mut edge));
     assert_eq!(edge.view(), LaneView::CandlesOnly);
@@ -256,7 +248,11 @@ fn a_pane_carries_its_divider_drag_in_one_slot() {
     assert!(config.drag_lane_divider(&mut hand, -10.0, CHART));
     assert!(hand.is_some(), "the first step began the drag");
     assert!(config.drag_lane_divider(&mut hand, 10_000.0, CHART));
-    assert_eq!(config.live_lane.view(), LaneView::Beside, "not yet released");
+    assert_eq!(
+        config.live_lane.view(),
+        LaneView::Beside,
+        "not yet released"
+    );
     assert!(config.release_lane_divider(&mut hand), "the view changed");
     assert!(hand.is_none(), "a release empties the slot");
     assert_eq!(config.live_lane.view(), LaneView::CandlesOnly);
@@ -286,7 +282,7 @@ fn on_a_wide_chart_the_divider_stays_under_the_hand_until_the_threshold() {
         assert!((drawn - wanted).abs() < 0.05, "{drawn} under {wanted}");
     }
     // The threshold is its share's floor there, 150 px.
-    assert!(!drag.clone().release(&mut style.clone()), "at it holds");
+    assert!(!drag.release(&mut style.clone()), "at it holds");
     drag.drag(&mut style, 1.0, WIDE);
     assert!(drag.release(&mut style));
     assert_eq!(style.view(), LaneView::CandlesOnly);
@@ -323,7 +319,7 @@ fn a_lane_kept_outside_the_open_range_drags_from_where_it_is() {
             assert!((drawn - wanted).abs() < 0.05, "{drawn} under {wanted}");
         }
         assert!((style.resolved_width_px(chart) - start).abs() < 0.05);
-        assert!(!drag.clone().release(&mut style.clone()), "{share}");
+        assert!(!drag.release(&mut style.clone()), "{share}");
         // One pixel past the share's own floor or ceiling decides.
         drag.drag(&mut style, toward_edge, chart);
         assert!(drag.release(&mut style));

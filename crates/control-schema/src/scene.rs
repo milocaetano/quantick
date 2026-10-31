@@ -210,9 +210,6 @@ pub enum SceneOwnerKindDto {
     TabStrip,
     /// The context toolbar above the canvas.
     Toolbar,
-    /// One pane's header line: its view, layers and bubble sizes, listed only
-    /// as painted, so a narrow pane lists fewer.
-    PaneHeader,
     /// The drawing tool rail.
     ToolRail,
     /// The right-hand dock.

@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 76 |
+| Reachable by capability | 75 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **134** |
+| **Total** | **133** |
 
-84 of the 134 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 50 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+83 of the 133 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 50 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -80,21 +80,20 @@ The three exclusion classes are closed:
 | `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
 | `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9 | `layout.preset.apply` | — |
-| `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a layer button's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a header glyph's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `layer.toolbar.set` | Set a chart layer from its toolbar control | toolbar LAYERS group | `layers.visibility.set` | — |
-| `layer.bubbles.toggle` | Switch the aggression bubbles on or off | toolbar LAYERS group, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
-| `layer.footprint.settings.open` | Open the footprint's settings window | right-click the toolbar's footprint button | `chart.settings.set` | — |
+| `layer.bubbles.toggle` | Switch the aggression bubbles on or off | pane header glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
+| `layer.footprint.settings.open` | Open the footprint's settings window | right-click the pane header's footprint glyph; the pane's footprint menu | `chart.settings.set` | — |
 | `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu, off until switched on | `layers.visibility.set` | — |
-| `layer.footprint.toggle` | Switch the candle footprint on or off | toolbar LAYERS group, pane right-click layer menu, Ctrl+F | `layers.visibility.set` | — |
-| `layer.heatmap.toggle` | Switch the L2 depth map on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
-| `layer.live_strip.toggle` | Switch the live depth strip on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
+| `layer.footprint.toggle` | Switch the candle footprint on or off | pane header glyph, pane right-click layer menu, Ctrl+F | `layers.visibility.set` | — |
+| `layer.heatmap.toggle` | Switch the L2 depth map on or off | pane header glyph, pane right-click layer menu | `layers.visibility.set` | — |
+| `layer.live_strip.toggle` | Switch the live depth strip on or off | pane header glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide candles) | `layers.visibility.set` | — |
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
-| `orderflow.tape.fold.set` | Fold the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click the rail it leaves | `orderflow.tape.fold.set` | — |
+| `orderflow.tape.view.set` | Show the candles and tape, the candles alone or the tape alone | pane header's view button; Ctrl+Shift+T on a focused flow pane; let go of the tape lane's divider at the left or right edge of the pane | `orderflow.tape.view.set`, `orderflow.tape.fold.set` | — |
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
 | `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
-| `orderflow.bubbles.size.set` | Adjust Tape and tick-chart bubble size independently | top-right bubble size sliders on Tape and tick-chart panes | `orderflow.bubbles.size.set` | — |
+| `orderflow.bubbles.size.set` | Adjust Tape and tick-chart bubble size independently | drag a sample bubble on the flow pane's header; double-click it for 1x | `orderflow.bubbles.size.set` | — |
 | `orderflow.bubbles.tick.set` | Select tick-chart spheres for a config-mode asset independently of the tape | Bubbles settings, Tick chart spheres preset picker | `orderflow.bubbles.tick.set` | — |
 | `orderflow.bubbles.preset.apply` | Apply or reapply a named whole bubble look | Bubbles settings, whole-look preset picker | `orderflow.bubbles.preset.apply` | — |
 | `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
@@ -197,7 +196,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 20 |
+| `toolbar_action` | 17 |
 | `strip_action` | 6 |
 | `tab_action` | 3 |
 | `dock_tab` | 5 |
@@ -207,7 +206,7 @@ matrix fails the build.
 | `toolbox_dock` | 3 |
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
-| `hotkey` | 16 |
+| `hotkey` | 17 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
 | `authored` | 50 |
@@ -233,13 +232,13 @@ declares nothing here is a guard failure.
 | `layout.flow.collapse` | the right-side canvas rail and divider |
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
 | `layout.pane.resize` | a drag on the divider between two panes |
-| `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no toolbar duplicate |
-| `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
-| `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
-| `orderflow.tape.fold.set` | the tape lane's divider and rail the pane handles directly |
+| `layer.footprint.settings.open` | a pane header glyph's right click and the pane menu's entry, not entries in the toolbar's action enum |
+| `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no pane header glyph |
+| `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
+| `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `orderflow.tape.opening_scale.set` | opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu |
 | `orderflow.bubbles.save_changes.set` | the per-asset save switch is a checkbox under the bubble preset picker |
-| `orderflow.bubbles.size.set` | independent presentation sliders appear while their bubble display is active |
+| `orderflow.bubbles.size.set` | independent sample bubbles appear while their bubble display is active |
 | `orderflow.bubbles.tick.set` | chart-only preset picker under the whole-look presets |
 | `orderflow.bubbles.preset.apply` | whole-look preset selection permits same-name reapplication |
 | `appearance.candle_presets` | the Candles tab's preset row, save field and Reset are widgets, not registry entries |
