@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quantick: chart identity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: the decision first, then the app today and the proposal as two working mocks, then the reasons and the build order. Single dark look on purpose: it is the app's own world. */
+:root {
+  color-scheme: dark;
+  --page: #0b0e14;
+  --panel: #131722;
+  --panel-2: #1a1f2c;
+  --line: #2a3040;
+  --ink: #e8eaf0;
+  --ink-2: #aab0bf;
+  --faint: #79808f;
+  --accent: #5b8def;
+  --gold: #e0b84a;
+  --buy: #26a69a;
+  --sell: #ef5350;
+  --mark: #ff5a4f;
+  --display: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.55 var(--display); }
+main { max-width: 1120px; margin: 0 auto; padding: 36px 20px 56px; display: flex; flex-direction: column; gap: 40px; }
+h1 { margin: 0; font-size: 34px; line-height: 1.15; font-weight: 600; text-wrap: balance; max-width: 22em; }
+h2 { margin: 0 0 12px; font-size: 21px; line-height: 1.25; font-weight: 600; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.lede { margin-top: 12px; color: var(--ink-2); font-size: 18px; }
+.steps { margin: 18px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; counter-reset: s; }
+.steps li { counter-increment: s; border-top: 2px solid var(--accent); padding-top: 10px; font-size: 15px; color: var(--ink-2); }
+.steps li b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+.steps li b::before { content: counter(s) ". "; color: var(--accent); }
+.sub { color: var(--ink-2); margin-bottom: 12px; font-size: 15px; }
+.scroller { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+
+/* The mock */
+.mock { min-width: 900px; background: var(--panel); font: 12px/1.3 var(--display); color: var(--ink-2); position: relative; user-select: none; }
+.tb { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tb .cap { font: 500 10px var(--mono); letter-spacing: .06em; color: var(--faint); }
+.tb .box { padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); background: var(--panel-2); }
+.tb .box.rec { background: #b83b36; border-color: #b83b36; color: #fff; }
+.tb .box.buy { background: #1d5c56; border-color: #1d5c56; color: #cfe; }
+.tb .box.sell { background: #7a3030; border-color: #7a3030; color: #fdd; }
+.tb .sep { width: 1px; height: 18px; background: var(--line); }
+.tb .grow { flex: 1; }
+.ico { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; border: 1px solid transparent; color: var(--faint); font: 13px var(--mono); }
+.ico.on-a { background: var(--accent); color: #fff; }
+.ico.on-g { background: var(--gold); color: #1a1a1a; }
+.canvas-grid { display: grid; grid-template-columns: 1fr 1.15fr; grid-template-rows: 1fr 1fr; height: 470px; gap: 2px; background: var(--line); }
+.pane { position: relative; background: var(--panel); display: flex; flex-direction: column; min-width: 0; min-height: 0; cursor: pointer; }
+.pane.flow { grid-column: 2; grid-row: 1 / span 2; }
+.pane .plot { position: relative; flex: 1; min-height: 0; }
+.pane canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ph { display: flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.pane.focus .ph { background: #1c2436; box-shadow: inset 0 2px 0 var(--accent); }
+.today .pane.focus::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px; background: var(--accent); z-index: 2; }
+.today .ph .name { margin-left: auto; color: var(--faint); font-size: 10px; }
+.chip { font: inherit; color: var(--ink-2); background: none; border: 1px solid transparent; border-radius: 4px; padding: 2px 6px; cursor: pointer; }
+.chip:hover { background: var(--panel-2); color: var(--ink); }
+.chip:focus-visible, .sw:focus-visible, .mi:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chip.sel { background: var(--accent); color: #fff; font-weight: 600; }
+.chip.quiet { color: var(--faint); padding: 2px 4px; }
+.today .chip.sel { background: #2b3a5e; color: #c5d4f5; font-weight: 400; }
+.kind { font-weight: 600; color: var(--ink); border-color: var(--line); background: var(--panel-2); font-size: 13px; padding: 2px 8px; }
+.badge { font: 600 11px var(--mono); letter-spacing: .05em; color: #10131a; background: var(--gold); border-radius: 3px; padding: 2px 6px; }
+.ph .right { margin-left: auto; display: flex; gap: 4px; align-items: center; position: relative; }
+.ltabs { display: flex; gap: 10px; height: 22px; align-items: center; padding: 0 10px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; }
+.ltabs b { color: var(--ink); font-weight: 400; border-bottom: 2px solid var(--accent); }
+.tapechip { position: absolute; top: 8px; right: 62px; padding: 2px 8px; border-radius: 10px; background: #0d1018; border: 1px solid var(--line); color: var(--ink-2); font-size: 11px; z-index: 2; }
+.tapechip::before { content: "● "; color: var(--accent); }
+.num { position: absolute; z-index: 4; width: 20px; height: 20px; border-radius: 50%; background: var(--mark); color: #fff; font: 600 12px/20px var(--display); text-align: center; pointer-events: none; box-shadow: 0 0 0 2px var(--panel); }
+.num.inline { position: static; flex: none; box-shadow: none; }
+.prop .chip.quiet.sel { background: var(--accent); color: #fff; font-weight: 600; }
+.pop { position: absolute; top: calc(100% + 4px); z-index: 10; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 22px rgba(0,0,0,.45); padding: 8px; cursor: default; }
+.lchip { font: inherit; color: var(--faint); background: none; border: 0; border-radius: 4px; padding: 3px 4px; cursor: pointer; display: inline-flex; align-items: center; touch-action: none; opacity: .5; }
+.lchip:hover { opacity: .85; }
+.lchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lchip[aria-pressed="true"] { color: var(--accent); opacity: 1; }
+.lchip svg { width: 15px; height: 15px; display: block; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.lchip[aria-pressed="true"] svg .f { fill: currentColor; }
+.lchip[aria-pressed="true"] svg .h { fill: currentColor; opacity: .45; }
+.lchip[aria-pressed="true"] svg .l { fill: currentColor; opacity: .2; }
+.lchip .lbl { display: none; }
+.lgroup { display: inline-flex; align-items: center; gap: 2px; }
+.lchip[disabled] { opacity: .22; cursor: not-allowed; }
+.lchip[disabled][aria-pressed="true"] { color: var(--faint); }
+.lchip.cycle { color: var(--accent); opacity: 1; }
+.lchip.cycle svg { width: 26px; }
+.lchip.cycle svg .f { fill: currentColor; }
+.sample { position: relative; width: 30px; height: 26px; display: grid; place-items: center; cursor: ns-resize; user-select: none; border-radius: 4px; }
+.sample:hover, .sample.on { background: var(--panel-2); }
+.sample i { display: block; border-radius: 50%; background: var(--accent); opacity: .8; }
+.sample.tape i { background: #26a69a; }
+.sample:hover i, .sample.on i { opacity: 1; }
+.sample .v { position: absolute; top: -20px; left: 50%; transform: translateX(-50%); font: 500 11px var(--mono); color: var(--ink); background: var(--panel-2); padding: 1px 5px; border-radius: 3px; opacity: 0; pointer-events: none; white-space: nowrap; }
+.sample.on .v { opacity: 1; }
+.sample.dim { opacity: .3; cursor: default; }
+.prop .right { gap: 8px; }
+.lchip.fx { font: 500 12px var(--mono); letter-spacing: -.02em; padding: 3px 5px; }
+.prop .lgap { margin: 0 6px; }
+.prop .lgap.wide { background: none; width: 8px; margin: 0; }
+.prop .chip.kind { background: none; border-color: transparent; padding: 2px 4px; }
+.prop .chip.kind:hover { background: var(--panel-2); }
+.prop .caret { color: var(--faint); opacity: .6; font-size: 10px; margin-left: 2px; }
+.prop .badge { font: 500 10px var(--mono); letter-spacing: .08em; color: var(--gold); background: none; padding: 0 4px 0 0; opacity: .85; }
+.lgap { width: 1px; height: 14px; background: var(--line); margin: 0 3px; }
+.pop.bars { left: 0; width: 290px; }
+.pop h4 { margin: 6px 4px 4px; font: 500 10px var(--mono); letter-spacing: .06em; color: var(--faint); }
+.pop h4:first-child { margin-top: 0; }
+.sw { display: flex; width: 100%; align-items: center; gap: 8px; padding: 5px 4px; background: none; border: 0; border-radius: 4px; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.sw:hover { background: rgba(255,255,255,.05); }
+.sw i { width: 24px; height: 13px; border-radius: 7px; background: #3a4152; position: relative; flex: none; }
+.sw i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 9px; height: 9px; border-radius: 50%; background: #aab0bf; }
+.sw[aria-checked="true"] i { background: var(--accent); }
+.sw[aria-checked="true"] i::after { left: 13px; background: #fff; }
+.sw kbd { margin-left: auto; font: 10px var(--mono); color: var(--faint); }
+.pop .hint { margin: 6px 4px 0; font-size: 11px; color: var(--faint); max-width: none; line-height: 1.4; }
+.mrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 3px 4px; }
+.mrow span { width: 62px; color: var(--faint); }
+.mi { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; cursor: pointer; }
+.mi:hover { border-color: var(--accent); }
+.mi.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Reading sections */
+.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 18px 28px; margin-top: 16px; }
+.finding { display: grid; grid-template-columns: 24px 1fr; gap: 2px 10px; font-size: 15px; align-content: start; }
+.today .tb { gap: 5px; }
+.finding .n { width: 22px; height: 22px; border-radius: 50%; background: var(--mark); color: #fff; font: 600 13px/22px var(--display); text-align: center; }
+.finding b { font-weight: 600; }
+.finding p { grid-column: 2; color: var(--ink-2); }
+code { font: 12.5px var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--ink-2); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+td.good { color: #7fd8c9; }
+td.bad { color: #f4a3a0; }
+.pairs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 24px; }
+.pairs ul, section ul { margin: 8px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 15px; display: flex; flex-direction: column; gap: 6px; }
+h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.person { color: var(--ink); font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) { .chip, .sw, .mi { transition: background .1s; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Each chart must say what it is without asking for a click</h1>
+    <p class="lede">The root problem: a single bar at the top mixes controls that apply to the tab, to the focused chart and only to the Flow chart, with nothing to tell them apart. The proposal splits this into three decisions.</p>
+    <ol class="steps">
+      <li><b>A fixed line on each chart</b>It states the bar type and the value. The order-flow chart gets the FLOW badge.</li>
+      <li><b>Icons on the chart itself, borderless</b>A view button that cycles candles and tape, candles only, tape only; the Bubbles, L2, Footprint and Strip layers; and the bubble size as a sample bubble you drag, one above each thing it controls. On is a blue icon; off is grey. Each chart shows only what it accepts.</li>
+      <li><b>The top bar holds only what belongs to the tab</b>Feed, symbol, recording, history and orders. Nothing in it depends on clicking a chart first any more.</li>
+    </ol>
+  </header>
+
+  <section>
+    <h2>Today: click each chart and look at the top bar</h2>
+    <p class="sub">Mock-up built from your screenshot. The answer to "which chart is this?" only appears at the top, and only for the clicked chart.</p>
+    <div class="scroller"><div class="mock today" id="today"></div></div>
+    <div class="findings">
+      <div class="finding"><span class="n">1</span><b>The Flow chart has no name</b><p>Only the time charts have a header line. Worse: the layout called "Flow" appears on the time chart on the left, which does not accept the flow layers. The mock-up renames that layout to "Order flow" just to avoid the confusion; the name is yours. Evidence: screenshot, <code>time_header.rs:112</code>.</p></div>
+      <div class="finding"><span class="n">2</span><b>The Flow bars disappear</b><p>Tick 2000 only appears at the top when Flow is in focus. The app itself admits this in a tooltip: "Click this chart, then use BARS". Evidence: <code>toolbar_wiring.rs:131</code>, <code>time_header.rs:144</code>.</p></div>
+      <div class="finding"><span class="n">3</span><b>Four scopes in the same bar</b><p>Feed applies to the tab, bars to the focus, three layers to Flow, panel to the window. Nothing in the design separates one from the other. Evidence: <code>toolbar_wiring.rs:104</code>.</p></div>
+      <div class="finding"><span class="n">4</span><b>Neighbouring buttons with different targets</b><p>Footprint changes the focused chart. Live strip, L2 and bubbles always change Flow, even with another one in focus. No tooltip says so. Evidence: <code>toolbar_wiring.rs:244</code>, <code>toolbar.rs:940</code>.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Proposal: each chart shows its view, its layers and its bars</h2>
+    <p class="sub">Clickable. In Flow, click the view button twice, the first one after Tick, to see only the tape: the candles disappear and their layers grey out. The third click goes back. Click Bubbles and slide to L2 to turn both on at once. Drag up the bubble next to the bubbles icon and they grow on the candles; the green bubble at the right end does the same on the tape. Candles and layers are simulated.</p>
+    <div class="scroller"><div class="mock prop" id="prop"></div></div>
+  </section>
+
+  <section class="pairs">
+    <div>
+      <h2>Only the tape, without the tick chart</h2>
+      <p>This already exists in the app, named "Tape only (hide candles)", but only through right-click, the checkbox in the bubble settings or by dragging the tape divider to the edge. Nothing on the chart shows that it exists. The panel chose a three-view selector on the chart line.</p>
+      <ul>
+        <li><span class="person">One button that cycles the three views:</span> candles and tape, candles only, tape only, and back. The icon is the view on screen. These are the three states the app already stores (<code>enabled</code> and <code>tape_only</code>). Your choice, among five ways shown in <a href="https://claude.ai/artifact/DpVTcr4c5pJMzKyjWG8y1o">Views of the Flow chart</a>; the cost is not seeing the next view before clicking, and tape-only being two clicks from today's view.</li>
+        <li><span class="person">Candle layers grey out, they do not vanish:</span> with only the tape, Bubbles, L2 and Footprint turn grey in the same place and keep their state. Going back to candles restores the same look, and the buttons never change position.</li>
+        <li><span class="person">Dragging becomes a shortcut:</span> dragging the divider to the left lands on "tape only", to the right on "candles only". The 8 px rail ceases to exist, because the chart line never disappears.</li>
+        <li><span class="person">Keyboard:</span> <code>Ctrl+Shift+T</code> toggles between tape only and the previous view; in the mock-up it works with Flow in focus. It is free today; command <code>orderflow.tape.view.set</code>.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Icons only, and what the visual panel decided</h2>
+      <p>Two agents judged four variants of the line by looking at the images, without tooltips. The visual designer chose V2, borderless and with minimal ink. The outside trader chose V1, with borders, because the border and the text said what was clickable. They agreed on three points, and the final line is V2 with those three.</p>
+      <ul>
+        <li><span class="person">Icons that show the layer:</span> L2, footprint and strip were three identical stacks of lines. Now L2 is a block with three fading bands, footprint is a candle split into two columns of marks, strip is a narrow band against the axis, tape is a column of dots.</li>
+        <li><span class="person">A clickable signal on the bars:</span> the small arrow on <code>Tick · 2000</code>, at 40% ink. Without it, the outside trader read it as a title.</li>
+        <li><span class="person">Chart name in words:</span> "FLOW" meant nothing to someone arriving from outside. It became "ORDER FLOW", in small amber capitals, dimmer than the price label.</li>
+        <li><span class="person">Bubble size, two sample bubbles:</span> you chose the sample bubble, in <a href="https://claude.ai/artifact/8UjfwdHLiD3uGZgMk9z5Zm">Bubble scale</a>. The control is a bubble at the current size; drag up and it grows. Since there are two scales, each sample sits above what it controls: the blue one next to the bubbles icon, over the candles; the green one at the right end of the line, over the tape column, in the tape colour. Without the tape, the green one disappears; without candles, the blue one greys out. The value only shows while you drag. Double-click returns to 1×.</li>
+        <li><span class="person">What was left out:</span> the outside trader asked for words beside each icon. You refused, so the tooltip is the only text, with name and key. He rated confidence per icon at 25 to 60 without words; the new icons should raise that, but it was not measured.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Alternatives I discarded</h2>
+      <ul>
+        <li><span class="person">Only a corner menu, on hover:</span> clean, but it hides the buttons and still does not say which chart is which.</li>
+        <li><span class="person">Legend over the chart, as in TradingView:</span> costs no height, but adds text over the candles, where the indicator list already sits.</li>
+        <li><span class="person">Only a FLOW label on the top bar:</span> the smallest change. Fixes finding 4 and leaves findings 1 and 2.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>What changes in gestures</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Task</th><th>Today</th><th>Proposal</th></tr></thead>
+      <tbody>
+        <tr><td>Know the bars of any chart</td><td class="bad">Click it and look at the top</td><td class="good">Just look</td></tr>
+        <tr><td>Know which chart accepts flow</td><td class="bad">There is no signal</td><td class="good">Just look (FLOW badge)</td></tr>
+        <tr><td>Change Tick 2000 of an unfocused chart</td><td class="bad">3: focus, open bars, choose</td><td class="good">2: open, choose</td></tr>
+        <tr><td>Switch 1m to 5m on a time chart</td><td>1 click</td><td>1 click (presets stay on the line)</td></tr>
+        <tr><td>Turn on bubbles or footprint</td><td>1 click or Ctrl+B / Ctrl+F</td><td>Same shortcuts</td></tr>
+        <tr><td>Turn on L2 or live strip with the mouse</td><td>1 click, if you know which icon it is</td><td class="good">1 click</td></tr>
+        <tr><td>Change the bubble size</td><td class="bad">Two black boxes floating over the chart, with a slider</td><td class="good">Drag the sample bubble up or down; double-click returns to 1×</td></tr>
+        <tr><td>See only the tape</td><td class="bad">Right-click and menu, or checkbox in the settings</td><td class="good">2 clicks on the view button, or Ctrl+Shift+T</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="pairs">
+    <div>
+      <h2>Who feels what</h2>
+      <ul>
+        <li><span class="person">Scalper:</span> trades the same. Fixed layout and shortcuts intact. The cost is one line less of height in Flow.</li>
+        <li><span class="person">Context trader:</span> gains more. Reads the timeframe and bars of all charts at once.</li>
+        <li><span class="person">Newcomer:</span> gains even more. Sees "FLOW" and the view selector. Each icon's tooltip gives the name and the key.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Build order</h2>
+      <ul>
+        <li><span class="person">PR 1:</span> fixed line on Flow, badge and bars on all charts. Resolves findings 1 and 2 on its own.</li>
+        <li><span class="person">PR 2:</span> layer icons, the view button and the two sample bubbles on the line. The two black scale boxes leave the chart. The four icons and the tape chip leave where they are. Resolves finding 4 and exposes tape-only.</li>
+        <li><span class="person">PR 2b:</span> dragging the divider now lands on the three views; the rail goes away. Saved workspaces with a rail open in "candles and tape".</li>
+        <li><span class="person">PR 3:</span> switch bars and indicators from the chart line. BARS leaves the top. Resolves finding 3.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Limits of this proposal</h2>
+    <ul>
+      <li>HTML mock-up. Nothing was tested in the real app with a fast tape. The mock-up does not show the narrow chart, where presets and buttons need to fold into menus.</li>
+      <li>PR 2 changes a written rule: <code>ui-design-model.md</code> §11 says the tape chip sits over the chart. Its reason is still met, because the fixed line does not disappear when the tape is off.</li>
+      <li>Tape-only today forces the native tape (time and execution price, axis fitted to the prints). The panel assumes that is what "only the tape" means; if not, the view button needs a fourth stop.</li>
+      <li>Still to prove in the app: does the Strip draw in tape-only? What happens to drawings and indicators, anchored to a bar, with the candles hidden? How does the line fold on a narrow chart?</li>
+      <li>The menu can read each layer's target from what already exists (<code>LayerScope</code>, <code>tab/panes.rs:307</code>). Control commands and MCP do not change.</li>
+    </ul>
+  </section>
+</main>
+<script>
+const LAYERS = {
+  candles: [["bubbles", "Bubbles", "Aggression bubbles on the candles (Ctrl+B)"], ["heatmap", "L2", "L2 depth heatmap on the candles"], ["footprint", "Footprint", "Footprint inside the candles (Ctrl+F)"]],
+  beside: [["tape", "Tape", "Live tape beside the candles"], ["strip", "Strip", "Book depth and forming bar beside the price axis"]],
+};
+const PRESETS = ["1m", "5m", "15m", "1h", "1d", "1w", "1mo"];
+const OTHER = { Tick: ["500", "2000"], Volume: ["5", "50"], Dollar: ["1M"], Imbalance: ["tick 500"], Trades: ["1000"] };
+
+function rng(seed) { let x = seed; return () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296; }
+
+function draw(canvas, pane, layersOverride) {
+  const w = canvas.clientWidth, h = canvas.clientHeight, dpr = devicePixelRatio || 1;
+  if (!w || !h) return;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const c = canvas.getContext("2d");
+  c.scale(dpr, dpr);
+  const L = layersOverride || (pane.layers && pane.seed !== undefined && pane.canvas ? pane.layers : pane) || {};
+  const axis = 52, stripW = L.strip ? 26 : 0;
+  const tapeW = L.tapeOnly ? w - axis - stripW : (L.tape ? Math.min(90, w * 0.15) : 0);
+  const pw = w - axis - tapeW - stripW;
+  const r = rng(pane.seed || 5);
+  const n = Math.max(24, Math.floor(pw / 9)), bw = pw / n;
+  let p = 0.5; const bars = [];
+  for (let i = 0; i < n; i++) {
+    const o = p; p = Math.min(0.88, Math.max(0.12, p + (r() - 0.5) * 0.11));
+    bars.push({ o, c: p, hi: Math.max(o, p) + r() * 0.05, lo: Math.min(o, p) - r() * 0.05 });
+  }
+  const y = (v) => 10 + (1 - v) * (h - 26);
+  c.strokeStyle = "#1e2432"; c.lineWidth = 1;
+  c.fillStyle = "#79808f"; c.font = "10px 'IBM Plex Mono', monospace"; c.textAlign = "left";
+  for (let i = 1; i < 5; i++) {
+    const yy = Math.round((h * i) / 5) + 0.5;
+    c.beginPath(); c.moveTo(0, yy); c.lineTo(w - axis, yy); c.stroke();
+    c.fillText(String(170600 - i * 100), w - axis + 5, yy + 3);
+  }
+  if (L.heatmap && !L.tapeOnly) {
+    const hr = rng(pane.seed + 7);
+    for (let i = 0; i < 9; i++) {
+      c.fillStyle = `rgba(91,141,239,${0.08 + hr() * 0.22})`;
+      c.fillRect(0, y(hr()), pw, 5 + hr() * 8);
+    }
+  }
+  if (!L.tapeOnly) bars.forEach((b, i) => {
+    const x = i * bw + bw / 2, up = b.c >= b.o;
+    const col = up ? "#26a69a" : "#ef5350";
+    c.strokeStyle = col; c.beginPath(); c.moveTo(x, y(b.hi)); c.lineTo(x, y(b.lo)); c.stroke();
+    c.fillStyle = col; const t = y(Math.max(b.o, b.c)), bh = Math.max(1, y(Math.min(b.o, b.c)) - t);
+    c.fillRect(x - bw * 0.32, t, bw * 0.64, bh);
+    if (L.footprint && bh > 8) {
+      c.fillStyle = "rgba(224,184,74,.9)";
+      c.fillRect(x - bw * 0.32, t + bh * 0.45, bw * 0.64, 2);
+    }
+  });
+  if (L.bubbles && !L.tapeOnly) {
+    const br = rng(pane.seed + 13);
+    for (let i = 0; i < n / 4; i++) {
+      const b = bars[Math.floor(br() * n)], x = bars.indexOf(b) * bw + bw / 2;
+      c.fillStyle = br() > 0.5 ? "rgba(38,166,154,.55)" : "rgba(239,83,80,.55)";
+      c.beginPath(); c.arc(x, y(b.c), (3 + br() * 7) * (L.scale || 1), 0, 7); c.fill();
+    }
+  }
+  const last = bars[n - 1];
+  if (stripW) {
+    const sr = rng(pane.seed + 21), x0 = pw;
+    for (let i = 0; i < 16; i++) {
+      c.fillStyle = i < 8 ? "rgba(239,83,80,.5)" : "rgba(38,166,154,.5)";
+      c.fillRect(x0 + 2, y(last.c) + (i - 8) * 6, sr() * (stripW - 4), 4);
+    }
+  }
+  if (tapeW) {
+    const x0 = pw + stripW, tr = rng(pane.seed + 33);
+    c.strokeStyle = "#2a3040"; c.beginPath(); c.moveTo(x0 + 0.5, 0); c.lineTo(x0 + 0.5, h); c.stroke();
+    let v = last.c;
+    const dots = L.tapeOnly ? Math.floor(tapeW / 6) : 22;
+    for (let i = 0; i < dots; i++) {
+      v = Math.min(0.9, Math.max(0.1, v + (tr() - 0.5) * 0.05));
+      c.fillStyle = tr() > 0.5 ? "rgba(38,166,154,.7)" : "rgba(239,83,80,.7)";
+      c.beginPath(); c.arc(x0 + 6 + (i / dots) * (tapeW - 12), y(v), (1.5 + tr() * (L.tapeOnly ? 5 : 3)) * (L.tapeScale || 1), 0, 7); c.fill();
+    }
+  }
+}
+
+function plotOf(pane, host) {
+  const plot = document.createElement("div"); plot.className = "plot";
+  const canvas = document.createElement("canvas"); plot.append(canvas);
+  host.append(plot);
+  pane.canvas = canvas;
+  return plot;
+}
+const redraw = (panes) => panes.forEach((p) => draw(p.canvas, p));
+function number(host, n, css) {
+  const s = document.createElement("span"); s.className = "num"; s.textContent = n; s.style.cssText = css; host.append(s);
+}
+
+/* ---------- today ---------- */
+(function today() {
+  const root = document.getElementById("today");
+  const panes = [
+    { id: "a", seed: 11, name: "Force Bar Only", kind: "time", val: "1m", cls: "" , lt: ["Flow", "Force Bar Only", "Layout 3"], act: 1 },
+    { id: "b", seed: 29, name: "Flow", kind: "time", val: "1m", cls: "", lt: ["Flow", "Force Bar Only", "Layout 3"], act: 0 },
+    { id: "f", seed: 47, kind: "tick", val: "2000", cls: "flow", lt: ["Flow", "Force Bar Only", "Layout 3"], act: 0 },
+  ];
+  let focus = "f";
+  root.innerHTML = `<div class="tb">
+      <span class="num inline">3</span><span class="cap">feed</span><span class="box">MetaTrader 5 — B3 ▾</span>
+      <span class="cap">symbol</span><span class="box">WINZ26 ▾</span>
+      <span class="box rec">REC · waiting</span><span class="sep"></span>
+      <span class="num inline">2</span><span class="cap">bars</span><span class="box" id="tKind"></span>
+      <span class="cap" id="tCap"></span><span class="box" id="tVal"></span>
+      <span class="box">Indicators</span><span class="sep"></span>
+      <span class="box">History ▾</span><span class="sep"></span>
+      <span class="box buy">BUY 1</span><span class="box sell">SELL 1</span>
+      <span class="grow"></span>
+      <span class="num inline">4</span><span class="ico on-a">≡</span><span class="ico on-g">▦</span><span class="ico">☰</span><span class="ico">⁘</span><span class="sep"></span><span class="ico">✎</span><span class="ico">▣</span>
+    </div><div class="canvas-grid"></div>`;
+  const grid = root.querySelector(".canvas-grid");
+  panes.forEach((p) => {
+    const el = document.createElement("div");
+    el.className = "pane " + p.cls;
+    p.el = el;
+    if (p.kind === "time") {
+      el.insertAdjacentHTML("beforeend", `<div class="ph"><span style="color:var(--faint)">time</span>${PRESETS.map((t) => `<span class="chip quiet ${t === p.val ? "sel" : ""}">${t}</span>`).join("")}<span class="name">${p.name}</span></div>`);
+    }
+    plotOf(p, el);
+    el.insertAdjacentHTML("beforeend", `<div class="ltabs">${p.lt.map((t, i) => (i === p.act ? `<b>${t}</b>` : `<span>${t}</span>`)).join("")}<span>+</span></div>`);
+    if (p.cls) el.querySelector(".plot").insertAdjacentHTML("beforeend", `<span class="tapechip">tape</span>`);
+    el.addEventListener("click", () => { focus = p.id; sync(); });
+    grid.append(el);
+  });
+  number(root, 1, "right: 300px; top: 90px;");
+  function sync() {
+    const p = panes.find((x) => x.id === focus);
+    panes.forEach((x) => x.el.classList.toggle("focus", x.id === focus));
+    root.querySelector("#tKind").textContent = p.kind + " ▾";
+    root.querySelector("#tCap").textContent = p.kind === "tick" ? "N ticks" : "interval";
+    root.querySelector("#tVal").textContent = p.val;
+  }
+  sync();
+  redraw(panes);
+  new ResizeObserver(() => redraw(panes)).observe(root);
+})();
+
+/* ---------- proposal ---------- */
+(function proposal() {
+  const root = document.getElementById("prop");
+  // Each glyph is a small copy of what the layer draws on the chart.
+  const ICON = {
+    candles: '<svg viewBox="0 0 15 15"><path d="M4.5 1.5v2M4.5 11v2.5M10.5 2.5v2M10.5 9.5v3"/><rect class="f" x="2.5" y="3.5" width="4" height="7.5"/><rect class="f" x="8.5" y="4.5" width="4" height="5"/></svg>',
+    tape: '<svg viewBox="0 0 15 15"><circle class="f" cx="7.5" cy="2.5" r="1.1"/><circle class="f" cx="7.5" cy="6" r="1.8"/><circle class="f" cx="7.5" cy="10" r="1.3"/><circle class="f" cx="7.5" cy="13.2" r=".9"/></svg>',
+    bubbles: '<svg viewBox="0 0 15 15"><circle class="f" cx="5" cy="9.5" r="3.2"/><circle class="f" cx="10.5" cy="4.5" r="2.1"/><circle class="f" cx="11.5" cy="11" r="1.3"/></svg>',
+    heatmap: '<svg viewBox="0 0 15 15"><rect class="f" x="1.5" y="1.5" width="12" height="3" stroke="none"/><rect class="h" x="1.5" y="6" width="12" height="3" stroke="none"/><rect class="l" x="1.5" y="10.5" width="12" height="3" stroke="none"/><rect x="1.5" y="1.5" width="12" height="12" rx="1"/></svg>',
+    footprint: '<svg viewBox="0 0 15 15"><path d="M7.5 1v1.5M7.5 12.5V14"/><rect x="3" y="2.5" width="9" height="10" rx="1"/><path d="M7.5 2.5v10"/><path d="M4.5 5h1.5M4.5 7.5h1.5M4.5 10h1.5M9 5h1.5M9 7.5h1.5M9 10h1.5" stroke-width="1.6"/></svg>',
+    strip: '<svg viewBox="0 0 15 15"><path d="M1.5 2v11"/><path d="M11.5 1.5v12" stroke-dasharray="1.5 1.5"/><path d="M11 4h-4M11 6.5h-6M11 9h-2.5M11 11.5h-5"/></svg>',
+  };
+  // One button that walks the three views; its glyph is the view on screen.
+  const VIEWS = [
+    { id: "both", label: "Candles + tape", candles: true, tape: true, icon: '<svg viewBox="0 0 30 22"><path d="M7 2v3M7 16v4"/><rect class="f" x="4" y="5" width="6" height="11" rx="1"/><path d="M15 2v18" stroke-dasharray="1.5 2"/><circle class="f" cx="23" cy="4" r="1.5"/><circle class="f" cx="23" cy="9.5" r="2.4"/><circle class="f" cx="23" cy="15.5" r="1.8"/><circle class="f" cx="23" cy="19.5" r="1.1"/></svg>' },
+    { id: "candles", label: "Candles only", candles: true, tape: false, icon: '<svg viewBox="0 0 30 22"><path d="M9 2v3M9 16v4M19 4v2.5M19 14v4"/><rect class="f" x="6" y="5" width="6" height="11" rx="1"/><rect class="f" x="16" y="6.5" width="6" height="7.5" rx="1"/></svg>' },
+    { id: "tape", label: "Tape only", candles: false, tape: true, icon: '<svg viewBox="0 0 30 22"><circle class="f" cx="9" cy="4" r="1.5"/><circle class="f" cx="15" cy="9.5" r="2.6"/><circle class="f" cx="21" cy="5.5" r="1.4"/><circle class="f" cx="10" cy="16" r="2"/><circle class="f" cx="20" cy="15.5" r="1.7"/></svg>' },
+  ];
+  const viewOf = (p) => VIEWS.find((v) => v.candles === p.candles && v.tape === p.tape) || VIEWS[0];
+  const LAYERS = {
+    candles: [["bubbles", "Bubbles", "Aggression bubbles on the candles (Ctrl+B)"], ["heatmap", "L2", "L2 depth heatmap on the candles"], ["footprint", "Footprint", "Footprint inside the candles (Ctrl+F)"]],
+    beside: [["strip", "Strip", "Book depth and forming bar beside the price axis"]],
+  };
+  const panes = [
+    { id: "a", seed: 11, flow: false, kind: "Time", val: "1m", candles: true, tape: false, layers: { footprint: true } },
+    { id: "b", seed: 29, flow: false, kind: "Time", val: "1m", candles: true, tape: false, layers: { footprint: true } },
+    { id: "f", seed: 47, flow: true, kind: "Tick", val: "2000", candles: true, tape: true, scale: 1, tapeScale: 1, layers: { footprint: true, strip: true, bubbles: true, heatmap: true } },
+  ];
+  let focus = "f", openBars = null;
+  root.innerHTML = `<div class="tb">
+      <span class="cap">THIS TAB</span><span class="box">MetaTrader 5 — B3 ▾</span><span class="box">WINZ26 ▾</span>
+      <span class="box rec">REC · waiting</span><span class="box">History: 5 days ▾</span><span class="sep"></span>
+      <span class="box buy">BUY 1</span><span class="box sell">SELL 1</span>
+      <span class="grow"></span><span class="ico">✎</span><span class="ico">▣</span>
+    </div><div class="canvas-grid"></div>`;
+  const grid = root.querySelector(".canvas-grid");
+  panes.forEach((p) => {
+    const el = document.createElement("div");
+    el.className = "pane" + (p.flow ? " flow" : "");
+    p.el = el;
+    el.innerHTML = `<div class="ph"></div>`;
+    plotOf(p, el);
+    el.insertAdjacentHTML("beforeend", `<div class="ltabs"><b>${p.flow ? "Order flow" : "Force Bar Only"}</b><span>Layout 3</span><span>+</span></div>`);
+    el.addEventListener("click", () => { if (focus !== p.id) { focus = p.id; render(); } });
+    grid.append(el);
+  });
+  // What the canvas draws, from the view and the switches.
+  function effective(p) {
+    const L = { ...p.layers };
+    L.tape = p.tape;
+    if (!p.candles) { L.bubbles = L.heatmap = L.footprint = false; L.tapeOnly = true; }
+    L.scale = p.scale || 1; L.tapeScale = p.tapeScale || 1;
+    return L;
+  }
+  function barsMenu(p) {
+    const t = PRESETS.map((v) => `<button class="mi ${p.kind === "Time" && p.val === v ? "sel" : ""}" data-k="Time" data-v="${v}">${v}</button>`).join("");
+    const rest = Object.entries(OTHER).map(([k, vs]) => `<div class="mrow"><span>${k}</span>${vs.map((v) => `<button class="mi ${p.kind === k && p.val === v ? "sel" : ""}" data-k="${k}" data-v="${v}">${v}</button>`).join("")}</div>`).join("");
+    return `<div class="pop bars"><h4>BARS OF THIS CHART</h4><div class="mrow"><span>Time</span>${t}</div>${rest}</div>`;
+  }
+  function lchip([k, label, hint], p, disabled) {
+    const title = disabled ? `${label}: candles hidden. The tape keeps its own bubbles and book on its right-click.` : hint;
+    return `<button class="lchip" aria-pressed="${!!p.layers[k]}" title="${title}" data-l="${k}" ${disabled ? "disabled" : ""}>${ICON[k]}</button>`;
+  }
+  function viewChips(p) {
+    const v = viewOf(p), next = VIEWS[(VIEWS.indexOf(v) + 1) % VIEWS.length];
+    return `<button class="lchip cycle" title="View: ${v.label.toLowerCase()}. Click for ${next.label.toLowerCase()} (Ctrl+Shift+T: tape only and back)" data-cycle>${v.icon}</button>`;
+  }
+  function layerChips(p) {
+    if (!p.flow) return `<span class="lgroup">${lchip(LAYERS.candles[2], p, false)}</span>`;
+    const hidden = !p.candles;
+    const dim = hidden || !p.layers.bubbles;
+    const px = (s) => (6 + (s - .25) / 2.75 * 16).toFixed(1);
+    const sample = (which, value, off, title, cls) => `<span class="sample ${cls} ${off ? "dim" : ""}" data-sample="${which}" title="${title}"><i style="width:${px(value)}px;height:${px(value)}px"></i><span class="v">${value.toFixed(2).replace(".", ",")}×</span></span>`;
+    const candleSample = sample("candle", p.scale || 1, dim, dim ? "Bubble size on the candles: bubbles are off" : "Bubble size on the candles: drag up or down; double-click for 1×", "");
+    return `<span class="lgroup">${viewChips(p)}</span><span class="lgap wide"></span><span class="lgroup">${lchip(LAYERS.candles[0], p, hidden)}${candleSample}${LAYERS.candles.slice(1).map((l) => lchip(l, p, hidden)).join("")}${LAYERS.beside.map((l) => lchip(l, p, false)).join("")}</span>`;
+  }
+  function header(p) {
+    const ph = p.el.querySelector(".ph");
+    const presets = p.kind === "Time" ? PRESETS.map((v) => `<button class="chip quiet ${p.val === v ? "sel" : ""}" data-preset="${v}">${v}</button>`).join("") : "";
+    const main = p.kind === "Time" ? `Time<span class="caret">▾</span>` : `${p.kind} · ${p.val}<span class="caret">▾</span>`;
+    ph.innerHTML = `${p.flow ? `<span class="badge" title="The order-flow chart: tape, L2 and bubbles live here">ORDER FLOW</span>` : ""}
+      <span style="position:relative"><button class="chip kind" data-barsbtn aria-expanded="${openBars === p.id}">${main}</button>${openBars === p.id ? barsMenu(p) : ""}</span>${presets}<span class="lgap"></span>${layerChips(p)}
+      <span class="right">${p.flow && p.tape ? (() => { const s = p.tapeScale || 1, d = (6 + (s - .25) / 2.75 * 16).toFixed(1); return `<span class="sample tape" data-sample="tape" title="Bubble size on the tape: drag up or down; double-click for 1×"><i style="width:${d}px;height:${d}px"></i><span class="v">${s.toFixed(2).replace(".", ",")}×</span></span>`; })() : ""}<button class="lchip fx" title="Indicators">ƒx</button></span>`;
+    ph.querySelector("[data-barsbtn]").addEventListener("click", (e) => {
+      e.stopPropagation(); openBars = openBars === p.id ? null : p.id; render(p, "[data-barsbtn]");
+    });
+    ph.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", (e) => {
+      e.stopPropagation(); p.val = b.dataset.preset; render();
+    }));
+    ph.querySelectorAll(".mi").forEach((b) => b.addEventListener("click", (e) => {
+      e.stopPropagation(); p.kind = b.dataset.k; p.val = b.dataset.v; openBars = null; p.seed += 3; render(); draw(p.canvas, effective(p));
+    }));
+    ph.querySelectorAll("[data-sample]").forEach((sc) => {
+      if (sc.classList.contains("dim")) return;
+      const key = sc.dataset.sample === "tape" ? "tapeScale" : "scale";
+      const dot = sc.querySelector("i"), lbl = sc.querySelector(".v");
+      let drag = null;
+      const show = () => { const d = (6 + (p[key] - .25) / 2.75 * 16).toFixed(1); dot.style.width = dot.style.height = d + "px"; lbl.textContent = p[key].toFixed(2).replace(".", ",") + "×"; draw(p.canvas, effective(p)); };
+      sc.addEventListener("pointerdown", (e) => { e.stopPropagation(); drag = { y: e.clientY, v: p[key] }; sc.setPointerCapture(e.pointerId); sc.classList.add("on"); });
+      sc.addEventListener("pointermove", (e) => { if (!drag) return; p[key] = Math.max(.25, Math.min(3, drag.v - (e.clientY - drag.y) / 40)); show(); });
+      sc.addEventListener("pointerup", () => { drag = null; sc.classList.remove("on"); });
+      sc.addEventListener("click", (e) => e.stopPropagation());
+      sc.addEventListener("dblclick", (e) => { e.stopPropagation(); p[key] = 1; show(); });
+    });
+    ph.querySelector("[data-cycle]")?.addEventListener("click", (e) => {
+      e.stopPropagation(); const n = VIEWS[(VIEWS.indexOf(viewOf(p)) + 1) % VIEWS.length];
+      p.candles = n.candles; p.tape = n.tape; render(p, "[data-cycle]"); draw(p.canvas, effective(p));
+    });
+  }
+  // Press a layer button and slide across its neighbours: each takes the state the press set.
+  let slide = null;
+  function setLayer(p, k, on) {
+    if (!!p.layers[k] === on) return;
+    p.layers[k] = on;
+    render(p, `[data-l="${k}"]`);
+    draw(p.canvas, effective(p));
+  }
+  panes.forEach((p) => {
+    const ph = p.el.querySelector(".ph");
+    ph.addEventListener("pointerdown", (e) => {
+      const b = e.target.closest(".lchip");
+      if (!b || b.disabled) return;
+      e.preventDefault();
+      slide = { pane: p, on: !p.layers[b.dataset.l] };
+      setLayer(p, b.dataset.l, slide.on);
+    });
+    ph.addEventListener("pointerover", (e) => {
+      const b = e.target.closest(".lchip");
+      if (b && !b.disabled && slide && slide.pane === p) setLayer(p, b.dataset.l, slide.on);
+    });
+    ph.addEventListener("click", (e) => {
+      const b = e.target.closest(".lchip");
+      if (!b) return;
+      e.stopPropagation();
+      if (e.detail === 0 && !b.disabled) setLayer(p, b.dataset.l, !p.layers[b.dataset.l]);
+    });
+  });
+  document.addEventListener("pointerup", () => { slide = null; });
+  function render(refocus, selector) {
+    panes.forEach((p) => { p.el.classList.toggle("focus", p.id === focus); header(p); });
+    if (refocus) { const t = refocus.el.querySelector(selector); if (t) t.focus({ preventScroll: true }); }
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && openBars) { openBars = null; render(); }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
+      const p = panes.find((x) => x.id === focus);
+      if (p && p.flow) {
+        e.preventDefault();
+        if (p.candles) { p.prev = p.tape; p.candles = false; p.tape = true; } else { p.candles = true; p.tape = p.prev ?? true; }
+        render(); draw(p.canvas, effective(p));
+      }
+    }
+  });
+  document.addEventListener("click", (e) => { if (openBars && !root.contains(e.target)) { openBars = null; render(); } });
+  render();
+  panes.forEach((p) => draw(p.canvas, effective(p)));
+  new ResizeObserver(() => panes.forEach((p) => draw(p.canvas, effective(p)))).observe(root);
+})();
+</script>
+</body>
+</html>

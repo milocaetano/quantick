@@ -52,6 +52,10 @@ pub const ACCENT: Color32 = Color32::from_rgb(0x8A, 0xB4, 0xF8);
 /// `honest/amber` — not-live provenance only: replay, backfill, inferred data.
 pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
 
+/// `pane/mark` — the name on a pane's header line. A dimmed amber, a step below
+/// the last-price label, so it never reads as [`AMBER`]'s not-live warning.
+pub const PANE_MARK: Color32 = Color32::from_rgb(0xA3, 0x82, 0x1C);
+
 /// `seam/line` — the venue/prints boundary: white, and mostly transparent.
 ///
 /// The one provenance mark that is *always* on screen, on every time-cutting

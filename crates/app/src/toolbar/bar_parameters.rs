@@ -8,7 +8,37 @@ use rust_decimal::{
     prelude::{FromPrimitive, ToPrimitive},
 };
 
-pub(super) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarInputAvailability) {
+/// The registered bar kinds as a pick list: the body of every bars menu.
+pub(crate) fn draw_kinds(
+    ui: &mut egui::Ui,
+    selection: &mut BarSelection,
+    inputs: BarInputAvailability,
+) {
+    let mut selected = None;
+    for definition in selection.registry().definitions() {
+        let reason = selection
+            .availability(definition.id, inputs)
+            .expect("registered kind");
+        let item = ui.add_enabled(
+            reason.is_none(),
+            egui::SelectableLabel::new(
+                selection.selected_id() == definition.id,
+                definition.label(),
+            ),
+        );
+        if item.clicked() {
+            selected = Some(definition.id);
+        }
+        if let Some(reason) = reason {
+            item.on_disabled_hover_text(reason.reason());
+        }
+    }
+    if let Some(id) = selected {
+        let _ = selection.update(SelectionCommand::Select(id), inputs);
+    }
+}
+
+pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarInputAvailability) {
     let config = selection.spec();
     let definition = config.definition();
     for choice in definition.choices {

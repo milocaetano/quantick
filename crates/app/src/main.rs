@@ -91,6 +91,7 @@ mod symbols_file;
 mod tab;
 mod tabstrip;
 mod theme;
+mod pane_header;
 mod time_header;
 mod timezone;
 mod toolbar;

@@ -71,6 +71,8 @@ mod history_control_tests;
 mod indicator_picker_control;
 #[path = "journal_sessions_control_tests.rs"]
 mod journal_sessions_control_tests;
+#[path = "pane_header_tests.rs"]
+mod pane_header;
 #[path = "layer_control_tests.rs"]
 mod layer_control;
 #[path = "native_tape_readback_tests.rs"]

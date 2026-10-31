@@ -26,8 +26,8 @@ use crate::state::SpecSelector;
 #[cfg(test)]
 use crate::state::{BarKind, BarSpec};
 use quantick_engine::bar_registry::BarDefinition;
-use quantick_engine::bar_selection::{BarInputAvailability, SelectionCommand};
-mod bar_parameters;
+use quantick_engine::bar_selection::BarInputAvailability;
+pub(crate) mod bar_parameters;
 use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use quantick_feed::history_reach::HistoryReach;
@@ -526,7 +526,7 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
         format!(
             "{} · {}",
             model.spec.spec().definition().label(),
-            param_summary(model)
+            model.spec.spec().parameter_summary()
         )
     };
     if std::mem::take(model.bars_menu) {
@@ -538,30 +538,8 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
     egui::ComboBox::from_id_salt("bar_kind")
         .selected_text(selected)
         .show_ui(ui, |ui| {
-            let mut selected = None;
-            for definition in model.spec.registry().definitions() {
-                let reason = model
-                    .spec
-                    .availability(definition.id, bar_inputs(model))
-                    .expect("registered kind");
-                let item = ui.add_enabled(
-                    reason.is_none(),
-                    egui::SelectableLabel::new(
-                        model.spec.selected_id() == definition.id,
-                        definition.label(),
-                    ),
-                );
-                if item.clicked() {
-                    selected = Some(definition.id);
-                }
-                if let Some(reason) = reason {
-                    item.on_disabled_hover_text(reason.reason());
-                }
-            }
-            if let Some(id) = selected {
-                let inputs = bar_inputs(model);
-                let _ = model.spec.update(SelectionCommand::Select(id), inputs);
-            }
+            let inputs = bar_inputs(model);
+            bar_parameters::draw_kinds(ui, model.spec, inputs);
         });
     if plan.param_inline {
         draw_bar_param(ui, model);
@@ -576,18 +554,21 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
 }
 
 fn bar_inputs(model: &ToolbarModel) -> BarInputAvailability {
-    BarInputAvailability {
-        traded_volume: model.capabilities.traded_volume,
-        deal_counter: model.capabilities.deal_counter,
-        deal_count: model
-            .deal_recording
-            .as_ref()
-            .is_some_and(crate::deal_recording::RecordingView::deal_count_available),
-    }
+    available_bar_inputs(model.capabilities, model.deal_recording.as_ref())
 }
 
-fn param_summary(model: &ToolbarModel) -> String {
-    model.spec.spec().parameter_summary()
+/// What the running source can build bars from: the one answer every bars menu
+/// reads, the toolbar's and each pane header's.
+pub(crate) fn available_bar_inputs(
+    capabilities: FeedCapabilities,
+    deal_recording: Option<&crate::deal_recording::RecordingView>,
+) -> BarInputAvailability {
+    BarInputAvailability {
+        traded_volume: capabilities.traded_volume,
+        deal_counter: capabilities.deal_counter,
+        deal_count: deal_recording
+            .is_some_and(crate::deal_recording::RecordingView::deal_count_available),
+    }
 }
 
 /// HISTORY: the `History` split button. The main click repeats this tab's

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Views of the Flow chart</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: two live panes to click, one per control design, then the three views as still pictures. Single dark look: the app's own world. */
+:root { color-scheme: dark; --page:#0b0e14; --panel:#131722; --panel-2:#1a1f2c; --line:#2a3040; --ink:#e8eaf0; --ink-2:#aab0bf; --faint:#79808f; --accent:#5b8def; --gold:#e0b84a; --mono:"IBM Plex Mono", monospace; --sans:"IBM Plex Sans", system-ui, sans-serif; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--page); color:var(--ink); font:16px/1.5 var(--sans); }
+main { max-width:980px; margin:0 auto; padding:28px 20px 48px; display:flex; flex-direction:column; gap:30px; }
+h1 { margin:0; font-size:28px; font-weight:600; line-height:1.2; text-wrap:balance; }
+h2 { margin:0 0 8px; font-size:18px; font-weight:600; }
+p { margin:0; color:var(--ink-2); max-width:62ch; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap:18px; }
+.pane { background:var(--panel); border:1px solid var(--line); border-radius:6px; overflow:hidden; display:flex; flex-direction:column; height:260px; user-select:none; }
+.ph { display:flex; align-items:center; gap:4px; height:36px; padding:0 10px; border-bottom:1px solid var(--line); white-space:nowrap; font-size:13px; }
+.tag { font:500 11px var(--mono); letter-spacing:.08em; color:var(--gold); opacity:.85; margin-right:6px; }
+.bars { font-weight:600; color:var(--ink); }
+.bars i { font-style:normal; color:var(--faint); opacity:.6; font-size:10px; margin-left:3px; }
+.sep { width:1px; height:16px; background:var(--line); margin:0 10px; }
+.b { background:none; border:0; border-radius:5px; padding:4px 5px; cursor:pointer; color:var(--faint); opacity:.5; display:inline-flex; }
+.b:hover { opacity:.85; }
+.b:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.b[aria-pressed="true"] { color:var(--accent); opacity:1; }
+.b svg { width:22px; height:22px; display:block; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.b[aria-pressed="true"] svg .f { fill:currentColor; }
+.b.cycle { color:var(--accent); opacity:1; }
+.b.cycle svg .f { fill:currentColor; }
+.b.cycle svg { width:30px; }
+.plot { flex:1; position:relative; }
+canvas { position:absolute; inset:0; width:100%; height:100%; }
+.state { position:absolute; left:10px; bottom:8px; font:500 11px var(--mono); letter-spacing:.06em; color:var(--faint); background:rgba(11,14,20,.8); padding:2px 6px; border-radius:3px; }
+.stills { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap:14px; }
+.still { display:flex; flex-direction:column; gap:8px; }
+.still .pane { height:170px; }
+.still .ph { height:32px; pointer-events:none; }
+.still .b svg { width:18px; height:18px; }
+.still .b.cycle svg { width:26px; }
+.cap { font-size:14px; color:var(--ink-2); }
+.thumb { background:none; border:1px solid transparent; border-radius:4px; padding:2px; cursor:pointer; display:inline-flex; opacity:.45; }
+.thumb[aria-pressed="true"] { opacity:1; border-color:var(--accent); }
+.thumb svg { width:30px; height:20px; display:block; }
+.grip { position:absolute; top:0; bottom:0; width:6px; margin-left:-3px; background:linear-gradient(var(--line), var(--line)) center/2px 100% no-repeat; cursor:col-resize; }
+.grip::after { content:""; position:absolute; top:50%; left:-3px; width:12px; height:30px; margin-top:-15px; border-radius:6px; background:var(--panel-2); border:1px solid var(--faint); }
+.rail { position:absolute; top:0; bottom:0; right:56px; width:8px; background:var(--panel-2); border-left:2px solid var(--accent); cursor:pointer; }
+.hint { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font:500 11px var(--mono); letter-spacing:.06em; color:var(--ink); background:rgba(11,14,20,.85); padding:4px 8px; border-radius:3px; pointer-events:none; }
+.cap b { color:var(--ink); font-weight:600; }
+.note { font-size:14px; color:var(--ink-2); display:flex; flex-direction:column; gap:6px; margin:0; padding-left:18px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Candles, tape, or both: the three views of the Flow chart</h1>
+    <p>Two ways to control the same thing. Click the blue icons inside each chart.</p>
+  </header>
+
+  <section class="grid">
+    <div>
+      <h2>A · two buttons, one for each part</h2>
+      <p>Candles and Tape light up and switch off on their own. The last one lit cannot be switched off.</p>
+      <div class="pane" id="A"></div>
+    </div>
+    <div>
+      <h2>B · one button that cycles the three views</h2>
+      <p>Each click moves to the next view. The icon shows which one is active.</p>
+      <div class="pane" id="B"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The three views, still</h2>
+    <div class="stills" id="stills"></div>
+  </section>
+
+  <section>
+    <h2>Three more ways, less obvious</h2>
+    <div class="stills" id="more"></div>
+  </section>
+
+  <section>
+    <h2>The difference</h2>
+    <ul class="note">
+      <li><b>A</b> shows the state at all times, and the tape alone is one click. Costs two icons.</li>
+      <li><b>B</b> costs one icon. Tape only is two clicks from today's view, and you only learn the next view after clicking.</li>
+      <li><b>C</b> is a thumbnail picker: the button is the drawing of the view. Reads without a caption, costs three icons.</li>
+      <li><b>D</b> has no button: the tape becomes the control. Double-click on it to fill everything; double-click again to go back. Invisible to newcomers, so it needs one of the others alongside.</li>
+      <li><b>E</b> is the divider with a handle: drag it to the edge and the other part disappears; a stroke on the edge brings it back. It is what the app already does today, only with a visible handle.</li>
+      <li>In all of them, <code>Ctrl+Shift+T</code> goes to tape only and back.</li>
+    </ul>
+  </section>
+</main>
+<script>
+const I = {
+  candles: '<svg viewBox="0 0 22 22"><path d="M7 2v3M7 16v4M15 4v2.5M15 14v4"/><rect class="f" x="4" y="5" width="6" height="11" rx="1"/><rect class="f" x="12" y="6.5" width="6" height="7.5" rx="1"/></svg>',
+  tape: '<svg viewBox="0 0 22 22"><circle class="f" cx="11" cy="3.5" r="1.6"/><circle class="f" cx="11" cy="9" r="2.6"/><circle class="f" cx="11" cy="15" r="1.9"/><circle class="f" cx="11" cy="19.5" r="1.2"/></svg>',
+  both: '<svg viewBox="0 0 30 22"><path d="M7 2v3M7 16v4"/><rect class="f" x="4" y="5" width="6" height="11" rx="1"/><path d="M15 2v18" stroke-dasharray="1.5 2"/><circle class="f" cx="23" cy="4" r="1.5"/><circle class="f" cx="23" cy="9.5" r="2.4"/><circle class="f" cx="23" cy="15.5" r="1.8"/><circle class="f" cx="23" cy="19.5" r="1.1"/></svg>',
+  onlyCandles: '<svg viewBox="0 0 30 22"><path d="M9 2v3M9 16v4M19 4v2.5M19 14v4"/><rect class="f" x="6" y="5" width="6" height="11" rx="1"/><rect class="f" x="16" y="6.5" width="6" height="7.5" rx="1"/></svg>',
+  onlyTape: '<svg viewBox="0 0 30 22"><circle class="f" cx="9" cy="4" r="1.5"/><circle class="f" cx="15" cy="9.5" r="2.6"/><circle class="f" cx="21" cy="5.5" r="1.4"/><circle class="f" cx="10" cy="16" r="2"/><circle class="f" cx="20" cy="15.5" r="1.7"/></svg>',
+};
+const VIEWS = [
+  { id: "both", label: "CANDLES + TAPE", candles: true, tape: true, icon: "both" },
+  { id: "candles", label: "CANDLES ONLY", candles: true, tape: false, icon: "onlyCandles" },
+  { id: "tape", label: "TAPE ONLY", candles: false, tape: true, icon: "onlyTape" },
+];
+function rng(s) { let x = s; return () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296; }
+function draw(cv, v, seed, share) {
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const c = cv.getContext("2d"); c.scale(dpr, dpr);
+  const r = rng(seed), axis = 56;
+  const tapeW = !v.candles ? w - axis : (v.tape ? (share ? (1 - share) * (w - axis) : Math.min(110, w * .2)) : 0);
+  const pw = w - axis - tapeW;
+  const y = (q) => 10 + (1 - q) * (h - 24);
+  c.strokeStyle = "#1e2432"; c.fillStyle = "#79808f"; c.font = "10px 'IBM Plex Mono'";
+  for (let i = 1; i < 5; i++) { const yy = Math.round(h * i / 5) + .5; c.beginPath(); c.moveTo(0, yy); c.lineTo(w - axis, yy); c.stroke(); c.fillText(String(170600 - i * 100), w - axis + 6, yy + 3); }
+  let p = .5;
+  if (v.candles) {
+    const n = Math.floor(pw / 9), bw = pw / n;
+    for (let i = 0; i < 7; i++) { c.fillStyle = `rgba(91,141,239,${.08 + r() * .2})`; c.fillRect(0, r() * h, pw, 4 + r() * 7); }
+    for (let i = 0; i < n; i++) {
+      const o = p; p = Math.min(.88, Math.max(.12, p + (r() - .5) * .11));
+      const col = p >= o ? "#26a69a" : "#ef5350", x = i * bw + bw / 2;
+      c.strokeStyle = col; c.beginPath(); c.moveTo(x, y(Math.max(o, p) + r() * .05)); c.lineTo(x, y(Math.min(o, p) - r() * .05)); c.stroke();
+      c.fillStyle = col; const t = y(Math.max(o, p)); c.fillRect(x - bw * .32, t, bw * .64, Math.max(1, y(Math.min(o, p)) - t));
+    }
+  }
+  if (tapeW) {
+    const x0 = pw;
+    if (v.candles) { c.strokeStyle = "#2a3040"; c.beginPath(); c.moveTo(x0 + .5, 0); c.lineTo(x0 + .5, h); c.stroke(); }
+    const dots = Math.floor(tapeW / 5); let q = p;
+    for (let i = 0; i < dots; i++) {
+      q = Math.min(.9, Math.max(.1, q + (r() - .5) * .05));
+      c.fillStyle = r() > .5 ? "rgba(38,166,154,.75)" : "rgba(239,83,80,.75)";
+      c.beginPath(); c.arc(x0 + 6 + i / dots * (tapeW - 12), y(q), 1.5 + r() * (v.candles ? 3 : 5), 0, 7); c.fill();
+    }
+  }
+}
+function headerA(v) {
+  return `<span class="tag">ORDER FLOW</span><span class="bars">Tick · 2000<i>▾</i></span><span class="sep"></span>
+    <button class="b" data-k="candles" aria-pressed="${v.candles}" title="Candles">${I.candles}</button>
+    <button class="b" data-k="tape" aria-pressed="${v.tape}" title="Tape">${I.tape}</button>`;
+}
+function headerB(v) {
+  return `<span class="tag">ORDER FLOW</span><span class="bars">Tick · 2000<i>▾</i></span><span class="sep"></span>
+    <button class="b cycle" data-cycle title="Vista: ${v.label.toLowerCase()}. Click for the next">${I[v.icon]}</button>`;
+}
+function live(id, kind) {
+  const el = document.getElementById(id);
+  let v = { ...VIEWS[0] };
+  el.innerHTML = `<div class="ph"></div><div class="plot"><canvas></canvas><span class="state"></span></div>`;
+  const ph = el.querySelector(".ph"), cv = el.querySelector("canvas"), st = el.querySelector(".state");
+  const cur = () => VIEWS.find((x) => x.candles === v.candles && x.tape === v.tape);
+  function render() {
+    ph.innerHTML = kind === "A" ? headerA(v) : headerB(cur());
+    st.textContent = cur().label;
+    draw(cv, v, 47);
+    ph.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", () => {
+      const k = b.dataset.k, other = k === "candles" ? "tape" : "candles";
+      if (v[k] && !v[other]) return;
+      v[k] = !v[k]; render();
+    }));
+    const cyc = ph.querySelector("[data-cycle]");
+    if (cyc) cyc.addEventListener("click", () => { const i = VIEWS.indexOf(cur()); const n = VIEWS[(i + 1) % VIEWS.length]; v = { ...n }; render(); });
+  }
+  render();
+  new ResizeObserver(render).observe(el);
+}
+live("A", "A");
+live("B", "B");
+// Thumbnails: the button is the picture of the view.
+const T = {
+  both: '<svg viewBox="0 0 30 20"><rect x=".5" y=".5" width="29" height="19" rx="2" fill="none" stroke="currentColor" opacity=".5"/><rect x="4" y="7" width="2" height="7" fill="#26a69a"/><rect x="8" y="5" width="2" height="7" fill="#ef5350"/><rect x="12" y="8" width="2" height="6" fill="#26a69a"/><rect x="16" y="6" width="2" height="8" fill="#ef5350"/><circle cx="24" cy="8" r="1.5" fill="#26a69a"/><circle cx="25" cy="12" r="1.2" fill="#ef5350"/><circle cx="23" cy="14" r="1" fill="#26a69a"/></svg>',
+  candles: '<svg viewBox="0 0 30 20"><rect x=".5" y=".5" width="29" height="19" rx="2" fill="none" stroke="currentColor" opacity=".5"/><rect x="4" y="7" width="2" height="7" fill="#26a69a"/><rect x="8" y="5" width="2" height="7" fill="#ef5350"/><rect x="12" y="8" width="2" height="6" fill="#26a69a"/><rect x="16" y="6" width="2" height="8" fill="#ef5350"/><rect x="20" y="4" width="2" height="8" fill="#26a69a"/><rect x="24" y="7" width="2" height="7" fill="#ef5350"/></svg>',
+  tape: '<svg viewBox="0 0 30 20"><rect x=".5" y=".5" width="29" height="19" rx="2" fill="none" stroke="currentColor" opacity=".5"/><circle cx="6" cy="9" r="1.6" fill="#26a69a"/><circle cx="10" cy="12" r="2.2" fill="#ef5350"/><circle cx="14" cy="8" r="1.4" fill="#26a69a"/><circle cx="18" cy="11" r="1.8" fill="#26a69a"/><circle cx="22" cy="7" r="1.2" fill="#ef5350"/><circle cx="25" cy="12" r="2" fill="#ef5350"/></svg>',
+};
+function headerC(v) {
+  return `<span class="tag">ORDER FLOW</span><span class="bars">Tick · 2000<i>▾</i></span><span class="sep"></span>` +
+    VIEWS.map((x) => `<button class="thumb" data-c="${x.id}" aria-pressed="${x.id === v.id}" title="${x.label.toLowerCase()}">${T[x.id]}</button>`).join("");
+}
+function more() {
+  const host = document.getElementById("more");
+  // C: live thumbnails
+  let v = VIEWS[0];
+  const c = document.createElement("div"); c.className = "still";
+  c.innerHTML = `<div class="pane"><div class="ph"></div><div class="plot"><canvas></canvas></div></div><div class="cap"><b>C · thumbnails</b> · the button is the view. Click one.</div>`;
+  const ph = c.querySelector(".ph"), cv = c.querySelector("canvas");
+  function rc() { ph.innerHTML = headerC(v); draw(cv, v, 47); ph.querySelectorAll("[data-c]").forEach((b) => b.addEventListener("click", () => { v = VIEWS.find((x) => x.id === b.dataset.c); rc(); })); }
+  c.querySelector(".ph").style.pointerEvents = "auto";
+  rc(); new ResizeObserver(rc).observe(c);
+  host.append(c);
+  // D: double-click the tape
+  let dv = VIEWS[0];
+  const d = document.createElement("div"); d.className = "still";
+  d.innerHTML = `<div class="pane"><div class="ph">${headerA(VIEWS[0]).replace(/<button[\s\S]*$/, "")}</div><div class="plot"><canvas></canvas><span class="hint">DOUBLE-CLICK THE TAPE</span></div></div><div class="cap"><b>D · double-click the tape</b> · it fills everything; again, it goes back.</div>`;
+  const dcv = d.querySelector("canvas"), dh = d.querySelector(".hint");
+  const rd = () => { draw(dcv, dv, 47); dh.textContent = dv.candles ? "DOUBLE-CLICK THE TAPE" : "DOUBLE-CLICK TO GO BACK"; };
+  d.querySelector(".plot").addEventListener("dblclick", () => { dv = dv.candles ? VIEWS[2] : VIEWS[0]; rd(); });
+  rd(); new ResizeObserver(rd).observe(d);
+  host.append(d);
+  // E: divider with a handle, snaps to the edge
+  let share = .72;
+  const e = document.createElement("div"); e.className = "still";
+  e.innerHTML = `<div class="pane"><div class="ph">${headerA(VIEWS[0]).replace(/<button[\s\S]*$/, "")}</div><div class="plot"><canvas></canvas><div class="grip"></div></div></div><div class="cap"><b>E · divider with a handle</b> · drag to the edge; the stroke brings it back.</div>`;
+  const ecv = e.querySelector("canvas"), plot = e.querySelector(".plot"), grip = e.querySelector(".grip");
+  function re() {
+    const w = ecv.clientWidth, axis = 56;
+    const v = share <= .08 ? VIEWS[2] : share >= .96 ? VIEWS[1] : VIEWS[0];
+    if (v === VIEWS[0]) { draw(ecv, v, 47, share); grip.style.display = ""; grip.style.left = (share * (w - axis)) + "px"; e.querySelector(".rail")?.remove(); }
+    else { draw(ecv, v, 47); grip.style.display = "none"; if (!e.querySelector(".rail")) { const r = document.createElement("div"); r.className = "rail"; r.title = "bring back"; r.style[v === VIEWS[2] ? "left" : "right"] = v === VIEWS[2] ? "0" : "56px"; r.addEventListener("click", () => { share = .72; re(); }); plot.append(r); } }
+  }
+  let dragging = false;
+  grip.addEventListener("pointerdown", (ev) => { dragging = true; grip.setPointerCapture(ev.pointerId); });
+  grip.addEventListener("pointermove", (ev) => { if (!dragging) return; const r = plot.getBoundingClientRect(); share = Math.max(0, Math.min(1, (ev.clientX - r.left) / (r.width - 56))); re(); });
+  grip.addEventListener("pointerup", () => { dragging = false; });
+  re(); new ResizeObserver(re).observe(e);
+  host.append(e);
+}
+const stills = document.getElementById("stills");
+VIEWS.forEach((v, i) => {
+  const d = document.createElement("div"); d.className = "still";
+  d.innerHTML = `<div class="pane"><div class="ph">${headerA(v)}</div><div class="plot"><canvas></canvas></div></div>
+    <div class="cap"><b>${v.label}</b> · in A: ${v.candles && v.tape ? "both lit" : v.candles ? "only candles lit" : "only tape lit"} · in B: ${["1st", "2nd", "3rd"][i]} click</div>`;
+  stills.append(d);
+  const cv = d.querySelector("canvas");
+  const go = () => draw(cv, v, 47);
+  go(); new ResizeObserver(go).observe(d);
+});
+more();
+</script>
+</body>
+</html>

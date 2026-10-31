@@ -23,10 +23,6 @@ use crate::theme;
 /// two horizontal rules framing a time pane read as one pair.
 pub const HEIGHT_PX: f32 = 24.0;
 
-/// Padding inside the header strip: enough horizontally to clear the pane's
-/// edge, and just enough vertically to keep the chips off the rule below.
-const CONTENT_PADDING: egui::Vec2 = egui::vec2(8.0, 2.0);
-
 /// The named timeframes, in the order they are offered.
 pub const PRESETS: [(&str, i64); quantick_engine::bar_registry::TIME_PRESETS.len()] =
     quantick_engine::bar_registry::TIME_PRESETS;
@@ -108,41 +104,31 @@ impl HeaderLayout {
 ///
 /// `layout_name` is the layout this pane shows, drawn at the strip's far end
 /// so a glance at a split says which chart carries which set.
-/// `active_bar` replaces time controls with the applied non-time bar summary.
+/// `bars` paints the pane's bars control at the head of the row; `presets` says
+/// whether the timeframe controls follow it.
 pub fn draw(
     ui: &mut egui::Ui,
     strip: egui::Rect,
     interval_ms: &mut i64,
     salt: u64,
     layout_name: &str,
-    active_bar: Option<&str>,
+    presets: bool,
+    bars: impl FnOnce(&mut egui::Ui),
 ) -> HeaderLayout {
     let mut changed = false;
     #[cfg(test)]
     let mut chips = [egui::Rect::NOTHING; PRESETS.len()];
     #[cfg(test)]
     let mut recorded = chips.iter_mut();
-    ui.painter().line_segment(
-        [
-            egui::pos2(strip.left(), strip.bottom()),
-            egui::pos2(strip.right(), strip.bottom()),
-        ],
-        egui::Stroke::new(1.0_f32, theme::BORDER),
-    );
+    crate::pane_header::paint_rule(ui, strip);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(("time_header", salt))
-            .max_rect(strip.shrink2(CONTENT_PADDING))
+            .max_rect(strip.shrink2(crate::pane_header::CONTENT_PADDING))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    content
-        .label(
-            egui::RichText::new(active_bar.unwrap_or("time"))
-                .small()
-                .color(theme::TEXT_FAINT),
-        )
-        .on_hover_text("Click this chart, then use BARS in the toolbar to change its bars");
-    let interval_rect = if active_bar.is_none() {
+    bars(&mut content);
+    let interval_rect = if presets {
         for (label, preset_ms) in PRESETS {
             let selected = *interval_ms == preset_ms;
             let chip = content.selectable_label(selected, label);
@@ -289,7 +275,7 @@ mod tests {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let strip =
                     egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(width, HEIGHT_PX));
-                let header = draw(ui, strip, &mut interval_ms, 0, layout_name, None);
+                let header = draw(ui, strip, &mut interval_ms, 0, layout_name, true, |_| {});
                 seen = Some((header.interval(), header.name()));
             });
         });
@@ -378,7 +364,7 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let strip =
                         egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(600.0, HEIGHT_PX));
-                    changed = Some(draw(ui, strip, &mut interval_ms, 0, "", None).changed);
+                    changed = Some(draw(ui, strip, &mut interval_ms, 0, "", true, |_| {}).changed);
                 });
             });
         }
