@@ -11,7 +11,7 @@ use quantick_engine::Side;
 
 use crate::indicator_worker::SlotId;
 use crate::pane::PaneSide;
-use crate::surfaces::ChartSettingsTab::{Candles, Footprint};
+use crate::surfaces::ChartSettingsTab::Candles;
 use crate::tab::CanvasLayout;
 use crate::toolbar::{self, ToolbarAction};
 
@@ -79,19 +79,6 @@ impl QuantickApp {
         let candles_held = self.active_tab().session.venue_candles_held();
         let older_candles = self.active_tab().older_candles(capabilities);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
-        // One reading per lamp, taken through the call the semantic scene
-        // makes too, so the button and what an operator captures cannot
-        // disagree about a layer. Every lamp reports the *switch* rather than
-        // what the source lets through it — the rule `heatmap_lamp_on` names,
-        // now the whole group's.
-        let layers = toolbar::LayerToggle::ALL.map(|toggle| {
-            let (on, blocked) = self.active_tab().layer_toggle_state(
-                toggle.layer(),
-                &self.runtime.style,
-                capabilities,
-            );
-            toolbar::LayerToggleState { on, blocked }
-        });
         let dock_visible = self.dock.visible();
         let show_style = self.surfaces.chart_settings.is_open_on(Candles);
         // The History button names this tab's target and run.
@@ -151,7 +138,6 @@ impl QuantickApp {
             history_candles: candles_held,
             older_candles,
             capabilities,
-            layers,
             dock_visible,
             appearance_open: show_style,
             // The lock reaches the toolbar too: `blocked` carries it, so a
@@ -211,9 +197,7 @@ impl QuantickApp {
         self.active_tab_mut().set_layout(layout);
     }
 
-    /// One toolbar side effect. Layer toggles reuse the same code paths the
-    /// old checkboxes took, so provider gating and command acknowledgement
-    /// rules are unchanged.
+    /// One toolbar side effect.
     pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::OpenIndicatorPicker => self
@@ -240,16 +224,6 @@ impl QuantickApp {
                     .runtime_mut(active)
                     .run_session(Some(&self.config), act);
             }
-            ToolbarAction::SetLayer(toggle, shown) => {
-                let pane = if toggle == toolbar::LayerToggle::Footprint {
-                    self.focused_pane_mut()
-                } else {
-                    &mut self.active_tab_mut().flow_pane
-                };
-                pane.set_layer_visible(toggle.layer(), shown, &mut Default::default());
-            }
-            ToolbarAction::OpenFootprintSettings => self.layer_wiring().open_settings(Footprint),
-            ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.layer_wiring().toggle_settings(Candles),

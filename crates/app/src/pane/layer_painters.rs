@@ -418,8 +418,6 @@ impl ChartPane {
             .canvas(&mut crate::pane::render_registry::CanvasPass {
                 painter,
                 rect: chart_rect,
-                tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
-                tape_hovered: self.tape_switch.hovered(),
                 state: &self.layers,
                 facts: self.layer_facts(Some(chrome.capabilities)),
             });

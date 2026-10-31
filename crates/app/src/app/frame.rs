@@ -607,7 +607,9 @@ impl QuantickApp {
                 self.layout_adapter().draw_layout_strips(ui);
                 // The grid and the indicator state belong to the window, not
                 // to the pane whose menu switched them.
-                self.layer_wiring().apply_actions();
+                if let Some(tab) = self.layer_wiring().apply_actions() {
+                    self.dock.open_tab(tab);
+                }
                 canvas::draw_overlays(ui, area, self.active_tab(), stall, &mut answers);
             });
         scratch.canvas = answers;

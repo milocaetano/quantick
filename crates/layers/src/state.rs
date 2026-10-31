@@ -138,9 +138,6 @@ impl LayerState {
         if !Self::draws(layer, facts) {
             return Some(blocks::WRONG_PANE);
         }
-        if layer == ChartLayer::LiveStrip && facts.tape_only {
-            return Some(blocks::TAPE_ONLY_STRIP);
-        }
         if facts.tape_only
             && [
                 ChartLayer::Footprint,

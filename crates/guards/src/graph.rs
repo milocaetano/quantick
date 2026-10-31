@@ -74,6 +74,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "engine",
             "indicator-session",
             "indicators",
+            "layers",
             "orderbook",
             "orderflow",
             "workspace",

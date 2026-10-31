@@ -12,6 +12,7 @@ quantick-civil = { path = "../civil" }
 quantick-engine = { path = "../engine" }
 quantick-indicator-session = { path = "../indicator-session" }
 quantick-indicators = { path = "../indicators" }
+quantick-layers = { path = "../layers" }
 quantick-orderflow = { path = "../orderflow" }
 quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }

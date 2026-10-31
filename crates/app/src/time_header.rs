@@ -105,7 +105,8 @@ impl HeaderLayout {
 /// `layout_name` is the layout this pane shows, drawn at the strip's far end
 /// so a glance at a split says which chart carries which set.
 /// `bars` paints the pane's bars control at the head of the row; `presets` says
-/// whether the timeframe controls follow it.
+/// whether the timeframe controls follow it; `glyphs` paints what follows those.
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     ui: &mut egui::Ui,
     strip: egui::Rect,
@@ -114,6 +115,7 @@ pub fn draw(
     layout_name: &str,
     presets: bool,
     bars: impl FnOnce(&mut egui::Ui),
+    glyphs: impl FnOnce(&mut egui::Ui),
 ) -> HeaderLayout {
     let mut changed = false;
     #[cfg(test)]
@@ -164,6 +166,7 @@ pub fn draw(
     };
     #[cfg(not(test))]
     let _ = interval_rect;
+    glyphs(&mut content);
     // The name takes the room the interval controls left and never more:
     // right-aligned in a `left_to_right` row, a label wider than what remains
     // is drawn back over the chips beside it, so it is bounded and elided
@@ -266,7 +269,16 @@ mod tests {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let strip =
                     egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(width, HEIGHT_PX));
-                let header = draw(ui, strip, &mut interval_ms, 0, layout_name, true, |_| {});
+                let header = draw(
+                    ui,
+                    strip,
+                    &mut interval_ms,
+                    0,
+                    layout_name,
+                    true,
+                    |_| {},
+                    |_| {},
+                );
                 seen = Some((header.interval(), header.name()));
             });
         });
@@ -356,7 +368,9 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let strip =
                         egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(600.0, HEIGHT_PX));
-                    changed = Some(draw(ui, strip, &mut interval_ms, 0, "", true, |_| {}).changed);
+                    changed = Some(
+                        draw(ui, strip, &mut interval_ms, 0, "", true, |_| {}, |_| {}).changed,
+                    );
                 });
             });
         }

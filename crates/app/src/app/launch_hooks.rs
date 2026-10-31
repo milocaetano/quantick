@@ -229,9 +229,9 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
             pane.price_view.set_inverted(true);
         }
     }
-    // The tape switch in the canvas's top-right corner — the one control
-    // that decides whether there is a band at all. Same setter the chip
-    // calls, so a capture shows what a click shows. Anything but `on`/`off`
+    // The view button on the pane's header — the one control
+    // that decides whether there is a band at all. The switch that view
+    // reads, so a capture shows what a click shows. Anything but `on`/`off`
     // leaves the tape alone rather than guessing.
     if let Some(value) = env.var("QUANTICK_TAPE") {
         match value.trim() {

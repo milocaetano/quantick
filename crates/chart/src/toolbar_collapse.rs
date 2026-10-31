@@ -27,8 +27,6 @@ const W_TIME_PARAM: f32 = 365.0;
 const W_IMBALANCE_PARAM: f32 = 330.0;
 /// The `History: <target> ▾` split button.
 const W_HISTORY: f32 = 150.0;
-/// The LAYERS icon group (bubbles, heatmap, live strip, footprint).
-const W_LAYERS: f32 = 100.0;
 const W_INDICATORS: f32 = 110.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
@@ -81,7 +79,7 @@ impl CollapsePlan {
     /// other kinds' single drag.
     #[must_use]
     pub fn width(self, trade_width: f32, param_width: f32) -> f32 {
-        let mut width = W_SLACK + W_ICON + W_BARS + W_LAYERS + W_INDICATORS;
+        let mut width = W_SLACK + W_ICON + W_BARS + W_INDICATORS;
         width += if self.feed_full_name {
             W_SOURCE_FULL
         } else {
@@ -108,7 +106,7 @@ impl CollapsePlan {
 
 /// Decide what folds at `available` width, following the §6 collapse order.
 /// The last plan is accepted even when it still overflows — there is nothing
-/// left to fold, and the symbol and LAYERS are never candidates.
+/// left to fold, and the symbol is never a candidate.
 #[must_use]
 pub fn collapse_plan(available: f32, trade_width: f32, param_width: f32) -> CollapsePlan {
     let mut plan = CollapsePlan::FULL;

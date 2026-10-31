@@ -10,7 +10,7 @@
 //! toolbar never wraps: [`collapse_plan`] folds groups into the `⋯` overflow
 //! menu in the §6 order — LOOK → PANELS → HISTORY → TRADE → bar parameter
 //! merges into the kind combo → the feed name shrinks to its initial. The
-//! symbol and LAYERS never fold.
+//! symbol never folds.
 //!
 //! The widgets edit the app's state through [`ToolbarModel`]'s borrows;
 //! anything with a side effect beyond a field write comes back as a
@@ -19,9 +19,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::FeedCapabilities;
-use crate::dock::DockTab;
 use crate::state::SpecSelector;
 #[cfg(test)]
 use crate::state::{BarKind, BarSpec};
@@ -38,19 +36,8 @@ use quantick_session::{HistoryPagingOff, fmt_history_span};
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 
-// The LAYERS group's glyphs. Named here, and asserted as a set by
-// `the_layer_toggles_speak_one_visual_language`, because a test that spells
-// the literal itself proves nothing: revert the button and it still passes.
-// The two layers that own a dock tab take the tab's glyph instead of a
-// constant here, so a toggle and the panel behind it cannot drift apart.
-/// The Indicators button: a plotted line.
+/// The INDICATORS button's glyph: a plotted line.
 const LAYER_INDICATORS_ICON: &str = icons::CHART_LINE;
-/// The live strip: a sideways histogram, which is what it draws.
-const LAYER_STRIP_ICON: &str = icons::CHART_BAR_HORIZONTAL;
-/// The footprint: the grid of per-price cells the layer draws inside each
-/// candle. Same alphabet rule as its neighbours — the glyph is the shape on
-/// the chart, never a metaphor for it.
-const LAYER_FOOTPRINT_ICON: &str = icons::GRID_NINE;
 
 /// One TRADE button's own horizontal padding, in pixels.
 const TRADE_BUTTON_PAD_PX: f32 = 16.0;
@@ -141,13 +128,6 @@ pub struct ToolbarModel<'a> {
     pub older_candles: crate::tab::OlderCandles,
     /// What the active source's backend can do.
     pub capabilities: FeedCapabilities,
-    /// The LAYERS group's lamps, in [`LayerToggle::ALL`] order: whether
-    /// each layer is drawn, and what blocks it where something does. Both
-    /// come from `ChartPane::layer_blocked` / `layer_visible` through
-    /// [`crate::tab::Tab::layer_toggle_state`], which the semantic scene reads
-    /// too — so a button cannot tell the trader one thing and an assistant
-    /// another.
-    pub layers: [LayerToggleState; LayerToggle::COUNT],
     /// Whether the dock (strip included) is shown.
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
@@ -203,15 +183,6 @@ pub enum ToolbarAction {
     /// under two different capabilities. A feed can page one and not the
     /// other, so they are two actions rather than one with a mode.
     LoadOlderCandles,
-    /// Set one layer through the same operation as its chart menu.
-    SetLayer(LayerToggle, bool),
-    /// Open the footprint's settings window. Like every other right-click in
-    /// this group, looking is not enabling: it opens with the layer off too,
-    /// because configuring before switching on is a legitimate order of
-    /// operations.
-    OpenFootprintSettings,
-    /// Open a dock tab (a layer's settings; never toggles the layer).
-    OpenDockTab(DockTab),
     /// Show or hide the dock.
     ToggleDock,
     /// Open or close the appearance dialog.
@@ -314,8 +285,6 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                             actions.push(ToolbarAction::ToggleAppearance);
                         }
                     }
-                    ui.separator();
-                    draw_layers(ui, model, &mut actions);
                 });
             });
         });
@@ -700,160 +669,6 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
     }
 }
 
-/// One LAYERS lamp this frame: drawn or not, and what blocks it if anything.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LayerToggleState {
-    pub on: bool,
-    pub blocked: Option<LayerBlock>,
-}
-
-/// The visual layers the LAYERS group toggles, declared once.
-///
-/// The toolbar draws from this list and the semantic scene projects from it,
-/// so a layer cannot wear a button the trader sees and be missing from what an
-/// operator can read, nor the reverse. A hand-kept list beside this one is the
-/// drift this type exists to prevent.
-///
-/// The INDICATORS menu is deliberately not a member: it opens a menu rather
-/// than toggling a layer, and folding it in would give the group two shapes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayerToggle {
-    Bubbles,
-    Heatmap,
-    Footprint,
-    LiveStrip,
-}
-
-impl LayerToggle {
-    /// Every toggle in *call* order, which the right-to-left layout turns
-    /// into right-to-left screen order: the trader reads them the other way
-    /// round. Anything that wants reading order reverses this — the scene
-    /// does, and says so — because the draw order is what the layout needs
-    /// and reordering here would move the buttons under the trader's hand.
-    pub const ALL: [Self; Self::COUNT] = [
-        Self::Bubbles,
-        Self::Heatmap,
-        Self::Footprint,
-        Self::LiveStrip,
-    ];
-
-    /// How many toggles the group has. Named so the model's array, the list
-    /// and any fixture widen together when a layer earns a button.
-    pub const COUNT: usize = 4;
-
-    /// The canvas layer this button switches.
-    ///
-    /// A toolbar button is a shortcut into the pane's own layer menu, never a
-    /// second switch beside it: the identifier, the label and the state all
-    /// come from [`ChartLayer`], which already resolves each layer to the one
-    /// field that owns it. Restating any of them here is how a button and a
-    /// menu start disagreeing about a pixel.
-    #[must_use]
-    pub(crate) fn layer(self) -> ChartLayer {
-        match self {
-            Self::Bubbles => ChartLayer::Bubbles,
-            Self::Heatmap => ChartLayer::Heatmap,
-            Self::Footprint => ChartLayer::Footprint,
-            Self::LiveStrip => ChartLayer::LiveStrip,
-        }
-    }
-
-    /// The glyph. Where a dock tab configures the layer it lends its own, so
-    /// the toggle and the panel behind it cannot wear two different marks.
-    #[must_use]
-    fn icon(self) -> &'static str {
-        match self {
-            Self::Bubbles => DockTab::Bubbles.icon(),
-            Self::Heatmap => DockTab::L2.icon(),
-            Self::Footprint => LAYER_FOOTPRINT_ICON,
-            Self::LiveStrip => LAYER_STRIP_ICON,
-        }
-    }
-
-    #[must_use]
-    fn accent(self) -> egui::Color32 {
-        match self {
-            Self::Bubbles => theme::BUY,
-            Self::Heatmap | Self::LiveStrip => theme::ACCENT,
-            Self::Footprint => theme::POC,
-        }
-    }
-
-    #[must_use]
-    fn hover_text(self) -> &'static str {
-        match self {
-            Self::Bubbles => {
-                "aggression bubbles (Ctrl+B): confirmed executions from the trade stream — \
-                 right-click for settings"
-            }
-            Self::Heatmap => {
-                "L2 heatmap: show the recorded depth map — recording never stops, so hiding it \
-                 loses nothing. Right-click for settings"
-            }
-            Self::Footprint => {
-                "candle footprint (Ctrl+F): the buy/sell split per price inside each bar — detail follows \
-                 the zoom. Right-click for style and thresholds"
-            }
-            Self::LiveStrip => {
-                "live strip: the book's resting depth and the forming bar's aggression, \
-                 beside the price axis — right-click for settings"
-            }
-        }
-    }
-
-    #[must_use]
-    fn toggle_action(self, on: bool) -> ToolbarAction {
-        ToolbarAction::SetLayer(self, on)
-    }
-
-    /// Where a right-click goes: the panel that configures the layer. Looking
-    /// is not enabling, so this never toggles on the way.
-    #[must_use]
-    fn settings_action(self) -> ToolbarAction {
-        match self {
-            Self::Bubbles => ToolbarAction::OpenDockTab(DockTab::Bubbles),
-            // The strip reads the same book the depth map draws, so the same
-            // tab configures both.
-            Self::Heatmap | Self::LiveStrip => ToolbarAction::OpenDockTab(DockTab::L2),
-            Self::Footprint => ToolbarAction::OpenFootprintSettings,
-        }
-    }
-}
-
-/// LAYERS: one icon toggle per visual layer. Left-click toggles the layer;
-/// right-click opens its dock tab — looking is not enabling. Drawn inside the
-/// right-to-left layout, so the call order is the reverse of what is seen.
-///
-/// One alphabet for the group: **every glyph is the shape its layer draws on
-/// the chart**, never a metaphor for it. A line for the indicators, circles
-/// for the prints, the book's stacked rows for the depth map, a sideways
-/// histogram for the strip. The metaphors that used to sit here (a flame for
-/// the heatmap, a brick wall for the strip) had nothing to do with each other
-/// or with what the trader sees — and the depth map, which *is* the bid/ask
-/// lists, was the one that read least like itself.
-fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
-    // Zipped rather than indexed: the array is filled in `ALL` order, so
-    // walking the two together is what makes that the only ordering. A second
-    // hand-written position map beside `ALL` is how a lamp ends up reporting
-    // the layer next to it.
-    for (layer, state) in LayerToggle::ALL.into_iter().zip(model.layers) {
-        let on = state.on;
-        let response = IconButton::new(layer.icon(), TOOLBAR_ICON)
-            .active(on)
-            .accent(layer.accent())
-            .enabled(state.blocked.is_none())
-            .hover_text(layer.hover_text())
-            .disabled_explanation(state.blocked.map_or("", |block| block.explanation))
-            .show(ui);
-        if response.clicked() {
-            actions.push(layer.toggle_action(!on));
-        }
-        if response.secondary_clicked() {
-            actions.push(layer.settings_action());
-        }
-    }
-}
-
 /// The `⋯` menu holding every folded group, in a fixed order so muscle
 /// memory survives resizes.
 fn draw_overflow(
@@ -954,41 +769,7 @@ fn draw_overflow(
 #[cfg(test)]
 mod tests {
 
-    fn layer_states(on: [bool; LayerToggle::COUNT]) -> [LayerToggleState; LayerToggle::COUNT] {
-        on.map(|on| LayerToggleState { on, blocked: None })
-    }
-
     use super::*;
-
-    /// The LAYERS group speaks one visual language: each glyph is the shape
-    /// its layer draws, and a layer that also has a dock tab wears the tab's
-    /// glyph rather than a second one of its own. The depth map in particular
-    /// has to read as the book — the stacked bid/ask lists — which is what
-    /// the flame it used to wear never did.
-    #[test]
-    fn the_layer_toggles_speak_one_visual_language() {
-        assert_eq!(DockTab::L2.icon(), icons::ROWS, "the book is its own rows");
-        assert_eq!(DockTab::Bubbles.icon(), icons::CIRCLES_THREE);
-
-        // Every glyph in the group is distinct — two layers wearing one mark
-        // would read as one feature — and none of them is a metaphor the
-        // chart never draws.
-        // Every entry comes from what the buttons actually use: revert one of
-        // them and this fails, which a test spelling its own literals cannot.
-        let group = [
-            LAYER_INDICATORS_ICON,   // indicators: a plotted line
-            DockTab::Bubbles.icon(), // prints: circles
-            DockTab::L2.icon(),      // depth map: the book's rows
-            LAYER_STRIP_ICON,        // live strip: a sideways histogram
-        ];
-        for (index, glyph) in group.iter().enumerate() {
-            assert!(
-                !group[index + 1..].contains(glyph),
-                "two layer toggles wear the same glyph"
-            );
-            assert!(![icons::FIRE, icons::WALL, icons::STACK].contains(glyph));
-        }
-    }
 
     /// Opening a position never changes what folds: at every window width,
     /// flat or open, the real toolbar paints BUY and SELL on the same
@@ -1063,7 +844,6 @@ mod tests {
                             ohlcv_daily_generation: 0,
                             ohlcv_aggressor_split: false,
                         },
-                        layers: layer_states([true, false, false, false]),
                         dock_visible: true,
                         appearance_open: false,
                         paper: flat_trade(true),
@@ -1134,7 +914,6 @@ mod tests {
                         ohlcv_daily_generation: 0,
                         ohlcv_aggressor_split: false,
                     },
-                    layers: layer_states([false, false, false, false]),
                     dock_visible: true,
                     appearance_open: false,
                     paper: flat_trade(true),
@@ -1215,7 +994,6 @@ mod tests {
                             ohlcv_daily_generation: 0,
                             ohlcv_aggressor_split: false,
                         },
-                        layers: layer_states([false, false, false, false]),
                         dock_visible: true,
                         appearance_open: false,
                         // Not yet ready: the TRADE pair must lay out in its
@@ -1326,7 +1104,6 @@ mod tests {
                         ohlcv_daily_generation: 0,
                         ohlcv_aggressor_split: false,
                     },
-                    layers: layer_states([false, false, false, false]),
                     dock_visible: true,
                     appearance_open: false,
                     paper: paper.clone(),

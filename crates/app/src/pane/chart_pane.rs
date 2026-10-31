@@ -99,9 +99,6 @@ pub struct ChartPane {
     pub(super) price_band_label: std::sync::Arc<str>,
     // Pointer position over the plot this frame, for the crosshair.
     pub hover_pos: Option<egui::Pos2>,
-    /// The tape switch in the canvas's top-right corner — see
-    /// [`TapeSwitch`].
-    pub tape_switch: TapeSwitch,
 
     /// Venue candles in front of the trade-derived series, folded to this pane's interval.
     ///
@@ -336,7 +333,6 @@ impl ChartPane {
             price_view: PriceView::new(),
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             hover_pos: None,
-            tape_switch: TapeSwitch::default(),
             history_prefix: quantick_chart::venue_history::VenueHistory::default(),
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
@@ -603,31 +599,6 @@ impl ChartPane {
         if !tool_armed {
             self.hover_pos = chart.hover_pos();
         }
-        // The tape switch, in the canvas's top-right corner. Registered after the chart body so the
-        // chip sits on top of it, and the *only* way back once the tape is off: with no band there
-        // is no tape to right-click, so a menu-only switch would be a one-way door.
-        let tape_only = self.tape_modes().0;
-        if self.orderflow.is_some() {
-            let on = self.layer_visible(ChartLayer::TapeChart, chrome.style);
-            let clicked = self.tape_switch.handle(
-                ui,
-                areas.chart,
-                self.interaction_id("tape_switch"),
-                on,
-                tape_only,
-            );
-            if self.tape_switch.hovered() {
-                // The chip is chrome on top of the canvas. A crosshair chasing
-                // the pointer underneath it would say the chart is being
-                // hovered while the pointer is reading a button.
-                self.hover_pos = None;
-            }
-            if clicked {
-                self.set_layer_visible(ChartLayer::TapeChart, !on, chrome.layers);
-            }
-        } else {
-            self.tape_switch.absent();
-        }
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
@@ -672,7 +643,6 @@ impl ChartPane {
             projection: &self.drawing_projection(),
             drawings: &self.drawings,
             layer_visible: paper_layer_visible,
-            tape_switch: super::tape_switch_rect(areas.chart, tape_only),
             lane_handle: super::lane_rail::lane_handle(self, areas.chart),
         }
         .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);

@@ -453,13 +453,29 @@ impl OrderflowView {
 
     /// Put the tape on the canvas, or take it off. Off, the lane reserves no width and asks for no
     /// projection; its two layer switches stay as they were, so switching it back on returns the
-    /// same tape, opened if it was folded ([`quantick_orderflow::LiveLaneStyle::set_enabled`]).
+    /// same tape.
     pub fn set_lane_enabled(&mut self, enabled: bool) {
         if self.config.live_lane.enabled == enabled {
             return;
         }
         let before = self.config.clone();
         self.config.live_lane.set_enabled(enabled);
+        self.commit_lane_switch(before);
+    }
+
+    /// Show `view`, from any view, through the one write every door shares
+    /// (the header's button, its key, a divider let go, the named call).
+    /// Answers whether it changed.
+    pub fn set_lane_view(&mut self, view: quantick_orderflow::LaneView) -> bool {
+        let before = self.config.clone();
+        let changed = self.config.live_lane.set_view(view);
+        if changed {
+            self.commit_lane_switch(before);
+        }
+        changed
+    }
+
+    fn commit_lane_switch(&mut self, before: HeatmapConfig) {
         if !self.config.depth_visible_anywhere() {
             // Drop the local frame immediately; the worker clears its own.
             self.published.frame = None;
@@ -641,24 +657,32 @@ impl OrderflowView {
 
     /// Widen or narrow the lane by a pixel drag on its divider. Dragging left
     /// (negative `delta_px`) gives the tape more room, at the expense of the
-    /// history beside it; near either edge that side folds
-    /// ([`HeatmapConfig::drag_lane_divider`]).
+    /// history beside it. The width is navigation; only letting go near an edge
+    /// is a setting ([`Self::finish_lane_drag`]).
     pub fn resize_live_lane(&mut self, delta_px: f32, chart_width: f32) {
         let before = self.config.clone();
-        let step = self
+        if self
             .config
-            .drag_lane_divider(&mut self.lane_drag, delta_px, chart_width);
-        // The width is navigation; a fold is a setting the asset keeps.
-        match step {
-            Some(true) => self.commit_config_changes(before),
-            Some(false) => self.apply_config(before),
-            None => false,
-        };
+            .drag_lane_divider(&mut self.lane_drag, delta_px, chart_width)
+        {
+            self.apply_config(before);
+        }
     }
 
-    /// The divider let go, or taken again: the next drag starts afresh.
-    pub fn release_lane_drag(&mut self) {
+    /// The divider taken again: the next drag starts afresh.
+    pub fn forget_lane_drag(&mut self) {
         self.lane_drag = None;
+    }
+
+    /// The divider let go: near an edge that side leaves the pane
+    /// ([`HeatmapConfig::release_lane_divider`]).
+    pub fn finish_lane_drag(&mut self) {
+        let before = self.config.clone();
+        if self.config.release_lane_divider(&mut self.lane_drag) {
+            self.commit_lane_switch(before);
+        } else if self.config.live_lane.width_share != before.live_lane.width_share {
+            self.apply_config(before);
+        }
     }
 
     /// Zoom the lane's time window by a multiplicative factor: `> 1` shows less market time in the
@@ -1186,7 +1210,7 @@ mod tests {
     use super::*;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
     use quantick_orderflow::{
-        BubbleSizeReference, BubbleStyle, ConsumptionMark, LaneFold, MAX_LIVE_LANE_WINDOW_MS,
+        BubbleSizeReference, BubbleStyle, ConsumptionMark, MAX_LIVE_LANE_WINDOW_MS,
         MAX_LIVE_LANE_ZOOM, MIN_LIVE_LANE_ZOOM,
     };
 
@@ -1272,6 +1296,39 @@ mod tests {
 
     /// The tape's own switch: one click takes the band off the canvas, another
     /// puts back the tape that was taken away.
+    /// Dragging the divider is the width slider by another route; let go past
+    /// either edge's threshold, that side leaves the pane and the width returns.
+    #[test]
+    fn dragging_the_divider_resizes_the_lane_and_a_release_lands_on_a_view() {
+        use quantick_orderflow::LaneView;
+        let mut view = OrderflowView::new("BTCUSDT");
+        let chart = 1_000.0;
+        let before = view.config.live_lane.resolved_width_px(chart);
+
+        // Drag left: a wider tape, pixel for pixel.
+        view.resize_live_lane(-60.0, chart);
+        assert!((view.config.live_lane.resolved_width_px(chart) - (before + 60.0)).abs() < 0.01);
+        view.finish_lane_drag();
+        assert_eq!(view.config.live_lane.view(), LaneView::Beside);
+        let share = view.config.live_lane.width_share;
+
+        view.resize_live_lane(-5_000.0, chart);
+        assert_eq!(
+            view.config.live_lane.view(),
+            LaneView::Beside,
+            "only a release"
+        );
+        view.finish_lane_drag();
+        assert_eq!(view.config.live_lane.view(), LaneView::TapeOnly);
+        assert_eq!(view.config.live_lane.width_share, share);
+
+        assert!(view.set_lane_view(LaneView::Beside));
+        view.resize_live_lane(5_000.0, chart);
+        view.finish_lane_drag();
+        assert_eq!(view.config.live_lane.view(), LaneView::CandlesOnly);
+        assert_eq!(view.config.live_lane.width_share, share);
+    }
+
     #[test]
     fn the_tape_switch_takes_the_band_away_and_gives_it_back_unchanged() {
         let mut view = OrderflowView::new("BTCUSDT");
@@ -1552,7 +1609,6 @@ mod tests {
                 forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
-                fold: LaneFold::Open,
             },
         });
         view.look = BubbleLook::open(
@@ -1896,43 +1952,6 @@ mod tests {
                 "averaging {averaging}: the cursor reads the strip the painter drew"
             );
         }
-    }
-
-    /// Dragging the divider is the width slider by another route, and past
-    /// either edge's threshold it folds that side instead of squeezing it.
-    #[test]
-    fn dragging_the_divider_resizes_the_lane_and_folds_at_the_edges() {
-        let mut view = OrderflowView::new("BTCUSDT");
-        let chart = 1_000.0;
-        let before = view.config.live_lane.resolved_width_px(chart);
-
-        // Drag left → a wider tape, pixel for pixel.
-        view.resize_live_lane(-60.0, chart);
-        assert!((view.config.live_lane.resolved_width_px(chart) - (before + 60.0)).abs() < 0.01);
-        // Drag right → a narrower one.
-        view.resize_live_lane(60.0, chart);
-        assert!((view.config.live_lane.resolved_width_px(chart) - before).abs() < 0.01);
-
-        // Past either edge a side folds, and the share it opens at is kept.
-        let share = view.config.live_lane.width_share;
-        view.resize_live_lane(-10_000.0, chart);
-        assert_eq!(view.config.live_lane.fold, LaneFold::Candles);
-        view.resize_live_lane(10_000.0, chart);
-        assert_eq!(
-            view.config.live_lane.fold,
-            LaneFold::Open,
-            "back under the hand"
-        );
-        view.resize_live_lane(10_000.0, chart);
-        assert_eq!(view.config.live_lane.fold, LaneFold::Tape);
-        assert_eq!(view.config.live_lane.width_share, share);
-        view.release_lane_drag();
-
-        // A degenerate chart or a lost pointer changes nothing at all.
-        let steady = view.config.live_lane.clone();
-        view.resize_live_lane(f32::NAN, chart);
-        view.resize_live_lane(-20.0, 0.0);
-        assert_eq!(view.config.live_lane, steady);
     }
 
     /// The tape's own zoom, and the bounds that keep it a tape.

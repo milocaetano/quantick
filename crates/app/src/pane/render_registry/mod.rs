@@ -38,8 +38,6 @@ pub(super) struct FootprintPass<'a> {
 pub(super) struct CanvasPass<'a> {
     pub painter: &'a egui::Painter,
     pub rect: egui::Rect,
-    pub tape_on: Option<bool>,
-    pub tape_hovered: bool,
     pub state: &'a quantick_layers::LayerState,
     pub facts: quantick_layers::LayerFacts,
 }
@@ -174,22 +172,6 @@ const PACKAGES: &[Package] = &[
         })],
     },
     candle_aggression::PACKAGE,
-    Package {
-        layers: &[],
-        contributions: &[Contribution::Canvas(|pass| {
-            if pass.state.registry().contains(ChartLayer::TapeChart)
-                && let Some(on) = pass.tape_on
-            {
-                super::tape_switch::paint_switch(
-                    pass.painter,
-                    pass.rect,
-                    pass.visible(ChartLayer::TapeChart, on),
-                    pass.tape_hovered,
-                    pass.facts.tape_only,
-                );
-            }
-        })],
-    },
 ];
 pub(super) fn standard() -> &'static RenderRegistry {
     static REGISTRY: std::sync::OnceLock<RenderRegistry> = std::sync::OnceLock::new();

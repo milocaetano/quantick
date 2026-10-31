@@ -130,30 +130,6 @@ fn tape_only_aims_across_the_whole_plot() {
     assert_eq!(the_order(&app), (quantick_engine::Side::Buy, price));
 }
 
-/// The tape chip keeps its press with the buy key down: Shift on it puts the
-/// tape away rather than resting an order under it.
-#[test]
-fn the_tape_chip_keeps_its_press_with_shift_down() {
-    let ctx = egui::Context::default();
-    let mut app = tape_app(&ctx, TapeMode::Chart);
-    let chart = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_area
-        .expect("the pane laid out");
-    let chip = crate::pane::tape_switch_rect(chart, false);
-    click_chart_with(&mut app, &ctx, chip.center(), egui::Modifiers::SHIFT);
-    assert!(
-        app.active_tab().paper.working_orders().is_empty(),
-        "the chip is chrome, not a price"
-    );
-    assert!(
-        !layer_on(&app, ChartLayer::TapeChart),
-        "the press put the tape away"
-    );
-}
-
 /// The lane's divider keeps its drag with the buy key down: Shift on it
 /// rests nothing, on either side of the hairline.
 #[test]
@@ -239,17 +215,6 @@ fn tape_only_cancels_from_the_tag_inside_the_plot() {
     );
 }
 
-/// The tape chip, in the canvas's top-right corner.
-fn tape_chip(app: &QuantickApp) -> egui::Rect {
-    let chart = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_area
-        .expect("the pane laid out");
-    crate::pane::tape_switch_rect(chart, false)
-}
-
 /// The lane divider's x on the flow pane.
 fn divider_x(app: &QuantickApp) -> f32 {
     app.active_tab()
@@ -264,73 +229,6 @@ fn arm_a_sell(app: &mut QuantickApp) {
     app.active_tab_mut()
         .paper
         .arm_for_tests(quantick_engine::Side::Sell, quantick_sim::EntryKind::Limit);
-}
-
-/// A sell resting on the chip's row, rested with Alt on the bare tape left
-/// of the chip: its line runs under the chip. Answers its price.
-fn rest_a_sell_under_the_chip(app: &mut QuantickApp, ctx: &egui::Context) -> Decimal {
-    let at = egui::pos2(divider_x(app) + 20.0, tape_chip(app).center().y);
-    click_chart_with(app, ctx, at, egui::Modifiers::ALT);
-    let (side, price) = the_order(app);
-    assert_eq!(side, quantick_engine::Side::Sell);
-    price
-}
-
-/// With a ticket armed, a plain click on the tape chip is the chip's: it
-/// puts the tape away and rests nothing.
-#[test]
-fn an_armed_click_on_the_tape_chip_only_toggles_the_tape() {
-    let ctx = egui::Context::default();
-    let mut app = tape_app(&ctx, TapeMode::Chart);
-    arm_a_sell(&mut app);
-    let chip = tape_chip(&app).center();
-    click_chart_with(&mut app, &ctx, chip, egui::Modifiers::NONE);
-    assert!(
-        app.active_tab().paper.working_orders().is_empty(),
-        "the chip is chrome, not a price"
-    );
-    assert!(
-        !layer_on(&app, ChartLayer::TapeChart),
-        "the click put the tape away"
-    );
-}
-
-/// On the chip an order line under it shows no drag cursor and takes no
-/// press: the chip keeps its hand and its click, and the order stays put.
-#[test]
-fn the_tape_chip_keeps_its_cursor_and_press_over_an_order_line() {
-    let ctx = egui::Context::default();
-    let mut app = tape_app(&ctx, TapeMode::Chart);
-    let price = rest_a_sell_under_the_chip(&mut app, &ctx);
-    let chip = tape_chip(&app).center();
-    let line_y = price_y(
-        &app,
-        PaneSide::Flow,
-        rust_decimal::prelude::ToPrimitive::to_f64(&price).expect("a price"),
-    );
-    assert!(
-        (line_y - chip.y).abs() < 5.0,
-        "the line runs under the chip"
-    );
-
-    let hover = move_chart_with(&mut app, &ctx, chip, egui::Modifiers::NONE);
-    assert_eq!(
-        hover.platform_output.cursor_icon,
-        egui::CursorIcon::PointingHand,
-        "the chip's hand, not the line's drag cursor"
-    );
-
-    run_frame_with_events(&mut app, &ctx, vec![pointer_button(chip, true)]);
-    assert!(
-        !app.active_tab().paper.gesture_active(),
-        "the press on the chip grabbed the line"
-    );
-    run_frame_with_events(&mut app, &ctx, vec![pointer_button(chip, false)]);
-    assert_eq!(the_order(&app).1, price, "the order did not move");
-    assert!(
-        !layer_on(&app, ChartLayer::TapeChart),
-        "the click put the tape away"
-    );
 }
 
 /// The divider's lane-side half resizes the lane under an armed ticket and
@@ -375,42 +273,5 @@ fn the_lane_divider_resizes_under_an_armed_ticket_and_over_a_line() {
             (divider_x(&app) - before).abs() > 1.0,
             "armed {armed}: the drag resized the lane"
         );
-    }
-}
-
-/// A folded side's rail is chrome like the divider: Shift on it rests
-/// nothing. Folded candles leave the aim the tape, and a folded tape leaves
-/// it the candles, each resting at the pointer's price.
-#[test]
-fn a_fold_rail_is_chrome_and_the_open_side_still_aims() {
-    use quantick_orderflow::{LANE_FOLD_RAIL_PX, LaneFold};
-    for fold in [LaneFold::Candles, LaneFold::Tape] {
-        let ctx = egui::Context::default();
-        let mut app = tape_app(&ctx, TapeMode::Chart);
-        app.active_tab_mut()
-            .tape_mut()
-            .edit_config(|config| _ = config.live_lane.set_fold(fold));
-        run_frame(&mut app, &ctx);
-        let chart = app
-            .active_tab()
-            .flow_pane
-            .frame
-            .chart_area
-            .expect("laid out");
-        let rail = match fold {
-            LaneFold::Candles => chart.left() + LANE_FOLD_RAIL_PX / 2.0,
-            _ => chart.right() - LANE_FOLD_RAIL_PX / 2.0,
-        };
-        let on_rail = at_x(&app, rail);
-        click_chart_with(&mut app, &ctx, on_rail, egui::Modifiers::SHIFT);
-        assert!(
-            app.active_tab().paper.working_orders().is_empty(),
-            "{fold:?}: the rail is chrome, not a price"
-        );
-        let at = at_x(&app, chart.center().x);
-        let price = pointer_price(&app, at);
-        click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
-        let order = (quantick_engine::Side::Buy, price);
-        assert_eq!(the_order(&app), order, "{fold:?}: the open side aims");
     }
 }
