@@ -255,6 +255,31 @@ recalibration: the orderflow ceiling, selection, representatives, host,
 toolchain, jobs, profile hash and protocol hash are unchanged, and the PR's
 exact-final-head run must pass every one.
 
+#### Drawings over its ceiling on the slower group (2026-10-31)
+
+With the ceiling at 1.499 s, the drawings loop failed in three retained series:
+[`b97859d2` attempts 1 and 2](https://github.com/milocaetano/quantick/actions/runs/41157966840)
+(1.588080493 s and 1.560631575 s, 5/5 samples over in each) and
+[`768bf629`](https://github.com/milocaetano/quantick/actions/runs/41160361815)
+(1.514420580 s, 1/5 over). All 310 tests passed in each. Merged main
+[`22e26e93`](https://github.com/milocaetano/quantick/actions/runs/41164792721)
+then passed at 1.141512992 s; between `768bf629` and it, `crates/drawings`
+and `tools/edit_loop` are identical and `Cargo.lock` differs by one line. The
+no-touch control (0.17-0.19 s against 0.11 s) and the unchanged orderflow test
+run (34-36 s against 22 s) move with it, so these are the two speed groups
+above, not a heavier crate. No ceiling changed.
+
+A [same-VM comparison](https://github.com/milocaetano/quantick/actions/runs/41166518033)
+on two hosted VMs, restoring main's target with 20 ABBA rounds each, measured
+what a touched `cargo test --no-run` and `cargo test -p quantick-drawings` do.
+The crate has no doctests, but with `doctest` on Cargo compiles the library
+twice, as an rlib beside the test harness, and starts rustdoc. `doctest = false`
+removes both. Median loop 1.066 s to 0.930 s (12.8%) and 1.332 s to 1.171 s
+(12.1%); it won all 40 pairs. Of the harness rustc call, 0.73-0.91 s on these
+VMs, the linker took 0.10-0.12 s and dependency-graph serialization 0.17-0.21 s;
+dependency metadata did not reach the top passes. A doctest added to this crate
+would not run until the setting is removed.
+
 #### Reviewed 2026-10-06 calibration
 
 The [reference series](https://github.com/milocaetano/quantick/actions/runs/37407876085)
