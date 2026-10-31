@@ -264,10 +264,21 @@ impl Rig {
         }
     }
 
-    /// Frames with nothing new until nothing is parked, then both barriers.
+    /// Frames with nothing new until nothing is parked or queued, then both
+    /// barriers.
+    ///
+    /// Queued too, not only parked: the barriers below go through the same
+    /// bounded channel as every other command, and a channel still exactly
+    /// full when a barrier is offered parks it — one more `deferred` after the
+    /// caller took its snapshot. That read as "counts are not cumulative" on a
+    /// loaded CI host whose worker had not yet taken its next batch.
     pub(super) fn settle(&mut self) {
+        let drained = |rig: &Self| {
+            let (indicator, book) = (rig.indicator_counts(), rig.book_counts());
+            indicator.queued + indicator.parked + book.queued + book.parked == 0
+        };
         let deadline = Instant::now() + Duration::from_secs(30);
-        while self.indicator_counts().parked + self.book_counts().parked > 0 {
+        while !drained(self) {
             assert!(Instant::now() < deadline, "parked commands never drained");
             std::thread::sleep(Duration::from_millis(1));
             self.read();
