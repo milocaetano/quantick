@@ -239,10 +239,18 @@ fn time_push_holds_to_budget() {
 #[test]
 fn imbalance_push_holds_to_budget() {
     holds_to_budget(IMBALANCE_TRADES, Box::new(ImbalanceBarBuilder::new(100)));
+}
+
+#[test]
+fn imbalance_volume_push_holds_to_budget() {
     holds_to_budget(
         IMBALANCE_VOLUME,
         Box::new(ImbalanceBarBuilder::with_unit(100, ImbalanceUnit::Volume)),
     );
+}
+
+#[test]
+fn imbalance_dollar_push_holds_to_budget() {
     holds_to_budget(
         IMBALANCE_DOLLAR,
         Box::new(ImbalanceBarBuilder::with_unit(100, ImbalanceUnit::Dollar)),
