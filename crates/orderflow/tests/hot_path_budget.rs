@@ -5,7 +5,7 @@
 //! | `orderflow.trade.book` | print | `BookEngine::record_trade` |
 //! | `orderflow.depth.book` | depth update | `BookEngine::handle_depth_event_at` |
 //! | `orderflow.frame.book` | frame | `BookEngine::project_at` over the newest 120 bars, heatmap and bubbles on |
-//! | `orderflow.trade.flow` | print | one live FLOW frame of five prints: `FlowSession::project`, its capture and an inline worker's append and publication, divided by the prints |
+//! | `orderflow.trade.flow.regions` / `.spheres` | print | one live FLOW frame of five prints: `FlowSession::project`, its capture and an inline worker's append and publication, divided by the prints; regional FLOW and typed-reference tick spheres |
 //!
 //! The prints are the recorded WIN slice under `tests/fixtures`, replayed in
 //! laps; the depth is a twenty-level book a side whose updates move one bid
@@ -94,16 +94,26 @@ const FRAME_BOOK: Budget = Budget {
     bytes: 2.5 * MIB,
     copy_bytes: 900.0 * KIB,
 };
-/// A live FLOW frame, per print. Calibrated at `3f9380bd`: 1,161.1
+/// A live regional FLOW frame, per print. Calibrated at `3f9380bd`: 1,161.1
 /// allocations, 813,776 bytes and 991,557 copy bytes per print — about 4 MB
-/// allocated per five-print frame over a 6,000-print window, almost all in
-/// the worker's `project_if_due`. Recorded as today's cost, not judged here.
-const TRADE_FLOW: Budget = Budget {
-    path: "orderflow.trade.flow",
+/// allocated per five-print frame over a 6,000-print window: an untyped
+/// reference is projected whole every frame, the worker's memo is for typed
+/// ones. Recorded as today's cost, not judged here.
+const TRADE_FLOW_REGIONS: Budget = Budget {
+    path: "orderflow.trade.flow.regions",
     unit: "print",
     allocs: 2_000.0,
     bytes: 1.5 * MIB,
     copy_bytes: 1.75 * MIB,
+};
+/// A live tick-sphere FLOW frame, per print. Calibrated at `d91a4c29`: 265.7
+/// allocations, 102,727 bytes and 159,018 copy bytes per print.
+const TRADE_FLOW_SPHERES: Budget = Budget {
+    path: "orderflow.trade.flow.spheres",
+    unit: "print",
+    allocs: 500.0,
+    bytes: 192.0 * KIB,
+    copy_bytes: 300.0 * KIB,
 };
 
 // ---------------------------------------------------------------------------
@@ -463,7 +473,7 @@ impl FlowRunner for InlineWorker {
 /// built as `quantick_chart::flow_execution` builds it for a chart whose
 /// every print is accepted into the bar its ordinal falls in: slot and
 /// accepted ordinal within the slot, as `TickMembership::locate` answers.
-fn flow_frame(session: &mut FlowSession<InlineWorker>, tape: &[Trade]) {
+fn flow_frame(session: &mut FlowSession<InlineWorker>, tape: &[Trade], look: FlowLook) {
     const EPOCH: u64 = 1;
     let total_slots = tape.len().div_ceil(TICKS_PER_BAR);
     let slots = total_slots.saturating_sub(VISIBLE_BARS)..total_slots;
@@ -487,8 +497,8 @@ fn flow_frame(session: &mut FlowSession<InlineWorker>, tape: &[Trade]) {
             width_px: slots.len() as f32 * PX_PER_BAR,
             height_px: PANE_HEIGHT_PX,
             prices: PriceWindow::from_f64_range(PRICE_RANGE).expect("a valid axis"),
-            reference: FlowReference::VisibleRegions,
-            radius_limit: FLOW_RADIUS_LIMIT_PX,
+            reference: look.reference,
+            radius_limit: look.radius_limit,
             merge_support_radius: FLOW_MERGE_SUPPORT_RADIUS_PX,
             exclude_opening: false,
         },
@@ -509,8 +519,47 @@ fn flow_frame(session: &mut FlowSession<InlineWorker>, tape: &[Trade]) {
     });
 }
 
+/// How a pane sizes its FLOW spheres: what the request carries.
+#[derive(Clone, Copy)]
+struct FlowLook {
+    reference: FlowReference,
+    radius_limit: f32,
+}
+
+/// Regional FLOW: spheres against the visible regions' own maximum.
+const REGIONS: FlowLook = FlowLook {
+    reference: FlowReference::VisibleRegions,
+    radius_limit: FLOW_RADIUS_LIMIT_PX,
+};
+
+/// Tick spheres against a typed reference, as the BTC spheres look sizes
+/// them: the projection the worker keeps and refinishes per region window.
+fn spheres() -> FlowLook {
+    let style = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 10.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+        viewport_scale: None,
+    };
+    FlowLook {
+        reference: FlowReference::from(style),
+        radius_limit: style.bubbles().max_radius,
+    }
+}
+
 #[test]
-fn flow_live_frames_hold_to_budget() {
+fn flow_regions_live_frames_hold_to_budget() {
+    flow_live_frames_hold_to_budget(TRADE_FLOW_REGIONS, REGIONS);
+}
+
+#[test]
+fn flow_spheres_live_frames_hold_to_budget() {
+    flow_live_frames_hold_to_budget(TRADE_FLOW_SPHERES, spheres());
+}
+
+fn flow_live_frames_hold_to_budget(budget: Budget, look: FlowLook) {
     let mut source = Tape::new();
     let mut tape: Vec<Trade> = (0..FLOW_HISTORY_PRINTS).map(|_| source.next()).collect();
     let mut session = FlowSession::<InlineWorker>::default();
@@ -521,7 +570,7 @@ fn flow_live_frames_hold_to_budget() {
         for _ in 0..PRINTS_PER_FRAME {
             tape.push(source.next());
         }
-        let ((), spent) = counted(|| flow_frame(&mut session, &tape));
+        let ((), spent) = counted(|| flow_frame(&mut session, &tape, look));
         if frame >= FLOW_WARMUP_FRAMES {
             work = add(work, spent);
             let current = session.frame_handle().cloned();
@@ -540,5 +589,5 @@ fn flow_live_frames_hold_to_budget() {
         publications, FLOW_MEASURED_FRAMES,
         "every counted frame publishes its new prints"
     );
-    holds_to_budget(TRADE_FLOW, work, FLOW_MEASURED_FRAMES * PRINTS_PER_FRAME);
+    holds_to_budget(budget, work, FLOW_MEASURED_FRAMES * PRINTS_PER_FRAME);
 }
