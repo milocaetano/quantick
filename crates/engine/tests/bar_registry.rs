@@ -197,7 +197,7 @@ fn every_family_member_exposes_the_same_parameter_contract() {
 }
 
 #[test]
-fn a_quick_switch_suffix_is_one_letter_no_other_kind_declares() {
+fn a_quick_switch_suffix_is_one_letter_kinds_may_share() {
     use quantick_engine::bar_registry::{
         BarConfigurationError, BarDefinition, QuickAlias,
         definitions::{RENKO, TICK},
@@ -206,7 +206,8 @@ fn a_quick_switch_suffix_is_one_letter_no_other_kind_declares() {
         id: "digit",
         quick_alias: Some(QuickAlias {
             suffix: '5',
-            noun: "Digits",
+            singular: "Digit",
+            plural: "Digits",
         }),
         ..TICK
     };
@@ -214,20 +215,17 @@ fn a_quick_switch_suffix_is_one_letter_no_other_kind_declares() {
         id: "twin",
         quick_alias: Some(QuickAlias {
             suffix: 'r',
-            noun: "Twins",
+            singular: "Twin",
+            plural: "Twins",
         }),
         ..TICK
     };
-    for registry in [
+    assert!(matches!(
         BarRegistry::new([&DIGIT]),
-        BarRegistry::new([&RENKO, &TWIN]),
-    ] {
-        assert!(matches!(
-            registry,
-            Err(BarConfigurationError::InvalidDefinition { .. })
-        ));
-    }
-    assert!(BarRegistry::new([&RENKO, &TICK]).is_ok());
+        Err(BarConfigurationError::InvalidDefinition { .. })
+    ));
+    let shared = BarRegistry::new([&RENKO, &TWIN]).unwrap();
+    assert_eq!(shared.quick_matches("50r").len(), 2);
 }
 
 #[test]
