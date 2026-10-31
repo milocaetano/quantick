@@ -2098,7 +2098,7 @@ fn observer_per_scope_capture_cost() {
 }
 
 /// Heap work one coherent capture of every scope may do on the loaded
-/// fixture. Readings: 1285 allocations, 67368 bytes.
+/// fixture. Readings: 1285 allocations, 67368 bytes on Windows, 67358 on Linux.
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
 const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 77500;
 
@@ -3927,7 +3927,7 @@ fn two_tabs_on_the_same_recording_share_one_trace_walk() {
 }
 
 /// Heap work one capture of the largest allowed chart-window page may do.
-/// Readings: 481 allocations, 7973 bytes.
+/// Readings: 481 allocations, 7973 bytes, on Windows and Linux.
 const MAX_CHART_WINDOW_CAPTURE_MAX_ALLOCS: u64 = 555;
 const MAX_CHART_WINDOW_CAPTURE_MAX_ALLOC_BYTES: u64 = 9200;
 
