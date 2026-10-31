@@ -149,9 +149,9 @@ Icons (§6–§7 use them):
 | # | Zone | Size | Owns |
 |---|---|---|---|
 | 1 | Menu bar + workspace tabs | 28 px | menus left (§10); one tab per open market right (§11) |
-| 2 | Context toolbar | 44 px | source · bars · history · look · panels (§6) |
+| 2 | Context toolbar | 44 px | tab scope: source · history · trade · look · panels (§6) |
 | 3 | Drawing toolbar | 44 px rail, edge-docked (default left) | cursor, crosshair, drawings (§7) |
-| 4 | Chart canvas | elastic | candles, flow layers, overlay legends, drawings |
+| 4 | Chart canvas | elastic | header line (mark · bars · view · layers · sizes · `ƒx`, per pane), candles, flow layers, overlay legends, drawings |
 | 5 | Sub-panes | ≤ 40% of 4, max 3 | pane indicators: CVD, delta… (§9) |
 | 6 | Time axis | 24 px | time labels, x-zoom drag |
 | 7 | Status bar | 28 px (+30 transport) | provenance · content · machinery (§8) |
@@ -183,7 +183,6 @@ Left, *what am I looking at*:
 - **SOURCE** — feed combo, symbol combo (from config, as today). During
   replay the group is replaced by the amber session label; you cannot pick a
   venue without closing the recording first (existing behaviour, kept).
-- **BARS** — bar-kind combo + its one parameter drag (as today).
 - **HISTORY** — one `+ older ▾` split button; the page size moves into its
   menu. Gated by the `history_paging` capability.
 
@@ -193,11 +192,15 @@ header line (§11):
 - **LOOK** — opens the appearance dialog (candles, canvas, grid).
 - **PANELS** — shows/hides the dock.
 - **⋯ overflow** — collapse target; the toolbar never wraps. Collapse order:
-  LOOK → PANELS → HISTORY → bar parameter merges into the kind combo → feed
-  name shrinks to its initial. Never folded: the symbol.
+  LOOK → PANELS → HISTORY → TRADE → feed name shrinks to its initial. Never
+  folded: the symbol.
 
 Leaving the toolbar: the perf checkbox (a *reading*, moves to the status
 bar §8) and both panel-opening buttons (the dock's tab strip replaces them).
+Bars and indicators belong to one pane, not the tab, so they sit on each pane's
+header line in zone 4: the bars control changes that pane wherever focus sits,
+and `ƒx` at the line's right end focuses that pane and opens the indicator
+library on it.
 
 ## 7. Tool rail and dock
 
@@ -456,10 +459,10 @@ startup-scoped like `default_feed`); the factory default stays Flow.
 - **Time pane header** carries an inline timeframe selector — `1m 5m 15m 1h
   1d 1w 1mo` presets plus the existing custom interval drag (a calendar month
   shows its name instead: it has no fixed length to drag). Days open at 00:00
-  UTC, weeks on Monday, months on the 1st. The toolbar's BARS group
-  governs the *focused* pane — the same pane the status bar reads and
-  indicator commands land on, so the chrome never disagrees with itself
-  about which chart a command describes.
+  UTC, weeks on Monday, months on the 1st. Each pane's bars control governs
+  that pane wherever focus sits. Indicator commands land on the *focused* pane,
+  the one the status bar reads, so `ƒx` focuses its own pane before it opens the
+  library.
 - **Focus follows the switch.** Changing layout focuses the pane the switch
   reveals, so the first command after it already lands on the chart that
   just appeared.

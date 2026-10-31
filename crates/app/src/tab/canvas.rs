@@ -324,8 +324,21 @@ impl Tab {
         rects
     }
 
-    /// The flow pane's header line: its mark, its own bars, its view, its layers
-    /// and its bubble sizes, read and changed here wherever focus sits.
+    /// The pane whose header asked for the indicator library this frame. Taken in
+    /// the frame of the click: a tab key on the next one would strand the request
+    /// on a tab left behind.
+    pub(crate) fn take_indicator_picker_request(&mut self) -> Option<PaneSide> {
+        self.panes_with_sides_mut()
+            .fold(None, |asked, (pane, side)| {
+                pane.take_indicator_picker_request()
+                    .then_some(side)
+                    .or(asked)
+            })
+    }
+
+    /// The flow pane's header line: its mark, its own bars, its view, its layers,
+    /// its bubble sizes and its indicators glyph, read and changed here wherever
+    /// focus sits.
     fn draw_flow_header(
         &mut self,
         ui: &mut egui::Ui,
@@ -341,7 +354,7 @@ impl Tab {
             glyphs: &glyphs,
             state: pane.flow_header_state(),
         };
-        let intent = crate::pane_header::draw_marked(
+        let (intent, indicators) = crate::pane_header::draw_marked(
             ui,
             strip,
             &header,
@@ -351,6 +364,9 @@ impl Tab {
             row,
             &mut pane.frame.header_controls,
         );
+        if indicators {
+            pane.request_indicator_picker();
+        }
         if let Some(intent) = intent {
             // A settings window edits the focused chart, and this is the one
             // the hand asked about.
@@ -362,7 +378,8 @@ impl Tab {
     }
 
     /// Each context chart carries its own bars control, timeframe selector
-    /// (§11) and footprint glyph, read and changed here wherever focus sits.
+    /// (§11), footprint glyph and indicators glyph, read and changed here wherever
+    /// focus sits.
     fn draw_time_header(
         &mut self,
         ui: &mut egui::Ui,
@@ -414,6 +431,9 @@ impl Tab {
         #[cfg(test)]
         if slot == 0 {
             self.time_header_chips = header_layout.chips();
+        }
+        if header_layout.indicators {
+            self.time_panes[slot].request_indicator_picker();
         }
         if header_layout.changed {
             let pane = &mut self.time_panes[slot];

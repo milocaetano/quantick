@@ -1,15 +1,16 @@
 //! Paints the header line every pane carries: the rule, the mark, the bars
-//! control, and the glyphs and sample bubbles beside it. What the line says and
-//! what a press asks for are `quantick_chart::pane_header`'s call; this file
-//! holds the shapes and the pointer.
+//! control, the glyphs and sample bubbles beside it, and the indicators glyph at
+//! its right end. What the line says and what a press asks for are
+//! `quantick_chart::pane_header`'s call; this file holds the shapes and the
+//! pointer.
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_chart::pane_header::{
     BubbleSample, FlowHeaderState, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk, HeaderControl,
-    HeaderIntent, LayerGlyph, LayerToggle, PaneHeader, SAMPLE_RESET_SCALE, SAMPLE_SLOT_PX,
-    SLOT_GAP_PX, VIEW_SLOT_PX, dragged_scale, flow_fit, sample_diameter_px, sample_value_text,
-    view_name,
+    HeaderIntent, INDICATORS_GLYPH, LayerGlyph, LayerToggle, PaneHeader, SAMPLE_RESET_SCALE,
+    SAMPLE_SLOT_PX, SLOT_GAP_PX, VIEW_SLOT_PX, dragged_scale, flow_fit, sample_diameter_px,
+    sample_value_text, view_name,
 };
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
 use quantick_orderflow::LaneView;
@@ -21,6 +22,10 @@ use crate::theme;
 /// Padding inside the strip: clears the pane's edge and keeps the controls off
 /// the rule below.
 pub const CONTENT_PADDING: egui::Vec2 = egui::vec2(8.0, 2.0);
+
+/// The room the indicators glyph holds at the strip's right end. Reserved before
+/// anything else paints, so no neighbour can push the glyph out of a narrow pane.
+const INDICATORS_SLOT_PX: f32 = 24.0;
 
 /// Side of a layer glyph's drawing box, the unit its shapes are written in.
 const GLYPH_BOX: f32 = 15.0;
@@ -48,13 +53,41 @@ pub fn paint_rule(ui: &egui::Ui, strip: egui::Rect) {
     );
 }
 
+/// Paint the indicators glyph at the strip's right end. Returns the padded room
+/// left for the rest of the line, its clip, and whether the glyph was clicked.
+pub fn indicators_glyph(
+    ui: &mut egui::Ui,
+    strip: egui::Rect,
+    salt: u64,
+) -> (egui::Rect, egui::Rect, bool) {
+    let inner = strip.shrink2(CONTENT_PADDING);
+    let slot_left = (inner.right() - INDICATORS_SLOT_PX).max(inner.left());
+    let slot = egui::Rect::from_x_y_ranges(slot_left..=inner.right(), inner.y_range());
+    let label = egui::RichText::new(INDICATORS_GLYPH)
+        .small()
+        .color(theme::TEXT_MUTED);
+    let glyph = ui
+        .push_id(("pane_indicators", salt), |ui| {
+            ui.put(slot, egui::Button::new(label).frame(false))
+        })
+        .inner
+        .on_hover_text("Indicators");
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(indicators_id(salt), glyph.rect));
+    let rest = inner.with_max_x(slot_left);
+    let clip = strip.with_max_x(slot_left).intersect(ui.clip_rect());
+    (rest, clip, glyph.clicked())
+}
+
 /// What a flow pane's row draws besides its bars.
 pub struct FlowRow<'a> {
     pub glyphs: &'a [LayerGlyph],
     pub state: Option<FlowHeaderState>,
 }
 
-/// The flow pane's header line; answers what a press on it asked for.
+/// The flow pane's header line; answers what a press on it asked for, and
+/// whether its indicators glyph was clicked.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_marked(
     ui: &mut egui::Ui,
@@ -65,17 +98,17 @@ pub fn draw_marked(
     inputs: BarInputAvailability,
     row: FlowRow<'_>,
     painted: &mut PaintedControls,
-) -> Option<HeaderIntent> {
+) -> (Option<HeaderIntent>, bool) {
     paint_rule(ui, strip);
     painted.clear();
-    let inner = strip.shrink2(CONTENT_PADDING);
+    let (rest, clip, indicators) = indicators_glyph(ui, strip, salt);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(("pane_header", salt))
-            .max_rect(inner)
+            .max_rect(rest)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    content.set_clip_rect(strip.intersect(ui.clip_rect()));
+    content.set_clip_rect(clip);
     content.spacing_mut().item_spacing.x = SLOT_GAP_PX;
     let mark_font = egui::TextStyle::Small.resolve(content.style());
     let mark_font = egui::FontId::monospace(mark_font.size);
@@ -87,7 +120,7 @@ pub fn draw_marked(
         galley.size().x
     });
     let bars_px = bars_width(&content, header);
-    let fit = flow_fit(inner.width(), mark_px, bars_px);
+    let fit = flow_fit(rest.width(), mark_px, bars_px);
     if let Some(mark) = header.mark.filter(|_| fit.mark) {
         content.label(
             egui::RichText::new(mark)
@@ -117,14 +150,14 @@ pub fn draw_marked(
         }
         if let Some(scale) = state.tape_sample.filter(|_| fit.samples) {
             let rect = egui::Rect::from_min_max(
-                egui::pos2(inner.right() - SAMPLE_SLOT_PX, strip.top()),
-                egui::pos2(inner.right(), strip.bottom()),
+                egui::pos2(rest.right() - SAMPLE_SLOT_PX, strip.top()),
+                egui::pos2(rest.right(), strip.bottom()),
             );
             let tape = BubbleSample::Tape;
             sample(&mut content, rect, salt, tape, scale, painted, &mut intent);
         }
     }
-    intent
+    (intent, indicators)
 }
 
 /// The slot beside the bubbles glyph: kept whether or not the sample shows, so
@@ -513,4 +546,10 @@ pub fn bars_control(
 /// The popup id of the bars menu of the pane keyed by `salt`.
 pub(crate) fn menu_id(salt: u64) -> egui::Id {
     egui::Id::new(("pane_bars_menu", salt))
+}
+
+/// Where the tests read back the indicators glyph of the pane keyed by `salt`.
+#[cfg(test)]
+pub(crate) fn indicators_id(salt: u64) -> egui::Id {
+    egui::Id::new(("pane_indicators_rect", salt))
 }

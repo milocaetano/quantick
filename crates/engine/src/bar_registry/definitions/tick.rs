@@ -1,6 +1,6 @@
 use crate::{
     TickBarBuilder,
-    bar_registry::{BarDefinition, NumberKind, ParameterDescriptor},
+    bar_registry::{BarDefinition, NumberKind, ParameterDescriptor, QuickAlias},
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 pub static TICK: BarDefinition = BarDefinition {
@@ -19,7 +19,11 @@ pub static TICK: BarDefinition = BarDefinition {
     requirements: super::PRINTS,
     progress_unit: "ticks",
     fixed_time_interval: false,
-    quick_alias: None,
+    quick_alias: Some(QuickAlias {
+        suffix: 't',
+        singular: "Tick",
+        plural: "Ticks",
+    }),
     path_dependent: false,
     factory: |value, _| {
         Box::new(TickBarBuilder::new(

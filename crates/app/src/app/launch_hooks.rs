@@ -437,7 +437,7 @@ fn layout(app: &mut QuantickApp, env: &ScenarioInputs) {
     }
     // Scripted validation runs can open with library scripts loaded:
     // a comma-separated list of script names, each through the same
-    // code path the INDICATORS menu takes.
+    // code path the indicator library takes.
     if let Some(names) = env.var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
         for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
             match app

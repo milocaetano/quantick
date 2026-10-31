@@ -26,7 +26,8 @@ pub static RENKO: BarDefinition = BarDefinition {
     fixed_time_interval: false,
     quick_alias: Some(QuickAlias {
         suffix: 'R',
-        noun: "Ticks (Renko)",
+        singular: "Tick (Renko)",
+        plural: "Ticks (Renko)",
     }),
     path_dependent: true,
     factory: |value, _| {

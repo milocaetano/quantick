@@ -665,7 +665,7 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
 /// The three-pane canvas shipped with a dead bottom chart: focus was a
 /// two-arm enum, so every reader mapped "time" to the *top* context pane.
 /// Clicking the bottom one has to focus it — and the status bar, the
-/// BARS group, the indicator command and the saved workspace have to
+/// indicator command and the saved workspace have to
 /// follow that focus, not the top chart's.
 #[test]
 fn the_second_context_pane_takes_focus_bars_and_indicators() {
@@ -700,7 +700,7 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
         "the status bar speaks for it"
     );
 
-    // The BARS group borrows the focused pane's selector fields.
+    // The focused pane's selector fields, as its bars menu edits them.
     let top_spec = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
     let pane = app.active_tab_mut().focused_pane_mut();
     pane.spec

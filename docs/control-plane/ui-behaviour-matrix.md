@@ -48,7 +48,7 @@ The three exclusion classes are closed:
 | Excluded: `pending_capability` | 50 |
 | **Total** | **133** |
 
-83 of the 133 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 50 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+82 of the 133 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 51 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -67,7 +67,7 @@ The three exclusion classes are closed:
 | `layout.tab.rename` | Rename a layout tab | layout strip double-click, View → Layouts | `layout.tab.rename` | — |
 | `layout.tab.rename.cancel` | Abandon a rename in progress | Escape, or clicking away from the strip's rename box | — | `ui_only_by_decision` — `layout.tab.rename` is atomic: a caller sends the new name or sends nothing, so there is no half-finished rename for it to abandon. The begin/cancel pair is the in-place editor's own state and has no remote counterpart by construction |
 | `layout.tab.switch` | Show another layout on the focused chart | layout strip, View → Layouts, Alt+1 … Alt+9 | `layout.tab.switch` | — |
-| `chart.bars.set_spec` | Change what one bar is — kind and size | toolbar bar controls, typing a number over the chart | `layout.pane.set_bar_spec`, `layout.pane.set_interval` | — |
+| `chart.bars.set_spec` | Change what one bar is — kind and size | each pane header's bars control, typing a number over the chart | `layout.pane.set_bar_spec`, `layout.pane.set_interval` | — |
 | `chart.pan` | Drag the chart horizontally through history | horizontal primary drag on the canvas | — | `pending_capability` — `chart.window.read` reports the visible time window; no capability pans that window. Price framing has its own capability below. Tracked in issue 401 |
 | `chart.price_axis.set` | Set a pane's price range or resume automatic fitting | drag or wheel on the price axis; double-click it to reset | `chart.price_axis.set` | — |
 | `chart.time_axis.reset` | Reset a time axis to where it opened, or the candles to a live overview | double-click the candles' time strip, or the tape's; double-click open canvas | `chart.time_axis.reset` | — |
@@ -101,7 +101,7 @@ The three exclusion classes are closed:
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
 | `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
-| `indicator.picker.open` | Open and search the indicator library | left toolbar Indicators button, searchable centered modal | `indicator.picker.set` | — |
+| `indicator.picker.open` | Open and search the indicator library | the ƒx glyph on each pane header, searchable centered modal | `indicator.picker.set` | — |
 | `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Tools menu, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
 | `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicator picker | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
@@ -196,7 +196,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 17 |
+| `toolbar_action` | 16 |
 | `strip_action` | 6 |
 | `tab_action` | 3 |
 | `dock_tab` | 5 |
@@ -209,7 +209,7 @@ matrix fails the build.
 | `hotkey` | 17 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 50 |
+| `authored` | 51 |
 
 ## Appendix: rows no registry stands behind
 
@@ -222,7 +222,7 @@ declares nothing here is a guard failure.
 | Behaviour | Why nothing registers it |
 | --- | --- |
 | `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |
-| `chart.bars.set_spec` | the bar-kind and size controls are toolbar widgets, not entries in its action enum |
+| `chart.bars.set_spec` | the bar-kind and size controls are pane header widgets, not entries in an action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
 | `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |
 | `chart.time_axis.reset` | a time-strip double-click the canvas handles directly |
@@ -241,6 +241,7 @@ declares nothing here is a guard failure.
 | `orderflow.bubbles.size.set` | independent sample bubbles appear while their bubble display is active |
 | `orderflow.bubbles.tick.set` | chart-only preset picker under the whole-look presets |
 | `orderflow.bubbles.preset.apply` | whole-look preset selection permits same-name reapplication |
+| `indicator.picker.open` | the glyph is a pane header widget, not an entry in the toolbar's action enum |
 | `appearance.candle_presets` | the Candles tab's preset row, save field and Reset are widgets, not registry entries |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |

@@ -4190,7 +4190,7 @@ fn the_scene_says_which_regions_it_looked_at_rather_than_claiming_the_screen() {
     let (mut app, _commands) = app_with_history(12);
     run_frame(&mut app, &ctx);
     let scene = observer_scene(&app);
-    // Whole regions of the window are still unnamed — the SOURCE and BARS
+    // Whole regions of the window are still unnamed — the SOURCE and HISTORY
     // groups, the menus, every dialog. A capture that answered "complete"
     // would tell a client those controls do not exist.
     let regions = scene["covered_regions"].as_array().unwrap();

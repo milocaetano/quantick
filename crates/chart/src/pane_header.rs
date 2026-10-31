@@ -10,6 +10,10 @@ use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{DEFAULT_BUBBLE_DISPLAY_SCALE, LaneView};
 use quantick_orderflow::{MAX_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_DISPLAY_SCALE};
 
+/// The glyph at a header line's right end that opens the indicators of that
+/// pane.
+pub const INDICATORS_GLYPH: &str = "ƒx";
+
 /// The mark naming the order-flow pane.
 pub const ORDER_FLOW_MARK: &str = "ORDER FLOW";
 

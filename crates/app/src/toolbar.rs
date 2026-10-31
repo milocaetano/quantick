@@ -2,15 +2,13 @@
 //! on it* on the right (`docs/ux/ui-design-model.md` §6).
 //!
 //! Left: SOURCE (feed + symbol, or the amber session label while replaying),
-//! BARS (kind + one parameter), INDICATORS (searchable modal), HISTORY (a `+ older ▾` split button whose
-//! menu holds the page size). Right: LAYERS (one icon toggle per visual
-//! layer; right-click opens its dock tab), LOOK (appearance dialog), PANELS
-//! (dock show/hide). Between HISTORY and the right groups sits TRADE — the
+//! HISTORY (a `+ older ▾` split button whose menu holds the page size). Right:
+//! LOOK (appearance dialog), PANELS (dock show/hide). Between HISTORY and the right groups sits TRADE — the
 //! simulated BUY/SELL market buttons (`docs/ux/paper-trading.md`). The
 //! toolbar never wraps: [`collapse_plan`] folds groups into the `⋯` overflow
-//! menu in the §6 order — LOOK → PANELS → HISTORY → TRADE → bar parameter
-//! merges into the kind combo → the feed name shrinks to its initial. The
-//! symbol never folds.
+//! menu in the §6 order — LOOK → PANELS → HISTORY → TRADE → the feed name
+//! shrinks to its initial. The symbol never folds. Bars, indicators and layers
+//! belong to each pane, on its header line (`crate::pane_header`).
 //!
 //! The widgets edit the app's state through [`ToolbarModel`]'s borrows;
 //! anything with a side effect beyond a field write comes back as a
@@ -20,10 +18,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::config::FeedCapabilities;
-use crate::state::SpecSelector;
-#[cfg(test)]
-use crate::state::{BarKind, BarSpec};
-use quantick_chart::toolbar_collapse::{CollapsePlan, collapse_plan, param_width};
+use quantick_chart::toolbar_collapse::{CollapsePlan, collapse_plan};
 use quantick_engine::bar_selection::BarInputAvailability;
 pub(crate) mod bar_parameters;
 use crate::theme;
@@ -35,9 +30,6 @@ use quantick_session::{HistoryPagingOff, fmt_history_span};
 
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
-
-/// The INDICATORS button's glyph: a plotted line.
-const LAYER_INDICATORS_ICON: &str = icons::CHART_LINE;
 
 /// One TRADE button's own horizontal padding, in pixels.
 const TRADE_BUTTON_PAD_PX: f32 = 16.0;
@@ -97,17 +89,12 @@ pub struct ToolbarModel<'a> {
     pub symbol: &'a mut String,
     /// Present while a recording is the source; replaces the SOURCE combos.
     pub replay: Option<ReplaySource>,
-    /// The selected bar kind and the parameter every kind is holding.
-    ///
-    /// The BARS group renders registered parameter descriptors and returns
-    /// typed selection commands. Adding a definition needs no editor arm.
-    pub spec: &'a mut SpecSelector,
     /// The deal recorder shown beside the symbol, when supported.
     pub deal_recording: Option<crate::deal_recording::RecordingView>,
     /// Open the REC popover through the launch hook.
     pub deal_recording_menu: bool,
-    /// Open the bar-kind popup through the launch hook.
-    pub bars_menu: &'a mut bool,
+    /// The bar kind of the focused pane, which the REC popover speaks about.
+    pub focused_bars: &'static quantick_engine::bar_registry::BarDefinition,
     /// Where the history menu's own button ended up, written back by the draw.
     ///
     /// Published for the same reason the Workspace menu's rect is: a menu is a
@@ -163,8 +150,6 @@ pub struct IndicatorMenuEntry {
 /// A side effect the toolbar asks the app to perform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarAction {
-    /// Open the searchable indicator library for the focused pane.
-    OpenIndicatorPicker,
     /// Switch the canvas to a named arrangement from the layout registry.
     ///
     /// Carries the registry entry rather than a copy of its shape, so the
@@ -229,22 +214,10 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
             } else {
                 0.0
             };
-            let plan = collapse_plan(
-                ui.available_width() - rec_width,
-                W_TRADE,
-                param_width(model.spec.spec().definition()),
-            );
+            let plan = collapse_plan(ui.available_width() - rec_width, W_TRADE);
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 draw_source(ui, model, plan, &mut actions);
-                ui.separator();
-                draw_bars(ui, model, plan);
-                if ui
-                    .button(format!("{} Indicators", LAYER_INDICATORS_ICON))
-                    .clicked()
-                {
-                    actions.push(ToolbarAction::OpenIndicatorPicker);
-                }
                 if plan.history_inline {
                     ui.separator();
                     draw_history(ui, model, &mut actions);
@@ -339,7 +312,7 @@ fn draw_source(
         && let Some(action) = crate::deal_recording_ui::draw_button(
             ui,
             view,
-            model.spec.spec().definition(),
+            model.focused_bars,
             model.deal_recording_menu,
         )
     {
@@ -347,49 +320,8 @@ fn draw_source(
     }
 }
 
-/// BARS: the kind combo, with the parameter beside it or merged into its
-/// selected text when folded.
-fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
-    ui.label(egui::RichText::new("bars").color(theme::TEXT_MUTED));
-    let selected = if plan.param_inline {
-        model.spec.spec().definition().label().to_owned()
-    } else {
-        format!(
-            "{} · {}",
-            model.spec.spec().definition().label(),
-            model.spec.spec().parameter_summary()
-        )
-    };
-    if std::mem::take(model.bars_menu) {
-        let popup = ui
-            .make_persistent_id(egui::Id::new("bar_kind"))
-            .with("popup");
-        ui.memory_mut(|memory| memory.open_popup(popup));
-    }
-    egui::ComboBox::from_id_salt("bar_kind")
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            let inputs = bar_inputs(model);
-            bar_parameters::draw_kinds(ui, model.spec, inputs);
-        });
-    if plan.param_inline {
-        draw_bar_param(ui, model);
-    }
-}
-
-/// The one parameter of the selected bar kind. Lives beside the combo, or in
-/// the overflow menu when the plan folded it.
-fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
-    let inputs = bar_inputs(model);
-    bar_parameters::draw(ui, model.spec, inputs);
-}
-
-fn bar_inputs(model: &ToolbarModel) -> BarInputAvailability {
-    available_bar_inputs(model.capabilities, model.deal_recording.as_ref())
-}
-
-/// What the running source can build bars from: the one answer every bars menu
-/// reads, the toolbar's and each pane header's.
+/// What the running source can build bars from: the one answer each pane
+/// header's bars menu reads.
 pub(crate) fn available_bar_inputs(
     capabilities: FeedCapabilities,
     deal_recording: Option<&crate::deal_recording::RecordingView>,
@@ -758,11 +690,6 @@ fn draw_overflow(
                 }
             }
         }
-        if !plan.param_inline {
-            ui.separator();
-            ui.label(egui::RichText::new("bar parameter").color(theme::TEXT_MUTED));
-            draw_bar_param(ui, model);
-        }
     });
 }
 
@@ -770,6 +697,21 @@ fn draw_overflow(
 mod tests {
 
     use super::*;
+
+    /// With bars, indicators and layers gone from the row, every group fits a
+    /// 1280 px window at TRADE's reserved width. REC needs more: beside it, 1280 px
+    /// folds LOOK and PANELS into the overflow, and 1920 px folds nothing.
+    #[test]
+    fn nothing_folds_at_the_common_window_widths() {
+        let rec = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX;
+        let margins = 16.0;
+        for available in [1280.0 - margins, 1920.0 - margins, 1920.0 - margins - rec] {
+            assert_eq!(collapse_plan(available, W_TRADE), CollapsePlan::FULL);
+        }
+        let with_rec = collapse_plan(1280.0 - margins - rec, W_TRADE);
+        assert!(!with_rec.look_inline && !with_rec.panels_inline);
+        assert!(with_rec.history_inline && with_rec.trade_inline);
+    }
 
     /// Opening a position never changes what folds: at every window width,
     /// flat or open, the real toolbar paints BUY and SELL on the same
@@ -781,7 +723,7 @@ mod tests {
             close: Some("Close 88888 SHORT".to_owned()),
             ..flat_trade(true)
         };
-        let full = CollapsePlan::FULL.width(W_TRADE, quantick_chart::toolbar_collapse::W_BAR_PARAM);
+        let full = CollapsePlan::FULL.width(W_TRADE);
         for width in [full + 200.0, full, full - 40.0, full - 200.0, full - 400.0] {
             let flat_rects = entry_rects(&toolbar_shapes(flat_trade(true), width));
             let open_rects = entry_rects(&toolbar_shapes(open.clone(), width));
@@ -800,9 +742,6 @@ mod tests {
         let ctx = egui::Context::default();
         let mut feed_id = "binance".to_owned();
         let mut symbol = "BTCUSDT".to_owned();
-        let mut selector = SpecSelector::default();
-        selector.retain(BarSpec::Time(1_000));
-        selector.set(*selector.retained(BarKind::Tick));
         let mut history_menu_rect = None;
         for replaying in [false, true] {
             for _ in 0..2 {
@@ -821,10 +760,9 @@ mod tests {
                             label: "BTCUSDT · 2026-03-16".to_owned(),
                             hover: "Replaying a recorded session".to_owned(),
                         }),
-                        spec: &mut selector,
                         deal_recording: None,
                         deal_recording_menu: false,
-                        bars_menu: &mut false,
+                        focused_bars: quantick_engine::BarKind::Tick.into(),
                         history_menu_rect: &mut history_menu_rect,
                         history: HistoryButton {
                             main: HistoryReach::default(),
@@ -855,94 +793,6 @@ mod tests {
         }
     }
 
-    /// With the time kind selected, the preset chips reach actual toolbar
-    /// pixels — the audit's pain 2 began with `bars → time` offering a bare
-    /// millisecond drag (QW1), and the summary speaks the chips' vocabulary
-    /// (QW3).
-    #[test]
-    fn the_time_kind_paints_the_preset_chips() {
-        let ctx = egui::Context::default();
-        let mut feed_id = "binance".to_owned();
-        let mut symbol = "BTCUSDT".to_owned();
-        let mut selector = SpecSelector::default();
-        selector.retain(BarSpec::Time(60_000));
-        selector.set(*selector.retained(BarKind::Time));
-        let mut history_menu_rect = None;
-        // Wide enough that the §6 plan folds nothing — the point is the
-        // inline chip row, not the overflow menu.
-        let input = || egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1900.0, 400.0),
-            )),
-            ..Default::default()
-        };
-        let mut painted = String::new();
-        for _ in 0..2 {
-            let output = ctx.run(input(), |ctx| {
-                let mut layout_picker_open = false;
-                let mut model = ToolbarModel {
-                    layout_preset: None,
-                    layout_picker_open: &mut layout_picker_open,
-                    layout_picker_request_open: false,
-                    feeds: vec![("binance".to_owned(), "Binance".to_owned())],
-                    feed_id: &mut feed_id,
-                    feed_display_name: "Binance".to_owned(),
-                    symbols: vec!["BTCUSDT".to_owned()],
-                    symbol: &mut symbol,
-                    replay: None,
-                    spec: &mut selector,
-                    deal_recording: None,
-                    deal_recording_menu: false,
-                    bars_menu: &mut false,
-                    history_menu_rect: &mut history_menu_rect,
-                    history: HistoryButton {
-                        main: HistoryReach::default(),
-                        status: RunStatus::Idle,
-                        tz: crate::timezone::TzOffset::default(),
-                    },
-                    history_candles: 0,
-                    older_candles: crate::tab::OlderCandles::NotArrivedYet,
-                    capabilities: FeedCapabilities {
-                        book_capture: true,
-                        history_paging: true,
-                        history_boundary: None,
-                        traded_volume: true,
-                        deal_counter: false,
-                        ohlcv_history: true,
-                        ohlcv_generation: 0,
-                        ohlcv_daily_generation: 0,
-                        ohlcv_aggressor_split: false,
-                    },
-                    dock_visible: true,
-                    appearance_open: false,
-                    paper: flat_trade(true),
-                };
-                let actions = draw(ctx, &mut model);
-                assert!(actions.is_empty(), "no clicks, no actions");
-            });
-            painted.clear();
-            for shape in output.shapes {
-                if let egui::epaint::Shape::Text(text) = shape.shape {
-                    painted.push_str(text.galley.text());
-                    painted.push(' ');
-                }
-            }
-        }
-        for chip in ["1m", "5m", "15m", "1h"] {
-            assert!(
-                painted.contains(chip),
-                "the {chip} preset never reached the toolbar; painted: {painted}"
-            );
-        }
-        assert_eq!(
-            selector.selected_id(),
-            "time",
-            "an un-clicked frame changes nothing"
-        );
-        assert_eq!(selector.spec(), BarSpec::Time(60_000));
-    }
-
     /// The same layout for a venue that prints no volume — the shape a live
     /// Tickmill US500 session produces. Every size-measuring affordance is
     /// disabled rather than absent, so the toolbar must still lay out whole.
@@ -952,58 +802,50 @@ mod tests {
         let mut feed_id = "metatrader".to_owned();
         let mut symbol = "US500".to_owned();
         let mut history_menu_rect = None;
-        // Every kind, including the two the feed cannot back: selecting one is
-        // still possible from config or a previous session, and the toolbar
-        // must draw it rather than panic.
-        for kind in BarKind::ALL {
-            let mut selector = SpecSelector::default();
-            selector.set(*selector.retained(kind));
-            for _ in 0..2 {
-                let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                    let mut layout_picker_open = false;
-                    let mut model = ToolbarModel {
-                        layout_preset: None,
-                        layout_picker_open: &mut layout_picker_open,
-                        layout_picker_request_open: false,
-                        feeds: vec![("metatrader".to_owned(), "MetaTrader 5".to_owned())],
-                        feed_id: &mut feed_id,
-                        feed_display_name: "MetaTrader 5".to_owned(),
-                        symbols: vec!["US500".to_owned()],
-                        symbol: &mut symbol,
-                        replay: None,
-                        spec: &mut selector,
-                        deal_recording: None,
-                        deal_recording_menu: false,
-                        bars_menu: &mut false,
-                        history_menu_rect: &mut history_menu_rect,
-                        history: HistoryButton {
-                            main: HistoryReach::default(),
-                            status: RunStatus::Idle,
-                            tz: crate::timezone::TzOffset::default(),
-                        },
-                        history_candles: 0,
-                        older_candles: crate::tab::OlderCandles::NotArrivedYet,
-                        capabilities: FeedCapabilities {
-                            book_capture: false,
-                            history_paging: false,
-                            history_boundary: None,
-                            traded_volume: false,
-                            deal_counter: false,
-                            ohlcv_history: false,
-                            ohlcv_generation: 0,
-                            ohlcv_daily_generation: 0,
-                            ohlcv_aggressor_split: false,
-                        },
-                        dock_visible: true,
-                        appearance_open: false,
-                        // Not yet ready: the TRADE pair must lay out in its
-                        // disabled state without asking anything of the app.
-                        paper: flat_trade(false),
-                    };
-                    let actions = draw(ctx, &mut model);
-                    assert!(actions.is_empty(), "no clicks, no actions");
-                });
-            }
+        for _ in 0..2 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                let mut layout_picker_open = false;
+                let mut model = ToolbarModel {
+                    layout_preset: None,
+                    layout_picker_open: &mut layout_picker_open,
+                    layout_picker_request_open: false,
+                    feeds: vec![("metatrader".to_owned(), "MetaTrader 5".to_owned())],
+                    feed_id: &mut feed_id,
+                    feed_display_name: "MetaTrader 5".to_owned(),
+                    symbols: vec!["US500".to_owned()],
+                    symbol: &mut symbol,
+                    replay: None,
+                    deal_recording: None,
+                    deal_recording_menu: false,
+                    focused_bars: quantick_engine::BarKind::Tick.into(),
+                    history_menu_rect: &mut history_menu_rect,
+                    history: HistoryButton {
+                        main: HistoryReach::default(),
+                        status: RunStatus::Idle,
+                        tz: crate::timezone::TzOffset::default(),
+                    },
+                    history_candles: 0,
+                    older_candles: crate::tab::OlderCandles::NotArrivedYet,
+                    capabilities: FeedCapabilities {
+                        book_capture: false,
+                        history_paging: false,
+                        history_boundary: None,
+                        traded_volume: false,
+                        deal_counter: false,
+                        ohlcv_history: false,
+                        ohlcv_generation: 0,
+                        ohlcv_daily_generation: 0,
+                        ohlcv_aggressor_split: false,
+                    },
+                    dock_visible: true,
+                    appearance_open: false,
+                    // Not yet ready: the TRADE pair must lay out in its
+                    // disabled state without asking anything of the app.
+                    paper: flat_trade(false),
+                };
+                let actions = draw(ctx, &mut model);
+                assert!(actions.is_empty(), "no clicks, no actions");
+            });
         }
     }
 
@@ -1056,9 +898,6 @@ mod tests {
         theme::apply(&ctx);
         let mut feed_id = "binance".to_owned();
         let mut symbol = "BTCUSDT".to_owned();
-        let mut selector = SpecSelector::default();
-        selector.retain(BarSpec::Time(1_000));
-        selector.set(*selector.retained(BarKind::Tick));
         let mut history_menu_rect = None;
         let input = || egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1081,10 +920,9 @@ mod tests {
                     symbols: vec!["BTCUSDT".to_owned()],
                     symbol: &mut symbol,
                     replay: None,
-                    spec: &mut selector,
                     deal_recording: None,
                     deal_recording_menu: false,
-                    bars_menu: &mut false,
+                    focused_bars: quantick_engine::BarKind::Tick.into(),
                     history_menu_rect: &mut history_menu_rect,
                     history: HistoryButton {
                         main: HistoryReach::default(),
