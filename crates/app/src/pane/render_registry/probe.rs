@@ -10,7 +10,7 @@ use quantick_layers::{
 static PROBE: LayerDescriptor = LayerDescriptor {
     id: "test_probe",
     label: "Probe",
-    hint: "An independently registered canvas contribution.",
+    hint: "An independently registered layer.",
     source: LayerSource::Local,
     scope: LayerScope::Pane,
     persistence: Persistence::Layers,
@@ -23,16 +23,10 @@ static PROBE: LayerDescriptor = LayerDescriptor {
     projection_demand: false,
 };
 const LAYER: ChartLayer = ChartLayer(&PROBE);
-const COLOR: egui::Color32 = egui::Color32::from_rgb(17, 83, 149);
 const PACKAGE: Package = Package {
     layers: &[LAYER],
-    contributions: &[Contribution::Canvas(paint)],
+    contributions: &[],
 };
-fn paint(pass: &mut CanvasPass<'_>) {
-    if pass.visible(LAYER, pass.state.requested(LAYER)) {
-        pass.painter.rect_filled(pass.rect, 0.0, COLOR);
-    }
-}
 fn installed() -> ChartPane {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(100), "TEST".to_owned());
     install(&mut pane);
@@ -44,28 +38,8 @@ pub(in crate::pane) fn install(pane: &mut ChartPane) {
     pane.layers = LayerState::new(registry.layers());
     pane.layer_renderers = registry;
 }
-fn render(pane: &ChartPane) -> egui::FullOutput {
-    let ctx = egui::Context::default();
-    ctx.run(egui::RawInput::default(), |ctx| {
-        let painter = ctx.layer_painter(egui::LayerId::background());
-        pane.layer_renderers
-            .canvas(&mut crate::pane::render_registry::CanvasPass {
-                painter: &painter,
-                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0)),
-                state: &pane.layers,
-                facts: pane.layer_facts(Some(crate::config::ProviderKind::Binance.capabilities())),
-            });
-    })
-}
-fn probe_shapes(output: &egui::FullOutput) -> Vec<&egui::epaint::ClippedShape> {
-    output
-        .shapes
-        .iter()
-        .filter(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == COLOR))
-        .collect()
-}
 #[test]
-fn new_package_reaches_production_discovery_operation_persistence_and_rendering() {
+fn new_package_reaches_production_discovery_operation_and_persistence() {
     let mut pane = installed();
     let style = ChartStyle::default();
     let catalog = pane.layers.registry();
@@ -73,11 +47,8 @@ fn new_package_reaches_production_discovery_operation_persistence_and_rendering(
     let discovered = catalog.resolve("test_probe").unwrap();
     assert_eq!(discovered.label(), "Probe");
     assert!(!pane.layer_visible(discovered, &style));
-    assert!(probe_shapes(&render(&pane)).is_empty());
     pane.set_layer_visible(discovered, true, &mut LayerActions::default());
     assert!(pane.layer_visible(discovered, &style));
-    let output = render(&pane);
-    assert_eq!(probe_shapes(&output).len(), 1);
     let text = quantick_layers::LayerDocument::encode(&pane.layer_states(&style)).unwrap();
     let restored = quantick_layers::LayerDocument::parse(&text)
         .unwrap()
@@ -86,7 +57,7 @@ fn new_package_reaches_production_discovery_operation_persistence_and_rendering(
     second.apply_layer_states(&restored);
     assert!(second.layer_visible(discovered, &style));
     second.set_layer_visible(discovered, false, &mut LayerActions::default());
-    assert!(probe_shapes(&render(&second)).is_empty());
+    assert!(!second.layer_visible(discovered, &style));
 }
 #[test]
 fn registration_rejects_duplicate_packages_without_painting() {

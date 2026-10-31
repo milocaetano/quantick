@@ -146,11 +146,11 @@ pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
         pixels_per_bar: canonical_f32(pane.model.viewport.px_per_bar(), VIEWPORT_DECIMAL_PLACES)
             .expect("viewport pixels per bar is finite"),
         right_edge_bar: canonical_f32(
-            pane.model.viewport.right_edge_bar(total),
+            pane.shown_viewport().right_edge_bar(total),
             VIEWPORT_DECIMAL_PLACES,
         )
         .expect("viewport right edge is finite"),
-        follows_live: pane.model.viewport.follows_live(),
+        follows_live: pane.shown_viewport().follows_live(),
         price_auto_fit: pane.price_view.is_auto(),
         price_axis_inverted: pane.price_view.is_inverted(),
         price_range: price_range.and_then(|(low, high)| {

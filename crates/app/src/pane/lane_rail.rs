@@ -20,9 +20,9 @@ fn lane(pane: &ChartPane) -> Option<&LiveLaneStyle> {
 }
 
 /// The jump-to-live chip at the candles' end of the time strip: `None`
-/// while following live.
+/// while following live, or with the candles hidden.
 pub(super) fn live_chip(pane: &ChartPane, strip: egui::Rect) -> Option<egui::Rect> {
-    let away = !pane.model.viewport.follows_live();
+    let away = !pane.shown_viewport().follows_live();
     let (history_strip, _) = split_time_strip(strip, pane.frame.lane_divider_x);
     away.then(|| super::live_chip_rect(history_strip))
 }
@@ -38,6 +38,9 @@ pub(super) fn lane_handle(pane: &ChartPane, chart: egui::Rect) -> Option<egui::R
 /// view. Registered after the chart body so it takes the drag that would pan.
 pub(super) fn handle_lane_divider(pane: &mut ChartPane, ui: &egui::Ui, chart: egui::Rect) {
     let Some(rect) = lane_handle(pane, chart) else {
+        if let Some(tape) = pane.orderflow.as_mut() {
+            tape.abandon_lane_drag();
+        }
         return;
     };
     let handle = ui.interact(

@@ -352,7 +352,12 @@ impl Tab {
             &mut pane.frame.header_controls,
         );
         if let Some(intent) = intent {
-            pane.apply_header_intent(intent, chrome.layers);
+            // A settings window edits the focused chart, and this is the one
+            // the hand asked about.
+            if matches!(intent, HeaderIntent::OpenLayerSettings(_)) {
+                self.focus = PaneSide::Flow;
+            }
+            self.flow_pane.apply_header_intent(intent, chrome.layers);
         }
     }
 
@@ -996,7 +1001,7 @@ impl Tab {
     }
 }
 
-/// A folded side's rail, one look for every fold: chrome, the inner edge
+/// A collapsed pane's rail: chrome, the inner edge
 /// where it meets the open side (so it reads as chrome rather than a stripe
 /// the chart starts after), and a grip in the colour a reader knows means
 /// "chrome you can take hold of", lit while `hot`.

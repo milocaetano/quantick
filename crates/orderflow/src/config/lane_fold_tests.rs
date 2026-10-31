@@ -327,3 +327,54 @@ fn a_lane_kept_outside_the_open_range_drags_from_where_it_is() {
         assert_eq!(style.width_share, share);
     }
 }
+
+/// A switched-off tape can carry a stale `tape_only` (a preset, the layer's
+/// setter): it reads candles only, clearing it counts as a change, and turning
+/// the tape on lands beside the candles rather than silently on tape only.
+#[test]
+fn a_stale_tape_only_never_decides_a_view() {
+    let stale = || LiveLaneStyle {
+        enabled: false,
+        tape_only: true,
+        ..LiveLaneStyle::default()
+    };
+    assert_eq!(stale().view(), LaneView::CandlesOnly);
+
+    let mut cleared = stale();
+    assert!(cleared.set_view(LaneView::CandlesOnly), "a field moved");
+    assert!(!cleared.tape_only);
+    assert!(
+        !cleared.set_view(LaneView::CandlesOnly),
+        "and now none does"
+    );
+
+    let mut switched = stale();
+    assert!(switched.set_enabled(true));
+    assert_eq!(switched.view(), LaneView::Beside);
+
+    // Off from tape only and on again is the same path.
+    let mut alone = lane(LaneView::TapeOnly);
+    assert!(alone.set_enabled(false));
+    assert!(alone.set_enabled(true));
+    assert_eq!(alone.view(), LaneView::Beside);
+    // A tape already on keeps its view.
+    let mut on = lane(LaneView::TapeOnly);
+    assert!(!on.set_enabled(true));
+    assert_eq!(on.view(), LaneView::TapeOnly);
+}
+
+/// A drag given up returns the share and decides no view, wherever the hand was.
+#[test]
+fn an_abandoned_drag_restores_the_share_and_decides_nothing() {
+    let mut config = HeatmapConfig::default();
+    let share = config.live_lane.width_share;
+    let mut hand = None;
+    assert!(config.drag_lane_divider(&mut hand, -5_000.0, CHART));
+    assert_ne!(config.live_lane.width_share, share);
+    config.abandon_lane_divider(&mut hand);
+    assert!(hand.is_none());
+    assert_eq!(config.live_lane.width_share, share);
+    assert_eq!(config.live_lane.view(), LaneView::Beside);
+    config.abandon_lane_divider(&mut hand);
+    assert_eq!(config.live_lane.width_share, share, "an empty hand is idle");
+}

@@ -1,6 +1,5 @@
 //! Typed rendering registrations. Each pass borrows only the owner and geometry
 //! it consumes; no contribution can call back into QuantickApp.
-use eframe::egui;
 use quantick_layers::{ChartLayer, LayerRegistry, RegistrationError};
 mod candle_aggression;
 pub(super) mod candles;
@@ -35,38 +34,10 @@ pub(super) struct FootprintPass<'a> {
     pub native_grid: Option<quantick_orderflow::projection::CandleDotGrid>,
     pub current_partial: Option<&'a quantick_engine::BarFootprint>,
 }
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the extension port: no shipped package docks on Canvas since the tape chip left"
-    )
-)]
-pub(super) struct CanvasPass<'a> {
-    pub painter: &'a egui::Painter,
-    pub rect: egui::Rect,
-    pub state: &'a quantick_layers::LayerState,
-    pub facts: quantick_layers::LayerFacts,
-}
-
-impl CanvasPass<'_> {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the extension port: no shipped package docks on Canvas since the tape chip left"
-        )
-    )]
-    /// Otherwise unowned canvas layers use their own policy, not another
-    /// feature's switch. Owner-specific stages borrow that feature directly.
-    pub fn visible(&self, layer: ChartLayer, requested: bool) -> bool {
-        quantick_layers::LayerState::effective(layer, requested, self.facts)
-    }
-}
 
 /// Borrow and ordering boundaries, not layer identities. Multiple packages
-/// can contribute to one stage; an independent layer uses Canvas with its
-/// own policy. Owner-specific stages run only when that owner's view exists.
+/// can contribute to one stage. Owner-specific stages run only when that
+/// owner's view exists.
 #[derive(Clone, Copy)]
 pub(super) enum Contribution {
     Heatmap(for<'a> fn(&mut FlowPass<'a>)),
@@ -78,14 +49,6 @@ pub(super) enum Contribution {
     Aggressions(for<'a> fn(&mut FlowPass<'a>)),
     Legend(for<'a> fn(&mut LegendPass<'a>)),
     Strip(for<'a> fn(&mut StripPass<'a>)),
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the extension port: no shipped package docks on Canvas since the tape chip left"
-        )
-    )]
-    Canvas(for<'a> fn(&mut CanvasPass<'a>)),
     Status(for<'a> fn(&mut StatusPass<'a>)),
     Seam(for<'a> fn(&mut DividerPass<'a>)),
     Backfill(for<'a> fn(&mut DividerPass<'a>)),
@@ -159,7 +122,6 @@ pass!(indicator_pane, IndicatorPane, IndicatorPanePass<'_, '_>);
 pass!(aggressions, Aggressions, FlowPass<'_>);
 pass!(legend, Legend, LegendPass<'_>);
 pass!(strip, Strip, StripPass<'_>);
-pass!(canvas, Canvas, CanvasPass<'_>);
 pass!(status, Status, StatusPass<'_>);
 pass!(seam, Seam, DividerPass<'_>);
 pass!(backfill, Backfill, DividerPass<'_>);

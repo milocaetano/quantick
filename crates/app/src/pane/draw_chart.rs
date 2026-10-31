@@ -96,7 +96,7 @@ impl ChartPane {
             renderers,
             &frame,
             layout.lane_width_px(),
-            &self.model.viewport,
+            &frame.view,
             self.price_view.is_inverted(),
         );
         let demand = self.projection_demand();
@@ -161,7 +161,7 @@ impl ChartPane {
                 history: frame.history_rect,
                 total: frame.total,
                 candle_width: frame.cw,
-                viewport: &self.model.viewport,
+                viewport: &frame.view,
                 turns,
             });
         }
@@ -170,7 +170,7 @@ impl ChartPane {
             renderers,
             frame: &frame,
             clip: painter.with_clip_rect(layout.history_rect),
-            viewport: &self.model.viewport,
+            viewport: &frame.view,
             dress: CandleDress::resolve(&self.footprint, chrome, start.footprint_paints, frame.cw),
         };
         let mut carved = std::mem::take(&mut self.frame.bands);
@@ -367,10 +367,6 @@ impl ChartPane {
         // it, even before the tape has a live edge to run to. The native tape
         // beside the candles keeps its share and fits the shared price axis.
         let (tape_only, native_tape) = self.tape_modes();
-        if tape_only {
-            // No candles to have panned away from: the pane is the live tape.
-            self.model.viewport.snap_to_live();
-        }
         let live_lane = self.lay_out_lane(chart_rect);
         if total == 0 {
             self.paint_empty_pane(painter, area, chart_rect, chrome);
@@ -390,9 +386,14 @@ impl ChartPane {
         // is the one place that sees all of it, so it is the one place the
         // rule holds — pushed fully left, the newest bar stops at the left
         // edge and the rest of the window is empty canvas to project into.
+        //
+        // With the candles hidden the view the trader left waits for them,
+        // unclamped, and the frame reads the live edge instead.
         let width = history_rect.width();
-        self.model.viewport.clamp_to_window(width, total);
-        let view = self.model.viewport;
+        if !tape_only {
+            self.model.viewport.clamp_to_window(width, total);
+        }
+        let view = self.shown_viewport();
         let (start, end) = view.visible_range(width, total);
         Some(FrameLayout {
             areas,
@@ -403,10 +404,10 @@ impl ChartPane {
             closed_total,
             start,
             end,
-            cw: self.model.viewport.candle_width(),
+            view,
+            cw: view.candle_width(),
             indicator_guide_x,
             tape_only,
-            fits_tape: tape_only,
             native_tape,
             // The lane setting's band, on screen yet or not.
             tape_padding_px: self.orderflow.as_ref().map_or(0.0, |view| {
@@ -437,7 +438,7 @@ impl ChartPane {
             .orderflow
             .as_mut()
             .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
-        // Tape only and a folded side included: the band is the lane's own.
+        // Tape only included: the band is the lane's own.
         let lane_width_px = self
             .orderflow
             .as_ref()
@@ -494,12 +495,6 @@ impl ChartPane {
                 rect: chart_rect,
             });
         }
-        self.layer_renderers.canvas(&mut CanvasPass {
-            painter,
-            rect: chart_rect,
-            state: &self.layers,
-            facts: self.layer_facts(Some(chrome.capabilities)),
-        });
     }
 
     /// The live lane's window as the indicator panes draw it, `None`

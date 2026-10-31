@@ -14,7 +14,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 use super::constants::MAX_FOLD_IDS;
 
 use super::model::{AggressionPrimitive, normalized_area_size};
-use crate::config::LiveLaneStyle;
+use crate::config::{LaneView, LiveLaneStyle};
 use crate::history::AggressorSide;
 use crate::timeline::BarTimeline;
 
@@ -40,7 +40,8 @@ fn side_key(side: AggressorSide) -> u8 {
 /// The split is the tape's own width share ([`LiveLaneStyle::width_share`]),
 /// not a number of its own: marks need room to be read, so the pane with a
 /// third of the canvas gets a third of the marks, and a trader who drags the
-/// divider moves both together.
+/// divider moves both together. A tape alone on the pane has the whole canvas,
+/// so it spends the whole budget.
 ///
 /// With the tape switched off there is no second pane, and the candles get the
 /// whole budget — reserving a share for a band nobody is drawing would fold the
@@ -52,7 +53,11 @@ pub(super) fn pane_budgets(limit: usize, lane: &LiveLaneStyle) -> (usize, usize)
     if !lane.enabled {
         return (limit, 0);
     }
-    let share = lane.open_share();
+    let share = if lane.view() == LaneView::TapeOnly {
+        1.0
+    } else {
+        lane.open_share()
+    };
     let lane_budget = ((limit as f32) * share).round().max(0.0) as usize;
     let lane_budget = lane_budget.clamp(2, limit.saturating_sub(2).max(2));
     (limit.saturating_sub(lane_budget).max(2), lane_budget)
@@ -354,5 +359,27 @@ mod tests {
             },
         );
         assert_eq!((all, none), (100, 0), "the candles get the whole budget");
+    }
+
+    /// A tape alone on the pane has all of the room, so all of the marks but
+    /// the two a pane always keeps, wherever the share was left.
+    #[test]
+    fn a_tape_alone_spends_the_whole_budget() {
+        for share in [MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE] {
+            let lane = LiveLaneStyle {
+                enabled: true,
+                tape_only: true,
+                width_share: share,
+                ..LiveLaneStyle::default()
+            };
+            assert_eq!(pane_budgets(100, &lane), (2, 98), "share {share}");
+        }
+        // Switched off it is candles only, whatever `tape_only` was left at.
+        let off = LiveLaneStyle {
+            enabled: false,
+            tape_only: true,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(pane_budgets(100, &off), (100, 0));
     }
 }

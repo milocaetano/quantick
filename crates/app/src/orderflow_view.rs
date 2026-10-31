@@ -685,6 +685,16 @@ impl OrderflowView {
         }
     }
 
+    /// The divider went away mid-drag (the view changed under the hand): the
+    /// share goes back, as no release will come to settle it.
+    pub fn abandon_lane_drag(&mut self) {
+        if self.lane_drag.is_some() {
+            let before = self.config.clone();
+            self.config.abandon_lane_divider(&mut self.lane_drag);
+            self.apply_config(before);
+        }
+    }
+
     /// Zoom the lane's time window by a multiplicative factor: `> 1` shows less market time in the
     /// same band (prints run faster and further apart), `< 1` shows more. The gesture speaks
     /// whichever language the window is in (zoom while following the bars, milliseconds while
@@ -2327,7 +2337,7 @@ mod tests {
             view.sync_published();
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_status_badge(ui.painter(), rect, 0.0);
+                    view.draw_status_badge(ui.painter(), rect);
                 });
             });
             let mut text = String::new();

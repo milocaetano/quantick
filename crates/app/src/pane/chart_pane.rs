@@ -146,6 +146,16 @@ impl ChartPane {
         })
     }
 
+    /// The candle view on screen: the stored one, or with the candles hidden
+    /// the live edge, a copy, so the stored one waits for them untouched.
+    pub(crate) fn shown_viewport(&self) -> crate::viewport::Viewport {
+        let mut view = self.model.viewport;
+        if self.tape_modes().0 {
+            view.snap_to_live();
+        }
+        view
+    }
+
     /// What the bubble size rule reads about this pane, the facts its size
     /// sliders and `orderflow.bubbles.size.set` both judge; `None` without
     /// an order-flow view.

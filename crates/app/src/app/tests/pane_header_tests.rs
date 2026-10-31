@@ -724,3 +724,138 @@ fn a_narrow_header_drops_the_mark_then_the_samples_and_never_overlaps() {
         "the rule fired across the widths"
     );
 }
+
+/// The footprint's settings edit the focused chart, so a right click on the flow
+/// pane's glyph makes that the focused chart, as a time pane's glyph does.
+#[test]
+fn a_right_click_on_the_flow_footprint_glyph_focuses_the_flow_pane() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    app.active_tab_mut().focus = PaneSide::Time(0);
+    run_frame(&mut app, &ctx);
+    let at = flow_control(&app, HeaderControl::Layer(LayerToggle::Footprint)).center();
+    let secondary = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::default(),
+    };
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+    run_frame_with_events(&mut app, &ctx, vec![secondary(true)]);
+    run_frame_with_events(&mut app, &ctx, vec![secondary(false)]);
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().focus, PaneSide::Flow);
+}
+
+/// Hiding the candles keeps their place, through every door out and back: the
+/// frame reads the live edge from a copy and the stored view waits, unclamped.
+#[test]
+fn a_panned_view_survives_tape_only_and_the_way_back() {
+    let mods = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
+    // Back into history, and forward into the projection margin a hidden
+    // pane's zero-width window would clamp away.
+    for pan in [400.0, -120.0] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = charted_fixture(&ctx);
+        let pane = &mut app.active_tab_mut().flow_pane;
+        pane.model.viewport.pan_pixels(pan, pane.slots());
+        run_frame(&mut app, &ctx);
+        let placed = candle_viewport(&app);
+        assert!(!app.active_tab().flow_pane.model.viewport.follows_live());
+
+        press_key(&mut app, &ctx, egui::Key::T, mods);
+        assert_eq!(view_of(&app), LaneView::TapeOnly);
+        run_frame(&mut app, &ctx);
+        let flow = &app.active_tab().flow_pane;
+        assert!(flow.shown_viewport().follows_live(), "the frame reads live");
+        assert!(!flow.model.viewport.follows_live(), "the view waits");
+        assert_eq!(candle_viewport(&app), placed, "pan {pan}: hidden");
+        press_key(&mut app, &ctx, egui::Key::T, mods);
+        assert_eq!(view_of(&app), LaneView::Beside);
+        assert_eq!(candle_viewport(&app), placed, "pan {pan}: the key");
+
+        for _ in 0..3 {
+            let button = flow_control(&app, HeaderControl::View);
+            click_chart(&mut app, &ctx, button.center());
+            run_frame(&mut app, &ctx);
+        }
+        assert_eq!(view_of(&app), LaneView::Beside);
+        assert_eq!(candle_viewport(&app), placed, "pan {pan}: the button");
+    }
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = charted_fixture(&ctx);
+    let pane = &mut app.active_tab_mut().flow_pane;
+    pane.model.viewport.pan_pixels(400.0, pane.slots());
+    run_frame(&mut app, &ctx);
+    let placed = candle_viewport(&app);
+    let flow = &app.active_tab().flow_pane;
+    let chart = flow.frame.chart_rect.expect("the canvas laid out");
+    let divider = flow.frame.lane_divider_x.expect("the divider");
+    let y = chart.center().y;
+    drag(
+        &mut app,
+        &ctx,
+        egui::pos2(divider, y),
+        egui::pos2(chart.left() + 30.0, y),
+    );
+    run_frame(&mut app, &ctx);
+    assert_eq!(view_of(&app), LaneView::TapeOnly);
+    assert_eq!(candle_viewport(&app), placed, "the divider let go");
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::Beside);
+    run_frame(&mut app, &ctx);
+    assert_eq!(candle_viewport(&app), placed, "and back beside");
+}
+
+/// A control the strip clips, even by a pixel, is not listed: what the scene
+/// names is whole, at every width a narrowing window walks through.
+#[test]
+fn the_header_lists_only_controls_wholly_inside_the_strip() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    app.active_tab_mut().set_layout(CanvasLayout::Single);
+    for width in (160..=460).step_by(3) {
+        let size = egui::vec2(width as f32, 700.0);
+        for _ in 0..2 {
+            run_frame_at(&mut app, &ctx, size);
+        }
+        let flow = &app.active_tab().flow_pane;
+        let Some(chart) = flow.frame.area else {
+            continue;
+        };
+        for (control, rect) in &flow.frame.header_controls {
+            assert!(
+                rect.right() <= chart.right(),
+                "{control:?} {rect:?} runs past the strip's end {} at {width}",
+                chart.right()
+            );
+        }
+    }
+}
+
+/// A held tape key acts once: its repeats are swallowed, never strobe the views
+/// and never reach `Ctrl+T`.
+#[test]
+fn a_held_tape_key_acts_once_and_never_opens_a_tab() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let mods = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
+    let tabs = app.runtime.tabs.len();
+    let press = |repeat| egui::Event::Key {
+        key: egui::Key::T,
+        physical_key: None,
+        pressed: true,
+        repeat,
+        modifiers: mods,
+    };
+    run_frame_with_modifiers(&mut app, &ctx, vec![press(false)], mods);
+    assert_eq!(view_of(&app), LaneView::TapeOnly);
+    for _ in 0..3 {
+        run_frame_with_modifiers(&mut app, &ctx, vec![press(true)], mods);
+        assert_eq!(view_of(&app), LaneView::TapeOnly, "a repeat moved the view");
+    }
+    assert_eq!(app.runtime.tabs.len(), tabs, "a repeat opened a tab");
+    assert!(!app.surfaces.source_picker.is_open());
+}

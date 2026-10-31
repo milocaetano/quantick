@@ -35,7 +35,7 @@ const VALUE_GAP_PX: f32 = 4.0;
 
 /// What the header painted this frame, in reading order: the scene reads it,
 /// so it lists a control only while a hand can reach it.
-pub type PaintedControls = SmallVec<[(HeaderControl, egui::Rect); 6]>;
+pub type PaintedControls = SmallVec<[(HeaderControl, egui::Rect); LayerToggle::ALL.len() + 3]>;
 
 /// The rule closing the strip against the chart below it.
 pub fn paint_rule(ui: &egui::Ui, strip: egui::Rect) {
@@ -281,8 +281,9 @@ fn view_button(
 }
 
 fn record(ui: &egui::Ui, control: HeaderControl, rect: egui::Rect, painted: &mut PaintedControls) {
-    // A control the strip clipped away is not on screen, so it is not listed.
-    if ui.is_rect_visible(rect) {
+    // A control the strip clipped, even in part, is not listed: a hand or a
+    // script aiming at the middle of its rect could miss it.
+    if ui.is_visible() && ui.clip_rect().contains_rect(rect) {
         painted.push((control, rect));
     }
 }

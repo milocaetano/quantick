@@ -12,8 +12,6 @@
 //! The threshold is the canvas pane fold's (the app's `canvas_layout` collapse
 //! threshold asserts it agrees), so the two edges feel alike.
 
-use serde::{Deserialize, Serialize};
-
 use super::HeatmapConfig;
 use super::lane::{
     DEFAULT_LIVE_LANE_SHARE, LiveLaneStyle, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
@@ -25,11 +23,9 @@ use super::lane::{
 pub const LANE_FOLD_AT_PX: f32 = 120.0;
 
 /// What the flow pane shows: never stored, always [`LiveLaneStyle::view`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneView {
     /// Candles and tape side by side, split at the lane's share.
-    #[default]
     Beside,
     /// The candles alone: the tape is switched off.
     CandlesOnly,
@@ -83,13 +79,14 @@ impl LiveLaneStyle {
     }
 
     /// Show `view`, the one write every view goes through; answers whether
-    /// the view changed. The share stays. Candles only clears `tape_only` too,
-    /// so the tape's own switch brings back a tape beside the candles.
+    /// either switch moved, so a stale `tape_only` cleared here is saved. The
+    /// share stays. Candles only clears `tape_only` too, so the tape's own
+    /// switch brings back a tape beside the candles.
     pub fn set_view(&mut self, view: LaneView) -> bool {
-        let changed = self.view() != view;
+        let before = (self.enabled, self.tape_only);
         self.enabled = view != LaneView::CandlesOnly;
         self.tape_only = view == LaneView::TapeOnly;
-        changed
+        before != (self.enabled, self.tape_only)
     }
 
     /// Whether the tape sits beside the candles, so a divider exists.
@@ -98,16 +95,21 @@ impl LiveLaneStyle {
         self.view() == LaneView::Beside
     }
 
-    /// Switch the tape on or off; answers whether it changed.
+    /// Switch the tape on or off; answers whether it changed. A tape switched
+    /// on lands beside the candles, whatever `tape_only` a preset or the layer
+    /// setter left behind while it was off.
     pub fn set_enabled(&mut self, enabled: bool) -> bool {
         let changed = self.enabled != enabled;
+        if changed && enabled {
+            self.tape_only = false;
+        }
         self.enabled = enabled;
         changed
     }
 
     /// The share the lane's band takes, clamped as the layout clamps it.
     #[must_use]
-    pub fn open_share(&self) -> f32 {
+    pub(crate) fn open_share(&self) -> f32 {
         if self.width_share.is_finite() {
             self.width_share
                 .clamp(MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE)
@@ -218,6 +220,12 @@ impl LaneDividerDrag {
         lane.width_share = self.restore_share;
         lane.set_view(view)
     }
+
+    /// The divider left under the hand, so no release will come: the lane
+    /// gets its share back and the view stays whatever took the divider away.
+    pub fn abandon(self, lane: &mut LiveLaneStyle) {
+        lane.width_share = self.restore_share;
+    }
 }
 
 impl HeatmapConfig {
@@ -245,6 +253,14 @@ impl HeatmapConfig {
     pub fn release_lane_divider(&mut self, hand: &mut Option<LaneDividerDrag>) -> bool {
         hand.take()
             .is_some_and(|drag| drag.release(&mut self.live_lane))
+    }
+
+    /// The drag in `hand` given up ([`LaneDividerDrag::abandon`]). An empty
+    /// hand changes nothing.
+    pub fn abandon_lane_divider(&mut self, hand: &mut Option<LaneDividerDrag>) {
+        if let Some(drag) = hand.take() {
+            drag.abandon(&mut self.live_lane);
+        }
     }
 }
 

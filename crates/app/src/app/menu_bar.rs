@@ -128,11 +128,25 @@ const MENU_BAR_HEIGHT: f32 = 28.0;
 
 impl QuantickApp {
     /// The tape key, on a focused flow pane: tape only, and from there back
-    /// beside the candles. Consumed whatever the focus, before `Ctrl+T` is read:
-    /// that one would match it too and open a tab.
+    /// beside the candles. Consumed whatever the focus and however held, before
+    /// `Ctrl+T` is read: that one would match it too and open a tab. Only a
+    /// fresh press acts: a held key's repeats would strobe the views.
     pub(super) fn read_tape_view_key(&mut self, ctx: &egui::Context) {
         let shortcut = crate::chart_layers::shortcuts::TAPE_VIEW_SHORTCUT;
-        if !ctx.input_mut(|input| input.consume_shortcut(&shortcut)) || ctx.wants_keyboard_input() {
+        let fresh = ctx.input_mut(|input| {
+            let fresh = input.events.iter().any(|event| {
+                matches!(event, egui::Event::Key {
+                    key,
+                    modifiers,
+                    pressed: true,
+                    repeat: false,
+                    ..
+                } if *key == shortcut.logical_key && modifiers.matches_logically(shortcut.modifiers))
+            });
+            input.consume_shortcut(&shortcut);
+            fresh
+        });
+        if !fresh || ctx.wants_keyboard_input() {
             return;
         }
         let tab = self.active_tab_mut();

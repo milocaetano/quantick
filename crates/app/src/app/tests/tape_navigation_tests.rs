@@ -683,7 +683,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     let tape_before = app.active_tab().tape().tape_end();
                     let window = app.active_tab().tape().live_lane_window();
                     assert_eq!(
-                        app.active_tab().flow_pane.model.viewport.follows_live(),
+                        app.active_tab().flow_pane.shown_viewport().follows_live(),
                         tape_only
                     );
                     assert!(!tape_before.is_live());
@@ -719,7 +719,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
                     if on_tape {
                         assert_eq!(candles_view(&app), candles_before);
-                        assert_eq!(pane.model.viewport.follows_live(), tape_only);
+                        assert_eq!(pane.shown_viewport().follows_live(), tape_only);
                     } else {
                         assert!(pane.model.viewport.follows_live());
                         assert_eq!(
@@ -1303,4 +1303,42 @@ fn the_tape_fold_is_named_retry_safe_refused_without_a_lane_and_read_back() {
     assert_eq!(success_result(&opened)["changed"], true);
     assert_eq!(read_bubbles(&mut app, &mut observer, "tape_fold"), "open");
     assert_eq!(lane_of(&app).view(), LaneView::Beside);
+}
+
+/// The divider gone under the hand (a key changed the view mid-drag) leaves no
+/// release to settle the drag: the share goes back and the view stays.
+#[test]
+fn a_divider_gone_mid_drag_gives_the_lane_its_share_back() {
+    use quantick_orderflow::LaneView;
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    let share = lane_of(&app).width_share;
+    let pane = &app.active_tab().flow_pane;
+    let open = pane.frame.lane_divider_x.expect("the divider");
+    let y = pane.frame.chart_rect.expect("the canvas").center().y;
+    let (from, to) = (egui::pos2(open, y), egui::pos2(open - 80.0, y));
+
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(from), pointer_button(from, true)],
+    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+    run_frame(&mut app, &ctx);
+    assert_ne!(lane_of(&app).width_share, share, "the drag moved the band");
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    run_frame(&mut app, &ctx);
+    assert_eq!(lane_of(&app).width_share, share, "the share came back");
+
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(to), pointer_button(to, false)],
+    );
+    run_frame(&mut app, &ctx);
+    assert_eq!(lane_of(&app).view(), LaneView::TapeOnly, "the view stays");
+    assert_eq!(lane_of(&app).width_share, share);
 }

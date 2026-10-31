@@ -57,7 +57,7 @@ impl ChartPane {
             let bar = if price_on || time_on {
                 self.hover_pos.and_then(|pointer| {
                     self.series_read()
-                        .pointer_bar(&self.model.viewport, pointer.x, right, total)
+                        .pointer_bar(&frame.view, pointer.x, right, total)
                 })
             } else {
                 None
@@ -224,7 +224,7 @@ impl ChartPane {
                     pane: history_rect,
                     total,
                     candle_width: cw,
-                    viewport: &self.model.viewport,
+                    viewport: &frame.view,
                     seam: self.seam_slot(),
                     boundary: self.state.backfill_boundary(),
                     bars: self.state.bars(),
@@ -238,7 +238,7 @@ impl ChartPane {
                     pane: history_rect,
                     total,
                     candle_width: cw,
-                    viewport: &self.model.viewport,
+                    viewport: &frame.view,
                     seam: self.seam_slot(),
                     boundary: self.state.backfill_boundary(),
                     bars: self.state.bars(),
@@ -255,7 +255,7 @@ impl ChartPane {
                     pane: history_rect,
                     total,
                     candle_width: cw,
-                    viewport: &self.model.viewport,
+                    viewport: &frame.view,
                     seam: self.seam_slot(),
                     boundary: self.state.backfill_boundary(),
                     bars: self.state.bars(),
@@ -272,7 +272,7 @@ impl ChartPane {
                 strip: areas.time_strip,
                 total,
                 candle_width: cw,
-                viewport: &self.model.viewport,
+                viewport: &frame.view,
                 turns,
                 tz: chrome.tz,
                 first_visible: (start < end)
@@ -299,7 +299,7 @@ impl ChartPane {
             style: chrome.style,
             tz: chrome.tz,
             divider_x: self.frame.lane_divider_x,
-            viewport: &self.model.viewport,
+            viewport: &frame.view,
             series: self.series_read(),
         }
         .paint();
@@ -342,8 +342,8 @@ impl ChartPane {
     }
 
     /// The last marks on the canvas: the jump-to-live chip, the empty-view
-    /// notice, the crosshair, the pointer compass, the status badge and the
-    /// tape switch, in that order so each sits on top of the ones before it.
+    /// notice, the crosshair, the pointer compass and the status badge, in that
+    /// order so each sits on top of the ones before it.
     pub(super) fn paint_canvas_chrome(
         &self,
         frame: &DrawFrame<'_>,
@@ -403,9 +403,7 @@ impl ChartPane {
                 });
         }
         // The status badge is not a layer: it reports whether the source is
-        // healthy, and a chart with every layer off must still say that. It
-        // shares the top-right corner with the tape switch, which is drawn last
-        // and holds the corner itself.
+        // healthy, and a chart with every layer off must still say that.
         if let Some(orderflow) = self.orderflow.as_ref() {
             self.layer_renderers
                 .status(&mut super::render_registry::StatusPass {
@@ -414,12 +412,5 @@ impl ChartPane {
                     rect: chart_rect,
                 });
         }
-        self.layer_renderers
-            .canvas(&mut crate::pane::render_registry::CanvasPass {
-                painter,
-                rect: chart_rect,
-                state: &self.layers,
-                facts: self.layer_facts(Some(chrome.capabilities)),
-            });
     }
 }

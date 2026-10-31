@@ -29,7 +29,7 @@ pub(super) struct PaperArbitration<'a> {
     pub(super) projection: &'a DrawingProjection<'a>,
     pub(super) drawings: &'a Drawings,
     pub(super) layer_visible: bool,
-    /// The lane divider's grip, or a folded side's rail: chrome, never an aim.
+    /// The lane divider's grip: chrome, never an aim.
     pub(super) lane_handle: Option<egui::Rect>,
 }
 
