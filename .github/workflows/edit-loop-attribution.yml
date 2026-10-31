@@ -1,0 +1,47 @@
+name: Edit loop attribution (scratch)
+
+on:
+  push:
+    branches: [diag/edit-loop-drawings-attribution]
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        vm: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install desktop GUI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - run: rustc --version
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ${{ runner.temp }}/edit-loop-targets
+          key: edit-loop-v2-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: edit-loop-v2-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: Same-VM comparison
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/edit-loop-worktree" HEAD
+          python .diag/ab.py "$RUNNER_TEMP/edit-loop-worktree" "$RUNNER_TEMP/edit-loop-targets" "$RUNNER_TEMP/diag" 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: attribution-${{ matrix.vm }}
+          path: ${{ runner.temp }}/diag
