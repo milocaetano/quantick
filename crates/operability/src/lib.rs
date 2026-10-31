@@ -107,7 +107,7 @@ pub enum Source {
     TabAction,
     /// A `dock::DockTab` entry.
     DockTab,
-    /// A `toolbar::LayerToggle` entry.
+    /// A `pane_header::LayerToggle` entry.
     LayerToggle,
     /// A `drawings::DRAWING_TOOLS` entry, by its registered tool id.
     DrawingTool,

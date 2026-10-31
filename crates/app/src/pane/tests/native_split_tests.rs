@@ -52,6 +52,7 @@ fn a_native_split_pane_fits_the_shared_axis_to_visible_candles_and_tape() {
         closed_total: bars.len(),
         start: 0,
         end: bars.len(),
+        view: crate::viewport::Viewport::new(),
         cw: 8.0,
         indicator_guide_x: None,
         tape_only: false,

@@ -44,6 +44,9 @@ pub(super) struct DrawFrame<'a> {
     pub(super) visible_prefix: &'a [quantick_engine::Bar],
     pub(super) visible_state: &'a [quantick_engine::Bar],
     pub(super) canvas_background: egui::Color32,
+    /// The candle view this frame reads: with the candles hidden, a copy at
+    /// the live edge rather than the stored one.
+    pub(super) view: crate::viewport::Viewport,
     pub(super) cw: f32,
 }
 

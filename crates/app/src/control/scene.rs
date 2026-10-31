@@ -12,7 +12,7 @@
 //!
 //! Nothing here declares a control of its own. Every entry resolves to the
 //! registry that already drives the interface: [`ChartLayer`] through
-//! [`LayerToggle`] for the toolbar's LAYERS group, [`DRAWING_TOOLS`] for the
+//! what each pane's header painted, [`DRAWING_TOOLS`] for the
 //! tool rail, [`DockTab::ALL`] for the dock, and the application's own tabs
 //! and panes for the rest. A hand-kept list beside those would drift the day
 //! someone adds a tool and forgets this file, and an operator would be told
@@ -43,7 +43,8 @@
 //! for its benefit but the rail's stage — one enum store per frame, which is
 //! what lets the rail be reported honestly instead of guessed at. The
 //! projection then reads state the frame already keeps: no rectangle is
-//! recorded, no hit test is run, no layout is measured. Note that a capture
+//! recorded beyond a pane header's painted controls, no hit test is run, no
+//! layout is measured. Note that a capture
 //! builds the list *twice* — once for the module revision and once for the
 //! scope — because module revisions are capture-derived across every module
 //! (PR 2's recorded deferral); this is the largest projection in the registry
@@ -61,14 +62,13 @@ use quantick_control::{
 };
 
 use eframe::egui;
+use quantick_chart::pane_header::{HeaderControl, view_name};
 
 use crate::{
-    chart_layers::ChartLayer,
     dock::DockTab,
     feed::stall::Recovery,
     pane::{ChartPane, PaneSide},
     tab::Tab,
-    toolbar::LayerToggle,
     toolrail::{RailControl, RailControlKind},
 };
 
@@ -128,11 +128,6 @@ fn tab_control_id(tab_id: u64) -> String {
     format!("{TAB_STRIP_OWNER_ID}.tab.{tab_id}")
 }
 
-/// The identifier of one layer toggle in the toolbar's LAYERS group.
-fn layer_control_id(layer: ChartLayer) -> String {
-    format!("{TOOLBAR_LAYERS_OWNER_ID}.{}", layer.id())
-}
-
 /// The identifier of one button on the drawing rail.
 ///
 /// The rail draws from three registries and they share no namespace: a tool
@@ -177,7 +172,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     let focused_pane_id = push_panes(&mut controls, tabs.active_id(), active, focused_side);
     push_context_dividers(&mut controls, tabs.active_id(), active);
     push_quick_range(&mut controls, app);
-    push_layer_toggles(&mut controls, app, active);
+    push_pane_headers(&mut controls, app, tabs.active_id(), active);
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
     // With the other fixed-size regions, ahead of the strip. At most three
@@ -199,8 +194,9 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
         unavailable("control_count_exceeded_the_scene_limit")
     } else {
         // Never `available()`. A region in `covered_regions` was *walked*,
-        // not exhausted: the toolbar contributes its LAYERS group and not the
-        // SOURCE, HISTORY or TRADE groups beside it, the rail its tools
+        // not exhausted: a pane header contributes its view, layers and sizes with
+        // bounds and its bars and indicators calls without, the toolbar its quick
+        // range and not its SOURCE, HISTORY or TRADE groups, the rail its tools
         // and not its trailing cluster, the strip its chips and not the `+`.
         // Reporting completeness here would tell a client the controls this
         // walk does not reach are not on screen, which is the one lie the
@@ -351,40 +347,66 @@ fn push_tab_strip(
     true
 }
 
-/// The toolbar's LAYERS group: one toggle per visual layer, each answering
-/// for the same field the pane's own layer menu writes.
-fn push_layer_toggles<P: TabsPort + ChromePort + ?Sized>(
+/// Every pane's header line, as painted: a narrow pane that dropped its samples
+/// or clipped a glyph lists neither. The state is read now, through the calls
+/// the header drew from. The tab owns them, as it owns its panes; the control's
+/// own id, `pane.<id>.header.*`, says which pane.
+fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     controls: &mut Vec<SceneControlSnapshot>,
     app: &P,
+    tab_id: u64,
     tab: &Tab,
 ) {
     let capabilities = tab.capabilities(app.tab_reads().config());
-    // `LayerToggle::ALL` is call order, which the group's right-to-left layout
-    // turns into right-to-left screen order. Reversed here so the scene lists
-    // them the way the trader reads them: an assistant asked about "the third
-    // button from the left" must count the same direction the eye does.
-    for toggle in LayerToggle::ALL.into_iter().rev() {
-        let layer = toggle.layer();
-        let (on, blocked) = tab.layer_toggle_state(layer, app.chrome_reads().style(), capabilities);
-        controls.push(SceneControlSnapshot {
-            control_id: layer_control_id(layer),
-            label: layer.label().to_owned(),
-            role: SceneRoleDto::Toggle,
-            owner: SceneOwnerSnapshot {
-                kind: SceneOwnerKindDto::Toolbar,
-                id: TOOLBAR_LAYERS_OWNER_ID.to_owned(),
-            },
-            selected: on,
-            // The very gate the disabled button reads, in its coded rendering:
-            // one condition, two audiences, no chance of drift.
-            availability: match blocked {
-                None => available(),
-                Some(block) => unavailable(block.code),
-            },
-            bounds: None,
-            bounds_availability: bounds_not_recorded(),
-            capability_id: None,
-        });
+    let style = app.chrome_reads().style();
+    for (pane, _) in tab.panes() {
+        for &(control, rect) in &pane.frame.header_controls {
+            let (label, role, selected, blocked, capability) = match control {
+                HeaderControl::View => (
+                    pane.orderflow.as_ref().map_or("", |tape| {
+                        view_name(tape.cached_config().live_lane.shown_view())
+                    }),
+                    SceneRoleDto::Action,
+                    false,
+                    None,
+                    quantick_control_schema::tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
+                ),
+                HeaderControl::Layer(toggle) => (
+                    toggle.name(),
+                    SceneRoleDto::Toggle,
+                    pane.layer_switched_on(toggle.layer(), style),
+                    pane.layer_blocked(toggle.layer(), capabilities),
+                    quantick_control_schema::layers::SET_VISIBILITY_CAPABILITY_ID,
+                ),
+                HeaderControl::Sample(sample) => (
+                    sample.name(),
+                    SceneRoleDto::Action,
+                    false,
+                    None,
+                    quantick_control_schema::bubble_scale::BUBBLE_SCALE_CAPABILITY_ID,
+                ),
+            };
+            let bounds = rect_bounds(rect);
+            controls.push(SceneControlSnapshot {
+                control_id: format!("pane.{}.header.{}", pane.id, control.id_in_header()),
+                label: label.to_owned(),
+                role,
+                owner: SceneOwnerSnapshot {
+                    kind: SceneOwnerKindDto::Tab,
+                    id: tab_control_id(tab_id),
+                },
+                selected,
+                // The very gate the glyph reads, in its coded rendering: one
+                // condition, two audiences, no chance of drift.
+                availability: blocked.map_or_else(available, |block| unavailable(block.code)),
+                bounds_availability: match &bounds {
+                    Bounds::Rect(_) => available(),
+                    _ => unavailable("the_controls_rectangle_is_not_reportable"),
+                },
+                bounds: bounds.into_snapshot(),
+                capability_id: Some(capability.to_owned()),
+            });
+        }
     }
 }
 

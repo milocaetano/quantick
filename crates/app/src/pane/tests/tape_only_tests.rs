@@ -51,6 +51,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
         closed_total: bars.len(),
         start: 0,
         end: bars.len(),
+        view: crate::viewport::Viewport::new(),
         cw: 8.0,
         indicator_guide_x: None,
         tape_only,
@@ -155,19 +156,26 @@ fn tape_only_reserves_no_forming_candle_volume_profile_strip() {
         "ordinary charts retain their live profile"
     );
     pane.set_layer_visible(ChartLayer::TapeOnly, true, &mut effects);
-    assert_eq!(pane.live_strip_width(capabilities), 0.0);
-    let rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1_000.0, 600.0));
-    assert!(pane.plot_areas(rect, capabilities).live_strip.is_none());
-    assert!(
-        pane.layers.requested(ChartLayer::LiveStrip),
-        "the user's ordinary setting is retained"
+    assert_eq!(
+        pane.live_strip_width(capabilities),
+        ordinary_width,
+        "the strip reads the book, so it stays with the candles hidden"
     );
+    let rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1_000.0, 600.0));
+    assert!(pane.plot_areas(rect, capabilities).live_strip.is_some());
+    pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut effects);
+    assert_eq!(
+        pane.live_strip_width(capabilities),
+        0.0,
+        "and it still answers to its own switch"
+    );
+    pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut effects);
     pane.set_layer_visible(ChartLayer::TapeOnly, false, &mut effects);
     assert_eq!(pane.live_strip_width(capabilities), ordinary_width);
 }
 
 #[test]
-fn the_tape_switch_and_key_share_the_header_without_covering_the_live_edge() {
+fn the_key_stays_in_the_header_without_covering_the_live_edge() {
     use crate::orderflow_render::{
         OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_compact_legend,
     };
@@ -188,66 +196,22 @@ fn the_tape_switch_and_key_share_the_header_without_covering_the_live_edge() {
     config.live_lane.show_depth = false;
     let style = OrderflowRenderStyle::from_config(&config, egui::Color32::BLACK.to_array());
     let layout = ProjectedLayout::new(header, &pane.model.viewport, 2, 0, 2, header.width());
-    for tape_only in [false, true] {
-        let ctx = egui::Context::default();
-        let mut key = None;
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
-            let painter = ctx.layer_painter(egui::LayerId::background());
-            if tape_only {
-                key =
-                    draw_compact_legend(&painter, &RenderContext::new(&projection, layout, &style));
-            }
-            pane.layer_renderers
-                .canvas(&mut crate::pane::render_registry::CanvasPass {
-                    painter: &painter,
-                    rect: plot,
-                    tape_on: Some(true),
-                    tape_hovered: true,
-                    state: &pane.layers,
-                    facts: quantick_layers::LayerFacts {
-                        flow_pane: true,
-                        tape_on: true,
-                        tape_only,
-                        ..Default::default()
-                    },
-                });
-        });
-        let chip = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT => {
-                    Some(rect.rect)
-                }
-                _ => None,
-            })
-            .expect("the tape control remains visible");
-        if tape_only {
+    let ctx = egui::Context::default();
+    let mut key = None;
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        key = draw_compact_legend(&painter, &RenderContext::new(&projection, layout, &style));
+    });
+    assert!(key.is_some(), "the buy/sell key remains visible");
+    for shape in &output.shapes {
+        let ink = shape
+            .shape
+            .visual_bounding_rect()
+            .intersect(shape.clip_rect);
+        if ink.is_positive() {
             assert!(
-                header.contains_rect(chip),
-                "the chip is outside the tape: {chip:?}"
-            );
-            assert!(
-                key.expect("the buy/sell key remains visible").right() < chip.left(),
-                "both controls fit at the narrow split without hiding one another"
-            );
-            for shape in &output.shapes {
-                let ink = shape
-                    .shape
-                    .visual_bounding_rect()
-                    .intersect(shape.clip_rect);
-                if ink.is_positive() {
-                    assert!(
-                        ink.bottom() <= plot.top(),
-                        "no header ink can hide the high forming dot"
-                    );
-                }
-            }
-        } else {
-            assert_eq!(
-                chip,
-                crate::pane::tape_switch_rect(plot, false),
-                "ordinary/BTC placement is unchanged"
+                ink.bottom() <= plot.top(),
+                "no header ink can hide the high forming dot"
             );
         }
     }

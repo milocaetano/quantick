@@ -1,6 +1,6 @@
 //! Shift/Alt order entry over the tape. The flow pane's tape lane shares the
 //! pane's price axis, so the aim and its press work there exactly as they do
-//! over candles, in every tape mode. The tape chip keeps its own press.
+//! over candles, in every tape mode. The pane header keeps its own press.
 use super::*;
 
 /// The tape modes a flow pane offers, and how a test enters each.
@@ -57,7 +57,7 @@ fn at_x(app: &QuantickApp, x: f32) -> egui::Pos2 {
     egui::pos2(x, chart.top() + chart.height() * 0.25)
 }
 
-/// The middle of the tape lane, a quarter down the plot, clear of the chip.
+/// The middle of the tape lane, a quarter down the plot.
 fn on_the_tape(app: &QuantickApp) -> egui::Pos2 {
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_area.expect("the pane laid out");
@@ -130,28 +130,37 @@ fn tape_only_aims_across_the_whole_plot() {
     assert_eq!(the_order(&app), (quantick_engine::Side::Buy, price));
 }
 
-/// The tape chip keeps its press with the buy key down: Shift on it puts the
-/// tape away rather than resting an order under it.
+/// The header's view button is chrome, not a price: with the buy key down or a
+/// ticket armed, a press on it walks the views, raises no aim and rests nothing.
 #[test]
-fn the_tape_chip_keeps_its_press_with_shift_down() {
+fn the_view_button_keeps_its_press_with_shift_down_and_under_an_armed_ticket() {
+    use quantick_chart::pane_header::HeaderControl;
+    use quantick_orderflow::LaneView;
+    let view_button = |app: &QuantickApp| {
+        let controls = &app.active_tab().flow_pane.frame.header_controls;
+        controls
+            .iter()
+            .find_map(|(control, rect)| (*control == HeaderControl::View).then_some(rect.center()))
+            .expect("the header painted its view button")
+    };
+    let view = |app: &QuantickApp| app.active_tab().tape().cached_config().live_lane.view();
+
     let ctx = egui::Context::default();
     let mut app = tape_app(&ctx, TapeMode::Chart);
-    let chart = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_area
-        .expect("the pane laid out");
-    let chip = crate::pane::tape_switch_rect(chart, false);
-    click_chart_with(&mut app, &ctx, chip.center(), egui::Modifiers::SHIFT);
-    assert!(
-        app.active_tab().paper.working_orders().is_empty(),
-        "the chip is chrome, not a price"
-    );
-    assert!(
-        !layer_on(&app, ChartLayer::TapeChart),
-        "the press put the tape away"
-    );
+    let at = view_button(&app);
+    move_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
+    assert!(!app.active_tab().paper.aiming(), "Shift on it aims nowhere");
+    click_chart_with(&mut app, &ctx, at, egui::Modifiers::SHIFT);
+    assert!(app.active_tab().paper.working_orders().is_empty());
+    assert_eq!(view(&app), LaneView::CandlesOnly);
+
+    let ctx = egui::Context::default();
+    let mut app = tape_app(&ctx, TapeMode::Chart);
+    arm_a_sell(&mut app);
+    let at = view_button(&app);
+    click_chart_with(&mut app, &ctx, at, egui::Modifiers::NONE);
+    assert!(app.active_tab().paper.working_orders().is_empty());
+    assert_eq!(view(&app), LaneView::CandlesOnly);
 }
 
 /// The lane's divider keeps its drag with the buy key down: Shift on it
@@ -239,17 +248,6 @@ fn tape_only_cancels_from_the_tag_inside_the_plot() {
     );
 }
 
-/// The tape chip, in the canvas's top-right corner.
-fn tape_chip(app: &QuantickApp) -> egui::Rect {
-    let chart = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_area
-        .expect("the pane laid out");
-    crate::pane::tape_switch_rect(chart, false)
-}
-
 /// The lane divider's x on the flow pane.
 fn divider_x(app: &QuantickApp) -> f32 {
     app.active_tab()
@@ -264,73 +262,6 @@ fn arm_a_sell(app: &mut QuantickApp) {
     app.active_tab_mut()
         .paper
         .arm_for_tests(quantick_engine::Side::Sell, quantick_sim::EntryKind::Limit);
-}
-
-/// A sell resting on the chip's row, rested with Alt on the bare tape left
-/// of the chip: its line runs under the chip. Answers its price.
-fn rest_a_sell_under_the_chip(app: &mut QuantickApp, ctx: &egui::Context) -> Decimal {
-    let at = egui::pos2(divider_x(app) + 20.0, tape_chip(app).center().y);
-    click_chart_with(app, ctx, at, egui::Modifiers::ALT);
-    let (side, price) = the_order(app);
-    assert_eq!(side, quantick_engine::Side::Sell);
-    price
-}
-
-/// With a ticket armed, a plain click on the tape chip is the chip's: it
-/// puts the tape away and rests nothing.
-#[test]
-fn an_armed_click_on_the_tape_chip_only_toggles_the_tape() {
-    let ctx = egui::Context::default();
-    let mut app = tape_app(&ctx, TapeMode::Chart);
-    arm_a_sell(&mut app);
-    let chip = tape_chip(&app).center();
-    click_chart_with(&mut app, &ctx, chip, egui::Modifiers::NONE);
-    assert!(
-        app.active_tab().paper.working_orders().is_empty(),
-        "the chip is chrome, not a price"
-    );
-    assert!(
-        !layer_on(&app, ChartLayer::TapeChart),
-        "the click put the tape away"
-    );
-}
-
-/// On the chip an order line under it shows no drag cursor and takes no
-/// press: the chip keeps its hand and its click, and the order stays put.
-#[test]
-fn the_tape_chip_keeps_its_cursor_and_press_over_an_order_line() {
-    let ctx = egui::Context::default();
-    let mut app = tape_app(&ctx, TapeMode::Chart);
-    let price = rest_a_sell_under_the_chip(&mut app, &ctx);
-    let chip = tape_chip(&app).center();
-    let line_y = price_y(
-        &app,
-        PaneSide::Flow,
-        rust_decimal::prelude::ToPrimitive::to_f64(&price).expect("a price"),
-    );
-    assert!(
-        (line_y - chip.y).abs() < 5.0,
-        "the line runs under the chip"
-    );
-
-    let hover = move_chart_with(&mut app, &ctx, chip, egui::Modifiers::NONE);
-    assert_eq!(
-        hover.platform_output.cursor_icon,
-        egui::CursorIcon::PointingHand,
-        "the chip's hand, not the line's drag cursor"
-    );
-
-    run_frame_with_events(&mut app, &ctx, vec![pointer_button(chip, true)]);
-    assert!(
-        !app.active_tab().paper.gesture_active(),
-        "the press on the chip grabbed the line"
-    );
-    run_frame_with_events(&mut app, &ctx, vec![pointer_button(chip, false)]);
-    assert_eq!(the_order(&app).1, price, "the order did not move");
-    assert!(
-        !layer_on(&app, ChartLayer::TapeChart),
-        "the click put the tape away"
-    );
 }
 
 /// The divider's lane-side half resizes the lane under an armed ticket and

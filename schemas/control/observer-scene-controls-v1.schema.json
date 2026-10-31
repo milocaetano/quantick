@@ -216,7 +216,7 @@
     },
     "coverage": {
       "$ref": "#/$defs/AvailabilitySnapshot",
-      "description": "Whether `controls` is every control on screen. It never is yet.\n\nTwo things cut it, and this says which. Each covered region is walked\nonly as far as one group of it — the toolbar's LAYERS, the rail's\ntools, the dock's tab strip, a tab's canvases — so a capture that has\ntruncated nothing is still not the screen, and reports as much rather\nthan letting a client read a short list as a complete one. Beyond\nthat the scene is bounded like every other projection, and a capture\nthat met the bound says so instead of truncating in silence."
+      "description": "Whether `controls` is every control on screen. It never is yet.\n\nTwo things cut it, and this says which. Each covered region is walked\nonly as far as one group of it — a pane header's controls, the rail's\ntools, the dock's tab strip, a tab's canvases — so a capture that has\ntruncated nothing is still not the screen, and reports as much rather\nthan letting a client read a short list as a complete one. Beyond\nthat the scene is bounded like every other projection, and a capture\nthat met the bound says so instead of truncating in silence."
     },
     "covered_regions": {
       "description": "The regions this capture enumerated, in the order it walked them.\n\nThe honest bound on everything above: a control belonging to a region\nabsent from this list was not looked for, and its absence from\n`controls` says nothing about whether it is on screen.",

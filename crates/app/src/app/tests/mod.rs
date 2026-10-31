@@ -932,6 +932,9 @@ fn drawing_strokes(output: &egui::FullOutput) -> usize {
     output
         .shapes
         .iter()
+        // A lit header glyph shares the drawing default's accent; its strip's
+        // clip is what tells it from the canvas.
+        .filter(|clipped| clipped.clip_rect.height() > crate::time_header::HEIGHT_PX)
         .filter(|clipped| match &clipped.shape {
             egui::Shape::LineSegment { stroke, .. } => stroke.color == color,
             _ => false,

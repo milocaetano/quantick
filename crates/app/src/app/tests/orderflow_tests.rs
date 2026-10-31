@@ -372,88 +372,27 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
 /// The gesture itself: a right-click on the canvas opens the menu, and the
 /// primary button — which pans, zooms and places drawings — never does.
 ///
-/// The tape switch in the canvas's top-right corner: one click takes the
-/// band away, another brings it back.
-///
-/// It is the only way back, too — with no band there is nothing to
-/// right-click — so this drives the real pointer through
-/// `handle_navigation` rather than calling the setter, and checks the
-/// corner it lands in.
+/// The tape's view: candles only takes the band away, beside brings it back.
 #[test]
-fn the_canvas_switch_takes_the_tape_off_and_puts_it_back() {
-    let ctx = egui::Context::default();
-    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+fn the_tape_view_takes_the_band_away_and_gives_it_back() {
+    use quantick_orderflow::LaneView;
     let (mut app, _events, _commands, _book) = test_app();
-
-    // A frame that clicks wherever `at` says, then draws — the draw is what
-    // publishes the lane divider the next assertion reads.
-    let frame = |app: &mut QuantickApp, at: Option<egui::Pos2>| {
-        with_flow_pane(app, |pane, chrome| {
-            for pressed in [true, false] {
-                let events = at.map_or_else(Vec::new, |target| {
-                    vec![
-                        egui::Event::PointerMoved(target),
-                        egui::Event::PointerButton {
-                            pos: target,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::default(),
-                        },
-                    ]
-                });
-                let _ = ctx.run(
-                    egui::RawInput {
-                        screen_rect: Some(screen),
-                        events,
-                        ..Default::default()
-                    },
-                    |ctx| {
-                        egui::CentralPanel::default().show(ctx, |ui| {
-                            let area = ui.available_rect_before_wrap();
-                            pane.handle_navigation(ui, area, chrome);
-                            pane.draw_chart(ui.painter(), area, chrome);
-                        });
-                    },
-                );
-            }
-        });
-    };
-
-    // Where the chip is: the canvas's top-right corner, inside it.
-    let chart = {
-        frame(&mut app, None);
-        app.active_tab()
-            .flow_pane
-            .frame
-            .chart_area
-            .expect("the canvas laid out")
-    };
-    let chip = crate::pane::tape_switch_rect(chart, false);
-    assert!(
-        chart.contains_rect(chip),
-        "the switch is on the canvas, not off its edge"
-    );
-    assert!(
-        chip.right() > chart.center().x && chip.top() < chart.center().y,
-        "and in its top-right corner: {chip:?} of {chart:?}"
-    );
-
+    const WIDTH: f32 = 1_000.0;
     assert!(layer_on(&app, ChartLayer::TapeChart), "the tape opens on");
 
-    frame(&mut app, Some(chip.center()));
-    assert!(!layer_on(&app, ChartLayer::TapeChart), "one click takes it");
+    let tape = app.active_tab_mut().tape_mut();
+    assert!(tape.set_lane_view(LaneView::CandlesOnly));
     assert_eq!(
-        app.active_tab().tape().lane_width_px(chart.width()),
+        tape.lane_width_px(WIDTH),
         0.0,
-        "and no band is reserved: the candles have the whole canvas"
+        "no band is reserved: the candles have the whole canvas"
     );
+    assert!(!layer_on(&app, ChartLayer::TapeChart), "the switch agrees");
 
-    frame(&mut app, Some(chip.center()));
-    assert!(
-        layer_on(&app, ChartLayer::TapeChart),
-        "and one puts it back"
-    );
-    assert!(app.active_tab().tape().lane_width_px(chart.width()) > 0.0);
+    let tape = app.active_tab_mut().tape_mut();
+    assert!(tape.set_lane_view(LaneView::Beside));
+    assert!(tape.lane_width_px(WIDTH) > 0.0);
+    assert!(layer_on(&app, ChartLayer::TapeChart));
 }
 
 /// Every point carries its own (bar, price), which is what lets a

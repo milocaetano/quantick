@@ -664,6 +664,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        ("orderflow.tape.view.set", 1, Value::Null, Readback::Moves),
         ("orderflow.tape.fold.set", 1, Value::Null, Readback::Moves),
         (
             "orderflow.bubbles.save_changes.set",
@@ -940,6 +941,18 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "ignore_opening_burst_in_scale": true,
             }),
+            "orderflow.tape.view.set" => {
+                // Away from beside, so the call has somewhere to go and the
+                // fold row after it still finds the tape beside the candles.
+                app.active_tab_mut()
+                    .tape_mut()
+                    .set_lane_view(quantick_orderflow::LaneView::TapeOnly);
+                json!({
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
+                    "pane_id": app.active_tab().flow_pane.id.to_string(),
+                    "view": "beside",
+                })
+            }
             "orderflow.tape.fold.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),

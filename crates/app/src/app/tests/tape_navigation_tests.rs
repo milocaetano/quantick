@@ -683,7 +683,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     let tape_before = app.active_tab().tape().tape_end();
                     let window = app.active_tab().tape().live_lane_window();
                     assert_eq!(
-                        app.active_tab().flow_pane.model.viewport.follows_live(),
+                        app.active_tab().flow_pane.shown_viewport().follows_live(),
                         tape_only
                     );
                     assert!(!tape_before.is_live());
@@ -719,7 +719,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
                     if on_tape {
                         assert_eq!(candles_view(&app), candles_before);
-                        assert_eq!(pane.model.viewport.follows_live(), tape_only);
+                        assert_eq!(pane.shown_viewport().follows_live(), tape_only);
                     } else {
                         assert!(pane.model.viewport.follows_live());
                         assert_eq!(
@@ -1325,4 +1325,93 @@ fn a_folded_tape_leaves_the_strip_to_its_rail() {
     let rail = (chart.right() - LANE_FOLD_RAIL_PX, chart.right() + 100.0);
     let crowded = strip_texts(&app, &output, rail);
     assert!(crowded.is_empty(), "{crowded:?}");
+}
+
+fn read_view(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    let scopes = json!({"scopes":["orderflow.bubbles"]});
+    let (response, _) = unkeyed_call(app, client, "snapshot.read", scopes);
+    success_result(&response)["scopes"]["orderflow.bubbles"]["value"]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|tab| tab["panes"].as_array().unwrap())
+        .find(|pane| pane["pane_id"] == pane_id)
+        .expect("the flow pane is readable")["bubbles"]["tape_view"]
+        .clone()
+}
+
+/// The view is one named call away: permission-checked, safe to retry, allowed
+/// from any view, read back, refused only where there is no lane at all, and it
+/// leaves a fold as it found it.
+#[test]
+fn the_tape_view_is_named_retry_safe_refused_without_a_lane_and_read_back() {
+    use quantick_orderflow::LaneFold;
+    const VIEW: &str = "orderflow.tape.view.set";
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    let share = lane_of(&app).width_share;
+    let directory = gateway_test_directory("tape-view-control");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    assert_eq!(read_view(&mut app, &mut observer), "beside");
+
+    let tape = input(&app, json!({"view": "tape"}));
+    let (denied, _) = unkeyed_call(&mut app, &mut observer, VIEW, tape.clone());
+    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
+    let (first, _) = keyed_call(
+        &mut app,
+        &mut cockpit,
+        "view",
+        VIEW,
+        tape.clone(),
+        "view-key",
+    );
+    let (retry, _) = keyed_call(
+        &mut app,
+        &mut cockpit,
+        "view-retry",
+        VIEW,
+        tape.clone(),
+        "view-key",
+    );
+    assert_eq!(first.outcome, retry.outcome);
+    assert_eq!(success_result(&first)["view"], "tape");
+    assert_eq!(success_result(&first)["changed"], true);
+    let (again, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, tape);
+    assert_eq!(success_result(&again)["changed"], false);
+    assert_eq!(read_view(&mut app, &mut observer), "tape");
+    assert_eq!(lane_of(&app).width_share, share);
+
+    // From tape only straight to candles only: no view stands in the way.
+    let candles = input(&app, json!({"view": "candles"}));
+    let (moved, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, candles);
+    assert_eq!(success_result(&moved)["changed"], true);
+    assert_eq!(read_view(&mut app, &mut observer), "candles");
+    assert!(!lane_of(&app).enabled, "the view is the tape's own switch");
+
+    let open = input(&app, json!({"view": "open"}));
+    let (bad, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, open);
+    assert!(error_code(&bad).is_some());
+    let tab_id = app.runtime.tabs.active_id().to_string();
+    let nowhere = json!({"tab_id": tab_id, "pane_id": "424242", "view": "beside"});
+    let (refused, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, nowhere);
+    assert!(error_code(&refused).is_some(), "no pane, no lane");
+    assert_eq!(read_view(&mut app, &mut observer), "candles");
+
+    set_fold(&mut app, LaneFold::Tape);
+    let beside = input(&app, json!({"view": "beside"}));
+    let (back, _) = unkeyed_call(&mut app, &mut cockpit, VIEW, beside);
+    assert_eq!(success_result(&back)["changed"], true);
+    assert_eq!(read_view(&mut app, &mut observer), "beside");
+    assert_eq!(
+        read_fold(&mut app, &mut observer),
+        "tape",
+        "the fold waited"
+    );
 }

@@ -68,11 +68,7 @@ pub(in crate::pane) struct StatusPass<'a> {
     pub rect: egui::Rect,
 }
 fn status(p: &mut StatusPass<'_>) {
-    p.owner.draw_status_badge(
-        p.painter,
-        p.rect,
-        super::super::constants::TAPE_SWITCH_RESERVED_PX,
-    );
+    p.owner.draw_status_badge(p.painter, p.rect);
 }
 fn background(p: &mut FlowPass<'_>) {
     p.owner.draw_background(

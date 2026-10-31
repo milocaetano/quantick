@@ -2994,6 +2994,7 @@ dependencies = [
  "quantick-engine",
  "quantick-indicator-session",
  "quantick-indicators",
+ "quantick-layers",
  "quantick-orderbook",
  "quantick-orderflow",
  "quantick-workspace",

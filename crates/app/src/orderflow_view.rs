@@ -460,6 +460,22 @@ impl OrderflowView {
         }
         let before = self.config.clone();
         self.config.live_lane.set_enabled(enabled);
+        self.commit_lane_switch(before);
+    }
+
+    /// Show `view`, from any view, through the one write every door shares
+    /// (the header's button, its key, the named call); a fold stays as it was.
+    /// Answers whether it changed.
+    pub fn set_lane_view(&mut self, view: quantick_orderflow::LaneView) -> bool {
+        let before = self.config.clone();
+        let changed = self.config.live_lane.set_view(view);
+        if changed {
+            self.commit_lane_switch(before);
+        }
+        changed
+    }
+
+    fn commit_lane_switch(&mut self, before: HeatmapConfig) {
         if !self.config.depth_visible_anywhere() {
             // Drop the local frame immediately; the worker clears its own.
             self.published.frame = None;
@@ -1301,6 +1317,25 @@ mod tests {
             view.lane_bubbles_enabled() && !view.config.lane_depth_visible(),
             "the tape that comes back is the tape that went away"
         );
+    }
+
+    /// A preset can save a tape-only mode with the tape off. Asking for the
+    /// view it already shows commits nothing, so the preset stays unedited, and
+    /// the tape's switch lands on the mode it saved.
+    #[test]
+    fn a_saved_tape_only_is_kept_by_a_no_op_view_and_returned_by_the_switch() {
+        use quantick_orderflow::LaneView;
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.config.enabled = true;
+        view.config.live_lane.enabled = false;
+        view.config.live_lane.tape_only = true;
+        let saved = view.config.clone();
+
+        assert!(!view.set_lane_view(LaneView::CandlesOnly));
+        assert_eq!(view.config, saved, "nothing to mark edited");
+
+        view.set_lane_enabled(true);
+        assert_eq!(view.config.live_lane.view(), LaneView::TapeOnly);
     }
 
     /// Hiding the map over the candles must not delete the tape. The lane is
@@ -2308,7 +2343,7 @@ mod tests {
             view.sync_published();
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_status_badge(ui.painter(), rect, 0.0);
+                    view.draw_status_badge(ui.painter(), rect);
                 });
             });
             let mut text = String::new();

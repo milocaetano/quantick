@@ -14,6 +14,7 @@ mod exact;
 pub mod labels;
 mod lane;
 mod lane_fold;
+mod lane_view;
 pub mod legend;
 pub mod theme;
 mod tick_bubbles;
@@ -41,6 +42,7 @@ pub use lane::{
 pub use lane_fold::{
     FoldRail, LANE_FOLD_AT_PX, LANE_FOLD_HIT_PX, LANE_FOLD_RAIL_PX, LaneDividerDrag, LaneFold,
 };
+pub use lane_view::LaneView;
 
 /// Contracts a volume dot holds at the largest radius, by default: a dot
 /// sums many prints, so it is drawn on a scale of its own, not on the
