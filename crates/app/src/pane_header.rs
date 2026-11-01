@@ -6,17 +6,16 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_chart::connection_state::Dot;
 use quantick_chart::pane_header::{
     BubbleSample, CAPSULE_HEIGHT_PX, CAPSULE_SLOT_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide,
     FLOW_CONTROLS_PX, FlowHeaderState, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk, HeaderControl,
     HeaderIntent, HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle,
-    PaneHeader,
-    SAMPLE_RESET_SCALE, SLOT_GAP_PX, VIEW_SLOT_PX, dragged_scale, flow_fit, sample_diameter_px,
-    sample_value_text, view_name,
+    PaneHeader, SAMPLE_RESET_SCALE, SLOT_GAP_PX, VIEW_SLOT_PX, dragged_scale, flow_fit,
+    sample_diameter_px, sample_value_text, view_name,
 };
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
 use quantick_orderflow::LaneView;
-use quantick_chart::connection_state::Dot;
 use smallvec::SmallVec;
 
 use crate::chart_layers::shortcuts;
@@ -167,7 +166,9 @@ pub fn draw_marked(
         .chip
         .as_ref()
         .map_or((0.0, 0.0), |dots| loading::chip_widths(ui, dots));
-    let slot_px = slot.as_ref().map_or(0.0, |slot| loading::slot_width(ui, slot));
+    let slot_px = slot
+        .as_ref()
+        .map_or(0.0, |slot| loading::slot_width(ui, slot));
     let fit = flow_fit(&HeaderWidths {
         strip: inner.width(),
         mark: mark_px,
@@ -184,7 +185,11 @@ pub fn draw_marked(
         _ => 0.0,
     };
     let right_px = controls_px + chip_px;
-    let slot_room = if fit.slot { slot_px + GROUP_GAP_PX } else { 0.0 };
+    let slot_room = if fit.slot {
+        slot_px + GROUP_GAP_PX
+    } else {
+        0.0
+    };
     let left = inner.with_max_x(inner.right() - right_px - slot_room);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
@@ -199,7 +204,14 @@ pub fn draw_marked(
         content.add(egui::Label::new(mark).selectable(false));
         content.add_space(GROUP_GAP_PX);
     }
-    bars_control(&mut content, header, salt, selection, inputs, row.rebuilding);
+    bars_control(
+        &mut content,
+        header,
+        salt,
+        selection,
+        inputs,
+        row.rebuilding,
+    );
     let button_left = (content.cursor().left() + GROUP_GAP_PX).min(limit);
     let indicators = indicators_button(ui, button_left, strip, salt);
     let chip_right = inner.right() - controls_px;

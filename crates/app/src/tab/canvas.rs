@@ -370,9 +370,14 @@ impl Tab {
         let chip = self.connection.chip();
         let slot = match state.current_job {
             Some(job) => Some((job.text(), true)),
-            None => self.session.history_note().map(|note| (note.to_owned(), false)),
+            None => self
+                .session
+                .history_note()
+                .map(|note| (note.to_owned(), false)),
         };
-        let rebuilding = self.loading.is_active(crate::loading::LoadingTask::BarRebuild);
+        let rebuilding = self
+            .loading
+            .is_active(crate::loading::LoadingTask::BarRebuild);
         let pane = &mut self.flow_pane;
         let identity = PaneIdentity::OrderFlow;
         let header = PaneHeader::of(identity, pane.spec.spec());
@@ -415,7 +420,9 @@ impl Tab {
         strip: egui::Rect,
         bar_inputs: BarInputAvailability,
     ) {
-        let rebuilding = self.loading.is_active(crate::loading::LoadingTask::BarRebuild);
+        let rebuilding = self
+            .loading
+            .is_active(crate::loading::LoadingTask::BarRebuild);
         let pane = &mut self.time_panes[slot];
         let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
         let mut interval_ms = pane

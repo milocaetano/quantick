@@ -460,6 +460,14 @@ impl QuantickApp {
                 word: tab.connection.status_word(now_ms),
                 door: tab.connection.has_recovery_door(),
                 open: self.chrome.feed_popup_tab == Some(popup_tab),
+                reason: crate::feed_notice::report(&tab.notice, scratch.stall.as_ref())
+                    .filter(crate::feed_notice::Report::is_offline)
+                    .map(|report| {
+                        (
+                            report.headline.to_owned(),
+                            report.next_step.map(str::to_owned),
+                        )
+                    }),
             }
         };
         let status = self.status_model();

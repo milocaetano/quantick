@@ -589,24 +589,6 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// Whether the book's status badge is drawn on the canvas.
-    #[must_use]
-    pub fn status_badge_visible(&self) -> bool {
-        self.config.show_status_badge
-    }
-
-    /// Show or hide it. The recorder is not part of this question: capture,
-    /// generation and the ladder carry on, and the L2 panel still states them
-    /// — this silences a label on the canvas, nothing else.
-    pub fn set_status_badge_visible(&mut self, visible: bool) {
-        if self.config.show_status_badge == visible {
-            return;
-        }
-        let before = self.config.clone();
-        self.config.show_status_badge = visible;
-        self.commit_config_changes(before);
-    }
-
     /// Whether intervals with no depth coverage are marked out.
     #[must_use]
     pub fn gaps_visible(&self) -> bool {
@@ -2333,60 +2315,6 @@ mod tests {
                 None
             )
             .is_none()
-        );
-    }
-
-    /// Hiding the badge silences chrome, never a dead feed. The badge is the
-    /// only real-time statement that the depth on screen has stopped being the
-    /// book — the loading overlay covers the waiting states only, and the dock
-    /// strip carries no status at all — so a failure re-asserts it whatever
-    /// the switch says.
-    #[test]
-    fn a_failing_book_says_so_even_with_the_badge_switched_off() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-        let mut view = OrderflowView::new("BTCUSDT");
-        view.set_enabled(true, 10);
-        view.handle_depth_event(snapshot_event(10));
-        view.flush_for_test();
-
-        let badge_text = |view: &mut OrderflowView| {
-            view.sync_published();
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_status_badge(ui.painter(), rect);
-                });
-            });
-            let mut text = String::new();
-            for shape in output.shapes {
-                if let egui::epaint::Shape::Text(galley) = shape.shape {
-                    text.push_str(galley.galley.text());
-                }
-            }
-            text
-        };
-
-        assert!(badge_text(&mut view).contains("book"), "a healthy badge");
-        view.set_status_badge_visible(false);
-        assert!(
-            badge_text(&mut view).is_empty(),
-            "a healthy book stays quiet once the trader silences it"
-        );
-
-        // The feed drops. The switch has not moved, and the badge is back.
-        view.handle_depth_event(DepthEvent::Status {
-            symbol: "BTCUSDT".to_owned(),
-            generation: 10,
-            status: quantick_orderbook::DepthStatus::Disconnected {
-                error_class: "websocket",
-            },
-        });
-        view.flush_for_test();
-        assert!(!view.status_badge_visible(), "the switch did not move");
-        let failing = badge_text(&mut view);
-        assert!(
-            failing.contains("book offline"),
-            "a dead book may never be hidden chrome: {failing:?}"
         );
     }
 

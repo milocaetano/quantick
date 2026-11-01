@@ -162,7 +162,7 @@ fn the_scene_names_the_corner_and_what_operates_it() {
         .find(|control| control["control_id"] == "feed_status.chip")
         .expect("the corner is on screen, so the scene names it")
         .clone();
-    assert_eq!(chip["label"], crate::feed_notice::OFFLINE_LABEL);
+    assert_eq!(chip["label"], "quiet", "the word the status bar paints");
     assert_eq!(chip["role"], "toggle");
     assert_eq!(chip["selected"], false, "the popup is shut");
     assert!(

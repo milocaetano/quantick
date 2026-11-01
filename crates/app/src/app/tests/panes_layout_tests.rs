@@ -789,34 +789,12 @@ fn the_notice_lands_on_the_pane_that_is_waiting() {
     let tab = app.active_tab();
     let flow = tab.flow_pane.frame.area.expect("the flow pane painted");
     let time = tab.time_panes[0].frame.area.expect("the time pane painted");
-    let (chosen, slots) = tab.starved_pane().expect("a painted pane");
-    assert_eq!(slots, 0, "the starved pane is the one with nothing on it");
-    assert_eq!(chosen, flow, "the note belongs to the pane that is waiting");
-    assert_ne!(
-        chosen, time,
-        "a pane full of candles is not waiting for anything"
+    assert_eq!(
+        tab.empty_panes_rect(),
+        Some(flow),
+        "the overlay covers the pane that is waiting, and a pane full of candles is not"
     );
-
-    // The corner belongs to the window, and the line belongs to the empty
-    // pane. Neither may land on the pane that is painting fine.
-    let notice = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
-    let report = feed_notice::report(&notice, None).expect("a named reason speaks");
-    assert!(report.is_offline());
-    let canvas = flow.union(time);
-    let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let chip = feed_notice::chip_rect(ui.painter(), canvas);
-            assert!(
-                !chip.intersects(time),
-                "chip {chip:?} covered the working time pane {time:?}"
-            );
-            let popup = feed_notice::popup_rect(ui.painter(), canvas, chip, &report);
-            assert!(
-                canvas.contains_rect(popup),
-                "popup {popup:?} left the canvas {canvas:?}"
-            );
-        });
-    });
+    assert!(!flow.intersects(time));
 }
 
 /// One dead terminal stalls every MetaTrader tab at once, and the popup

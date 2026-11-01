@@ -7,8 +7,8 @@ use std::sync::OnceLock;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_chart::connection_state::{Dot, DotLook, OverlayWords};
-use quantick_chart::logo_mark::{self, MarkCell};
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
+use quantick_chart::logo_mark::{self, MarkCell};
 
 /// The system's greys, from the trader's mock: title, meta, faint, border.
 pub const GREY_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xd7, 0xdd, 0xe8);
@@ -236,9 +236,7 @@ pub fn draw_overlay(
 pub fn chip_widths(ui: &egui::Ui, dots: &[Dot; 3]) -> (f32, f32) {
     let words: f32 = dots
         .iter()
-        .map(|dot| {
-            DOT_PX + DOT_WORD_GAP_PX + word_galley(ui, dot.name).size().x
-        })
+        .map(|dot| DOT_PX + DOT_WORD_GAP_PX + word_galley(ui, dot.name).size().x)
         .sum();
     let pad = 2.0 * CHIP_PAD_PX;
     (
@@ -249,11 +247,7 @@ pub fn chip_widths(ui: &egui::Ui, dots: &[Dot; 3]) -> (f32, f32) {
 
 fn word_galley(ui: &egui::Ui, word: &str) -> std::sync::Arc<egui::Galley> {
     ui.fonts(|fonts| {
-        fonts.layout_no_wrap(
-            word.to_owned(),
-            egui::FontId::monospace(CHIP_PT),
-            GREY_MID,
-        )
+        fonts.layout_no_wrap(word.to_owned(), egui::FontId::monospace(CHIP_PT), GREY_MID)
     })
 }
 
@@ -280,14 +274,12 @@ pub fn draw_chip(ui: &egui::Ui, right: f32, strip: egui::Rect, dots: &[Dot; 3], 
         if words {
             let galley = word_galley(ui, dot.name);
             let size = galley.size();
-            let at = egui::pos2(
-                x + DOT_WORD_GAP_PX,
-                rect.center().y - size.y / 2.0,
-            );
+            let at = egui::pos2(x + DOT_WORD_GAP_PX, rect.center().y - size.y / 2.0);
             painter.galley(at, galley, GREY_MID);
             x += DOT_WORD_GAP_PX + size.x;
         }
-        let area = egui::Rect::from_x_y_ranges(start..=x, rect.y_range()).expand2(egui::vec2(2.0, 0.0));
+        let area =
+            egui::Rect::from_x_y_ranges(start..=x, rect.y_range()).expand2(egui::vec2(2.0, 0.0));
         dot_hover(ui, area, index, dot);
         x += if words { DOT_GAP_PX } else { DOT_ONLY_GAP_PX };
     }
@@ -296,7 +288,11 @@ pub fn draw_chip(ui: &egui::Ui, right: f32, strip: egui::Rect, dots: &[Dot; 3], 
 /// The dot's hover, standing down under an open menu: egui ranks tooltips above
 /// popups, and a word about the feed must not cover the menu the hand is on.
 fn dot_hover(ui: &egui::Ui, area: egui::Rect, index: usize, dot: &Dot) {
-    let response = ui.interact(area, ui.id().with(("chip_dot", index)), egui::Sense::hover());
+    let response = ui.interact(
+        area,
+        ui.id().with(("chip_dot", index)),
+        egui::Sense::hover(),
+    );
     if !ui.memory(egui::Memory::any_popup_open) {
         let _ = response.on_hover_text(dot.hover);
     }
@@ -344,11 +340,7 @@ fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>) -> SlotGalleys {
     ui.fonts(|fonts| {
         let font = egui::FontId::proportional(SLOT_PT);
         let glyph = slot.job.then(|| {
-            fonts.layout_no_wrap(
-                icons::ARROW_CLOCKWISE.to_owned(),
-                font.clone(),
-                GREY_MID,
-            )
+            fonts.layout_no_wrap(icons::ARROW_CLOCKWISE.to_owned(), font.clone(), GREY_MID)
         });
         (
             glyph,
@@ -413,6 +405,44 @@ mod tests {
             !cells.iter().any(|cell| cell.column == 0 && cell.row == 0),
             "the corner is clear"
         );
+    }
+
+    /// A press on the control is an answer; the same press beside it is not.
+    #[test]
+    fn the_overlay_control_answers_a_real_press() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let press_at = |at: Option<egui::Pos2>| {
+            let ctx = egui::Context::default();
+            let frame = |events: Vec<egui::Event>| {
+                let mut answer = (None, false);
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            answer = draw_overlay(ui, ui.max_rect(), "X", &words(true), 0);
+                        });
+                    },
+                );
+                answer
+            };
+            let control = frame(Vec::new()).0.expect("laid out");
+            let at = at.unwrap_or(control.center());
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let _ = frame(vec![egui::Event::PointerMoved(at)]);
+            let _ = frame(vec![button(true)]);
+            frame(vec![button(false)]).1
+        };
+        assert!(press_at(None));
+        assert!(!press_at(Some(egui::pos2(20.0, 20.0))));
     }
 
     /// The overlay paints a drag through: only its one control takes a press,

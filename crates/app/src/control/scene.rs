@@ -505,8 +505,12 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
     let chip_bounds = rect_bounds(chip);
     controls.push(SceneControlSnapshot {
         control_id: FEED_CHIP_CONTROL_ID.to_owned(),
-        // The word the chip paints, not one assembled here.
-        label: crate::feed_notice::OFFLINE_LABEL.to_owned(),
+        // The word the status bar paints, not one assembled here.
+        label: app
+            .chrome_reads()
+            .feed_word()
+            .unwrap_or(crate::feed_notice::OFFLINE_LABEL)
+            .to_owned(),
         role: SceneRoleDto::Toggle,
         owner: owner(),
         selected: popup_open,

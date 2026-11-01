@@ -342,11 +342,7 @@ impl ChartPane {
     /// The frame's geometry: the plot split, the live lane, the history
     /// pane beside it and the clamped viewport's visible slots. `None` for an
     /// empty series: the connection overlay speaks for an empty pane.
-    fn lay_out(
-        &mut self,
-        area: egui::Rect,
-        chrome: &PaneChrome<'_>,
-    ) -> Option<FrameLayout> {
+    fn lay_out(&mut self, area: egui::Rect, chrome: &PaneChrome<'_>) -> Option<FrameLayout> {
         self.sync_price_axis_mode();
         let closed_total = self.history_prefix.len() + self.state.bars().len();
         let total = closed_total + usize::from(self.state.partial().is_some());

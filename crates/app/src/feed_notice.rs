@@ -44,7 +44,8 @@ pub const OFFLINE_LABEL: &str = "offline";
 
 /// The next step when the feed's own loop has gone back to "working" while the
 /// chart holds offline: a fresh attempt is what a hand can add.
-pub const HELD_NEXT_STEP: &str = "It is still retrying on its own; Reconnect starts a fresh attempt.";
+pub const HELD_NEXT_STEP: &str =
+    "It is still retrying on its own; Reconnect starts a fresh attempt.";
 
 /// Width of the popup, in pixels.
 ///
@@ -176,7 +177,7 @@ pub struct Report<'a> {
     pub headline: &'a str,
     /// The single next step, when there is one to give.
     pub next_step: Option<&'a str>,
-    /// Red rather than amber: this needs a person, it is not just quiet.
+    /// This needs a person, it is not just quiet.
     pub needs_user: bool,
     /// Whether this is worth a corner at all.
     pub severity: Severity,
@@ -185,18 +186,15 @@ pub struct Report<'a> {
 }
 
 impl Report<'_> {
-    /// The colour carrying this report's severity.
-    ///
-    /// [`theme::WARN`] for a transport that is broken however you read it,
-    /// [`theme::AMBER`] for a tape that has merely gone quiet — which is also
-    /// what a closed market looks like, and a red dot every night on a chart
-    /// with nothing wrong with it is how a warning stops being read.
+    /// The grey carrying this report's severity: lighter for a transport that is
+    /// broken however you read it than for a tape that has merely gone quiet,
+    /// which is also what a closed market looks like.
     #[must_use]
     pub fn accent(&self) -> egui::Color32 {
         if self.needs_user {
-            theme::WARN
+            crate::loading::GREY_LIGHT
         } else {
-            theme::AMBER
+            crate::loading::GREY_MID
         }
     }
 
@@ -592,10 +590,10 @@ mod tests {
         }
     }
 
-    /// Draw the chip the way the frame does: one measurement, handed down.
-    fn chip_at(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>, open: bool) -> bool {
-        let rect = chip_rect(ui.painter(), area);
-        draw_chip(ui, rect, report, open)
+    /// An anchor standing where a status word would, inside `area`.
+    fn chip_rect(_painter: &egui::Painter, area: egui::Rect) -> egui::Rect {
+        let size = egui::vec2(60.0_f32.min(area.width()), 22.0_f32.min(area.height()));
+        egui::Rect::from_min_size(area.max - size, size)
     }
 
     /// The popup, anchored on that same measurement. Answers what was
@@ -668,54 +666,6 @@ mod tests {
         assert!(
             inferred.is_offline(),
             "so is a tape that stopped without anyone saying why"
-        );
-    }
-
-    #[test]
-    fn a_quiet_tape_is_amber_and_a_broken_one_is_red() {
-        let silent = silent_stall();
-        let quiet = from_stall(&silent);
-        assert_eq!(
-            quiet.accent(),
-            theme::AMBER,
-            "a closed market wears no alarm"
-        );
-
-        let attention = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
-        let broken = plain(&attention).expect("a named reason speaks");
-        assert_eq!(broken.accent(), theme::WARN);
-    }
-
-    #[test]
-    fn the_chip_sits_in_the_bottom_right_corner_and_covers_nothing_else() {
-        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 700.0));
-        let chip = with_painter(|painter| chip_rect(painter, area));
-
-        assert!(area.contains_rect(chip), "the chip stays inside the chart");
-        assert!(
-            (area.right() - chip.right() - CHIP_MARGIN_PX).abs() < 0.5,
-            "pinned to the right edge: {chip:?}"
-        );
-        assert!(
-            (area.bottom() - chip.bottom() - CHIP_MARGIN_PX).abs() < 0.5,
-            "pinned to the bottom edge: {chip:?}"
-        );
-        // The rule the trader asked for, measured: what it covers is a corner,
-        // not a chart. Anything approaching the old card's 420 px would mean
-        // the demotion had quietly been undone.
-        assert!(
-            chip.width() < 100.0 && chip.height() <= CHIP_HEIGHT_PX,
-            "the chip is a chip: {chip:?}"
-        );
-    }
-
-    #[test]
-    fn a_chart_narrower_than_the_chip_still_holds_it() {
-        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(40.0, 30.0));
-        let chip = with_painter(|painter| chip_rect(painter, area));
-        assert!(
-            area.contains_rect(chip),
-            "a cramped chip beats one hanging off the canvas: {chip:?}"
         );
     }
 
@@ -855,10 +805,6 @@ mod tests {
                             egui::pos2(900.0, 600.0),
                         );
                         let report = report(notice, None).expect("something to say");
-                        assert!(
-                            !chip_at(ui, area, &report, false),
-                            "an un-clicked frame presses nothing"
-                        );
                         assert_eq!(
                             popup_at(ui, area, &report),
                             NoticeAction::None,
@@ -941,49 +887,6 @@ mod tests {
                 if secondary { "secondary" } else { "primary" }
             );
         }
-    }
-
-    /// The chip is a control, so a click on it has to register as one.
-    #[test]
-    fn the_chip_reports_a_real_click() {
-        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(900.0, 600.0));
-        let notice = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
-        let report = report(&notice, None).expect("a named reason speaks");
-        let ctx = egui::Context::default();
-
-        let mut target = egui::Pos2::ZERO;
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                assert!(!chip_at(ui, area, &report, false));
-                target = chip_rect(ui.painter(), area).center();
-            });
-        });
-
-        let input = egui::RawInput {
-            events: vec![
-                egui::Event::PointerMoved(target),
-                egui::Event::PointerButton {
-                    pos: target,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::default(),
-                },
-                egui::Event::PointerButton {
-                    pos: target,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: egui::Modifiers::default(),
-                },
-            ],
-            ..Default::default()
-        };
-        let mut clicked = false;
-        let _ = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                clicked = chip_at(ui, area, &report, false);
-            });
-        });
-        assert!(clicked, "the corner has to answer the pointer");
     }
 
     /// The consequence of the destructive control is on the popup, so a trader

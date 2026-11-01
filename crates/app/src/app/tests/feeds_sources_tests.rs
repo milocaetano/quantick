@@ -367,10 +367,6 @@ fn only_explicit_connection_notices_drive_transport_state() {
         app.active_tab().feed_connection,
         FeedConnectionState::Connected
     );
-    assert_eq!(
-        statusbar::feed_state(false, app.active_tab().feed_connection),
-        statusbar::FeedState::Live
-    );
 
     notices
         .blocking_send(FeedNotice::attention(
@@ -383,10 +379,6 @@ fn only_explicit_connection_notices_drive_transport_state() {
         app.active_tab().feed_connection,
         FeedConnectionState::Connected
     );
-    assert_eq!(
-        statusbar::feed_state(false, app.active_tab().feed_connection),
-        statusbar::FeedState::Live
-    );
 
     notices
         .blocking_send(FeedNotice::reconnecting(
@@ -398,21 +390,12 @@ fn only_explicit_connection_notices_drive_transport_state() {
         app.active_tab().feed_connection,
         FeedConnectionState::Reconnecting
     );
-    assert_eq!(
-        statusbar::feed_state(false, app.active_tab().feed_connection),
-        statusbar::FeedState::Reconnecting,
-        "a previous latency observation must not keep a disconnected socket green"
-    );
 
     notices.blocking_send(FeedNotice::Connected).unwrap();
     app.active_tab_mut().drain_notices();
     assert_eq!(
         app.active_tab().feed_connection,
         FeedConnectionState::Connected
-    );
-    assert_eq!(
-        statusbar::feed_state(false, app.active_tab().feed_connection),
-        statusbar::FeedState::Live
     );
 }
 
@@ -662,10 +645,8 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     click_chart(&mut app, &ctx, chip.center());
     assert!(app.chrome_reads().feed_popup_open());
 
-    // Where the popup landed, derived rather than assumed: the corner is
-    // measured against the canvas, and on a flow-only layout the pane *is*
-    // the canvas — which the chip's own rectangle proves before the popup
-    // is measured from it.
+    // Where the popup landed, derived rather than assumed: on a flow-only
+    // layout the pane *is* the canvas.
     let stall = app
         .active_tab()
         .stall_at(&app.config, metrics::wall_clock_ms());
@@ -680,11 +661,6 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     let mut popup = egui::Rect::NOTHING;
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         let painter = ctx.layer_painter(egui::LayerId::background());
-        assert_eq!(
-            feed_notice::chip_rect(&painter, area),
-            chip,
-            "the pane is the canvas on this layout"
-        );
         popup = feed_notice::popup_rect(&painter, area, chip, &report);
     });
 
@@ -854,10 +830,6 @@ fn quiet_market_keeps_the_observed_arrival_latency_live() {
 
     assert_eq!(app.active_tab().trade_arrival_ms(), Some(42));
     assert_eq!(
-        statusbar::feed_state(false, app.active_tab().feed_connection),
-        statusbar::FeedState::Live
-    );
-    assert_eq!(
         app.active_tab().trade_arrival_ms(),
         Some(42),
         "reading the status again without another print must not age latency"
@@ -875,10 +847,6 @@ fn backfill_does_not_claim_a_live_transport_latency() {
     app.active_tab_mut().drain_feed(tab_id);
 
     assert_eq!(app.active_tab().trade_arrival_ms(), None);
-    assert_eq!(
-        statusbar::feed_state(false, app.active_tab().feed_connection),
-        statusbar::FeedState::Connecting
-    );
 }
 
 /// Finer, not coarser: the series grows and the same market time moves to

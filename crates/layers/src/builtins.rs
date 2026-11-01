@@ -159,24 +159,6 @@ impl ChartLayer {
         default_on: true,
         projection_demand: false,
     });
-    pub const BookStatus: Self = Self(&LayerDescriptor {
-        id: "book_status",
-        label: "book status badge",
-        hint: "the badge at the top-right reporting on the book feed. Hiding it silences a \
-                 label, never the recorder: capture, generation and the ladder carry on, and the \
-                 L2 panel still states them. A book that goes down or errors brings the badge \
-                 back on its own — hidden chrome may not hide a dead feed",
-        source: LayerSource::Orderflow(OrderflowSwitch::Status),
-        scope: LayerScope::FlowPane,
-        persistence: Persistence::Layers,
-        requirement: Requirement::Book,
-        on_tape: false,
-        needs_tape: false,
-        needs_depth: true,
-        capture_gates_visibility: false,
-        default_on: true,
-        projection_demand: false,
-    });
     pub const DepthGaps: Self = Self(&LayerDescriptor {
         id: "depth_gaps",
         label: "L2 gap boundaries",
@@ -426,7 +408,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 26] = [
+pub const ALL: [ChartLayer; 25] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -436,7 +418,6 @@ pub const ALL: [ChartLayer; 26] = [
     ChartLayer::LiveStrip,
     ChartLayer::LaneMarks,
     ChartLayer::FlowLegend,
-    ChartLayer::BookStatus,
     ChartLayer::DepthGaps,
     ChartLayer::BubbleOverlapMerge,
     ChartLayer::TapeOnly,

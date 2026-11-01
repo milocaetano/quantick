@@ -12,7 +12,6 @@ pub(super) const PACKAGE: Package = Package {
         quantick_layers::ChartLayer::LiveStrip,
         quantick_layers::ChartLayer::LaneMarks,
         quantick_layers::ChartLayer::FlowLegend,
-        quantick_layers::ChartLayer::BookStatus,
         quantick_layers::ChartLayer::DepthGaps,
         quantick_layers::ChartLayer::BubbleOverlapMerge,
         quantick_layers::ChartLayer::TapeOnly,

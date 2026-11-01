@@ -495,6 +495,14 @@ impl<'a> ChromeReads<'a> {
         self.drawn.feed_chip_rect
     }
 
+    /// The word the status bar is painting about the active tab's feed.
+    pub(crate) fn feed_word(self) -> Option<&'static str> {
+        let tab = &self.tabs[self.tabs.active_index()];
+        tab.connection
+            .status_word(crate::metrics::wall_clock_ms())
+            .map(|word| word.word)
+    }
+
     /// The Reconnect standing outside the popup, while one does.
     pub(crate) fn feed_reconnect_rect(self) -> Option<egui::Rect> {
         self.drawn.feed_reconnect_rect

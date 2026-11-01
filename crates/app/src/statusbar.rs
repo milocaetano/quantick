@@ -240,6 +240,8 @@ pub struct StatusLead {
     pub door: bool,
     /// The popup it opens is up.
     pub open: bool,
+    /// The reason, on the word's hover, so reading it takes no click.
+    pub reason: Option<(String, Option<String>)>,
 }
 
 /// Draw the status bar as the window's bottom panel. `tz` is the bar's
@@ -327,7 +329,14 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead, response: &mut StatusResponse
         response.word_rect = Some(rect);
         let cell = cell
             .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text("Why, and how to recover");
+            .on_hover_ui(|ui| {
+                if let Some((headline, step)) = &lead.reason {
+                    ui.label(headline);
+                    if let Some(step) = step {
+                        ui.label(egui::RichText::new(step).color(theme::TEXT_MUTED));
+                    }
+                }
+            });
         response.word_clicked = cell.clicked();
     }
     if word.reconnect {
@@ -819,13 +828,13 @@ mod tests {
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,
-            connection: FeedConnectionState::Connected,
             feed_arrival_ms: Some(106),
             feed_latency: None,
             tape_age_ms: Some(150),
             spec_summary: "tick(50)".to_owned(),
             bar_progress: Some("37/50 ticks".to_owned()),
             deal_recording: None,
+            deal_chip: None,
             venue_bars: 0,
             backfilled_bars: 3_999,
             live_bars: 17,
@@ -848,7 +857,7 @@ mod tests {
         let mut painted = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let _ = draw(ctx, &model, &mut tz, None);
+                let _ = draw(ctx, &model, &mut tz, &StatusLead::default());
             });
             painted.clear();
             for shape in output.shapes {

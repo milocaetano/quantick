@@ -411,6 +411,7 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
                 config: &app.config,
                 toast: &mut app.surfaces.toast,
                 chip_rect: &mut chip,
+                reconnect_rect: &mut None,
                 popup_tab: &mut popup,
             }
             .execute(
@@ -423,6 +424,7 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
                     popup_open: true,
                     chip_clicked: false,
                     dismissed: false,
+                    reconnect_rect: None,
                     chip_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
                         egui::vec2(20.0, 20.0),

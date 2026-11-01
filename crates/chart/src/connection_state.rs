@@ -382,10 +382,8 @@ impl ConnectionTracker {
         }
         self.observe_book(facts.book, link, now);
         self.any_bars = facts.any_bars;
-        self.empty_since = facts
-            .empty_pane
-            .then(|| self.empty_since.unwrap_or(now));
-        self.observe_jobs(jobs, facts.fraction, now);
+        self.empty_since = facts.empty_pane.then(|| self.empty_since.unwrap_or(now));
+        self.observe_jobs(jobs, link, facts.fraction, now);
         let attempt_shown = self.pressed || now.saturating_sub(self.attempting_since) >= BLIP_MS;
         self.state.link = link;
         self.state.feed = match link {
@@ -457,12 +455,15 @@ impl ConnectionTracker {
         self.state.book = self.book_shown;
     }
 
-    fn observe_jobs(&mut self, jobs: &LoadingTracker, fraction: Option<f32>, now: i64) {
+    fn observe_jobs(&mut self, jobs: &LoadingTracker, link: Link, fraction: Option<f32>, now: i64) {
         self.any_job = jobs.any_active();
         let mut newest: Option<(LoadingTask, i64)> = None;
         for task in LoadingTask::ALL {
             let started = &mut self.job_started[task.index()];
-            if !jobs.is_active(task) {
+            // A book cannot be syncing over a feed that is offline: the capture's
+            // own "connecting" outlives the transport it was waiting on.
+            let stale = task == LoadingTask::BookSync && link == Link::Offline;
+            if !jobs.is_active(task) || stale {
                 *started = None;
                 continue;
             }
@@ -696,5 +697,587 @@ pub fn clock_age(ms: i64) -> String {
         format!("{hours}:{minutes:02}:{seconds:02}")
     } else {
         format!("{minutes}:{seconds:02}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FEED: &str = "Binance";
+
+    struct Run {
+        tracker: ConnectionTracker,
+        jobs: LoadingTracker,
+        now: i64,
+        attached: i64,
+        transport: Transport,
+        verdict: Verdict<'static>,
+        trades: u64,
+        has_transport: bool,
+        empty_pane: bool,
+        any_bars: bool,
+        book: Book,
+    }
+
+    impl Run {
+        fn new() -> Self {
+            let mut run = Self {
+                tracker: ConnectionTracker::new(),
+                jobs: LoadingTracker::new(),
+                now: 1_000_000,
+                attached: 1_000_000,
+                transport: Transport::Connecting,
+                verdict: Verdict::None,
+                trades: 0,
+                has_transport: true,
+                empty_pane: true,
+                any_bars: false,
+                book: Book::Off,
+            };
+            run.step(0);
+            run
+        }
+
+        fn step(&mut self, ms: i64) {
+            self.now += ms;
+            self.tracker.observe(
+                &ConnectionFacts {
+                    now_ms: self.now,
+                    symbol: "DOGEUSDT",
+                    attached_ms: self.attached,
+                    has_transport: self.has_transport,
+                    transport: self.transport,
+                    verdict: self.verdict,
+                    live_trades: self.trades,
+                    empty_pane: self.empty_pane,
+                    any_bars: self.any_bars,
+                    book: self.book,
+                    fraction: None,
+                },
+                &self.jobs,
+            );
+        }
+
+        /// A respawn: what a press on Reconnect does to the session.
+        fn press(&mut self) {
+            self.attached = self.now;
+            self.transport = Transport::Connecting;
+            self.verdict = Verdict::None;
+        }
+
+        fn link(&self) -> Link {
+            self.tracker.state().link
+        }
+
+        fn word(&self) -> Option<&'static str> {
+            self.tracker.status_word(self.now).map(|word| word.word)
+        }
+
+        fn overlay(&self) -> Option<OverlayWords> {
+            self.tracker.overlay(FEED, self.now)
+        }
+
+        fn connected(&mut self) {
+            self.transport = Transport::Connected;
+            self.verdict = Verdict::None;
+            self.empty_pane = false;
+            self.any_bars = true;
+            self.step(0);
+        }
+    }
+
+    const FAILED: Verdict<'static> = Verdict::Failed {
+        provider_says: None,
+    };
+
+    fn facts(transport: Transport) -> LinkFacts {
+        LinkFacts {
+            has_transport: true,
+            transport,
+            failed: false,
+            quiet: false,
+            data_arrived: false,
+            press_holding: false,
+        }
+    }
+
+    /// Each transition of the pure decision, the one the words come from.
+    #[test]
+    fn the_link_decision_table() {
+        let trying = facts(Transport::Reconnecting);
+        assert_eq!(next_link(Link::Live, trying), Link::Attempting);
+        assert_eq!(next_link(Link::Attempting, trying), Link::Attempting);
+        assert_eq!(
+            next_link(
+                Link::Attempting,
+                LinkFacts {
+                    failed: true,
+                    ..trying
+                }
+            ),
+            Link::Offline
+        );
+        assert_eq!(next_link(Link::Offline, trying), Link::Offline, "the latch");
+        assert_eq!(
+            next_link(Link::Offline, facts(Transport::Connecting)),
+            Link::Offline,
+            "whichever way the retry loop reports itself"
+        );
+        assert_eq!(
+            next_link(
+                Link::Offline,
+                LinkFacts {
+                    data_arrived: true,
+                    ..trying
+                }
+            ),
+            Link::Live,
+            "data leaves the latch"
+        );
+        assert_eq!(
+            next_link(Link::Offline, facts(Transport::Connected)),
+            Link::Live,
+            "no connection would now be false"
+        );
+        assert_eq!(
+            next_link(
+                Link::Offline,
+                LinkFacts {
+                    press_holding: true,
+                    failed: true,
+                    ..trying
+                }
+            ),
+            Link::Attempting,
+            "a press is shown, however fast it fails"
+        );
+        assert_eq!(
+            next_link(
+                Link::Live,
+                LinkFacts {
+                    quiet: true,
+                    ..facts(Transport::Connected)
+                }
+            ),
+            Link::Quiet
+        );
+        assert_eq!(
+            next_link(
+                Link::Offline,
+                LinkFacts {
+                    has_transport: false,
+                    failed: true,
+                    ..trying
+                }
+            ),
+            Link::NoTransport,
+            "a source with no transport is never offline"
+        );
+    }
+
+    /// The no-bounce rule: a provider that says Attention, then Working, then
+    /// Attention on every retry tick leaves one word on screen.
+    #[test]
+    fn automatic_retries_do_not_bounce_the_words() {
+        let mut run = Run::new();
+        run.transport = Transport::Reconnecting;
+        run.verdict = FAILED;
+        run.step(100);
+        let offline_title = run.tracker.status_word(run.now).expect("a word").word;
+        assert_eq!(offline_title, "offline");
+        for tick in 0..50 {
+            run.verdict = if tick % 2 == 0 { Verdict::None } else { FAILED };
+            run.transport = if tick % 3 == 0 {
+                Transport::Connecting
+            } else {
+                Transport::Reconnecting
+            };
+            run.step(1_700);
+            assert_eq!(run.link(), Link::Offline, "tick {tick}");
+            assert_eq!(run.word(), Some("offline"), "tick {tick}");
+            assert_eq!(run.tracker.state().feed, Stream::Idle, "tick {tick}");
+            assert!(!run.tracker.breathing(run.now), "offline does not move");
+        }
+    }
+
+    /// A blip shorter than the tier shows nothing anywhere: no chip, no word
+    /// change, on a chart with bars.
+    #[test]
+    fn a_short_blip_shows_nothing() {
+        let mut run = Run::new();
+        run.step(BLIP_MS);
+        run.connected();
+        assert_eq!(run.word(), Some("live"));
+        assert_eq!(run.tracker.chip(), None, "all well, nothing drawn");
+        run.transport = Transport::Reconnecting;
+        for _ in 0..4 {
+            run.step(BLIP_MS / 4 - 1);
+            assert_eq!(run.word(), Some("live"));
+            assert_eq!(run.tracker.chip(), None);
+            assert!(!run.tracker.breathing(run.now));
+        }
+        run.transport = Transport::Connected;
+        run.step(10);
+        assert_eq!(run.word(), Some("live"));
+        // The same drop, standing past the tier, is spoken.
+        run.transport = Transport::Reconnecting;
+        run.step(10);
+        run.step(BLIP_MS);
+        let word = run.tracker.status_word(run.now).expect("a word");
+        assert_eq!(word.word, "reconnecting");
+        assert!(word.pulses);
+        assert_eq!(run.tracker.state().feed, Stream::Connecting);
+        let dots = run.tracker.chip().expect("the chip is up");
+        assert_eq!(dots[0].look, DotLook::Pulsing);
+        assert_eq!(dots[0].hover, "feed connecting");
+    }
+
+    /// A session opening says nothing for its first moments, so a launch that
+    /// lands in a second has never mentioned the connection at all.
+    #[test]
+    fn a_session_that_lands_quickly_never_mentions_the_connection() {
+        let mut run = Run::new();
+        assert_eq!(run.word(), None);
+        assert_eq!(run.tracker.chip(), None);
+        assert_eq!(run.overlay(), None);
+        run.step(BLIP_MS - 1);
+        assert_eq!(run.word(), None);
+        assert_eq!(run.tracker.chip(), None);
+        assert_eq!(run.overlay(), None);
+        run.connected();
+        assert_eq!(run.word(), Some("live"));
+    }
+
+    #[test]
+    fn the_overlay_waits_two_seconds_and_says_what_is_true_in_each_state() {
+        let mut run = Run::new();
+        run.step(OVERLAY_DELAY_MS - 1);
+        assert_eq!(run.overlay(), None);
+        run.step(1);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "Connecting to");
+        assert_eq!(words.meta, "Binance · attempting");
+        assert!(words.breathing && !words.reconnect);
+
+        run.verdict = FAILED;
+        run.step(10);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "No connection to");
+        assert_eq!(
+            words.meta,
+            "Binance · never connected · retrying automatically"
+        );
+        assert!(words.reconnect && !words.breathing);
+        // The overlay's control is the one on offer: never both.
+        let word = run.tracker.status_word(run.now).expect("a word");
+        assert!(!word.reconnect && word.age.is_none());
+
+        // Live with nothing: "connection" would be false.
+        run.transport = Transport::Connected;
+        run.verdict = Verdict::None;
+        run.step(10);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "No trades yet on");
+        assert_eq!(words.meta, "Binance · connected");
+        assert!(!words.reconnect);
+
+        // Quiet is not offline, and offers no Reconnect.
+        run.verdict = Verdict::Quiet;
+        run.step(10);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "No trades on");
+        assert_eq!(words.meta, "Binance connected · market may be closed");
+        assert!(!words.reconnect);
+        assert_eq!(run.word(), Some("quiet"));
+
+        // Gone on the first bar.
+        run.empty_pane = false;
+        run.any_bars = true;
+        run.step(1);
+        assert_eq!(run.overlay(), None);
+    }
+
+    #[test]
+    fn a_lost_connection_is_dated_and_a_provider_reason_replaces_the_meta() {
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.step(5);
+        run.transport = Transport::Reconnecting;
+        run.verdict = FAILED;
+        run.step(180_000);
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(
+            run.overlay().expect("up").meta,
+            "Binance · last connected 3 min ago · retrying automatically"
+        );
+        run.verdict = Verdict::Failed {
+            provider_says: Some("MetaTrader 5 is closed"),
+        };
+        run.step(1);
+        assert_eq!(
+            run.overlay().expect("up").meta,
+            "MetaTrader 5 is closed · retrying automatically"
+        );
+    }
+
+    /// With bars on the chart: no overlay, and the word carries the age and the
+    /// one-click Reconnect, with the chip up.
+    #[test]
+    fn offline_with_bars_goes_to_the_status_bar() {
+        let mut run = Run::new();
+        run.connected();
+        run.trades = 5;
+        run.step(10);
+        run.transport = Transport::Reconnecting;
+        run.verdict = FAILED;
+        run.step(42_000);
+        assert_eq!(run.overlay(), None);
+        assert_eq!(
+            run.tracker.status_word(run.now),
+            Some(StatusWord {
+                word: "offline",
+                pulses: false,
+                age: Some("0:42".to_owned()),
+                reconnect: true,
+            })
+        );
+        assert!(run.tracker.chip().is_some());
+        assert!(run.tracker.has_recovery_door());
+    }
+
+    /// A press shows the attempt at once and for at least a second, however
+    /// fast the new session fails, and failing returns to the latch.
+    #[test]
+    fn a_press_is_shown_at_once_and_holds() {
+        let mut run = Run::new();
+        run.verdict = FAILED;
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.link(), Link::Offline);
+        run.press();
+        run.verdict = Verdict::Failed {
+            provider_says: Some("the bridge refused"),
+        };
+        run.step(1);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "Reconnecting to", "even before any connection");
+        assert!(words.breathing && !words.reconnect);
+        assert_eq!(
+            run.word(),
+            Some("reconnecting"),
+            "at once, not after a blip"
+        );
+        run.step(PRESS_HOLD_MS - 1);
+        assert_eq!(run.link(), Link::Attempting);
+        run.step(1);
+        assert_eq!(run.link(), Link::Offline);
+        assert!(run.overlay().expect("up").reconnect);
+    }
+
+    /// Vocabulary follows the capability: a source with no transport has no
+    /// data, never a connection problem, and offers no Reconnect.
+    #[test]
+    fn a_source_with_no_transport_has_no_data_rather_than_no_connection() {
+        let mut run = Run::new();
+        run.has_transport = false;
+        run.step(OVERLAY_DELAY_MS);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "No data for");
+        assert_eq!(words.meta, "Binance · 0 trades");
+        assert!(!words.reconnect && !words.breathing);
+        assert_eq!(run.word(), Some("no data"));
+        assert_eq!(run.tracker.chip(), None);
+        assert!(!run.tracker.has_recovery_door());
+        // Still being read: not "no data".
+        run.jobs.set_active(LoadingTask::ReplaySession, true);
+        run.step(1);
+        assert_eq!(run.overlay(), None);
+        run.jobs.set_active(LoadingTask::ReplaySession, false);
+        run.empty_pane = false;
+        run.any_bars = true;
+        run.step(1);
+        assert_eq!(run.word(), Some("replay"));
+    }
+
+    /// The chip's mapping: book first, one row per capture status.
+    #[test]
+    fn the_book_maps_every_capture_status() {
+        for (status, book, word) in [
+            (CaptureStatus::Disabled, Book::Off, "book off"),
+            (
+                CaptureStatus::Connecting,
+                Book::Connecting,
+                "book connecting",
+            ),
+            (
+                CaptureStatus::Buffering,
+                Book::Connecting,
+                "book connecting",
+            ),
+            (
+                CaptureStatus::SnapshotFetching,
+                Book::Connecting,
+                "book connecting",
+            ),
+            (
+                CaptureStatus::Resyncing { reason: "gap" },
+                Book::Connecting,
+                "book connecting",
+            ),
+            (
+                CaptureStatus::Live {
+                    generation: 1,
+                    last_update_id: 1,
+                },
+                Book::Synced,
+                "book synced",
+            ),
+            (
+                CaptureStatus::Disconnected { error_class: "x" },
+                Book::Lost,
+                "book lost",
+            ),
+            (CaptureStatus::Error, Book::Lost, "book lost"),
+        ] {
+            assert_eq!(Book::of(&status), book);
+            assert_eq!(book_dot(book).hover, word);
+        }
+    }
+
+    #[test]
+    fn the_chip_comes_up_for_a_stream_that_is_not_well_and_off_alone_does_not_raise_it() {
+        let mut run = Run::new();
+        run.step(BLIP_MS);
+        run.book = Book::Off;
+        run.connected();
+        assert_eq!(run.tracker.chip(), None, "book off alone raises nothing");
+        run.book = Book::Connecting;
+        run.step(0);
+        run.step(BLIP_MS - 1);
+        assert_eq!(run.tracker.chip(), None, "a book blip shows nothing");
+        run.step(1);
+        let dots = run.tracker.chip().expect("standing sync raises it");
+        assert_eq!(dots[1].look, DotLook::Pulsing);
+        assert_eq!(dots[0].look, DotLook::Solid, "only the book moves");
+        assert_eq!(dots[2].look, DotLook::Solid);
+        run.book = Book::Synced;
+        run.step(1);
+        assert_eq!(run.tracker.chip(), None, "well again at once");
+        run.book = Book::Lost;
+        run.step(0);
+        run.step(BLIP_MS);
+        let dots = run.tracker.chip().expect("up");
+        assert_eq!(dots[1].hover, "book lost");
+        assert_eq!(dots[1].look, DotLook::Faint);
+    }
+
+    #[test]
+    fn offline_is_not_syncing_the_book() {
+        let mut run = Run::new();
+        run.jobs.set_active(LoadingTask::BookSync, true);
+        run.step(0);
+        run.step(SLOT_DELAY_MS);
+        assert!(run.tracker.state().current_job.is_some());
+        run.verdict = FAILED;
+        run.step(SLOT_HOLD_MS);
+        assert_eq!(run.tracker.state().current_job, None);
+    }
+
+    /// Nothing tries while the feed is offline, so the book does not pulse.
+    #[test]
+    fn the_book_does_not_pulse_on_a_feed_that_is_offline() {
+        let mut run = Run::new();
+        run.book = Book::Connecting;
+        run.verdict = FAILED;
+        run.step(BLIP_MS);
+        run.step(BLIP_MS);
+        assert_eq!(run.tracker.state().book, Book::Idle);
+        assert_eq!(run.tracker.chip().expect("up")[1].hover, "book idle");
+    }
+
+    #[test]
+    fn the_slot_waits_a_second_holds_half_a_second_and_the_newest_job_wins() {
+        let mut run = Run::new();
+        let job = |run: &Run| run.tracker.state().current_job.map(|job| job.task);
+        run.jobs.begin(LoadingTask::History);
+        run.step(0);
+        run.step(SLOT_DELAY_MS - 1);
+        assert_eq!(job(&run), None, "under a second, nothing");
+        run.step(1);
+        assert_eq!(job(&run), Some(LoadingTask::History));
+
+        // A newer job replaces it once the hold has run, never stacked.
+        run.jobs.set_active(LoadingTask::BookSync, true);
+        run.step(0);
+        run.step(SLOT_DELAY_MS);
+        assert_eq!(job(&run), Some(LoadingTask::BookSync));
+
+        // The job ending at once still leaves the word up long enough to read.
+        run.jobs.set_active(LoadingTask::BookSync, false);
+        run.jobs.set_active(LoadingTask::History, false);
+        run.step(SLOT_HOLD_MS - 1);
+        assert_eq!(job(&run), Some(LoadingTask::BookSync));
+        run.step(1);
+        assert_eq!(job(&run), None);
+
+        // A job that ends before its second never appeared at all.
+        run.jobs.set_active(LoadingTask::BarRebuild, true);
+        run.step(0);
+        run.step(SLOT_DELAY_MS - 1);
+        run.jobs.set_active(LoadingTask::BarRebuild, false);
+        run.step(1);
+        assert_eq!(job(&run), None);
+    }
+
+    #[test]
+    fn a_percent_is_only_ever_a_measured_one() {
+        let job = |fraction| Job {
+            task: LoadingTask::BarRebuild,
+            fraction,
+        };
+        assert_eq!(job(None).text(), "rebuilding bars");
+        assert_eq!(job(Some(0.62)).text(), "rebuilding bars 62%");
+        assert_eq!(job(Some(1.7)).text(), "rebuilding bars 100%");
+    }
+
+    #[test]
+    fn another_symbol_starts_from_nothing() {
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.step(10);
+        assert!(run.tracker.state().last_connected_at.is_some());
+        let now = run.now + 1;
+        run.tracker.observe(
+            &ConnectionFacts {
+                now_ms: now,
+                symbol: "ETHUSDT",
+                attached_ms: now,
+                has_transport: true,
+                transport: Transport::Connecting,
+                verdict: Verdict::None,
+                live_trades: 0,
+                empty_pane: true,
+                any_bars: false,
+                book: Book::Off,
+                fraction: None,
+            },
+            &run.jobs,
+        );
+        assert_eq!(run.tracker.state().last_connected_at, None);
+        assert_eq!(
+            run.tracker.status_word(now),
+            None,
+            "not a press: it settles"
+        );
+    }
+
+    #[test]
+    fn durations_read_as_said() {
+        assert_eq!(spoken_ago(42_000), "42 s");
+        assert_eq!(spoken_ago(180_000), "3 min");
+        assert_eq!(spoken_ago(3 * 3_600_000), "3 h");
+        assert_eq!(clock_age(42_000), "0:42");
+        assert_eq!(clock_age(3_729_000), "1:02:09");
+        assert_eq!(clock_age(-5), "0:00");
     }
 }

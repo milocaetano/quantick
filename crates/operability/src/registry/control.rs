@@ -144,7 +144,8 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
     UiBehaviour {
         id: "feed.reconnect",
         title: "Respawn the transport and keep the timeline",
-        reach: "the feed notice popup",
+        reach: "the feed notice popup; the connection overlay's Reconnect; the status bar's \
+                Reconnect while the chart holds bars",
         keys: &[(Source::NoticeAction, "Reconnect")],
         mapping: capability!("feed.reconnect"),
     },
@@ -154,6 +155,20 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
         reach: "the feed notice popup",
         keys: &[(Source::NoticeAction, "Reload")],
         mapping: capability!("feed.reload"),
+    },
+    UiBehaviour {
+        id: "feed.connection_state",
+        title: "Read what the chart says about its feed, book, trades and current job",
+        reach: "the flow header's chip and slot, the connection overlay, the status word",
+        keys: &[(
+            Source::Authored,
+            "a readout painted from one state, with no control of its own",
+        )],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "nothing to perform: the state is readable as `connection` on the `feed.status` \
+             scope, and the recovery it offers is `feed.reconnect` and `feed.reload`"
+        ),
     },
     UiBehaviour {
         id: "feed.deal_recording.set",
