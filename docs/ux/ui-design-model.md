@@ -392,8 +392,9 @@ focused flow pane · `Space` play/pause while replaying ·
 While Home is on screen, `Ctrl+W` closes nothing, `Ctrl+Tab` and
 `Ctrl+Shift+Tab` return to the active market, and the keys that would change a
 chart or trade from it (presets, layers, drawing tools, paper hotkeys) stand
-down. The toolbar is not drawn, and the menus refuse the same chart commands, so
-nothing a trader can reach acts on the market Home hides. Agents keep theirs:
+down. The toolbar, dock, drawing rail and pinned inspector are not drawn, and the
+menus refuse the same chart commands and Close Replay, so nothing a trader can
+reach acts on the market Home hides. Agents keep theirs:
 control-plane writes still target the active market, and `home.leave` puts it
 back on screen.
 

@@ -73,10 +73,11 @@ impl MenuCommand {
     /// while Home hides it. Tabs, replay browsing and the window's own chrome
     /// are not the chart's. "Close Tab" is the active market's, which Home is
     /// covering; closing a chip on the strip is a separate, visible act.
-    pub(super) const fn needs_chart(&self) -> bool {
+    pub(in crate::app) const fn needs_chart(&self) -> bool {
         matches!(
             self,
             Self::Tab(TabAction::Close(_))
+                | Self::CloseReplay
                 | Self::ToggleLayer(_)
                 | Self::ToggleContextCharts
                 | Self::ApplyLayoutPreset(_)

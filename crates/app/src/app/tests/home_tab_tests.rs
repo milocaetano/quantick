@@ -526,6 +526,38 @@ fn home_draws_no_toolbar_and_the_canvas_returns_at_its_full_size() {
     );
 }
 
+/// The dock's ticket trades the active market, so it cannot stay reachable
+/// while Home hides that market; it comes back with the market.
+#[test]
+fn home_draws_no_dock_so_its_ticket_cannot_trade_the_hidden_market() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let title = crate::dock::DockTab::Trading.title();
+    app.dock.open_tab(crate::dock::DockTab::Trading);
+    frame(&mut app, &ctx);
+    let output = frame(&mut app, &ctx);
+    assert!(painted_text_center(&output, title).is_some(), "on a market");
+
+    app.show_home_tab().unwrap();
+    for _ in 0..2 {
+        let output = frame(&mut app, &ctx);
+        assert!(painted_text_center(&output, title).is_none(), "on Home");
+    }
+    assert!(app.dock.visible(), "hidden with Home, not closed");
+
+    app.chrome.title_bar.surface.show_market();
+    let output = frame(&mut app, &ctx);
+    assert!(painted_text_center(&output, title).is_some(), "and back");
+}
+
+/// Closing a replay ends a session the trader cannot see from Home, exactly as
+/// Close Tab would, so the menu entry stands down the same way.
+#[test]
+fn close_replay_is_refused_while_home_hides_the_chart() {
+    use crate::app::menu_bar::MenuCommand;
+    assert!(MenuCommand::CloseReplay.needs_chart());
+}
+
 /// The toolbar used to refresh the chip label; without it a source change must
 /// still reach the strip and take Home down.
 #[test]
