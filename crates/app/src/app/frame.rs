@@ -137,7 +137,7 @@ impl QuantickApp {
         tail: &mut Option<T>,
     ) {
         let presented = self.presentation.resolve(&self.runtime, ctx).is_ok();
-        if stage.needs_presentation() && !presented {
+        if (stage.needs_presentation() && !presented) || super::home_wiring::hides(self, stage) {
             return;
         }
         match stage {
@@ -228,8 +228,6 @@ impl QuantickApp {
             FrameStage::StatusLine => self.draw_status_line(ctx, scratch),
             FrameStage::LayoutDialogs => self.layout_adapter().draw_layout_delete_confirm(ctx),
             FrameStage::ReplayBrowser => self.draw_replay_browser_stage(ctx),
-            // Home hides the market, so what acts on it hides too.
-            FrameStage::DrawingRail if self.chrome.title_bar.surface.is_home() => {}
             FrameStage::DrawingRail => {
                 panels::draw_drawing_rail(
                     ctx,
@@ -251,7 +249,6 @@ impl QuantickApp {
             FrameStage::Dock => self.draw_dock_stage(ctx),
             // Chrome like the dock: declared before the central canvas so
             // the chart pays its width.
-            FrameStage::PinnedInspector if self.chrome.title_bar.surface.is_home() => {}
             FrameStage::PinnedInspector => {
                 if let Some(ask) = self.drawings.draw_pinned_inspector(
                     ctx,
@@ -496,12 +493,6 @@ impl QuantickApp {
     }
 
     fn draw_dock_stage(&mut self, ctx: &egui::Context) {
-        // A file picker the menus opened still answers while Home is up.
-        if self.chrome.title_bar.surface.is_home() {
-            self.paper_settings().poll_trades_dir_picker();
-            self.workspace_bundle_adapter().poll_picker();
-            return;
-        }
         let response = panels::draw_dock(
             ctx,
             &mut self.dock,

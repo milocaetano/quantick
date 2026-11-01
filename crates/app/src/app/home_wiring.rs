@@ -40,6 +40,16 @@ pub(super) fn stand_in_for_toolbar(app: &mut super::QuantickApp) {
     app.chrome.layout_picker_open = false;
     let (tab, config) = app.active_with_config();
     tab.settle_source(config);
+    // The dock stage polls these; a picker the menus opened still answers.
+    use super::control_host::PaperPort as _;
+    app.paper_settings().poll_trades_dir_picker();
+    app.workspace_bundle_adapter().poll_picker();
+}
+
+/// Home hides the market, so the chrome that acts on it hides too.
+pub(super) fn hides(app: &super::QuantickApp, stage: super::frame::FrameStage) -> bool {
+    use super::frame::FrameStage::{Dock, DrawingRail, PinnedInspector};
+    matches!(stage, Dock | DrawingRail | PinnedInspector) && app.chrome.title_bar.surface.is_home()
 }
 
 /// Moving between surfaces only stands down for text entry: it closes nothing, a
