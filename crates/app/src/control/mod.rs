@@ -6,7 +6,6 @@
 //! the local gateway workers.
 
 mod actions;
-mod analysis;
 mod annotate;
 pub(crate) mod chart;
 mod chart_settings;
@@ -143,7 +142,7 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     feed::register(&mut registry)?;
     quantick_control_handlers::chart::register(&mut registry)?;
     health::register(&mut registry)?;
-    analysis::register(&mut registry)?;
+    quantick_control_handlers::analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;
     orderflow::register(&mut registry)?;
     session::register(&mut registry)?;

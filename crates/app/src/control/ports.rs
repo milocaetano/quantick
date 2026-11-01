@@ -4,6 +4,7 @@
 
 use quantick_control_handlers::{
     TabDirectory,
+    analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
     trade::{TradeAccess, TradeDesk, TradePort},
     history::HistoryPort,
     journal_sessions::JournalSessionsPort,
@@ -22,6 +23,7 @@ use crate::app::control_host::ControlPort;
 use crate::app::paper_wiring::PaperSettingsChange;
 use crate::control::ControlAccess;
 use crate::paper_trading::PaperTrading;
+use crate::{control::pane_side_dto, pane::ChartPane};
 use quantick_control_handlers::feed_source::{FeedSelection, FeedSourcePort};
 
 impl FeedSourcePort for dyn ControlPort {
@@ -189,5 +191,35 @@ impl TradePort for dyn ControlPort {
 impl TradeAccess for ControlAccess {
     fn record_event(&mut self, event: quantick_control_host::journal::NewEvent) {
         self.append_event(event);
+    }
+}
+
+impl AnalysisPane for ChartPane {
+    fn pane_id(&self) -> u64 {
+        self.id
+    }
+    fn indicators(&self) -> &quantick_chart::indicator_views::IndicatorViews {
+        &self.indicators
+    }
+    fn drawings(&self) -> &quantick_drawings::Drawings<quantick_drawings::DrawingTool> {
+        &self.drawings
+    }
+}
+
+impl AnalysisPort for dyn ControlPort {
+    fn drawing_magnet(&self) -> bool {
+        self.chrome_reads().tool_rail().magnet()
+    }
+    fn visit_analysis_tabs(&self, visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {
+        for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {
+            let panes: Vec<AnalysisPaneEntry<'_>> = tab
+                .panes()
+                .map(|(pane, side)| AnalysisPaneEntry {
+                    side: pane_side_dto(side),
+                    pane,
+                })
+                .collect();
+            visit(tab_id, &panes);
+        }
     }
 }

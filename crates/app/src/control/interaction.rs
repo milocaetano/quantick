@@ -292,15 +292,7 @@ fn drawing_hit_snapshot(
 
 pub(crate) use quantick_control_schema::interaction::flow_cell_snapshot;
 
-/// The one wire name of a drawing band, used by the pointer hit in the pane
-/// and by the selection scope alike.
-pub(crate) fn drawing_band_name(band: &DrawingBand) -> &'static str {
-    match band {
-        DrawingBand::Price => "price",
-        DrawingBand::Indicator(_) => "indicator_value",
-        DrawingBand::AllBands => "all_bands",
-    }
-}
+pub(crate) use quantick_control_handlers::analysis::drawing_band_name;
 
 fn drawing_band(band: &DrawingBand) -> String {
     drawing_band_name(band).to_owned()
