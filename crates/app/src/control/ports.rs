@@ -4,6 +4,7 @@
 
 use quantick_control_handlers::{
     TabDirectory,
+    orderflow::{OrderflowEngine, OrderflowPane, OrderflowPaneEntry, OrderflowPort},
     attention::{MarkAccess, MarkPort},
     analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
     trade::{TradeAccess, TradeDesk, TradePort},
@@ -13,6 +14,7 @@ use quantick_control_handlers::{
     pnl_display::PnlDisplayPort,
     recovery::{FeedRecoveryPort, RecoveredFeed},
 };
+use quantick_control_host::wire::PaneSideDto;
 use quantick_control_schema::notify::AgentPopup;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
@@ -24,7 +26,7 @@ use crate::app::control_host::ControlPort;
 use crate::app::paper_wiring::PaperSettingsChange;
 use crate::control::ControlAccess;
 use crate::paper_trading::PaperTrading;
-use crate::{control::pane_side_dto, pane::ChartPane};
+use crate::{control::pane_side_dto, orderflow_view::OrderflowView, pane::ChartPane, tab::Tab};
 use quantick_control_handlers::feed_source::{FeedSelection, FeedSourcePort};
 
 impl FeedSourcePort for dyn ControlPort {
@@ -237,5 +239,86 @@ impl MarkAccess for ControlAccess {
         event: quantick_control_host::journal::NewEvent,
     ) -> quantick_control::wire::WireU64 {
         self.append_event(event)
+    }
+}
+
+impl OrderflowEngine for OrderflowView {
+    fn config(&self) -> &quantick_orderflow::HeatmapConfig {
+        self.cached_config()
+    }
+    fn book(
+        &self,
+    ) -> (
+        &quantick_orderflow::engine::CaptureStatus,
+        Option<&quantick_orderflow::engine::BookLadder>,
+        rust_decimal::Decimal,
+    ) {
+        self.cached_book()
+    }
+    fn health(&self) -> &quantick_orderflow::engine::OrderflowHealth {
+        self.cached_health()
+    }
+    fn live_end_ms(&self) -> Option<i64> {
+        self.cached_live_end_ms()
+    }
+    fn bubbles(&self) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
+        self.bubbles_snapshot()
+    }
+    fn flow_execution(&self) -> Option<quantick_control_schema::orderflow::FlowExecutionSnapshot> {
+        self.flow_execution_snapshot_frame()
+            .map(|frame| (frame.as_ref(), self.flow_execution_progress()).into())
+    }
+}
+
+/// One pane read with its tab and the window's footprint setup, as the
+/// order-flow scopes read a pane.
+struct OrderflowPaneRead<'a> {
+    tab: &'a Tab,
+    pane: &'a ChartPane,
+    window: &'a crate::footprint_config::FootprintConfig,
+}
+
+impl OrderflowPane for OrderflowPaneRead<'_> {
+    fn pane_id(&self) -> u64 {
+        self.pane.id
+    }
+    fn footprint_visible(&self) -> bool {
+        self.pane.footprint.visible
+    }
+    fn footprint_overridden(&self) -> bool {
+        self.pane.footprint.config.is_some()
+    }
+    fn footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
+        self.pane.footprint_config(self.window)
+    }
+    fn opening_scale(&self) -> quantick_control_schema::orderflow::OpeningScaleSnapshot {
+        self.pane.opening_scale_snapshot()
+    }
+    fn tape_age_at(&self, now_ms: i64) -> Option<i64> {
+        self.tab.tape_age_at(now_ms)
+    }
+    fn engine(&self) -> Option<&dyn OrderflowEngine> {
+        self.pane
+            .orderflow
+            .as_ref()
+            .map(|view| view as &dyn OrderflowEngine)
+    }
+}
+
+impl OrderflowPort for dyn ControlPort {
+    fn visit_orderflow_tabs(&self, visit: &mut dyn FnMut(u64, &[OrderflowPaneEntry<'_>])) {
+        let reads = self.tab_reads();
+        let window = reads.footprint_config();
+        for (tab_id, tab) in reads.tabs().iter_with_ids() {
+            let panes: Vec<(PaneSideDto, OrderflowPaneRead<'_>)> = tab
+                .panes()
+                .map(|(pane, side)| (pane_side_dto(side), OrderflowPaneRead { tab, pane, window }))
+                .collect();
+            let entries: Vec<OrderflowPaneEntry<'_>> = panes
+                .iter()
+                .map(|(side, pane)| OrderflowPaneEntry { side: *side, pane })
+                .collect();
+            visit(tab_id, &entries);
+        }
     }
 }

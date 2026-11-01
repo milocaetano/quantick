@@ -29,6 +29,7 @@ pub mod history;
 pub mod journal_sessions;
 pub mod notify;
 pub mod opening_scale;
+pub mod orderflow;
 pub mod pnl_display;
 pub mod recovery;
 pub mod semantic;

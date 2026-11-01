@@ -8,6 +8,9 @@ use serde_json::{Value, json};
 use quantick_control_host::catalogue::SnapshotScopeDescriptor;
 use quantick_control_handlers::attention::{MarkInput, MarkResult};
 use quantick_control_schema::analysis::{DrawingsSnapshot, IndicatorsSnapshot};
+use quantick_control_schema::orderflow::{
+    BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot,
+};
 
 use super::{
 
@@ -29,7 +32,6 @@ use super::{
     layers::{LayersSnapshot, SetVisibilityInput, VisibilityResult},
     layout::{LayoutResultV2, ResizeInputV2},
     notify::{NotifyInput, NotifyResult},
-    orderflow::{BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot},
     registry::SerializedSnapshotCapture,
     scene::SceneSnapshot,
     script::{AttachInput, AttachResult, DetachInput, DetachResult, ScriptDiagnostic},
