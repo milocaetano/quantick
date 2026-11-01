@@ -37,7 +37,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layer.bubbles.toggle",
         title: "Switch the aggression bubbles on or off",
-        reach: "pane header glyph, pane right-click layer menu, Ctrl+B",
+        reach: "candles capsule glyph, pane right-click layer menu, Ctrl+B",
         keys: &[(Source::LayerToggle, "Bubbles")],
         mapping: LAYER_SWITCH,
     },
@@ -64,7 +64,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layer.footprint.toggle",
         title: "Switch the candle footprint on or off",
-        reach: "pane header glyph, pane right-click layer menu, Ctrl+F",
+        reach: "pane capsule glyph, pane right-click layer menu, Ctrl+F",
         keys: &[(Source::LayerToggle, "Footprint")],
         mapping: LAYER_SWITCH,
     },
@@ -80,6 +80,20 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         title: "Switch the live depth strip on or off",
         reach: "pane header glyph, pane right-click layer menu",
         keys: &[(Source::LayerToggle, "LiveStrip")],
+        mapping: LAYER_SWITCH,
+    },
+    UiBehaviour {
+        id: "layer.tape_bubbles.toggle",
+        title: "Switch the bubbles on the tape on or off",
+        reach: "tape capsule glyph, pane right-click layer menu",
+        keys: &[(Source::LayerToggle, "TapeBubbles")],
+        mapping: LAYER_SWITCH,
+    },
+    UiBehaviour {
+        id: "layer.tape_heatmap.toggle",
+        title: "Switch the book on the tape on or off",
+        reach: "tape capsule glyph, pane right-click layer menu",
+        keys: &[(Source::LayerToggle, "TapeHeatmap")],
         mapping: LAYER_SWITCH,
     },
     UiBehaviour {

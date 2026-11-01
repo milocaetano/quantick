@@ -204,26 +204,63 @@ fn drag(app: &mut QuantickApp, ctx: &egui::Context, from: egui::Pos2, to: egui::
     run_frame(app, ctx);
 }
 
-/// The toolbar has no LAYERS: each pane carries its own, a time pane only its
-/// footprint, in the same strip as its bars.
+/// The toolbar has no LAYERS, and neither does a header line now: a flow pane's
+/// keeps its view and strip, a time pane's nothing, and each chart side's capsule
+/// floats over that side, below the header, holding that side's own controls.
 #[test]
 fn each_pane_paints_only_the_controls_it_accepts() {
     let ctx = egui::Context::default();
     let (app, _ends) = flow_fixture(&ctx);
-    for toggle in LayerToggle::ALL {
-        flow_control(&app, HeaderControl::Layer(toggle));
+    let flow = &app.active_tab().flow_pane;
+    let area = flow.frame.area.expect("flow chart");
+    let divider = flow.frame.lane_divider_x.expect("the tape is beside");
+    let chart = flow.frame.chart_rect.expect("flow chart");
+    for control in [
+        HeaderControl::View,
+        HeaderControl::Layer(LayerToggle::LiveStrip),
+    ] {
+        let rect = flow_control(&app, control);
+        assert!(
+            rect.bottom() <= area.top(),
+            "{control:?} sits off the chart"
+        );
+        assert!(rect.left() > area.center().x, "{control:?} stands right");
     }
-    flow_control(&app, HeaderControl::View);
-    let time = &app
-        .active_tab()
-        .pane(PaneSide::Time(0))
-        .frame
-        .header_controls;
-    let only: Vec<_> = time.iter().map(|(control, _)| *control).collect();
+    for (control, right_side) in [
+        (HeaderControl::Layer(LayerToggle::Bubbles), false),
+        (HeaderControl::Sample(BubbleSample::Candle), false),
+        (HeaderControl::Layer(LayerToggle::Heatmap), false),
+        (HeaderControl::Layer(LayerToggle::Footprint), false),
+        (HeaderControl::Layer(LayerToggle::TapeBubbles), true),
+        (HeaderControl::Sample(BubbleSample::Tape), true),
+        (HeaderControl::Layer(LayerToggle::TapeHeatmap), true),
+    ] {
+        let rect = flow_control(&app, control);
+        assert!(
+            rect.top() >= chart.top() + 8.0,
+            "{control:?} below the header"
+        );
+        assert_eq!(
+            rect.left() >= divider,
+            right_side,
+            "{control:?} on its side"
+        );
+        let edge = if right_side { chart.right() } else { divider };
+        assert!(rect.right() <= edge - 8.0, "{control:?} inside its corner");
+    }
+    let time = &app.active_tab().pane(PaneSide::Time(0)).frame;
+    let only: Vec<_> = time
+        .header_controls
+        .iter()
+        .map(|(control, _)| *control)
+        .collect();
     assert_eq!(only, [HeaderControl::Layer(LayerToggle::Footprint)]);
-    let area = app.active_tab().flow_pane.frame.area.expect("flow chart");
-    let strip_bottom = flow_control(&app, HeaderControl::View).bottom();
-    assert!(strip_bottom <= area.top(), "the controls sit off the chart");
+    let (_, footprint) = time.header_controls[0];
+    let chart = time.chart_rect.expect("time chart");
+    assert!(
+        chart.contains_rect(footprint),
+        "the capsule floats on the chart"
+    );
 }
 
 /// One button walks the three views and its state agrees with the named read.
@@ -338,10 +375,10 @@ fn a_right_click_opens_a_layers_settings_and_switches_nothing() {
     }
 }
 
-/// With the candles hidden their glyphs stay where they were, refuse the hand
-/// and the keys, and keep their state; the strip stays live and paints.
+/// With the candles hidden their capsule goes with them; the keys stay refused,
+/// the layers keep their state and the look returns. The strip stays live.
 #[test]
-fn candles_hidden_grey_their_glyphs_keep_their_state_and_the_strip_stays_live() {
+fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_stays_live() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     let toggles = [
@@ -349,22 +386,20 @@ fn candles_hidden_grey_their_glyphs_keep_their_state_and_the_strip_stays_live() 
         LayerToggle::Heatmap,
         LayerToggle::Footprint,
     ];
-    let at =
-        |app: &QuantickApp| toggles.map(|toggle| flow_control(app, HeaderControl::Layer(toggle)));
-    let (before, states) = (at(&app), toggles.map(|toggle| on(&app, toggle.layer())));
+    let at = |app: &QuantickApp| {
+        toggles.map(|toggle| control_rect(app, PaneSide::Flow, HeaderControl::Layer(toggle)))
+    };
+    let states = toggles.map(|toggle| on(&app, toggle.layer()));
     let view_glyph = flow_control(&app, HeaderControl::View);
 
     app.active_tab_mut()
         .tape_mut()
         .set_lane_view(LaneView::TapeOnly);
     run_frame(&mut app, &ctx);
-    assert_eq!(at(&app), before, "the glyphs never shift");
+    assert_eq!(at(&app), [None; 3], "no candles, no capsule for them");
     assert_eq!(flow_control(&app, HeaderControl::View), view_glyph);
+    flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
 
-    for rect in before {
-        click_chart(&mut app, &ctx, rect.center());
-        run_frame(&mut app, &ctx);
-    }
     press_key(&mut app, &ctx, egui::Key::B, egui::Modifiers::CTRL);
     press_key(&mut app, &ctx, egui::Key::F, egui::Modifiers::CTRL);
     assert_eq!(toggles.map(|toggle| on(&app, toggle.layer())), states);
@@ -396,17 +431,107 @@ fn candles_hidden_grey_their_glyphs_keep_their_state_and_the_strip_stays_live() 
         .tape_mut()
         .set_lane_view(LaneView::Beside);
     run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
     assert_eq!(
         toggles.map(|toggle| on(&app, toggle.layer())),
         states,
         "the look returns"
     );
+    assert!(at(&app).iter().all(Option::is_some), "and its capsule");
     press_key(&mut app, &ctx, egui::Key::B, egui::Modifiers::CTRL);
     assert_ne!(
         on(&app, ChartLayer::Bubbles),
         states[0],
         "the key works again, so its silence above was the gate's"
     );
+}
+
+fn set_capabilities(app: &mut QuantickApp, capabilities: quantick_feed::config::FeedCapabilities) {
+    app.active_tab_mut().feed_capabilities = quantick_feed::fixed_capabilities(capabilities);
+}
+
+/// What the data blocks leaves the capsule and the scene with its sample; the
+/// layer keeps its switch, the named read keeps the reason, and the glyph comes
+/// back when the data does. A capsule with nothing left is not painted.
+#[test]
+fn a_glyph_the_data_blocks_is_not_painted_and_returns_with_the_data() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let pane_id = app.active_tab().flow_pane.id;
+    let live = app.active_tab().capabilities(&app.config);
+    let mut no_book = live;
+    no_book.book_capture = false;
+    let mut no_volume = live;
+    no_volume.traded_volume = false;
+    let painted = |app: &QuantickApp, control| control_rect(app, PaneSide::Flow, control).is_some();
+    let heatmap = HeaderControl::Layer(LayerToggle::Heatmap);
+    let tape_heatmap = HeaderControl::Layer(LayerToggle::TapeHeatmap);
+    let bubbles = HeaderControl::Layer(LayerToggle::Bubbles);
+    let candle = HeaderControl::Sample(BubbleSample::Candle);
+    let footprint = HeaderControl::Layer(LayerToggle::Footprint);
+
+    set_capabilities(&mut app, no_book);
+    run_frame(&mut app, &ctx);
+    assert!(!painted(&app, heatmap), "book offline blocks L2");
+    assert!(!painted(&app, tape_heatmap), "on both sides");
+    assert!(painted(&app, footprint), "the footprint stays");
+    assert!(painted(&app, bubbles));
+    let ids = scene_control_ids(&observer_scene(&app));
+    assert!(!ids.contains(&format!("pane.{pane_id}.header.layer.heatmap")));
+
+    set_capabilities(&mut app, no_volume);
+    run_frame(&mut app, &ctx);
+    assert!(!painted(&app, bubbles), "no traded volume blocks bubbles");
+    assert!(!painted(&app, candle), "and their sample");
+    assert!(painted(&app, heatmap), "L2 is back with the book");
+
+    no_volume.book_capture = false;
+    set_capabilities(&mut app, no_volume);
+    run_frame(&mut app, &ctx);
+    let frame = &app.active_tab().flow_pane.frame;
+    assert_eq!(frame.capsule_floor, None, "nothing left, no capsule");
+
+    set_capabilities(&mut app, live);
+    run_frame(&mut app, &ctx);
+    for control in [heatmap, tape_heatmap, bubbles, candle, footprint] {
+        assert!(painted(&app, control), "{control:?} returns with the data");
+    }
+}
+
+/// The book's status label stands below the capsule at the chart's right end.
+#[test]
+fn the_status_label_stands_below_the_tape_capsule() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    run_frame(&mut app, &ctx);
+    let flow = &app.active_tab().flow_pane;
+    let chart = flow.frame.chart_rect.expect("flow chart");
+    let floor = flow.frame.capsule_floor.expect("the tape capsule");
+    let tape_bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
+    assert!(floor >= tape_bubbles.bottom(), "the capsule's own bottom");
+    assert_eq!(flow.status_rect(chart).top(), floor);
+    let time = &app.active_tab().pane(PaneSide::Time(0)).frame;
+    assert!(time.capsule_floor.is_some(), "a time pane has one too");
+}
+
+/// A side narrower than its capsule paints none; the named call still reaches
+/// the layer.
+#[test]
+fn a_side_too_narrow_for_its_capsule_paints_none() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    set_fold(&mut app, LaneFold::Tape);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(
+        control_rect(
+            &app,
+            PaneSide::Flow,
+            HeaderControl::Layer(LayerToggle::TapeBubbles)
+        )
+        .is_none()
+    );
+    flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
 }
 
 /// A sample grows as it is dragged up, reads back through the named call's
@@ -466,7 +591,7 @@ fn a_sample_hides_with_its_target_and_its_slot_stays() {
     assert_eq!(
         flow_control(&app, heatmap),
         glyph,
-        "the slot stays reserved"
+        "the slot stays, outlined, so the capsule never shifts"
     );
 
     app.active_tab_mut()
@@ -489,7 +614,6 @@ fn a_sample_hides_with_its_target_and_its_slot_stays() {
     run_frame(&mut app, &ctx);
     assert!(control_rect(&app, PaneSide::Flow, candle).is_none());
     flow_control(&app, tape);
-    assert_eq!(flow_control(&app, heatmap), glyph, "nothing shifted");
 }
 
 /// The header is painted whichever side is on show, and the view button is what
@@ -508,8 +632,16 @@ fn the_header_is_painted_in_all_three_views() {
         run_frame(&mut app, &ctx);
         assert_eq!(view_of(&app), view);
         assert_eq!(flow_control(&app, HeaderControl::View), button, "{view:?}");
-        for toggle in LayerToggle::ALL {
-            flow_control(&app, HeaderControl::Layer(toggle));
+        flow_control(&app, HeaderControl::Layer(LayerToggle::LiveStrip));
+        let (candles, tape) = (view != LaneView::TapeOnly, view != LaneView::CandlesOnly);
+        for (toggle, side) in [
+            (LayerToggle::Bubbles, candles),
+            (LayerToggle::Footprint, candles),
+            (LayerToggle::TapeBubbles, tape),
+            (LayerToggle::TapeHeatmap, tape),
+        ] {
+            let painted = control_rect(&app, PaneSide::Flow, HeaderControl::Layer(toggle));
+            assert_eq!(painted.is_some(), side, "{view:?}: {toggle:?}");
         }
         let flow = &app.active_tab().flow_pane;
         let chart = flow.frame.area.expect("flow chart");
@@ -671,11 +803,12 @@ fn the_scene_names_each_header_control_and_its_call() {
     assert_eq!(view["capability_id"], "orderflow.tape.view.set");
     assert_eq!(view["label"], "Tape only");
     assert_eq!(view["owner"]["kind"], "tab");
-    let l2 = scene_control(&scene, &id("layer.heatmap"));
+    let l2 = scene_control(&scene, &id("layer.tape_heatmap"));
     assert_eq!(l2["capability_id"], "layers.visibility.set");
-    assert_eq!(
-        l2["availability"]["reason"],
-        "candle_layer_hidden_in_tape_only"
+    assert_eq!(l2["label"], "Tape L2");
+    assert!(
+        !scene_control_ids(&scene).contains(&id("layer.heatmap")),
+        "a blocked glyph is not there to name"
     );
     let strip = scene_control(&scene, &id("layer.live_strip"));
     assert_eq!(strip["availability"]["available"], true);
@@ -690,34 +823,24 @@ fn the_scene_names_each_header_control_and_its_call() {
     );
 }
 
-/// On a narrow pane the mark goes, then the samples; nothing overlaps, and what
-/// clipped away the scene does not list.
+/// On a narrow pane only the mark goes; the view and strip keep the right end,
+/// nothing overlaps, and what clipped away the scene does not list.
 #[test]
-fn a_narrow_header_drops_the_mark_then_the_samples_and_never_overlaps() {
+fn a_narrow_header_drops_the_mark_and_never_overlaps() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     app.active_tab_mut().set_layout(CanvasLayout::Single);
-    let sample = HeaderControl::Sample(BubbleSample::Tape);
-    let mut seen_with = false;
-    let mut seen_without = false;
     for width in [1_400.0, 420.0, 340.0, 260.0] {
         for _ in 0..2 {
             run_frame_at(&mut app, &ctx, egui::vec2(width, 700.0));
         }
         let controls = app.active_tab().flow_pane.frame.header_controls.clone();
         let indicators = glyph_of(&app, &ctx, PaneSide::Flow);
-        for (control, rect) in &controls {
+        for (index, (control, rect)) in controls.iter().enumerate() {
             assert!(
                 !rect.shrink(0.5).intersects(indicators),
-                "{control:?} {rect:?} overlaps the indicators glyph at {width}"
+                "{control:?} {rect:?} overlaps the indicators button at {width}"
             );
-        }
-        if controls.iter().any(|(control, _)| *control == sample) {
-            seen_with = true;
-        } else {
-            seen_without = true;
-        }
-        for (index, (control, rect)) in controls.iter().enumerate() {
             for (other, other_rect) in controls.iter().skip(index + 1) {
                 assert!(
                     !rect.shrink(0.5).intersects(*other_rect),
@@ -725,11 +848,13 @@ fn a_narrow_header_drops_the_mark_then_the_samples_and_never_overlaps() {
                 );
             }
         }
+        assert!(
+            controls
+                .iter()
+                .any(|(control, _)| *control == HeaderControl::View),
+            "the view stays at {width}"
+        );
     }
-    assert!(
-        seen_with && seen_without,
-        "the rule fired across the widths"
-    );
 }
 
 /// The footprint's settings edit the focused chart, so a right click on the flow
@@ -830,28 +955,30 @@ fn candles_folded_turn_only_the_view_glyph_to_the_tape() {
         .tape_mut()
         .edit_config(|config| config.show_aggressions = true);
     run_frame(&mut app, &ctx);
-    let glyph = flow_control(&app, heatmap);
     let open_gates = gates(&app);
     let open_l2 = l2_gate(&app);
+    flow_control(&app, heatmap);
 
     set_fold(&mut app, LaneFold::Candles);
     run_frame(&mut app, &ctx);
     assert_eq!(view_of(&app), LaneView::Beside, "the stored view stays");
-    assert_eq!(flow_control(&app, heatmap), glyph, "nothing shifted");
-    flow_control(&app, HeaderControl::Sample(BubbleSample::Candle));
+    assert!(
+        control_rect(&app, PaneSide::Flow, heatmap).is_none(),
+        "a folded side has no capsule"
+    );
     flow_control(&app, HeaderControl::Sample(BubbleSample::Tape));
     assert_eq!(gates(&app), open_gates, "a fold moves no gate");
-    assert_eq!(l2_gate(&app), open_l2, "and the scene reads that gate");
     let scene = observer_scene(&app);
     assert_eq!(scene_control(&scene, &id("view"))["label"], "Tape only");
 
-    let bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
     let before = on(&app, ChartLayer::Bubbles);
-    click_chart(&mut app, &ctx, bubbles.center());
-    run_frame(&mut app, &ctx);
-    assert_ne!(on(&app, ChartLayer::Bubbles), before, "the glyph answers");
     press_key(&mut app, &ctx, egui::Key::B, egui::Modifiers::CTRL);
-    assert_eq!(on(&app, ChartLayer::Bubbles), before, "and so does its key");
+    assert_ne!(
+        on(&app, ChartLayer::Bubbles),
+        before,
+        "its key still answers"
+    );
+    assert_eq!(open_l2["available"], true);
 
     let button = flow_control(&app, HeaderControl::View);
     click_chart(&mut app, &ctx, button.center());
@@ -871,11 +998,10 @@ fn candles_folded_turn_only_the_view_glyph_to_the_tape() {
         [Some(quantick_layers::blocks::TAPE_ONLY_CANDLES); 3],
         "stored tape only greys them"
     );
-    assert_eq!(l2_gate(&app)["reason"], "candle_layer_hidden_in_tape_only");
 }
 
-/// The tape folded to its rail: only the view glyph reads the side on screen,
-/// and a folded side is not off, so both samples stay.
+/// The tape folded to its rail: the view glyph reads the side on screen, and the
+/// tape's capsule folds away with its side.
 #[test]
 fn a_tape_folded_turns_only_the_view_glyph_to_the_candles() {
     let ctx = egui::Context::default();
@@ -889,7 +1015,11 @@ fn a_tape_folded_turns_only_the_view_glyph_to_the_candles() {
     run_frame(&mut app, &ctx);
     assert_eq!(view_of(&app), LaneView::Beside, "the stored view stays");
     flow_control(&app, HeaderControl::Sample(BubbleSample::Candle));
-    flow_control(&app, HeaderControl::Sample(BubbleSample::Tape));
+    let tape = HeaderControl::Sample(BubbleSample::Tape);
+    assert!(
+        control_rect(&app, PaneSide::Flow, tape).is_none(),
+        "no tape side"
+    );
 
     let pane_id = app.active_tab().flow_pane.id;
     let scene = observer_scene(&app);
@@ -1122,12 +1252,15 @@ fn the_toolbar_leaves_bars_and_indicators_to_the_panes() {
     let texts = painted_text(&run_frame(&mut app, &ctx));
     let glyphs = texts.iter().filter(|text| *text == "ƒx").count();
     assert_eq!(glyphs, 3, "one per pane in {texts:?}");
-    for gone in ["bars", "Indicators"] {
-        assert!(
-            !texts.iter().any(|text| text == gone),
-            "{gone} is still painted in {texts:?}"
-        );
-    }
+    let words = texts.iter().filter(|text| *text == "Indicators").count();
+    assert_eq!(
+        words, 3,
+        "beside each pane's icon, not on the row: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|text| text == "bars"),
+        "bars is still painted in {texts:?}"
+    );
 }
 
 /// However narrow the pane, the glyph is on it, off the bars control, and it
@@ -1152,7 +1285,7 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let row = crate::pane_header::FlowRow {
-                        glyphs: &[],
+                        strip: None,
                         state: None,
                     };
                     (_, clicked) = crate::pane_header::draw_marked(

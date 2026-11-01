@@ -500,9 +500,16 @@ impl ChartPane {
             self.layer_renderers.status(&mut StatusPass {
                 owner: orderflow,
                 painter,
-                rect: chart_rect,
+                rect: self.status_rect(chart_rect),
             });
         }
+    }
+
+    /// The status badge's room: the chart below the capsule at its right end.
+    pub(crate) fn status_rect(&self, chart_rect: egui::Rect) -> egui::Rect {
+        self.frame
+            .capsule_floor
+            .map_or(chart_rect, |floor| chart_rect.with_min_y(floor))
     }
 
     /// The live lane's window as the indicator panes draw it, `None`

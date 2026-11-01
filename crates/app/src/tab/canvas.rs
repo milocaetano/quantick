@@ -138,6 +138,7 @@ impl Tab {
         let picks = self.shared_picks(ui);
         let edits = self.draw_panes(tab_id, ui, chrome, &rects, &picks);
         self.apply_shared_interactions(&edits);
+        self.draw_layer_capsules(ui, chrome);
 
         // Drawings marked "show on all charts" cross here, after both panes
         // have drawn and cached their projections. It happens outside the
@@ -306,7 +307,7 @@ impl Tab {
                 }
                 let pane_areas = split_pane_layout_strip(*band);
                 let areas = split_pane_header(pane_areas.body);
-                self.draw_time_header(ui, slot, areas.header, bar_inputs, chrome);
+                self.draw_time_header(ui, slot, areas.header, bar_inputs);
                 rects
                     .context_charts
                     .push(Some((areas.chart, pane_areas.layout_strip)));
@@ -336,9 +337,27 @@ impl Tab {
             })
     }
 
-    /// The flow pane's header line: its mark, its own bars, its view, its layers,
-    /// its bubble sizes and its indicators glyph, read and changed here wherever
-    /// focus sits.
+    /// Each chart side's floating capsule, after the charts so it wins the press.
+    fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
+        let mut focus = None;
+        for (pane, side) in self.panes_with_sides_mut() {
+            let intent = pane.draw_capsules(ui, side, chrome.style, chrome.capabilities);
+            if let Some(intent) = intent {
+                // A settings window edits the focused chart, and this is the
+                // one the hand asked about.
+                if matches!(intent, HeaderIntent::OpenLayerSettings(_)) {
+                    focus = Some(side);
+                }
+                pane.apply_header_intent(intent, chrome.layers);
+            }
+        }
+        if let Some(side) = focus {
+            self.focus = side;
+        }
+    }
+
+    /// The flow pane's header line: its mark, its own bars, its indicators
+    /// button, its view and its strip, read and changed here wherever focus sits.
     fn draw_flow_header(
         &mut self,
         ui: &mut egui::Ui,
@@ -349,9 +368,8 @@ impl Tab {
         let pane = &mut self.flow_pane;
         let identity = PaneIdentity::OrderFlow;
         let header = PaneHeader::of(identity, pane.spec.spec());
-        let glyphs = pane.header_glyphs(identity, chrome.style, chrome.capabilities);
         let row = crate::pane_header::FlowRow {
-            glyphs: &glyphs,
+            strip: pane.strip_glyph(chrome.style, chrome.capabilities),
             state: pane.flow_header_state(),
         };
         let (intent, indicators) = crate::pane_header::draw_marked(
@@ -378,56 +396,27 @@ impl Tab {
     }
 
     /// Each context chart carries its own bars control, timeframe selector
-    /// (§11), footprint glyph and indicators glyph, read and changed here wherever
-    /// focus sits.
+    /// (§11) and indicators button, read and changed here wherever focus sits.
     fn draw_time_header(
         &mut self,
         ui: &mut egui::Ui,
         slot: usize,
         strip: egui::Rect,
         bar_inputs: BarInputAvailability,
-        chrome: &mut CanvasChrome<'_>,
     ) {
         let pane = &mut self.time_panes[slot];
-        let identity = PaneIdentity::Time;
-        let header = PaneHeader::of(identity, pane.spec.spec());
-        let glyphs = pane.header_glyphs(identity, chrome.style, chrome.capabilities);
+        let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
         let mut interval_ms = pane
             .spec
             .retained(BarKind::Time)
             .time_interval_ms()
             .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
         let spec = &mut pane.spec;
-        let painted = &mut pane.frame.header_controls;
-        painted.clear();
-        let mut intent = None;
-        let glyphs_px = quantick_chart::pane_header::GROUP_GAP_PX
-            + glyphs.len() as f32
-                * (quantick_chart::pane_header::GLYPH_SLOT_PX + ui.spacing().item_spacing.x);
-        let header_layout = crate::time_header::draw(
-            ui,
-            strip,
-            &mut interval_ms,
-            pane.id,
-            &pane.layout.label,
-            header.presets,
-            glyphs_px,
-            |ui| crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs),
-            |ui| {
-                ui.add_space(quantick_chart::pane_header::GROUP_GAP_PX);
-                for glyph in &glyphs {
-                    crate::pane_header::layer_glyph(ui, *glyph, painted, &mut intent);
-                }
-            },
-        );
-        if let Some(intent) = intent {
-            // A settings window edits the focused chart, and this is the one
-            // the hand asked about.
-            if matches!(intent, HeaderIntent::OpenLayerSettings(_)) {
-                self.focus = PaneSide::Time(slot);
-            }
-            self.time_panes[slot].apply_header_intent(intent, chrome.layers);
-        }
+        pane.frame.header_controls.clear();
+        let header_layout =
+            crate::time_header::draw(ui, strip, &mut interval_ms, pane.id, header.presets, |ui| {
+                crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs)
+            });
         #[cfg(test)]
         if slot == 0 {
             self.time_header_chips = header_layout.chips();
@@ -801,6 +790,14 @@ impl Tab {
         // pane's bars from there never moves focus. Only the chart below takes it.
         let on_header = |band: &egui::Rect| split_pane_header(*band).header.contains(position);
         if context_bands.iter().chain([&flow_area]).any(on_header) {
+            return;
+        }
+        // A capsule governs its own pane the same way.
+        let on_capsule = |pane: &crate::pane::ChartPane| {
+            let mut capsules = pane.frame.capsules.iter().flatten();
+            capsules.any(|capsule| capsule.contains(position))
+        };
+        if self.panes().any(|(pane, _)| on_capsule(pane)) {
             return;
         }
         // A press egui routed to another layer belongs to whatever floats

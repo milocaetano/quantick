@@ -52,9 +52,24 @@ pub const ACCENT: Color32 = Color32::from_rgb(0x8A, 0xB4, 0xF8);
 /// `honest/amber` — not-live provenance only: replay, backfill, inferred data.
 pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
 
-/// `pane/mark` — the name on a pane's header line. A dimmed amber, a step below
-/// the last-price label, so it never reads as [`AMBER`]'s not-live warning.
-pub const PANE_MARK: Color32 = Color32::from_rgb(0xA3, 0x82, 0x1C);
+/// `pane/mark` — the name on a pane's header line: gold `#E0B84A` at 85%, softer
+/// than [`AMBER`], so it reads at a glance and never as the not-live warning.
+pub const PANE_MARK: Color32 = Color32::from_rgba_premultiplied(190, 156, 63, 217);
+
+/// `pane/action` — a word on a header line that does something: quieter than the
+/// bars it follows, louder than muted text.
+pub const PANE_ACTION: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
+
+/// `layer/off` — a layer switched off by hand. Not in the heatmap, not a side.
+pub const OFF: Color32 = Color32::from_rgb(0xF2, 0x9A, 0x4B);
+
+/// `capsule/*` — the backdrop of the layer capsule floating over a chart side:
+/// `rgba(11,14,20,.74)`, a 9% white hairline and a soft black shadow.
+pub const CAPSULE_FILL: Color32 = Color32::from_rgba_premultiplied(8, 10, 15, 189);
+pub const CAPSULE_BORDER: Color32 = Color32::from_rgba_premultiplied(23, 23, 23, 23);
+pub const CAPSULE_SHADOW: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 115);
+/// `control/hover` — the 6% white under a bare control the pointer is on.
+pub const BARE_HOVER: Color32 = Color32::from_rgba_premultiplied(15, 15, 15, 15);
 
 /// `seam/line` — the venue/prints boundary: white, and mostly transparent.
 ///

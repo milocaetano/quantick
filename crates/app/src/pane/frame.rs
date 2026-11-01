@@ -47,8 +47,15 @@ pub struct PaneFrame {
     /// catalogue once for each of them. Keeping the measured rectangle here
     /// makes the chart, overlays and strip agree about the same boundary.
     pub layout_strip: Option<egui::Rect>,
-    /// The controls the pane's header line painted last, for the scene.
+    /// The controls the pane's header line and capsules painted last, for the
+    /// scene.
     pub header_controls: crate::pane_header::PaintedControls,
+    /// The bottom of the capsule at the chart's right end, last frame: the status
+    /// badge stands below it.
+    pub capsule_floor: Option<f32>,
+    /// The capsules painted last, one per chart side: a press on one belongs to
+    /// the capsule, never to the pane's focus.
+    pub capsules: [Option<egui::Rect>; 2],
     /// The price gutter of the last draw, published for the same reason: the
     /// scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
     /// is really on the axis, not a guess about where the gutter probably is.
@@ -106,6 +113,8 @@ impl Default for PaneFrame {
             area: None,
             layout_strip: None,
             header_controls: Default::default(),
+            capsule_floor: None,
+            capsules: [None; 2],
             price_gutter: None,
             time_strip: None,
             lane_time_strip: None,
