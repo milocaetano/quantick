@@ -66,5 +66,52 @@ fn native_window_requests_validate_authority_and_retry_without_repeating_the_eff
     );
     assert!(scene_control(&scene, "tab_strip.close")["capability_id"].is_null());
     assert_eq!(app.runtime.tabs.active_id(), identity);
+    client
+        .send_with_idempotency_key(
+            RequestId::new("restore-while-minimized").unwrap(),
+            CAPABILITY,
+            1,
+            json!({"state":"normal"}),
+            IdempotencyKey::new("restore-key".to_owned()).unwrap(),
+        )
+        .unwrap();
+    wait_for_queued_gateway_requests(&app, 1);
+    let mut input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(158.0, 26.0),
+        )),
+        ..Default::default()
+    };
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .minimized = Some(true);
+    let output = ctx.run(input, |ctx| app.draw_frame(ctx, frame_instant(ctx)));
+    assert!(
+        client.reply_pending(GATEWAY_TEST_WAIT),
+        "minimized frame services the gateway"
+    );
+    assert_eq!(
+        success_result(&client.read().unwrap())["requested"],
+        "normal"
+    );
+    let commands: Vec<_> = output
+        .viewport_output
+        .values()
+        .flat_map(|viewport| &viewport.commands)
+        .collect();
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Minimized(false)))
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Maximized(false)))
+    );
+    assert_eq!(app.runtime.tabs.active_id(), identity);
     disable_test_gateway(&mut app, &ctx);
 }

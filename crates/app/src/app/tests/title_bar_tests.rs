@@ -295,3 +295,113 @@ fn title_bar_accepts_degenerate_client_widths_without_negative_widget_sizes() {
         assert_eq!(app.runtime.tabs.len(), 1);
     }
 }
+
+#[test]
+fn minimized_nonzero_client_preserves_canvas_while_feeds_and_workers_progress() {
+    let (mut app, first, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    for tab in app.runtime.tabs.iter_mut() {
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        tab.split_fraction = 0.35;
+    }
+    app.runtime.tabs.select(0);
+    settled_frame(&mut app, &ctx);
+    let layout = |app: &QuantickApp| {
+        app.runtime
+            .tabs
+            .iter_with_ids()
+            .map(|(id, tab)| {
+                (
+                    id,
+                    tab.layout,
+                    tab.split_fraction,
+                    tab.context_collapsed,
+                    tab.flow_collapsed,
+                    tab.focused_side(),
+                    tab.panes().map(|(pane, _)| pane.id).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = layout(&app);
+    let workers = |app: &QuantickApp| {
+        app.runtime
+            .tabs
+            .iter()
+            .map(|tab| tab.tape().worker_progress())
+            .collect::<Vec<_>>()
+    };
+    let worker_before = workers(&app);
+    let live_before: Vec<_> = app.runtime.tabs.iter().map(|tab| tab.live_trades).collect();
+    let channels: Vec<_> = app
+        .runtime
+        .tabs
+        .iter()
+        .map(|tab| tab.commands.clone())
+        .collect();
+    crate::orderflow_view::layers::set_layer_switch(
+        app.active_tab_mut().tape_mut(),
+        quantick_layers::OrderflowSwitch::TapeOnly,
+        true,
+    );
+    for index in 1..=3 {
+        first.try_send(FeedEvent::Live(trade(index))).unwrap();
+        second
+            .events
+            .try_send(FeedEvent::Live(trade(index)))
+            .unwrap();
+        // Undecorated Windows iconic client: 237x39 physical pixels at 144 DPI.
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(158.0, 26.0),
+            )),
+            time: Some(10.0 + index as f64),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .minimized = Some(true);
+        let _ = ctx.run(input, |ctx| app.draw_frame(ctx, frame_instant(ctx)));
+        assert_eq!(
+            layout(&app),
+            before,
+            "iconic geometry cannot become a saved layout"
+        );
+    }
+    settle_workers(&mut app);
+    for ((before, after), (tab, channel)) in worker_before
+        .iter()
+        .zip(workers(&app))
+        .zip(app.runtime.tabs.iter().zip(channels))
+    {
+        assert_eq!(before.instance, after.instance);
+        assert!(after.counts.retired > before.counts.retired);
+        assert!(channel.same_channel(&tab.commands));
+    }
+    assert_eq!(
+        app.runtime
+            .tabs
+            .iter()
+            .map(|tab| tab.live_trades)
+            .collect::<Vec<_>>(),
+        live_before
+            .iter()
+            .map(|count| count + 3)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        app.active_tab().tape().lane_now_ms(),
+        Some(trade(1).timestamp_ms + 2_000),
+        "the live tape clock advances with the two elapsed input seconds"
+    );
+    sized(&mut app, &ctx, TEST_WINDOW.x);
+    assert_eq!(
+        layout(&app),
+        before,
+        "restoring preserves the original split"
+    );
+}
