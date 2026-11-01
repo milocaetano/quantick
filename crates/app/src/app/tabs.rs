@@ -89,12 +89,6 @@ impl QuantickApp {
     /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
         self.read_tape_view_key(ctx);
-        // Focus-gated like `handle_drawing_keys` (audit MINOR-13): typing in
-        // the source picker's field with Ctrl held must never close the tab
-        // under it — closing is instant and currently irreversible.
-        if ctx.memory(|memory| memory.focused().is_some()) {
-            return;
-        }
         let keys = super::home_wiring::read_tab_keys(ctx);
         if self.arrangement_adapter().apply_tab_keys(keys) {
             self.surfaces.source_picker.open(&self.config);

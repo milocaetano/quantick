@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 40 |
+| deduplicated per connection | 41 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 1 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **65** |
+| **Total** | **66** |
 
 ## Capabilities
 
@@ -146,6 +146,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `feed.reconnect` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].feed_generation` | the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation) | `a_dropped_feed_recovery_answer_is_replayed_and_the_recovery_runs_once`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_feed_generation_advances_on_every_respawn_and_reads_back` |
 | `feed.reload` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].feed_generation` | the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation) | `a_dropped_feed_recovery_answer_is_replayed_and_the_recovery_runs_once`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_feed_generation_advances_on_every_respawn_and_reads_back` |
 | `feed.source.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].active_symbol` | the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the pair changed and not otherwise | `configured_feed_selection_is_validated_retry_safe_and_reads_back`, `a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position` |
+| `home.leave` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `active_surface` | active_surface is market, and the active market's panes are listed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `home.show` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `active_surface` | active_surface is home, and the tab_strip.home control is selected | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `indicator.mouse_vertical_line.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `indicator.mouse_vertical_line.changed` | `payload.indicator_guide.enabled` | an event after the pre-call cursor carries the requested boolean and its payload names the exact tab, pane and slot | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `indicator.picker.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `indicator.picker.changed` | `payload.indicator_picker` | the event reports the picker state after the call | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -188,4 +189,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-65 mutable capabilities registered, 65 with a readback.
+66 mutable capabilities registered, 66 with a readback.

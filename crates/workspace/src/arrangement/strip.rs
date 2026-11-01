@@ -9,14 +9,35 @@ pub fn visible_tabs(count: usize, active: usize, slots: usize) -> Range<usize> {
     end.saturating_sub(slots)..end
 }
 
-/// Whether Home keeps its label beside `markets` chips.
+/// How many market chips the strip holds, never fewer than the one on screen.
 ///
 /// Asked of the labelled width whatever the tab drew last frame, so dropping the
 /// label can never free the room that would bring it back on the next one.
 #[must_use]
+pub fn market_slots(room: f32, labelled_width: f32, chip_width: f32) -> usize {
+    (((room - labelled_width).max(0.0) / chip_width).floor() as usize).max(1)
+}
+
+/// Whether Home keeps its label beside `markets` chips: until one is hidden.
+#[must_use]
 pub fn home_label_fits(markets: usize, room: f32, labelled_width: f32, chip_width: f32) -> bool {
-    let slots = ((room - labelled_width).max(0.0) / chip_width).floor() as usize;
-    markets <= slots
+    markets <= market_slots(room, labelled_width, chip_width)
+}
+
+/// Which bundled logo raster, by its pixel size, to draw `points` wide. A size
+/// that lands on a raster is drawn pixel for pixel; a fractional scale samples
+/// the next raster that does not have to be stretched up.
+#[must_use]
+pub fn logo_raster_px(points: f32, pixels_per_point: f32) -> u32 {
+    let physical = points * pixels_per_point;
+    let exact = [16, 32, 48, 96]
+        .into_iter()
+        .find(|size| (physical - *size as f32).abs() < 0.5);
+    match exact {
+        Some(size) => size,
+        None if physical <= 48.0 => 48,
+        None => 96,
+    }
 }
 
 /// How opaque the Home logo is while another surface is on screen.
@@ -43,12 +64,29 @@ pub struct TabKeys {
     pub previous: bool,
 }
 
-/// What the active market tab held when it was last compared.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MarketShown {
+/// What the active market tab holds this frame. Borrowed, so comparing it on
+/// every frame Home is up costs no allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MarketShown<'a> {
     pub tab_id: u64,
-    pub label: String,
+    pub label: &'a str,
     pub replaying: bool,
+}
+
+/// The market Home was brought over, kept to compare later frames against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MarketHeld {
+    tab_id: u64,
+    label: String,
+    replaying: bool,
+}
+
+impl MarketHeld {
+    fn holds(&self, market: &MarketShown<'_>) -> bool {
+        self.tab_id == market.tab_id
+            && self.label == market.label
+            && self.replaying == market.replaying
+    }
 }
 
 /// Which surface the central canvas shows: Home, or the active market.
@@ -59,7 +97,7 @@ pub struct MarketShown {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StripSurface {
     /// The market Home was brought over; `None` while a market is on screen.
-    home_over: Option<MarketShown>,
+    home_over: Option<MarketHeld>,
 }
 
 impl StripSurface {
@@ -69,8 +107,12 @@ impl StripSurface {
     }
 
     /// Bring Home forward over `market`. Showing it twice is the same state.
-    pub fn show_home(&mut self, market: MarketShown) {
-        self.home_over = Some(market);
+    pub fn show_home(&mut self, market: MarketShown<'_>) {
+        self.home_over = Some(MarketHeld {
+            tab_id: market.tab_id,
+            label: market.label.to_owned(),
+            replaying: market.replaying,
+        });
     }
 
     /// Put the active market back on screen.
@@ -80,8 +122,12 @@ impl StripSurface {
 
     /// Leave Home when the active tab now holds anything else, whichever route
     /// got it there: a new tab, a restored workspace, a replay, a source change.
-    pub fn observe(&mut self, market: &MarketShown) {
-        if self.home_over.as_ref().is_some_and(|over| over != market) {
+    pub fn observe(&mut self, market: &MarketShown<'_>) {
+        if self
+            .home_over
+            .as_ref()
+            .is_some_and(|over| !over.holds(market))
+        {
             self.home_over = None;
         }
     }
@@ -102,9 +148,10 @@ impl StripSurface {
         }
     }
 
-    /// The strip position that looks active, `None` while Home does.
+    /// The market that looks active, by whichever handle the caller holds on
+    /// it, `None` while Home does.
     #[must_use]
-    pub const fn active_chip(&self, active: usize) -> Option<usize> {
+    pub fn active_chip<T>(&self, active: T) -> Option<T> {
         if self.is_home() { None } else { Some(active) }
     }
 }
@@ -113,10 +160,10 @@ impl StripSurface {
 mod tests {
     use super::*;
 
-    fn market(tab_id: u64, label: &str) -> MarketShown {
+    fn market(tab_id: u64, label: &str) -> MarketShown<'_> {
         MarketShown {
             tab_id,
-            label: label.to_owned(),
+            label,
             replaying: false,
         }
     }
@@ -141,6 +188,7 @@ mod tests {
         assert_eq!(surface, once);
         assert!(surface.is_home());
         assert_eq!(surface.active_chip(3), None);
+        assert_eq!(surface.active_chip(7_u64), None, "or a tab id");
         surface.show_market();
         assert_eq!(surface, StripSurface::default());
     }
@@ -212,7 +260,43 @@ mod tests {
             assert!(!home_label_fits(2, room, labelled, 200.0));
         }
         assert!(home_label_fits(2, room + 1.0, labelled, 200.0));
-        assert!(!home_label_fits(1, 10.0, labelled, 200.0), "no room at all");
+    }
+
+    /// One market is always on screen, so it never costs Home its label however
+    /// narrow the window: the logo stands alone exactly when a chip is hidden.
+    #[test]
+    fn home_is_logo_only_exactly_when_a_chip_is_hidden() {
+        assert!(home_label_fits(1, 10.0, 70.0, 200.0), "no room at all");
+        assert!(!home_label_fits(2, 10.0, 70.0, 200.0));
+        for room in [0.0, 10.0, 269.0, 270.0, 469.0, 470.0, 1130.0] {
+            let slots = market_slots(room, 70.0, 200.0);
+            for markets in 1..=9 {
+                for active in 0..markets {
+                    let shown = visible_tabs(markets, active, slots).len();
+                    assert_eq!(
+                        home_label_fits(markets, room, 70.0, 200.0),
+                        shown == markets,
+                        "{markets} markets in {room} px"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_logo_raster_matches_the_scale_or_is_never_stretched_up() {
+        for (points, scale, raster) in [
+            (16.0, 1.0, 16),
+            (16.0, 2.0, 32),
+            (16.0, 1.25, 48),
+            (16.0, 1.5, 48),
+            (16.0, 3.0, 48),
+            (48.0, 1.0, 48),
+            (48.0, 2.0, 96),
+            (48.0, 1.5, 96),
+        ] {
+            assert_eq!(logo_raster_px(points, scale), raster, "{points} at {scale}");
+        }
     }
 
     #[test]

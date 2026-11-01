@@ -13,7 +13,7 @@ use crate::surfaces::ChartSettingsTab::Candles;
 use crate::theme;
 
 use super::QuantickApp;
-use commands::MenuCommand;
+pub(super) use commands::MenuCommand;
 
 mod commands;
 mod menus;
@@ -199,6 +199,7 @@ impl QuantickApp {
         }
         .show(ui, commands);
         menus::ViewMenu {
+            chart_shown: !self.chrome.title_bar.surface.is_home(),
             layouts: self.layout_state(),
             tab: self.active_tab(),
             dock_visible: self.dock.visible(),
@@ -234,7 +235,10 @@ impl QuantickApp {
     }
 
     /// Carry out one command a menu entry or a menu shortcut recorded.
-    fn apply_menu_command(&mut self, command: MenuCommand) {
+    pub(super) fn apply_menu_command(&mut self, command: MenuCommand) {
+        if command.needs_chart() && self.chrome.title_bar.surface.is_home() {
+            return;
+        }
         match command {
             MenuCommand::Tab(action) => self.apply_tab_action(action),
             MenuCommand::OpenReplayBrowser => self.replay_view.open_browser(),

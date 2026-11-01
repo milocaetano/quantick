@@ -92,6 +92,8 @@ impl FileMenu {
 /// than under File, and each entry names the charts it shows — "Timeframe",
 /// not layout jargon (audit §3).
 pub(super) struct ViewMenu<'a> {
+    /// False while Home covers the canvas: the chart entries grey out.
+    pub(super) chart_shown: bool,
     pub(super) layouts: LayoutRead<'a>,
     pub(super) tab: &'a Tab,
     pub(super) dock_visible: bool,
@@ -104,9 +106,11 @@ pub(super) struct ViewMenu<'a> {
 impl ViewMenu<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
         ui.menu_button("View", |ui| {
-            self.layouts_menu(ui, commands);
-            self.preset_menu(ui, commands);
-            self.context_entries(ui, commands);
+            ui.add_enabled_ui(self.chart_shown, |ui| {
+                self.layouts_menu(ui, commands);
+                self.preset_menu(ui, commands);
+                self.context_entries(ui, commands);
+            });
             ui.separator();
             self.chrome_entries(ui, commands);
             ui.separator();
@@ -322,7 +326,7 @@ impl ViewMenu<'_> {
             .is_empty();
         if ui
             .add_enabled(
-                has_legend,
+                has_legend && self.chart_shown,
                 egui::Button::new(legend_label)
                     .shortcut_text(ui.ctx().format_shortcut(&LEGEND_SHORTCUT)),
             )

@@ -409,3 +409,249 @@ fn only_the_active_market_shows_its_close_mark_at_rest() {
     );
     assert_eq!(count_painted(&hovered, "\u{00d7}"), 2);
 }
+
+/// Each key press carries its own modifiers; the frame's may have moved on by
+/// the time it is read.
+#[test]
+fn the_number_shortcut_reads_the_press_not_the_frame() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx);
+    let keys = |app: &mut QuantickApp, pressed, held| {
+        let event = key_press_with(egui::Key::Num1, pressed);
+        run_frame_sized(app, &ctx, WINDOW, vec![event], held);
+        frame(app, &ctx);
+    };
+
+    // Shift already released as the frame reads it: still a preset.
+    keys(&mut app, CTRL_SHIFT, egui::Modifiers::CTRL);
+    assert!(!on_home(&app), "Ctrl+Shift+1 is never Home");
+
+    // Shift went down after the press, in the same frame.
+    keys(&mut app, egui::Modifiers::CTRL, CTRL_SHIFT);
+    assert!(on_home(&app), "Ctrl+1 is not refused for a later Shift");
+    app.chrome.title_bar.surface.show_market();
+
+    keys(&mut app, egui::Modifiers::CTRL, egui::Modifiers::CTRL);
+    assert!(on_home(&app));
+    app.chrome.title_bar.surface.show_market();
+
+    let alt_gr = egui::Modifiers::CTRL.plus(egui::Modifiers::ALT);
+    keys(&mut app, alt_gr, egui::Modifiers::CTRL);
+    assert!(!on_home(&app), "Ctrl+Alt+1 is AltGr typing");
+}
+
+/// egui's `wants_keyboard_input` is true for any focus, so this needs a focused
+/// widget that takes no text.
+#[test]
+fn a_focused_button_blocks_closing_a_tab_but_not_going_home() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    let focus = || {
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("a focused button")));
+    };
+
+    focus();
+    press(&mut app, &ctx, egui::Key::W, egui::Modifiers::CTRL);
+    assert_eq!(app.runtime.tabs.len(), 2, "the Ctrl+W gate still holds");
+
+    focus();
+    press(&mut app, &ctx, egui::Key::Num1, egui::Modifiers::CTRL);
+    assert!(on_home(&app), "Ctrl+1");
+    app.chrome.title_bar.surface.show_market();
+
+    focus();
+    press(&mut app, &ctx, egui::Key::H, CTRL_SHIFT);
+    assert!(on_home(&app), "Ctrl+Shift+H");
+
+    focus();
+    press(&mut app, &ctx, egui::Key::Tab, egui::Modifiers::CTRL);
+    assert!(!on_home(&app), "and the way back is not trapped either");
+}
+
+#[test]
+fn a_text_field_keeps_both_home_shortcuts() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx);
+    app.surfaces.source_picker.open(&app.config);
+    frame(&mut app, &ctx);
+    frame(&mut app, &ctx);
+    let add = app
+        .surfaces
+        .source_picker
+        .picker()
+        .expect("the picker is open")
+        .add_button_rect()
+        .expect("the picker drew its Add button");
+    let field = add.left_center() - egui::vec2(30.0, 0.0);
+    click_sized(&mut app, &ctx, WINDOW, field);
+    frame(&mut app, &ctx);
+    assert!(ctx.memory(|memory| memory.focused().is_some()), "the field");
+
+    press(&mut app, &ctx, egui::Key::Num1, egui::Modifiers::CTRL);
+    assert!(!on_home(&app), "Ctrl+1 while typing");
+    press(&mut app, &ctx, egui::Key::H, CTRL_SHIFT);
+    assert!(!on_home(&app), "Ctrl+Shift+H while typing");
+}
+
+#[test]
+fn home_draws_no_toolbar_and_the_canvas_returns_at_its_full_size() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx);
+    let output = frame(&mut app, &ctx);
+    let buy = app.active_tab().paper.trade_bar("").buy.face;
+    assert!(painted_text_center(&output, &buy).is_some(), "on a market");
+    let area = app.active_tab().flow_pane.frame.chart_area;
+    assert!(area.is_some());
+
+    app.chrome.layout_picker_open = true;
+    app.show_home_tab().unwrap();
+    for _ in 0..3 {
+        let output = frame(&mut app, &ctx);
+        assert!(painted_text_center(&output, &buy).is_none(), "on Home");
+    }
+    assert!(!app.chrome.layout_picker_open, "the picker went with it");
+    assert!(app.active_tab().paper.is_flat());
+
+    app.chrome.title_bar.surface.show_market();
+    let output = frame(&mut app, &ctx);
+    assert!(painted_text_center(&output, &buy).is_some(), "and back");
+    assert_eq!(
+        app.active_tab().flow_pane.frame.chart_area,
+        area,
+        "the first frame back is the size the canvas left at"
+    );
+}
+
+/// The toolbar used to refresh the chip label; without it a source change must
+/// still reach the strip and take Home down.
+#[test]
+fn a_source_change_behind_home_still_relabels_the_chip_and_leaves_home() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx);
+    app.show_home_tab().unwrap();
+    frame(&mut app, &ctx);
+    let before = app.active_tab().chip_label().to_owned();
+
+    app.active_tab_mut().symbol = "ETHUSDT".to_owned();
+    frame(&mut app, &ctx);
+    frame(&mut app, &ctx);
+    assert_ne!(app.active_tab().chip_label(), before);
+    assert!(!on_home(&app));
+}
+
+#[test]
+fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
+    use super::super::menu_bar::MenuCommand;
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    let preset = &crate::canvas_layout::LAYOUT_PRESETS[2];
+    let layout = app.active_tab().layout;
+    let legend = app.active_tab().focused_pane().legend_collapsed;
+    let context = app.active_tab().context_collapsed;
+    assert_ne!(layout, preset_layout(2));
+
+    app.show_home_tab().unwrap();
+    app.apply_menu_command(MenuCommand::ApplyLayoutPreset(preset));
+    app.apply_menu_command(MenuCommand::ToggleLegend);
+    app.apply_menu_command(MenuCommand::ToggleContextCharts);
+    app.apply_menu_command(MenuCommand::PaperMarket(quantick_engine::Side::Buy));
+    app.apply_menu_command(MenuCommand::Tab(TabAction::Close(0)));
+    frame(&mut app, &ctx);
+    assert!(on_home(&app));
+    assert_eq!(app.runtime.tabs.len(), 2, "Close Tab is a no-op");
+    let tab = app.active_tab();
+    assert_eq!(tab.layout, layout);
+    assert_eq!(tab.focused_pane().legend_collapsed, legend);
+    assert_eq!(tab.context_collapsed, context);
+    assert!(tab.paper.is_flat());
+
+    // What is not the chart's still works, and the window stays on Home.
+    let dock = app.dock.visible();
+    app.apply_menu_command(MenuCommand::ToggleDock);
+    assert_ne!(app.dock.visible(), dock, "window commands");
+    app.apply_menu_command(MenuCommand::Tab(TabAction::New));
+    assert!(app.surfaces.source_picker.is_open(), "New Tab");
+    app.surfaces.source_picker.close();
+    app.apply_menu_command(MenuCommand::OpenReplayBrowser);
+    assert!(on_home(&app));
+    app.apply_menu_command(MenuCommand::Tab(TabAction::Activate(0)));
+    assert!(!on_home(&app), "tab commands");
+
+    // The same commands do act on a market.
+    app.apply_menu_command(MenuCommand::ApplyLayoutPreset(preset));
+    assert_eq!(app.active_tab().layout, preset_layout(2));
+}
+
+#[test]
+fn one_market_keeps_the_label_in_a_narrow_strip_and_a_hidden_chip_costs_it() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let narrow = egui::vec2(300.0, 760.0);
+    let sized = |app: &mut QuantickApp| {
+        run_frame_sized(app, &ctx, narrow, Vec::new(), egui::Modifiers::NONE)
+    };
+    sized(&mut app);
+    let output = sized(&mut app);
+    assert!(painted_text_center(&output, "Home").is_some());
+    assert!(home_rect(&app).width() > crate::tabstrip::HOME_MIN_WIDTH_PX);
+    assert!(app.chrome.title_bar.strip.overflow.is_none());
+
+    let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    sized(&mut app);
+    let output = sized(&mut app);
+    assert!(painted_text_center(&output, "Home").is_none());
+    assert_eq!(
+        home_rect(&app).width(),
+        46.0,
+        "the logo-only width is fixed"
+    );
+    assert!(app.chrome.title_bar.strip.overflow.is_some());
+}
+
+/// Across the width where two chips stop fitting, the label and the overflow
+/// menu trade places in the same step.
+#[test]
+fn the_overflow_menu_and_the_labelled_home_never_show_together_or_both_go() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    for width in (600..1100).step_by(10) {
+        let size = egui::vec2(width as f32, 760.0);
+        run_frame_sized(&mut app, &ctx, size, Vec::new(), egui::Modifiers::NONE);
+        let output = run_frame_sized(&mut app, &ctx, size, Vec::new(), egui::Modifiers::NONE);
+        let labelled = painted_text_center(&output, "Home").is_some();
+        let overflow = app.chrome.title_bar.strip.overflow.is_some();
+        assert_ne!(labelled, overflow, "at {width} px");
+    }
+}
+
+#[test]
+fn the_logo_uses_the_raster_its_scale_lands_on() {
+    for (zoom, raster) in [(1.0, 16), (2.0, 32), (1.5, 48)] {
+        let (mut app, _, _, _) = test_app();
+        let ctx = egui::Context::default();
+        ctx.set_zoom_factor(zoom);
+        frame(&mut app, &ctx);
+        let output = frame(&mut app, &ctx);
+        let texture = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                    Some(mesh.texture_id)
+                }
+                _ => None,
+            })
+            .expect("the logo is painted");
+        let manager = ctx.tex_manager();
+        let manager = manager.read();
+        let size = manager.meta(texture).expect("the logo is loaded").size;
+        assert_eq!(size, [raster, raster], "at {zoom}x");
+    }
+}

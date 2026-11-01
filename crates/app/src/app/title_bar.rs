@@ -86,8 +86,9 @@ pub(crate) fn draw(
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
-                        let home = title.surface.is_home();
-                        action = crate::tabstrip::draw(ui, &chips, active, home, &mut title.strip);
+                        let surface = &title.surface;
+                        action =
+                            crate::tabstrip::draw(ui, &chips, active, surface, &mut title.strip);
                     },
                 );
                 let drag_width = (ui.available_width()

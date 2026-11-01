@@ -708,6 +708,11 @@ impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
         super::home_wiring::show_home(&self.runtime.tabs, &mut self.chrome.title_bar.surface);
         Ok(())
     }
+
+    fn leave_home_tab(&mut self) -> Result<(), quantick_control::error::ControlError> {
+        self.chrome.title_bar.surface.show_market();
+        Ok(())
+    }
 }
 
 impl ChromePort for QuantickApp {

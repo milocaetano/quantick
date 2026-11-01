@@ -1,6 +1,6 @@
 # Issue #735: native title-strip egui layout/input, bounded overflow painting, and scene geometry adapters. Native request policy and handlers live in headless crates.
-crates/app +1074
-!budget +1074
+crates/app +1143
+!budget +1143
 
 # Final feature accounting: +7 native canvas/geometry repair lines and +117 rounded tab painting, focus outline, and cached bundled-logo drawing.
 # Integration accounting: main PR #741 adds 153 pane-capsule painting/input/geometry lines after PR #739 left 31 headroom, inheriting a 122-line deficit. Carry it here without changing upstream ratchets.
@@ -10,3 +10,5 @@ crates/app +1074
 # Resize blocker repair: +120 egui-only border/corner geometry, cursor responses and native BeginResize input docking. The L-shaped hit areas preserve widget interiors; no headless policy or new app state.
 
 # Home tab amendment: +345: egui painting and input for the Home chip, Home page and bundled-logo texture, the one-tab active look, one field on the title bar, scene walks, and the tab keys moved off the root onto the arrangement adapter. State and rules live in crates/workspace; home.show in control-schema and control-handlers.
+
+# Home review amendment: +69: home.leave on the host, the logo rasters, per-key Home input, the toolbar's stand-in on Home, the menu seam's table of chart commands and greyed View entries. Rules live in crates/workspace strip.rs; home.leave in control-schema and control-handlers.

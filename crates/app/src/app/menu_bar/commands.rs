@@ -23,7 +23,7 @@ use super::{
 
 /// One thing a menu entry or a menu shortcut asked for.
 #[derive(Debug)]
-pub(super) enum MenuCommand {
+pub(in crate::app) enum MenuCommand {
     /// What the tab strip, or the File menu's tab entries, asked for.
     Tab(TabAction),
     OpenReplayBrowser,
@@ -66,6 +66,30 @@ pub(super) enum MenuCommand {
     OpenAppearance,
     OpenAgentAccess,
     OpenReplayFormatHelp,
+}
+
+impl MenuCommand {
+    /// Whether this changes or trades the chart on screen, so means nothing
+    /// while Home hides it. Tabs, replay browsing and the window's own chrome
+    /// are not the chart's. "Close Tab" is the active market's, which Home is
+    /// covering; closing a chip on the strip is a separate, visible act.
+    pub(super) const fn needs_chart(&self) -> bool {
+        matches!(
+            self,
+            Self::Tab(TabAction::Close(_))
+                | Self::ToggleLayer(_)
+                | Self::ToggleContextCharts
+                | Self::ApplyLayoutPreset(_)
+                | Self::SwitchLayoutIndex(_)
+                | Self::Strip(_)
+                | Self::MoveContextChart { .. }
+                | Self::ToggleLegend
+                | Self::PaperMarket(_)
+                | Self::PaperReverse
+                | Self::PaperFlatten
+                | Self::PaperCancelAll
+        )
+    }
 }
 
 /// The menu shortcuts pressed this frame, as commands, in the order they

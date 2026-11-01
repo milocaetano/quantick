@@ -755,6 +755,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("home.show", 1, json!({}), Readback::Moves),
+        ("home.leave", 1, json!({}), Readback::Moves),
         ("layout.tab.create", 1, json!({}), Readback::Moves),
         (
             "layout.tab.rename",

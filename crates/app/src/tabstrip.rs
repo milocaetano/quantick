@@ -5,6 +5,7 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
+use quantick_workspace::arrangement::strip::{StripSurface, market_slots, visible_tabs};
 
 use crate::config::AppConfig;
 use crate::symbols_file::AddedSymbols;
@@ -25,9 +26,8 @@ const HOME_LETTER_SPACING_PX: f32 = 0.12;
 const HOME_PADDING_LEFT_PX: f32 = 12.0;
 const HOME_LOGO_GAP_PX: f32 = 7.0;
 const HOME_PADDING_RIGHT_PX: f32 = 14.0;
+/// The logo alone, centred with 15 px either side.
 pub(crate) const HOME_MIN_WIDTH_PX: f32 = 46.0;
-/// The logo alone in a strip too narrow to spend [`HOME_MIN_WIDTH_PX`].
-const HOME_COMPACT_WIDTH_PX: f32 = 28.0;
 /// Height of the line across the top of the tab on screen.
 const ACTIVE_LINE_PX: f32 = 2.0;
 const ACTIVE_LINE_INSET_PX: f32 = 8.0;
@@ -85,7 +85,7 @@ pub(crate) fn draw(
     ui: &mut egui::Ui,
     chips: &[TabChip<'_>],
     active: usize,
-    home: bool,
+    surface: &StripSurface,
     drawn: &mut StripDrawn,
 ) -> Option<TabAction> {
     drawn.tabs.clear();
@@ -109,19 +109,13 @@ pub(crate) fn draw(
         + label.size().x
         + HOME_PADDING_RIGHT_PX)
         .max(HOME_MIN_WIDTH_PX);
-    let fits = quantick_workspace::arrangement::strip::home_label_fits(
-        chips.len(),
-        ui.available_width() - controls_width - ui.spacing().item_spacing.x,
-        labelled,
-        CHIP_PREFERRED_WIDTH_PX,
-    );
-    let shown = fits.then_some((label, labelled));
-    let mut action = draw_home_tab(ui, home, compact, shown, drawn).then_some(TabAction::Home);
+    let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
+    let slots = market_slots(room, labelled, CHIP_PREFERRED_WIDTH_PX);
+    let visible = visible_tabs(chips.len(), active, slots);
+    let shown = (visible.len() == chips.len()).then_some((label, labelled));
+    let mut action = draw_home_tab(ui, surface.is_home(), shown, drawn).then_some(TabAction::Home);
     let closable = chips.len() > 1;
-    let slots = ((ui.available_width() - controls_width).max(0.0) / CHIP_PREFERRED_WIDTH_PX).floor()
-        as usize;
-    let visible =
-        quantick_workspace::arrangement::strip::visible_tabs(chips.len(), active, slots.max(1));
+    let active_chip = surface.active_chip(active);
     let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
         .clamp(CHIP_MIN_WIDTH_PX, CHIP_MAX_WIDTH_PX);
     for (index, chip) in chips
@@ -130,7 +124,7 @@ pub(crate) fn draw(
         .filter(|(index, _)| visible.contains(index))
     {
         ui.push_id(("market_tab", chip.id), |ui| {
-            let selected = !home && index == active;
+            let selected = active_chip == Some(index);
             let surface = ui.painter().add(egui::Shape::Noop);
             let mut text = egui::RichText::new(chip.label)
                 .size(17.0)
@@ -229,7 +223,7 @@ pub(crate) fn draw(
                             }
                             if ui
                                 .push_id(chip.id, |ui| {
-                                    ui.selectable_label(!home && index == active, text)
+                                    ui.selectable_label(active_chip == Some(index), text)
                                 })
                                 .inner
                                 .clicked()
@@ -291,16 +285,12 @@ fn home_label(ui: &egui::Ui) -> std::sync::Arc<egui::Galley> {
 fn draw_home_tab(
     ui: &mut egui::Ui,
     active: bool,
-    compact: bool,
     label: Option<(std::sync::Arc<egui::Galley>, f32)>,
     drawn: &mut StripDrawn,
 ) -> bool {
-    let logo_only = if compact {
-        HOME_COMPACT_WIDTH_PX
-    } else {
-        HOME_MIN_WIDTH_PX
-    };
-    let width = label.as_ref().map_or(logo_only, |(_, width)| *width);
+    let width = label
+        .as_ref()
+        .map_or(HOME_MIN_WIDTH_PX, |(_, width)| *width);
     let surface = ui.painter().add(egui::Shape::Noop);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());

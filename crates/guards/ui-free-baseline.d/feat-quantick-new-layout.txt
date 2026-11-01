@@ -1,3 +1,4 @@
 # Home tab: applying strip actions and tab keys on the arrangement adapter, and reading the active tab's label and replay state, must touch app-only Tab and ArrangementHost state. The rules are in crates/workspace strip.rs.
-crates/app +17
-!budget +17
+crates/app +23
+!budget +23
+# Home review amendment: +6: home.leave's host method reaches the app-only title bar, and the source settle that outlives the toolbar reads app-only Tab state.

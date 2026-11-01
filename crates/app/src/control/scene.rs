@@ -164,10 +164,14 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     // with a control ID this scope no longer contains.
     //
     // While Home is up none of them is on screen, so none is listed.
-    let home = app
+    let active_id = tabs.active_id();
+    let active_chip = app
         .chrome_reads()
         .title_bar()
-        .is_some_and(|title| title.surface.is_home());
+        .map_or(Some(active_id), |title| {
+            title.surface.active_chip(active_id)
+        });
+    let home = active_chip.is_none();
     let mut focused_pane_id = None;
     if !home {
         focused_pane_id = push_panes(&mut controls, tabs.active_id(), active, focused_side);
@@ -192,7 +196,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     let strip_complete = push_tab_strip(
         &mut controls,
         tabs,
-        (!home).then(|| tabs.active_id()),
+        active_chip,
         app.chrome_reads().title_bar(),
     );
     push_title_bar(&mut controls, app);

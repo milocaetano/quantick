@@ -365,7 +365,11 @@ impl QuantickApp {
         if let Some(access) = self.control.control_access.as_mut() {
             access.draw_panel(ctx);
         }
-        self.draw_toolbar(ctx);
+        if self.chrome.title_bar.surface.is_home() {
+            super::home_wiring::stand_in_for_toolbar(self);
+        } else {
+            self.draw_toolbar(ctx);
+        }
     }
 
     /// The registered surfaces, then what they asked for. The environment is

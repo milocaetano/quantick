@@ -30,6 +30,16 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
         mapping: capability!("home.show"),
     },
     UiBehaviour {
+        id: "home.leave",
+        title: "Leave the Home tab",
+        reach: "the active market's chip, Ctrl+Tab and Ctrl+Shift+Tab while Home shows",
+        keys: &[(
+            Source::Authored,
+            "market chip click and tab cycling while Home shows",
+        )],
+        mapping: capability!("home.leave"),
+    },
+    UiBehaviour {
         id: "window.move",
         title: "Move or resize the native window",
         reach: "free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface",

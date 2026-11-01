@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 80 |
+| Reachable by capability | 81 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 4 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **140** |
+| **Total** | **141** |
 
-85 of the 140 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 55 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+85 of the 141 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 56 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -56,6 +56,7 @@ The three exclusion classes are closed:
 | --- | --- | --- | --- | --- |
 | `layout.window.state.set` | Set native window presentation | title-strip minimize and maximize controls; double-click free title-strip space | `layout.window.state.set` | — |
 | `home.show` | Show the Home tab | first tab of the market title strip, Ctrl+1, Ctrl+Shift+H | `home.show` | — |
+| `home.leave` | Leave the Home tab | the active market's chip, Ctrl+Tab and Ctrl+Shift+Tab while Home shows | `home.leave` | — |
 | `window.move` | Move or resize the native window | free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface | — | `ui_only_by_decision` — docs/ux/native-market-titlebar.md keeps desktop movement under OS authority; scene bounds identify the native gesture target but do not execute it |
 | `window.snap` | Snap the native window | Windows+Left/Right and the operating system's native window snapping | — | `ui_only_by_decision` — docs/ux/native-market-titlebar.md keeps window snapping as an OS gesture rather than granting arbitrary desktop positioning through the app API |
 | `app.exit` | Close the application | File menu, and the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the window would end every other capability's session |
@@ -216,7 +217,7 @@ matrix fails the build.
 | `hotkey` | 19 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 55 |
+| `authored` | 56 |
 
 ## Appendix: rows no registry stands behind
 
@@ -229,6 +230,7 @@ declares nothing here is a guard failure.
 | Behaviour | Why nothing registers it |
 | --- | --- |
 | `layout.window.state.set` | native title-strip minimize/maximize buttons and free-space double-click |
+| `home.leave` | market chip click and tab cycling while Home shows |
 | `window.move` | native title-strip drag and window-edge resize gestures |
 | `window.snap` | native Windows snapping |
 | `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |

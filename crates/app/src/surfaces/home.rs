@@ -8,34 +8,34 @@ use eframe::egui;
 use crate::theme;
 
 const PAGE_LOGO_PX: f32 = 48.0;
-/// Physical size of the small raster, drawn pixel for pixel at 100% scale.
-const SMALL_LOGO_PX: f32 = 16.0;
+
+fn logo_png(raster: u32) -> &'static [u8] {
+    match raster {
+        16 => include_bytes!("../../assets/icon-solid-16.png"),
+        32 => include_bytes!("../../assets/icon-solid-32.png"),
+        48 => include_bytes!("../../assets/icon-solid-48.png"),
+        _ => include_bytes!("../../assets/icon-solid-96.png"),
+    }
+}
 
 /// Paint the solid logo into `rect` at `opacity`. The tint is the only opacity
 /// control, so the raster stays sharp on a whole-pixel rectangle.
 pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, opacity: f32) {
-    let small = rect.width() * ui.ctx().pixels_per_point() <= SMALL_LOGO_PX + 0.5;
-    let (key, png): (_, &[u8]) = if small {
-        (
-            "Quantick logo 16",
-            include_bytes!("../../assets/icon-solid-16.png"),
-        )
-    } else {
-        (
-            "Quantick logo 48",
-            include_bytes!("../../assets/icon-solid-48.png"),
-        )
-    };
-    let id = egui::Id::new(key);
+    let raster = quantick_workspace::arrangement::strip::logo_raster_px(
+        rect.width(),
+        ui.ctx().pixels_per_point(),
+    );
+    let id = egui::Id::new(("Quantick logo", raster));
     let texture = ui
         .ctx()
         .data_mut(|data| data.get_temp::<egui::TextureHandle>(id))
         .unwrap_or_else(|| {
-            let icon = eframe::icon_data::from_png_bytes(png).expect("bundled logo is a valid PNG");
+            let icon = eframe::icon_data::from_png_bytes(logo_png(raster))
+                .expect("bundled logo is a valid PNG");
             let size = [icon.width as usize, icon.height as usize];
             let image = egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
             let options = egui::TextureOptions::LINEAR;
-            let texture = ui.ctx().load_texture(key, image, options);
+            let texture = ui.ctx().load_texture("Quantick logo", image, options);
             ui.ctx()
                 .data_mut(|data| data.insert_temp(id, texture.clone()));
             texture
@@ -62,4 +62,17 @@ pub(crate) fn draw_page(ui: &mut egui::Ui) -> bool {
         open = ui.button("Open a market").clicked();
     });
     open
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_bundled_logo_is_the_size_it_is_chosen_for() {
+        for raster in [16, 32, 48, 96] {
+            let icon = eframe::icon_data::from_png_bytes(logo_png(raster)).unwrap();
+            assert_eq!((icon.width, icon.height), (raster, raster));
+        }
+    }
 }
