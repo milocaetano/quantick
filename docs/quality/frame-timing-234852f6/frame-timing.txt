@@ -1,0 +1,23 @@
+# command: powershell tools/live_envelope/run_replay.ps1 -Exe <build> -Label <run> -Root <scratch>, ten runs interleaved in the order below, then
+#          python tools/live_envelope/frame_timing.py <scratch>
+# builds: cargo build --release --features harness -p quantick-app (the default release exe reads none of the QUANTICK_* launch hooks and opens the trader's workspace instead of the replay; a first set without the feature was discarded for that reason)
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro), 2026-10-31 21:52 to 22:11 UTC-3
+# load: not idle; the trader's own quantick-app was running a live session alongside every run (about 1.5 cores), host load 17-26% before the first run, no cargo, rustc or python process. Treat the absolute frame_cpu as measured under that load; the base/head contrast is same-host, same-load.
+# base = release build of 46d68560 (origin/main, the PR's base); head = release build of 234852f6 (feat/counted-hot-path-budgets); the two builds differ only in test files, docs and the work_meter module's crate, so the release binaries carry the same production code
+# replay: WINV26 2026-08-25 (1.70 M prints) at speed 60, book + bubbles + footprint + live strip on, 1500x900, 45 s per run
+# reading: fps min 59 and APP_SLOW_FRAMES 0 on both sides; frame_cpu mean base 2.756 ms vs head 2.844 ms (+0.088 ms, one base stdev); both sides sit about 0.9 ms above the last committed idle measurement of September (docs/quality/gate6-0c0860db/frame-timing.txt: 1.662 ms at 0c0860db) - whether that gap is main's drift since September or this run's load is not separable here; a regression to report, not fixed in this PR
+
+| Run | lines | fps min / mean | frame_avg ms | frame_cpu ms mean | frame_cpu median | worst ms | trades/s mean | worker_deferred max | worker_backlog max | slow-frame lines |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| base-1 | 21 | 59 / 59.29 | 16.667 | 2.646 | 2.570 | 33.37 | 4,699 | 0 | 307 | 0 |
+| head-1 | 21 | 59 / 59.33 | 16.667 | 2.897 | 2.843 | 33.27 | 4,661 | 0 | 272 | 0 |
+| base-2 | 21 | 59 / 59.33 | 16.667 | 2.733 | 2.657 | 33.48 | 4,696 | 0 | 501 | 0 |
+| head-2 | 21 | 59 / 59.29 | 16.667 | 2.779 | 2.720 | 33.44 | 4,678 | 0 | 224 | 0 |
+| head-3 | 21 | 59 / 59.33 | 16.666 | 2.789 | 2.756 | 33.32 | 4,659 | 0 | 355 | 0 |
+| base-3 | 21 | 59 / 59.33 | 16.667 | 2.723 | 2.688 | 33.34 | 4,675 | 0 | 290 | 0 |
+| head-4 | 21 | 59 / 59.38 | 16.667 | 2.872 | 2.822 | 33.42 | 4,673 | 0 | 249 | 0 |
+| base-4 | 21 | 59 / 59.33 | 16.667 | 2.800 | 2.713 | 33.42 | 4,670 | 0 | 444 | 0 |
+| head-5 | 21 | 59 / 59.19 | 16.668 | 2.884 | 2.837 | 33.48 | 4,680 | 0 | 272 | 0 |
+| base-5 | 21 | 59 / 59.33 | 16.667 | 2.879 | 2.784 | 33.35 | 4,665 | 0 | 282 | 0 |
+- **base**: 5 runs; fps min 59; frame_avg 16.667 ms; frame_cpu mean 2.756 ms (per run 2.65, 2.73, 2.72, 2.80, 2.88; stdev 0.088); worst steady frame 33.48 ms; APP_SLOW_FRAMES lines 0
+- **head**: 5 runs; fps min 59; frame_avg 16.667 ms; frame_cpu mean 2.844 ms (per run 2.90, 2.78, 2.79, 2.87, 2.88; stdev 0.056); worst steady frame 33.48 ms; APP_SLOW_FRAMES lines 0

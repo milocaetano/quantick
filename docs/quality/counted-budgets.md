@@ -62,4 +62,7 @@ without copying it, a quadratic sort, a cache that stops hitting but rebuilds
 into reused buffers. Those show only on a clock. Timing stays in the
 `#[ignore]` tests run by name (`flow_live_bench.rs`, the long
 `session_length_tests` variant), in `cargo bench -p quantick-engine`, and in committed
-measurements under `docs/quality/`, taken on an idle host.
+measurements under `docs/quality/`, taken on an idle host; the one taken
+with these budgets is `docs/quality/frame-timing-234852f6/frame-timing.txt`
+(base and head within one standard deviation, measured beside the trader's
+live session, not idle).
