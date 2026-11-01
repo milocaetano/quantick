@@ -236,10 +236,9 @@ fn each_pane_paints_only_the_controls_it_accepts() {
         (HeaderControl::Layer(LayerToggle::TapeHeatmap), true),
     ] {
         let rect = flow_control(&app, control);
-        assert!(
-            rect.top() >= chart.top() + 8.0,
-            "{control:?} below the header"
-        );
+        let capsule = flow.frame.capsules[usize::from(right_side)].expect("its capsule");
+        assert_eq!(capsule.top(), area.top() + 8.0, "8 points below the rule");
+        assert!(capsule.contains_rect(rect), "{control:?} in its capsule");
         assert_eq!(
             rect.left() >= divider,
             right_side,

@@ -391,8 +391,9 @@ impl Capsule {
         (min_x + CAPSULE_FRAME_X_PX, min_y + CAPSULE_FRAME_Y_PX)
     }
 
-    /// The capsule's corner over a side spanning `left..right` of a chart spanning
-    /// `top..bottom`; `None` when the side is too narrow or short to hold it.
+    /// The capsule's corner over a side spanning `left..right`, with the header's
+    /// rule at `top` and the plot ending at `bottom`; `None` when the side is too
+    /// narrow or short to hold it.
     #[must_use]
     pub fn place(&self, left: f32, right: f32, top: f32, bottom: f32) -> Option<(f32, f32)> {
         let min_x = right - CAPSULE_INSET_PX - self.width_px();
