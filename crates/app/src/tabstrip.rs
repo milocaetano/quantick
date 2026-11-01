@@ -17,7 +17,6 @@ const CHIP_MIN_WIDTH_PX: f32 = 44.0;
 const CHIP_CLOSE_RESERVE_PX: f32 = 36.0;
 pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 32.0;
 pub(crate) const CHIP_HEIGHT: f32 = 42.0;
-pub(crate) const LOGO_SLOT_WIDTH_PX: f32 = 36.0;
 
 /// Radius of the amber dot marking a background tab whose feed is in trouble.
 const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
@@ -82,7 +81,6 @@ pub(crate) fn draw(
     };
     let close_width = if compact { 24.0 } else { CLOSE_HIT_WIDTH_PX };
     let close_reserve = if compact { 28.0 } else { CHIP_CLOSE_RESERVE_PX };
-    draw_logo(ui);
     let mut action = None;
     let closable = chips.len() > 1;
     let slots = ((ui.available_width() - controls_width).max(0.0) / CHIP_PREFERRED_WIDTH_PX).floor()
@@ -211,39 +209,6 @@ pub(crate) fn draw(
         action = Some(TabAction::New);
     }
     action
-}
-
-/// Decode once per egui context; the texture handle keeps the upload alive.
-fn draw_logo(ui: &mut egui::Ui) {
-    let key = egui::Id::new("quantick_title_logo");
-    let texture = ui
-        .ctx()
-        .data_mut(|data| data.get_temp::<egui::TextureHandle>(key))
-        .unwrap_or_else(|| {
-            let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
-                .expect("bundled assets/icon.png is a valid PNG");
-            let image = egui::ColorImage::from_rgba_unmultiplied(
-                [icon.width as usize, icon.height as usize],
-                &icon.rgba,
-            );
-            let texture =
-                ui.ctx()
-                    .load_texture("Quantick logo", image, egui::TextureOptions::LINEAR);
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(key, texture.clone()));
-            texture
-        });
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(LOGO_SLOT_WIDTH_PX, CHIP_HEIGHT),
-        egui::Sense::hover(),
-    );
-    let image = egui::Rect::from_center_size(rect.center(), egui::vec2(32.0, 32.0));
-    ui.painter().image(
-        texture.id(),
-        image,
-        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE,
-    );
 }
 
 fn paint_tab_surface(

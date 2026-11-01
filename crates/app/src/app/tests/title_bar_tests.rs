@@ -31,14 +31,6 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
                 .iter()
                 .any(|(index, _)| *index == app.runtime.tabs.active_index())
         );
-        assert!(
-            title
-                .strip
-                .tabs
-                .iter()
-                .all(|(_, rect)| rect.left() >= crate::tabstrip::LOGO_SLOT_WIDTH_PX + 4.0),
-            "the leading logo slot never overlaps a market target"
-        );
         for (_, rect) in &title.strip.tabs {
             assert_eq!(rect.height(), crate::tabstrip::CHIP_HEIGHT);
             if width >= 1200.0 {
