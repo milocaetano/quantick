@@ -114,8 +114,9 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | --- | --- |
 | deduplicated per connection | 39 |
 | key refused; not retryable, read back | 17 |
+| key required; deduplicated per connection | 1 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **63** |
+| **Total** | **64** |
 
 ## Capabilities
 
@@ -164,6 +165,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `layout.tab.create` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `layouts[].name` | one more layout than the pre-call reading listed | `a_dropped_layout_answer_is_replayed_and_the_layout_is_made_once`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `a_keyed_action_held_past_its_deadline_is_refused_as_unknown_and_reconciled_by_readback` |
 | `layout.tab.rename` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `layouts[].name` | the layout carries the name asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `layout.tab.switch` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].panes[].layout_id` | the pane the call named (the active tab's focused pane unless `tab_id`/`pane` say otherwise) carries the layout asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `layout.window.state.set` | 1 | required | key required; deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | tab_strip.maximize or tab_strip.minimize is selected once the native viewport reports that state; both clear in normal state | `native_window_requests_validate_authority_and_retry_without_repeating_the_effect` |
 | `notify.popup` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.sound` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.toast` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
@@ -185,4 +187,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-63 mutable capabilities registered, 63 with a readback.
+64 mutable capabilities registered, 64 with a readback.

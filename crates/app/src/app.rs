@@ -52,6 +52,7 @@ mod menu_bar;
 pub(crate) mod paper_wiring;
 mod replay_and_history;
 mod tabs;
+pub(crate) mod title_bar;
 mod toolbar_wiring;
 mod workspace_bundle_adapter;
 mod workspace_restore;
@@ -589,6 +590,7 @@ impl QuantickApp {
             runtime,
             presentation,
             chrome: chrome::ChromeState {
+                title_bar: Default::default(),
                 #[cfg(any(feature = "scenario-harness", test))]
                 harness: Harness::capture(&launch.scenario),
                 #[cfg(any(feature = "scenario-harness", test))]

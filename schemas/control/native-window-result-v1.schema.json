@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "WindowState": {
+      "enum": [
+        "normal",
+        "maximized",
+        "minimized"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "requested": {
+      "$ref": "#/$defs/WindowState",
+      "description": "Accepted for the next native frame; this is not an OS acknowledgement."
+    }
+  },
+  "required": [
+    "requested"
+  ],
+  "title": "WindowResult",
+  "type": "object"
+}

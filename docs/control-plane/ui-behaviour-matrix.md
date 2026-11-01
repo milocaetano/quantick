@@ -42,20 +42,23 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 78 |
+| Reachable by capability | 79 |
 | Excluded: `authority` | 6 |
-| Excluded: `ui_only_by_decision` | 2 |
+| Excluded: `ui_only_by_decision` | 4 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **136** |
+| **Total** | **139** |
 
-84 of the 136 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 52 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+84 of the 139 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 55 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
 | Behaviour | What it does | Reach | Capability | Exclusion |
 | --- | --- | --- | --- | --- |
+| `layout.window.state.set` | Set native window presentation | title-strip minimize and maximize controls; double-click free title-strip space | `layout.window.state.set` | — |
+| `window.move` | Move or resize the native window | free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface | — | `ui_only_by_decision` — docs/ux/native-market-titlebar.md keeps desktop movement under OS authority; scene bounds identify the native gesture target but do not execute it |
+| `window.snap` | Snap the native window | Windows+Left/Right and the operating system's native window snapping | — | `ui_only_by_decision` — docs/ux/native-market-titlebar.md keeps window snapping as an OS gesture rather than granting arbitrary desktop positioning through the app API |
 | `app.exit` | Close the application | File menu, and the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the window would end every other capability's session |
-| `tab.market.activate` | Switch to another market tab | tab strip in the menu row; Ctrl+Tab and Ctrl+Shift+Tab | — | `pending_capability` — `layout.tab.switch` switches a layout tab, not a market tab; nothing reaches the strip that carries the open markets. Tracked in issue 401 |
+| `tab.market.activate` | Switch to another market tab | market title strip and its overflow menu; Ctrl+Tab and Ctrl+Shift+Tab | — | `pending_capability` — `layout.tab.switch` switches a layout tab, not a market tab; nothing reaches the strip that carries the open markets. Tracked in issue 401 |
 | `tab.market.close` | Close the active market tab | tab strip chip, File menu, Ctrl+W | — | `pending_capability` — closing a tab discards its drawings and its paper position, and the control contract admits no destructive effect yet — the same ceiling `layout.tab.delete` sits under. Tracked in issue 401 |
 | `tab.market.open` | Open a new market tab | tab strip +, File menu, Ctrl+T | — | `pending_capability` — no capability opens a second market tab. `feed.source.set` switches the feed and symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401 |
 | `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's SOURCE feed and symbol combos | `feed.source.set` | — |
@@ -212,7 +215,7 @@ matrix fails the build.
 | `hotkey` | 17 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 52 |
+| `authored` | 55 |
 
 ## Appendix: rows no registry stands behind
 
@@ -224,6 +227,9 @@ declares nothing here is a guard failure.
 
 | Behaviour | Why nothing registers it |
 | --- | --- |
+| `layout.window.state.set` | native title-strip minimize/maximize buttons and free-space double-click |
+| `window.move` | native title-strip drag and window-edge resize gestures |
+| `window.snap` | native Windows snapping |
 | `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |
 | `chart.bars.set_spec` | the bar-kind and size controls are pane header widgets, not entries in an action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |

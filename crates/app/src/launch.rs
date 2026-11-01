@@ -155,6 +155,7 @@ impl LaunchConfig {
             viewport: eframe::egui::ViewportBuilder::default()
                 .with_inner_size(self.window_size(saved))
                 .with_title("quantick")
+                .with_decorations(false)
                 .with_icon(icon),
             ..Default::default()
         }

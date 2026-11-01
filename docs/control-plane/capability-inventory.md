@@ -85,6 +85,7 @@ capability that cannot change application state.
 | `layout.tab.create` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.rename` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.switch` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.window.state.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `notify.popup` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `notify.sound` | 1 | `notify` | no | `annotate`, `annotate.sound` |
 | `notify.toast` | 1 | `notify` | no | `annotate`, `annotate.notification` |
@@ -109,4 +110,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-84 capabilities registered.
+85 capabilities registered.

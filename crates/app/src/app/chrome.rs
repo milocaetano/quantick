@@ -28,6 +28,7 @@ pub(super) struct LayoutRename {
 /// none of it is chart state and none of it outlives the frame that is
 /// drawing, except to reach the workspace on the frame after.
 pub(super) struct ChromeState {
+    pub(super) title_bar: super::title_bar::TitleBarState,
     /// Every scenario hook an agent drives this window by, captured once at
     /// launch and named. See [`crate::harness`] for what belongs here and why
     /// the trunk asks it rather than holding its flags. Exists only with the

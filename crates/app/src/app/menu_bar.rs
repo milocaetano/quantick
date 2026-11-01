@@ -10,7 +10,6 @@ use super::{GatewayPort, LayersPort, LayoutPort};
 use eframe::egui;
 
 use crate::surfaces::ChartSettingsTab::Candles;
-use crate::tabstrip::{self, TabAction};
 use crate::theme;
 
 use super::QuantickApp;
@@ -158,6 +157,11 @@ impl QuantickApp {
             self.apply_menu_command(command);
         }
 
+        if let Some(action) =
+            super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar)
+        {
+            self.apply_tab_action(action);
+        }
         egui::TopBottomPanel::top("menu_bar")
             .exact_height(MENU_BAR_HEIGHT)
             .frame(
@@ -173,8 +177,7 @@ impl QuantickApp {
         }
     }
 
-    /// The menus left to right, then the tab strip, each handed exactly the
-    /// state it shows.
+    /// The existing menus left to right, each handed exactly the state it shows.
     fn draw_menus(&mut self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
         menus::FileMenu {
             tab_count: self.runtime.tabs.len(),
@@ -215,14 +218,6 @@ impl QuantickApp {
             .as_ref()
             .is_some_and(crate::control::ControlAccess::is_enabled);
         menus::show_agent_access_indicator(ui, agent_access_on, commands);
-        ui.separator();
-        // The tab strip shares the menu row: zone 1 already had the
-        // horizontal room, so tabs cost no chrome budget. Only a chip the
-        // trader clicked records anything, so the strip's usual "nothing"
-        // can no longer erase the File menu's New Tab… or Close Tab.
-        if let Some(action) = self.draw_tab_strip(ui) {
-            commands.push(MenuCommand::Tab(action));
-        }
     }
 
     /// Carry out one command a menu entry or a menu shortcut recorded.
@@ -315,20 +310,5 @@ impl QuantickApp {
             }
             MenuCommand::OpenReplayFormatHelp => self.replay_view.open_format_help(),
         }
-    }
-
-    /// The chips, built from what each tab actually is right now.
-    pub(super) fn draw_tab_strip(&self, ui: &mut egui::Ui) -> Option<TabAction> {
-        let chips: Vec<tabstrip::TabChip<'_>> = self
-            .runtime
-            .tabs
-            .iter()
-            .map(|tab| tabstrip::TabChip {
-                label: tab.chip_label(),
-                replaying: tab.replay.is_some(),
-                needs_attention: tab.needs_attention(),
-            })
-            .collect();
-        tabstrip::draw(ui, &chips, self.runtime.tabs.active_index())
     }
 }
