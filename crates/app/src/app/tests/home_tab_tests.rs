@@ -365,3 +365,47 @@ fn nine_markets_at_1400_leave_only_the_logo_and_few_bring_the_label_back() {
     assert_eq!(home_rect(&app).width(), labelled);
     assert!(painted_text_center(&output, "Home").is_some());
 }
+
+fn count_painted(output: &egui::FullOutput, wanted: &str) -> usize {
+    fn walk(shape: &egui::Shape, wanted: &str) -> usize {
+        match shape {
+            egui::Shape::Text(text) => usize::from(text.galley.text() == wanted),
+            egui::Shape::Vec(shapes) => shapes.iter().map(|shape| walk(shape, wanted)).sum(),
+            _ => 0,
+        }
+    }
+    let shapes = output.shapes.iter();
+    shapes.map(|clipped| walk(&clipped.shape, wanted)).sum()
+}
+
+#[test]
+fn only_the_active_market_shows_its_close_mark_at_rest() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let far = egui::Event::PointerMoved(egui::pos2(1000.0, 400.0));
+    let at_rest = |app: &mut QuantickApp| {
+        let output = run_frame_sized(app, &ctx, WINDOW, vec![far.clone()], egui::Modifiers::NONE);
+        count_painted(&output, "\u{00d7}")
+    };
+    frame(&mut app, &ctx);
+    assert_eq!(at_rest(&mut app), 1, "the last market, active, shows it");
+    app.show_home_tab().unwrap();
+    assert_eq!(at_rest(&mut app), 0, "no market is active on Home");
+    app.chrome.title_bar.surface.show_market();
+
+    let _second = two_tabs(&mut app, &ctx);
+    assert_eq!(
+        at_rest(&mut app),
+        1,
+        "an inactive chip waits for the pointer"
+    );
+    let inactive = chip_rect(&app, 0).center();
+    let hovered = run_frame_sized(
+        &mut app,
+        &ctx,
+        WINDOW,
+        vec![egui::Event::PointerMoved(inactive)],
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(count_painted(&hovered, "\u{00d7}"), 2);
+}

@@ -37,6 +37,9 @@ const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
 /// How far below a chip's top edge the attention dot sits, so it clears the
 /// selection outline instead of riding it.
 const ATTENTION_DOT_INSET_PX: f32 = 1.0;
+/// How far the replay dot sits from a chip's left edge, inside its padding so
+/// it never touches the centred label.
+const STATUS_DOT_INSET_PX: f32 = 4.0;
 /// Width of the add-symbol field: wide enough for the longest contract code a
 /// venue uses, narrow enough that the dialog stays a dialog.
 const SYMBOL_FIELD_WIDTH_PX: f32 = 120.0;
@@ -129,9 +132,11 @@ pub(crate) fn draw(
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = !home && index == active;
             let surface = ui.painter().add(egui::Shape::Noop);
-            let mut text = egui::RichText::new(chip.label).size(17.0);
+            let mut text = egui::RichText::new(chip.label)
+                .size(17.0)
+                .family(egui::FontFamily::Monospace);
             if chip.replaying {
-                text = text.color(theme::AMBER);
+                text = text.color(theme::REPLAY);
             }
             let response = ui
                 .add_sized(
@@ -150,6 +155,14 @@ pub(crate) fn draw(
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
             }
+            if chip.replaying {
+                let center = egui::pos2(
+                    response.rect.left() + STATUS_DOT_INSET_PX,
+                    response.rect.center().y,
+                );
+                ui.painter()
+                    .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::REPLAY);
+            }
             // The dot rides the chip's own rect so it moves with the layout.
             if chip.needs_attention && !selected {
                 let center = egui::pos2(
@@ -165,10 +178,8 @@ pub(crate) fn draw(
                     ui.next_widget_position(),
                     egui::vec2(close_width, CHIP_HEIGHT),
                 );
-                let show_close = selected
-                    || response.hovered()
-                    || ui.rect_contains_pointer(close_target)
-                    || !closable;
+                let show_close =
+                    selected || response.hovered() || ui.rect_contains_pointer(close_target);
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
@@ -193,7 +204,11 @@ pub(crate) fn draw(
                     selected,
                     response.hovered() || close.hovered(),
                     response.has_focus() || close.has_focus(),
-                    None,
+                    Some(if chip.replaying {
+                        theme::REPLAY
+                    } else {
+                        theme::AMBER
+                    }),
                 );
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
@@ -210,7 +225,7 @@ pub(crate) fn draw(
                         for (index, chip) in chips.iter().enumerate() {
                             let mut text = egui::RichText::new(chip.label);
                             if chip.replaying {
-                                text = text.color(theme::AMBER);
+                                text = text.color(theme::REPLAY);
                             }
                             if ui
                                 .push_id(chip.id, |ui| {
@@ -341,7 +356,7 @@ fn paint_tab_surface(
     let mut rect = bounds.expand2(egui::vec2(2.0, 2.0));
     rect.max.y = ui.max_rect().bottom();
     let fill = if selected {
-        theme::CHROME
+        theme::CANVAS
     } else {
         theme::BARE_HOVER
     };

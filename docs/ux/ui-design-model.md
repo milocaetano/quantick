@@ -408,7 +408,13 @@ without the other.
 
 ### Workspace tabs (zone 1, right of the menus)
 
-One tab per open market. A tab chip reads `SYMBOL · venue` in chrome type,
+The strip opens with Home, which never closes and shrinks to its logo once the
+market chips overflow. Exactly one tab looks active: canvas fill, a 2 px top line
+(green on Home, amber on a market, `#C58CFF` on a replay) and its ×. A replay
+chip carries that purple as its label and status dot; an inactive × waits for
+the pointer.
+
+One tab per open market. A tab chip reads `SYMBOL · venue` in monospace type,
 with a close `×` on hover and a trailing `+` that opens the source picker
 (feed + symbol, from the config catalog — the same catalog the toolbar's
 SOURCE group reads). Zone 1 already had the horizontal room; the chrome
