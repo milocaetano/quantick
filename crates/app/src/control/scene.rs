@@ -176,10 +176,8 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
     // With the other fixed-size regions, ahead of the strip. At most three
-    // entries, and they are the ones worth keeping if a workspace ever reaches
-    // the ceiling: the chip is the only control on screen with no capability
-    // behind it, so an operator that loses it loses its only way to the corner
-    // at all.
+    // entries, and worth keeping if a workspace ever reaches the ceiling: the
+    // word is the one control on screen with no capability behind it.
     push_feed_status(&mut controls, app);
     // Bounded like every other projection, and honest about it. Every registry
     // behind the scene is fixed-size except the trader's own tab strip, which
@@ -484,15 +482,12 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
     }
 }
 
-/// The feed's offline corner, while there is one.
+/// The status word, while it is the recovery popup's door.
 ///
-/// Unlike every other region here, this one is usually empty: the chip is
-/// drawn only when the chart is not being fed, so an operator reading a
-/// capture with no `feed_status` control has been told the feed is healthy.
-/// The two recovery controls join it only while the popup is open, because a
-/// control behind a click is not on screen — and they are the first entries in
-/// this module to name the capability that operates them, which is the whole
-/// reason `capability_id` exists.
+/// Unlike every other region here, this one is usually empty, so an operator
+/// reading a capture with no `feed_status` control has been told the feed is
+/// healthy. The recovery controls name the capability that operates them, which
+/// is the whole reason `capability_id` exists.
 fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
     let Some(chip) = app.chrome_reads().feed_chip_rect() else {
         return;
@@ -526,31 +521,18 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
         // human something would be a second way to say the same thing.
         capability_id: None,
     });
-    if !popup_open {
-        // The one-click Reconnect standing outside the popup: the overlay's, or
-        // the status bar's beside the word, never both.
-        if app.chrome_reads().feed_reconnect_offered() {
-            controls.push(SceneControlSnapshot {
-                control_id: FEED_RECONNECT_CONTROL_ID.to_owned(),
-                label: Recovery::Reconnect.label().to_owned(),
-                role: SceneRoleDto::Action,
-                owner: owner(),
-                selected: false,
-                availability: available(),
-                bounds: None,
-                bounds_availability: bounds_not_recorded(),
-                capability_id: Some(
-                    quantick_control_handlers::recovery::capability_id(Recovery::Reconnect)
-                        .to_owned(),
-                ),
-            });
-        }
-        return;
-    }
-    for (control_id, recovery) in [
+    // Both inside the popup. Outside it, the one-click Reconnect standing on
+    // screen: the overlay's or the status bar's, never both.
+    let recoveries = [
         (FEED_RECONNECT_CONTROL_ID, Recovery::Reconnect),
         (FEED_RELOAD_CONTROL_ID, Recovery::Reload),
-    ] {
+    ];
+    let shown = if popup_open {
+        2
+    } else {
+        usize::from(app.chrome_reads().feed_reconnect_offered())
+    };
+    for (control_id, recovery) in recoveries.into_iter().take(shown) {
         controls.push(SceneControlSnapshot {
             control_id: control_id.to_owned(),
             label: recovery.label().to_owned(),

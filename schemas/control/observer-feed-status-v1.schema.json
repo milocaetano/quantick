@@ -28,7 +28,7 @@
           "x-unit": "unix_milliseconds"
         },
         "link": {
-          "description": "`live`, `attempting`, `offline`, `quiet` or `no_transport`. `offline`\nlatches until data arrives or `feed.reconnect` is called.",
+          "description": "`live`, `attempting`, `offline`, `quiet` or `no_transport`. `offline`\nlatches until data arrives, `feed.reconnect` is called or the transport\nhas stayed up for ten seconds.",
           "type": "string"
         },
         "overlay_up": {

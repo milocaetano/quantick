@@ -50,6 +50,8 @@ struct FrameScratch {
     /// readings a millisecond apart could disagree about whether a budget
     /// had run out.
     stall: Option<Stall>,
+    /// The one wall-clock reading the connection surfaces share this frame.
+    now_ms: i64,
     status: statusbar::StatusResponse,
     canvas: canvas::CanvasAnswers,
 }
@@ -446,15 +448,15 @@ impl QuantickApp {
     }
 
     fn draw_status_line(&mut self, ctx: &egui::Context, scratch: &mut FrameScratch) {
-        scratch.stall = self
-            .active_tab()
-            .stall_at(&self.config, crate::metrics::wall_clock_ms());
         let now_ms = crate::metrics::wall_clock_ms();
-        panels::observe_connections(&mut self.runtime.tabs, &self.config, now_ms);
+        scratch.now_ms = now_ms;
+        scratch.stall = self.active_tab().stall_at(&self.config, now_ms);
+        let stall = scratch.stall.as_ref();
+        panels::observe_connections(ctx, &mut self.runtime.tabs, &self.config, now_ms, stall);
         let open = self.chrome.feed_popup_tab == Some(self.runtime.tabs.active_id());
-        let lead =
-            statusbar::StatusLead::of(self.active_tab(), scratch.stall.as_ref(), now_ms, open);
         let status = self.status_model();
+        let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
+        let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
         scratch.status = statusbar::draw(ctx, &status, &mut self.runtime.tz, &lead);
         if scratch.status.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
@@ -579,7 +581,7 @@ impl QuantickApp {
         self.drawings
             .chrome
             .sync_content_editing(&mut self.runtime.tabs);
-        let stall = scratch.stall.as_ref();
+        let (stall, now_ms) = (scratch.stall.as_ref(), scratch.now_ms);
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(background))
             .show(ctx, |ui| {
@@ -614,7 +616,7 @@ impl QuantickApp {
                     self.dock.open_tab(tab);
                 }
                 let tab = self.active_tab();
-                canvas::overlays(ui, area, tab, &self.config, stall, &mut answers);
+                canvas::overlays(ui, area, tab, &self.config, stall, now_ms, &mut answers);
             });
         scratch.canvas = answers;
     }

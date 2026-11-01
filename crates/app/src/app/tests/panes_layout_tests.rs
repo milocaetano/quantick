@@ -797,6 +797,30 @@ fn the_notice_lands_on_the_pane_that_is_waiting() {
     assert!(!flow.intersects(time));
 }
 
+/// A wait is named in exactly one header: the flow pane's, or the first time
+/// pane's when the layout has no flow pane.
+#[test]
+fn the_job_slot_speaks_once_in_every_layout() {
+    let ctx = egui::Context::default();
+    let (mut app, _feed, _commands, _notices) = test_app();
+    let sentence = "history reached its end";
+    app.active_tab_mut().raise_history_note(sentence);
+    for layout in [
+        CanvasLayout::TimeTimeAndFlow,
+        CanvasLayout::TimeAndFlow,
+        CanvasLayout::Time,
+    ] {
+        app.active_tab_mut().set_layout(layout);
+        run_frame(&mut app, &ctx);
+        let output = run_frame(&mut app, &ctx);
+        let spoken = painted_text(&output)
+            .iter()
+            .filter(|text| text.as_str() == sentence)
+            .count();
+        assert_eq!(spoken, 1, "{layout:?}");
+    }
+}
+
 /// One dead terminal stalls every MetaTrader tab at once, and the popup
 /// must not follow the trader into a chart whose chip they never pressed.
 ///

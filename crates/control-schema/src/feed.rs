@@ -130,7 +130,8 @@ pub struct FeedTabSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ConnectionSnapshot {
     /// `live`, `attempting`, `offline`, `quiet` or `no_transport`. `offline`
-    /// latches until data arrives or `feed.reconnect` is called.
+    /// latches until data arrives, `feed.reconnect` is called or the transport
+    /// has stayed up for ten seconds.
     pub link: String,
     /// `connecting`, `live` or `idle`.
     pub feed: String,

@@ -5,8 +5,9 @@
 //!
 //! The rule the trader set: messages about the connection look like a platform
 //! bug when they flicker. So a short blip shows nothing, and offline **latches**:
-//! once the stall has fired the state holds until data arrives or a hand presses
-//! Reconnect, whatever the feed's automatic retries do in between.
+//! once the stall has fired the state holds until data arrives, a hand presses
+//! Reconnect, or the transport has stayed up for [`CONNECTED_HOLD_MS`], whatever
+//! the feed's automatic retries do in between.
 
 use quantick_orderflow::engine::CaptureStatus;
 
@@ -22,6 +23,16 @@ pub const SLOT_DELAY_MS: i64 = 1_000;
 pub const SLOT_HOLD_MS: i64 = 500;
 /// How long the attempt a press started is shown, however fast it fails.
 pub const PRESS_HOLD_MS: i64 = 1_000;
+/// How long a transport must stay up, unbroken, to clear the offline latch on
+/// its own: a flapping feed never gets there, a closed market after a reconnect
+/// does and reaches its true word.
+pub const CONNECTED_HOLD_MS: i64 = 10_000;
+/// How long after a print the data still counts as flowing, so a standing
+/// report cannot retake the words in the gaps between prints.
+pub const DATA_FLOWING_MS: i64 = 2_000;
+/// How often a tab nobody is looking at is observed. The one on screen is
+/// observed every frame.
+pub const BACKGROUND_OBSERVE_MS: i64 = 1_000;
 
 /// The transport as the feed reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,19 +76,22 @@ pub struct LinkFacts {
     pub transport: Transport,
     pub failed: bool,
     pub quiet: bool,
-    /// A print arrived since the last step.
-    pub data_arrived: bool,
+    /// A print arrived within [`DATA_FLOWING_MS`].
+    pub data_flowing: bool,
     /// A press's minimum attempt is still running.
     pub press_holding: bool,
+    /// The transport has been up, unbroken, for [`CONNECTED_HOLD_MS`].
+    pub connected_held: bool,
 }
 
 /// The next link, from the last one and this frame's facts.
 ///
-/// Only two things leave [`Link::Offline`] for an attempt: a press (a respawned
-/// session, which holds) and data. An automatic retry changes `transport` or
-/// the notice behind `failed` on every tick, and neither moves it, which is
-/// what stops the words bouncing while the feed's own loop runs. A transport
-/// that has landed clears the latch: "no connection" would then be false.
+/// Data outranks every report: prints arriving are the answer to the question.
+/// Three things leave [`Link::Offline`]: a press (a respawned session, which
+/// holds), data, and a transport that has stayed up for [`CONNECTED_HOLD_MS`].
+/// An automatic retry changes `transport` or the notice behind `failed` on every
+/// tick, and none of that moves it, which is what stops the words bouncing while
+/// the feed's own loop runs.
 #[must_use]
 pub fn next_link(previous: Link, facts: LinkFacts) -> Link {
     if !facts.has_transport {
@@ -86,17 +100,17 @@ pub fn next_link(previous: Link, facts: LinkFacts) -> Link {
     if facts.press_holding {
         return Link::Attempting;
     }
-    if facts.failed {
+    if facts.data_flowing {
+        return Link::Live;
+    }
+    if facts.failed || (previous == Link::Offline && !facts.connected_held) {
         return Link::Offline;
     }
     if facts.quiet {
         return Link::Quiet;
     }
-    if facts.data_arrived || facts.transport == Transport::Connected {
-        return Link::Live;
-    }
-    if previous == Link::Offline {
-        Link::Offline
+    if facts.transport == Transport::Connected {
+        Link::Live
     } else {
         Link::Attempting
     }
@@ -221,6 +235,9 @@ pub struct ConnectionFacts<'a> {
     pub empty_pane: bool,
     /// The chart holds anything at all.
     pub any_bars: bool,
+    /// The flow series holds bars: the tape has seen market data, so a pane
+    /// that is empty is only waiting on its own candles.
+    pub flow_bars: bool,
     pub book: Book,
     pub fraction: Option<f32>,
 }
@@ -277,6 +294,13 @@ pub struct ConnectionTracker {
     pressed: bool,
     press_hold_until: i64,
     attempting_since: i64,
+    /// What the current attempt interrupted, which a blip goes on saying.
+    before_attempt: Link,
+    connected_since: Option<i64>,
+    observed_ms: Option<i64>,
+    /// Whether the overlay has room for its control; the status bar offers
+    /// Reconnect when it has not.
+    control_fits: bool,
     live_trades: u64,
     book_shown: Book,
     book_raw: Book,
@@ -318,6 +342,10 @@ impl ConnectionTracker {
             pressed: false,
             press_hold_until: i64::MIN,
             attempting_since: 0,
+            before_attempt: Link::Attempting,
+            connected_since: None,
+            observed_ms: None,
+            control_fits: true,
             live_trades: 0,
             book_shown: Book::Off,
             book_raw: Book::Off,
@@ -339,17 +367,32 @@ impl ConnectionTracker {
         self.state
     }
 
+    /// Whether a tab nobody is looking at is due another [`Self::observe`].
+    #[must_use]
+    pub fn background_due(&self, now_ms: i64) -> bool {
+        self.observed_ms
+            .is_none_or(|at| now_ms.saturating_sub(at) >= BACKGROUND_OBSERVE_MS)
+    }
+
+    /// Say whether the overlay's control fits its rect this frame. Told before
+    /// either surface draws, so exactly one of them offers Reconnect.
+    pub fn set_overlay_control_fits(&mut self, fits: bool) {
+        self.control_fits = fits;
+    }
+
     /// Take this frame's facts. Allocates only when the symbol or the
     /// provider's own words changed.
     pub fn observe(&mut self, facts: &ConnectionFacts<'_>, jobs: &LoadingTracker) {
         let now = facts.now_ms;
+        self.observed_ms = Some(now);
         self.observe_attach(facts);
         let previous = self.state.link;
-        let data_arrived = facts.live_trades > self.live_trades;
-        self.live_trades = facts.live_trades;
-        if data_arrived {
+        if facts.live_trades > self.live_trades {
             self.state.last_data_at = Some(now);
         }
+        self.live_trades = facts.live_trades;
+        self.connected_since =
+            (facts.transport == Transport::Connected).then(|| self.connected_since.unwrap_or(now));
         let link = next_link(
             previous,
             LinkFacts {
@@ -357,12 +400,19 @@ impl ConnectionTracker {
                 transport: facts.transport,
                 failed: matches!(facts.verdict, Verdict::Failed { .. }),
                 quiet: matches!(facts.verdict, Verdict::Quiet),
-                data_arrived,
+                data_flowing: self
+                    .state
+                    .last_data_at
+                    .is_some_and(|at| now.saturating_sub(at) < DATA_FLOWING_MS),
                 press_holding: now < self.press_hold_until,
+                connected_held: self
+                    .connected_since
+                    .is_some_and(|since| now.saturating_sub(since) >= CONNECTED_HOLD_MS),
             },
         );
         if link == Link::Attempting && previous != Link::Attempting {
             self.attempting_since = now;
+            self.before_attempt = previous;
         }
         self.retrying = facts.has_transport && facts.transport != Transport::Connected;
         self.settling = !self.pressed && now.saturating_sub(self.settle_from_ms) < BLIP_MS;
@@ -382,7 +432,11 @@ impl ConnectionTracker {
         }
         self.observe_book(facts.book, link, now);
         self.any_bars = facts.any_bars;
-        self.empty_since = facts.empty_pane.then(|| self.empty_since.unwrap_or(now));
+        // Only a tape with no market data at all earns the overlay: a time pane
+        // merely awaiting its candles draws nothing.
+        let tape_empty = !facts.flow_bars && self.state.last_data_at.is_none();
+        self.empty_since =
+            (facts.empty_pane && tape_empty).then(|| self.empty_since.unwrap_or(now));
         self.observe_jobs(jobs, link, facts.fraction, now);
         let attempt_shown = self.pressed || now.saturating_sub(self.attempting_since) >= BLIP_MS;
         self.state.link = link;
@@ -412,6 +466,14 @@ impl ConnectionTracker {
         let new_symbol = self.symbol != facts.symbol;
         if new_symbol {
             facts.symbol.clone_into(&mut self.symbol);
+            // A latch is about the symbol it fired on.
+            self.state.link = Link::Attempting;
+            self.before_attempt = Link::Attempting;
+            self.attempting_since = now;
+            self.settle_from_ms = now;
+            self.connected_since = None;
+            self.pressed = false;
+            self.press_hold_until = i64::MIN;
             self.state.last_connected_at = None;
             self.state.last_data_at = None;
             self.state.feed = Stream::Idle;
@@ -494,19 +556,47 @@ impl ConnectionTracker {
         });
     }
 
+    /// The job slot's words and whether a job (not a remark) wrote them. A
+    /// running job outranks the remark.
+    #[must_use]
+    pub fn slot(&self, note: Option<&str>) -> Option<(String, bool)> {
+        match self.state.current_job {
+            Some(job) => Some((job.text(), true)),
+            None => note.map(|note| (note.to_owned(), false)),
+        }
+    }
+
     /// Whether the overlay stands over the empty panes this frame.
     #[must_use]
     pub fn overlay_up(&self, now_ms: i64) -> bool {
         let stood = self
             .empty_since
             .is_some_and(|since| now_ms.saturating_sub(since) >= OVERLAY_DELAY_MS);
-        // "No data" about a recording still being read would be false.
-        stood && !(self.state.link == Link::NoTransport && self.any_job)
+        stood
+            && match self.spoken_link(now_ms) {
+                None => false,
+                // "No trades" about a job still reading them in would be false:
+                // the slot speaks until it is done.
+                Some(Link::Live | Link::Quiet | Link::NoTransport) => !self.any_job,
+                Some(Link::Attempting | Link::Offline) => true,
+            }
     }
 
     /// Whether what the transport is doing may be spoken yet.
     fn attempt_shown(&self, now_ms: i64) -> bool {
         self.pressed || now_ms.saturating_sub(self.attempting_since) >= BLIP_MS
+    }
+
+    /// The link as every surface speaks it. A blip keeps the word it
+    /// interrupted; a session opening has none.
+    fn spoken_link(&self, now_ms: i64) -> Option<Link> {
+        match self.state.link {
+            Link::Attempting if !self.attempt_shown(now_ms) => {
+                matches!(self.before_attempt, Link::Live | Link::Quiet)
+                    .then_some(self.before_attempt)
+            }
+            link => Some(link),
+        }
     }
 
     /// The overlay's words, or `None` when it is not up. Formats only then.
@@ -516,7 +606,7 @@ impl ConnectionTracker {
             return None;
         }
         let state = self.state;
-        Some(match state.link {
+        Some(match self.spoken_link(now_ms)? {
             Link::Live => OverlayWords {
                 verb: "No trades yet on",
                 meta: format!("{feed} · connected"),
@@ -554,7 +644,9 @@ impl ConnectionTracker {
                     ),
                     (None, None) => format!("{feed} · never connected"),
                 };
-                let meta = if self.retrying {
+                // The provider's report says what the hand must do; "retrying"
+                // beside it would contradict a feed that has given up.
+                let meta = if self.retrying && self.provider_says.is_none() {
                     format!("{lead} · retrying automatically")
                 } else {
                     lead
@@ -562,7 +654,7 @@ impl ConnectionTracker {
                 OverlayWords {
                     verb: "No connection to",
                     meta,
-                    reconnect: true,
+                    reconnect: self.control_fits,
                     breathing: false,
                 }
             }
@@ -580,18 +672,16 @@ impl ConnectionTracker {
             reconnect: false,
         };
         let state = self.state;
-        match state.link {
+        match self.spoken_link(now_ms)? {
             Link::Live if self.settling && state.last_connected_at.is_none() => None,
             Link::Live => Some(still("live")),
             Link::Quiet => Some(still("quiet")),
             Link::NoTransport if self.any_bars => Some(still("replay")),
             Link::NoTransport => Some(still("no data")),
-            Link::Attempting if self.attempt_shown(now_ms) => Some(StatusWord {
+            Link::Attempting => Some(StatusWord {
                 pulses: true,
                 ..still("reconnecting")
             }),
-            // A blip keeps the word it interrupted; a session opening has none.
-            Link::Attempting => (state.feed == Stream::Ok).then(|| still("live")),
             Link::Offline => {
                 let overlay = self.overlay_up(now_ms);
                 Some(StatusWord {
@@ -602,7 +692,7 @@ impl ConnectionTracker {
                                 .map(|at| clock_age(now_ms.saturating_sub(at)))
                         })
                         .flatten(),
-                    reconnect: !overlay,
+                    reconnect: !overlay || !self.control_fits,
                     ..still("offline")
                 })
             }
@@ -641,12 +731,6 @@ impl ConnectionTracker {
     #[must_use]
     pub fn has_recovery_door(&self) -> bool {
         matches!(self.state.link, Link::Offline | Link::Quiet)
-    }
-
-    /// Whether anything on screen is moving and so owes a repaint.
-    #[must_use]
-    pub fn breathing(&self, now_ms: i64) -> bool {
-        self.state.link == Link::Attempting && self.attempt_shown(now_ms)
     }
 }
 
@@ -717,6 +801,8 @@ mod tests {
         has_transport: bool,
         empty_pane: bool,
         any_bars: bool,
+        flow_bars: bool,
+        symbol: &'static str,
         book: Book,
     }
 
@@ -733,6 +819,8 @@ mod tests {
                 has_transport: true,
                 empty_pane: true,
                 any_bars: false,
+                flow_bars: false,
+                symbol: "DOGEUSDT",
                 book: Book::Off,
             };
             run.step(0);
@@ -744,7 +832,7 @@ mod tests {
             self.tracker.observe(
                 &ConnectionFacts {
                     now_ms: self.now,
-                    symbol: "DOGEUSDT",
+                    symbol: self.symbol,
                     attached_ms: self.attached,
                     has_transport: self.has_transport,
                     transport: self.transport,
@@ -752,6 +840,7 @@ mod tests {
                     live_trades: self.trades,
                     empty_pane: self.empty_pane,
                     any_bars: self.any_bars,
+                    flow_bars: self.flow_bars,
                     book: self.book,
                     fraction: None,
                 },
@@ -778,6 +867,20 @@ mod tests {
             self.tracker.overlay(FEED, self.now)
         }
 
+        fn pulsing(&self) -> bool {
+            self.tracker
+                .status_word(self.now)
+                .is_some_and(|word| word.pulses)
+        }
+
+        /// Into the latch, on a tape with nothing on it.
+        fn offline(&mut self) {
+            self.transport = Transport::Reconnecting;
+            self.verdict = FAILED;
+            self.step(OVERLAY_DELAY_MS);
+            assert_eq!(self.link(), Link::Offline);
+        }
+
         fn connected(&mut self) {
             self.transport = Transport::Connected;
             self.verdict = Verdict::None;
@@ -797,8 +900,9 @@ mod tests {
             transport,
             failed: false,
             quiet: false,
-            data_arrived: false,
+            data_flowing: false,
             press_holding: false,
+            connected_held: false,
         }
     }
 
@@ -828,7 +932,7 @@ mod tests {
             next_link(
                 Link::Offline,
                 LinkFacts {
-                    data_arrived: true,
+                    data_flowing: true,
                     ..trying
                 }
             ),
@@ -836,9 +940,52 @@ mod tests {
             "data leaves the latch"
         );
         assert_eq!(
-            next_link(Link::Offline, facts(Transport::Connected)),
+            next_link(
+                Link::Offline,
+                LinkFacts {
+                    data_flowing: true,
+                    failed: true,
+                    ..trying
+                }
+            ),
             Link::Live,
-            "no connection would now be false"
+            "data outranks a report still standing"
+        );
+        assert_eq!(
+            next_link(Link::Offline, facts(Transport::Connected)),
+            Link::Offline,
+            "landing alone does not clear the latch"
+        );
+        let held = LinkFacts {
+            connected_held: true,
+            ..facts(Transport::Connected)
+        };
+        assert_eq!(
+            next_link(Link::Offline, held),
+            Link::Live,
+            "staying up does"
+        );
+        assert_eq!(
+            next_link(
+                Link::Offline,
+                LinkFacts {
+                    quiet: true,
+                    ..held
+                }
+            ),
+            Link::Quiet,
+            "and a closed market reaches its true word"
+        );
+        assert_eq!(
+            next_link(
+                Link::Offline,
+                LinkFacts {
+                    quiet: true,
+                    ..facts(Transport::Connected)
+                }
+            ),
+            Link::Offline,
+            "quiet does not jump the hold"
         );
         assert_eq!(
             next_link(
@@ -888,17 +1035,113 @@ mod tests {
         assert_eq!(offline_title, "offline");
         for tick in 0..50 {
             run.verdict = if tick % 2 == 0 { Verdict::None } else { FAILED };
-            run.transport = if tick % 3 == 0 {
-                Transport::Connecting
-            } else {
-                Transport::Reconnecting
+            run.transport = match tick % 3 {
+                0 => Transport::Connecting,
+                1 => Transport::Reconnecting,
+                _ => Transport::Connected,
             };
             run.step(1_700);
             assert_eq!(run.link(), Link::Offline, "tick {tick}");
             assert_eq!(run.word(), Some("offline"), "tick {tick}");
             assert_eq!(run.tracker.state().feed, Stream::Idle, "tick {tick}");
-            assert!(!run.tracker.breathing(run.now), "offline does not move");
+            assert!(!run.pulsing(), "offline does not move");
         }
+    }
+
+    /// A feed that lands and drops inside the hold never leaves the latch, and
+    /// the first stretch that outlasts the hold does: to its true word.
+    #[test]
+    fn a_flapping_feed_stays_offline_until_the_transport_holds() {
+        let mut run = Run::new();
+        run.offline();
+        run.verdict = Verdict::None;
+        for _ in 0..5 {
+            run.transport = Transport::Connected;
+            run.step(0);
+            run.step(CONNECTED_HOLD_MS - 1);
+            assert_eq!(run.link(), Link::Offline);
+            run.transport = Transport::Reconnecting;
+            run.step(1);
+            assert_eq!(run.link(), Link::Offline);
+        }
+        run.transport = Transport::Connected;
+        run.verdict = Verdict::Quiet;
+        run.step(0);
+        run.step(CONNECTED_HOLD_MS);
+        assert_eq!(run.link(), Link::Quiet);
+        assert_eq!(run.word(), Some("quiet"));
+    }
+
+    /// Prints under a report that still stands: the chart is being fed, for as
+    /// long as they keep coming, and the gaps between them do not bounce it.
+    #[test]
+    fn prints_outrank_a_standing_attention() {
+        let mut run = Run::new();
+        run.verdict = Verdict::Failed {
+            provider_says: Some("MetaTrader 5 is closed"),
+        };
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.link(), Link::Offline);
+        run.trades = 1;
+        run.step(10);
+        assert_eq!(run.link(), Link::Live);
+        for _ in 0..3 {
+            run.step(DATA_FLOWING_MS - 1);
+            assert_eq!(run.link(), Link::Live, "a gap is not an outage");
+            run.trades += 1;
+            run.step(1);
+            assert_eq!(run.link(), Link::Live);
+        }
+        run.step(DATA_FLOWING_MS);
+        assert_eq!(run.link(), Link::Offline, "stopped: the report speaks");
+    }
+
+    /// The suffix is inferred from the transport, so it steps aside whenever the
+    /// provider has given its own reason, and stays aside through the retry
+    /// loop's notices.
+    #[test]
+    fn retrying_is_never_claimed_beside_a_provider_report() {
+        let mut run = Run::new();
+        run.transport = Transport::Reconnecting;
+        run.verdict = Verdict::Failed {
+            provider_says: Some("Start the bridge by hand"),
+        };
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.overlay().expect("up").meta, "Start the bridge by hand");
+        run.verdict = Verdict::None;
+        run.step(100);
+        assert_eq!(run.overlay().expect("up").meta, "Start the bridge by hand");
+    }
+
+    /// Exactly one Reconnect on screen, wherever there is room for it.
+    #[test]
+    fn the_status_bar_takes_reconnect_when_the_overlay_has_no_room() {
+        let mut run = Run::new();
+        run.offline();
+        let offers = |run: &Run| {
+            (
+                run.overlay().expect("up").reconnect,
+                run.tracker.status_word(run.now).expect("a word").reconnect,
+            )
+        };
+        assert_eq!(offers(&run), (true, false));
+        run.tracker.set_overlay_control_fits(false);
+        assert_eq!(offers(&run), (false, true));
+    }
+
+    /// A tab nobody is looking at is judged once a second, not once a frame.
+    #[test]
+    fn a_background_tab_is_observed_once_a_second() {
+        let mut run = Run::new();
+        assert!(ConnectionTracker::new().background_due(run.now));
+        assert!(!run.tracker.background_due(run.now));
+        assert!(
+            !run.tracker
+                .background_due(run.now + BACKGROUND_OBSERVE_MS - 1)
+        );
+        assert!(run.tracker.background_due(run.now + BACKGROUND_OBSERVE_MS));
+        run.step(BACKGROUND_OBSERVE_MS);
+        assert!(!run.tracker.background_due(run.now));
     }
 
     /// A blip shorter than the tier shows nothing anywhere: no chip, no word
@@ -915,7 +1158,7 @@ mod tests {
             run.step(BLIP_MS / 4 - 1);
             assert_eq!(run.word(), Some("live"));
             assert_eq!(run.tracker.chip(), None);
-            assert!(!run.tracker.breathing(run.now));
+            assert!(!run.pulsing());
         }
         run.transport = Transport::Connected;
         run.step(10);
@@ -976,7 +1219,8 @@ mod tests {
         // Live with nothing: "connection" would be false.
         run.transport = Transport::Connected;
         run.verdict = Verdict::None;
-        run.step(10);
+        run.step(0);
+        run.step(CONNECTED_HOLD_MS);
         let words = run.overlay().expect("up");
         assert_eq!(words.verb, "No trades yet on");
         assert_eq!(words.meta, "Binance · connected");
@@ -1015,10 +1259,105 @@ mod tests {
             provider_says: Some("MetaTrader 5 is closed"),
         };
         run.step(1);
-        assert_eq!(
-            run.overlay().expect("up").meta,
-            "MetaTrader 5 is closed · retrying automatically"
-        );
+        assert_eq!(run.overlay().expect("up").meta, "MetaTrader 5 is closed");
+    }
+
+    /// Every surface keeps what a blip interrupted: the overlay does not flash
+    /// an attempt the status word and the chip are still keeping quiet about.
+    #[test]
+    fn a_blip_under_the_overlay_keeps_its_words() {
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.verdict = Verdict::Quiet;
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.overlay().expect("up").verb, "No trades on");
+        run.transport = Transport::Reconnecting;
+        run.verdict = Verdict::None;
+        run.step(0);
+        run.step(BLIP_MS - 1);
+        assert_eq!(run.link(), Link::Attempting);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "No trades on", "the blip says nothing new");
+        assert!(!words.breathing);
+        assert_eq!(run.word(), Some("quiet"));
+        run.step(1);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "Reconnecting to", "standing, it is spoken");
+        assert!(words.breathing);
+        assert_eq!(run.word(), Some("reconnecting"));
+    }
+
+    /// The overlay is about a tape with no market data at all. A time pane that
+    /// is only awaiting candles beside a working flow pane says nothing, and
+    /// neither does one after the tape has seen a print.
+    #[test]
+    fn only_a_tape_with_no_market_data_raises_the_overlay() {
+        let mut run = Run::new();
+        run.flow_bars = true;
+        run.step(0);
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.overlay(), None, "flow has bars");
+
+        let mut run = Run::new();
+        run.trades = 1;
+        run.step(0);
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.overlay(), None, "a print arrived");
+
+        let mut run = Run::new();
+        run.step(OVERLAY_DELAY_MS);
+        assert!(run.overlay().is_some(), "nothing at all has arrived");
+        run.flow_bars = true;
+        run.step(1);
+        assert_eq!(run.overlay(), None, "gone on the flow's first bar");
+    }
+
+    /// While a job reads data in, "no trades" would be a claim nobody has
+    /// checked: the slot speaks and the overlay stays down until it finishes.
+    /// The connection's own words stay true, so they stay up.
+    #[test]
+    fn a_running_job_silences_the_overlay_claims_about_trades() {
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.jobs.set_active(LoadingTask::History, true);
+        run.step(0);
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.link(), Link::Live);
+        assert_eq!(run.overlay(), None, "not `No trades yet`");
+        assert!(run.tracker.state().current_job.is_some(), "the slot speaks");
+        run.verdict = Verdict::Quiet;
+        run.step(1);
+        assert_eq!(run.overlay(), None, "not `No trades`");
+        run.has_transport = false;
+        run.step(1);
+        assert_eq!(run.overlay(), None, "not `0 trades`");
+        run.jobs.set_active(LoadingTask::History, false);
+        run.step(1);
+        assert_eq!(run.overlay().expect("up").verb, "No data for");
+
+        let mut run = Run::new();
+        run.jobs.set_active(LoadingTask::History, true);
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.overlay().expect("up").verb, "Connecting to");
+    }
+
+    /// A latch is about the symbol it fired on: the next one starts attempting,
+    /// settling first.
+    #[test]
+    fn a_new_symbol_does_not_inherit_offline() {
+        let mut run = Run::new();
+        run.offline();
+        assert_eq!(run.word(), Some("offline"));
+        run.symbol = "ETHUSDT";
+        run.attached = run.now + 1;
+        run.transport = Transport::Connecting;
+        run.verdict = Verdict::None;
+        run.step(1);
+        assert_eq!(run.link(), Link::Attempting);
+        assert_eq!(run.word(), None, "not a press: it settles");
+        assert_eq!(run.overlay(), None);
+        run.step(BLIP_MS);
+        assert_eq!(run.overlay().expect("up").verb, "Connecting to");
     }
 
     /// With bars on the chart: no overlay, and the word carries the age and the
@@ -1258,6 +1597,7 @@ mod tests {
                 live_trades: 0,
                 empty_pane: true,
                 any_bars: false,
+                flow_bars: false,
                 book: Book::Off,
                 fraction: None,
             },
@@ -1268,6 +1608,24 @@ mod tests {
             run.tracker.status_word(now),
             None,
             "not a press: it settles"
+        );
+    }
+
+    #[test]
+    fn a_running_job_outranks_the_remark_in_the_slot() {
+        let mut run = Run::new();
+        assert_eq!(run.tracker.slot(None), None);
+        let note = Some("history reached its end");
+        assert_eq!(
+            run.tracker.slot(note),
+            Some(("history reached its end".to_owned(), false))
+        );
+        run.jobs.begin(LoadingTask::History);
+        run.step(0);
+        run.step(SLOT_DELAY_MS);
+        assert_eq!(
+            run.tracker.slot(note),
+            Some(("loading history".to_owned(), true))
         );
     }
 

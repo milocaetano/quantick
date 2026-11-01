@@ -55,25 +55,49 @@ impl CanvasAnswers {
     }
 }
 
-/// The overlay over whatever panes have no bars, then the popup if it is open.
-/// The panes published their rects on the draw just before this, so these are
-/// this frame's geometry rather than the previous one's.
+/// What the overlay calls the source: one with no transport is not the feed the
+/// tab was opened on.
+fn source_name<'a>(tab: &'a Tab, config: &'a crate::config::AppConfig) -> &'a str {
+    if tab.capabilities(config).transport {
+        tab.feed_display_name(config)
+    } else {
+        "recording"
+    }
+}
+
+/// Measure whether the overlay's control fits before the status bar draws, so
+/// exactly one of them offers Reconnect. On last frame's rects: a resize can
+/// leave neither for its one frame, never both, since the overlay checks again.
+pub(super) fn settle_overlay_control(
+    ctx: &egui::Context,
+    tab: &mut Tab,
+    config: &crate::config::AppConfig,
+    now: i64,
+) {
+    let fits = tab
+        .connection
+        .overlay(source_name(tab, config), now)
+        .zip(tab.empty_panes_rect())
+        .is_some_and(|(words, rect)| loading::reconnect_fits(ctx, rect, &tab.symbol, &words));
+    tab.connection.set_overlay_control_fits(fits);
+}
+
+/// The overlay over whatever panes have no bars, then the popup if it is open,
+/// which speaks in the overlay's place so no headline appears twice. The panes
+/// published their rects on the draw just before this, so these are this frame's
+/// geometry rather than the previous one's.
 pub(super) fn overlays(
     ui: &mut egui::Ui,
     area: egui::Rect,
     tab: &Tab,
     config: &crate::config::AppConfig,
     stall: Option<&Stall>,
+    now: i64,
     answers: &mut CanvasAnswers,
 ) {
-    let now = crate::metrics::wall_clock_ms();
-    // A source with no transport is not the feed the tab was opened on.
-    let feed_name = if tab.capabilities(config).transport {
-        tab.feed_display_name(config)
-    } else {
-        "recording"
-    };
-    if let Some(words) = tab.connection.overlay(feed_name, now)
+    let feed_name = source_name(tab, config);
+    if !answers.popup_open
+        && let Some(words) = tab.connection.overlay(feed_name, now)
         && let Some(rect) = tab.empty_panes_rect()
     {
         let (_, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, now);

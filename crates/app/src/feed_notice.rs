@@ -8,14 +8,9 @@
 //! reason is written down, and something the trader can press once they have
 //! read it.
 //!
-//! Until now that somewhere was a 420 px card with two buttons, drawn across
-//! whichever pane was empty, and it was drawn *because the application decided
-//! the trader needed to see it*. That is right for a terminal that froze in
-//! the middle of a session. It is wrong every morning: the chart a trader
-//! opens before the open is a chart with nothing wrong with it, and greeting
-//! them with an error panel over the whole canvas taught them to close the
-//! application rather than to read it. Their words, and the rule this module
-//! now keeps: **seeing no data at all is worse than not being connected.**
+//! The chart a trader opens before the open has nothing wrong with it, so no
+//! panel greets them. The trader's rule: **seeing no data at all is worse than
+//! not being connected.**
 //!
 //! So the news is one word in the status bar, the resting report for every feed
 //! problem there is, and **the popup** ([`draw_popup`]): the headline, the next
@@ -33,13 +28,8 @@ use crate::theme;
 use quantick_feed::FeedNotice;
 use quantick_feed::stall::{Recovery, Stall};
 
-/// The word the chip carries when the chart is not being fed.
-///
-/// One word for four different faults, and deliberately: it answers the
-/// question the trader actually has — *is what I am looking at live?* — and
-/// leaves *why* to the popup one click away. Calling a connected socket over a
-/// closed market "offline" is a true statement about the thing being reported
-/// on, which is the data, not the transport.
+/// The word when the chart is not being fed: one word for several faults, which
+/// leaves *why* to the popup one click away.
 pub const OFFLINE_LABEL: &str = "offline";
 
 /// The next step when the feed's own loop has gone back to "working" while the
@@ -48,10 +38,6 @@ pub const HELD_NEXT_STEP: &str =
     "It is still retrying on its own; Reconnect starts a fresh attempt.";
 
 /// Width of the popup, in pixels.
-///
-/// Narrower than the card it replaces (420 px). The card had to carry the news
-/// to someone who had not gone looking for it; the popup is opened on purpose,
-/// by someone already reading the corner it grew out of.
 const POPUP_WIDTH_PX: f32 = 340.0;
 /// Floor for the popup's text column, in pixels. A chart narrow enough to
 /// drive this negative would otherwise wrap every word onto its own line, or
@@ -148,18 +134,11 @@ impl From<Recovery> for NoticeAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     /// Something is under way and nothing is wrong yet: a first connection, a
-    /// history block still arriving.
-    ///
-    /// Says nothing in the corner. The wait already has a surface of its own —
-    /// `loading`'s overlay, on the pane that is waiting — and a second badge
-    /// beside it would be the interface talking about itself twice.
+    /// history block still arriving. The wait has surfaces of its own.
     Progress,
-    /// The chart is not being fed, whatever the socket believes.
-    ///
-    /// The one state the chip exists for. Four faults reach it — a transport
-    /// that never landed, one that dropped, one that stayed open while the
-    /// thing behind it went quiet, and a reason the provider named itself —
-    /// and the trader is told them apart in the popup, not in the corner.
+    /// The chart is not being fed, whatever the socket believes: a transport
+    /// that never landed, one that dropped, one that stayed open while the thing
+    /// behind it went quiet, or a reason the provider named itself.
     Offline,
 }
 
@@ -167,10 +146,8 @@ pub enum Severity {
 /// however it was arrived at.
 ///
 /// Both sources of words end up here: the feed's own [`FeedNotice`], and the
-/// [`Stall`] this application infers when a notice stops being progress. The
-/// chip and the popup draw a `Report` and know nothing about which one
-/// produced it, so there is one set of words, one severity and one pair of
-/// buttons rather than a second surface for the second source.
+/// [`Stall`] this application infers when a notice stops being progress, so
+/// there is one set of words and one pair of buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Report<'a> {
     /// One line: what is happening, or what was observed.
@@ -289,21 +266,10 @@ fn popup_open_from(value: Option<&str>) -> bool {
 
 /// Whether the recovery popup is still up after a frame.
 ///
-/// The chip is its only door, in both directions — the rule the trader asked
-/// for, after a card that opened itself over the chart every morning.
-/// Everything else here closes it: a click that landed somewhere else, a
-/// control that was pressed and is now under way, and a feed that recovered on
-/// its own while the trader was reading about it.
-///
-/// Pure, because the rule is worth a table rather than four frames of
-/// clicking, and because the frame that applies it has three other jobs on the
-/// same line.
-///
-/// `offline` is checked before anything else, and deliberately: no chip, no
-/// popup, in every combination. Today the frame cannot report a click on a
-/// chip it did not draw, so the case is unreachable — which is exactly why it
-/// is worth pinning here rather than leaving to hold by luck. A popup carries
-/// a `Report`; with no report there is nothing to draw in it.
+/// The status word is its only door, in both directions. Everything else here
+/// closes it: a click that landed somewhere else, a control that was pressed and
+/// is now under way, and a feed that recovered on its own while the trader was
+/// reading about it. With no door there is nothing to draw, in every combination.
 #[must_use]
 pub fn popup_still_open(
     was_open: bool,

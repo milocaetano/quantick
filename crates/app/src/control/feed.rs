@@ -135,38 +135,13 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                         .deal_recording_view()
                         .as_ref()
                         .map(super::deal_recording::snapshot),
-                    connection: Some(connection_snapshot(tab, now_ms)),
+                    connection: Some(quantick_control_handlers::connection::snapshot(
+                        &tab.connection,
+                        now_ms,
+                    )),
                 }
             })
             .collect(),
-    }
-}
-
-/// The tab's connection state on the wire. Time-bound fields travel only with a
-/// clock: the revision key reads with none, and they would otherwise move it on
-/// every frame the transport is up.
-fn connection_snapshot(tab: &crate::tab::Tab, now_ms: Option<i64>) -> ConnectionSnapshot {
-    use quantick_chart::connection_state::Link;
-    let state = tab.connection.state();
-    let word = now_ms.and_then(|now| tab.connection.status_word(now));
-    let overlay_up = now_ms.is_some_and(|now| tab.connection.overlay_up(now));
-    ConnectionSnapshot {
-        link: match state.link {
-            Link::Live => "live",
-            Link::Attempting => "attempting",
-            Link::Offline => "offline",
-            Link::Quiet => "quiet",
-            Link::NoTransport => "no_transport",
-        }
-        .to_owned(),
-        feed: state.feed.word().to_owned(),
-        book: state.book.word().to_owned(),
-        trades: state.trades.word().to_owned(),
-        last_connected_unix_ms: now_ms.and(state.last_connected_at),
-        current_job: state.current_job.map(|job| job.task.label().to_owned()),
-        reconnect_offered: state.link == Link::Offline && now_ms.is_some(),
-        status_word: word.map(|word| word.word.to_owned()),
-        overlay_up,
     }
 }
 

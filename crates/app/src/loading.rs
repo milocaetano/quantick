@@ -17,16 +17,12 @@ pub const GREY_FAINT: egui::Color32 = egui::Color32::from_rgb(0x4b, 0x55, 0x66);
 const GREY_BORDER: egui::Color32 = egui::Color32::from_rgb(0x1b, 0x23, 0x30);
 
 /// The stacking of the connection surfaces, named once: `menu > tooltip >
-/// loading-slot > overlay > chart`. egui ranks its tooltips above its popups,
-/// so a chip's tooltip stands down while a menu is open ([`dot_hover`]).
-#[cfg(test)]
-const CHART_ORDER: egui::Order = egui::Order::Background;
-const OVERLAY_ORDER: egui::Order = egui::Order::Background;
-const SLOT_ORDER: egui::Order = egui::Order::PanelResizeLine;
-#[cfg(test)]
-const TOOLTIP_ORDER: egui::Order = egui::Order::Tooltip;
-#[cfg(test)]
-const MENU_ORDER: egui::Order = egui::Order::Foreground;
+/// loading-slot, overlay > chart`. Sharing a layer with the chart would leave
+/// their order to egui's hash map, so they stand one order above it, below
+/// windows and menus. The slot lives in the header strip and the overlay below
+/// it, so they never meet. egui ranks its tooltips above its popups, so a chip's
+/// tooltip stands down while a menu is open ([`dot_hover`]).
+const LOADING_ORDER: egui::Order = egui::Order::PanelResizeLine;
 
 /// The inline spinner's diameter, in pixels.
 const SPINNER_SIZE: f32 = 14.0;
@@ -170,17 +166,22 @@ fn paint_mark(painter: &egui::Painter, min: egui::Pos2, alpha: f32) {
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// The overlay's group, centred in `rect`, painted without an input region but
-/// for the one control. Answers the control's rect and whether it was pressed.
-pub fn draw_overlay(
-    ui: &mut egui::Ui,
+/// The overlay's group, measured.
+struct OverlayGroup {
+    title: std::sync::Arc<egui::Galley>,
+    meta: std::sync::Arc<egui::Galley>,
+    /// The control and the rect it answers in.
+    control: Option<(std::sync::Arc<egui::Galley>, egui::Rect)>,
+    top: f32,
+}
+
+fn lay_out_overlay(
+    ctx: &egui::Context,
     rect: egui::Rect,
     symbol: &str,
     words: &OverlayWords,
-    now_ms: i64,
-) -> (Option<egui::Rect>, bool) {
-    let layer = egui::LayerId::new(OVERLAY_ORDER, egui::Id::new("connection_overlay"));
-    let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
+    with_control: bool,
+) -> OverlayGroup {
     let mut title = egui::text::LayoutJob::default();
     let font = egui::FontId::proportional(TITLE_PT);
     title.append(
@@ -190,18 +191,22 @@ pub fn draw_overlay(
     );
     title.append(symbol, 4.0, egui::TextFormat::simple(font, GREY_MID));
     title.wrap.max_width = rect.width();
-    let title = painter.layout_job(title);
-    let meta = painter.layout(
-        words.meta.clone(),
-        egui::FontId::monospace(META_PT),
-        GREY_MID,
-        rect.width(),
-    );
-    let control = words.reconnect.then(|| {
-        painter.layout_no_wrap(
-            RECONNECT_LABEL.to_owned(),
-            egui::FontId::proportional(CONTROL_PT),
-            GREY_MID,
+    let (title, meta, control) = ctx.fonts(|fonts| {
+        (
+            fonts.layout_job(title),
+            fonts.layout(
+                words.meta.clone(),
+                egui::FontId::monospace(META_PT),
+                GREY_MID,
+                rect.width(),
+            ),
+            with_control.then(|| {
+                fonts.layout_no_wrap(
+                    RECONNECT_LABEL.to_owned(),
+                    egui::FontId::proportional(CONTROL_PT),
+                    GREY_MID,
+                )
+            }),
         )
     });
     let mut height = logo_mark::MARK_PX + MARK_GAP_PX + title.size().y + TITLE_GAP_PX;
@@ -209,13 +214,56 @@ pub fn draw_overlay(
     if let Some(control) = &control {
         height += CONTROL_GAP_PX + control.size().y;
     }
+    let top = (rect.top() + rect.height() * GROUP_AT - height / 2.0).max(rect.top());
+    let control = control.map(|galley| {
+        let at = egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            top + height - galley.size().y,
+        );
+        let hit = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(6.0, 3.0));
+        (galley, hit)
+    });
+    OverlayGroup {
+        title,
+        meta,
+        control,
+        top,
+    }
+}
+
+/// Whether the overlay's control stands wholly inside `rect`. When it does not,
+/// the overlay draws none and the status bar offers Reconnect instead.
+pub fn reconnect_fits(
+    ctx: &egui::Context,
+    rect: egui::Rect,
+    symbol: &str,
+    words: &OverlayWords,
+) -> bool {
+    lay_out_overlay(ctx, rect, symbol, words, true)
+        .control
+        .is_some_and(|(_, hit)| rect.contains_rect(hit))
+}
+
+/// The overlay's group, centred in `rect`, painted without an input region but
+/// for the one control. Answers the control's rect and whether it was pressed.
+pub fn draw_overlay(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    symbol: &str,
+    words: &OverlayWords,
+    now_ms: i64,
+) -> (Option<egui::Rect>, bool) {
+    let layer = egui::LayerId::new(LOADING_ORDER, egui::Id::new("connection_overlay"));
+    let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
+    let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words);
+    let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits);
     let breathing = words.breathing && !reduced_motion();
     let alpha = logo_mark::alpha_at(breathing, now_ms);
     if breathing {
         ui.ctx().request_repaint_after(PULSE_REPAINT);
     }
     let center_x = rect.center().x;
-    let mut y = (rect.top() + rect.height() * GROUP_AT - height / 2.0).max(rect.top());
+    let mut y = group.top;
     paint_mark(
         &painter,
         egui::pos2(center_x - logo_mark::MARK_PX / 2.0, y),
@@ -223,17 +271,19 @@ pub fn draw_overlay(
     );
     y += logo_mark::MARK_PX + MARK_GAP_PX;
     let centred = |width: f32| center_x - width / 2.0;
-    let title_size = title.size();
-    painter.galley(egui::pos2(centred(title_size.x), y), title, GREY_LIGHT);
+    let title_size = group.title.size();
+    painter.galley(
+        egui::pos2(centred(title_size.x), y),
+        group.title,
+        GREY_LIGHT,
+    );
     y += title_size.y + TITLE_GAP_PX;
-    let meta_size = meta.size();
-    painter.galley(egui::pos2(centred(meta_size.x), y), meta, GREY_MID);
-    y += meta_size.y + CONTROL_GAP_PX;
-    let Some(control) = control else {
+    let meta_size = group.meta.size();
+    painter.galley(egui::pos2(centred(meta_size.x), y), group.meta, GREY_MID);
+    let Some((control, hit)) = group.control else {
         return (None, false);
     };
-    let at = egui::pos2(centred(control.size().x), y);
-    let hit = egui::Rect::from_min_size(at, control.size()).expand2(egui::vec2(6.0, 3.0));
+    let at = hit.shrink2(egui::vec2(6.0, 3.0)).min;
     let response = ui.interact(hit, ui.id().with("overlay_reconnect"), egui::Sense::click());
     let colour = if response.hovered() {
         GREY_LIGHT
@@ -309,7 +359,9 @@ fn dot_hover(ui: &egui::Ui, area: egui::Rect, index: usize, dot: &Dot) {
         egui::Sense::hover(),
     );
     if !ui.memory(egui::Memory::any_popup_open) {
-        let _ = response.on_hover_text(dot.hover);
+        let _ = response.on_hover_ui(|ui| {
+            ui.label(dot.hover);
+        });
     }
 }
 
@@ -366,7 +418,7 @@ fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>) -> SlotGalleys {
 
 /// The slot, with its right edge at `right`, on its own layer so a menu wins.
 pub fn draw_slot(ui: &egui::Ui, right: f32, strip: egui::Rect, slot: &Slot<'_>) {
-    let layer = egui::LayerId::new(SLOT_ORDER, ui.id().with("loading_slot"));
+    let layer = egui::LayerId::new(LOADING_ORDER, ui.id().with("loading_slot"));
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(strip);
     let (glyph, words) = slot_galleys(ui, slot);
     let width = slot_width(ui, slot);
@@ -394,14 +446,81 @@ mod tests {
         }
     }
 
-    /// The named stack holds: a menu over the slot, the slot over the overlay,
-    /// and neither of them above a popup.
+    /// The named stack, read off what egui actually paints: the chart first,
+    /// then the overlay and the slot, then a menu on top of them all.
     #[test]
-    fn menus_win_and_loading_stays_below_them() {
-        assert!(MENU_ORDER > SLOT_ORDER);
-        assert!(SLOT_ORDER > OVERLAY_ORDER);
-        assert!(OVERLAY_ORDER >= CHART_ORDER);
-        assert!(TOOLTIP_ORDER > SLOT_ORDER);
+    fn the_chart_loading_and_a_menu_paint_in_the_named_order() {
+        const CHART: egui::Color32 = egui::Color32::from_rgb(1, 2, 3);
+        const MENU: egui::Color32 = egui::Color32::from_rgb(4, 5, 6);
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.painter().rect_filled(screen, 0.0, CHART);
+                    let _ = draw_overlay(ui, screen, "X", &words(false), 0);
+                    let slot = Slot {
+                        job: false,
+                        text: "the slot",
+                    };
+                    draw_slot(ui, screen.right(), screen, &slot);
+                });
+                let menu = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("menu"));
+                ctx.layer_painter(menu).rect_filled(screen, 0.0, MENU);
+            },
+        );
+        let at = |wanted: &dyn Fn(&egui::Shape) -> bool| {
+            output
+                .shapes
+                .iter()
+                .position(|clipped| wanted(&clipped.shape))
+                .expect("painted")
+        };
+        let filled = |fill| move |shape: &egui::Shape| matches!(shape, egui::Shape::Rect(rect) if rect.fill == fill);
+        let chart = at(&filled(CHART));
+        let menu = at(&filled(MENU));
+        let overlay = at(&|shape| matches!(shape, egui::Shape::Mesh(_)));
+        let slot = at(
+            &|shape| matches!(shape, egui::Shape::Text(text) if text.galley.job.text == "the slot"),
+        );
+        assert!(
+            chart < overlay && overlay < menu,
+            "{chart} {overlay} {menu}"
+        );
+        assert!(chart < slot && slot < menu, "{chart} {slot} {menu}");
+    }
+
+    /// A control that would leave the rect is not drawn, nor answers a press,
+    /// and the group recentres without it.
+    #[test]
+    fn a_control_with_no_room_is_not_offered() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let roomy =
+                        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 400.0));
+                    assert!(reconnect_fits(ctx, roomy, "X", &words(true)));
+                    let (control, _) = draw_overlay(ui, roomy, "X", &words(true), 0);
+                    assert!(roomy.contains_rect(control.expect("it fits")));
+
+                    let short =
+                        egui::Rect::from_min_size(egui::pos2(0.0, 500.0), egui::vec2(800.0, 110.0));
+                    assert!(!reconnect_fits(ctx, short, "X", &words(true)));
+                    let (control, pressed) = draw_overlay(ui, short, "X", &words(true), 0);
+                    assert!(control.is_none() && !pressed);
+                });
+            },
+        );
     }
 
     /// The asset has no plate: its corners are clear and something is drawn.
