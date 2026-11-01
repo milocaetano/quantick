@@ -408,8 +408,8 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
     }
 }
 
-/// Every pane's header line, as painted: a narrow pane that dropped its samples
-/// or clipped a glyph lists neither. The state is read now, through the calls
+/// Every pane's header line and capsules, as painted: a side too narrow for its
+/// capsule, a glyph the data blocks or a clipped one is not listed. The state is read now, through the calls
 /// the header drew from. The tab owns them, as it owns its panes; the control's
 /// own id, `pane.<id>.header.*`, says which pane.
 fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(

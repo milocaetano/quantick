@@ -2599,10 +2599,17 @@ fn gateway_wait_for_change_sees_a_human_mark_and_does_not_delay_a_concurrent_rea
             .unwrap();
 
     // The waiter parks on the gateway side, from the journal's current end.
+    // Its timeout is the longest the gateway grants, not a round number: the
+    // mark below lands after a describe, a snapshot and however many frames
+    // a loaded host needs for them, and a wait that times out first turns a
+    // slow host into a wrong page.
     let wait_id = waiter
         .send(
             "events.wait",
-            serde_json::json!({ "start": "latest", "timeout_ms": 5000 }),
+            serde_json::json!({
+                "start": "latest",
+                "timeout_ms": quantick_control::limits::CONTROL_WAIT_TIMEOUT_MAX_MS,
+            }),
         )
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(50));

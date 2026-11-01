@@ -4,12 +4,12 @@
 use eframe::egui;
 
 use quantick_chart::pane_header::{
-    BubbleSample, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle, PaneHeader, PaneIdentity,
+    BubbleSample, Capsule, CapsuleSide, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle,
+    flow_sides,
 };
 use quantick_control_handlers::bubble_scale::BubbleScalePane;
 use quantick_control_schema::bubble_scale::BubbleScaleTarget;
 use quantick_layers::{ChartLayer, LayerActions};
-use smallvec::SmallVec;
 
 use crate::bands;
 use crate::chart::PriceScale;
@@ -463,11 +463,13 @@ impl ChartPane {
     /// the renderer can never disagree about a boundary.
     pub(super) fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
         let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
-        plot_split(
+        let mut areas = plot_split(
             area,
             self.live_strip_width(capabilities),
             self.indicators.pane_sizing(&mut sizing),
-        )
+        );
+        areas.capsules = self.frame.capsules;
+        areas
     }
 
     /// Why a call takes no anchor on `band`: the last carve's collapse, else the shared rule.
@@ -1056,26 +1058,85 @@ fn target(sample: BubbleSample) -> BubbleScaleTarget {
 }
 
 impl ChartPane {
-    /// The pane's layer glyphs: every lamp the *switch*, not what the source
-    /// lets through it, with what blocks it beside it, read through the calls
-    /// the pane's layer menu and `layers.visibility.set` read.
-    pub(crate) fn header_glyphs(
+    /// One layer glyph: its lamp the *switch*, not what the source lets through
+    /// it, with what blocks it beside it, read through the calls the pane's layer
+    /// menu and `layers.visibility.set` read.
+    fn header_glyph(
         &self,
-        identity: PaneIdentity,
+        toggle: LayerToggle,
         style: &ChartStyle,
         capabilities: FeedCapabilities,
-    ) -> SmallVec<[LayerGlyph; 4]> {
-        PaneHeader::toggles(identity)
-            .iter()
-            .map(|&toggle| LayerGlyph {
-                toggle,
-                on: self.layer_switched_on(toggle.layer(), style),
-                blocked: self.layer_blocked(toggle.layer(), capabilities),
-            })
-            .collect()
+    ) -> LayerGlyph {
+        LayerGlyph {
+            toggle,
+            on: self.layer_switched_on(toggle.layer(), style),
+            blocked: self.layer_blocked(toggle.layer(), capabilities),
+        }
     }
 
-    /// The view and sizes a flow pane's header shows; `None` without an
+    /// The header's strip glyph, unless the data blocks it.
+    pub(crate) fn strip_glyph(
+        &self,
+        style: &ChartStyle,
+        capabilities: FeedCapabilities,
+    ) -> Option<LayerGlyph> {
+        let glyph = self.header_glyph(LayerToggle::LiveStrip, style, capabilities);
+        glyph.blocked.is_none().then_some(glyph)
+    }
+
+    /// Paint this pane's capsules, one per chart side on screen, over the chart
+    /// just drawn; answers what a press on one asked for.
+    pub(crate) fn draw_capsules(
+        &mut self,
+        ui: &mut egui::Ui,
+        side: PaneSide,
+        style: &ChartStyle,
+        capabilities: FeedCapabilities,
+    ) -> Option<HeaderIntent> {
+        self.frame.capsules = [None; 2];
+        let chart = self.frame.chart_rect?;
+        let top = self.frame.area.map_or(chart.top(), |area| area.top());
+        let state = self.flow_header_state();
+        let (left, right) = (chart.left(), chart.right());
+        let sides = match (side, state) {
+            (PaneSide::Time(_), _) => [Some((CapsuleSide::Time, left, right)), None],
+            (PaneSide::Flow, Some(state)) => {
+                flow_sides(state.shown_view, left, right, self.frame.lane_divider_x)
+            }
+            (PaneSide::Flow, None) => [None, None],
+        };
+        let mut intent = None;
+        for (slot, (side, left, right)) in sides
+            .into_iter()
+            .enumerate()
+            .filter_map(|(slot, side)| side.map(|side| (slot, side)))
+        {
+            let scale = state.and_then(|state| match side {
+                CapsuleSide::Candles => state.candle_sample,
+                CapsuleSide::Tape => state.tape_sample,
+                CapsuleSide::Time => None,
+            });
+            let glyph = |toggle| self.header_glyph(toggle, style, capabilities);
+            let capsule = Capsule::of(side, glyph, scale);
+            let corner = capsule.place(left, right, top, chart.bottom());
+            let Some(corner) = corner.filter(|_| !capsule.is_empty()) else {
+                continue;
+            };
+            let rect = crate::pane_header::draw_capsule(
+                ui,
+                &capsule,
+                corner,
+                side,
+                self.id,
+                &mut self.frame.header_controls,
+                &mut intent,
+            );
+            self.frame.capsules[slot] = Some(rect);
+        }
+        intent
+    }
+
+    /// The view and sizes a flow pane's chrome shows; `None` without an
     /// order-flow view. A sample is there only while its target is on, the one
     /// size rule `orderflow.bubbles.size.set` judges by too; a folded side is
     /// not off.

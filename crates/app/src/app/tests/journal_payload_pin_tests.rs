@@ -38,7 +38,7 @@ fn journaled(app: &QuantickApp) -> Vec<String> {
 fn act(app: &mut QuantickApp, id: &str, input: Value) -> Value {
     app.control_action(
         id,
-        crate::control::trade::CAPABILITY_VERSION,
+        quantick_control_handlers::trade::CAPABILITY_VERSION,
         crate::control::ActionOrigin::Human,
         input,
     )
@@ -120,7 +120,7 @@ fn a_spent_notification_budget_refuses_in_its_pinned_words() {
         .find_map(|_| {
             app.control_action(
                 "notify.toast",
-                crate::control::trade::CAPABILITY_VERSION,
+                quantick_control_handlers::trade::CAPABILITY_VERSION,
                 crate::control::ActionOrigin::Human,
                 json!({ "message": "pin" }),
             )

@@ -167,26 +167,6 @@ impl BookWorker {
             .book
             .base_price_grouping
     }
-
-    /// Block until every command sent before this call has been applied and
-    /// published. Tests use this to make the async pipeline deterministic.
-    #[cfg(test)]
-    pub(crate) fn flush(&self) {
-        let (ack_tx, ack_rx) = std::sync::mpsc::channel();
-        self.send(BookCommand::Flush(ack_tx));
-        // A test is its own frame loop: pump what a full queue parked, or a
-        // parked barrier would wait on a queue nobody refills.
-        let deadline = Instant::now() + std::time::Duration::from_secs(10);
-        while Instant::now() < deadline {
-            self.commands.pump();
-            if ack_rx
-                .recv_timeout(std::time::Duration::from_millis(5))
-                .is_ok()
-            {
-                return;
-            }
-        }
-    }
 }
 
 /// The superseding rule for commands parked behind a full queue: only a layout
@@ -316,6 +296,9 @@ fn run(
     }
 }
 
+#[cfg(test)]
+#[path = "orderflow_worker/tests/barrier.rs"]
+mod barrier;
 #[cfg(test)]
 mod fold_tests;
 

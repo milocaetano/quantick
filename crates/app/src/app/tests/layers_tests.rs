@@ -1148,30 +1148,36 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
     let pane_id = app.active_tab().flow_pane.id;
     let header_id = |control: &str| format!("pane.{pane_id}.header.{control}");
     let scene = observer_scene(&app);
-    let bubbles = scene_control(&scene, &header_id("layer.bubbles"));
-    assert_eq!(bubbles["availability"]["available"], false);
-    assert_eq!(
-        bubbles["availability"]["reason"], "source_prints_no_traded_volume",
-        "the reason is the code the gate declares"
-    );
-    let heatmap = scene_control(&scene, &header_id("layer.heatmap"));
-    assert_eq!(heatmap["availability"]["available"], false);
-    assert_eq!(
-        heatmap["availability"]["reason"],
-        "source_captures_no_order_book"
-    );
-
-    // The strip takes either a book or traded volume and this source has
-    // neither, so it is blocked too — with its own code, not one of the
-    // two above. A gate declared beside the button instead of read from
-    // `ChartPane::layer_blocked` reported this one available, and the
-    // trader saw a lit switch that reserved no width.
-    let strip = scene_control(&scene, &header_id("layer.live_strip"));
-    assert_eq!(strip["availability"]["available"], false);
-    assert_eq!(
-        strip["availability"]["reason"],
-        "source_publishes_neither_book_nor_traded_volume"
-    );
+    // A blocked glyph is not painted, so the scene does not list it; the code
+    // lives on in the gate every named read shares.
+    let ids = scene_control_ids(&scene);
+    let caps = app.active_tab().capabilities(&app.config);
+    let flow = &app.active_tab().flow_pane;
+    for (layer, id, code) in [
+        (
+            ChartLayer::Bubbles,
+            "layer.bubbles",
+            "source_prints_no_traded_volume",
+        ),
+        (
+            ChartLayer::Heatmap,
+            "layer.heatmap",
+            "source_captures_no_order_book",
+        ),
+        // The strip takes either a book or traded volume and this source has
+        // neither, so it is blocked too, with its own code.
+        (
+            ChartLayer::LiveStrip,
+            "layer.live_strip",
+            "source_publishes_neither_book_nor_traded_volume",
+        ),
+    ] {
+        assert!(!ids.contains(&header_id(id)), "{id} is not painted");
+        assert_eq!(
+            flow.layer_blocked(layer, caps).map(|block| block.code),
+            Some(code)
+        );
+    }
 
     // The contrast: a control nothing gates is available with no reason at
     // all, rather than a reason saying "fine".
@@ -1196,10 +1202,6 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
             control["control_id"]
         );
     }
-    assert_ne!(
-        bubbles["availability"]["reason"], "this source quotes prices but prints no traded volume",
-        "the sentence on the button is not the answer on the wire"
-    );
 }
 
 /// The scene lists a pane's header left to right, as the eye meets it: an
@@ -1220,10 +1222,12 @@ fn the_header_controls_are_listed_the_way_the_trader_reads_them() {
         listed,
         vec![
             "view",
+            "layer.live_strip",
             "layer.bubbles",
             "layer.heatmap",
             "layer.footprint",
-            "layer.live_strip",
+            "layer.tape_bubbles",
+            "layer.tape_heatmap",
         ]
     );
 }

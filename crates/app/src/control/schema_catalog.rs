@@ -5,11 +5,15 @@ use quantick_control::schema::generated_schema;
 use quantick_control_schema::tape_view::{TapeViewInput, TapeViewResult};
 use serde_json::{Value, json};
 
+use quantick_control_handlers::attention::{MarkInput, MarkResult};
 use quantick_control_host::catalogue::SnapshotScopeDescriptor;
+use quantick_control_schema::analysis::{DrawingsSnapshot, IndicatorsSnapshot};
+use quantick_control_schema::orderflow::{
+    BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot,
+};
+use quantick_control_schema::session::{PaperSnapshot, ReplaySnapshot};
 
 use super::{
-    actions::{MarkInput, MarkResult},
-    analysis::{DrawingsSnapshot, IndicatorsSnapshot},
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput},
     drawing_magnet::{
@@ -28,11 +32,9 @@ use super::{
     layers::{LayersSnapshot, SetVisibilityInput, VisibilityResult},
     layout::{LayoutResultV2, ResizeInputV2},
     notify::{NotifyInput, NotifyResult},
-    orderflow::{BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot},
     registry::SerializedSnapshotCapture,
     scene::SceneSnapshot,
     script::{AttachInput, AttachResult, DetachInput, DetachResult, ScriptDiagnostic},
-    session::{PaperSnapshot, ReplaySnapshot},
     system::SystemSnapshot,
     workspace::WorkspaceSnapshot,
 };

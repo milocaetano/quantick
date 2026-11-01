@@ -185,8 +185,15 @@ impl PaperArbitration<'_> {
     }
 }
 
+/// Whether `pos` lands on a layer capsule floating over the chart.
+pub(super) fn capsule_hit(areas: &PlotAreas, pos: egui::Pos2) -> bool {
+    let mut capsules = areas.capsules.iter().flatten();
+    capsules.any(|rect| rect.contains(pos))
+}
+
 /// Pixels inside a band that belong to the pane's own chrome rather than
-/// to its canvas: the collapse chevron and the divider grab band.
+/// to its canvas: the collapse chevron, the divider grab band and the layer
+/// capsules.
 ///
 /// A drawing gesture never takes them. egui hands an overlapping rect to
 /// whoever registers last, and both of those register after the canvas —
@@ -194,11 +201,12 @@ impl PaperArbitration<'_> {
 /// it has to honour that order itself instead of inheriting it. Without
 /// this, arming a tool silently kills the chevron and the pane resize.
 pub(super) fn pane_chrome_hit(areas: &PlotAreas, pos: egui::Pos2) -> bool {
-    areas.indicator_panes.iter().any(|slot| {
-        indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed).contains(pos)
+    capsule_hit(areas, pos)
+        || areas.indicator_panes.iter().any(|slot| {
+            indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed).contains(pos)
             // The header opens the pane's settings; like the chevron and
             // the divider, arming a drawing tool must not silently kill it.
             || indicator_render::pane_header_rect(slot.rect, slot.collapsed).contains(pos)
             || (pos.y - slot.rect.top()).abs() <= PANE_DIVIDER_HANDLE_PX
-    })
+        })
 }

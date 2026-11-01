@@ -21,14 +21,22 @@ quantick-control-schema = { path = "../control-schema" }
 # The marks an annotation folds into, through the same update a click makes.
 quantick-drawings = { path = "../drawings" }
 quantick-engine = { path = "../engine" }
+# The published book, health and heatmap setup the order-flow scopes read.
+quantick-orderflow = { path = "../orderflow" }
 # The trades journal's sessions: the listing, the filter and the edits the
 # ledger makes, so the capability and the gesture share one path.
 quantick-paper = { path = "../paper" }
+# The recorded session the replay scope describes.
+quantick-replay = { path = "../replay" }
 # The tab session the History press and its cancel are acts of: the handler
 # picks the act and judges the session's answer.
 quantick-session = { path = "../session" }
+# The order intents, brackets and venue answers a trade action speaks.
+quantick-sim = { path = "../sim" }
 # The history reach and run vocabulary the History press speaks.
 quantick-sources = { path = "../sources" }
+# The footprint setup the footprint scope reports.
+quantick-stores = { path = "../stores" }
 rust_decimal = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

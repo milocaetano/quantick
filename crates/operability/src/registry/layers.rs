@@ -5,7 +5,7 @@
 
 use super::{Mapping, PENDING_SURFACE, Source, UiBehaviour};
 
-/// A chart layer switch: the header glyph and the pane's layer menu both set
+/// A chart layer switch: the capsule or header glyph and the pane's layer menu both set
 /// one pane's layer, which `layers.visibility.set` does by stable pane ID.
 const LAYER_SWITCH: Mapping = capability!("layers.visibility.set");
 
@@ -14,7 +14,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "dock.tab.open",
         title: "Open a panel — L2, bubbles, session, trading or trades",
-        reach: "View menu, the dock's own strip, a header glyph's right-click",
+        reach: "View menu, the dock's own strip, a capsule glyph's right-click",
         keys: &[
             (Source::DockTab, "l2"),
             (Source::DockTab, "bubbles"),
@@ -37,17 +37,17 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layer.bubbles.toggle",
         title: "Switch the aggression bubbles on or off",
-        reach: "pane header glyph, pane right-click layer menu, Ctrl+B",
+        reach: "candles capsule glyph, pane right-click layer menu, Ctrl+B",
         keys: &[(Source::LayerToggle, "Bubbles")],
         mapping: LAYER_SWITCH,
     },
     UiBehaviour {
         id: "layer.footprint.settings.open",
         title: "Open the footprint's settings window",
-        reach: "right-click the pane header's footprint glyph; the pane's footprint menu",
+        reach: "right-click the capsule's footprint glyph; the pane's footprint menu",
         keys: &[(
             Source::Authored,
-            "a pane header glyph's right click and the pane menu's entry, not entries in the toolbar's action enum",
+            "a capsule glyph's right click and the pane menu's entry, not entries in the toolbar's action enum",
         )],
         mapping: capability!("chart.settings.set"),
     },
@@ -57,21 +57,21 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         reach: "pane right-click layer menu, off until switched on",
         keys: &[(
             Source::Authored,
-            "the per-pane candle aggression layer is opt-in and has no pane header glyph",
+            "the per-pane candle aggression layer is opt-in and has no glyph on a capsule or header",
         )],
         mapping: LAYER_SWITCH,
     },
     UiBehaviour {
         id: "layer.footprint.toggle",
         title: "Switch the candle footprint on or off",
-        reach: "pane header glyph, pane right-click layer menu, Ctrl+F",
+        reach: "pane capsule glyph, pane right-click layer menu, Ctrl+F",
         keys: &[(Source::LayerToggle, "Footprint")],
         mapping: LAYER_SWITCH,
     },
     UiBehaviour {
         id: "layer.heatmap.toggle",
         title: "Switch the L2 depth map on or off",
-        reach: "pane header glyph, pane right-click layer menu",
+        reach: "capsule glyph, pane right-click layer menu",
         keys: &[(Source::LayerToggle, "Heatmap")],
         mapping: LAYER_SWITCH,
     },
@@ -80,6 +80,20 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         title: "Switch the live depth strip on or off",
         reach: "pane header glyph, pane right-click layer menu",
         keys: &[(Source::LayerToggle, "LiveStrip")],
+        mapping: LAYER_SWITCH,
+    },
+    UiBehaviour {
+        id: "layer.tape_bubbles.toggle",
+        title: "Switch the bubbles on the tape on or off",
+        reach: "tape capsule glyph, pane right-click layer menu",
+        keys: &[(Source::LayerToggle, "TapeBubbles")],
+        mapping: LAYER_SWITCH,
+    },
+    UiBehaviour {
+        id: "layer.tape_heatmap.toggle",
+        title: "Switch the book on the tape on or off",
+        reach: "tape capsule glyph, pane right-click layer menu",
+        keys: &[(Source::LayerToggle, "TapeHeatmap")],
         mapping: LAYER_SWITCH,
     },
     UiBehaviour {

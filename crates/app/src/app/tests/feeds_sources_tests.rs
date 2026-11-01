@@ -2452,8 +2452,8 @@ fn a_market_action_with_a_price_is_refused_as_a_bad_request() {
 
     let error = app
         .control_action(
-            crate::control::trade::PLACE_CAPABILITY_ID,
-            crate::control::trade::CAPABILITY_VERSION,
+            quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
+            quantick_control_handlers::trade::CAPABILITY_VERSION,
             crate::control::ActionOrigin::Human,
             serde_json::json!({
                 "side": "buy",

@@ -253,7 +253,7 @@ fn a_field_the_scope_schema_lacks_is_drift() {
 fn a_readback_beyond_the_callers_grant_is_drift() {
     let rows = with_row("indicator.script.attach", |row| {
         row.read = SNAPSHOT_CAPABILITY_ID;
-        row.scope = Some(super::super::analysis::INDICATORS_SCOPE_ID);
+        row.scope = Some(quantick_control_handlers::analysis::INDICATORS_SCOPE_ID);
         row.event = None;
         row.field = "tabs[].panes[].indicators[].slot_id";
     });

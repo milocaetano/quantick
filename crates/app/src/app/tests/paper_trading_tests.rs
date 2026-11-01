@@ -2540,8 +2540,8 @@ fn the_trade_actions_place_bracket_and_read_back_an_order() {
 
     let placed = app
         .control_action(
-            crate::control::trade::PLACE_CAPABILITY_ID,
-            crate::control::trade::CAPABILITY_VERSION,
+            quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
+            quantick_control_handlers::trade::CAPABILITY_VERSION,
             crate::control::ActionOrigin::Human,
             serde_json::json!({
                 "side": "buy",
@@ -2565,8 +2565,8 @@ fn the_trade_actions_place_bracket_and_read_back_an_order() {
     let target = price + rust_decimal::Decimal::from(2);
     let bracketed = app
         .control_action(
-            crate::control::trade::BRACKET_CAPABILITY_ID,
-            crate::control::trade::CAPABILITY_VERSION,
+            quantick_control_handlers::trade::BRACKET_CAPABILITY_ID,
+            quantick_control_handlers::trade::CAPABILITY_VERSION,
             crate::control::ActionOrigin::Human,
             serde_json::json!({
                 "order_id": order_id,
@@ -2591,8 +2591,8 @@ fn the_trade_actions_place_bracket_and_read_back_an_order() {
     // the profit side of the entry would exit the instant it filled.
     let refused = app
         .control_action(
-            crate::control::trade::BRACKET_CAPABILITY_ID,
-            crate::control::trade::CAPABILITY_VERSION,
+            quantick_control_handlers::trade::BRACKET_CAPABILITY_ID,
+            quantick_control_handlers::trade::CAPABILITY_VERSION,
             crate::control::ActionOrigin::Human,
             serde_json::json!({
                 "order_id": order_id,
@@ -2616,8 +2616,8 @@ fn the_trade_actions_place_bracket_and_read_back_an_order() {
     // And it can be taken away again.
     let cancelled = app
         .control_action(
-            crate::control::trade::CANCEL_CAPABILITY_ID,
-            crate::control::trade::CAPABILITY_VERSION,
+            quantick_control_handlers::trade::CANCEL_CAPABILITY_ID,
+            quantick_control_handlers::trade::CAPABILITY_VERSION,
             crate::control::ActionOrigin::Human,
             serde_json::json!({ "order_id": order_id }),
         )
@@ -2652,8 +2652,8 @@ fn an_order_placed_through_the_registry_names_who_asked_for_it() {
 
     let accepted = app
         .control_action(
-            crate::control::trade::PLACE_CAPABILITY_ID,
-            crate::control::trade::CAPABILITY_VERSION,
+            quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
+            quantick_control_handlers::trade::CAPABILITY_VERSION,
             crate::control::ActionOrigin::Human,
             serde_json::json!({
                 "side": "buy",
@@ -2667,8 +2667,8 @@ fn an_order_placed_through_the_registry_names_who_asked_for_it() {
 
     // And one the venue refuses: a buy limit above the market.
     app.control_action(
-        crate::control::trade::PLACE_CAPABILITY_ID,
-        crate::control::trade::CAPABILITY_VERSION,
+        quantick_control_handlers::trade::PLACE_CAPABILITY_ID,
+        quantick_control_handlers::trade::CAPABILITY_VERSION,
         crate::control::ActionOrigin::Human,
         serde_json::json!({
             "side": "buy",
