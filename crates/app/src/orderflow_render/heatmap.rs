@@ -6,8 +6,8 @@
 //! pass, whatever the book is doing.
 
 use crate::orderflow_render::constants::{
-    GAP_LABEL_INSET_PX, LANE_DIVIDER_DASH_PX, LANE_DIVIDER_GAP_PX, LANE_MARK_WIDTH_PX,
-    LANE_NOW_DASH_PX, LANE_NOW_GAP_PX,
+    GAP_LABEL_INSET_PX, GAP_LABEL_TOP_PX, LANE_DIVIDER_DASH_PX, LANE_DIVIDER_GAP_PX,
+    LANE_MARK_WIDTH_PX, LANE_NOW_DASH_PX, LANE_NOW_GAP_PX,
 };
 use eframe::egui;
 use quantick_orderflow::LiquidityEvidence;
@@ -159,12 +159,12 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             // otherwise clean chart; it belongs to the divider, so it hugs it.
             let (anchor, align) = if leading {
                 (
-                    rect.right_top() + egui::vec2(-GAP_LABEL_INSET_PX, 17.0),
+                    rect.right_top() + egui::vec2(-GAP_LABEL_INSET_PX, GAP_LABEL_TOP_PX),
                     egui::Align2::RIGHT_TOP,
                 )
             } else {
                 (
-                    rect.center_top() + egui::vec2(0.0, 17.0),
+                    rect.center_top() + egui::vec2(0.0, GAP_LABEL_TOP_PX),
                     egui::Align2::CENTER_TOP,
                 )
             };
