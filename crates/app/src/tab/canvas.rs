@@ -362,6 +362,7 @@ impl Tab {
             now_ms,
             symbol: &self.symbol,
             attached_ms: self.feed_attached_ms,
+            timeline_generation: self.session.timeline_generation(),
             has_transport: capabilities.transport,
             transport: match self.feed_connection {
                 FeedConnectionState::Connecting => Transport::Connecting,

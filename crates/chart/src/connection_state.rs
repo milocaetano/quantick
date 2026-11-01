@@ -7,7 +7,9 @@
 //! bug when they flicker. So a short blip shows nothing, and offline **latches**:
 //! once the stall has fired the state holds until data arrives, a hand presses
 //! Reconnect, or the transport has stayed up for [`CONNECTED_HOLD_MS`], whatever
-//! the feed's automatic retries do in between.
+//! the feed's automatic retries do in between. A print answers the report it
+//! arrived under for good: only a new report can latch again, so a thin tape
+//! cannot bounce the words through its gaps.
 
 use quantick_orderflow::engine::CaptureStatus;
 
@@ -27,8 +29,8 @@ pub const PRESS_HOLD_MS: i64 = 1_000;
 /// its own: a flapping feed never gets there, a closed market after a reconnect
 /// does and reaches its true word.
 pub const CONNECTED_HOLD_MS: i64 = 10_000;
-/// How long after a print the data still counts as flowing, so a standing
-/// report cannot retake the words in the gaps between prints.
+/// How long after a print the data still counts as flowing, whatever a report
+/// that arrives meanwhile says.
 pub const DATA_FLOWING_MS: i64 = 2_000;
 /// How often a tab nobody is looking at is observed. The one on screen is
 /// observed every frame.
@@ -78,6 +80,9 @@ pub struct LinkFacts {
     pub quiet: bool,
     /// A print arrived within [`DATA_FLOWING_MS`].
     pub data_flowing: bool,
+    /// A print arrived after the report now standing: that report has been
+    /// answered, and the gap to the next print does not bring it back.
+    pub report_superseded: bool,
     /// A press's minimum attempt is still running.
     pub press_holding: bool,
     /// The transport has been up, unbroken, for [`CONNECTED_HOLD_MS`].
@@ -86,7 +91,9 @@ pub struct LinkFacts {
 
 /// The next link, from the last one and this frame's facts.
 ///
-/// Data outranks every report: prints arriving are the answer to the question.
+/// Data outranks every report: prints arriving are the answer to the question,
+/// and a report they answered stays answered, whatever the transport still says
+/// about it, until another one replaces it.
 /// Three things leave [`Link::Offline`]: a press (a respawned session, which
 /// holds), data, and a transport that has stayed up for [`CONNECTED_HOLD_MS`].
 /// An automatic retry changes `transport` or the notice behind `failed` on every
@@ -100,7 +107,7 @@ pub fn next_link(previous: Link, facts: LinkFacts) -> Link {
     if facts.press_holding {
         return Link::Attempting;
     }
-    if facts.data_flowing {
+    if facts.data_flowing || facts.report_superseded {
         return Link::Live;
     }
     if facts.failed || (previous == Link::Offline && !facts.connected_held) {
@@ -226,6 +233,9 @@ pub struct ConnectionFacts<'a> {
     pub symbol: &'a str,
     /// When this feed session was attached: moves on a respawn, and only then.
     pub attached_ms: i64,
+    /// Moves whenever the tab throws its timeline away: a reload, a feed switch,
+    /// a replay opening or seeking. A respawn that keeps the timeline leaves it.
+    pub timeline_generation: u64,
     pub has_transport: bool,
     pub transport: Transport,
     pub verdict: Verdict<'a>,
@@ -286,11 +296,12 @@ pub struct StatusWord {
 #[derive(Debug, Clone)]
 pub struct ConnectionTracker {
     symbol: String,
+    timeline_generation: u64,
     state: ConnectionState,
     attached_ms: Option<i64>,
     /// When the current attach started, against which startup settles.
     settle_from_ms: i64,
-    /// Set by a respawn on the same symbol: an attempt a hand asked for.
+    /// Set by a respawn on the same timeline: an attempt a hand asked for.
     pressed: bool,
     press_hold_until: i64,
     attempting_since: i64,
@@ -306,6 +317,11 @@ pub struct ConnectionTracker {
     book_raw: Book,
     book_raw_since: i64,
     provider_says: Option<String>,
+    /// The failure report seen last frame, by its words: the provider's, or
+    /// `None` inside for one the stall inferred.
+    standing_report: Option<Option<String>>,
+    /// A print has arrived since [`Self::standing_report`] first stood.
+    report_superseded: bool,
     empty_since: Option<i64>,
     any_bars: bool,
     settling: bool,
@@ -328,6 +344,7 @@ impl ConnectionTracker {
     pub fn new() -> Self {
         Self {
             symbol: String::new(),
+            timeline_generation: 0,
             state: ConnectionState {
                 link: Link::Attempting,
                 feed: Stream::Idle,
@@ -351,6 +368,8 @@ impl ConnectionTracker {
             book_raw: Book::Off,
             book_raw_since: 0,
             provider_says: None,
+            standing_report: None,
+            report_superseded: false,
             empty_since: None,
             any_bars: false,
             settling: true,
@@ -380,17 +399,19 @@ impl ConnectionTracker {
         self.control_fits = fits;
     }
 
-    /// Take this frame's facts. Allocates only when the symbol or the
-    /// provider's own words changed.
+    /// Take this frame's facts. Allocates only when the symbol, the report or
+    /// the provider's own words changed.
     pub fn observe(&mut self, facts: &ConnectionFacts<'_>, jobs: &LoadingTracker) {
         let now = facts.now_ms;
         self.observed_ms = Some(now);
         self.observe_attach(facts);
         let previous = self.state.link;
-        if facts.live_trades > self.live_trades {
+        let printed = facts.live_trades > self.live_trades;
+        if printed {
             self.state.last_data_at = Some(now);
         }
         self.live_trades = facts.live_trades;
+        self.observe_report(facts.verdict, printed);
         self.connected_since =
             (facts.transport == Transport::Connected).then(|| self.connected_since.unwrap_or(now));
         let link = next_link(
@@ -398,12 +419,13 @@ impl ConnectionTracker {
             LinkFacts {
                 has_transport: facts.has_transport,
                 transport: facts.transport,
-                failed: matches!(facts.verdict, Verdict::Failed { .. }),
+                failed: matches!(facts.verdict, Verdict::Failed { .. }) && !self.report_superseded,
                 quiet: matches!(facts.verdict, Verdict::Quiet),
                 data_flowing: self
                     .state
                     .last_data_at
                     .is_some_and(|at| now.saturating_sub(at) < DATA_FLOWING_MS),
+                report_superseded: self.report_superseded,
                 press_holding: now < self.press_hold_until,
                 connected_held: self
                     .connected_since
@@ -464,9 +486,13 @@ impl ConnectionTracker {
     fn observe_attach(&mut self, facts: &ConnectionFacts<'_>) {
         let now = facts.now_ms;
         let new_symbol = self.symbol != facts.symbol;
+        let new_timeline = new_symbol || self.timeline_generation != facts.timeline_generation;
         if new_symbol {
             facts.symbol.clone_into(&mut self.symbol);
-            // A latch is about the symbol it fired on.
+        }
+        if new_timeline {
+            self.timeline_generation = facts.timeline_generation;
+            // A latch, and every date, is about the timeline it was seen on.
             self.state.link = Link::Attempting;
             self.before_attempt = Link::Attempting;
             self.attempting_since = now;
@@ -479,11 +505,13 @@ impl ConnectionTracker {
             self.state.feed = Stream::Idle;
             self.state.trades = Stream::Idle;
             self.provider_says = None;
+            self.standing_report = None;
+            self.report_superseded = false;
             self.empty_since = None;
             self.live_trades = facts.live_trades;
         }
         if self.attached_ms != Some(facts.attached_ms) {
-            let respawn = self.attached_ms.is_some() && !new_symbol;
+            let respawn = self.attached_ms.is_some() && !new_timeline;
             self.attached_ms = Some(facts.attached_ms);
             self.settle_from_ms = now;
             self.attempting_since = now;
@@ -496,6 +524,27 @@ impl ConnectionTracker {
             && self.state.link != Link::Attempting
         {
             self.pressed = false;
+        }
+    }
+
+    /// Whether a print has answered the report now standing. A report first
+    /// seen on this frame is new, whatever printed beside it: a feed's last
+    /// print and its dying words can share a frame.
+    fn observe_report(&mut self, verdict: Verdict<'_>, printed: bool) {
+        let Verdict::Failed { provider_says } = verdict else {
+            self.standing_report = None;
+            self.report_superseded = false;
+            return;
+        };
+        let standing = self
+            .standing_report
+            .as_ref()
+            .is_some_and(|words| words.as_deref() == provider_says);
+        if standing {
+            self.report_superseded |= printed;
+        } else {
+            self.standing_report = Some(provider_says.map(str::to_owned));
+            self.report_superseded = false;
         }
     }
 
@@ -795,6 +844,7 @@ mod tests {
         jobs: LoadingTracker,
         now: i64,
         attached: i64,
+        timeline: u64,
         transport: Transport,
         verdict: Verdict<'static>,
         trades: u64,
@@ -813,6 +863,7 @@ mod tests {
                 jobs: LoadingTracker::new(),
                 now: 1_000_000,
                 attached: 1_000_000,
+                timeline: 0,
                 transport: Transport::Connecting,
                 verdict: Verdict::None,
                 trades: 0,
@@ -834,6 +885,7 @@ mod tests {
                     now_ms: self.now,
                     symbol: self.symbol,
                     attached_ms: self.attached,
+                    timeline_generation: self.timeline,
                     has_transport: self.has_transport,
                     transport: self.transport,
                     verdict: self.verdict,
@@ -853,6 +905,16 @@ mod tests {
             self.attached = self.now;
             self.transport = Transport::Connecting;
             self.verdict = Verdict::None;
+        }
+
+        /// A new session on an empty timeline: a reload, a same-symbol feed
+        /// switch, a replay opening.
+        fn rebuild(&mut self) {
+            self.press();
+            self.timeline += 1;
+            self.empty_pane = true;
+            self.any_bars = false;
+            self.flow_bars = false;
         }
 
         fn link(&self) -> Link {
@@ -901,6 +963,7 @@ mod tests {
             failed: false,
             quiet: false,
             data_flowing: false,
+            report_superseded: false,
             press_holding: false,
             connected_held: false,
         }
@@ -950,6 +1013,17 @@ mod tests {
             ),
             Link::Live,
             "data outranks a report still standing"
+        );
+        assert_eq!(
+            next_link(
+                Link::Live,
+                LinkFacts {
+                    report_superseded: true,
+                    ..trying
+                }
+            ),
+            Link::Live,
+            "an answered report stays answered through a gap"
         );
         assert_eq!(
             next_link(Link::Offline, facts(Transport::Connected)),
@@ -1092,8 +1166,95 @@ mod tests {
             run.step(1);
             assert_eq!(run.link(), Link::Live);
         }
+    }
+
+    fn thin_tape_stays_live(run: &mut Run) {
+        for gap in [3_000, 5_000, 4_000, 3_500, 5_000] {
+            for _ in 0..gap / 250 {
+                run.step(250);
+                assert_eq!(run.link(), Link::Live, "a {gap} ms gap");
+                assert_eq!(run.word(), Some("live"), "a {gap} ms gap");
+            }
+            run.trades += 1;
+            run.step(0);
+            assert_eq!(run.link(), Link::Live);
+        }
+    }
+
+    /// The gaps of a thin tape run past [`DATA_FLOWING_MS`]. The first print
+    /// answers the report, and from there only a new report can speak: not the
+    /// gap, on a transport reported up or still reported down.
+    #[test]
+    fn a_thin_tape_does_not_bounce_under_a_report_it_answered() {
+        for transport in [
+            Transport::Connected,
+            Transport::Connecting,
+            Transport::Reconnecting,
+        ] {
+            let mut run = Run::new();
+            run.transport = transport;
+            run.verdict = Verdict::Failed {
+                provider_says: Some("MetaTrader 5 is closed"),
+            };
+            run.step(OVERLAY_DELAY_MS);
+            assert_eq!(run.link(), Link::Offline);
+            run.trades = 1;
+            run.step(1);
+            thin_tape_stays_live(&mut run);
+
+            // A stall's inferred report is answered the same way.
+            run.verdict = Verdict::None;
+            run.step(1);
+            run.verdict = FAILED;
+            run.trades += 1;
+            run.step(1);
+            run.step(DATA_FLOWING_MS);
+            assert_eq!(run.link(), Link::Offline, "a new report latches");
+            run.trades += 1;
+            run.step(1);
+            thin_tape_stays_live(&mut run);
+        }
+    }
+
+    /// Another report is news, and so is the same words again after they
+    /// stopped standing. A print sharing the report's first frame answers
+    /// nothing: it came before the report, as far as anyone can tell.
+    #[test]
+    fn a_new_notice_latches_again_after_prints_answered_the_last() {
+        const CLOSED: Verdict<'static> = Verdict::Failed {
+            provider_says: Some("MetaTrader 5 is closed"),
+        };
+        const REFUSED: Verdict<'static> = Verdict::Failed {
+            provider_says: Some("The bridge refused"),
+        };
+        let mut run = Run::new();
+        run.verdict = CLOSED;
+        run.step(1);
+        run.trades = 1;
+        run.step(1);
         run.step(DATA_FLOWING_MS);
-        assert_eq!(run.link(), Link::Offline, "stopped: the report speaks");
+        assert_eq!(run.link(), Link::Live, "answered");
+
+        run.verdict = REFUSED;
+        run.step(1);
+        assert_eq!(run.link(), Link::Offline, "another report");
+        run.trades += 1;
+        run.step(1);
+        run.step(DATA_FLOWING_MS);
+        assert_eq!(run.link(), Link::Live, "answered in turn");
+
+        run.verdict = Verdict::None;
+        run.step(1);
+        run.verdict = REFUSED;
+        run.step(1);
+        assert_eq!(run.link(), Link::Offline, "the same words, said again");
+
+        run.verdict = CLOSED;
+        run.trades += 1;
+        run.step(1);
+        assert_eq!(run.link(), Link::Live, "the print itself still counts");
+        run.step(DATA_FLOWING_MS);
+        assert_eq!(run.link(), Link::Offline, "but it answered nothing");
     }
 
     /// The suffix is inferred from the transport, so it steps aside whenever the
@@ -1360,6 +1521,89 @@ mod tests {
         assert_eq!(run.overlay().expect("up").verb, "Connecting to");
     }
 
+    /// A reload on the same symbol empties the chart, so the overlay is owed,
+    /// and it opens like any session: settling, then connecting, with no date
+    /// carried from the timeline that was thrown away.
+    #[test]
+    fn a_reload_on_the_same_symbol_starts_from_nothing() {
+        let mut run = Run::new();
+        run.connected();
+        run.trades = 5;
+        run.step(10);
+        run.offline();
+        assert!(run.tracker.state().last_data_at.is_some());
+
+        run.rebuild();
+        run.step(1);
+        let state = run.tracker.state();
+        assert_eq!(state.link, Link::Attempting);
+        assert_eq!(state.last_data_at, None);
+        assert_eq!(state.last_connected_at, None);
+        assert_eq!(run.word(), None, "not a press: it settles");
+        assert_eq!(run.overlay(), None);
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.overlay().expect("up").verb, "Connecting to");
+    }
+
+    /// A same-symbol switch onto a venue that never connects says so: not
+    /// `reconnecting`, and no date from the venue it left.
+    #[test]
+    fn a_same_symbol_feed_switch_is_not_a_press_and_keeps_no_date() {
+        let mut run = Run::new();
+        run.connected();
+        run.trades = 5;
+        run.step(720_000);
+
+        run.rebuild();
+        run.step(1);
+        assert!(!run.pulsing(), "not an attempt a hand asked for");
+        run.verdict = FAILED;
+        run.step(OVERLAY_DELAY_MS);
+        let words = run.overlay().expect("up");
+        assert_eq!(words.verb, "No connection to");
+        assert_eq!(
+            words.meta,
+            "Binance · never connected · retrying automatically"
+        );
+    }
+
+    /// A source rewinding resets the timeline with no new session: a replay's
+    /// seek, which the tracker must see as much as a respawn.
+    #[test]
+    fn a_reset_without_a_respawn_clears_the_data_facts() {
+        let mut run = Run::new();
+        run.connected();
+        run.trades = 5;
+        run.step(10);
+        run.timeline += 1;
+        run.empty_pane = true;
+        run.any_bars = false;
+        run.step(1);
+        assert_eq!(run.tracker.state().last_data_at, None);
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.overlay().expect("up").verb, "No trades yet on");
+    }
+
+    /// A Reconnect keeps the timeline, and so what the tracker knows about it,
+    /// and is still the hand-pressed attempt shown at once.
+    #[test]
+    fn a_true_reconnect_stays_a_press_and_keeps_its_facts() {
+        let mut run = Run::new();
+        run.connected();
+        run.trades = 5;
+        run.step(10);
+        let before = run.tracker.state();
+        assert!(before.last_data_at.is_some());
+        run.step(DATA_FLOWING_MS);
+        run.press();
+        run.step(1);
+        let state = run.tracker.state();
+        assert_eq!(state.last_data_at, before.last_data_at);
+        assert!(state.last_connected_at.is_some());
+        assert_eq!(run.word(), Some("reconnecting"));
+        assert!(run.pulsing());
+    }
+
     /// With bars on the chart: no overlay, and the word carries the age and the
     /// one-click Reconnect, with the chip up.
     #[test]
@@ -1591,6 +1835,7 @@ mod tests {
                 now_ms: now,
                 symbol: "ETHUSDT",
                 attached_ms: now,
+                timeline_generation: 1,
                 has_transport: true,
                 transport: Transport::Connecting,
                 verdict: Verdict::None,

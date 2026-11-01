@@ -158,6 +158,7 @@ impl Tab {
     /// chart is rebuilt from the history that follows rather than patched,
     /// because bars that already closed cannot be reopened.
     pub fn reset_market_state(&mut self, keep_readings: bool) {
+        self.session.timeline_reset();
         for pane in self.panes_mut() {
             pane.reset_series_with(keep_readings);
             // Indicators follow the chart into the empty state; the refill's

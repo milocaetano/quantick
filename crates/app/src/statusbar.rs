@@ -356,7 +356,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
             });
         response.word_clicked = cell.clicked();
     }
-    if word.reconnect {
+    if word.reconnect && !lead.open {
         let reconnect = ui
             .add(
                 egui::Label::new(
