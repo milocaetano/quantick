@@ -30,6 +30,10 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
                 .iter()
                 .any(|(index, _)| *index == app.runtime.tabs.active_index())
         );
+        assert!(
+            title.strip.tabs.iter().all(|(_, rect)| rect.left() >= 36.0),
+            "the leading logo slot never overlaps a market target"
+        );
         let plus = title.strip.add.unwrap();
         assert!(
             plus.right() <= width && plus.top() < 32.0,

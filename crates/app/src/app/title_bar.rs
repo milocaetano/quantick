@@ -59,15 +59,20 @@ pub(crate) fn draw(
         .exact_height(HEIGHT)
         .frame(
             egui::Frame::none()
-                .fill(theme::CHROME)
-                .inner_margin(egui::Margin::symmetric(4.0, 2.0)),
+                .fill(theme::INSET)
+                .inner_margin(egui::Margin {
+                    left: 4.0,
+                    right: 4.0,
+                    top: 4.0,
+                    bottom: 0.0,
+                }),
         )
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let tab_width =
                     (ui.available_width() - 3.0 * WINDOW_BUTTON_WIDTH - DRAG_WIDTH - 20.0).max(0.0);
                 ui.allocate_ui_with_layout(
-                    egui::vec2(tab_width, 26.0),
+                    egui::vec2(tab_width, 28.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));

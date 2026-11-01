@@ -16,6 +16,7 @@ const CHIP_MAX_WIDTH_PX: f32 = 150.0;
 const CHIP_MIN_WIDTH_PX: f32 = 30.0;
 const CHIP_CLOSE_RESERVE_PX: f32 = 32.0;
 const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
+const LOGO_SLOT_WIDTH_PX: f32 = 28.0;
 
 /// Radius of the amber dot marking a background tab whose feed is in trouble.
 const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
@@ -70,6 +71,7 @@ pub(crate) fn draw(
     drawn.add = None;
     drawn.overflow = None;
     ui.spacing_mut().item_spacing.x = 4.0;
+    draw_logo(ui);
     let mut action = None;
     let closable = chips.len() > 1;
     let slots = ((ui.available_width() - STRIP_CONTROLS_WIDTH_PX).max(0.0)
@@ -87,6 +89,7 @@ pub(crate) fn draw(
     {
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = index == active;
+            let surface = ui.painter().add(egui::Shape::Noop);
             let mut text = egui::RichText::new(chip.label);
             if chip.replaying {
                 text = text.color(theme::AMBER);
@@ -94,7 +97,7 @@ pub(crate) fn draw(
             let response = ui
                 .add_sized(
                     [(chip_width - CHIP_CLOSE_RESERVE_PX).max(0.0), 24.0],
-                    egui::Button::new(text).selected(selected).truncate(),
+                    egui::Button::new(text).frame(false).truncate(),
                 )
                 .on_hover_text(if chip.replaying {
                     format!("{} (replay)", chip.label)
@@ -139,6 +142,14 @@ pub(crate) fn draw(
                         "The last tab stays open — a window with no market has nothing to show",
                     )
                 };
+                paint_tab_surface(
+                    ui,
+                    surface,
+                    response.rect.union(close.rect),
+                    selected,
+                    response.hovered() || close.hovered(),
+                    response.has_focus() || close.has_focus(),
+                );
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
@@ -182,6 +193,107 @@ pub(crate) fn draw(
         action = Some(TabAction::New);
     }
     action
+}
+
+/// Decode once per egui context; the texture handle keeps the upload alive.
+fn draw_logo(ui: &mut egui::Ui) {
+    let key = egui::Id::new("quantick_title_logo");
+    let texture = ui
+        .ctx()
+        .data_mut(|data| data.get_temp::<egui::TextureHandle>(key))
+        .unwrap_or_else(|| {
+            let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+                .expect("bundled assets/icon.png is a valid PNG");
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [icon.width as usize, icon.height as usize],
+                &icon.rgba,
+            );
+            let texture =
+                ui.ctx()
+                    .load_texture("Quantick logo", image, egui::TextureOptions::LINEAR);
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(key, texture.clone()));
+            texture
+        });
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(LOGO_SLOT_WIDTH_PX, 24.0), egui::Sense::hover());
+    let image = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 22.0));
+    ui.painter().image(
+        texture.id(),
+        image,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+}
+
+fn paint_tab_surface(
+    ui: &egui::Ui,
+    slot: egui::layers::ShapeIdx,
+    bounds: egui::Rect,
+    selected: bool,
+    hovered: bool,
+    focused: bool,
+) {
+    let mut rect = bounds.expand2(egui::vec2(2.0, 2.0));
+    rect.max.y = ui.max_rect().bottom();
+    let fill = if selected {
+        theme::CHROME
+    } else {
+        theme::BARE_HOVER
+    };
+    if selected || hovered || focused {
+        ui.painter().set(
+            slot,
+            egui::Shape::rect_filled(
+                rect,
+                egui::Rounding {
+                    nw: 9.0,
+                    ne: 9.0,
+                    sw: 0.0,
+                    se: 0.0,
+                },
+                fill,
+            ),
+        );
+        // Small outward feet join the tab to the row below without a box outline.
+        for (edge, direction) in [(rect.left(), -1.0), (rect.right(), 1.0)] {
+            let radius = 4.0;
+            let mut mesh = egui::Mesh::default();
+            mesh.colored_vertex(egui::pos2(edge, rect.bottom()), fill);
+            for step in 0..=8 {
+                let angle = std::f32::consts::FRAC_PI_2 * step as f32 / 8.0;
+                mesh.colored_vertex(
+                    egui::pos2(
+                        edge + direction * radius * (1.0 - angle.cos()),
+                        rect.bottom() - radius * (1.0 - angle.sin()),
+                    ),
+                    fill,
+                );
+                if step > 0 {
+                    mesh.add_triangle(0, step, step + 1);
+                }
+            }
+            ui.painter().add(egui::Shape::mesh(mesh));
+        }
+    } else {
+        ui.painter().set(
+            slot,
+            egui::Shape::line_segment(
+                [
+                    egui::pos2(rect.right(), rect.top() + 7.0),
+                    egui::pos2(rect.right(), rect.bottom() - 7.0),
+                ],
+                egui::Stroke::new(1.0_f32, theme::BORDER),
+            ),
+        );
+    }
+    if focused {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            8.0,
+            egui::Stroke::new(1.0_f32, theme::ACCENT),
+        );
+    }
 }
 
 /// The `+` dialog: pick a feed and a symbol from the catalog, or add one the
