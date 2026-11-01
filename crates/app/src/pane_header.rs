@@ -180,11 +180,11 @@ pub fn draw_marked(
     let mut intent = None;
     if let Some(state) = state {
         let room = inner.with_min_x(inner.right() - FLOW_CONTROLS_PX);
-        let mut right = clipped_child(ui, room, strip, ("pane_header_right", salt));
+        let right = clipped_child(ui, room, strip, ("pane_header_right", salt));
         let height = inner.y_range();
         let view_right = room.left() + VIEW_SLOT_PX;
         let rect = egui::Rect::from_x_y_ranges(room.left()..=view_right, height);
-        view_button(&mut right, rect, salt, state, painted, &mut intent);
+        view_button(&right, rect, salt, state, painted, &mut intent);
         if let Some(glyph) = row.strip {
             let glyph_left = inner.right() - GLYPH_SLOT_PX;
             let rect = egui::Rect::from_x_y_ranges(glyph_left..=inner.right(), height);

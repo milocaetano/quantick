@@ -1250,13 +1250,8 @@ fn the_toolbar_leaves_bars_and_indicators_to_the_panes() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     let texts = painted_text(&run_frame(&mut app, &ctx));
-    let glyphs = texts.iter().filter(|text| *text == "ƒx").count();
-    assert_eq!(glyphs, 3, "one per pane in {texts:?}");
-    let words = texts.iter().filter(|text| *text == "Indicators").count();
-    assert_eq!(
-        words, 3,
-        "beside each pane's icon, not on the row: {texts:?}"
-    );
+    let buttons = texts.iter().filter(|text| *text == "ƒxIndicators").count();
+    assert_eq!(buttons, 3, "one per pane in {texts:?}");
     assert!(
         !texts.iter().any(|text| text == "bars"),
         "bars is still painted in {texts:?}"
