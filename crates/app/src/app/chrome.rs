@@ -53,8 +53,6 @@ pub(super) struct ChromeState {
     /// is recorded on a healthy chart, which is every frame of a normal
     /// session.
     pub(super) feed_chip_rect: Option<egui::Rect>,
-    /// The Reconnect standing outside the popup, while one does.
-    pub(super) feed_reconnect_rect: Option<egui::Rect>,
 
     /// The tab whose chip opened the feed's recovery popup, if any.
     ///

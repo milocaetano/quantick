@@ -447,8 +447,6 @@ pub(crate) struct ChromeReads<'a> {
 pub(crate) struct ChromeDrawn {
     /// Where the feed's offline chip was painted, or `None` when it was not.
     pub(crate) feed_chip_rect: Option<egui::Rect>,
-    /// The Reconnect standing outside the popup, while one does.
-    pub(crate) feed_reconnect_rect: Option<egui::Rect>,
     /// The tab whose chip opened the feed's recovery popup, if any.
     pub(crate) feed_popup_tab: Option<u64>,
     /// Whether a recording opens with the session day before it joined.
@@ -503,9 +501,11 @@ impl<'a> ChromeReads<'a> {
             .map(|word| word.word)
     }
 
-    /// The Reconnect standing outside the popup, while one does.
-    pub(crate) fn feed_reconnect_rect(self) -> Option<egui::Rect> {
-        self.drawn.feed_reconnect_rect
+    /// Whether a one-click Reconnect stands outside the popup: the overlay's or
+    /// the status bar's, whichever is up.
+    pub(crate) fn feed_reconnect_offered(self) -> bool {
+        let tab = &self.tabs[self.tabs.active_index()];
+        tab.connection.state().link == quantick_chart::connection_state::Link::Offline
     }
 
     /// Whether the recovery popup that chip opens is showing, on the chart
@@ -685,7 +685,6 @@ impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
             feed_chip_rect: self.chrome.feed_chip_rect,
-            feed_reconnect_rect: self.chrome.feed_reconnect_rect,
             feed_popup_tab: self.chrome.feed_popup_tab,
             replay_day_before: self.replay_view.day_before(),
         };

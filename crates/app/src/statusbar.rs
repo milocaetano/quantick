@@ -228,8 +228,6 @@ pub struct StatusResponse {
     pub word_rect: Option<egui::Rect>,
     /// The one-click Reconnect beside the word was pressed.
     pub reconnect: bool,
-    /// That Reconnect's rect, while it stands.
-    pub reconnect_rect: Option<egui::Rect>,
 }
 
 /// What the status bar's first cell shows this frame.
@@ -242,6 +240,31 @@ pub struct StatusLead {
     pub open: bool,
     /// The reason, on the word's hover, so reading it takes no click.
     pub reason: Option<(String, Option<String>)>,
+}
+
+impl StatusLead {
+    /// What the first cell shows for this tab, and the reason behind the word.
+    #[must_use]
+    pub fn of(
+        tab: &crate::tab::Tab,
+        stall: Option<&quantick_feed::stall::Stall>,
+        now_ms: i64,
+        open: bool,
+    ) -> Self {
+        Self {
+            word: tab.connection.status_word(now_ms),
+            door: tab.connection.has_recovery_door(),
+            open,
+            reason: crate::feed_notice::report(&tab.notice, stall)
+                .filter(crate::feed_notice::Report::is_offline)
+                .map(|report| {
+                    (
+                        report.headline.to_owned(),
+                        report.next_step.map(str::to_owned),
+                    )
+                }),
+        }
+    }
 }
 
 /// Draw the status bar as the window's bottom panel. `tz` is the bar's
@@ -351,7 +374,6 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead, response: &mut StatusResponse
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text("Keeps the chart as it is");
-        response.reconnect_rect = Some(reconnect.rect);
         response.reconnect = reconnect.clicked();
     }
 }

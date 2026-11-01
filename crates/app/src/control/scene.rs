@@ -529,8 +529,7 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
     if !popup_open {
         // The one-click Reconnect standing outside the popup: the overlay's, or
         // the status bar's beside the word, never both.
-        if let Some(reconnect) = app.chrome_reads().feed_reconnect_rect() {
-            let bounds = rect_bounds(reconnect);
+        if app.chrome_reads().feed_reconnect_offered() {
             controls.push(SceneControlSnapshot {
                 control_id: FEED_RECONNECT_CONTROL_ID.to_owned(),
                 label: Recovery::Reconnect.label().to_owned(),
@@ -538,8 +537,8 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
                 owner: owner(),
                 selected: false,
                 availability: available(),
-                bounds_availability: available(),
-                bounds: bounds.into_snapshot(),
+                bounds: None,
+                bounds_availability: bounds_not_recorded(),
                 capability_id: Some(
                     quantick_control_handlers::recovery::capability_id(Recovery::Reconnect)
                         .to_owned(),

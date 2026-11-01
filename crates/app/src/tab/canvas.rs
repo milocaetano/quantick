@@ -325,6 +325,51 @@ impl Tab {
         rects
     }
 
+    /// Tell this tab's connection state what the frame found.
+    pub(crate) fn observe_connection(&mut self, config: &crate::config::AppConfig, now_ms: i64) {
+        use quantick_chart::connection_state::{ConnectionFacts, Transport, Verdict};
+        use quantick_feed::{FeedConnectionState, FeedNotice};
+        let stall = self.stall_at(config, now_ms);
+        let report = crate::feed_notice::report(&self.notice, stall.as_ref())
+            .filter(crate::feed_notice::Report::is_offline);
+        let verdict = match (&self.notice, report) {
+            (_, None) => Verdict::None,
+            (FeedNotice::Attention { headline, .. }, Some(_)) => Verdict::Failed {
+                provider_says: Some(headline),
+            },
+            (_, Some(report)) if report.needs_user => Verdict::Failed {
+                provider_says: None,
+            },
+            (_, Some(_)) => Verdict::Quiet,
+        };
+        let mut empty_pane = false;
+        let mut any_bars = false;
+        for (pane, _) in self.panes() {
+            let slots = pane.slots();
+            any_bars |= slots > 0;
+            empty_pane |= slots == 0 && pane.frame.area.is_some();
+        }
+        let capabilities = self.capabilities(config);
+        let facts = ConnectionFacts {
+            now_ms,
+            symbol: &self.symbol,
+            attached_ms: self.feed_attached_ms,
+            has_transport: capabilities.transport,
+            transport: match self.feed_connection {
+                FeedConnectionState::Connecting => Transport::Connecting,
+                FeedConnectionState::Reconnecting => Transport::Reconnecting,
+                FeedConnectionState::Connected => Transport::Connected,
+            },
+            verdict,
+            live_trades: self.live_trades,
+            empty_pane,
+            any_bars,
+            book: self.tape().connection_book(),
+            fraction: None,
+        };
+        self.connection.observe(&facts, &self.loading);
+    }
+
     /// The pane whose header asked for the indicator library this frame. Taken in
     /// the frame of the click: a tab key on the next one would strand the request
     /// on a tab left behind.

@@ -11,7 +11,6 @@ pub(super) struct FrameTailOwners<'a> {
     pub config: &'a AppConfig,
     pub toast: &'a mut ToastSurface,
     pub chip_rect: &'a mut Option<egui::Rect>,
-    pub reconnect_rect: &'a mut Option<egui::Rect>,
     pub popup_tab: &'a mut Option<u64>,
 }
 pub(super) struct FrameTailInput<'a> {
@@ -25,7 +24,6 @@ pub(super) struct FrameTailInput<'a> {
     pub chip_clicked: bool,
     pub dismissed: bool,
     pub chip_rect: Option<egui::Rect>,
-    pub reconnect_rect: Option<egui::Rect>,
 }
 impl FrameTailOwners<'_> {
     pub fn execute(
@@ -66,7 +64,6 @@ impl FrameTailOwners<'_> {
                 }
                 FrameTailStage::PublishFeedPopup => {
                     *self.chip_rect = input.chip_rect;
-                    *self.reconnect_rect = input.reconnect_rect;
                     *self.popup_tab = feed_notice::popup_still_open(
                         input.popup_open,
                         input.chip_clicked,

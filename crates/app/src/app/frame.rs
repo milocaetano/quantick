@@ -450,30 +450,13 @@ impl QuantickApp {
             .active_tab()
             .stall_at(&self.config, crate::metrics::wall_clock_ms());
         let now_ms = crate::metrics::wall_clock_ms();
-        for tab in self.runtime.tabs.iter_mut() {
-            tab.observe_connection(&self.config, now_ms);
-        }
-        let popup_tab = self.runtime.tabs.active_id();
-        let lead = {
-            let tab = self.active_tab();
-            statusbar::StatusLead {
-                word: tab.connection.status_word(now_ms),
-                door: tab.connection.has_recovery_door(),
-                open: self.chrome.feed_popup_tab == Some(popup_tab),
-                reason: crate::feed_notice::report(&tab.notice, scratch.stall.as_ref())
-                    .filter(crate::feed_notice::Report::is_offline)
-                    .map(|report| {
-                        (
-                            report.headline.to_owned(),
-                            report.next_step.map(str::to_owned),
-                        )
-                    }),
-            }
-        };
+        panels::observe_connections(&mut self.runtime.tabs, &self.config, now_ms);
+        let open = self.chrome.feed_popup_tab == Some(self.runtime.tabs.active_id());
+        let lead =
+            statusbar::StatusLead::of(self.active_tab(), scratch.stall.as_ref(), now_ms, open);
         let status = self.status_model();
-        let status_response = statusbar::draw(ctx, &status, &mut self.runtime.tz, &lead);
-        scratch.status = status_response;
-        if status_response.open_trading_tab {
+        scratch.status = statusbar::draw(ctx, &status, &mut self.runtime.tz, &lead);
+        if scratch.status.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
     }
@@ -583,19 +566,8 @@ impl QuantickApp {
         // Read before the canvas borrows the tabs, and answered after it
         // lets go.
         let popup_tab = self.runtime.tabs.active_id();
-        let mut answers = canvas::CanvasAnswers {
-            popup_tab,
-            popup_open: self.chrome.feed_popup_tab == Some(popup_tab),
-            chip_clicked: scratch.status.word_clicked,
-            chip_rect: scratch.status.word_rect,
-            reconnect_rect: scratch.status.reconnect_rect,
-            notice_action: if scratch.status.reconnect {
-                crate::feed_notice::NoticeAction::Reconnect
-            } else {
-                crate::feed_notice::NoticeAction::None
-            },
-            ..canvas::CanvasAnswers::default()
-        };
+        let mut answers =
+            canvas::CanvasAnswers::seeded(popup_tab, self.chrome.feed_popup_tab, &scratch.status);
         // The layer menu offers what this source can produce, and the
         // footprint legend carries the side-honesty label: both resolved once
         // here rather than per pane, per entry, inside the canvas.
@@ -642,8 +614,7 @@ impl QuantickApp {
                     self.dock.open_tab(tab);
                 }
                 let tab = self.active_tab();
-                let feed_name = tab.feed_display_name(&self.config);
-                canvas::draw_overlays(ui, area, tab, feed_name, stall, &mut answers);
+                canvas::overlays(ui, area, tab, &self.config, stall, &mut answers);
             });
         scratch.canvas = answers;
     }
@@ -684,7 +655,6 @@ impl QuantickApp {
             config: &self.config,
             toast: &mut self.surfaces.toast,
             chip_rect: &mut self.chrome.feed_chip_rect,
-            reconnect_rect: &mut self.chrome.feed_reconnect_rect,
             popup_tab: &mut self.chrome.feed_popup_tab,
         }
         .execute(
@@ -698,7 +668,6 @@ impl QuantickApp {
                 chip_clicked: answers.chip_clicked,
                 dismissed: answers.dismissed,
                 chip_rect: answers.chip_rect,
-                reconnect_rect: answers.reconnect_rect,
             },
             spawn,
             stages,

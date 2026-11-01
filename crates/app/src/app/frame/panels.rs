@@ -150,6 +150,18 @@ pub(super) fn center_flow_pane_on_trade(tab: &mut Tab, opened: i64, closed: i64)
     }
 }
 
+/// Tell every tab's connection state what this frame found, the background ones
+/// too: the control plane reads them all.
+pub(super) fn observe_connections(
+    tabs: &mut ArrangementHost,
+    config: &crate::config::AppConfig,
+    now_ms: i64,
+) {
+    for tab in tabs.iter_mut() {
+        tab.observe_connection(config, now_ms);
+    }
+}
+
 /// Waits owned by other components, mirrored level-style each frame so the
 /// overlay needs no push notifications from either.
 pub(super) fn mirror_loading_waits(replay_view: &ReplayView, tabs: &mut ArrangementHost) {

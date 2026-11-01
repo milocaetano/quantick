@@ -26,33 +26,52 @@ pub(in crate::app) struct CanvasAnswers {
     /// recovered while the popup was open closes it, rather than leaving a
     /// stale explanation over a chart that is fine again.
     pub chip_rect: Option<egui::Rect>,
-    /// The Reconnect standing on screen outside the popup, for the scene.
-    pub reconnect_rect: Option<egui::Rect>,
     /// Raised by a placement that wants its note typed, and handed to the
     /// drawing chrome: the flag belongs to the editor that owns the caret,
     /// not to the canvas that asks for it.
     pub begin_text_edit: bool,
 }
 
+impl CanvasAnswers {
+    /// What the frame already knows before the canvas draws: which tab's popup
+    /// this is, and what the status bar was just asked.
+    pub(in crate::app) fn seeded(
+        popup_tab: u64,
+        open_popup: Option<u64>,
+        status: &crate::statusbar::StatusResponse,
+    ) -> Self {
+        Self {
+            popup_tab,
+            popup_open: open_popup == Some(popup_tab),
+            chip_clicked: status.word_clicked,
+            chip_rect: status.word_rect,
+            notice_action: if status.reconnect {
+                feed_notice::NoticeAction::Reconnect
+            } else {
+                feed_notice::NoticeAction::None
+            },
+            ..Self::default()
+        }
+    }
+}
+
 /// The overlay over whatever panes have no bars, then the popup if it is open.
 /// The panes published their rects on the draw just before this, so these are
 /// this frame's geometry rather than the previous one's.
-pub(super) fn draw_overlays(
+pub(super) fn overlays(
     ui: &mut egui::Ui,
     area: egui::Rect,
     tab: &Tab,
-    feed_name: &str,
+    config: &crate::config::AppConfig,
     stall: Option<&Stall>,
     answers: &mut CanvasAnswers,
 ) {
     let now = crate::metrics::wall_clock_ms();
+    let feed_name = tab.feed_display_name(config);
     if let Some(words) = tab.connection.overlay(feed_name, now)
         && let Some(rect) = tab.empty_panes_rect()
     {
-        let (control, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, now);
-        if control.is_some() {
-            answers.reconnect_rect = control;
-        }
+        let (_, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, now);
         if pressed {
             answers.notice_action = feed_notice::NoticeAction::Reconnect;
         }

@@ -232,13 +232,6 @@ pub struct Tab {
     /// blocks once and then goes quiet has to keep saying so — the chart it
     /// left empty will not.
     pub notice: FeedNotice,
-    /// Wall clock when [`Self::notice`] last changed.
-    ///
-    /// A feed cannot report that nothing is happening, because nothing
-    /// happening produces no event; the only way to tell a step in progress
-    /// from a step that has stopped progressing is how long it has stood.
-    /// Read by [`Self::stall_at`].
-    pub notice_since_ms: i64,
     /// Wall clock when the running feed session was attached — the floor for
     /// judging a first connection that never lands.
     pub feed_attached_ms: i64,
@@ -480,7 +473,6 @@ impl Tab {
             book_events: feed.book_events,
             notices: feed.notices,
             notice: FeedNotice::Clear,
-            notice_since_ms: metrics::wall_clock_ms(),
             feed_attached_ms: metrics::wall_clock_ms(),
             connection_since_ms: metrics::wall_clock_ms(),
             connection: quantick_chart::connection_state::ConnectionTracker::new(),
@@ -593,9 +585,8 @@ impl Tab {
         self.feed_capabilities = handle.capabilities;
         self.feed_latency = handle.latency;
         self.notice = FeedNotice::Clear;
-        self.notice_since_ms = metrics::wall_clock_ms();
-        self.feed_attached_ms = self.notice_since_ms;
-        self.connection_since_ms = self.notice_since_ms;
+        self.feed_attached_ms = metrics::wall_clock_ms();
+        self.connection_since_ms = self.feed_attached_ms;
         self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;

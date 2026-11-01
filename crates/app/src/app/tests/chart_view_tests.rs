@@ -291,6 +291,31 @@ fn the_empty_chart_never_says_the_same_thing_twice() {
     );
 }
 
+/// The word and the state answer the same stall on one frame, and a feed that
+/// is offline offers the one-click Reconnect a script can name too. Quiet does
+/// not: reconnecting an open socket fixes nothing.
+#[test]
+fn the_status_word_and_the_recovery_on_offer_follow_the_stall() {
+    use quantick_feed::stall::ForcedStall;
+    let (mut app, _notices, _channels) = test_app_with_notices();
+    let ctx = egui::Context::default();
+    for (stall, word, offered) in [
+        (ForcedStall::Reconnect, "offline", true),
+        (ForcedStall::FirstConnect, "offline", true),
+        (ForcedStall::Silent, "quiet", false),
+    ] {
+        app.active_tab_mut().forced_stall = Some(stall);
+        run_frame(&mut app, &ctx);
+        assert_eq!(app.chrome_reads().feed_word(), Some(word), "{stall:?}");
+        assert_eq!(
+            app.chrome_reads().feed_reconnect_offered(),
+            offered,
+            "{stall:?}"
+        );
+        assert!(app.chrome_reads().feed_chip_rect().is_some(), "{stall:?}");
+    }
+}
+
 /// A click on the chart puts the popup away. The rule is a table in
 /// `feed_notice`; this proves the frame feeds it the right answer, which
 /// means measuring the click against the two rectangles that were drawn.
