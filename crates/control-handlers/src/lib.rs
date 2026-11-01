@@ -19,6 +19,7 @@
 
 pub mod analysis;
 pub mod annotate;
+pub mod attention;
 pub mod bubble_preset;
 pub mod bubble_scale;
 pub mod chart;

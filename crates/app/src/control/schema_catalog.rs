@@ -6,10 +6,10 @@ use quantick_control_schema::tape_view::{TapeViewInput, TapeViewResult};
 use serde_json::{Value, json};
 
 use quantick_control_host::catalogue::SnapshotScopeDescriptor;
+use quantick_control_handlers::attention::{MarkInput, MarkResult};
 use quantick_control_schema::analysis::{DrawingsSnapshot, IndicatorsSnapshot};
 
 use super::{
-    actions::{MarkInput, MarkResult},
 
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput},

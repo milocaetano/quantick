@@ -4,6 +4,7 @@
 
 use quantick_control_handlers::{
     TabDirectory,
+    attention::{MarkAccess, MarkPort},
     analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
     trade::{TradeAccess, TradeDesk, TradePort},
     history::HistoryPort,
@@ -221,5 +222,20 @@ impl AnalysisPort for dyn ControlPort {
                 .collect();
             visit(tab_id, &panes);
         }
+    }
+}
+
+impl MarkPort for dyn ControlPort {
+    fn cursor_snapshot(&self) -> quantick_control_schema::interaction::CursorSnapshot {
+        crate::control::interaction::cursor_snapshot(self)
+    }
+}
+
+impl MarkAccess for ControlAccess {
+    fn record_event(
+        &mut self,
+        event: quantick_control_host::journal::NewEvent,
+    ) -> quantick_control::wire::WireU64 {
+        self.append_event(event)
     }
 }

@@ -1,39 +1,22 @@
 //! The action registry port: named, attributed calls that change session
-//! state, and the first one — a human mark.
+//! state, and the one list of the families this build docks into it.
 //!
 //! Plan §2.2 and `arch-review`'s second operator: a capability a trader does
 //! exists as a named call with an actor in its signature, not only inside a
 //! click handler. The UI hotkey, the `QUANTICK_CONTROL_MARK` hook, a
-//! deterministic test and — in a later pull request — an authorized agent all
-//! arrive at the same handler through [`ActionRegistry`]. The gateway keeps
-//! every action here unavailable to remote observer clients: an action's
-//! permissions are not in the observer ceiling, so a remote invocation is
-//! refused before dispatch.
+//! deterministic test and an authorized agent all arrive at the same handler
+//! through [`ActionRegistry`]. The gateway keeps every action here
+//! unavailable to remote observer clients: an action's permissions are not in
+//! the observer ceiling, so a remote invocation is refused before dispatch.
 
-use crate::app::TabsPort;
 pub(crate) use quantick_control_schema::attention::*;
 
-use std::collections::BTreeSet;
-
-use quantick_control::{
-    error::ControlError,
-    id::{CapabilityId, CostClassId, ModuleId, RiskFlagId},
-    limits::CONTROL_REASON_MAX_BYTES,
-    registry::{
-        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
-        RegistryError, RevisionPolicy,
-    },
-    schema::generated_schema,
-    wire::{ActorContext, ActorKind, WireU64},
-};
-
-use schemars::JsonSchema;
-
-use serde::{Deserialize, Serialize};
-
-use serde_json::{Value, json};
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
+use serde_json::Value;
 
 use crate::app::ControlWindow;
+
+use super::gateway::ControlAccess;
 
 /// One action's handler over this application: it mutates the window and
 /// journals through its control access.
@@ -50,16 +33,9 @@ pub(crate) type ActionHandler = fn(
 pub(crate) type ActionRegistry =
     quantick_control_host::actions::ActionRegistry<ControlWindow, ControlAccess>;
 
-use super::{
-    gateway::ControlAccess,
-    interaction::{CursorSnapshot, cursor_snapshot},
-    journal::{EventActor, NewEvent},
-};
-
-/// The annotate tier's identifiers this action docks into (contract §7).
+/// The annotate tier's identifiers the mark docks into (contract §7).
 pub(crate) use quantick_control_host::authority::{
-    ANNOTATE_ATTENTION_PERMISSION_ID, ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID,
-    ANNOTATOR_PROFILE_ID, ATTENTION_MODULE_ID, CAPABILITY_VERSION, NO_CONFIRMATION_ID,
+    ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, CAPABILITY_VERSION, NO_CONFIRMATION_ID,
     UI_BOUNDED_COST_ID,
 };
 
@@ -67,12 +43,7 @@ pub(crate) use quantick_control_host::authority::{
 /// and one handler here; nothing else opens.
 pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     let mut registry = ActionRegistry::new();
-    registry.register_resolved(
-        mark_descriptor(),
-        create_mark,
-        resolve_mark,
-        generated_schema::<MarkCanonicalInput>(),
-    )?;
+    quantick_control_handlers::attention::register(&mut registry)?;
     quantick_control_handlers::annotate::register(&mut registry)?;
     quantick_control_handlers::notify::register(&mut registry)?;
     super::layout::register(&mut registry)?;
@@ -100,253 +71,4 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::script::register(&mut registry)?;
     quantick_control_handlers::trade::register(&mut registry)?;
     Ok(registry)
-}
-
-/// What a mark takes: an optional note the human typed, and optionally the
-/// target itself. The hotkey resolves the pointer and supplies the target, so
-/// the input alone determines the mark and a control trace can replay it
-/// identically; a caller that supplies none gets what is under the pointer
-/// at that moment — and a replayed entry without one is refused rather than
-/// resolved against the rerun's pointer, which is not the one that was
-/// marked.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MarkInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(max = CONTROL_REASON_MAX_BYTES))]
-    pub note: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<CursorSnapshot>,
-}
-
-/// A mark after resolution: the target is settled, and the input says how it
-/// was settled. This is what the control trace records and what a replay
-/// hands back, so a rerun marks the bar that was marked rather than whatever
-/// the pointer happens to be over.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MarkCanonicalInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(max = CONTROL_REASON_MAX_BYTES))]
-    pub note: Option<String>,
-    pub target: CursorSnapshot,
-    pub target_source: MarkTargetSource,
-}
-
-/// Who settled a mark's target.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum MarkTargetSource {
-    /// The pointer of this window, read when the mark was taken.
-    Pointer,
-    /// The caller passed the target it had read from a snapshot.
-    Supplied,
-    /// A control trace re-injected a recorded mark.
-    Replayed,
-}
-
-impl MarkTargetSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Pointer => "pointer",
-            Self::Supplied => "supplied",
-            Self::Replayed => "replayed",
-        }
-    }
-}
-
-/// What a mark returns: where it landed in the journal and exactly what was
-/// pointed at when it was taken. The journal event at `sequence` carries the
-/// wall-clock time; the result does not repeat it, so the trace's result
-/// digest depends on what was marked and on its place in the journal, never
-/// on the clock.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct MarkResult {
-    pub sequence: WireU64,
-    pub target: CursorSnapshot,
-    /// Who resolved the target: `pointer` — the human's pointer, at the
-    /// gesture (the hotkey and the hook pass it) or at the call (a caller
-    /// that passed none); `supplied` — an agent passed a target it read from
-    /// a snapshot; `replayed` — a control trace re-injected a recorded mark.
-    pub target_source: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-    pub actor: EventActor,
-}
-
-fn mark_descriptor() -> CapabilityDescriptor {
-    CapabilityDescriptor {
-        id: CapabilityId::new(MARK_CAPABILITY_ID).expect("static capability ID is valid"),
-        version: CAPABILITY_VERSION,
-        title: "Mark what is under the pointer".to_owned(),
-        description: "Appends a journal event carrying the fully resolved cursor target — pane, bar, price, flow cell, drawing — plus an optional note, attributed to its actor. The primitive that turns \"look at this\" into a referent a client can quote back.".to_owned(),
-        module: ModuleId::new(ATTENTION_MODULE_ID).expect("static module ID is valid"),
-        input_schema: generated_schema::<MarkInput>(),
-        output_schema: generated_schema::<MarkResult>(),
-        examples: Vec::new(),
-        effect: quantick_control::id::EffectId::new(ANNOTATE_EFFECT_ID)
-            .expect("static effect ID is valid"),
-        risk_flags: BTreeSet::<RiskFlagId>::new(),
-        read_only: false,
-        idempotency: IdempotencyPolicy::Forbidden,
-        // A mark adds to an append-only journal; stale input cannot damage
-        // existing state, which is why no expected revision is demanded.
-        revision_policy: RevisionPolicy::OptionalForAdditive,
-        stale_input_safety: Some(
-            "A mark appends one journal event and overwrites nothing; a stale caller can only mark the wrong thing, which the event's resolved target makes visible."
-                .to_owned(),
-        ),
-        dry_run_supported: false,
-        persistence: EffectPersistence::Transient,
-        reversible: false,
-        destructive: false,
-        risk_reducing: false,
-        required_permissions: [ANNOTATE_PERMISSION_ID, ANNOTATE_ATTENTION_PERMISSION_ID]
-            .into_iter()
-            .map(|id| quantick_control::id::PermissionId::new(id).expect("static permission"))
-            .collect(),
-        preconditions: Vec::new(),
-        confirmation_class: quantick_control::id::ConfirmationClassId::new(NO_CONFIRMATION_ID)
-            .expect("static confirmation class is valid"),
-        availability: Availability::available(),
-        expected_cost: ExpectedCost {
-            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-            max_items: None,
-            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-        },
-        pagination: None,
-    }
-}
-
-/// A mark's resolver: what is under the pointer *now* becomes part of the
-/// input, so the trace line and a replay of it name the same bar.
-fn resolve_mark<P: TabsPort + ?Sized>(
-    app: &P,
-    _actor: &ActorContext,
-    input: Value,
-) -> Result<Value, ControlError> {
-    let input: MarkInput = serde_json::from_value(input)
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let (target, target_source) = match input.target {
-        Some(target) => (target, MarkTargetSource::Supplied),
-        None => (cursor_snapshot(app), MarkTargetSource::Pointer),
-    };
-    serde_json::to_value(MarkCanonicalInput {
-        note: input.note,
-        target,
-        target_source,
-    })
-    .map_err(|error| ControlError::invalid_request(format!("mark input: {error}")))
-}
-
-/// The mark handler: append the event for the resolved target. One path for
-/// the hotkey, the hook, the tests, a replayed trace entry and any authorized
-/// agent.
-fn create_mark<P: ?Sized>(
-    _app: &mut P,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: MarkCanonicalInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    if input
-        .note
-        .as_ref()
-        .is_some_and(|note| note.len() > CONTROL_REASON_MAX_BYTES)
-    {
-        return Err(ControlError::invalid_request(format!(
-            "a mark note is at most {CONTROL_REASON_MAX_BYTES} bytes"
-        )));
-    }
-    let target = input.target;
-    // A rerun says how *this* mark arrived: from the trace, not from a
-    // pointer that was somewhere else. What the original run resolved stays
-    // in the trace line.
-    let target_source = if actor.actor_kind == ActorKind::Automation {
-        MarkTargetSource::Replayed
-    } else {
-        input.target_source
-    }
-    .as_str();
-    let event_actor = EventActor::from(actor);
-    let payload = json!({
-        "target": target,
-        "target_source": target_source,
-        "note": input.note,
-        "actor": event_actor,
-    });
-    let sequence = access.append_event(NewEvent::by(
-        ATTENTION_MODULE_ID,
-        MARK_EVENT_KIND,
-        actor,
-        payload,
-    ));
-    let result = MarkResult {
-        sequence,
-        target,
-        target_source: target_source.to_owned(),
-        note: input.note,
-        actor: event_actor,
-    };
-    serde_json::to_value(result)
-        .map_err(|error| ControlError::invalid_request(format!("mark result: {error}")))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn borrowed_schemas_name_the_same_registered_action_and_refuse_other_versions() {
-        let registry = standard_actions().unwrap();
-        let action = registry.lookup(MARK_CAPABILITY_ID, 1).unwrap();
-        let schemas = registry.schemas(&action.descriptor.id, 1).unwrap();
-        assert!(std::ptr::eq(schemas.capability_id, &action.descriptor.id));
-        assert!(std::ptr::eq(schemas.input, &action.input));
-        assert!(std::ptr::eq(schemas.output, &action.output));
-        assert_eq!(schemas.version, action.descriptor.version);
-        assert!(registry.schemas(&action.descriptor.id, 2).is_none());
-        assert!(
-            registry
-                .schemas(&CapabilityId::new("action.unknown").unwrap(), 1)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn the_standard_actions_register_and_validate_their_schemas() {
-        let registry = standard_actions().unwrap();
-        let action = registry.lookup(MARK_CAPABILITY_ID, 1).unwrap();
-        let (descriptor, input, output) = (&action.descriptor, &action.input, &action.output);
-        assert_eq!(descriptor.effect.as_str(), ANNOTATE_EFFECT_ID);
-        assert!(!descriptor.read_only);
-        assert!(
-            descriptor
-                .required_permissions
-                .iter()
-                .any(|permission| permission.as_str() == ANNOTATE_ATTENTION_PERMISSION_ID)
-        );
-        input.validate(&json!({})).unwrap();
-        input
-            .validate(&json!({ "note": "this absorption" }))
-            .unwrap();
-        assert!(input.validate(&json!({ "note": 1 })).is_err());
-        assert!(input.validate(&json!({ "unexpected": true })).is_err());
-        assert!(
-            output.validate(&json!({})).is_err(),
-            "a result needs its fields"
-        );
-        assert!(registry.lookup("attention.mark.create", 2).is_none());
-        assert!(registry.lookup("not an id", 1).is_none());
-    }
-
-    #[test]
-    fn a_second_registration_of_the_same_action_is_refused() {
-        let mut registry = standard_actions().unwrap();
-        assert!(matches!(
-            registry.register(mark_descriptor(), create_mark),
-            Err(RegistryError::Duplicate { .. })
-        ));
-    }
 }

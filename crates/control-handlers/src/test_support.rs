@@ -9,7 +9,11 @@ use quantick_control::{
     id::{ConnectionId, PrincipalId, RequestId},
     wire::{ActorContext, ActorKind, CanonicalDecimal, WireU64},
 };
-use quantick_control_host::{journal::NewEvent, wire::PaneSideDto};
+use quantick_control_host::{
+    journal::NewEvent,
+    wire::{PaneSideDto, unavailable},
+};
+use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::{Bar, BarSpec, Side, Trade};
@@ -24,6 +28,7 @@ use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, Pane
 use crate::history::HistoryPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
+use crate::attention::{MarkAccess, MarkPort};
 use crate::tabs::TabDirectory;
 use crate::trade::{TradeAccess, TradeDesk, TradePort};
 
@@ -339,6 +344,22 @@ impl TradePort for FakeWindow {
     fn persist_risk_settings(&mut self) {}
 }
 
+/// The fake window has no pointer: a mark resolved against it names the
+/// active tab's first pane and says why the pointer is missing.
+impl MarkPort for FakeWindow {
+    fn cursor_snapshot(&self) -> CursorSnapshot {
+        let tab = &self.tabs[self.active];
+        CursorSnapshot {
+            active_tab_id: WireU64::new(tab.id),
+            focused_pane_id: WireU64::new(tab.panes.first().map_or(0, |pane| pane.id)),
+            focused_pane_side: PaneSideDto::Flow,
+            pointer: None,
+            pointer_availability: unavailable("fake_window_has_no_pointer"),
+            semantic_scene: unavailable("fake_window_has_no_pointer"),
+        }
+    }
+}
+
 impl ChartPort for FakeWindow {
     fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
         for (index, tab) in self.tabs.iter().enumerate() {
@@ -412,6 +433,13 @@ impl FakeAccess {
 impl TradeAccess for FakeAccess {
     fn record_event(&mut self, event: NewEvent) {
         self.events.push(event);
+    }
+}
+
+impl MarkAccess for FakeAccess {
+    fn record_event(&mut self, event: NewEvent) -> WireU64 {
+        self.events.push(event);
+        WireU64::new(self.events.len() as u64)
     }
 }
 
