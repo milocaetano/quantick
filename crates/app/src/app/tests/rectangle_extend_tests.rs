@@ -287,10 +287,7 @@ fn extend_left_makes_the_region_active_before_its_left_anchor() {
 /// untouched too.
 #[test]
 fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
-    for position in [
-        egui::pos2(LEFT - 150.0, MID_Y),
-        egui::pos2(LEFT - 150.0, TOP - 100.0),
-    ] {
+    for inside_outline in [true, false] {
         let (mut app, ctx, _commands) = drawn_rectangle_with_fill(0);
         let (left, _) = drawn_sides(&app);
         click(&mut app, &ctx, egui::pos2(left + BAND_INSET, MID_Y));
@@ -306,6 +303,53 @@ fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
         }
         run_frame(&mut app, &ctx);
         assert!(!app.active_tab().flow_pane.model.viewport.follows_live());
+        let pane = &app.active_tab().flow_pane;
+        let chart = pane.frame.chart_area.expect("the chart was painted");
+        let ys: Vec<_> = pane.drawings.items()[0]
+            .points
+            .iter()
+            .map(|point| price_y(&app, PaneSide::Flow, point.price))
+            .collect();
+        let top = ys[0].min(ys[1]);
+        let bottom = ys[0].max(ys[1]);
+        let (left, _) = drawn_sides(&app);
+        let position = egui::pos2(
+            (chart.left() + left) / 2.0,
+            if inside_outline {
+                (top + bottom) / 2.0
+            } else {
+                (bottom + chart.bottom()) / 2.0
+            },
+        );
+        assert!(
+            position.x < left - BAND_INSET,
+            "outside the original rectangle"
+        );
+        if inside_outline {
+            assert!(position.y > top + BAND_INSET && position.y < bottom - BAND_INSET);
+        } else {
+            assert!(
+                position.y > bottom + BAND_INSET,
+                "outside the extended band"
+            );
+        }
+        assert!(
+            chart.contains(position),
+            "the double click must reach the chart"
+        );
+        assert!(
+            pane.frame
+                .capsules
+                .iter()
+                .flatten()
+                .all(|rect| !rect.contains(position))
+        );
+        assert!(
+            app.drawings
+                .chrome
+                .context_bar_rect()
+                .is_none_or(|rect| !rect.contains(position))
+        );
         double_click(&mut app, &ctx, position);
         assert!(
             app.active_tab().flow_pane.model.viewport.follows_live(),

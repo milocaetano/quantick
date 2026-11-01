@@ -61,6 +61,7 @@ mod launch_phase_tests;
 mod layers_tests;
 mod live_trade_tests;
 mod menu_bar_tests;
+mod native_resize_tests;
 mod objects_menu_tests;
 mod orderflow_tests;
 mod panes_layout_tests;

@@ -3,6 +3,7 @@ use crate::theme;
 use eframe::egui;
 
 use quantick_control_schema::native_window::WindowState;
+mod resize;
 
 #[derive(Default)]
 pub(crate) struct TitleBarState {
@@ -36,6 +37,7 @@ pub(crate) fn draw(
     tabs: &super::arrangement_host::ArrangementHost,
     title: &mut TitleBarState,
 ) -> Option<crate::tabstrip::TabAction> {
+    resize::draw(ctx);
     let active = tabs.active_index();
     let chips: Vec<_> = tabs
         .iter_with_ids()
