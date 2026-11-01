@@ -42,7 +42,6 @@ mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
 pub(crate) mod script;
-mod session;
 mod system;
 mod trace;
 mod types;
@@ -144,7 +143,7 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     quantick_control_handlers::analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;
     quantick_control_handlers::orderflow::register(&mut registry)?;
-    session::register(&mut registry)?;
+    quantick_control_handlers::session::register(&mut registry)?;
     scene::register(&mut registry)?;
     layers::register(&mut registry)?;
     Ok(registry)

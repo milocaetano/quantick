@@ -3042,6 +3042,7 @@ dependencies = [
  "quantick-engine",
  "quantick-orderflow",
  "quantick-paper",
+ "quantick-replay",
  "quantick-session",
  "quantick-sim",
  "quantick-sources",

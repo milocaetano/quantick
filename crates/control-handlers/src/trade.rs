@@ -39,7 +39,7 @@ pub use quantick_control_host::authority::CAPABILITY_VERSION;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;
 use quantick_engine::Side;
-use quantick_paper::PaperAccount;
+use quantick_paper::{PaperAccount, format::PositionSummary, risk_sizing::RiskState};
 use quantick_sim::{Bracket, EntryKind, Order, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -69,6 +69,12 @@ pub trait TradeDesk {
     /// The bracket the ticket would attach to an order of `quantity` on
     /// `side` around `reference`, exactly as a click attaches it.
     fn armed_bracket(&self, side: Side, reference: Decimal, quantity: Decimal) -> Bracket;
+    /// The risk sizing's state and whether it blocks an entry, asked once.
+    fn risk_report(&self) -> (RiskState, bool);
+    /// The open position, as the desk's own surfaces summarise it.
+    fn position_summary(&self) -> Option<PositionSummary>;
+    /// Which closed-trade row the trader selected in the ledger.
+    fn selected_trade_index(&self) -> Option<usize>;
 }
 
 /// The window as the trade family reaches it: the active tab's desk, and

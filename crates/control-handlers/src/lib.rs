@@ -33,6 +33,7 @@ pub mod orderflow;
 pub mod pnl_display;
 pub mod recovery;
 pub mod semantic;
+pub mod session;
 mod tabs;
 pub mod tape_fold;
 pub mod tape_view_set;

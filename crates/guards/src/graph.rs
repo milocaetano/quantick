@@ -138,6 +138,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "engine",
             "orderflow",
             "paper",
+            "replay",
             "session",
             "sim",
             "sources",

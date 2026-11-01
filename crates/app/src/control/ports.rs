@@ -4,6 +4,7 @@
 
 use quantick_control_handlers::{
     TabDirectory,
+    session::{ReplayRead, SessionPort, SessionTab},
     orderflow::{OrderflowEngine, OrderflowPane, OrderflowPaneEntry, OrderflowPort},
     attention::{MarkAccess, MarkPort},
     analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
@@ -168,6 +169,15 @@ impl TradeDesk for PaperTrading {
     ) -> quantick_sim::Bracket {
         PaperTrading::armed_bracket(self, side, reference, quantity)
     }
+    fn risk_report(&self) -> (quantick_paper::risk_sizing::RiskState, bool) {
+        PaperTrading::risk_report(self)
+    }
+    fn position_summary(&self) -> Option<quantick_paper::format::PositionSummary> {
+        PaperTrading::position_summary(self)
+    }
+    fn selected_trade_index(&self) -> Option<usize> {
+        PaperTrading::account(self).selected_trade_index()
+    }
 }
 
 impl TradePort for dyn ControlPort {
@@ -319,6 +329,80 @@ impl OrderflowPort for dyn ControlPort {
                 .map(|(side, pane)| OrderflowPaneEntry { side: *side, pane })
                 .collect();
             visit(tab_id, &entries);
+        }
+    }
+}
+
+/// One linked recording, lent for the read.
+struct ReplayLinkRead<'a>(&'a quantick_feed::replay::ReplayLink);
+
+impl ReplayRead for ReplayLinkRead<'_> {
+    fn session(&self) -> &quantick_replay::Session {
+        &self.0.session
+    }
+    fn playing(&self) -> bool {
+        self.0.status.is_playing()
+    }
+    fn finished(&self) -> bool {
+        self.0.status.is_finished()
+    }
+    fn position_ms(&self) -> i64 {
+        self.0.status.position_ms()
+    }
+    fn start_ms(&self) -> i64 {
+        self.0.status.start_ms()
+    }
+    fn end_ms(&self) -> i64 {
+        self.0.status.end_ms()
+    }
+    fn elapsed_ms(&self) -> i64 {
+        self.0.status.elapsed_ms()
+    }
+    fn progress(&self) -> f32 {
+        self.0.status.progress()
+    }
+    fn speed(&self) -> f32 {
+        self.0.status.speed()
+    }
+    fn rewinds(&self) -> u64 {
+        self.0.status.rewinds()
+    }
+    fn day_prints(&self) -> (usize, usize) {
+        self.0.day_prints()
+    }
+    fn trace_file_name(&self) -> String {
+        quantick_control_schema::session::file_name(&super::trace::ReplayTraceFile::path_for(
+            &self.0.session.path,
+        ))
+    }
+}
+
+/// One open tab, lent for the session scopes' read.
+struct SessionTabRead<'a> {
+    tab: &'a Tab,
+    replay: Option<ReplayLinkRead<'a>>,
+}
+
+impl SessionTab for SessionTabRead<'_> {
+    fn symbol(&self) -> &str {
+        &self.tab.symbol
+    }
+    fn desk(&self) -> &dyn TradeDesk {
+        &self.tab.paper
+    }
+    fn replay(&self) -> Option<&dyn ReplayRead> {
+        self.replay.as_ref().map(|link| link as &dyn ReplayRead)
+    }
+}
+
+impl SessionPort for dyn ControlPort {
+    fn visit_session_tabs(&self, visit: &mut dyn FnMut(u64, &dyn SessionTab)) {
+        for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {
+            let read = SessionTabRead {
+                tab,
+                replay: tab.replay.as_ref().map(ReplayLinkRead),
+            };
+            visit(tab_id, &read);
         }
     }
 }

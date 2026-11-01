@@ -26,6 +26,8 @@ quantick-orderflow = { path = "../orderflow" }
 # The trades journal's sessions: the listing, the filter and the edits the
 # ledger makes, so the capability and the gesture share one path.
 quantick-paper = { path = "../paper" }
+# The recorded session the replay scope describes.
+quantick-replay = { path = "../replay" }
 # The tab session the History press and its cancel are acts of: the handler
 # picks the act and judges the session's answer.
 quantick-session = { path = "../session" }
