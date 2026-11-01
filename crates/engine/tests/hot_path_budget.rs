@@ -105,7 +105,8 @@ const RENKO: Budget = Budget {
     bytes: 0.0,
     copy_bytes: 0.0,
 };
-/// deals:500, a reading a second. Calibrated at `ff300983`: 0 allocations, 0 bytes, 0 copy bytes per
+/// deals:500, a reading a second (the reading itself is observed outside the
+/// counted window; the budget covers `push_into` only). Calibrated at `ff300983`: 0 allocations, 0 bytes, 0 copy bytes per
 /// trade (120 bars closed in the window).
 const DEALS: Budget = Budget {
     path: "engine.push.deals",

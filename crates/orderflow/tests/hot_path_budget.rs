@@ -79,7 +79,7 @@ const TRADE_BOOK: Budget = Budget {
 /// move the clock. Calibrated at `53266e52`: 16.11 allocations, 6,648.6 bytes
 /// and 0 copy bytes per update over 6,000 updates. The copy bytes measured
 /// zero, so they get a small absolute allowance of 64 bytes per update
-/// (384 KiB over the window): one buffer starting to grow per update crosses
+/// (384 KB over the window): one buffer starting to grow per update crosses
 /// it.
 const DEPTH_BOOK: Budget = Budget {
     path: "orderflow.depth.book",
@@ -441,6 +441,11 @@ fn book_depth_path_holds_to_budget() {
         work = add(work, print.depth);
         updates += print.depth_updates;
     }
+    assert_eq!(
+        book.engine.health().gaps,
+        0,
+        "every counted delta must apply, or the budget measures a rejected feed"
+    );
     holds_to_budget(DEPTH_BOOK, work, updates);
 }
 

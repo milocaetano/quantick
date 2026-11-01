@@ -61,5 +61,5 @@ A CPU slowdown that allocates nothing: a loop that walks retained history
 without copying it, a quadratic sort, a cache that stops hitting but rebuilds
 into reused buffers. Those show only on a clock. Timing stays in the
 `#[ignore]` tests run by name (`flow_live_bench.rs`, the long
-`session_length_tests` variant, the engine benches) and in committed
+`session_length_tests` variant), in `cargo bench -p quantick-engine`, and in committed
 measurements under `docs/quality/`, taken on an idle host.

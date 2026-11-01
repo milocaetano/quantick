@@ -5,11 +5,13 @@
 //! | `chart.frame.flow_session` | frame | `flow_execution::project_styled_flow_executions`: the session's request, admission and capture, the worker's own work subtracted |
 //! | `chart.frame.flow_plan` | frame | `FlowPresentation::styled` over the published frame and `place_flow_chrome` for the caption |
 //!
-//! The scene is the one `app`'s ignored live FLOW bench
-//! (`orderflow_render/tests/flow_live_bench.rs`) paints: the recorded busy
-//! Binance spot minute (`crates/stores/tests/fixtures/btc/spot-busy.csv`)
-//! replayed as a seeded random walk, a tick:50 chart in the "Binance BTC Spot
-//! spheres" look, the pane's worker run inline. Counted, not timed: work is
+//! The scene is derived from `app`'s ignored live FLOW bench
+//! (`orderflow_render/tests/flow_live_bench.rs`), cut down to one counted
+//! minute: the recorded busy Binance spot minute only
+//! (`crates/stores/tests/fixtures/btc/spot-busy.csv`) replayed as a seeded
+//! random walk at about 50 prints a second, 60,000 prints of history where
+//! the bench loads 4.32 M, a tick:50 chart in the "Binance BTC Spot spheres"
+//! look, the pane's worker run inline. Counted, not timed: work is
 //! read with [`work_meter`] on the UI thread, so the budgets hold in the
 //! ordinary `cargo test` whatever the host's load. What the bench also sees,
 //! egui's paint and tessellation and the GPU upload, is `app`'s and not
@@ -80,10 +82,12 @@ const FRAME_PLAN: Budget = Budget {
 // ---------------------------------------------------------------------------
 
 const BUSY: &str = include_str!("../../stores/tests/fixtures/btc/spot-busy.csv");
-/// History before the live frames: about twenty minutes of this tape.
+/// History before the live frames: about 72 minutes of this tape
+/// (60,000 prints at the busy minute's 119.8 ms mean gap, scaled by 0.6).
 const HISTORY_PRINTS: usize = 60_000;
 const HISTORY_PACE: f64 = 0.6;
-/// The live tape the bench's perf session saw: about 39 prints a second.
+/// The bench's live pace factor; over the busy minute alone it yields about
+/// 50 prints a second (the bench's 39/s mixes in the quiet minute).
 const LIVE_PACE: f64 = 0.155;
 const FRAME_MS: f64 = 1000.0 / 60.0;
 /// Frames run before counting (the visible window's cold fill), and counted.
