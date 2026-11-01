@@ -1,0 +1,319 @@
+//! Home driven by real input: the strip's first tab and its shortcuts.
+use super::*;
+use quantick_control_handlers::home_tab::HomeTabHost as _;
+
+const WINDOW: egui::Vec2 = egui::vec2(1400.0, 760.0);
+const CTRL_SHIFT: egui::Modifiers = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
+
+fn frame(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
+    run_frame_sized(app, ctx, WINDOW, Vec::new(), egui::Modifiers::NONE)
+}
+
+fn press(app: &mut QuantickApp, ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers) {
+    run_frame_sized(
+        app,
+        ctx,
+        WINDOW,
+        vec![key_press_with(key, modifiers)],
+        modifiers,
+    );
+    frame(app, ctx);
+}
+
+fn on_home(app: &QuantickApp) -> bool {
+    app.chrome.title_bar.surface.is_home()
+}
+
+fn home_rect(app: &QuantickApp) -> egui::Rect {
+    app.chrome
+        .title_bar
+        .strip
+        .home
+        .expect("the Home tab is painted")
+}
+
+fn chip_rect(app: &QuantickApp, index: usize) -> egui::Rect {
+    let tabs = &app.chrome.title_bar.strip.tabs;
+    tabs.iter()
+        .find(|(at, _)| *at == index)
+        .expect("chip is painted")
+        .1
+}
+
+fn preset_layout(index: usize) -> CanvasLayout {
+    CanvasLayout::from_preset(&crate::canvas_layout::LAYOUT_PRESETS[index]).unwrap()
+}
+
+fn two_tabs(app: &mut QuantickApp, ctx: &egui::Context) -> TabEnds {
+    let second = open_second_tab(app, ctx, "ETHUSDT");
+    frame(app, ctx);
+    second
+}
+
+/// The tint on the first painted image, which is the Home tab's logo.
+fn logo_tint(output: &egui::FullOutput) -> egui::Color32 {
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                mesh.vertices.first().map(|vertex| vertex.color)
+            }
+            _ => None,
+        })
+        .expect("the logo is painted")
+}
+
+#[test]
+fn both_shortcuts_go_home_and_a_preset_does_not() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx);
+    press(&mut app, &ctx, egui::Key::Num1, egui::Modifiers::CTRL);
+    assert!(on_home(&app), "Ctrl+1");
+    app.chrome.title_bar.surface.show_market();
+    press(&mut app, &ctx, egui::Key::H, CTRL_SHIFT);
+    assert!(on_home(&app), "Ctrl+Shift+H");
+    app.chrome.title_bar.surface.show_market();
+
+    let before = app.active_tab().layout;
+    let second = preset_layout(1);
+    assert_ne!(before, second);
+    press(&mut app, &ctx, egui::Key::Num2, egui::Modifiers::CTRL);
+    assert_eq!(app.active_tab().layout, before, "Ctrl+2 left the presets");
+    assert!(!on_home(&app));
+    press(&mut app, &ctx, egui::Key::Num2, CTRL_SHIFT);
+    frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().layout,
+        second,
+        "Ctrl+Shift+2 is the preset"
+    );
+    assert!(!on_home(&app));
+
+    let first = preset_layout(0);
+    press(&mut app, &ctx, egui::Key::Num1, CTRL_SHIFT);
+    frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().layout,
+        first,
+        "Ctrl+Shift+1 is the first preset"
+    );
+    assert!(!on_home(&app), "Ctrl+Shift+1 does not also fire Ctrl+1");
+}
+
+#[test]
+fn close_commands_close_nothing_on_home_and_ctrl_tab_returns_to_the_same_market() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    let active = app.runtime.tabs.active_id();
+    let at = home_rect(&app).center();
+    click_sized(&mut app, &ctx, WINDOW, at);
+    assert!(on_home(&app));
+
+    press(&mut app, &ctx, egui::Key::W, egui::Modifiers::CTRL);
+    assert_eq!(app.runtime.tabs.len(), 2, "Ctrl+W closes nothing on Home");
+    assert!(on_home(&app));
+
+    press(&mut app, &ctx, egui::Key::Tab, egui::Modifiers::CTRL);
+    assert!(!on_home(&app));
+    assert_eq!(
+        app.runtime.tabs.active_id(),
+        active,
+        "Ctrl+Tab lands where it left"
+    );
+    press(&mut app, &ctx, egui::Key::Num1, egui::Modifiers::CTRL);
+    press(&mut app, &ctx, egui::Key::Tab, CTRL_SHIFT);
+    assert!(!on_home(&app));
+    assert_eq!(app.runtime.tabs.active_id(), active);
+}
+
+#[test]
+fn the_home_tab_has_no_close_target_and_a_click_inside_it_only_shows_home() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    let home = home_rect(&app);
+    assert!(
+        home.right() <= chip_rect(&app, 0).left(),
+        "Home is first and overlaps no market"
+    );
+    for x in [home.left() + 2.0, home.center().x, home.right() - 2.0] {
+        click_sized(&mut app, &ctx, WINDOW, egui::pos2(x, home.center().y));
+        assert!(on_home(&app));
+        assert_eq!(app.runtime.tabs.len(), 2);
+        app.chrome.title_bar.surface.show_market();
+    }
+}
+
+#[test]
+fn hover_changes_the_home_text_and_leaves_the_logo_tint_and_surface() {
+    assert_eq!(
+        crate::tabstrip::home_text_color(false, true),
+        crate::theme::TEXT_PRIMARY
+    );
+    assert_eq!(
+        crate::tabstrip::home_text_color(false, false),
+        crate::theme::TEXT_MUTED
+    );
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx);
+    let far = egui::pos2(1000.0, 400.0);
+    let at = home_rect(&app).center();
+    let idle = run_frame_sized(
+        &mut app,
+        &ctx,
+        WINDOW,
+        vec![egui::Event::PointerMoved(far)],
+        egui::Modifiers::NONE,
+    );
+    let hovered = run_frame_sized(
+        &mut app,
+        &ctx,
+        WINDOW,
+        vec![egui::Event::PointerMoved(at)],
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(logo_tint(&idle), logo_tint(&hovered));
+    assert_eq!(
+        logo_tint(&idle),
+        egui::Color32::WHITE.gamma_multiply(0.65),
+        "inactive"
+    );
+    click_sized(&mut app, &ctx, WINDOW, at);
+    let active = frame(&mut app, &ctx);
+    assert_eq!(logo_tint(&active), egui::Color32::WHITE, "active");
+}
+
+#[test]
+fn exactly_one_tab_is_active_and_a_chip_click_returns_to_it() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    let selected = |app: &QuantickApp| {
+        let scene = observer_scene(app);
+        scene_control_ids(&scene)
+            .into_iter()
+            .filter(|id| id.starts_with("tab_strip.tab.") || id == "tab_strip.home")
+            .filter(|id| scene_control(&scene, id)["selected"] == true)
+            .collect::<Vec<_>>()
+    };
+    let active = app.runtime.tabs.active_id();
+    assert_eq!(selected(&app), [format!("tab_strip.tab.{active}")]);
+
+    let at = home_rect(&app).center();
+    click_sized(&mut app, &ctx, WINDOW, at);
+    frame(&mut app, &ctx);
+    assert_eq!(selected(&app), ["tab_strip.home"]);
+
+    // The chip of the market behind Home: selected underneath, yet it must
+    // answer a click.
+    let index = app.runtime.tabs.active_index();
+    let at = chip_rect(&app, index).center();
+    click_sized(&mut app, &ctx, WINDOW, at);
+    assert!(!on_home(&app));
+    assert_eq!(app.runtime.tabs.active_id(), active);
+    frame(&mut app, &ctx);
+    assert_eq!(selected(&app), [format!("tab_strip.tab.{active}")]);
+
+    let at = home_rect(&app).center();
+    click_sized(&mut app, &ctx, WINDOW, at);
+    frame(&mut app, &ctx);
+    let at = chip_rect(&app, 0).center();
+    click_sized(&mut app, &ctx, WINDOW, at);
+    assert!(!on_home(&app));
+    assert_eq!(app.runtime.tabs.active_index(), 0, "another chip works too");
+}
+
+#[test]
+fn closing_a_market_chip_from_home_stays_on_home() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    app.show_home_tab().unwrap();
+    frame(&mut app, &ctx);
+    let active = app.runtime.tabs.active_index();
+    app.apply_tab_action(TabAction::Close(active));
+    frame(&mut app, &ctx);
+    assert_eq!(app.runtime.tabs.len(), 1);
+    assert!(on_home(&app));
+}
+
+#[test]
+fn opening_a_market_or_a_new_route_leaves_home_and_the_picker_opens_from_the_page() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx);
+    app.show_home_tab().unwrap();
+    let output = frame(&mut app, &ctx);
+    let open = painted_text_center(&output, "Open a market").expect("the page offers a market");
+    assert!(painted_text_center(&output, "Market Shelf not built yet").is_some());
+    click_sized(&mut app, &ctx, WINDOW, open);
+    assert!(app.surfaces.source_picker.is_open());
+    assert!(on_home(&app), "the picker alone does not leave Home");
+
+    let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    frame(&mut app, &ctx);
+    assert!(!on_home(&app), "a new market comes forward");
+}
+
+#[test]
+fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
+    let (mut app, events, _, _) = test_app();
+    let ctx = egui::Context::default();
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    app.active_tab_mut().split_fraction = 0.35;
+    frame(&mut app, &ctx);
+    frame(&mut app, &ctx);
+    let width = app.active_tab().last_canvas_width();
+    let layout = app.active_tab().layout;
+    let live = app.active_tab().live_trades;
+
+    app.show_home_tab().unwrap();
+    for index in 1..=3 {
+        events.try_send(FeedEvent::Live(trade(index))).unwrap();
+        frame(&mut app, &ctx);
+    }
+    assert_eq!(
+        app.active_tab().live_trades,
+        live + 3,
+        "the feed keeps draining"
+    );
+
+    // Keys that would change or trade an unseen chart stand down.
+    press(&mut app, &ctx, egui::Key::B, egui::Modifiers::SHIFT);
+    assert!(app.active_tab().paper.is_flat(), "no order from Home");
+    press(&mut app, &ctx, egui::Key::Num3, CTRL_SHIFT);
+    frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().layout, layout);
+
+    // The scene lists no pane, the cursor resolves to none, and a viewport
+    // read says the geometry is unavailable.
+    let scene = observer_scene(&app);
+    assert_eq!(scene["active_surface"], "home");
+    assert!(scene["focused_pane_id"].is_null());
+    let ids = scene_control_ids(&scene);
+    assert!(!ids.iter().any(|id| id.starts_with("pane.")), "{ids:?}");
+    assert!(ids.iter().any(|id| id == "tab_strip.home"));
+    let tab = app.active_tab();
+    assert!(!crate::control::chart::viewport_snapshot(&tab.flow_pane).geometry_available);
+    assert_eq!(tab.split_fraction, 0.35, "Home writes no split");
+    assert_eq!(tab.last_canvas_width(), width, "nor a canvas size");
+
+    press(&mut app, &ctx, egui::Key::Tab, egui::Modifiers::CTRL);
+    frame(&mut app, &ctx);
+    let tab = app.active_tab();
+    assert_eq!(tab.split_fraction, 0.35);
+    assert_eq!(
+        tab.last_canvas_width(),
+        width,
+        "the canvas comes back at its size"
+    );
+    assert!(tab.flow_pane.frame.chart_area.is_some(), "and paints again");
+    let scene = observer_scene(&app);
+    assert_eq!(scene["active_surface"], "market");
+    let flow = format!("pane.{}.canvas", app.active_tab().flow_pane.id);
+    assert!(scene_control_ids(&scene).contains(&flow));
+}

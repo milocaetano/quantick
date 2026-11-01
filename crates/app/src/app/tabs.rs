@@ -17,9 +17,6 @@ use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
 use crate::tabstrip::TabAction;
 
-use super::menu_bar::{
-    CLOSE_TAB_SHORTCUT, NEW_TAB_SHORTCUT, NEXT_TAB_SHORTCUT, PREVIOUS_TAB_SHORTCUT,
-};
 use super::{QuantickApp, TabSlot};
 
 pub(super) fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64> {
@@ -98,26 +95,9 @@ impl QuantickApp {
         if ctx.memory(|memory| memory.focused().is_some()) {
             return;
         }
-        let (new_tab, close_tab, next, previous) = ctx.input_mut(|input| {
-            (
-                input.consume_shortcut(&NEW_TAB_SHORTCUT),
-                input.consume_shortcut(&CLOSE_TAB_SHORTCUT),
-                input.consume_shortcut(&NEXT_TAB_SHORTCUT),
-                input.consume_shortcut(&PREVIOUS_TAB_SHORTCUT),
-            )
-        });
-        if new_tab {
+        let keys = super::home_wiring::read_tab_keys(ctx);
+        if self.arrangement_adapter().apply_tab_keys(keys) {
             self.surfaces.source_picker.open(&self.config);
-        }
-        if close_tab {
-            let index = self.runtime.tabs.active_index();
-            self.arrangement_adapter().close_tab(index);
-        }
-        if next {
-            self.arrangement_adapter().cycle_tab(1);
-        }
-        if previous {
-            self.arrangement_adapter().cycle_tab(-1);
         }
     }
 
@@ -148,14 +128,8 @@ impl QuantickApp {
 
     /// Carry out what the tab strip asked for.
     pub(super) fn apply_tab_action(&mut self, action: TabAction) {
-        match action {
-            TabAction::Activate(index) => {
-                if index < self.runtime.tabs.len() {
-                    self.runtime.tabs.select(index);
-                }
-            }
-            TabAction::Close(index) => self.arrangement_adapter().close_tab(index),
-            TabAction::New => self.surfaces.source_picker.open(&self.config),
+        if self.arrangement_adapter().apply_tab_action(action) {
+            self.surfaces.source_picker.open(&self.config);
         }
     }
 }

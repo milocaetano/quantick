@@ -49,6 +49,8 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 
 /// The name every test client connects under, and so the author every object
 /// an interrupted call placed is attributed to.
+#[path = "home_tab_control_tests.rs"]
+mod home_tab_control;
 #[path = "native_window_control_tests.rs"]
 mod native_window_control;
 
@@ -752,6 +754,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "fraction": "0.5" }),
             Readback::Moves,
         ),
+        ("home.show", 1, json!({}), Readback::Moves),
         ("layout.tab.create", 1, json!({}), Readback::Moves),
         (
             "layout.tab.rename",

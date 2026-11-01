@@ -27,6 +27,8 @@ use super::{
 /// File: tabs, replay and the window itself.
 pub(super) struct FileMenu {
     pub(super) tab_count: usize,
+    /// Home is on screen, so no market is the one "Close Tab" would mean.
+    pub(super) home: bool,
     pub(super) active_index: usize,
     /// Whether the active tab is playing a recording back.
     pub(super) replaying: bool,
@@ -47,13 +49,15 @@ impl FileMenu {
             }
             if ui
                 .add_enabled(
-                    self.tab_count > 1,
+                    self.tab_count > 1 && !self.home,
                     egui::Button::new("Close Tab")
                         .shortcut_text(ui.ctx().format_shortcut(&CLOSE_TAB_SHORTCUT)),
                 )
-                .on_disabled_hover_text(
-                    "The last tab stays open — a window with no market has nothing to show",
-                )
+                .on_disabled_hover_text(if self.home {
+                    "Home stays open — pick a market to close it"
+                } else {
+                    "The last tab stays open — a window with no market has nothing to show"
+                })
                 .clicked()
             {
                 commands.push(MenuCommand::Tab(TabAction::Close(self.active_index)));

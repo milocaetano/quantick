@@ -22,7 +22,8 @@ mod menus;
 const REPLAY_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
 /// Shows/hides the panels dock (§10).
-/// `Ctrl+1` … `Ctrl+9` apply the layout registry's presets, in table order.
+/// `Ctrl+Shift+1` … `Ctrl+Shift+9` apply the layout registry's presets, in
+/// table order.
 ///
 /// The keys are listed; which preset each one reaches is not. A preset added
 /// to `LAYOUT_PRESETS` gets its shortcut from its position without this array
@@ -44,9 +45,9 @@ const LAYOUT_PRESET_KEYS: [egui::Key; 9] = [
 /// The shortcut that reaches the preset at `index` in the registry, if a
 /// number key still reaches that far.
 fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
-    LAYOUT_PRESET_KEYS
-        .get(index)
-        .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::CTRL, *key))
+    LAYOUT_PRESET_KEYS.get(index).map(|key| {
+        egui::KeyboardShortcut::new(egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT), *key)
+    })
 }
 
 /// The shortcut that reaches the layout tab at strip position `index`, if a
@@ -59,8 +60,8 @@ fn layout_tab_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
 
 /// `Ctrl+0` puts the context charts away, or brings them back.
 ///
-/// The number row's own zero, beside `Ctrl+1..9` for the presets: nine keys
-/// choose an arrangement and the tenth dismisses the column that arrangement
+/// The number row's own zero, near `Ctrl+Shift+1..9` for the presets: nine
+/// keys choose an arrangement and the tenth dismisses the column that arrangement
 /// put beside the heatmap. Without it the only way to collapse was a drag,
 /// which a trader working by keyboard cannot make and which WCAG 2.2's
 /// dragging rule wants an alternative to besides.
@@ -92,6 +93,14 @@ const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::
 /// Opens the source picker for a new tab (§10).
 pub(super) const NEW_TAB_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::T);
+/// Shows Home.
+pub(super) const HOME_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Num1);
+/// The same, by letter.
+pub(super) const HOME_ALT_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
+    egui::Key::H,
+);
 /// Closes the active tab (§10). Free of any other binding: the chart has no
 /// text inputs and no document to "write".
 pub(super) const CLOSE_TAB_SHORTCUT: egui::KeyboardShortcut =
@@ -130,7 +139,9 @@ impl QuantickApp {
     /// beside the candles. Consumed whatever the focus, before `Ctrl+T` is read:
     /// that one would match it too and open a tab.
     pub(super) fn read_tape_view_key(&mut self, ctx: &egui::Context) {
-        if !crate::chart_layers::shortcuts::take_tape_view_press(ctx) {
+        if !crate::chart_layers::shortcuts::take_tape_view_press(ctx)
+            || self.chrome.title_bar.surface.is_home()
+        {
             return;
         }
         let tab = self.active_tab_mut();
@@ -152,7 +163,8 @@ impl QuantickApp {
         let mut commands = Vec::new();
         let context_column =
             self.active_tab().layout.shows_time() && self.active_tab().layout.shows_flow();
-        commands::read_shortcuts(ctx, context_column, &mut commands);
+        let chart_on_screen = !self.chrome.title_bar.surface.is_home();
+        commands::read_shortcuts(ctx, context_column, chart_on_screen, &mut commands);
         for command in commands.drain(..) {
             self.apply_menu_command(command);
         }
@@ -181,6 +193,7 @@ impl QuantickApp {
     fn draw_menus(&mut self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
         menus::FileMenu {
             tab_count: self.runtime.tabs.len(),
+            home: self.chrome.title_bar.surface.is_home(),
             active_index: self.runtime.tabs.active_index(),
             replaying: self.active_tab().replay.is_some(),
         }

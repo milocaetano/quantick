@@ -145,6 +145,9 @@ pub const SCRIPT_PERMISSION_ID: &str = "annotate.script";
 /// The canvas: which charts are on screen, where and how wide.
 pub const LAYOUT_MODULE_ID: &str = "layout";
 
+/// The Home tab: what the central canvas shows instead of a market.
+pub const HOME_MODULE_ID: &str = "home";
+
 /// Evidence bundles: one hashed, redacted capture of a running session.
 pub const EVIDENCE_MODULE_ID: &str = "evidence";
 pub const EVIDENCE_PERMISSION_ID: &str = "observe.evidence";
@@ -556,6 +559,12 @@ pub fn modules() -> Vec<ModuleDescriptor> {
             id: module(LAYOUT_MODULE_ID),
             title: "Layout".to_owned(),
             description: "The canvas: which charts are on screen, where they sit, and how wide."
+                .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(HOME_MODULE_ID),
+            title: "Home".to_owned(),
+            description: "The Home tab, shown over the canvas while every market keeps running."
                 .to_owned(),
         },
         ModuleDescriptor {

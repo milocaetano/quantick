@@ -24,6 +24,7 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) history: &'a mut super::tabs::HistorySettings,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
+    pub(super) surface: &'a mut quantick_workspace::arrangement::strip::StripSurface,
 }
 
 #[derive(Clone, Copy)]
@@ -278,6 +279,53 @@ impl ArrangementAdapter<'_> {
             layouts.remove_pane(pane.id);
         }
         Ok(())
+    }
+    /// Carry out what the tab strip asked for. Answers whether the source
+    /// picker, which this adapter does not own, should open.
+    pub(super) fn apply_tab_action(&mut self, action: crate::tabstrip::TabAction) -> bool {
+        use crate::tabstrip::TabAction;
+        match action {
+            TabAction::Activate(index) => {
+                if index < self.tabs.len() {
+                    self.tabs.select(index);
+                    self.surface.show_market();
+                }
+            }
+            // Closing a chip from Home stays on Home, whichever market went.
+            TabAction::Close(index) => {
+                let home = self.surface.is_home();
+                self.close_tab(index);
+                if home {
+                    super::home_wiring::show_home(self.tabs, self.surface);
+                }
+            }
+            TabAction::New => return true,
+            TabAction::Home => super::home_wiring::show_home(self.tabs, self.surface),
+        }
+        false
+    }
+    /// Carry out the tab shortcuts. Answers as [`Self::apply_tab_action`] does.
+    pub(super) fn apply_tab_keys(&mut self, keys: super::home_wiring::TabKeys) -> bool {
+        if keys.home {
+            super::home_wiring::show_home(self.tabs, self.surface);
+        }
+        if self.surface.is_home() {
+            // Nothing is open to close, and the way out lands where it left.
+            if keys.next || keys.previous {
+                self.surface.show_market();
+            }
+            return keys.new_tab;
+        }
+        if keys.close_tab {
+            self.close_tab(self.tabs.active_index());
+        }
+        if keys.next {
+            self.cycle_tab(1);
+        }
+        if keys.previous {
+            self.cycle_tab(-1);
+        }
+        keys.new_tab
     }
     /// Move tabs along the strip with the core's existing positional wrap.
     pub(super) fn cycle_tab(&mut self, delta: isize) {

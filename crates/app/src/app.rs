@@ -51,6 +51,7 @@ pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod menu_bar;
 pub(crate) mod paper_wiring;
 mod replay_and_history;
+mod home_wiring;
 mod tabs;
 pub(crate) mod title_bar;
 mod toolbar_wiring;
@@ -269,6 +270,7 @@ macro_rules! arrangement_adapter {
             history: &mut $app.runtime.history,
             drawing_chrome: &mut $app.drawings.chrome,
             toast: &mut $app.surfaces.toast,
+            surface: &mut $app.chrome.title_bar.surface,
         }
     }};
 }

@@ -9,6 +9,7 @@ mod resize;
 pub(crate) struct TitleBarState {
     pub(crate) maximized: bool,
     pub(crate) minimized: bool,
+    pub(crate) surface: quantick_workspace::arrangement::strip::StripSurface,
     pub(crate) strip: crate::tabstrip::StripDrawn,
     pub(crate) controls: Vec<(&'static str, egui::Rect)>,
     pub(crate) requests: quantick_control_schema::native_window::WindowRequests,
@@ -85,7 +86,8 @@ pub(crate) fn draw(
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
-                        action = crate::tabstrip::draw(ui, &chips, active, &mut title.strip);
+                        let home = title.surface.is_home();
+                        action = crate::tabstrip::draw(ui, &chips, active, home, &mut title.strip);
                     },
                 );
                 let drag_width = (ui.available_width()

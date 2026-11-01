@@ -162,10 +162,19 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     // resolves to, and the cap below cuts from the end. A workspace large
     // enough to truncate must not be one where `interaction.cursor` answers
     // with a control ID this scope no longer contains.
-    let focused_pane_id = push_panes(&mut controls, tabs.active_id(), active, focused_side);
-    push_context_dividers(&mut controls, tabs.active_id(), active);
-    push_quick_range(&mut controls, app);
-    push_pane_headers(&mut controls, app, tabs.active_id(), active);
+    //
+    // While Home is up none of them is on screen, so none is listed.
+    let home = app
+        .chrome_reads()
+        .title_bar()
+        .is_some_and(|title| title.surface.is_home());
+    let mut focused_pane_id = None;
+    if !home {
+        focused_pane_id = push_panes(&mut controls, tabs.active_id(), active, focused_side);
+        push_context_dividers(&mut controls, tabs.active_id(), active);
+        push_quick_range(&mut controls, app);
+        push_pane_headers(&mut controls, app, tabs.active_id(), active);
+    }
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
     // With the other fixed-size regions, ahead of the strip. At most three
@@ -183,7 +192,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     let strip_complete = push_tab_strip(
         &mut controls,
         tabs,
-        tabs.active_id(),
+        (!home).then(|| tabs.active_id()),
         app.chrome_reads().title_bar(),
     );
     push_title_bar(&mut controls, app);
@@ -206,6 +215,11 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
 
     SceneSnapshot {
         active_tab_id: WireU64::new(tabs.active_id()),
+        active_surface: if home {
+            ActiveSurfaceDto::Home
+        } else {
+            ActiveSurfaceDto::Market
+        },
         // From the walk, not from `Tab::pane`. The two disagree for the frame
         // between a tab asking for the time layout and its time pane being
         // built: `focused_side` falls back to the flow pane while the layout
@@ -320,7 +334,7 @@ fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab_id: u64, 
 fn push_tab_strip(
     controls: &mut Vec<SceneControlSnapshot>,
     tabs: &crate::app::arrangement_host::ArrangementHost,
-    active_id: u64,
+    selected_id: Option<u64>,
     title: Option<&crate::app::title_bar::TitleBarState>,
 ) -> bool {
     for (index, (tab_id, tab)) in tabs.iter_with_ids().enumerate() {
@@ -349,7 +363,7 @@ fn push_tab_strip(
                 kind: SceneOwnerKindDto::TabStrip,
                 id: TAB_STRIP_OWNER_ID.to_owned(),
             },
-            selected: tab_id == active_id,
+            selected: selected_id == Some(tab_id),
             availability: available(),
             bounds: rect.and_then(|rect| rect_bounds(rect).into_snapshot()),
             bounds_availability: rect.map_or_else(bounds_not_recorded, |_| available()),
@@ -383,6 +397,12 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
             )
         })
         .chain([
+            (
+                "home",
+                "Home",
+                title.strip.home,
+                Some(quantick_control_schema::home_tab::HOME_SHOW_CAPABILITY_ID),
+            ),
             ("new", "Open another market", title.strip.add, None),
             ("overflow", "All markets", title.strip.overflow, None),
         ])
@@ -399,7 +419,8 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
                 id: TAB_STRIP_OWNER_ID.to_owned(),
             },
             selected: (id == "maximize" && title.maximized)
-                || (id == "minimize" && title.minimized),
+                || (id == "minimize" && title.minimized)
+                || (id == "home" && title.surface.is_home()),
             availability: available(),
             bounds: rect_bounds(rect).into_snapshot(),
             bounds_availability: available(),

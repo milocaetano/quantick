@@ -96,6 +96,7 @@ pub(crate) trait TabsMutPort {
 /// Chrome and layout: what the window drew around the tab on screen.
 pub(crate) trait ChromePort:
     quantick_control_handlers::native_window::NativeWindowHost
+    + quantick_control_handlers::home_tab::HomeTabHost
 {
     fn chrome_reads(&self) -> ChromeReads<'_>;
 }
@@ -699,6 +700,14 @@ impl quantick_control_handlers::native_window::NativeWindowHost for QuantickApp 
         state: quantick_control_schema::native_window::WindowState,
     ) -> Result<(), quantick_control::error::ControlError> {
         self.chrome.title_bar.requests.request(state)
+    }
+}
+
+impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
+    fn show_home_tab(&mut self) -> Result<(), quantick_control::error::ControlError> {
+        let tabs = &self.runtime.tabs;
+        super::home_wiring::show_home(tabs, &mut self.chrome.title_bar.surface);
+        Ok(())
     }
 }
 

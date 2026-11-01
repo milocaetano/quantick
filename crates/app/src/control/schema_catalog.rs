@@ -52,6 +52,12 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<quantick_control_schema::native_window::WindowResult>(
             "native-window-result-v1.schema.json",
         ),
+        document::<quantick_control_schema::home_tab::HomeShowInput>(
+            "home-show-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::home_tab::HomeShowResult>(
+            "home-show-result-v1.schema.json",
+        ),
         document::<quantick_control_schema::indicator_picker::PickerInput>(
             "indicator-picker-input-v1.schema.json",
         ),

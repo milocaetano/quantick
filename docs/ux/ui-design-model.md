@@ -386,7 +386,13 @@ Shortcut map currently implemented:
 `Ctrl+L` fold the indicator legend · `Ctrl+Shift+T` tape only and back on a
 focused flow pane · `Space` play/pause while replaying ·
 `+`/`−` replay speed · `Ctrl+T` new tab · `Ctrl+W` close tab ·
-`Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs.
+`Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs · `Ctrl+1` or `Ctrl+Shift+H` Home ·
+`Ctrl+Shift+1…9` layout presets.
+
+While Home is on screen, `Ctrl+W` closes nothing, `Ctrl+Tab` and
+`Ctrl+Shift+Tab` return to the active market, and the keys that would change a
+chart or trade from it (presets, layers, drawing tools, paper hotkeys) stand
+down.
 
 Single letters stay free of modifiers where the chart itself answers them —
 but that freedom belongs to the *toolbox*: bare letters arm drawing tools, and

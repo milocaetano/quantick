@@ -26,6 +26,7 @@ pub mod chart;
 pub mod dock;
 pub mod feed_source;
 pub mod history;
+pub mod home_tab;
 pub mod journal_sessions;
 pub mod native_window;
 pub mod notify;

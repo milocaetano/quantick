@@ -42,19 +42,20 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 79 |
+| Reachable by capability | 80 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 4 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **139** |
+| **Total** | **140** |
 
-84 of the 139 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 55 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+85 of the 140 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 55 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
 | Behaviour | What it does | Reach | Capability | Exclusion |
 | --- | --- | --- | --- | --- |
 | `layout.window.state.set` | Set native window presentation | title-strip minimize and maximize controls; double-click free title-strip space | `layout.window.state.set` | — |
+| `home.show` | Show the Home tab | first tab of the market title strip, Ctrl+1, Ctrl+Shift+H | `home.show` | — |
 | `window.move` | Move or resize the native window | free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface | — | `ui_only_by_decision` — docs/ux/native-market-titlebar.md keeps desktop movement under OS authority; scene bounds identify the native gesture target but do not execute it |
 | `window.snap` | Snap the native window | Windows+Left/Right and the operating system's native window snapping | — | `ui_only_by_decision` — docs/ux/native-market-titlebar.md keeps window snapping as an OS gesture rather than granting arbitrary desktop positioning through the app API |
 | `app.exit` | Close the application | File menu, and the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the window would end every other capability's session |
@@ -82,7 +83,7 @@ The three exclusion classes are closed:
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
 | `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
-| `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9 | `layout.preset.apply` | — |
+| `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+Shift+1 … Ctrl+Shift+9 | `layout.preset.apply` | — |
 | `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a capsule glyph's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | candles capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
@@ -204,7 +205,7 @@ matrix fails the build.
 | --- | --- |
 | `toolbar_action` | 16 |
 | `strip_action` | 6 |
-| `tab_action` | 3 |
+| `tab_action` | 4 |
 | `dock_tab` | 5 |
 | `layer_toggle` | 6 |
 | `drawing_tool` | 22 |
@@ -212,7 +213,7 @@ matrix fails the build.
 | `toolbox_dock` | 3 |
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
-| `hotkey` | 17 |
+| `hotkey` | 19 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
 | `authored` | 55 |

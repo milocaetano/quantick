@@ -18,6 +18,7 @@ pub mod deal_recording;
 pub mod drawing_magnet;
 pub mod evidence;
 pub mod feed;
+pub mod home_tab;
 pub mod feed_source;
 pub mod health;
 pub mod history;

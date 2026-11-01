@@ -18,6 +18,20 @@ const CHIP_CLOSE_RESERVE_PX: f32 = 36.0;
 pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 32.0;
 pub(crate) const CHIP_HEIGHT: f32 = 42.0;
 
+const HOME_LOGO_PX: f32 = 16.0;
+const HOME_TEXT_PX: f32 = 12.0;
+/// 0.01em at [`HOME_TEXT_PX`].
+const HOME_LETTER_SPACING_PX: f32 = 0.12;
+const HOME_PADDING_LEFT_PX: f32 = 12.0;
+const HOME_LOGO_GAP_PX: f32 = 7.0;
+const HOME_PADDING_RIGHT_PX: f32 = 14.0;
+pub(crate) const HOME_MIN_WIDTH_PX: f32 = 46.0;
+/// The logo alone in a strip too narrow to spend [`HOME_MIN_WIDTH_PX`].
+const HOME_COMPACT_WIDTH_PX: f32 = 28.0;
+/// Height of the line across the top of the tab on screen.
+const ACTIVE_LINE_PX: f32 = 2.0;
+const ACTIVE_LINE_INSET_PX: f32 = 8.0;
+
 /// Radius of the amber dot marking a background tab whose feed is in trouble.
 const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
 /// How far below a chip's top edge the attention dot sits, so it clears the
@@ -47,6 +61,8 @@ pub enum TabAction {
     Close(usize),
     /// The `+`: open the source picker.
     New,
+    /// The first tab: show Home over the canvas.
+    Home,
 }
 
 /// Draw the strip and report the one action it produced.
@@ -56,6 +72,7 @@ pub enum TabAction {
 /// why rather than vanishing.
 #[derive(Default)]
 pub(crate) struct StripDrawn {
+    pub(crate) home: Option<egui::Rect>,
     pub(crate) tabs: Vec<(usize, egui::Rect)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
@@ -65,6 +82,7 @@ pub(crate) fn draw(
     ui: &mut egui::Ui,
     chips: &[TabChip<'_>],
     active: usize,
+    home: bool,
     drawn: &mut StripDrawn,
 ) -> Option<TabAction> {
     drawn.tabs.clear();
@@ -81,7 +99,7 @@ pub(crate) fn draw(
     };
     let close_width = if compact { 24.0 } else { CLOSE_HIT_WIDTH_PX };
     let close_reserve = if compact { 28.0 } else { CHIP_CLOSE_RESERVE_PX };
-    let mut action = None;
+    let mut action = draw_home_tab(ui, home, compact, drawn).then_some(TabAction::Home);
     let closable = chips.len() > 1;
     let slots = ((ui.available_width() - controls_width).max(0.0) / CHIP_PREFERRED_WIDTH_PX).floor()
         as usize;
@@ -95,7 +113,7 @@ pub(crate) fn draw(
         .filter(|(index, _)| visible.contains(index))
     {
         ui.push_id(("market_tab", chip.id), |ui| {
-            let selected = index == active;
+            let selected = !home && index == active;
             let surface = ui.painter().add(egui::Shape::Noop);
             let mut text = egui::RichText::new(chip.label).size(17.0);
             if chip.replaying {
@@ -161,6 +179,7 @@ pub(crate) fn draw(
                     selected,
                     response.hovered() || close.hovered(),
                     response.has_focus() || close.has_focus(),
+                    None,
                 );
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
@@ -180,7 +199,9 @@ pub(crate) fn draw(
                                 text = text.color(theme::AMBER);
                             }
                             if ui
-                                .push_id(chip.id, |ui| ui.selectable_label(index == active, text))
+                                .push_id(chip.id, |ui| {
+                                    ui.selectable_label(!home && index == active, text)
+                                })
                                 .inner
                                 .clicked()
                             {
@@ -211,6 +232,84 @@ pub(crate) fn draw(
     action
 }
 
+/// The Home text's colour. Hover reaches this and nothing else on the tab.
+#[must_use]
+pub(crate) fn home_text_color(active: bool, hovered: bool) -> egui::Color32 {
+    if active || hovered {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
+    }
+}
+
+/// The first tab: logo and "Home". It has no close target. Returns whether it
+/// was pressed.
+fn draw_home_tab(ui: &mut egui::Ui, active: bool, compact: bool, drawn: &mut StripDrawn) -> bool {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        "Home",
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(HOME_TEXT_PX),
+            color: egui::Color32::PLACEHOLDER,
+            extra_letter_spacing: HOME_LETTER_SPACING_PX,
+            ..Default::default()
+        },
+    );
+    let label = ui.fonts(|fonts| fonts.layout_job(job));
+    let width = if compact {
+        HOME_COMPACT_WIDTH_PX
+    } else {
+        (HOME_PADDING_LEFT_PX
+            + HOME_LOGO_PX
+            + HOME_LOGO_GAP_PX
+            + label.size().x
+            + HOME_PADDING_RIGHT_PX)
+            .max(HOME_MIN_WIDTH_PX)
+    };
+    let surface = ui.painter().add(egui::Shape::Noop);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), active, "Home")
+    });
+    let response = response.on_hover_text("Home · Ctrl+1");
+    let bounds = rect.intersect(ui.clip_rect());
+    drawn.home = bounds.is_positive().then_some(bounds);
+    paint_tab_surface(
+        ui,
+        surface,
+        rect,
+        active,
+        false,
+        response.has_focus(),
+        Some(theme::BRAND_GREEN),
+    );
+    let logo_x = if compact {
+        rect.center().x
+    } else {
+        rect.left() + HOME_PADDING_LEFT_PX + HOME_LOGO_PX / 2.0
+    };
+    let logo = egui::Rect::from_center_size(
+        egui::pos2(logo_x, rect.center().y),
+        egui::Vec2::splat(HOME_LOGO_PX),
+    );
+    crate::surfaces::home::paint_logo(
+        ui,
+        logo,
+        quantick_workspace::arrangement::strip::home_logo_opacity(active),
+    );
+    if !compact {
+        let at = egui::pos2(
+            logo.right() + HOME_LOGO_GAP_PX,
+            rect.center().y - label.size().y / 2.0,
+        );
+        let color = home_text_color(active, response.hovered());
+        ui.painter().galley(at, label, color);
+    }
+    response.clicked()
+}
+
 fn paint_tab_surface(
     ui: &egui::Ui,
     slot: egui::layers::ShapeIdx,
@@ -218,6 +317,7 @@ fn paint_tab_surface(
     selected: bool,
     hovered: bool,
     focused: bool,
+    accent: Option<egui::Color32>,
 ) {
     let mut rect = bounds.expand2(egui::vec2(2.0, 2.0));
     rect.max.y = ui.max_rect().bottom();
@@ -271,6 +371,17 @@ fn paint_tab_surface(
                 egui::Stroke::new(1.0_f32, theme::BORDER),
             ),
         );
+    }
+    if let Some(accent) = accent.filter(|_| selected) {
+        // Inside the rounded corners, so the line never overhangs them.
+        let line = egui::Rect::from_min_max(
+            rect.left_top() + egui::vec2(ACTIVE_LINE_INSET_PX, 0.0),
+            egui::pos2(
+                rect.right() - ACTIVE_LINE_INSET_PX,
+                rect.top() + ACTIVE_LINE_PX,
+            ),
+        );
+        ui.painter().rect_filled(line, 0.0, accent);
     }
     if focused {
         ui.painter().rect_stroke(

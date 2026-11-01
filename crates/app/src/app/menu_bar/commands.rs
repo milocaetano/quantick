@@ -76,9 +76,14 @@ pub(super) enum MenuCommand {
 /// gated on. Ungated, `Ctrl+0` on the Flow or Timeframe layout set a flag
 /// nothing drew — and swallowed the key besides, so egui's own "reset zoom"
 /// never ran.
+///
+/// `chart_on_screen` is false while Home covers the canvas: what would change a
+/// chart or trade from it stands down, because a trader cannot see what those
+/// keys did. Nothing else in the window depends on them.
 pub(super) fn read_shortcuts(
     ctx: &egui::Context,
     context_column: bool,
+    chart_on_screen: bool,
     commands: &mut Vec<MenuCommand>,
 ) {
     let pressed =
@@ -89,7 +94,7 @@ pub(super) fn read_shortcuts(
     if pressed(&DOCK_SHORTCUT) {
         commands.push(MenuCommand::ToggleDock);
     }
-    if !ctx.wants_keyboard_input() {
+    if chart_on_screen && !ctx.wants_keyboard_input() {
         for layer in [
             crate::chart_layers::ChartLayer::Bubbles,
             crate::chart_layers::ChartLayer::Footprint,
@@ -101,7 +106,7 @@ pub(super) fn read_shortcuts(
             }
         }
     }
-    if context_column && pressed(&COLLAPSE_CONTEXT_SHORTCUT) {
+    if chart_on_screen && context_column && pressed(&COLLAPSE_CONTEXT_SHORTCUT) {
         commands.push(MenuCommand::ToggleContextCharts);
     }
     // Layout by number, straight off the registry. The same
@@ -111,11 +116,11 @@ pub(super) fn read_shortcuts(
         let Some(shortcut) = layout_preset_shortcut(index) else {
             break;
         };
-        if pressed(&shortcut) {
+        if chart_on_screen && pressed(&shortcut) {
             commands.push(MenuCommand::ApplyLayoutPreset(preset));
         }
     }
-    // Layout tabs by number: `Alt+1..9`, beside `Ctrl+1..9` for the
+    // Layout tabs by number: `Alt+1..9`, beside `Ctrl+Shift+1..9` for the
     // presets — one row of keys, two things a trader switches by number.
     // Not while a text field has the keyboard — a rename box, a note,
     // the ticket — where Alt+1 is text, not a switch.
@@ -124,11 +129,11 @@ pub(super) fn read_shortcuts(
         let Some(shortcut) = layout_tab_shortcut(index) else {
             break;
         };
-        if !typing && pressed(&shortcut) {
+        if chart_on_screen && !typing && pressed(&shortcut) {
             commands.push(MenuCommand::SwitchLayoutIndex(index));
         }
     }
-    if pressed(&LEGEND_SHORTCUT) {
+    if chart_on_screen && pressed(&LEGEND_SHORTCUT) {
         commands.push(MenuCommand::ToggleLegend);
     }
     if pressed(&crate::control::MARK_SHORTCUT) {
@@ -140,7 +145,7 @@ pub(super) fn read_shortcuts(
     // Trading hotkeys, swallowed only while no text field owns the
     // keyboard. Market entries use the ticket's quantity and offsets,
     // exactly like the toolbar buttons they twin.
-    if !ctx.wants_keyboard_input() {
+    if chart_on_screen && !ctx.wants_keyboard_input() {
         for (shortcut, command) in [
             (
                 PAPER_BUY_SHORTCUT,

@@ -19,6 +19,17 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
         mapping: capability!("layout.window.state.set"),
     },
     UiBehaviour {
+        id: "home.show",
+        title: "Show the Home tab",
+        reach: "first tab of the market title strip, Ctrl+1, Ctrl+Shift+H",
+        keys: &[
+            (Source::TabAction, "Home"),
+            (Source::Hotkey, "HOME_SHORTCUT"),
+            (Source::Hotkey, "HOME_ALT_SHORTCUT"),
+        ],
+        mapping: capability!("home.show"),
+    },
+    UiBehaviour {
         id: "window.move",
         title: "Move or resize the native window",
         reach: "free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface",
