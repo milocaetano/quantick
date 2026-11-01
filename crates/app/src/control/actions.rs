@@ -49,6 +49,8 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::layout::register(&mut registry)?;
     super::layers::register_action(&mut registry)?;
     super::price_axis::register(&mut registry)?;
+    quantick_control_handlers::home_tab::register(&mut registry)?;
+    quantick_control_handlers::native_window::register(&mut registry)?;
     super::time_axis::register(&mut registry)?;
     quantick_control_handlers::opening_scale::register(&mut registry)?;
     quantick_control_handlers::bubble_preset::register_tick(&mut registry)?;

@@ -720,6 +720,17 @@ impl Tab {
         }
     }
 
+    /// Settle a write to the source: a newly picked feed may not offer the
+    /// current symbol. Never during a replay: the recorded instrument belongs to
+    /// no live feed's menu, and snapping it away would relabel the whole session
+    /// — the status bar and the logs must keep naming what is actually playing.
+    pub fn settle_source(&mut self, config: &AppConfig) {
+        if self.replay.is_none() {
+            self.ensure_symbol_valid(config);
+            self.refresh_chip_label(config);
+        }
+    }
+
     /// What the selected feed's backend can do.
     ///
     /// A feed missing from the config can do nothing — the selection is snapped

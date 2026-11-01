@@ -27,6 +27,8 @@ use super::{
 /// File: tabs, replay and the window itself.
 pub(super) struct FileMenu {
     pub(super) tab_count: usize,
+    /// Home is on screen, so no market is the one "Close Tab" would mean.
+    pub(super) home: bool,
     pub(super) active_index: usize,
     /// Whether the active tab is playing a recording back.
     pub(super) replaying: bool,
@@ -47,13 +49,15 @@ impl FileMenu {
             }
             if ui
                 .add_enabled(
-                    self.tab_count > 1,
+                    self.tab_count > 1 && !self.home,
                     egui::Button::new("Close Tab")
                         .shortcut_text(ui.ctx().format_shortcut(&CLOSE_TAB_SHORTCUT)),
                 )
-                .on_disabled_hover_text(
-                    "The last tab stays open — a window with no market has nothing to show",
-                )
+                .on_disabled_hover_text(if self.home {
+                    "Home stays open — pick a market to close it"
+                } else {
+                    "The last tab stays open — a window with no market has nothing to show"
+                })
                 .clicked()
             {
                 commands.push(MenuCommand::Tab(TabAction::Close(self.active_index)));
@@ -88,6 +92,8 @@ impl FileMenu {
 /// than under File, and each entry names the charts it shows — "Timeframe",
 /// not layout jargon (audit §3).
 pub(super) struct ViewMenu<'a> {
+    /// False while Home covers the canvas: the chart entries grey out.
+    pub(super) chart_shown: bool,
     pub(super) layouts: LayoutRead<'a>,
     pub(super) tab: &'a Tab,
     pub(super) dock_visible: bool,
@@ -100,9 +106,11 @@ pub(super) struct ViewMenu<'a> {
 impl ViewMenu<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
         ui.menu_button("View", |ui| {
-            self.layouts_menu(ui, commands);
-            self.preset_menu(ui, commands);
-            self.context_entries(ui, commands);
+            ui.add_enabled_ui(self.chart_shown, |ui| {
+                self.layouts_menu(ui, commands);
+                self.preset_menu(ui, commands);
+                self.context_entries(ui, commands);
+            });
             ui.separator();
             self.chrome_entries(ui, commands);
             ui.separator();
@@ -318,7 +326,7 @@ impl ViewMenu<'_> {
             .is_empty();
         if ui
             .add_enabled(
-                has_legend,
+                has_legend && self.chart_shown,
                 egui::Button::new(legend_label)
                     .shortcut_text(ui.ctx().format_shortcut(&LEGEND_SHORTCUT)),
             )

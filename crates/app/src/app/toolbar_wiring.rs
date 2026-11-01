@@ -143,15 +143,8 @@ impl QuantickApp {
         drop(model);
         self.chrome.layout_picker_open = layout_picker_open;
         self.chrome.history_menu_rect = history_menu_rect;
-        // A newly picked feed may not offer the current symbol. Never during
-        // a replay: the recorded instrument belongs to no live feed's menu,
-        // and snapping it away would relabel the whole session — the status
-        // bar and the logs must keep naming what is actually playing.
-        if self.active_tab().replay.is_none() {
-            let (tab, config) = self.active_with_config();
-            tab.ensure_symbol_valid(config);
-            tab.refresh_chip_label(config);
-        }
+        let (tab, config) = self.active_with_config();
+        tab.settle_source(config);
         for action in actions {
             self.apply_toolbar_action(action);
         }

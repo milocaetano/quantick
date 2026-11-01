@@ -7,7 +7,6 @@ use eframe::egui::Color32;
 /// dialog; [`crate::style::CanvasStyle`] holds the editable copy, and the
 /// parity test below keeps the two in agreement — the reason this token
 /// exists without a chrome consumer).
-#[allow(dead_code)]
 pub const CANVAS: Color32 = Color32::from_rgb(0x13, 0x17, 0x22);
 
 /// `bg/chrome` — menu bar, toolbar, tool rail, dock and status bar.
@@ -51,6 +50,10 @@ pub const ACCENT: Color32 = Color32::from_rgb(0x8A, 0xB4, 0xF8);
 
 /// `honest/amber` — not-live provenance only: replay, backfill, inferred data.
 pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
+/// The logo's green: the line on the active Home tab, and only that.
+pub const BRAND_GREEN: Color32 = Color32::from_rgb(0x2F, 0xC7, 0x9A);
+/// A market tab playing a recording: its label, status dot and top line.
+pub const REPLAY: Color32 = Color32::from_rgb(0xC5, 0x8C, 0xFF);
 
 /// `pane/mark` — the name on a pane's header line: gold `#E0B84A` at 85%, softer
 /// than [`AMBER`], so it reads at a glance and never as the not-live warning.

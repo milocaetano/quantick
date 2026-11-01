@@ -129,6 +129,11 @@ impl Tab {
     ) {
         let monotonic_ms = (ui.input(|input| input.time).max(0.0) * 1_000.0) as u64;
         self.update_tape_clock_at(monotonic_ms);
+        // Undecorated Windows can report a small positive client area while
+        // minimized. It is not chart geometry and must not become a saved split.
+        if ui.input(|input| input.viewport().minimized.unwrap_or(false)) {
+            return;
+        }
         let frame = self.canvas_frame(area);
         let rects = self.draw_context_column(ui, &frame, chrome);
 

@@ -1,31 +1,52 @@
-//! The workspace tab strip and the source picker behind its `+`
+//! The market tab strip and the source picker behind its `+`
 //! (`docs/ux/ui-design-model.md` §11).
 //!
-//! One chip per open market, `SYMBOL · venue`, sitting in zone 1 to the right
-//! of the menus — the row already had the horizontal room, so tabs cost no
-//! chrome budget. The picker reads the same config catalog the toolbar's
-//! SOURCE group does; there is one list of what quantick can open, and both
-//! surfaces show it.
+//! One chip per open market in the native title strip. The picker shares the
+//! toolbar's configured source catalog.
 
 use eframe::egui;
+use quantick_workspace::arrangement::strip::{StripSurface, market_slots, visible_tabs};
 
 use crate::config::AppConfig;
 use crate::symbols_file::AddedSymbols;
 use crate::theme;
 
+const STRIP_CONTROLS_WIDTH_PX: f32 = 80.0;
+const CHIP_PREFERRED_WIDTH_PX: f32 = 200.0;
+const CHIP_MAX_WIDTH_PX: f32 = 240.0;
+const CHIP_MIN_WIDTH_PX: f32 = 44.0;
+const CHIP_CLOSE_RESERVE_PX: f32 = 36.0;
+pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 32.0;
+pub(crate) const CHIP_HEIGHT: f32 = 42.0;
+
+const HOME_LOGO_PX: f32 = 16.0;
+const HOME_TEXT_PX: f32 = 12.0;
+/// 0.01em at [`HOME_TEXT_PX`].
+const HOME_LETTER_SPACING_PX: f32 = 0.12;
+const HOME_PADDING_LEFT_PX: f32 = 12.0;
+const HOME_LOGO_GAP_PX: f32 = 7.0;
+const HOME_PADDING_RIGHT_PX: f32 = 14.0;
+/// The logo alone, centred with 15 px either side.
+pub(crate) const HOME_MIN_WIDTH_PX: f32 = 46.0;
+/// Height of the line across the top of the tab on screen.
+const ACTIVE_LINE_PX: f32 = 2.0;
+const ACTIVE_LINE_INSET_PX: f32 = 8.0;
+
 /// Radius of the amber dot marking a background tab whose feed is in trouble.
 const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
-/// Gap between a chip's label and its close affordance.
-const CHIP_GAP_PX: f32 = 6.0;
 /// How far below a chip's top edge the attention dot sits, so it clears the
 /// selection outline instead of riding it.
 const ATTENTION_DOT_INSET_PX: f32 = 1.0;
+/// How far the replay dot sits from a chip's left edge, inside its padding so
+/// it never touches the centred label.
+const STATUS_DOT_INSET_PX: f32 = 4.0;
 /// Width of the add-symbol field: wide enough for the longest contract code a
 /// venue uses, narrow enough that the dialog stays a dialog.
 const SYMBOL_FIELD_WIDTH_PX: f32 = 120.0;
 
 /// What one tab looks like on the strip this frame.
 pub struct TabChip<'a> {
+    pub id: u64,
     /// `SYMBOL · venue`, composed by the tab when its market last changed.
     pub label: &'a str,
     /// Whether this tab is playing a recording rather than streaming.
@@ -43,6 +64,8 @@ pub enum TabAction {
     Close(usize),
     /// The `+`: open the source picker.
     New,
+    /// The first tab: show Home over the canvas.
+    Home,
 }
 
 /// Draw the strip and report the one action it produced.
@@ -50,55 +73,347 @@ pub enum TabAction {
 /// `closable` is false for the last tab: closing it would leave the window
 /// with no market and nothing to draw, so the affordance is disabled and says
 /// why rather than vanishing.
-pub fn draw(ui: &mut egui::Ui, chips: &[TabChip<'_>], active: usize) -> Option<TabAction> {
-    let mut action = None;
+#[derive(Default)]
+pub(crate) struct StripDrawn {
+    pub(crate) home: Option<egui::Rect>,
+    pub(crate) tabs: Vec<(usize, egui::Rect)>,
+    pub(crate) add: Option<egui::Rect>,
+    pub(crate) overflow: Option<egui::Rect>,
+}
+
+pub(crate) fn draw(
+    ui: &mut egui::Ui,
+    chips: &[TabChip<'_>],
+    active: usize,
+    surface: &StripSurface,
+    drawn: &mut StripDrawn,
+) -> Option<TabAction> {
+    drawn.tabs.clear();
+    drawn.add = None;
+    drawn.overflow = None;
+    let compact = ui.available_width() < 240.0;
+    ui.spacing_mut().item_spacing.x = if compact { 2.0 } else { 4.0 };
+    ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 8.0);
+    ui.spacing_mut().interact_size.y = CHIP_HEIGHT;
+    let controls_width = if compact {
+        56.0
+    } else {
+        STRIP_CONTROLS_WIDTH_PX
+    };
+    let close_width = if compact { 24.0 } else { CLOSE_HIT_WIDTH_PX };
+    let close_reserve = if compact { 28.0 } else { CHIP_CLOSE_RESERVE_PX };
+    let label = home_label(ui);
+    let labelled = (HOME_PADDING_LEFT_PX
+        + HOME_LOGO_PX
+        + HOME_LOGO_GAP_PX
+        + label.size().x
+        + HOME_PADDING_RIGHT_PX)
+        .max(HOME_MIN_WIDTH_PX);
+    let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
+    let slots = market_slots(room, labelled, CHIP_PREFERRED_WIDTH_PX);
+    let visible = visible_tabs(chips.len(), active, slots);
+    let shown = (visible.len() == chips.len()).then_some((label, labelled));
+    let mut action = draw_home_tab(ui, surface.is_home(), shown, drawn).then_some(TabAction::Home);
     let closable = chips.len() > 1;
-    for (index, chip) in chips.iter().enumerate() {
-        let selected = index == active;
-        let mut text = egui::RichText::new(chip.label);
-        if chip.replaying {
-            text = text.color(theme::AMBER);
-        }
-        let response = ui.selectable_label(selected, text);
-        if response.clicked() && !selected {
-            action = Some(TabAction::Activate(index));
-        }
-        // The dot rides the chip's own rect so it moves with the layout.
-        if chip.needs_attention && !selected {
-            let center = egui::pos2(
-                response.rect.right() - ATTENTION_DOT_RADIUS_PX,
-                response.rect.top() + ATTENTION_DOT_RADIUS_PX + ATTENTION_DOT_INSET_PX,
-            );
-            ui.painter()
-                .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::AMBER);
-        }
-        // The close affordance shows on hover, and on the active chip so a
-        // keyboard-only path to it is never the only one.
-        let show_close = selected || response.hovered() || !closable;
-        if show_close {
-            ui.add_space(-CHIP_GAP_PX / 2.0);
-            let close = ui.add_enabled(closable, egui::Button::new("×").frame(false));
-            let close = if closable {
-                close.on_hover_text("Close tab (Ctrl+W)")
-            } else {
-                close.on_disabled_hover_text(
-                    "The last tab stays open — a window with no market has nothing to show",
-                )
-            };
-            if close.clicked() {
-                action = Some(TabAction::Close(index));
-            }
-        }
-        ui.add_space(CHIP_GAP_PX);
-    }
-    if ui
-        .button("+")
-        .on_hover_text("Open another market (Ctrl+T)")
-        .clicked()
+    let active_chip = surface.active_chip(active);
+    let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
+        .clamp(CHIP_MIN_WIDTH_PX, CHIP_MAX_WIDTH_PX);
+    for (index, chip) in chips
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| visible.contains(index))
     {
+        ui.push_id(("market_tab", chip.id), |ui| {
+            let selected = active_chip == Some(index);
+            let surface = ui.painter().add(egui::Shape::Noop);
+            let mut text = egui::RichText::new(chip.label)
+                .size(17.0)
+                .family(egui::FontFamily::Monospace);
+            if chip.replaying {
+                text = text.color(theme::REPLAY);
+            }
+            let response = ui
+                .add_sized(
+                    [(chip_width - close_reserve).max(0.0), CHIP_HEIGHT],
+                    egui::Button::new(text).frame(false).truncate(),
+                )
+                .on_hover_text(if chip.replaying {
+                    format!("{} (replay)", chip.label)
+                } else {
+                    chip.label.to_owned()
+                });
+            if response.clicked() && !selected {
+                action = Some(TabAction::Activate(index));
+            }
+            let bounds = response.rect.intersect(ui.clip_rect());
+            if bounds.is_positive() {
+                drawn.tabs.push((index, bounds));
+            }
+            if chip.replaying {
+                let center = egui::pos2(
+                    response.rect.left() + STATUS_DOT_INSET_PX,
+                    response.rect.center().y,
+                );
+                ui.painter()
+                    .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::REPLAY);
+            }
+            // The dot rides the chip's own rect so it moves with the layout.
+            if chip.needs_attention && !selected {
+                let center = egui::pos2(
+                    response.rect.right() - ATTENTION_DOT_RADIUS_PX,
+                    response.rect.top() + ATTENTION_DOT_RADIUS_PX + ATTENTION_DOT_INSET_PX,
+                );
+                ui.painter()
+                    .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::AMBER);
+            }
+            // Reserve a stable close target so hover never shifts adjacent controls.
+            {
+                let close_target = egui::Rect::from_min_size(
+                    ui.next_widget_position(),
+                    egui::vec2(close_width, CHIP_HEIGHT),
+                );
+                let show_close =
+                    selected || response.hovered() || ui.rect_contains_pointer(close_target);
+                let close = ui
+                    .add_enabled_ui(closable, |ui| {
+                        ui.add_visible(
+                            show_close,
+                            egui::Button::new(egui::RichText::new("\u{00d7}").size(22.0))
+                                .frame(false)
+                                .min_size(egui::vec2(close_width, CHIP_HEIGHT)),
+                        )
+                    })
+                    .inner;
+                let close = if closable {
+                    close.on_hover_text("Close tab (Ctrl+W)")
+                } else {
+                    close.on_disabled_hover_text(
+                        "The last tab stays open — a window with no market has nothing to show",
+                    )
+                };
+                paint_tab_surface(
+                    ui,
+                    surface,
+                    response.rect.union(close.rect),
+                    selected,
+                    response.hovered() || close.hovered(),
+                    response.has_focus() || close.has_focus(),
+                    Some(if chip.replaying {
+                        theme::REPLAY
+                    } else {
+                        theme::AMBER
+                    }),
+                );
+                if close.clicked() {
+                    action = Some(TabAction::Close(index));
+                }
+            }
+        });
+    }
+    if visible.len() < chips.len() {
+        let overflow = ui.push_id("market_overflow", |ui| {
+            ui.menu_button(egui::RichText::new("...").size(17.0), |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for (index, chip) in chips.iter().enumerate() {
+                            let mut text = egui::RichText::new(chip.label);
+                            if chip.replaying {
+                                text = text.color(theme::REPLAY);
+                            }
+                            if ui
+                                .push_id(chip.id, |ui| {
+                                    ui.selectable_label(active_chip == Some(index), text)
+                                })
+                                .inner
+                                .clicked()
+                            {
+                                action = Some(TabAction::Activate(index));
+                                ui.close_menu();
+                            }
+                        }
+                    });
+            })
+        });
+        let bounds = overflow.inner.response.rect.intersect(ui.clip_rect());
+        drawn.overflow = bounds.is_positive().then_some(bounds);
+    }
+    let add = ui
+        .push_id("market_new", |ui| {
+            ui.add_sized(
+                [if compact { 24.0 } else { 36.0 }, CHIP_HEIGHT],
+                egui::Button::new(egui::RichText::new("+").size(24.0)).frame(false),
+            )
+            .on_hover_text("Open another market (Ctrl+T)")
+        })
+        .inner;
+    let bounds = add.rect.intersect(ui.clip_rect());
+    drawn.add = bounds.is_positive().then_some(bounds);
+    if add.clicked() {
         action = Some(TabAction::New);
     }
     action
+}
+
+/// The Home text's colour. Hover reaches this and nothing else on the tab.
+#[must_use]
+pub(crate) fn home_text_color(active: bool, hovered: bool) -> egui::Color32 {
+    if active || hovered {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
+    }
+}
+
+fn home_label(ui: &egui::Ui) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        "Home",
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(HOME_TEXT_PX),
+            color: egui::Color32::PLACEHOLDER,
+            extra_letter_spacing: HOME_LETTER_SPACING_PX,
+            ..Default::default()
+        },
+    );
+    ui.fonts(|fonts| fonts.layout_job(job))
+}
+
+/// The first tab: logo and "Home", or the logo alone and centred when `label`
+/// is `None`. It has no close target. Returns whether it was pressed.
+fn draw_home_tab(
+    ui: &mut egui::Ui,
+    active: bool,
+    label: Option<(std::sync::Arc<egui::Galley>, f32)>,
+    drawn: &mut StripDrawn,
+) -> bool {
+    let width = label
+        .as_ref()
+        .map_or(HOME_MIN_WIDTH_PX, |(_, width)| *width);
+    let surface = ui.painter().add(egui::Shape::Noop);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), active, "Home")
+    });
+    let response = response.on_hover_text("Home · Ctrl+1");
+    let bounds = rect.intersect(ui.clip_rect());
+    drawn.home = bounds.is_positive().then_some(bounds);
+    paint_tab_surface(
+        ui,
+        surface,
+        rect,
+        active,
+        false,
+        response.has_focus(),
+        Some(theme::BRAND_GREEN),
+    );
+    let logo_x = if label.is_some() {
+        rect.left() + HOME_PADDING_LEFT_PX + HOME_LOGO_PX / 2.0
+    } else {
+        rect.center().x
+    };
+    let logo = egui::Rect::from_center_size(
+        egui::pos2(logo_x, rect.center().y),
+        egui::Vec2::splat(HOME_LOGO_PX),
+    );
+    crate::surfaces::home::paint_logo(
+        ui,
+        logo,
+        quantick_workspace::arrangement::strip::home_logo_opacity(active),
+    );
+    if let Some((label, _)) = label {
+        let at = egui::pos2(
+            logo.right() + HOME_LOGO_GAP_PX,
+            rect.center().y - label.size().y / 2.0,
+        );
+        let color = home_text_color(active, response.hovered());
+        ui.painter().galley(at, label, color);
+    }
+    response.clicked()
+}
+
+fn paint_tab_surface(
+    ui: &egui::Ui,
+    slot: egui::layers::ShapeIdx,
+    bounds: egui::Rect,
+    selected: bool,
+    hovered: bool,
+    focused: bool,
+    accent: Option<egui::Color32>,
+) {
+    let mut rect = bounds.expand2(egui::vec2(2.0, 2.0));
+    rect.max.y = ui.max_rect().bottom();
+    let fill = if selected {
+        theme::CANVAS
+    } else {
+        theme::BARE_HOVER
+    };
+    if selected || hovered || focused {
+        ui.painter().set(
+            slot,
+            egui::Shape::rect_filled(
+                rect,
+                egui::Rounding {
+                    nw: 12.0,
+                    ne: 12.0,
+                    sw: 0.0,
+                    se: 0.0,
+                },
+                fill,
+            ),
+        );
+        // Small outward feet join the tab to the row below without a box outline.
+        for (edge, direction) in [(rect.left(), -1.0), (rect.right(), 1.0)] {
+            let radius = 6.0;
+            let mut mesh = egui::Mesh::default();
+            mesh.colored_vertex(egui::pos2(edge, rect.bottom()), fill);
+            for step in 0..=8 {
+                let angle = std::f32::consts::FRAC_PI_2 * step as f32 / 8.0;
+                mesh.colored_vertex(
+                    egui::pos2(
+                        edge + direction * radius * (1.0 - angle.cos()),
+                        rect.bottom() - radius * (1.0 - angle.sin()),
+                    ),
+                    fill,
+                );
+                if step > 0 {
+                    mesh.add_triangle(0, step, step + 1);
+                }
+            }
+            ui.painter().add(egui::Shape::mesh(mesh));
+        }
+    } else {
+        ui.painter().set(
+            slot,
+            egui::Shape::line_segment(
+                [
+                    egui::pos2(rect.right(), rect.top() + 7.0),
+                    egui::pos2(rect.right(), rect.bottom() - 7.0),
+                ],
+                egui::Stroke::new(1.0_f32, theme::BORDER),
+            ),
+        );
+    }
+    if let Some(accent) = accent.filter(|_| selected) {
+        // Inside the rounded corners, so the line never overhangs them.
+        let line = egui::Rect::from_min_max(
+            rect.left_top() + egui::vec2(ACTIVE_LINE_INSET_PX, 0.0),
+            egui::pos2(
+                rect.right() - ACTIVE_LINE_INSET_PX,
+                rect.top() + ACTIVE_LINE_PX,
+            ),
+        );
+        ui.painter().rect_filled(line, 0.0, accent);
+    }
+    if focused {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            8.0,
+            egui::Stroke::new(1.0_f32, theme::ACCENT),
+        );
+    }
 }
 
 /// The `+` dialog: pick a feed and a symbol from the catalog, or add one the
@@ -231,7 +546,7 @@ impl SourcePicker {
     /// would leave a tab streaming an instrument the catalog no longer offers,
     /// and the next SOURCE correction would silently retarget it, so the
     /// affordance says so instead of doing it.
-    pub fn draw(
+    pub(crate) fn draw(
         &mut self,
         ctx: &egui::Context,
         config: &AppConfig,

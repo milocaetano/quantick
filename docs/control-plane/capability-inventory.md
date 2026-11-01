@@ -56,6 +56,8 @@ capability that cannot change application state.
 | `feed.reload` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `feed.source.set` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `health.diagnostics.read` | 1 | `health` | yes | `observe`, `observe.health`, `observe.indicators`, `observe.orderflow` |
+| `home.leave` | 1 | `home` | no | `cockpit`, `cockpit.layout` |
+| `home.show` | 1 | `home` | no | `cockpit`, `cockpit.layout` |
 | `indicator.mouse_vertical_line.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout` |
 | `indicator.picker.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout`, `observe.user_text` |
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
@@ -85,6 +87,7 @@ capability that cannot change application state.
 | `layout.tab.create` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.rename` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.switch` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.window.state.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `notify.popup` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `notify.sound` | 1 | `notify` | no | `annotate`, `annotate.sound` |
 | `notify.toast` | 1 | `notify` | no | `annotate`, `annotate.notification` |
@@ -109,4 +112,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-84 capabilities registered.
+87 capabilities registered.

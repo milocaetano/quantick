@@ -374,6 +374,7 @@ impl super::arrangement_adapter::ArrangementAdapter<'_> {
             history: self.history,
             drawing_chrome: self.drawing_chrome,
             toast: self.toast,
+            surface: self.surface,
         }
     }
 }

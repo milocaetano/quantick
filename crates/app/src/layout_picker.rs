@@ -39,7 +39,7 @@ const THUMBNAIL_STROKE_PX: f32 = 1.0;
 const SELECTED_STROKE_PX: f32 = 1.5;
 /// Padding inside the popover frame.
 const POPOVER_PADDING_PX: f32 = 10.0;
-/// How many presets a number key reaches (`Ctrl+1` … `Ctrl+9`). Mirrors
+/// How many presets a number key reaches (`Ctrl+Shift+1` … `+9`). Mirrors
 /// `app::LAYOUT_PRESET_KEYS`, whose length is what a number row has; a preset
 /// past the ninth simply has no shortcut to name.
 const SHORTCUT_KEYS: usize = 9;
@@ -79,7 +79,7 @@ pub struct PickerModel<'a> {
 pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static LayoutPreset> {
     let button = IconButton::new(icons::LAYOUT, TOOLBAR_ICON)
         .active(*model.open)
-        .hover_text("chart layout (Ctrl+1…)")
+        .hover_text("chart layout (Ctrl+Shift+1…)")
         .show(ui);
 
     let popup_id = ui.make_persistent_id("layout_picker_popup");

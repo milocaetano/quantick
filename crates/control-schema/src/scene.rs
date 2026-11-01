@@ -96,7 +96,12 @@ pub const QUICK_RANGE_OWNER_ID: &str = "quick_range";
 /// into anything to find it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SceneSnapshot {
+    /// The market tab the window holds as active. While Home is the
+    /// [`Self::active_surface`] this market keeps running behind it.
     pub active_tab_id: WireU64,
+    /// What the central canvas shows.
+    #[serde(default)]
+    pub active_surface: ActiveSurfaceDto,
     /// The focused canvas, when this capture lists one.
     ///
     /// Absent while the active tab is between layouts and has no painted
@@ -122,6 +127,17 @@ pub struct SceneSnapshot {
     /// that the scene is bounded like every other projection, and a capture
     /// that met the bound says so instead of truncating in silence.
     pub coverage: AvailabilitySnapshot,
+}
+
+/// What the central canvas shows.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActiveSurfaceDto {
+    /// The Home page: no chart is painted and no pane is listed.
+    Home,
+    /// The chart of the active market tab.
+    #[default]
+    Market,
 }
 
 /// One control the trader can see.

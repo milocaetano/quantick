@@ -45,6 +45,7 @@ pub(crate) mod agent_popup;
 pub(crate) mod bar_switch;
 pub(crate) mod chart_settings;
 pub(crate) mod drawing_chrome;
+pub(crate) mod home;
 pub(crate) mod indicator_picker;
 pub(crate) mod indicator_preview;
 pub(crate) mod source_picker;

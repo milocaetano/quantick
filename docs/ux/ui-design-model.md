@@ -386,7 +386,17 @@ Shortcut map currently implemented:
 `Ctrl+L` fold the indicator legend · `Ctrl+Shift+T` tape only and back on a
 focused flow pane · `Space` play/pause while replaying ·
 `+`/`−` replay speed · `Ctrl+T` new tab · `Ctrl+W` close tab ·
-`Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs.
+`Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs · `Ctrl+1` or `Ctrl+Shift+H` Home ·
+`Ctrl+Shift+1…9` layout presets.
+
+While Home is on screen, `Ctrl+W` closes nothing, `Ctrl+Tab` and
+`Ctrl+Shift+Tab` return to the active market, and the keys that would change a
+chart or trade from it (presets, layers, drawing tools, paper hotkeys) stand
+down. The toolbar, dock, drawing rail and pinned inspector are not drawn, and the
+menus refuse the same chart commands and Close Replay, so nothing a trader can
+reach acts on the market Home hides. Agents keep theirs:
+control-plane writes still target the active market, and `home.leave` puts it
+back on screen.
 
 Single letters stay free of modifiers where the chart itself answers them —
 but that freedom belongs to the *toolbox*: bare letters arm drawing tools, and
@@ -402,7 +412,13 @@ without the other.
 
 ### Workspace tabs (zone 1, right of the menus)
 
-One tab per open market. A tab chip reads `SYMBOL · venue` in chrome type,
+The strip opens with Home, which never closes and shrinks to its logo once the
+market chips overflow. Exactly one tab looks active: canvas fill, a 2 px top line
+(green on Home, amber on a market, `#C58CFF` on a replay) and its ×. A replay
+chip carries that purple as its label and status dot; an inactive × waits for
+the pointer.
+
+One tab per open market. A tab chip reads `SYMBOL · venue` in monospace type,
 with a close `×` on hover and a trailing `+` that opens the source picker
 (feed + symbol, from the config catalog — the same catalog the toolbar's
 SOURCE group reads). Zone 1 already had the horizontal room; the chrome

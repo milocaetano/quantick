@@ -135,7 +135,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.preset.apply",
         title: "Switch the canvas to another arrangement",
-        reach: "toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9",
+        reach: "toolbar layout picker, View → Layout, Ctrl+Shift+1 … Ctrl+Shift+9",
         keys: &[
             (Source::ToolbarAction, "SetLayout"),
             (Source::LayoutPreset, "flow"),

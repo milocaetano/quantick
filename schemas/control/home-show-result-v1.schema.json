@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "ActiveSurfaceDto": {
+      "description": "What the central canvas shows.",
+      "oneOf": [
+        {
+          "const": "home",
+          "description": "The Home page: no chart is painted and no pane is listed.",
+          "type": "string"
+        },
+        {
+          "const": "market",
+          "description": "The chart of the active market tab.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "active_surface": {
+      "$ref": "#/$defs/ActiveSurfaceDto"
+    }
+  },
+  "required": [
+    "active_surface"
+  ],
+  "title": "HomeShowResult",
+  "type": "object"
+}
