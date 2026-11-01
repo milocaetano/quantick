@@ -50,11 +50,8 @@ pub struct PaneFrame {
     /// The controls the pane's header line and capsules painted last, for the
     /// scene.
     pub header_controls: crate::pane_header::PaintedControls,
-    /// The bottom of the capsule at the chart's right end, last frame: the status
-    /// badge stands below it.
-    pub capsule_floor: Option<f32>,
-    /// The capsules painted last, one per chart side: a press on one belongs to
-    /// the capsule, never to the pane's focus.
+    /// The capsules painted last frame, one per chart side: a press on one never
+    /// moves focus, and the status badge stands below the one at the right end.
     pub capsules: [Option<egui::Rect>; 2],
     /// The price gutter of the last draw, published for the same reason: the
     /// scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
@@ -113,7 +110,6 @@ impl Default for PaneFrame {
             area: None,
             layout_strip: None,
             header_controls: Default::default(),
-            capsule_floor: None,
             capsules: [None; 2],
             price_gutter: None,
             time_strip: None,

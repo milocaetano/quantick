@@ -507,9 +507,13 @@ impl ChartPane {
 
     /// The status badge's room: the chart below the capsule at its right end.
     pub(crate) fn status_rect(&self, chart_rect: egui::Rect) -> egui::Rect {
-        self.frame
-            .capsule_floor
-            .map_or(chart_rect, |floor| chart_rect.with_min_y(floor))
+        let at_right_end = |capsule: &&egui::Rect| {
+            chart_rect.right() - capsule.right() <= quantick_chart::pane_header::CAPSULE_INSET_PX
+        };
+        let mut capsules = self.frame.capsules.iter().flatten();
+        capsules.find(at_right_end).map_or(chart_rect, |capsule| {
+            chart_rect.with_min_y(capsule.bottom())
+        })
     }
 
     /// The live lane's window as the indicator panes draw it, `None`

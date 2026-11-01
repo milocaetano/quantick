@@ -70,79 +70,50 @@ pub fn paint_rule(ui: &egui::Ui, strip: egui::Rect) {
     );
 }
 
-/// How wide the indicators button is, before it is laid out.
-pub fn indicators_width(ui: &egui::Ui) -> f32 {
-    let measure = |text: &str, font| {
-        ui.painter()
-            .layout_no_wrap(text.to_owned(), font, theme::TEXT_MUTED)
-            .size()
-            .x
+/// The `ƒx` icon and the words, as the button writes them.
+fn indicators_text(words: egui::Color32) -> egui::text::LayoutJob {
+    let mut text = egui::text::LayoutJob::default();
+    let icon = egui::TextFormat {
+        italics: true,
+        ..egui::TextFormat::simple(egui::FontId::monospace(INDICATORS_SIZE), theme::TEXT_MUTED)
     };
-    measure(INDICATORS_GLYPH, indicators_icon_font())
-        + INDICATORS_ICON_GAP_PX
-        + measure(
-            INDICATORS_LABEL,
-            egui::FontId::proportional(INDICATORS_SIZE),
-        )
-        + 2.0 * INDICATORS_PADDING.x
+    text.append(INDICATORS_GLYPH, 0.0, icon);
+    let font = egui::FontId::proportional(INDICATORS_SIZE);
+    let words = egui::TextFormat::simple(font, words);
+    text.append(INDICATORS_LABEL, INDICATORS_ICON_GAP_PX, words);
+    text
 }
 
-fn indicators_icon_font() -> egui::FontId {
-    egui::FontId::monospace(INDICATORS_SIZE)
+/// How wide the indicators button is, before it is laid out.
+pub fn indicators_width(ui: &egui::Ui) -> f32 {
+    let galley = ui.fonts(|fonts| fonts.layout_job(indicators_text(theme::PANE_ACTION)));
+    galley.size().x + 2.0 * INDICATORS_PADDING.x
 }
 
 /// The indicators button with its left edge at `left`, centred on the strip;
 /// answers whether it was clicked.
 pub fn indicators_button(ui: &egui::Ui, left: f32, strip: egui::Rect, salt: u64) -> bool {
-    let size = egui::vec2(
-        indicators_width(ui),
-        INDICATORS_SIZE + 2.0 * INDICATORS_PADDING.y + 2.0,
-    );
-    let rect =
-        egui::Rect::from_center_size(egui::pos2(left + size.x / 2.0, strip.center().y), size);
-    let response = ui.interact(
-        rect,
-        ui.id().with(("pane_indicators", salt)),
-        egui::Sense::click(),
-    );
+    let size = egui::vec2(indicators_width(ui), 2.0 * (INDICATORS_SIZE - 1.0));
+    let center = egui::pos2(left + size.x / 2.0, strip.center().y);
+    let rect = egui::Rect::from_center_size(center, size);
+    let id = ui.id().with(("pane_indicators", salt));
+    let response = ui.interact(rect, id, egui::Sense::click());
     #[cfg(test)]
     ui.ctx()
         .data_mut(|data| data.insert_temp(indicators_id(salt), rect));
-    let painter = ui.painter();
-    if response.hovered() {
-        painter.rect_filled(
-            rect,
-            egui::Rounding::same(HOVER_ROUNDING),
-            theme::BARE_HOVER,
-        );
-    }
-    let words = if response.hovered() {
+    let hovered = response.hovered();
+    let words = if hovered {
         theme::TEXT_PRIMARY
     } else {
         theme::PANE_ACTION
     };
-    let icon = painter.layout_no_wrap(
-        INDICATORS_GLYPH.to_owned(),
-        indicators_icon_font(),
-        theme::TEXT_MUTED,
-    );
-    let icon_right = rect.left() + INDICATORS_PADDING.x + icon.size().x;
-    let at = |width: egui::Vec2, x| egui::pos2(x, rect.center().y - width.y / 2.0);
-    painter.galley(
-        at(icon.size(), rect.left() + INDICATORS_PADDING.x),
-        icon,
-        theme::TEXT_MUTED,
-    );
-    let label = painter.layout_no_wrap(
-        INDICATORS_LABEL.to_owned(),
-        egui::FontId::proportional(INDICATORS_SIZE),
-        words,
-    );
-    painter.galley(
-        at(label.size(), icon_right + INDICATORS_ICON_GAP_PX),
-        label,
-        words,
-    );
+    if hovered {
+        let rounding = egui::Rounding::same(HOVER_ROUNDING);
+        ui.painter().rect_filled(rect, rounding, theme::BARE_HOVER);
+    }
+    let galley = ui.fonts(|fonts| fonts.layout_job(indicators_text(words)));
+    let at = rect.center() - galley.size() / 2.0;
+    ui.painter().galley(at, galley, words);
     response.clicked()
 }
 

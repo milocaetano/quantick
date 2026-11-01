@@ -1083,8 +1083,7 @@ impl ChartPane {
     }
 
     /// Paint this pane's capsules, one per chart side on screen, over the chart
-    /// just drawn; answers what a press on one asked for. Publishes how far down
-    /// the rightmost reaches, so the status badge can stand below it.
+    /// just drawn; answers what a press on one asked for.
     pub(crate) fn draw_capsules(
         &mut self,
         ui: &mut egui::Ui,
@@ -1092,7 +1091,6 @@ impl ChartPane {
         style: &ChartStyle,
         capabilities: FeedCapabilities,
     ) -> Option<HeaderIntent> {
-        self.frame.capsule_floor = None;
         self.frame.capsules = [None; 2];
         let chart = self.frame.chart_rect?;
         let state = self.flow_header_state();
@@ -1117,7 +1115,6 @@ impl ChartPane {
             });
             let glyph = |toggle| self.header_glyph(toggle, style, capabilities);
             let capsule = Capsule::of(side, glyph, scale);
-            self.frame.capsule_floor = None;
             let corner = capsule.place(left, right, chart.top());
             let Some(corner) = corner.filter(|_| !capsule.is_empty()) else {
                 continue;
@@ -1131,7 +1128,6 @@ impl ChartPane {
                 &mut self.frame.header_controls,
                 &mut intent,
             );
-            self.frame.capsule_floor = Some(rect.bottom());
             self.frame.capsules[slot] = Some(rect);
         }
         intent

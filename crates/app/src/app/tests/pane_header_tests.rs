@@ -489,7 +489,7 @@ fn a_glyph_the_data_blocks_is_not_painted_and_returns_with_the_data() {
     set_capabilities(&mut app, no_volume);
     run_frame(&mut app, &ctx);
     let frame = &app.active_tab().flow_pane.frame;
-    assert_eq!(frame.capsule_floor, None, "nothing left, no capsule");
+    assert_eq!(frame.capsules, [None; 2], "nothing left, no capsule");
 
     set_capabilities(&mut app, live);
     run_frame(&mut app, &ctx);
@@ -506,12 +506,12 @@ fn the_status_label_stands_below_the_tape_capsule() {
     run_frame(&mut app, &ctx);
     let flow = &app.active_tab().flow_pane;
     let chart = flow.frame.chart_rect.expect("flow chart");
-    let floor = flow.frame.capsule_floor.expect("the tape capsule");
+    let floor = flow.frame.capsules[1].expect("the tape capsule").bottom();
     let tape_bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
     assert!(floor >= tape_bubbles.bottom(), "the capsule's own bottom");
     assert_eq!(flow.status_rect(chart).top(), floor);
     let time = &app.active_tab().pane(PaneSide::Time(0)).frame;
-    assert!(time.capsule_floor.is_some(), "a time pane has one too");
+    assert!(time.capsules[0].is_some(), "a time pane has one too");
 }
 
 /// A side narrower than its capsule paints none; the named call still reaches
