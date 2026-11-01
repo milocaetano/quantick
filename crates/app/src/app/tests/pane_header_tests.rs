@@ -1213,3 +1213,29 @@ fn the_scene_names_each_panes_bars_and_indicators_calls() {
         }
     }
 }
+
+/// The library is modal, and a click off it must hand the app back. It used to
+/// raise the scrim over the window, leaving nothing the pointer could reach.
+#[test]
+fn a_click_outside_the_library_hands_the_app_back() {
+    let ctx = egui::Context::default();
+    let (mut app, _events, _commands) = context_fixture(&ctx);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let glyph = glyph_of(&app, &ctx, PaneSide::Flow);
+    click_chart(&mut app, &ctx, glyph.center());
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.surfaces.indicator_picker.state.target.is_some());
+
+    click_chart(&mut app, &ctx, egui::pos2(30.0, 400.0));
+    run_frame(&mut app, &ctx);
+    assert!(app.surfaces.indicator_picker.state.target.is_none());
+
+    click_chart(&mut app, &ctx, glyph.center());
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.surfaces.indicator_picker.state.target.is_some(),
+        "the header answers again once the library is gone"
+    );
+}
