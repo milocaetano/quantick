@@ -143,8 +143,7 @@ pub fn draw_marked(
     painted.clear();
     let inner = strip.shrink2(CONTENT_PADDING);
     let indicators_px = indicators_width(ui);
-    let state = row.state;
-    let right_px = state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
+    let right_px = row.state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
     let left = inner.with_max_x(inner.right() - right_px);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
@@ -176,7 +175,7 @@ pub fn draw_marked(
     let button_left = (content.cursor().left() + GROUP_GAP_PX).min(limit);
     let indicators = indicators_button(ui, button_left, strip, salt);
     let mut intent = None;
-    if let Some(state) = state {
+    if let Some(state) = row.state {
         let room = inner.with_min_x(inner.right() - FLOW_CONTROLS_PX);
         let right = clipped_child(ui, room, strip, ("pane_header_right", salt));
         let height = inner.y_range();

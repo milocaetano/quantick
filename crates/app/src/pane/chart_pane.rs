@@ -1095,7 +1095,6 @@ impl ChartPane {
     ) -> Option<HeaderIntent> {
         self.frame.capsules = [None; 2];
         let chart = self.frame.chart_rect?;
-        // Measured from the header's rule: the plot itself starts further down.
         let top = self.frame.area.map_or(chart.top(), |area| area.top());
         let state = self.flow_header_state();
         let (left, right) = (chart.left(), chart.right());

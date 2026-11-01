@@ -187,8 +187,7 @@ impl PaperArbitration<'_> {
 
 /// Whether `pos` lands on a layer capsule floating over the chart.
 pub(super) fn capsule_hit(areas: &PlotAreas, pos: egui::Pos2) -> bool {
-    let mut capsules = areas.capsules.iter().flatten();
-    capsules.any(|capsule| capsule.contains(pos))
+    areas.capsules.iter().flatten().any(|rect| rect.contains(pos))
 }
 
 /// Pixels inside a band that belong to the pane's own chrome rather than

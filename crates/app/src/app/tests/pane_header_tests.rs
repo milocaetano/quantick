@@ -255,7 +255,7 @@ fn each_pane_paints_only_the_controls_it_accepts() {
         .collect();
     assert_eq!(only, [HeaderControl::Layer(LayerToggle::Footprint)]);
     let (_, footprint) = time.header_controls[0];
-    let chart = time.chart_rect.expect("time chart");
+    let chart = time.area.expect("time chart");
     assert!(
         chart.contains_rect(footprint),
         "the capsule floats on the chart"
