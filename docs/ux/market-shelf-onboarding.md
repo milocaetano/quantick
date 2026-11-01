@@ -2,6 +2,11 @@
 
 Status: design approved by the trader on 2026-10-07, not built yet. This page is
 the brief to implement from; the two prototypes beside it show the behaviour.
+[`window-menu-and-workspace-tabs.md`](window-menu-and-workspace-tabs.md)
+(2026-10-31) extends it: the tab strip moves into the title bar, the text
+menu bar becomes a `⋮` menu, every tab carries a workspace, tab tear-off by
+drag enters scope, and the palette gains Bars and Workspace selectors. Where
+the two disagree, the newer page wins.
 
 - [`first-run-concepts.html`](first-run-concepts.html) — the five first-run
   concepts a design panel shortlisted. The trader picked **Market Shelf**.

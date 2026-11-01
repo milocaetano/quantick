@@ -79,6 +79,8 @@ not a claim that those features have shipped.
 | Document | What it covers |
 | --- | --- |
 | [`ux/ui-design-model.md`](ux/ui-design-model.md) | The shell: status bar, toolbar, icon set, right dock, tool rail (phases 1–5 implemented) |
+| [`ux/market-shelf-onboarding.md`](ux/market-shelf-onboarding.md) | First run and opening more charts: the pinned Home tab, the `+` "Open a market" palette, My markets; prototypes beside it |
+| [`ux/window-menu-and-workspace-tabs.md`](ux/window-menu-and-workspace-tabs.md) | Chrome-style tabs in the title bar, the `⋮` window menu that replaces File/View/Workspace/Tools/Help, and a workspace per market tab with drawings kept per market; the vocabulary Market tab / Workspace / Market settings / Desk; prototype [`ux/window-menu-prototype.html`](ux/window-menu-prototype.html) |
 | [`ux/paper-trading.md`](ux/paper-trading.md) | The paper-trading surface: drag-to-create brackets, the trades ledger |
 | [`ux/strategy-anchors.md`](ux/strategy-anchors.md) | The semi-automatic operation and the division of labour between trader and machine |
 | [`drawing-toolbar-ux.md`](drawing-toolbar-ux.md) | The drawing toolbar and inspector redesign (specification) |
