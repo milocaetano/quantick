@@ -74,14 +74,17 @@ impl Surface for IndicatorPickerSurface {
         let width = (available.x - 32.0).clamp(240.0, 760.0);
         let height = (available.y - 120.0).clamp(100.0, 440.0);
         // The foreground scrim consumes pointer input before it reaches the chart.
-        egui::Area::new(egui::Id::new("indicator-picker-scrim"))
+        let scrim = egui::Area::new(egui::Id::new("indicator-picker-scrim"))
             .order(egui::Order::Foreground)
             .fixed_pos(ctx.screen_rect().min)
             .show(ctx, |ui| {
-                let (rect, _) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+                let (rect, response) =
+                    ui.allocate_exact_size(available, egui::Sense::click_and_drag());
                 ui.painter()
                     .rect_filled(rect, 0.0, egui::Color32::from_black_alpha(90));
-            });
+                response
+            })
+            .inner;
         egui::Window::new(egui::RichText::new("Indicators").size(20.0).strong())
             .id(egui::Id::new(self.id()))
             .order(egui::Order::Foreground)
@@ -179,7 +182,13 @@ impl Surface for IndicatorPickerSurface {
                     });
                 });
             });
-        if !open || escape {
+        // A press raises the layer under it, and the scrim shares this layer
+        // order: left alone, it would cover the window and take every click.
+        ctx.move_to_top(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new(self.id()),
+        ));
+        if !open || escape || scrim.clicked() {
             self.state.close();
         }
         // The chart paints after surfaces; it must never see this modal's keys.
@@ -387,6 +396,54 @@ mod tests {
             frame(&mut surface, &ctx, click(at, pressed), size);
         }
         assert!(surface.state.target.is_none());
+    }
+    /// Off the window: the scrim, which covers the rest of the app.
+    const OUTSIDE: egui::Pos2 = egui::pos2(20.0, 20.0);
+    #[test]
+    fn clicking_outside_the_picker_dismisses_it_without_an_action() {
+        let ctx = egui::Context::default();
+        let mut surface = IndicatorPickerSurface::default();
+        surface.state.open((0, 0));
+        let size = egui::vec2(1000.0, 700.0);
+        for _ in 0..3 {
+            frame(&mut surface, &ctx, vec![], size);
+        }
+        frame(&mut surface, &ctx, click(OUTSIDE, true), size);
+        let (_, response) = frame(&mut surface, &ctx, click(OUTSIDE, false), size);
+        assert!(surface.state.target.is_none());
+        assert!(response.indicator_actions.is_empty());
+    }
+    /// A press on the scrim that is no click leaves the picker open, and the
+    /// window has to stay above the scrim or the trader holds a modal nothing
+    /// can reach.
+    #[test]
+    fn a_drag_on_the_scrim_leaves_the_window_reachable() {
+        let ctx = egui::Context::default();
+        let mut surface = IndicatorPickerSurface::default();
+        surface.state.open((0, 0));
+        let size = egui::vec2(1000.0, 700.0);
+        let mut output = frame(&mut surface, &ctx, vec![], size).0;
+        for _ in 0..3 {
+            output = frame(&mut surface, &ctx, vec![], size).0;
+        }
+        let row = text_rect(&output, "CVD pane").unwrap().center();
+        let away = OUTSIDE + egui::vec2(60.0, 60.0);
+        frame(&mut surface, &ctx, click(OUTSIDE, true), size);
+        frame(
+            &mut surface,
+            &ctx,
+            vec![egui::Event::PointerMoved(away)],
+            size,
+        );
+        frame(&mut surface, &ctx, click(away, false), size);
+        frame(&mut surface, &ctx, vec![], size);
+        assert!(surface.state.target.is_some(), "a drag is not a dismissal");
+        frame(&mut surface, &ctx, click(row, true), size);
+        let (_, response) = frame(&mut surface, &ctx, click(row, false), size);
+        assert_eq!(
+            response.indicator_actions,
+            vec![ToolbarAction::AddNative("native.cvd")]
+        );
     }
     fn click(at: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
         vec![
