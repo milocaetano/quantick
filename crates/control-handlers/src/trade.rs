@@ -33,8 +33,8 @@
 //! and the two persistence calls a ticket edit makes. What it decides from
 //! those is all here.
 
-pub use quantick_control_schema::trade::*;
 pub use quantick_control_host::authority::CAPABILITY_VERSION;
+pub use quantick_control_schema::trade::*;
 
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::journal::NewEvent;

@@ -110,5 +110,8 @@ fn a_trade_without_a_chart_open_is_refused_before_it_journals() {
     )
     .expect_err("no desk");
     assert_eq!(refusal, no_chart_open());
-    assert!(access.events.is_empty(), "a refused call before the desk records nothing");
+    assert!(
+        access.events.is_empty(),
+        "a refused call before the desk records nothing"
+    );
 }

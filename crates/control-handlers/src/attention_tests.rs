@@ -68,20 +68,15 @@ fn a_second_registration_of_the_same_action_is_refused() {
 #[test]
 fn a_mark_resolves_the_pointer_and_a_replay_names_its_source() {
     let window = FakeWindow::new(vec![FakeTab::new(3, "WIN")]);
-    let resolved = resolve_mark(&window, &FakeWindow::trader(), json!({ "note": "here" }))
-        .expect("resolved");
+    let resolved =
+        resolve_mark(&window, &FakeWindow::trader(), json!({ "note": "here" })).expect("resolved");
     assert_eq!(resolved["target_source"], "pointer");
     assert_eq!(resolved["target"]["active_tab_id"], "3");
 
     let mut window = window;
     let mut access = FakeAccess::with_budget(0);
-    let result = create_mark(
-        &mut window,
-        &mut access,
-        &FakeWindow::trader(),
-        &resolved,
-    )
-    .expect("marked");
+    let result =
+        create_mark(&mut window, &mut access, &FakeWindow::trader(), &resolved).expect("marked");
     assert_eq!(result["target_source"], "pointer");
     assert_eq!(result["sequence"], "1");
     assert_eq!(access.events.len(), 1);
@@ -102,7 +97,6 @@ fn a_note_past_the_reason_limit_is_refused_before_it_journals() {
         json!({ "note": "x".repeat(CONTROL_REASON_MAX_BYTES + 1) }),
     )
     .expect("the resolver does not judge the note");
-    create_mark(&mut window, &mut access, &FakeWindow::trader(), &resolved)
-        .expect_err("too long");
+    create_mark(&mut window, &mut access, &FakeWindow::trader(), &resolved).expect_err("too long");
     assert!(access.events.is_empty());
 }

@@ -236,7 +236,12 @@ fn pane_analysis_keys(tab: &dyn SemanticTab) -> Vec<PaneAnalysisKey> {
         keys.push(PaneAnalysisKey {
             pane_id: pane.pane_id(),
             side,
-            indicators: pane.indicators().all().iter().map(IndicatorKey::of).collect(),
+            indicators: pane
+                .indicators()
+                .all()
+                .iter()
+                .map(IndicatorKey::of)
+                .collect(),
             drawings: pane.drawings().items().iter().map(DrawingKey::of).collect(),
         });
     });

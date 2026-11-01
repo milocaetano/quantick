@@ -13,8 +13,8 @@ use quantick_control_host::{
     journal::NewEvent,
     wire::{PaneSideDto, unavailable},
 };
-use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
+use quantick_control_schema::interaction::CursorSnapshot;
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::{Bar, BarSpec, Side, Trade};
 use quantick_session::{
@@ -24,11 +24,11 @@ use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
 
+use crate::attention::{MarkAccess, MarkPort};
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::history::HistoryPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
-use crate::attention::{MarkAccess, MarkPort};
 use crate::tabs::TabDirectory;
 use crate::trade::{TradeAccess, TradeDesk, TradePort};
 

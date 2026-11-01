@@ -177,7 +177,10 @@ fn a_tab_switch_records_the_activation_and_the_focus() {
     assert_eq!(
         events,
         vec![
-            ("workspace.tab.activated".to_owned(), json!({ "tab_id": "2" })),
+            (
+                "workspace.tab.activated".to_owned(),
+                json!({ "tab_id": "2" })
+            ),
             (
                 "workspace.focus.changed".to_owned(),
                 json!({ "tab_id": "2", "pane_id": "20" })

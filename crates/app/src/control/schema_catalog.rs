@@ -5,16 +5,15 @@ use quantick_control::schema::generated_schema;
 use quantick_control_schema::tape_view::{TapeViewInput, TapeViewResult};
 use serde_json::{Value, json};
 
-use quantick_control_host::catalogue::SnapshotScopeDescriptor;
 use quantick_control_handlers::attention::{MarkInput, MarkResult};
+use quantick_control_host::catalogue::SnapshotScopeDescriptor;
 use quantick_control_schema::analysis::{DrawingsSnapshot, IndicatorsSnapshot};
-use quantick_control_schema::session::{PaperSnapshot, ReplaySnapshot};
 use quantick_control_schema::orderflow::{
     BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot,
 };
+use quantick_control_schema::session::{PaperSnapshot, ReplaySnapshot};
 
 use super::{
-
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput},
     drawing_magnet::{
