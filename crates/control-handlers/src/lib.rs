@@ -31,6 +31,7 @@ pub mod notify;
 pub mod opening_scale;
 pub mod pnl_display;
 pub mod recovery;
+pub mod semantic;
 mod tabs;
 pub mod tape_fold;
 pub mod tape_view_set;
