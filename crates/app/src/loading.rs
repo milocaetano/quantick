@@ -150,7 +150,9 @@ fn decode_alpha(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
     }
     let side = info.width as usize;
     let alpha = buffer[..info.buffer_size()]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|pixel| pixel[3])
         .collect();
     Some((alpha, side))
