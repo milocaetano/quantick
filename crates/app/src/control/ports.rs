@@ -3,9 +3,9 @@
 //! makes, on the window as the gateway holds it.
 
 use quantick_control_handlers::{
-    TabDirectory,
+    JournalAccess, TabDirectory,
     analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
-    attention::{MarkAccess, MarkPort},
+    attention::MarkPort,
     history::HistoryPort,
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
@@ -13,7 +13,7 @@ use quantick_control_handlers::{
     pnl_display::PnlDisplayPort,
     recovery::{FeedRecoveryPort, RecoveredFeed},
     session::{ReplayRead, SessionPort, SessionTab},
-    trade::{TradeAccess, TradeDesk, TradePort},
+    trade::{TradeDesk, TradePort},
 };
 use quantick_control_host::wire::PaneSideDto;
 use quantick_control_schema::notify::AgentPopup;
@@ -201,12 +201,6 @@ impl TradePort for dyn ControlPort {
     }
 }
 
-impl TradeAccess for ControlAccess {
-    fn record_event(&mut self, event: quantick_control_host::journal::NewEvent) {
-        self.append_event(event);
-    }
-}
-
 impl AnalysisPane for ChartPane {
     fn pane_id(&self) -> u64 {
         self.id
@@ -243,7 +237,7 @@ impl MarkPort for dyn ControlPort {
     }
 }
 
-impl MarkAccess for ControlAccess {
+impl JournalAccess for ControlAccess {
     fn record_event(
         &mut self,
         event: quantick_control_host::journal::NewEvent,

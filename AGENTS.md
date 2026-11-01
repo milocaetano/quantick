@@ -23,10 +23,10 @@ leaves; `guards` has no edges either way.
 | `backtest` | strategy, pine, indicators, replay, sim, paper (dev), engine | Recorded sessions in, performance out, over the chart's engine and indicators. |
 | `mcp` | control-local, control | The MCP adapter; stdout carries MCP frames only. |
 | `guards` | — | Size, context, cycle and UI-free ratchets; English and encoding scans. |
-| `control-handlers` | control-schema, control-host, control, chart, sources, engine | Control handlers over headless ports. |
+| `control-handlers` | control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores | Headless-port handlers. |
 | `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
 | `stores` | chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
-| `chart` | chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model, indicator registry |
+| `chart` | chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model. |
 | `indicator-session` | pine, indicators, engine | Source binding, batches, deltas. |
 | `anchored-studies` | indicators, engine | Resumable profile and anchored-average state; the caller schedules and paints. |
 | `pine` | indicators | "Quantick Pine", a Pine v5 subset; zero external dependencies. |

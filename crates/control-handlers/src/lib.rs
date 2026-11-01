@@ -40,7 +40,7 @@ pub mod tape_view_set;
 pub mod ticket_money;
 pub mod trade;
 
-pub use tabs::{TabDirectory, tab_index};
+pub use tabs::{JournalAccess, TabDirectory, tab_index};
 
 #[cfg(test)]
 mod test_support;

@@ -187,17 +187,13 @@ fn pointer_snapshot<P: TabsPort + ?Sized>(
 pub(crate) use quantick_control_handlers::semantic::SelectionIdentity;
 
 pub(crate) fn selection_identity<P: TabsPort + ?Sized>(app: &P) -> SelectionIdentity {
-    use quantick_control_handlers::semantic::FocusedSide;
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let drawing_pane = tab.pane(tab.drawing_side());
     SelectionIdentity {
         active_tab_id: app.tab_reads().tabs().active_id(),
         focused_pane_id: tab.pane(focused_side).id,
-        focused_pane_side: match focused_side {
-            PaneSide::Flow => FocusedSide::Flow,
-            PaneSide::Time(slot) => FocusedSide::Time(slot),
-        },
+        focused_pane_side: focused_side,
         drawing: drawing_pane
             .drawings
             .selected()

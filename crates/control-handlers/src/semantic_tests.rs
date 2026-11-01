@@ -117,7 +117,7 @@ impl SemanticSource for Source {
         SelectionIdentity {
             active_tab_id: self.active_tab_id(),
             focused_pane_id: self.focused_pane,
-            focused_pane_side: FocusedSide::Flow,
+            focused_pane_side: quantick_chart_interaction::pane::PaneSide::Flow,
             drawing: self.drawing,
             paper_trade_row: None,
         }

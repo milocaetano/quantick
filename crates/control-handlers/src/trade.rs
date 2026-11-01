@@ -44,6 +44,7 @@ use quantick_sim::{Bracket, EntryKind, Order, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 
+use crate::JournalAccess;
 use crate::dock::ActionDock;
 
 pub use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
@@ -89,12 +90,6 @@ pub trait TradePort {
     /// Persist the risk per trade, the declared capital and the instrument
     /// money.
     fn persist_risk_settings(&mut self);
-}
-
-/// What a trade action needs of the control access it runs in.
-pub trait TradeAccess {
-    /// Journal one event, stamped by the access's own clock.
-    fn record_event(&mut self, event: NewEvent);
 }
 
 /// Turn the venue's answer into the result, whatever the call was.
@@ -149,7 +144,7 @@ fn answer<P: TradePort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult 
 /// the honesty contract quietly dropped — and a refusal is worth recording
 /// too, since "the agent tried to buy here and was told no" is precisely the
 /// line a trader reviewing a session wants to find.
-fn journal<A: TradeAccess>(
+fn journal<A: JournalAccess>(
     access: &mut A,
     actor: &ActorContext,
     kind: &str,
@@ -166,7 +161,7 @@ fn journal<A: TradeAccess>(
     access.record_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
 }
 
-fn place_order<P: TradePort + ?Sized, A: TradeAccess>(
+fn place_order<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
     actor: &ActorContext,
@@ -242,7 +237,7 @@ fn place_order<P: TradePort + ?Sized, A: TradeAccess>(
     to_value(result)
 }
 
-fn bracket_order<P: TradePort + ?Sized, A: TradeAccess>(
+fn bracket_order<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
     actor: &ActorContext,
@@ -273,7 +268,7 @@ fn bracket_order<P: TradePort + ?Sized, A: TradeAccess>(
     to_value(result)
 }
 
-fn cancel_order<P: TradePort + ?Sized, A: TradeAccess>(
+fn cancel_order<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
     actor: &ActorContext,
@@ -292,7 +287,7 @@ fn cancel_order<P: TradePort + ?Sized, A: TradeAccess>(
     to_value(result)
 }
 
-fn select_strategy<P: TradePort + ?Sized, A: TradeAccess>(
+fn select_strategy<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
     actor: &ActorContext,
@@ -318,7 +313,7 @@ fn select_strategy<P: TradePort + ?Sized, A: TradeAccess>(
     to_value(result)
 }
 
-fn set_ruler<P: TradePort + ?Sized, A: TradeAccess>(
+fn set_ruler<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
     actor: &ActorContext,
@@ -335,7 +330,7 @@ fn set_ruler<P: TradePort + ?Sized, A: TradeAccess>(
     to_value(result)
 }
 
-fn set_risk<P: TradePort + ?Sized, A: TradeAccess>(
+fn set_risk<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
     actor: &ActorContext,
@@ -355,7 +350,7 @@ fn set_risk<P: TradePort + ?Sized, A: TradeAccess>(
     to_value(result)
 }
 
-fn set_instrument_money<P: TradePort + ?Sized, A: TradeAccess>(
+fn set_instrument_money<P: TradePort + ?Sized, A: JournalAccess>(
     app: &mut P,
     access: &mut A,
     actor: &ActorContext,
@@ -378,7 +373,7 @@ pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
     H: TradePort + ?Sized,
-    A: TradeAccess,
+    A: JournalAccess,
 {
     registry.register(select_strategy_descriptor(), select_strategy::<H, A>)?;
     registry.register(set_ruler_descriptor(), set_ruler::<H, A>)?;

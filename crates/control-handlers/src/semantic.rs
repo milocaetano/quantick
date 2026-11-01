@@ -10,6 +10,7 @@
 //! time in, nothing here reads a clock.
 
 use quantick_chart::indicator_views::IndicatorView;
+use quantick_chart_interaction::pane::PaneSide;
 use quantick_control::id::{EventKind, ModuleId};
 use quantick_control_host::{
     journal::{EventJournal, NewEvent},
@@ -21,22 +22,15 @@ use serde_json::{Value, json};
 
 use crate::analysis::AnalysisPane;
 
-/// The side of a tab's split a pane sits on, as the selection names it: a
-/// context chart keeps its slot, so a focus moving between two stacked
-/// context charts is a change.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FocusedSide {
-    Flow,
-    Time(usize),
-}
-
 /// What identifies the selection — the ids, never the content — so a frame
 /// compares a few integers and builds the owned snapshot only on a change.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SelectionIdentity {
     pub active_tab_id: u64,
     pub focused_pane_id: u64,
-    pub focused_pane_side: FocusedSide,
+    /// The side the focused pane sits on; a context chart keeps its slot,
+    /// so a focus moving between two stacked context charts is a change.
+    pub focused_pane_side: PaneSide,
     /// `(pane_id, drawing_id)` of the selected drawing, if any.
     pub drawing: Option<(u64, u64)>,
     pub paper_trade_row: Option<usize>,

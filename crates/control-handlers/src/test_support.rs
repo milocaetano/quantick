@@ -24,13 +24,14 @@ use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
 
-use crate::attention::{MarkAccess, MarkPort};
+use crate::JournalAccess;
+use crate::attention::MarkPort;
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::history::HistoryPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
 use crate::tabs::TabDirectory;
-use crate::trade::{TradeAccess, TradeDesk, TradePort};
+use crate::trade::{TradeDesk, TradePort};
 
 /// One pane of a fake tab: a real chart model, an optional venue prefix, and
 /// the framing a frame would have laid out.
@@ -348,10 +349,13 @@ impl TradePort for FakeWindow {
 /// active tab's first pane and says why the pointer is missing.
 impl MarkPort for FakeWindow {
     fn cursor_snapshot(&self) -> CursorSnapshot {
-        let tab = &self.tabs[self.active];
+        let tab = self.tabs.get(self.active);
         CursorSnapshot {
-            active_tab_id: WireU64::new(tab.id),
-            focused_pane_id: WireU64::new(tab.panes.first().map_or(0, |pane| pane.id)),
+            active_tab_id: WireU64::new(tab.map_or(0, |tab| tab.id)),
+            focused_pane_id: WireU64::new(
+                tab.and_then(|tab| tab.panes.first())
+                    .map_or(0, |pane| pane.id),
+            ),
             focused_pane_side: PaneSideDto::Flow,
             pointer: None,
             pointer_availability: unavailable("fake_window_has_no_pointer"),
@@ -430,13 +434,7 @@ impl FakeAccess {
     }
 }
 
-impl TradeAccess for FakeAccess {
-    fn record_event(&mut self, event: NewEvent) {
-        self.events.push(event);
-    }
-}
-
-impl MarkAccess for FakeAccess {
+impl JournalAccess for FakeAccess {
     fn record_event(&mut self, event: NewEvent) -> WireU64 {
         self.events.push(event);
         WireU64::new(self.events.len() as u64)

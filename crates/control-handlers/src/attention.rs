@@ -34,6 +34,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::JournalAccess;
 use crate::dock::ActionDock;
 
 /// The annotate tier's identifiers this action docks into (contract §7).
@@ -48,13 +49,6 @@ pub trait MarkPort {
     /// The fully resolved cursor target — pane, bar, price, flow cell,
     /// drawing — at this instant.
     fn cursor_snapshot(&self) -> CursorSnapshot;
-}
-
-/// What a mark needs of the control access it runs in.
-pub trait MarkAccess {
-    /// Journal one event, stamped by the access's own clock; answers its
-    /// sequence.
-    fn record_event(&mut self, event: NewEvent) -> WireU64;
 }
 
 /// What a mark takes: an optional note the human typed, and optionally the
@@ -199,7 +193,7 @@ fn resolve_mark<P: MarkPort + ?Sized>(
 /// The mark handler: append the event for the resolved target. One path for
 /// the hotkey, the hook, the tests, a replayed trace entry and any authorized
 /// agent.
-pub fn create_mark<P: ?Sized, A: MarkAccess>(
+pub fn create_mark<P: ?Sized, A: JournalAccess>(
     _app: &mut P,
     access: &mut A,
     actor: &ActorContext,
@@ -256,7 +250,7 @@ pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
     H: MarkPort + ?Sized,
-    A: MarkAccess,
+    A: JournalAccess,
 {
     registry.register_resolved(
         mark_descriptor(),
