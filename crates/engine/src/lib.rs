@@ -21,6 +21,9 @@
 //!
 //! The [`fixture`] module defines the plain-text trade format that golden tests
 //! replay to guard determinism.
+//!
+//! [`work_meter`] is the counting allocator the hot-path budgets are held
+//! with, here and in every crate above: each test binary installs it.
 
 pub mod bar_registry;
 pub mod bar_selection;
@@ -30,6 +33,11 @@ pub mod fixture;
 pub mod forming_run;
 pub mod golden;
 pub mod trade_tape;
+pub mod work_meter;
+
+#[cfg(test)]
+#[global_allocator]
+static TEST_ALLOCATOR: work_meter::Counting = work_meter::Counting;
 
 mod bar;
 mod builder;

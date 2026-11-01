@@ -23,6 +23,9 @@ use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 #[cfg(test)]
+#[path = "indicator_worker/tests/barrier.rs"]
+pub(crate) mod barrier;
+#[cfg(test)]
 #[path = "indicator_worker/tests/event_fixture.rs"]
 pub(crate) mod event_fixture;
 /// Transport markers stay outside the domain command vocabulary.
@@ -233,31 +236,6 @@ impl IndicatorWorker {
         self.send(WorkerCommand::InspectLane(tx));
         self.await_reply(&rx)
             .expect("the worker reports retained lane storage")
-    }
-
-    /// Wait up to ten seconds for a reply to a command just sent, pumping any
-    /// parked commands meanwhile — a test is its own UI frame loop, and a
-    /// parked barrier would otherwise wait on a queue nobody refills.
-    #[cfg(test)]
-    pub(crate) fn await_reply<T>(&self, rx: &Receiver<T>) -> Option<T> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while std::time::Instant::now() < deadline {
-            self.commands.pump();
-            if let Ok(reply) = rx.recv_timeout(std::time::Duration::from_millis(5)) {
-                return Some(reply);
-            }
-        }
-        None
-    }
-
-    /// Block until every command sent before this call has been applied and
-    /// its events published. Tests use this to make the pipeline
-    /// deterministic (pattern: `BookWorker::flush`).
-    #[cfg(test)]
-    pub(crate) fn flush(&self) {
-        let (ack_tx, ack_rx) = channel();
-        self.send(WorkerCommand::Flush(ack_tx));
-        let _ = self.await_reply(&ack_rx);
     }
 }
 
