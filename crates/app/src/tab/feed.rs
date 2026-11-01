@@ -787,28 +787,29 @@ impl Tab {
         }
     }
 
-    /// Where a feed's trouble is actually visible: the painted pane with the
-    /// least on it, and how many bar slots that pane holds.
-    ///
-    /// One tab is one feed, so its notice is tab-scoped information — but its
-    /// *consequence* never is. A MetaTrader tab whose time panes are full of
-    /// the terminal's candle history and whose flow pane has not seen one tick
-    /// is starved in exactly one place, and the card explaining it was being
-    /// centred across all three. The trader read a sentence attached to
-    /// nothing, floating over two charts with nothing wrong with them.
-    ///
-    /// Fewest slots wins; the larger pane breaks a tie, so an all-empty canvas
-    /// puts the card on the biggest chart — which is where it landed before
-    /// this existed, and why a single-pane tab looks unchanged.
+    /// The one rect the connection overlay covers: every pane with no bars, and
+    /// only those, so a time pane standing on venue candles stays visible. When
+    /// the empty panes are not neighbours their union would cross a chart that
+    /// has bars, and the largest of them is what the overlay takes instead.
     #[must_use]
-    pub fn starved_pane(&self) -> Option<(egui::Rect, usize)> {
-        self.panes()
-            .filter_map(|(pane, _)| pane.frame.area.map(|area| (area, pane.slots())))
-            .min_by(|(left_area, left_slots), (right_area, right_slots)| {
-                left_slots
-                    .cmp(right_slots)
-                    .then_with(|| right_area.area().total_cmp(&left_area.area()))
+    pub fn empty_panes_rect(&self) -> Option<egui::Rect> {
+        let mut union: Option<egui::Rect> = None;
+        let mut largest: Option<egui::Rect> = None;
+        for (pane, _) in self.panes() {
+            let Some(rect) = pane.frame.area.filter(|_| pane.slots() == 0) else {
+                continue;
+            };
+            union = Some(union.map_or(rect, |so_far| so_far.union(rect)));
+            if largest.is_none_or(|so_far| rect.area() > so_far.area()) {
+                largest = Some(rect);
+            }
+        }
+        let crosses_a_chart = union.is_some_and(|whole| {
+            self.panes().any(|(pane, _)| {
+                pane.slots() > 0 && pane.frame.area.is_some_and(|rect| rect.intersects(whole))
             })
+        });
+        if crosses_a_chart { largest } else { union }
     }
 
     /// Move the transport to `state`, stamping when it got there.
@@ -844,10 +845,54 @@ impl Tab {
                 attached_ms: self.feed_attached_ms,
                 provider,
                 provider_name: self.feed_display_name(config),
-                replaying: self.replay.is_some(),
+                replaying: self.replay.is_some() || !self.capabilities(config).transport,
             },
             now_ms,
         )
+    }
+
+    /// Tell this tab's connection state what the frame found.
+    pub(crate) fn observe_connection(&mut self, config: &AppConfig, now_ms: i64) {
+        use quantick_chart::connection_state::{ConnectionFacts, Transport, Verdict};
+        let stall = self.stall_at(config, now_ms);
+        let report = crate::feed_notice::report(&self.notice, stall.as_ref())
+            .filter(crate::feed_notice::Report::is_offline);
+        let verdict = match (&self.notice, report) {
+            (_, None) => Verdict::None,
+            (FeedNotice::Attention { headline, .. }, Some(_)) => Verdict::Failed {
+                provider_says: Some(headline),
+            },
+            (_, Some(report)) if report.needs_user => Verdict::Failed {
+                provider_says: None,
+            },
+            (_, Some(_)) => Verdict::Quiet,
+        };
+        let mut empty_pane = false;
+        let mut any_bars = false;
+        for (pane, _) in self.panes() {
+            let slots = pane.slots();
+            any_bars |= slots > 0;
+            empty_pane |= slots == 0 && pane.frame.area.is_some();
+        }
+        let capabilities = self.capabilities(config);
+        let facts = ConnectionFacts {
+            now_ms,
+            symbol: &self.symbol,
+            attached_ms: self.feed_attached_ms,
+            has_transport: capabilities.transport,
+            transport: match self.feed_connection {
+                FeedConnectionState::Connecting => Transport::Connecting,
+                FeedConnectionState::Reconnecting => Transport::Reconnecting,
+                FeedConnectionState::Connected => Transport::Connected,
+            },
+            verdict,
+            live_trades: self.live_trades,
+            empty_pane,
+            any_bars,
+            book: self.tape().connection_book(),
+            fraction: None,
+        };
+        self.connection.observe(&facts, &self.loading);
     }
 
     /// Deterministic half of live ingestion: `received_at_ms` is the UI's epoch

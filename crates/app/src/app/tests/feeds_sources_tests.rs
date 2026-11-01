@@ -2054,6 +2054,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
     let (_book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+        transport: true,
         book_capture: false,
         history_paging: true,
         history_boundary: None,

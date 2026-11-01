@@ -1887,6 +1887,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
             book_events: book_rx,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(FeedCapabilities {
+                transport: true,
                 book_capture: false,
                 history_paging: true,
                 history_boundary: None,
@@ -3169,6 +3170,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
             book_events: book_rx,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(FeedCapabilities {
+                transport: true,
                 book_capture: false,
                 history_paging: true,
                 history_boundary: None,

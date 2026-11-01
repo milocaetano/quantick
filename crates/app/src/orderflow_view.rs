@@ -984,6 +984,17 @@ impl OrderflowView {
         self.config.depth_visible() && self.published.status.is_syncing()
     }
 
+    /// The book as the connection state reads it: off when nobody asked to see it.
+    #[must_use]
+    pub fn connection_book(&self) -> quantick_chart::connection_state::Book {
+        use quantick_chart::connection_state::Book;
+        if self.config.depth_visible() {
+            Book::of(&self.published.status)
+        } else {
+            Book::Off
+        }
+    }
+
     /// A setting changed: the asset on screen files it at the next frame.
     fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
         self.look.note_config_change(&before, &self.config);

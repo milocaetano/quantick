@@ -447,6 +447,8 @@ pub(crate) struct ChromeReads<'a> {
 pub(crate) struct ChromeDrawn {
     /// Where the feed's offline chip was painted, or `None` when it was not.
     pub(crate) feed_chip_rect: Option<egui::Rect>,
+    /// The Reconnect standing outside the popup, while one does.
+    pub(crate) feed_reconnect_rect: Option<egui::Rect>,
     /// The tab whose chip opened the feed's recovery popup, if any.
     pub(crate) feed_popup_tab: Option<u64>,
     /// Whether a recording opens with the session day before it joined.
@@ -485,31 +487,17 @@ impl<'a> ChromeReads<'a> {
         self.tool_rail
     }
 
-    /// The colour the chart's corner is wearing, or `None` while the chart
-    /// is being fed.
-    ///
-    /// The status line's provenance dot takes this rather than deciding for
-    /// itself. It used to read the connection alone, which is a socket's
-    /// opinion: a terminal that froze with the socket open had the
-    /// bottom-left of the window saying `live` while the bottom-right said
-    /// `offline`, about the same feed, at the same moment. Two surfaces
-    /// disagreeing about the one question the trader is asking is worse than
-    /// either answer alone, so there is one report and both read it.
-    pub(crate) fn feed_offline_accent(
-        self,
-        stall: Option<&quantick_feed::stall::Stall>,
-    ) -> Option<egui::Color32> {
-        crate::feed_notice::report(&self.tabs[self.tabs.active_index()].notice, stall)
-            .filter(crate::feed_notice::Report::is_offline)
-            .map(|report| report.accent())
-    }
-
     /// Where the feed's offline chip was painted, or `None` when it was not.
     ///
     /// The projection reads what was drawn rather than re-deciding it, so the
     /// scene and the screen cannot disagree across the edge of a stall budget.
     pub(crate) fn feed_chip_rect(self) -> Option<egui::Rect> {
         self.drawn.feed_chip_rect
+    }
+
+    /// The Reconnect standing outside the popup, while one does.
+    pub(crate) fn feed_reconnect_rect(self) -> Option<egui::Rect> {
+        self.drawn.feed_reconnect_rect
     }
 
     /// Whether the recovery popup that chip opens is showing, on the chart
@@ -689,6 +677,7 @@ impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
             feed_chip_rect: self.chrome.feed_chip_rect,
+            feed_reconnect_rect: self.chrome.feed_reconnect_rect,
             feed_popup_tab: self.chrome.feed_popup_tab,
             replay_day_before: self.replay_view.day_before(),
         };

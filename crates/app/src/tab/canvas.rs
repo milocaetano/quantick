@@ -366,12 +366,22 @@ impl Tab {
         bar_inputs: BarInputAvailability,
         chrome: &mut CanvasChrome<'_>,
     ) {
+        let state = self.connection.state();
+        let chip = self.connection.chip();
+        let slot = match state.current_job {
+            Some(job) => Some((job.text(), true)),
+            None => self.session.history_note().map(|note| (note.to_owned(), false)),
+        };
+        let rebuilding = self.loading.is_active(crate::loading::LoadingTask::BarRebuild);
         let pane = &mut self.flow_pane;
         let identity = PaneIdentity::OrderFlow;
         let header = PaneHeader::of(identity, pane.spec.spec());
         let row = crate::pane_header::FlowRow {
             strip: pane.strip_glyph(chrome.style, chrome.capabilities),
             state: pane.flow_header_state(),
+            chip,
+            slot,
+            rebuilding,
         };
         let (intent, indicators) = crate::pane_header::draw_marked(
             ui,
@@ -405,6 +415,7 @@ impl Tab {
         strip: egui::Rect,
         bar_inputs: BarInputAvailability,
     ) {
+        let rebuilding = self.loading.is_active(crate::loading::LoadingTask::BarRebuild);
         let pane = &mut self.time_panes[slot];
         let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
         let mut interval_ms = pane
@@ -416,7 +427,7 @@ impl Tab {
         pane.frame.header_controls.clear();
         let header_layout =
             crate::time_header::draw(ui, strip, &mut interval_ms, pane.id, header.presets, |ui| {
-                crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs)
+                crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs, rebuilding)
             });
         #[cfg(test)]
         if slot == 0 {
@@ -457,7 +468,6 @@ impl Tab {
         let Self {
             flow_pane,
             time_panes,
-            symbol,
             paper,
             feed_gaps,
             paper_drag_pane,
@@ -518,7 +528,6 @@ impl Tab {
             begin_text_edit: chrome.begin_text_edit,
             style: chrome.style,
             tz: chrome.tz,
-            symbol,
             paper,
             paper_takes_input: false,
             paper_hud_here: false,

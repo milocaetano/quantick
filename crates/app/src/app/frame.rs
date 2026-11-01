@@ -13,7 +13,7 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
-use super::{AlertsPort, ChromePort, GatewayPort, LayersPort, LayoutPort, PaperPort};
+use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_feed::stall::Stall;
 use std::time::{Duration, Instant};
@@ -50,6 +50,7 @@ struct FrameScratch {
     /// readings a millisecond apart could disagree about whether a budget
     /// had run out.
     stall: Option<Stall>,
+    status: statusbar::StatusResponse,
     canvas: canvas::CanvasAnswers,
 }
 
@@ -448,11 +449,22 @@ impl QuantickApp {
         scratch.stall = self
             .active_tab()
             .stall_at(&self.config, crate::metrics::wall_clock_ms());
-        let offline_accent = self
-            .chrome_reads()
-            .feed_offline_accent(scratch.stall.as_ref());
+        let now_ms = crate::metrics::wall_clock_ms();
+        for tab in self.runtime.tabs.iter_mut() {
+            tab.observe_connection(&self.config, now_ms);
+        }
+        let popup_tab = self.runtime.tabs.active_id();
+        let lead = {
+            let tab = self.active_tab();
+            statusbar::StatusLead {
+                word: tab.connection.status_word(now_ms),
+                door: tab.connection.has_recovery_door(),
+                open: self.chrome.feed_popup_tab == Some(popup_tab),
+            }
+        };
         let status = self.status_model();
-        let status_response = statusbar::draw(ctx, &status, &mut self.runtime.tz, offline_accent);
+        let status_response = statusbar::draw(ctx, &status, &mut self.runtime.tz, &lead);
+        scratch.status = status_response;
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
@@ -566,6 +578,14 @@ impl QuantickApp {
         let mut answers = canvas::CanvasAnswers {
             popup_tab,
             popup_open: self.chrome.feed_popup_tab == Some(popup_tab),
+            chip_clicked: scratch.status.word_clicked,
+            chip_rect: scratch.status.word_rect,
+            reconnect_rect: scratch.status.reconnect_rect,
+            notice_action: if scratch.status.reconnect {
+                crate::feed_notice::NoticeAction::Reconnect
+            } else {
+                crate::feed_notice::NoticeAction::None
+            },
             ..canvas::CanvasAnswers::default()
         };
         // The layer menu offers what this source can produce, and the
@@ -613,7 +633,9 @@ impl QuantickApp {
                 if let Some(tab) = self.layer_wiring().apply_actions() {
                     self.dock.open_tab(tab);
                 }
-                canvas::draw_overlays(ui, area, self.active_tab(), stall, &mut answers);
+                let tab = self.active_tab();
+                let feed_name = tab.feed_display_name(&self.config);
+                canvas::draw_overlays(ui, area, tab, feed_name, stall, &mut answers);
             });
         scratch.canvas = answers;
     }
@@ -654,6 +676,7 @@ impl QuantickApp {
             config: &self.config,
             toast: &mut self.surfaces.toast,
             chip_rect: &mut self.chrome.feed_chip_rect,
+            reconnect_rect: &mut self.chrome.feed_reconnect_rect,
             popup_tab: &mut self.chrome.feed_popup_tab,
         }
         .execute(
@@ -667,6 +690,7 @@ impl QuantickApp {
                 chip_clicked: answers.chip_clicked,
                 dismissed: answers.dismissed,
                 chip_rect: answers.chip_rect,
+                reconnect_rect: answers.reconnect_rect,
             },
             spawn,
             stages,

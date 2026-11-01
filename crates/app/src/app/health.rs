@@ -110,7 +110,6 @@ impl QuantickApp {
                     speed: link.status.speed(),
                     progress: link.status.progress(),
                 }),
-            connection: self.active_tab().feed_connection,
             feed_arrival_ms: self.active_tab().trade_arrival_ms(),
             feed_latency: self.active_tab().feed_latency(),
             tape_age_ms: self.active_tab().tape_age_at(metrics::wall_clock_ms()),
@@ -120,6 +119,7 @@ impl QuantickApp {
                 .progress()
                 .map(|(progress, unit)| fmt_progress(&progress, unit)),
             deal_recording: self.active_tab().deal_status_cell(),
+            deal_chip: self.active_tab().deal_chip(),
             venue_bars: pane.history_prefix.len(),
             backfilled_bars: backfilled,
             live_bars: live,

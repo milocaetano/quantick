@@ -9,15 +9,18 @@ use egui_phosphor::regular as icons;
 use quantick_chart::pane_header::{
     BubbleSample, CAPSULE_HEIGHT_PX, CAPSULE_SLOT_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide,
     FLOW_CONTROLS_PX, FlowHeaderState, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk, HeaderControl,
-    HeaderIntent, INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle, PaneHeader,
+    HeaderIntent, HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle,
+    PaneHeader,
     SAMPLE_RESET_SCALE, SLOT_GAP_PX, VIEW_SLOT_PX, dragged_scale, flow_fit, sample_diameter_px,
     sample_value_text, view_name,
 };
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
 use quantick_orderflow::LaneView;
+use quantick_chart::connection_state::Dot;
 use smallvec::SmallVec;
 
 use crate::chart_layers::shortcuts;
+use crate::loading;
 use crate::theme;
 
 /// Padding inside the strip: clears the pane's edge and keeps the controls off
@@ -33,6 +36,8 @@ const CARET_SIZE: f32 = 10.0;
 /// egui's bundled fonts have one weight; the text painted again this far right
 /// reads as the semibold the header asks for.
 const SEMIBOLD_OFFSET_PX: f32 = 0.4;
+/// The spin inside the bars control during a recut.
+const REBUILD_SPINNER_PX: f32 = 10.0;
 /// The indicators button: 12 pt words, an icon and its gap, its padding.
 const INDICATORS_SIZE: f32 = 12.0;
 const INDICATORS_ICON_GAP_PX: f32 = 5.0;
@@ -124,6 +129,12 @@ pub struct FlowRow {
     /// The strip glyph, unless the data blocks it.
     pub strip: Option<LayerGlyph>,
     pub state: Option<FlowHeaderState>,
+    /// The connection chip, while some stream is not well.
+    pub chip: Option<[Dot; 3]>,
+    /// The job slot's words and whether a job (not a remark) wrote them.
+    pub slot: Option<(String, bool)>,
+    /// The bars are being rebuilt: the bars control says so, and nothing else.
+    pub rebuilding: bool,
 }
 
 /// The flow pane's header line; answers what a press on it asked for, and
@@ -143,8 +154,38 @@ pub fn draw_marked(
     painted.clear();
     let inner = strip.shrink2(CONTENT_PADDING);
     let indicators_px = indicators_width(ui);
-    let right_px = row.state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
-    let left = inner.with_max_x(inner.right() - right_px);
+    let controls_px = row.state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
+    let mark = header.mark.map(mark_text);
+    let mark_px = mark.as_ref().map_or(0.0, |job| {
+        ui.fonts(|fonts| fonts.layout_job(job.clone())).size().x
+    });
+    let slot = row.slot.as_ref().map(|(text, job)| loading::Slot {
+        job: *job,
+        text: text.as_str(),
+    });
+    let (chip_with_words, chip_dots) = row
+        .chip
+        .as_ref()
+        .map_or((0.0, 0.0), |dots| loading::chip_widths(ui, dots));
+    let slot_px = slot.as_ref().map_or(0.0, |slot| loading::slot_width(ui, slot));
+    let fit = flow_fit(&HeaderWidths {
+        strip: inner.width(),
+        mark: mark_px,
+        bars: bars_width(ui, header),
+        indicators: indicators_px,
+        controls: controls_px,
+        slot: slot_px,
+        chip_with_words,
+        chip_dots,
+    });
+    let chip_px = match (fit.chip, fit.chip_words) {
+        (true, true) => chip_with_words + GROUP_GAP_PX,
+        (true, false) => chip_dots + GROUP_GAP_PX,
+        _ => 0.0,
+    };
+    let right_px = controls_px + chip_px;
+    let slot_room = if fit.slot { slot_px + GROUP_GAP_PX } else { 0.0 };
+    let left = inner.with_max_x(inner.right() - right_px - slot_room);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(("pane_header", salt))
@@ -154,26 +195,20 @@ pub fn draw_marked(
     let limit = (left.right() - indicators_px).max(strip.left());
     content.set_clip_rect(strip.with_max_x(limit).intersect(ui.clip_rect()));
     content.spacing_mut().item_spacing.x = 0.0;
-    let mark = header.mark.map(mark_text);
-    let mark_px = mark.as_ref().map_or(0.0, |job| {
-        content
-            .fonts(|fonts| fonts.layout_job(job.clone()))
-            .size()
-            .x
-    });
-    let fit = flow_fit(
-        inner.width(),
-        mark_px,
-        bars_width(&content, header),
-        indicators_px,
-    );
     if let Some(mark) = mark.filter(|_| fit.mark) {
         content.add(egui::Label::new(mark).selectable(false));
         content.add_space(GROUP_GAP_PX);
     }
-    bars_control(&mut content, header, salt, selection, inputs);
+    bars_control(&mut content, header, salt, selection, inputs, row.rebuilding);
     let button_left = (content.cursor().left() + GROUP_GAP_PX).min(limit);
     let indicators = indicators_button(ui, button_left, strip, salt);
+    let chip_right = inner.right() - controls_px;
+    if let Some(dots) = row.chip.as_ref().filter(|_| fit.chip) {
+        loading::draw_chip(ui, chip_right, strip, dots, fit.chip_words);
+    }
+    if let Some(slot) = slot.as_ref().filter(|_| fit.slot) {
+        loading::draw_slot(ui, chip_right - chip_px, strip, slot);
+    }
     let mut intent = None;
     if let Some(state) = row.state {
         let room = inner.with_min_x(inner.right() - FLOW_CONTROLS_PX);
@@ -608,6 +643,7 @@ pub fn bars_control(
     salt: u64,
     selection: &mut BarSelection,
     inputs: BarInputAvailability,
+    rebuilding: bool,
 ) {
     let galley = ui.fonts(|fonts| fonts.layout_job(bars_text(header)));
     let padding = ui.spacing().button_padding;
@@ -623,12 +659,27 @@ pub fn bars_control(
         );
     }
     let at = rect.min + padding;
-    ui.painter().galley(
-        at + egui::vec2(SEMIBOLD_OFFSET_PX, 0.0),
-        galley.clone(),
-        theme::TEXT_PRIMARY,
-    );
-    ui.painter().galley(at, galley, theme::TEXT_PRIMARY);
+    if rebuilding {
+        // The one place a recut spins: the control the hand just changed, its
+        // words dimmed under the spin.
+        ui.painter().galley(at, galley, theme::TEXT_FAINT);
+        ui.put(
+            egui::Rect::from_center_size(
+                egui::pos2(rect.right() - REBUILD_SPINNER_PX / 2.0, rect.center().y),
+                egui::Vec2::splat(REBUILD_SPINNER_PX),
+            ),
+            egui::Spinner::new()
+                .size(REBUILD_SPINNER_PX)
+                .color(loading::GREY_MID),
+        );
+    } else {
+        ui.painter().galley(
+            at + egui::vec2(SEMIBOLD_OFFSET_PX, 0.0),
+            galley.clone(),
+            theme::TEXT_PRIMARY,
+        );
+        ui.painter().galley(at, galley, theme::TEXT_PRIMARY);
+    }
     let control = control.on_hover_text("Change this chart's bars");
     let popup = menu_id(salt);
     #[cfg(test)]

@@ -378,36 +378,6 @@ impl OrderflowView {
         draw_compact_legend_avoiding(painter, &context, tick_regions)
     }
 
-    pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
-        // Tied to the map, not to the recorder: a badge reporting on a book
-        // nobody asked to see is just chrome. The trader can silence it on its
-        // own too, from the canvas's right-click menu — but only while the
-        // book is working. A failure re-asserts the badge: it is the one
-        // real-time statement that the depth on screen has stopped being the
-        // book, and hiding chrome may never hide *that* (data honesty).
-        let failing = self.published.status.is_failure();
-        if !self.config.depth_visible() || (!self.config.show_status_badge && !failing) {
-            return;
-        }
-        let text = self.published.status.label();
-        let color = status_color(&self.published.status);
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), color);
-        let pos = egui::pos2(
-            chart_rect.right() - galley.size().x - 10.0,
-            chart_rect.top() + 4.0,
-        );
-        let rect = egui::Rect::from_min_size(
-            pos - egui::vec2(5.0, 3.0),
-            galley.size() + egui::vec2(10.0, 6.0),
-        );
-        painter.rect_filled(
-            rect,
-            egui::Rounding::same(3.0),
-            egui::Color32::from_black_alpha(165),
-        );
-        painter.galley(pos, galley, color);
-    }
-
     /// The live strip's rows: see [`live_strip::forming_rows`].
     pub(crate) fn live_strip_rows(
         &self,

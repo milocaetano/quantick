@@ -251,6 +251,8 @@ pub struct Tab {
     /// re-stamped the clock forever and the budget never ran out, which is the
     /// failure this whole module exists to end.
     pub connection_since_ms: i64,
+    /// What every surface says about this feed; read after the frame observed.
+    pub connection: quantick_chart::connection_state::ConnectionTracker,
     /// After a reconnect that kept the timeline, the market time the chart had
     /// already reached.
     ///
@@ -481,6 +483,7 @@ impl Tab {
             notice_since_ms: metrics::wall_clock_ms(),
             feed_attached_ms: metrics::wall_clock_ms(),
             connection_since_ms: metrics::wall_clock_ms(),
+            connection: quantick_chart::connection_state::ConnectionTracker::new(),
             resume_floor_ms: None,
             feed_generation: 0,
             forced_stall: stall::ForcedStall::from_env(),

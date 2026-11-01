@@ -23,7 +23,6 @@ pub(super) const PACKAGE: Package = Package {
         Contribution::Aggressions(aggressions),
         Contribution::Legend(legend),
         Contribution::Strip(strip),
-        Contribution::Status(status),
     ],
 };
 pub(in crate::pane) struct FlowPass<'a> {
@@ -61,14 +60,6 @@ pub(in crate::pane) struct StripPass<'a> {
     pub background: egui::Color32,
     pub partial_time: Option<i64>,
     pub forming: Option<&'a quantick_engine::BarFootprint>,
-}
-pub(in crate::pane) struct StatusPass<'a> {
-    pub owner: &'a OrderflowView,
-    pub painter: &'a egui::Painter,
-    pub rect: egui::Rect,
-}
-fn status(p: &mut StatusPass<'_>) {
-    p.owner.draw_status_badge(p.painter, p.rect);
 }
 fn background(p: &mut FlowPass<'_>) {
     p.owner.draw_background(

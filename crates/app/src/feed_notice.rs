@@ -17,18 +17,10 @@
 //! application rather than to read it. Their words, and the rule this module
 //! now keeps: **seeing no data at all is worse than not being connected.**
 //!
-//! So the news comes at three sizes, and the trader chooses which one they
-//! want:
-//!
-//! - **The chip** ([`draw_chip`]) — a dot and one word in the chart's
-//!   bottom-right corner, the resting report for every feed problem there is.
-//!   It never covers a bar, it is in the same place every time, and it is the
-//!   only one of the three drawn without being asked for.
-//! - **The popup** ([`draw_popup`]) — the headline, the next step and the two
-//!   recovery controls, opened by clicking the chip and by nothing else.
-//! - **One line on an empty pane** ([`draw_empty_pane_note`]) — because a
-//!   chart with no bars on it has room to say why, and a corner chip alone on
-//!   a blank canvas is a puzzle rather than an answer.
+//! So the news is one word in the status bar, the resting report for every feed
+//! problem there is, and **the popup** ([`draw_popup`]): the headline, the next
+//! step and the two recovery controls, opened by clicking that word and by
+//! nothing else.
 //!
 //! The two controls are [`Recovery::Reconnect`] and [`Recovery::Reload`], and
 //! which of them is offered *first* is decided upstream from what the
@@ -50,21 +42,9 @@ use quantick_feed::stall::{Recovery, Stall};
 /// on, which is the data, not the transport.
 pub const OFFLINE_LABEL: &str = "offline";
 
-/// Height of the chip, in pixels. A pill inside the canvas' bottom margin.
-pub(crate) const CHIP_HEIGHT_PX: f32 = 22.0;
-/// Padding inside the chip, left and right, in pixels.
-pub(crate) const CHIP_PAD_PX: f32 = 9.0;
-/// Diameter of the chip's state dot, in pixels.
-pub(crate) const CHIP_DOT_DIAMETER_PX: f32 = 8.0;
-/// Gap between the chip's dot and its word, in pixels.
-pub(crate) const CHIP_DOT_GAP_PX: f32 = 7.0;
-/// The chip's font size, in points.
-pub(crate) const CHIP_LABEL_PT: f32 = 11.0;
-/// How far the chip sits from the chart's bottom-right corner, in pixels.
-///
-/// Far enough not to touch the axis furniture, close enough that it reads as
-/// belonging to the corner rather than floating in the chart.
-pub(crate) const CHIP_MARGIN_PX: f32 = 10.0;
+/// The next step when the feed's own loop has gone back to "working" while the
+/// chart holds offline: a fresh attempt is what a hand can add.
+pub const HELD_NEXT_STEP: &str = "It is still retrying on its own; Reconnect starts a fresh attempt.";
 
 /// Width of the popup, in pixels.
 ///
@@ -108,13 +88,6 @@ const BUTTON_SPACING_PX: f32 = 8.0;
 const BUTTON_GAP_PX: f32 = 10.0;
 /// Gap between the button row and the consequence caption, in pixels.
 const CAPTION_GAP_PX: f32 = 6.0;
-
-/// Font size of the line drawn on a pane with nothing else on it, in points.
-const EMPTY_NOTE_PT: f32 = 13.0;
-/// How far above an empty pane's vertical centre that line sits, as a fraction
-/// of the pane's height. Slightly high reads as a note about the chart rather
-/// than as content in it.
-const EMPTY_NOTE_BIAS: f32 = 0.08;
 
 /// What [`Recovery::Reload`] costs, said on the popup rather than behind a
 /// confirmation dialog.
@@ -348,132 +321,6 @@ pub fn popup_still_open(
         return !was_open;
     }
     was_open && !dismissed && action == NoticeAction::None
-}
-
-/// Where the chip lands inside `area`.
-///
-/// Measured from the word it carries rather than fixed, so a future state word
-/// cannot silently overflow the pill.
-///
-/// **Call this once a frame and pass the answer down.** Laying out even a
-/// seven-character static string allocates it, and the corner is drawn on
-/// every frame of a chart that is not being fed — which, since the opening
-/// backfill learned to reach the last session, is the ordinary state of a
-/// chart opened outside market hours and can be hours at a time. Passing the
-/// rectangle rather than re-deriving it also makes the drawing, the hit test
-/// and the popup's anchor share one measurement by construction rather than
-/// by three callers agreeing.
-#[must_use]
-pub fn chip_rect(painter: &egui::Painter, area: egui::Rect) -> egui::Rect {
-    let label = painter.layout_no_wrap(
-        OFFLINE_LABEL.to_owned(),
-        egui::FontId::proportional(CHIP_LABEL_PT),
-        theme::TEXT_PRIMARY,
-    );
-    let width = 2.0 * CHIP_PAD_PX + CHIP_DOT_DIAMETER_PX + CHIP_DOT_GAP_PX + label.size().x.ceil();
-    // Clamped to the chart, so a pane narrower than the chip keeps it inside
-    // rather than hanging it off the left edge.
-    let width = width.min(area.width());
-    egui::Rect::from_min_size(
-        egui::pos2(
-            area.right() - CHIP_MARGIN_PX - width,
-            area.bottom() - CHIP_MARGIN_PX - CHIP_HEIGHT_PX,
-        ),
-        egui::vec2(width, CHIP_HEIGHT_PX),
-    )
-    // A chart shorter than the margins keeps the chip on screen rather than
-    // above the canvas' own top edge.
-    .intersect(area)
-}
-
-/// Draw the chip in the bottom-right corner of `area`. Answers whether it was
-/// clicked this frame.
-///
-/// `open` is whether the popup it opens is showing, which the chip carries as
-/// a pressed look — the trader must be able to tell the click landed even
-/// though the thing it opened is above their pointer rather than under it.
-///
-/// The reason rides on the hover. The chip is one word by design, and one word
-/// answers "am I live?" and nothing else; a trader mid-session who wants *why*
-/// should not have to spend a click and a dismissal to read it. `on_hover_ui`
-/// rather than `on_hover_text`, for the reason the status line gives: the
-/// closure runs only while someone is pointing at it.
-#[must_use]
-pub fn draw_chip(ui: &mut egui::Ui, rect: egui::Rect, report: &Report<'_>, open: bool) -> bool {
-    let response = ui
-        .interact(
-            rect,
-            ui.id().with("feed_offline_chip"),
-            egui::Sense::click(),
-        )
-        .on_hover_ui(|ui| {
-            ui.label(report.headline);
-            if let Some(step) = report.next_step {
-                ui.label(egui::RichText::new(step).color(theme::TEXT_MUTED));
-            }
-        });
-    let accent = report.accent();
-    let hovered = response.hovered();
-    let painter = ui.painter();
-
-    let fill = if open || hovered {
-        theme::CONTROL
-    } else {
-        theme::CHROME
-    };
-    let radius = rect.height() / 2.0;
-    painter.rect_filled(rect, egui::Rounding::same(radius), fill);
-    painter.rect_stroke(
-        rect,
-        egui::Rounding::same(radius),
-        egui::Stroke::new(1.0_f32, accent),
-    );
-    painter.circle_filled(
-        egui::pos2(
-            rect.left() + CHIP_PAD_PX + CHIP_DOT_DIAMETER_PX / 2.0,
-            rect.center().y,
-        ),
-        CHIP_DOT_DIAMETER_PX / 2.0,
-        accent,
-    );
-    painter.text(
-        egui::pos2(
-            rect.left() + CHIP_PAD_PX + CHIP_DOT_DIAMETER_PX + CHIP_DOT_GAP_PX,
-            rect.center().y,
-        ),
-        egui::Align2::LEFT_CENTER,
-        OFFLINE_LABEL,
-        egui::FontId::proportional(CHIP_LABEL_PT),
-        theme::TEXT_PRIMARY,
-    );
-    if hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    response.clicked()
-}
-
-/// One muted line on a pane with nothing else on it.
-///
-/// The chip answers "am I live?" in a corner, which is enough on a chart full
-/// of bars and not enough on a blank one: there the trader has come to read
-/// something and there is nothing to read. This is the headline and no more —
-/// no border, no fill, no buttons. The way out is still the corner.
-pub fn draw_empty_pane_note(painter: &egui::Painter, pane: egui::Rect, report: &Report<'_>) {
-    let galley = painter.layout(
-        report.headline.to_owned(),
-        egui::FontId::proportional(EMPTY_NOTE_PT),
-        theme::TEXT_MUTED,
-        (pane.width() - 2.0 * PAD_PX).max(MIN_TEXT_WIDTH_PX),
-    );
-    let size = galley.size();
-    painter.galley(
-        egui::pos2(
-            pane.center().x - size.x / 2.0,
-            pane.center().y - pane.height() * EMPTY_NOTE_BIAS - size.y / 2.0,
-        ),
-        galley,
-        theme::TEXT_MUTED,
-    );
 }
 
 /// Where every piece of the popup lands, measured once so drawing and hit

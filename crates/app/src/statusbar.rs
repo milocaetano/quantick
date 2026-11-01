@@ -16,12 +16,10 @@
 //! in one place whatever the chart holds, so the pair went back out rather
 //! than stand as a second way to do the same two things.
 //!
-//! What the corner did leave behind is a duty. The provenance dot used to read
-//! the connection alone, which is a socket's opinion — a frozen terminal had
-//! this line saying `live` while the corner said `offline`, about the same
-//! feed, at the same moment. So [`draw`] is handed the corner's own colour
-//! when there is one, and the dot yields to it. One report, two surfaces; see
-//! [`crate::feed_notice`].
+//! The first cell is the window's one word on the feed's global state, in grey,
+//! and it is the recovery popup's door: see
+//! [`quantick_chart::connection_state`] for what it says and [`crate::feed_notice`]
+//! for what it opens.
 //!
 //! The section values are computed by the app and handed in as a plain
 //! [`StatusModel`], so every text and colour decision here stays pure and
@@ -31,11 +29,11 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::deal_recording::RecState;
-use crate::feed_notice;
 use crate::metrics;
 use crate::theme;
 use crate::timezone::TzOffset;
-use quantick_feed::{FeedConnectionState, FeedLatency};
+use quantick_chart::connection_state::StatusWord;
+use quantick_feed::FeedLatency;
 use quantick_orderflow as orderflow;
 
 /// Height of the status line, in pixels (§5 zone 7).
@@ -44,56 +42,8 @@ pub const STATUS_BAR_HEIGHT: f32 = 28.0;
 const STATE_DOT_DIAMETER_PX: f32 = 8.0;
 /// Gap between neighbouring cells on the line, in pixels.
 const CELL_SPACING_PX: f32 = 8.0;
-
-/// What the provenance dot reports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FeedState {
-    /// The first live transport is not established yet.
-    Connecting,
-    /// A previously established live transport is reconnecting.
-    Reconnecting,
-    /// The provider reports an established live transport.
-    Live,
-    /// A recorded session is the source.
-    Replay,
-}
-
-impl FeedState {
-    /// Dot colour: green live, amber replay/reconnect, faint connecting.
-    #[must_use]
-    pub fn color(self) -> egui::Color32 {
-        match self {
-            Self::Connecting => theme::TEXT_FAINT,
-            Self::Reconnecting => theme::WARN,
-            Self::Live => theme::BUY,
-            Self::Replay => theme::AMBER,
-        }
-    }
-
-    /// The word next to the dot.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Connecting => "connecting",
-            Self::Reconnecting => "reconnecting",
-            Self::Live => "live",
-            Self::Replay => "replay",
-        }
-    }
-}
-
-/// Classify the feed for the provenance dot.
-#[must_use]
-pub fn feed_state(replaying: bool, connection: FeedConnectionState) -> FeedState {
-    if replaying {
-        return FeedState::Replay;
-    }
-    match connection {
-        FeedConnectionState::Connecting => FeedState::Connecting,
-        FeedConnectionState::Reconnecting => FeedState::Reconnecting,
-        FeedConnectionState::Connected => FeedState::Live,
-    }
-}
+/// Gap between the state dot and its word, in pixels.
+const DOT_WORD_GAP_PX: f32 = 4.0;
 
 /// Replay figures for the provenance section, read from the transport link.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -115,8 +65,6 @@ pub struct StatusModel {
     pub symbol: String,
     /// Replay speed/progress while a recording plays, `None` when live.
     pub replay: Option<ReplayFigures>,
-    /// Provider-neutral live transport state, reported by the reconnect loop.
-    pub connection: FeedConnectionState,
     /// Exchange-to-screen delay observed when the newest trade arrived; `None`
     /// before the first live trade or while replaying (a recording has no lag
     /// to report).
@@ -146,6 +94,8 @@ pub struct StatusModel {
     /// The deal recorder's cell — `REC 2 301 455 · 09:00:00 · file`, `REC
     /// off`, `RECORDED · day` — or none where the feed has no counter.
     pub deal_recording: Option<DealCell>,
+    /// What the recorder has to say about the flow pane, beside that cell.
+    pub deal_chip: Option<crate::deal_recording_ui::DealChip>,
     /// Bars that came from the venue's own candle history, in front of
     /// everything this app built from prints. Zero on any pane without a
     /// venue prefix, which is every flow pane.
@@ -195,18 +145,6 @@ pub struct DealCell {
     pub text: String,
     pub tone: RecState,
 }
-
-/// The delay the tape cell reports, and the sample the hop beside it came from.
-///
-/// A provider that cut its own chain reports the total *its own halves add up
-/// to*, measured where it read the print off the wire. The chart's own
-/// end-to-end figure — the one that also counts the queue and the frame — stays
-/// available and is named separately in the hover.
-///
-/// Showing one of those totals with a breakdown of the other is what this
-/// exists to prevent: three numbers that do not reconcile, on a readout whose
-/// entire selling point is that two of them sum to the third.
-pub use quantick_feed::timing::tape_arrival_ms;
 
 /// The tape cell: `clock 123 ms` for an unsplit wall-clock difference,
 /// `arrival 123 ms` for provider breakdowns, `stale 12 s` / `stale 14 h` when the
@@ -259,7 +197,7 @@ pub fn tape_text(
 }
 
 #[cfg(test)]
-use quantick_feed::timing::TAPE_TOOLTIP_BASE;
+use quantick_feed::timing::{TAPE_TOOLTIP_BASE, tape_arrival_ms};
 
 pub fn tape_tooltip(arrival_ms: Option<i64>, latency: Option<FeedLatency>) -> String {
     quantick_feed::timing::tape_tooltip(arrival_ms, latency, orderflow::format_window_ms)
@@ -279,25 +217,38 @@ pub fn bars_text(venue: usize, backfilled: usize, live: usize) -> String {
 }
 
 /// What a click on the bar asked of the app this frame.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct StatusResponse {
     /// The SIM cell was clicked: open the Trading dock tab, where the
     /// position it summarizes is managed.
     pub open_trading_tab: bool,
+    /// The word was clicked: it opens and closes the recovery popup.
+    pub word_clicked: bool,
+    /// The word's rect while it is a door, which is the popup's anchor.
+    pub word_rect: Option<egui::Rect>,
+    /// The one-click Reconnect beside the word was pressed.
+    pub reconnect: bool,
+    /// That Reconnect's rect, while it stands.
+    pub reconnect_rect: Option<egui::Rect>,
+}
+
+/// What the status bar's first cell shows this frame.
+#[derive(Debug, Clone, Default)]
+pub struct StatusLead {
+    pub word: Option<StatusWord>,
+    /// The word opens the recovery popup: there is a report to read.
+    pub door: bool,
+    /// The popup it opens is up.
+    pub open: bool,
 }
 
 /// Draw the status bar as the window's bottom panel. `tz` is the bar's
 /// resident control, and the SIM cell clicks through to the Trading tab.
-///
-/// `offline` is the accent the chart's corner is wearing this frame, or `None`
-/// while the chart is being fed. The provenance dot takes it as an override
-/// rather than deciding for itself, which is what keeps the two ends of the
-/// window from disagreeing about the same feed.
 pub fn draw(
     ctx: &egui::Context,
     model: &StatusModel,
     tz: &mut TzOffset,
-    offline: Option<egui::Color32>,
+    lead: &StatusLead,
 ) -> StatusResponse {
     let mut response = StatusResponse::default();
     egui::TopBottomPanel::bottom("status_bar")
@@ -312,7 +263,8 @@ pub fn draw(
                 // Wrap whole facts as cells, keeping their words together.
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
-                draw_provenance(ui, model, offline);
+                draw_lead(ui, lead, &mut response);
+                draw_provenance(ui, model);
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
                 draw_machinery(ui, model, tz);
@@ -321,57 +273,88 @@ pub fn draw(
     response
 }
 
-/// What the provenance dot says, and in what colour.
-///
-/// The corner wins whenever there is one. Pure, because the rule it keeps —
-/// this line never claims `live` about a chart the corner calls `offline` —
-/// is one worth asserting rather than eyeballing.
-#[must_use]
-pub fn provenance_dot(
-    state: FeedState,
-    offline: Option<egui::Color32>,
-) -> (egui::Color32, &'static str) {
-    match offline {
-        Some(accent) => (accent, feed_notice::OFFLINE_LABEL),
-        None => (state.color(), state.label()),
+/// The word: a grey dot and what is true of the feed. Only an attempt pulses.
+fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead, response: &mut StatusResponse) {
+    let Some(word) = &lead.word else {
+        return;
+    };
+    let colour = match word.word {
+        "offline" | "no data" | "quiet" => crate::loading::GREY_FAINT,
+        _ if word.pulses => {
+            crate::loading::GREY_MID.gamma_multiply(crate::loading::pulse(ui.ctx()))
+        }
+        _ => crate::loading::GREY_MID,
+    };
+    let text = match &word.age {
+        Some(age) => format!("{} · {age}", word.word),
+        None => word.word.to_owned(),
+    };
+    let sense = if lead.door {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let galley = ui.fonts(|fonts| {
+        fonts.layout_no_wrap(
+            text,
+            egui::TextStyle::Small.resolve(ui.style()),
+            crate::loading::GREY_MID,
+        )
+    });
+    let size = egui::vec2(
+        STATE_DOT_DIAMETER_PX + DOT_WORD_GAP_PX + galley.size().x,
+        galley.size().y.max(STATE_DOT_DIAMETER_PX),
+    );
+    let (rect, cell) = ui.allocate_exact_size(size, sense);
+    let painter = ui.painter();
+    if lead.door && (lead.open || cell.hovered()) {
+        painter.rect_filled(rect.expand(2.0), egui::Rounding::same(3.0), theme::CONTROL);
+    }
+    painter.circle_filled(
+        egui::pos2(rect.left() + STATE_DOT_DIAMETER_PX / 2.0, rect.center().y),
+        STATE_DOT_DIAMETER_PX / 2.0,
+        colour,
+    );
+    painter.galley(
+        egui::pos2(
+            rect.left() + STATE_DOT_DIAMETER_PX + DOT_WORD_GAP_PX,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        crate::loading::GREY_MID,
+    );
+    if lead.door {
+        response.word_rect = Some(rect);
+        let cell = cell
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Why, and how to recover");
+        response.word_clicked = cell.clicked();
+    }
+    if word.reconnect {
+        let reconnect = ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new(crate::loading::RECONNECT_LABEL)
+                        .small()
+                        .color(crate::loading::GREY_MID),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Keeps the chart as it is");
+        response.reconnect_rect = Some(reconnect.rect);
+        response.reconnect = reconnect.clicked();
     }
 }
 
-/// Left section: state dot, venue, symbol, lag.
-///
-/// The dot answers what the corner answers, in the words this line has room
-/// for: `offline` and the corner's colour whenever the chart is not being fed,
-/// the transport's own state otherwise.
-fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel, offline: Option<egui::Color32>) {
-    let state = feed_state(model.replay.is_some(), model.connection);
-    let (dot_color, dot_label) = provenance_dot(state, offline);
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(STATE_DOT_DIAMETER_PX, STATE_DOT_DIAMETER_PX),
-        egui::Sense::hover(),
-    );
-    ui.painter()
-        .circle_filled(rect.center(), STATE_DOT_DIAMETER_PX / 2.0, dot_color);
-    ui.label(egui::RichText::new(dot_label).small().color(dot_color));
+/// Venue, symbol, lag.
+fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
     ui.label(egui::RichText::new(&model.venue).color(theme::TEXT_MUTED));
     ui.label(
         egui::RichText::new(&model.symbol)
             .monospace()
             .color(theme::TEXT_PRIMARY),
     );
-    let stale = model
-        .tape_age_ms
-        .is_some_and(|age| age > metrics::STALE_TAPE_MS);
-    // The same figure the cell prints, so a cell reading nine seconds cannot
-    // be coloured from a different measurement reading two hundred milliseconds.
-    let shown_arrival = tape_arrival_ms(model.feed_arrival_ms, model.feed_latency);
-    let tape_color = match (state, shown_arrival) {
-        (FeedState::Replay, _) => theme::AMBER,
-        // A quiet tape and a late print are both worth a warning, and a
-        // wedged socket only shows up as the first.
-        _ if stale => theme::WARN,
-        (_, Some(arrival)) if arrival > metrics::HIGH_LAG_MS => theme::WARN,
-        (FeedState::Connecting | FeedState::Reconnecting | FeedState::Live, _) => theme::TEXT_MUTED,
-    };
     // The two measurements this cell can show are easy to conflate, so the
     // cell explains itself (audit: every readout answers on hover).
     ui.label(
@@ -382,7 +365,7 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel, offline: Option<egui:
             model.feed_latency,
         ))
         .monospace()
-        .color(tape_color),
+        .color(theme::TEXT_MUTED),
     )
     // `on_hover_ui`, not `on_hover_text`: the split's sentences are built with
     // `format!`, and `on_hover_text` evaluates its argument on every frame
@@ -426,6 +409,15 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
         };
         ui.label(egui::RichText::new(&cell.text).monospace().color(color))
             .on_hover_text("the venue's deal counter: counted live and written to disk");
+    }
+    if let Some(chip) = &model.deal_chip {
+        let color = match chip.tone {
+            RecState::Recording => theme::REC,
+            RecState::Stale => theme::AMBER,
+            RecState::Off | RecState::Recorded | RecState::Unsupported => theme::TEXT_MUTED,
+        };
+        ui.label(egui::RichText::new(&chip.text).small().color(color))
+            .on_hover_text(&chip.hover);
     }
     ui.label(
         egui::RichText::new(bars_text(
@@ -534,59 +526,6 @@ fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The rule the corner imposed on this line: two ends of one window may
-    /// not answer the same question differently.
-    #[test]
-    fn the_line_never_claims_live_about_a_chart_the_corner_calls_offline() {
-        for state in [
-            FeedState::Connecting,
-            FeedState::Reconnecting,
-            FeedState::Live,
-            FeedState::Replay,
-        ] {
-            let (color, label) = provenance_dot(state, Some(theme::WARN));
-            assert_eq!(label, crate::feed_notice::OFFLINE_LABEL, "{state:?}");
-            assert_eq!(color, theme::WARN, "the corner's colour, not this line's");
-            // And with no corner the line goes back to reporting the transport.
-            let (color, label) = provenance_dot(state, None);
-            assert_eq!(label, state.label(), "{state:?}");
-            assert_eq!(color, state.color(), "{state:?}");
-        }
-    }
-
-    #[test]
-    fn the_dot_reads_the_feed_honestly() {
-        assert_eq!(
-            feed_state(false, FeedConnectionState::Connecting),
-            FeedState::Connecting
-        );
-        assert_eq!(
-            feed_state(false, FeedConnectionState::Reconnecting),
-            FeedState::Reconnecting
-        );
-        assert_eq!(
-            feed_state(false, FeedConnectionState::Connected),
-            FeedState::Live
-        );
-        // A recording is replay, whatever the displaced live transport says.
-        assert_eq!(
-            feed_state(true, FeedConnectionState::Connecting),
-            FeedState::Replay
-        );
-        assert_eq!(
-            feed_state(true, FeedConnectionState::Connected),
-            FeedState::Replay
-        );
-    }
-
-    #[test]
-    fn dot_colours_follow_the_tokens() {
-        assert_eq!(FeedState::Live.color(), theme::BUY);
-        assert_eq!(FeedState::Replay.color(), theme::AMBER);
-        assert_eq!(FeedState::Reconnecting.color(), theme::WARN);
-        assert_eq!(FeedState::Connecting.color(), theme::TEXT_FAINT);
-    }
 
     #[test]
     fn lag_cell_reports_replay_live_and_waiting() {
@@ -781,13 +720,13 @@ mod tests {
                     speed: 10.0,
                     progress: 0.4,
                 }),
-                connection: FeedConnectionState::Connected,
                 feed_arrival_ms: (!replaying).then_some(120),
                 feed_latency: None,
                 tape_age_ms: (!replaying).then_some(200),
                 spec_summary: "tick(50)".to_owned(),
                 bar_progress: Some("37/50 ticks".to_owned()),
                 deal_recording: None,
+                deal_chip: None,
                 venue_bars: 0,
                 backfilled_bars: 240,
                 live_bars: 61,
@@ -814,7 +753,7 @@ mod tests {
                             ..Default::default()
                         },
                         |ctx| {
-                            let response = draw(ctx, &model, &mut tz, None);
+                            let response = draw(ctx, &model, &mut tz, &StatusLead::default());
                             assert_eq!(
                                 response,
                                 StatusResponse::default(),

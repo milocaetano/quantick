@@ -772,6 +772,7 @@ mod tests {
                         history_candles: 0,
                         older_candles: crate::tab::OlderCandles::NotArrivedYet,
                         capabilities: FeedCapabilities {
+                            transport: true,
                             book_capture: !replaying,
                             history_paging: !replaying,
                             history_boundary: None,
@@ -827,6 +828,7 @@ mod tests {
                     history_candles: 0,
                     older_candles: crate::tab::OlderCandles::NotArrivedYet,
                     capabilities: FeedCapabilities {
+                        transport: true,
                         book_capture: false,
                         history_paging: false,
                         history_boundary: None,
@@ -932,6 +934,7 @@ mod tests {
                     history_candles: 0,
                     older_candles: crate::tab::OlderCandles::NotArrivedYet,
                     capabilities: FeedCapabilities {
+                        transport: true,
                         book_capture: true,
                         history_paging: true,
                         history_boundary: None,

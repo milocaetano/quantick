@@ -601,6 +601,7 @@ impl QuantickApp {
                 workspace_menu_rect: None,
                 history_menu_rect: None,
                 feed_chip_rect: None,
+                feed_reconnect_rect: None,
                 // The hook stands in for a click on the opening tab's chip, which
                 // is the first tab there is.
                 feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),

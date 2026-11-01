@@ -523,6 +523,25 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
         capability_id: None,
     });
     if !popup_open {
+        // The one-click Reconnect standing outside the popup: the overlay's, or
+        // the status bar's beside the word, never both.
+        if let Some(reconnect) = app.chrome_reads().feed_reconnect_rect() {
+            let bounds = rect_bounds(reconnect);
+            controls.push(SceneControlSnapshot {
+                control_id: FEED_RECONNECT_CONTROL_ID.to_owned(),
+                label: Recovery::Reconnect.label().to_owned(),
+                role: SceneRoleDto::Action,
+                owner: owner(),
+                selected: false,
+                availability: available(),
+                bounds_availability: available(),
+                bounds: bounds.into_snapshot(),
+                capability_id: Some(
+                    quantick_control_handlers::recovery::capability_id(Recovery::Reconnect)
+                        .to_owned(),
+                ),
+            });
+        }
         return;
     }
     for (control_id, recovery) in [

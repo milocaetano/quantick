@@ -140,6 +140,7 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
     ("crates/feed/src/lib.rs", quantick_feed::HOOKS),
     ("crates/feed/src/stall.rs", quantick_feed::stall::HOOKS),
     ("crates/app/src/feed_notice.rs", crate::feed_notice::HOOKS),
+    ("crates/app/src/loading.rs", crate::loading::HOOKS),
     (
         "crates/app/src/footprint_config.rs",
         crate::footprint_config::HOOKS,

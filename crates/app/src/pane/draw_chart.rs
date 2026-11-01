@@ -64,7 +64,7 @@ impl ChartPane {
         if flow_execution {
             start.candle_aggression = false;
         }
-        let Some(layout) = self.lay_out(painter, area, chrome) else {
+        let Some(layout) = self.lay_out(area, chrome) else {
             return;
         };
         let tape_range = self
@@ -341,10 +341,9 @@ impl ChartPane {
 
     /// The frame's geometry: the plot split, the live lane, the history
     /// pane beside it and the clamped viewport's visible slots. `None` for an
-    /// empty series, after painting what an empty pane says instead.
+    /// empty series: the connection overlay speaks for an empty pane.
     fn lay_out(
         &mut self,
-        painter: &egui::Painter,
         area: egui::Rect,
         chrome: &PaneChrome<'_>,
     ) -> Option<FrameLayout> {
@@ -371,7 +370,6 @@ impl ChartPane {
         let candles_folded = super::lane_rail::shown_fold(self) == LaneFold::Candles;
         let live_lane = self.lay_out_lane(chart_rect);
         if total == 0 {
-            self.paint_empty_pane(painter, area, chart_rect, chrome);
             return None;
         }
         let history_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
@@ -468,50 +466,6 @@ impl ChartPane {
             self.indicator_worker.send(command);
         }
         live_lane
-    }
-
-    /// What a pane with no bars yet shows: the symbol it is waiting for, the
-    /// tape's status and the canvas layers that need no bars.
-    fn paint_empty_pane(
-        &self,
-        painter: &egui::Painter,
-        area: egui::Rect,
-        chart_rect: egui::Rect,
-        chrome: &PaneChrome<'_>,
-    ) {
-        painter.text(
-            area.center(),
-            egui::Align2::CENTER_CENTER,
-            format!("connecting to {} …", chrome.symbol),
-            egui::FontId::proportional(16.0),
-            theme::TEXT_MUTED,
-        );
-        if let Some(orderflow) = self.orderflow.as_ref() {
-            let width = self
-                .frame
-                .lane_divider_x
-                .map_or(0.0, |x| chart_rect.right() - x);
-            orderflow.draw_lane_boundary(
-                painter,
-                chart_rect,
-                width,
-                background_color(chrome.style),
-            );
-            self.layer_renderers.status(&mut StatusPass {
-                owner: orderflow,
-                painter,
-                rect: self.status_rect(chart_rect),
-            });
-        }
-    }
-
-    /// The status badge's room: the chart below the capsules, which share a row,
-    /// so its label can never cross one however long it grows.
-    pub(crate) fn status_rect(&self, chart_rect: egui::Rect) -> egui::Rect {
-        let mut capsules = self.frame.capsules.iter().flatten();
-        capsules.next().map_or(chart_rect, |capsule| {
-            chart_rect.with_min_y(capsule.bottom())
-        })
     }
 
     /// The live lane's window as the indicator panes draw it, `None`

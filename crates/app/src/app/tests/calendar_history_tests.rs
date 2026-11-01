@@ -76,6 +76,7 @@ fn push_feed_app_restoring(
     let (_book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+        transport: true,
         book_capture: false,
         history_paging: true,
         history_boundary: None,
@@ -743,6 +744,7 @@ fn reconnect(app: &mut QuantickApp) -> (mpsc::Sender<FeedEvent>, mpsc::Receiver<
         book_events: books,
         notices: feed::silent_notices(),
         capabilities: feed::fixed_capabilities(FeedCapabilities {
+            transport: true,
             ohlcv_daily_generation: 2,
             ohlcv_aggressor_split: false,
             ..app.active_tab().capabilities(&app.config)
