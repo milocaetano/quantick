@@ -18,9 +18,8 @@ use eframe::egui;
 
 use crate::theme;
 
-/// Height of the header strip, in pixels. Matches the bottom time axis, so the
-/// two horizontal rules framing a time pane read as one pair.
-pub const HEIGHT_PX: f32 = 24.0;
+/// Height of every pane's header strip, in pixels.
+pub const HEIGHT_PX: f32 = 34.0;
 
 /// The named timeframes, in the order they are offered.
 pub const PRESETS: [(&str, i64); quantick_engine::bar_registry::TIME_PRESETS.len()] =
@@ -31,16 +30,8 @@ pub const PRESETS: [(&str, i64); quantick_engine::bar_registry::TIME_PRESETS.len
 /// time spec, so a fresh `bars -> time` and a fresh time pane open alike.
 pub const DEFAULT_INTERVAL_MS: i64 = quantick_engine::DEFAULT_TIME_INTERVAL_MS;
 
-/// The narrowest strip that still gets the layout's name.
-///
-/// The name is right-aligned at the far end of a row whose left half is the
-/// timeframe controls, and those come first: a name given the space they did
-/// not use is a name that fits, while one given the whole strip is painted
-/// across the chips. Below this the room left is an ellipsis and a letter,
-/// which says less than the layout strip along the bottom of the window
-/// already says, so the header drops the name instead of crowding the
-/// controls a hand has to hit.
-const MIN_LAYOUT_NAME_PX: f32 = 40.0;
+/// The presets' text, as the mock sets them.
+const PRESET_SIZE: f32 = 12.0;
 
 /// The free interval field's room; narrower, the chips already say enough.
 const MIN_INTERVAL_FIELD_PX: f32 = 44.0;
@@ -55,16 +46,11 @@ pub struct HeaderLayout {
     /// [`Self::chips`].
     #[cfg(test)]
     chips: [egui::Rect; PRESETS.len()],
-    /// Where the interval control landed, and where the layout's name landed
-    /// if it was drawn at all — the pair
-    /// [`tests::a_long_layout_name_never_lands_on_the_interval_controls`]
-    /// compares. Recorded for the same reason the chips are: the geometry a
-    /// test asserts on has to be the geometry egui produced, not one derived
-    /// from font metrics this code does not own.
+    /// Where the interval control landed. Recorded for the same reason the
+    /// chips are: the geometry a test asserts on has to be the geometry egui
+    /// produced, not one derived from font metrics this code does not own.
     #[cfg(test)]
     interval: egui::Rect,
-    #[cfg(test)]
-    name: Option<egui::Rect>,
 }
 
 impl HeaderLayout {
@@ -83,13 +69,6 @@ impl HeaderLayout {
     fn interval(&self) -> egui::Rect {
         self.interval
     }
-
-    /// Where the layout's name landed, or `None` when the strip had no room
-    /// for it.
-    #[cfg(test)]
-    fn name(&self) -> Option<egui::Rect> {
-        self.name
-    }
 }
 
 /// Draw the header into `strip`.
@@ -106,24 +85,17 @@ impl HeaderLayout {
 /// is what makes them distinct, the same rule `ChartPane::interaction_id`
 /// follows.
 ///
-/// `layout_name` is the layout this pane shows, drawn at the strip's far end
-/// so a glance at a split says which chart carries which set.
 /// `bars` paints the pane's bars control at the head of the row; `presets` says
-/// whether the timeframe controls follow it; `glyphs` paints what follows those,
-/// inside the `glyphs_px` a narrow strip takes from the presets, never from them.
-/// The indicators glyph holds the strip's right end before any of it paints, so
-/// the row and that reservation both end left of it.
-#[allow(clippy::too_many_arguments)]
+/// whether the timeframe controls follow it. The indicators button follows those,
+/// and its room is what a narrow strip takes from the presets, never from it.
+/// Nothing stands at the right end: a time pane's layer lives in its capsule.
 pub fn draw(
     ui: &mut egui::Ui,
     strip: egui::Rect,
     interval_ms: &mut i64,
     salt: u64,
-    layout_name: &str,
     presets: bool,
-    glyphs_px: f32,
     bars: impl FnOnce(&mut egui::Ui),
-    glyphs: impl FnOnce(&mut egui::Ui),
 ) -> HeaderLayout {
     let mut changed = false;
     #[cfg(test)]
@@ -131,20 +103,33 @@ pub fn draw(
     #[cfg(test)]
     let mut recorded = chips.iter_mut();
     crate::pane_header::paint_rule(ui, strip);
-    let (rest, clip, indicators) = crate::pane_header::indicators_glyph(ui, strip, salt);
+    let inner = strip.shrink2(crate::pane_header::CONTENT_PADDING);
+    let indicators_px = crate::pane_header::indicators_width(ui);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(("time_header", salt))
-            .max_rect(rest)
+            .max_rect(inner)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    let row = content.max_rect();
-    content.set_clip_rect(clip.with_max_x(row.right() - glyphs_px));
+    let limit = (inner.right() - indicators_px).max(strip.left());
+    content.set_clip_rect(strip.with_max_x(limit).intersect(ui.clip_rect()));
     bars(&mut content);
     let interval_rect = if presets {
         for (label, preset_ms) in PRESETS {
             let selected = *interval_ms == preset_ms;
-            let chip = content.selectable_label(selected, label);
+            let ink = if selected {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_MUTED
+            };
+            let chip = content.add(
+                egui::Button::new(
+                    egui::RichText::new(label)
+                        .font(egui::FontId::monospace(PRESET_SIZE))
+                        .color(ink),
+                )
+                .frame(false),
+            );
             #[cfg(test)]
             if let Some(slot) = recorded.next() {
                 *slot = chip.rect;
@@ -157,7 +142,7 @@ pub fn draw(
         // A month is a calendar unit, not a duration: dragging its nominal
         // millisecond size would walk into values no chart accepts, and its
         // chip already names it, so nothing stands beside it.
-        let fits = content.available_width() >= glyphs_px + MIN_INTERVAL_FIELD_PX;
+        let fits = content.available_width() >= indicators_px + MIN_INTERVAL_FIELD_PX;
         let interval = (fits
             && quantick_engine::time_bucket::calendar_months(*interval_ms).is_none())
         .then(|| {
@@ -177,41 +162,9 @@ pub fn draw(
     };
     #[cfg(not(test))]
     let _ = interval_rect;
-    content.set_clip_rect(clip);
-    let row_used = content.cursor().left();
-    let glyphs_left = row_used.min(row.right() - glyphs_px);
-    let _ = content.allocate_new_ui(
-        egui::UiBuilder::new()
-            .max_rect(row.with_min_x(glyphs_left))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        glyphs,
-    );
-    // The name takes the room the interval controls left and never more:
-    // right-aligned in a `left_to_right` row, a label wider than what remains
-    // is drawn back over the chips beside it, so it is bounded and elided
-    // here rather than clipped by luck.
-    let name_rect = (!layout_name.is_empty()
-        && row.right() - row_used - glyphs_px >= MIN_LAYOUT_NAME_PX)
-        .then(|| {
-            content
-                .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(layout_name)
-                                .small()
-                                .color(theme::TEXT_FAINT),
-                        )
-                        .truncate(),
-                    )
-                    .on_hover_text(
-                        "the layout this chart shows — click the chart, then pick another on the strip",
-                    )
-                    .rect
-                })
-                .inner
-        });
-    #[cfg(not(test))]
-    let _ = name_rect;
+    let button_left =
+        (content.cursor().left() + quantick_chart::pane_header::GROUP_GAP_PX).min(limit);
+    let indicators = crate::pane_header::indicators_button(ui, button_left, strip, salt);
     HeaderLayout {
         changed,
         indicators,
@@ -219,8 +172,6 @@ pub fn draw(
         chips,
         #[cfg(test)]
         interval: interval_rect,
-        #[cfg(test)]
-        name: name_rect,
     }
 }
 
@@ -272,48 +223,14 @@ mod tests {
         assert!(PRESETS.iter().any(|(_, ms)| *ms == DEFAULT_INTERVAL_MS));
     }
 
-    /// Draw one frame of the header into a strip `width` wide, and report
-    /// where the interval control and the layout name landed.
-    fn header_in(width: f32, layout_name: &str) -> (egui::Rect, Option<egui::Rect>) {
-        let ctx = egui::Context::default();
-        let mut interval_ms = DEFAULT_INTERVAL_MS;
-        let mut seen = None;
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(width + 200.0, 200.0),
-            )),
-            ..Default::default()
-        };
-        let _ = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let strip =
-                    egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(width, HEIGHT_PX));
-                let header = draw(
-                    ui,
-                    strip,
-                    &mut interval_ms,
-                    0,
-                    layout_name,
-                    true,
-                    0.0,
-                    |_| {},
-                    |_| {},
-                );
-                seen = Some((header.interval(), header.name()));
-            });
-        });
-        seen.expect("the header drew")
-    }
-
     /// A strip too narrow for the presets cuts them and drops the free interval
-    /// field: the glyph after them stays whole, or a hand could not reach it.
+    /// field: the indicators button after them stays whole, or a hand could not
+    /// reach it.
     #[test]
-    fn a_narrow_strip_keeps_the_glyph_whole() {
-        const GLYPHS_PX: f32 = 40.0;
+    fn a_narrow_strip_keeps_the_indicators_button_whole() {
         let ctx = egui::Context::default();
         let mut interval_ms = DEFAULT_INTERVAL_MS;
-        let mut seen = None;
+        let mut strip = egui::Rect::NOTHING;
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -323,22 +240,8 @@ mod tests {
         };
         let _ = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let strip =
-                    egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(200.0, HEIGHT_PX));
-                let header = draw(
-                    ui,
-                    strip,
-                    &mut interval_ms,
-                    0,
-                    "",
-                    true,
-                    GLYPHS_PX,
-                    |_| {},
-                    |ui| {
-                        let glyph = ui.allocate_space(egui::vec2(GLYPHS_PX - 4.0, 10.0)).1;
-                        seen = Some((strip, glyph, ui.clip_rect()));
-                    },
-                );
+                strip = egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(160.0, HEIGHT_PX));
+                let header = draw(ui, strip, &mut interval_ms, 0, true, |_| {});
                 assert_eq!(
                     header.interval(),
                     egui::Rect::NOTHING,
@@ -346,41 +249,10 @@ mod tests {
                 );
             });
         });
-        let (strip, glyph, clip) = seen.expect("the glyph drew");
-        assert!(
-            strip.contains_rect(glyph),
-            "{glyph:?} left the strip {strip:?}"
-        );
-        assert!(
-            clip.contains_rect(glyph),
-            "{glyph:?} was clipped by {clip:?}"
-        );
-    }
-
-    /// The layout's name is drawn where the interval controls are not, and is
-    /// dropped rather than crowded when nothing is left.
-    ///
-    /// It is right-aligned inside a row that fills from the left, so a name
-    /// wider than the room the chips left is painted *back over* them — which
-    /// is what a 24-character name on a narrow pane did: the interval read
-    /// `60000 ms` with the name's head on top of it.
-    #[test]
-    fn a_long_layout_name_never_lands_on_the_interval_controls() {
-        let name = "opening range levels A24";
-        assert_eq!(name.len(), crate::layouts::MAX_LAYOUT_NAME);
-
-        let (interval, drawn) = header_in(600.0, name);
-        let drawn = drawn.expect("a 600 px strip has room for a name");
-        assert!(
-            drawn.left() >= interval.right(),
-            "the name at {drawn:?} was drawn back over the interval control at {interval:?}"
-        );
-
-        let (_, crowded) = header_in(200.0, name);
-        assert!(
-            crowded.is_none(),
-            "a strip with no room left keeps its controls whole and drops the name, got {crowded:?}"
-        );
+        let button: egui::Rect = ctx
+            .data(|data| data.get_temp(crate::pane_header::indicators_id(0)))
+            .expect("the button drew");
+        assert!(strip.contains_rect(button), "{button:?} left {strip:?}");
     }
 
     /// Every preset has to be reachable by *both* time-bar controls: the two
@@ -440,20 +312,7 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let strip =
                         egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(600.0, HEIGHT_PX));
-                    changed = Some(
-                        draw(
-                            ui,
-                            strip,
-                            &mut interval_ms,
-                            0,
-                            "",
-                            true,
-                            0.0,
-                            |_| {},
-                            |_| {},
-                        )
-                        .changed,
-                    );
+                    changed = Some(draw(ui, strip, &mut interval_ms, 0, true, |_| {}).changed);
                 });
             });
         }

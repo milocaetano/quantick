@@ -409,7 +409,7 @@ impl ChartPane {
                 .status(&mut super::render_registry::StatusPass {
                     owner: orderflow,
                     painter,
-                    rect: chart_rect,
+                    rect: self.status_rect(chart_rect),
                 });
         }
     }

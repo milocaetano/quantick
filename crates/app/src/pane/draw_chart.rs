@@ -500,9 +500,18 @@ impl ChartPane {
             self.layer_renderers.status(&mut StatusPass {
                 owner: orderflow,
                 painter,
-                rect: chart_rect,
+                rect: self.status_rect(chart_rect),
             });
         }
+    }
+
+    /// The status badge's room: the chart below the capsules, which share a row,
+    /// so its label can never cross one however long it grows.
+    pub(crate) fn status_rect(&self, chart_rect: egui::Rect) -> egui::Rect {
+        let mut capsules = self.frame.capsules.iter().flatten();
+        capsules.next().map_or(chart_rect, |capsule| {
+            chart_rect.with_min_y(capsule.bottom())
+        })
     }
 
     /// The live lane's window as the indicator panes draw it, `None`

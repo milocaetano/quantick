@@ -87,6 +87,7 @@ impl QuickRangeView<'_> {
             // candles keep every pixel they had before panes took ranges.
             if pressed
                 && let Some(position) = pointer
+                && !super::primary_button::capsule_hit(areas, position)
                 && let Some(band) = bands::band_at(bands, drawings::px(position))
                     .filter(|band| band.drawable())
                     .filter(|band| {

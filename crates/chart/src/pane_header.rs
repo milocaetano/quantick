@@ -1,5 +1,6 @@
-//! What a pane's header line says about the pane and what it lets a hand do:
-//! its identity, its bars, its view, its layers and its bubble sizes.
+//! What a pane's header line says about the pane, what it lets a hand do, and
+//! what each chart side's floating capsule holds: identity, bars, view, layers
+//! and bubble sizes.
 //!
 //! Built from that pane's own state and nothing else, so the line reads the
 //! same wherever focus sits. The window only paints the result and hands back
@@ -10,9 +11,11 @@ use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{DEFAULT_BUBBLE_DISPLAY_SCALE, LaneView};
 use quantick_orderflow::{MAX_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_DISPLAY_SCALE};
 
-/// The glyph at a header line's right end that opens the indicators of that
+/// The icon of the button on a header line that opens the indicators of that
 /// pane.
 pub const INDICATORS_GLYPH: &str = "ƒx";
+/// The words beside that icon.
+pub const INDICATORS_LABEL: &str = "Indicators";
 
 /// The mark naming the order-flow pane.
 pub const ORDER_FLOW_MARK: &str = "ORDER FLOW";
@@ -34,8 +37,20 @@ pub const VIEW_SLOT_PX: f32 = 28.0;
 pub const SAMPLE_SLOT_PX: f32 = 24.0;
 /// The gap between neighbouring slots.
 pub const SLOT_GAP_PX: f32 = 2.0;
-/// The gap between the header's groups: bars, view, layers.
+/// The gap between the header's groups.
 pub const GROUP_GAP_PX: f32 = 8.0;
+
+/// How far a capsule stands below the header and off its side's right edge.
+pub const CAPSULE_INSET_PX: f32 = 8.0;
+/// The capsule's padding plus its 1 px border, across and along.
+const CAPSULE_FRAME_X_PX: f32 = 5.0;
+const CAPSULE_FRAME_Y_PX: f32 = 4.0;
+/// A capsule's slots are this tall.
+pub const CAPSULE_SLOT_HEIGHT_PX: f32 = 20.0;
+/// A capsule's height: one row of slots inside its frame.
+pub const CAPSULE_HEIGHT_PX: f32 = CAPSULE_SLOT_HEIGHT_PX + 2.0 * CAPSULE_FRAME_Y_PX;
+/// The most a capsule holds: a sample and three layers.
+const CAPSULE_MAX_ITEMS: usize = 4;
 
 /// The sample's diameter at the smallest scale, in points.
 const SAMPLE_MIN_DIAMETER_PX: f32 = 6.0;
@@ -53,15 +68,19 @@ pub enum LayerToggle {
     Heatmap,
     Footprint,
     LiveStrip,
+    TapeBubbles,
+    TapeHeatmap,
 }
 
 impl LayerToggle {
     /// Every toggle, left to right.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::Bubbles,
         Self::Heatmap,
         Self::Footprint,
         Self::LiveStrip,
+        Self::TapeBubbles,
+        Self::TapeHeatmap,
     ];
 
     /// The canvas layer this glyph switches: a shortcut into the pane's own
@@ -73,6 +92,8 @@ impl LayerToggle {
             Self::Heatmap => ChartLayer::Heatmap,
             Self::Footprint => ChartLayer::Footprint,
             Self::LiveStrip => ChartLayer::LiveStrip,
+            Self::TapeBubbles => ChartLayer::TapeBubbles,
+            Self::TapeHeatmap => ChartLayer::TapeHeatmap,
         }
     }
 
@@ -84,16 +105,18 @@ impl LayerToggle {
             Self::Heatmap => "L2",
             Self::Footprint => "Footprint",
             Self::LiveStrip => "Strip",
+            Self::TapeBubbles => "Tape bubbles",
+            Self::TapeHeatmap => "Tape L2",
         }
     }
 }
 
-/// One of the two bubble sizes a flow pane's header carries.
+/// One of the two bubble sizes a flow pane's capsules carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BubbleSample {
-    /// Beside the bubbles glyph: the size of the bubbles over the candles.
+    /// In the candles' capsule: the size of the bubbles over the candles.
     Candle,
-    /// At the header's right end: the size of the bubbles on the tape.
+    /// In the tape's capsule: the size of the bubbles on the tape.
     Tape,
 }
 
@@ -108,7 +131,7 @@ impl BubbleSample {
     }
 }
 
-/// Which control of a header line this is.
+/// Which control of a pane's header line or capsules this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeaderControl {
     View,
@@ -140,7 +163,8 @@ pub enum HeaderIntent {
     SetSample(BubbleSample, f32),
 }
 
-/// One layer glyph this frame: drawn or not, and what blocks it if anything.
+/// One layer glyph this frame: drawn or not, and what blocks it if anything. A
+/// blocked glyph is never painted; the layer read still says why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerGlyph {
     pub toggle: LayerToggle,
@@ -153,19 +177,17 @@ pub struct LayerGlyph {
 pub enum GlyphInk {
     /// Switched on: the accent colour.
     Lit,
-    /// Switched off: grey.
+    /// Switched off by hand: an outline with a slash through it.
     Off,
-    /// Cannot move right now: the faintest grey, whatever its switch says.
-    Blocked,
 }
 
 impl LayerGlyph {
     #[must_use]
     pub fn ink(self) -> GlyphInk {
-        match (self.blocked, self.on) {
-            (Some(_), _) => GlyphInk::Blocked,
-            (None, true) => GlyphInk::Lit,
-            (None, false) => GlyphInk::Off,
+        if self.on {
+            GlyphInk::Lit
+        } else {
+            GlyphInk::Off
         }
     }
 
@@ -212,8 +234,8 @@ pub fn sample_value_text(scale: f32) -> String {
     format!("{scale:.2}x")
 }
 
-/// What a flow pane's header shows of the pane's tape: its view, and each
-/// sample's scale while its target is there to scale.
+/// What a flow pane shows of its tape: its view, and each sample's scale while
+/// its target is there to scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlowHeaderState {
     /// The stored view, which the button walks.
@@ -228,38 +250,175 @@ pub struct FlowHeaderState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeaderFit {
     pub mark: bool,
-    pub samples: bool,
 }
 
-/// Width of the view button and the four layer glyphs, with their gaps.
-const FLOW_CONTROLS_PX: f32 = SLOT_GAP_PX
-    + GROUP_GAP_PX
-    + VIEW_SLOT_PX
-    + SLOT_GAP_PX
-    + GROUP_GAP_PX
-    + (LayerToggle::ALL.len() as f32) * (GLYPH_SLOT_PX + SLOT_GAP_PX);
+/// Width of the header's right end: the view button and the strip glyph.
+pub const FLOW_CONTROLS_PX: f32 = VIEW_SLOT_PX + GROUP_GAP_PX + GLYPH_SLOT_PX;
 /// The gap the mark leaves before the bars.
-const MARK_GAP_PX: f32 = SLOT_GAP_PX + GROUP_GAP_PX;
-/// Width of both samples: the slot beside the bubbles glyph and the right end.
-const FLOW_SAMPLES_PX: f32 = 2.0 * (SAMPLE_SLOT_PX + SLOT_GAP_PX) + GROUP_GAP_PX;
+const MARK_GAP_PX: f32 = GROUP_GAP_PX;
 
-/// The narrow rule of a flow pane's header: the mark goes first, then the
-/// samples. What still does not fit clips at the strip's edge, and with the
-/// samples gone nothing stands at the right end to overlap.
+/// The narrow rule of a flow pane's header: only the mark goes. What still does
+/// not fit is the bars text, clipped short of the indicators button.
 #[must_use]
-pub fn flow_fit(strip_px: f32, mark_px: f32, bars_px: f32) -> HeaderFit {
-    let controls = bars_px + FLOW_CONTROLS_PX;
-    let with_samples = controls + FLOW_SAMPLES_PX;
-    if with_samples + mark_px + MARK_GAP_PX <= strip_px {
-        HeaderFit {
-            mark: true,
-            samples: true,
+pub fn flow_fit(strip_px: f32, mark_px: f32, bars_px: f32, indicators_px: f32) -> HeaderFit {
+    let line = mark_px + MARK_GAP_PX + bars_px + GROUP_GAP_PX + indicators_px;
+    HeaderFit {
+        mark: line + GROUP_GAP_PX + FLOW_CONTROLS_PX <= strip_px,
+    }
+}
+
+/// The chart side a capsule floats over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapsuleSide {
+    Candles,
+    Tape,
+    /// A timeframe pane: one side, candles only.
+    Time,
+}
+
+impl CapsuleSide {
+    /// The layers this side's capsule switches, left to right.
+    #[must_use]
+    pub fn toggles(self) -> &'static [LayerToggle] {
+        match self {
+            Self::Candles => &[
+                LayerToggle::Bubbles,
+                LayerToggle::Heatmap,
+                LayerToggle::Footprint,
+            ],
+            Self::Tape => &[LayerToggle::TapeBubbles, LayerToggle::TapeHeatmap],
+            Self::Time => &[LayerToggle::Footprint],
         }
-    } else {
-        HeaderFit {
-            mark: false,
-            samples: with_samples <= strip_px,
+    }
+
+    /// The sample that stands right of this side's bubbles glyph, if any.
+    fn sample(self, toggle: LayerToggle) -> Option<BubbleSample> {
+        match (self, toggle) {
+            (Self::Candles, LayerToggle::Bubbles) => Some(BubbleSample::Candle),
+            (Self::Tape, LayerToggle::TapeBubbles) => Some(BubbleSample::Tape),
+            _ => None,
         }
+    }
+}
+
+/// One slot of a capsule.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CapsuleItem {
+    Layer(LayerGlyph),
+    /// A live sample at this scale.
+    Sample(BubbleSample, f32),
+    /// A sample whose bubbles are switched off by hand: nothing to scale, so it
+    /// takes no hand and no scene entry, and its ink says why.
+    SampleOff(BubbleSample),
+}
+
+impl CapsuleItem {
+    /// The slot's width.
+    #[must_use]
+    pub fn slot_px(self) -> f32 {
+        match self {
+            Self::Layer(_) => GLYPH_SLOT_PX,
+            Self::Sample(..) | Self::SampleOff(_) => SAMPLE_SLOT_PX,
+        }
+    }
+}
+
+/// What one chart side's capsule holds this frame: only what a hand can switch.
+/// A layer the data blocks is left out with its sample, and comes back when the
+/// data arrives.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Capsule {
+    items: [Option<CapsuleItem>; CAPSULE_MAX_ITEMS],
+}
+
+impl Capsule {
+    /// `glyph` reads each layer of the side; `scale` is the side's sample scale
+    /// while its target may be scaled.
+    #[must_use]
+    pub fn of(
+        side: CapsuleSide,
+        glyph: impl Fn(LayerToggle) -> LayerGlyph,
+        scale: Option<f32>,
+    ) -> Self {
+        let mut items = [None; CAPSULE_MAX_ITEMS];
+        let mut slots = items.iter_mut();
+        for &toggle in side.toggles() {
+            let glyph = glyph(toggle);
+            if glyph.blocked.is_some() {
+                continue;
+            }
+            if let Some(slot) = slots.next() {
+                *slot = Some(CapsuleItem::Layer(glyph));
+            }
+            let sample = side
+                .sample(toggle)
+                .and_then(|which| match (scale, glyph.on) {
+                    (Some(scale), _) => Some(CapsuleItem::Sample(which, scale)),
+                    (None, false) => Some(CapsuleItem::SampleOff(which)),
+                    (None, true) => None,
+                });
+            if let Some(sample) = sample
+                && let Some(slot) = slots.next()
+            {
+                *slot = Some(sample);
+            }
+        }
+        Self { items }
+    }
+
+    /// The slots, left to right.
+    pub fn items(&self) -> impl Iterator<Item = CapsuleItem> + '_ {
+        self.items.iter().copied().flatten()
+    }
+
+    /// With nothing left to switch, the capsule is not painted at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.items().next().is_none()
+    }
+
+    /// The whole capsule's width, frame included.
+    #[must_use]
+    pub fn width_px(&self) -> f32 {
+        let slots = self.items().map(CapsuleItem::slot_px).sum::<f32>();
+        let gaps = self.items().count().saturating_sub(1) as f32 * SLOT_GAP_PX;
+        slots + gaps + 2.0 * CAPSULE_FRAME_X_PX
+    }
+
+    /// Where the first slot starts, from the capsule's own corner.
+    #[must_use]
+    pub fn slot_origin(min_x: f32, min_y: f32) -> (f32, f32) {
+        (min_x + CAPSULE_FRAME_X_PX, min_y + CAPSULE_FRAME_Y_PX)
+    }
+
+    /// The capsule's corner over a side spanning `left..right`, with the header's
+    /// rule at `top` and the plot ending at `bottom`; `None` when the side is too
+    /// narrow or short to hold it.
+    #[must_use]
+    pub fn place(&self, left: f32, right: f32, top: f32, bottom: f32) -> Option<(f32, f32)> {
+        let min_x = right - CAPSULE_INSET_PX - self.width_px();
+        let min_y = top + CAPSULE_INSET_PX;
+        (min_x >= left && min_y + CAPSULE_HEIGHT_PX <= bottom).then_some((min_x, min_y))
+    }
+}
+
+/// The sides on screen for this view over a chart spanning `left..right`, with
+/// the tape's divider if there is one, leftmost first. A hidden side has no
+/// capsule; a pane without a lane is all candles.
+#[must_use]
+pub fn flow_sides(
+    shown: LaneView,
+    left: f32,
+    right: f32,
+    divider: Option<f32>,
+) -> [Option<(CapsuleSide, f32, f32)>; 2] {
+    let candles = |end| Some((CapsuleSide::Candles, left, end));
+    let tape = |start| Some((CapsuleSide::Tape, start, right));
+    match (shown, divider) {
+        (LaneView::Beside, Some(divider)) => [candles(divider), tape(divider)],
+        (LaneView::Beside | LaneView::CandlesOnly, None) => [candles(right), None],
+        (LaneView::CandlesOnly, Some(divider)) => [candles(divider), None],
+        (LaneView::TapeOnly, divider) => [tape(divider.unwrap_or(left)), None],
     }
 }
 
@@ -276,16 +435,6 @@ pub struct PaneHeader {
 }
 
 impl PaneHeader {
-    /// The layers a pane with this identity toggles: a time pane has only its
-    /// own footprint.
-    #[must_use]
-    pub fn toggles(identity: PaneIdentity) -> &'static [LayerToggle] {
-        match identity {
-            PaneIdentity::OrderFlow => &LayerToggle::ALL,
-            PaneIdentity::Time => &[LayerToggle::Footprint],
-        }
-    }
-
     /// The header line of a pane with this identity building these bars.
     #[must_use]
     pub fn of(identity: PaneIdentity, bars: BarConfiguration) -> Self {
@@ -368,23 +517,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_time_pane_toggles_only_its_own_footprint() {
-        assert_eq!(
-            PaneHeader::toggles(PaneIdentity::Time),
-            [LayerToggle::Footprint]
-        );
-        assert_eq!(
-            PaneHeader::toggles(PaneIdentity::OrderFlow),
-            LayerToggle::ALL
-        );
-    }
-
     /// The tooltip is the name and nothing else: no sentence to read mid-trade.
     #[test]
     fn every_glyph_is_named_in_a_word_or_two() {
         let words = LayerToggle::ALL.map(LayerToggle::name);
-        assert_eq!(words, ["Bubbles", "L2", "Footprint", "Strip"]);
+        assert_eq!(
+            words,
+            [
+                "Bubbles",
+                "L2",
+                "Footprint",
+                "Strip",
+                "Tape bubbles",
+                "Tape L2"
+            ]
+        );
         for view in [LaneView::Beside, LaneView::CandlesOnly, LaneView::TapeOnly] {
             assert!(view_name(view).split(' ').count() <= 3, "{view:?}");
         }
@@ -399,6 +546,14 @@ mod tests {
                 HeaderControl::Layer(LayerToggle::LiveStrip),
                 "layer.live_strip",
             ),
+            (
+                HeaderControl::Layer(LayerToggle::TapeBubbles),
+                "layer.tape_bubbles",
+            ),
+            (
+                HeaderControl::Layer(LayerToggle::TapeHeatmap),
+                "layer.tape_heatmap",
+            ),
             (HeaderControl::Sample(BubbleSample::Tape), "sample.tape"),
             (HeaderControl::Sample(BubbleSample::Candle), "sample.candle"),
         ] {
@@ -407,7 +562,7 @@ mod tests {
     }
 
     /// Off is not blocked: a blocked glyph keeps its switch and refuses the
-    /// click, and its ink says so whichever way the switch stands.
+    /// click, whichever way the switch stands.
     #[test]
     fn a_blocked_glyph_keeps_its_state_and_refuses_the_click() {
         let glyph = |on, blocked| LayerGlyph {
@@ -427,7 +582,6 @@ mod tests {
         );
         let block = quantick_layers::blocks::TAPE_ONLY_CANDLES;
         for on in [true, false] {
-            assert_eq!(glyph(on, Some(block)).ink(), GlyphInk::Blocked);
             assert_eq!(glyph(on, Some(block)).click(), None);
         }
     }
@@ -452,37 +606,145 @@ mod tests {
         assert_eq!(sample_value_text(1.5), "1.50x");
     }
 
-    /// The mark goes first, then the samples; bars and glyphs are never dropped
-    /// by the rule, they clip.
+    /// Only the mark goes; the right end and the indicators button never do.
     #[test]
-    fn a_narrow_strip_drops_the_mark_then_the_samples() {
-        let (mark, bars) = (70.0, 80.0);
-        let everything = bars + FLOW_CONTROLS_PX + FLOW_SAMPLES_PX + mark + MARK_GAP_PX;
-        let both = |mark, samples| HeaderFit { mark, samples };
-        assert_eq!(flow_fit(everything, mark, bars), both(true, true));
-        assert_eq!(flow_fit(everything - 1.0, mark, bars), both(false, true));
-        let samples = bars + FLOW_CONTROLS_PX + FLOW_SAMPLES_PX;
-        assert_eq!(flow_fit(samples, mark, bars), both(false, true));
-        assert_eq!(flow_fit(samples - 1.0, mark, bars), both(false, false));
-        assert_eq!(flow_fit(10.0, mark, bars), both(false, false));
+    fn a_narrow_strip_drops_only_the_mark() {
+        let (mark, bars, indicators) = (70.0, 80.0, 90.0);
+        let everything =
+            mark + MARK_GAP_PX + bars + GROUP_GAP_PX + indicators + GROUP_GAP_PX + FLOW_CONTROLS_PX;
+        assert!(flow_fit(everything, mark, bars, indicators).mark);
+        assert!(!flow_fit(everything - 1.0, mark, bars, indicators).mark);
     }
 
-    /// With samples kept the right-end sample starts past the last glyph: the
-    /// widths the rule adds are the widths the row lays out.
-    #[test]
-    fn what_the_rule_keeps_does_not_overlap() {
-        let (mark, bars) = (70.0, 80.0);
-        for strip in (100..1_200).step_by(7) {
-            let strip = strip as f32;
-            let fit = flow_fit(strip, mark, bars);
-            if fit.samples {
-                let left = bars
-                    + FLOW_CONTROLS_PX
-                    + SAMPLE_SLOT_PX
-                    + SLOT_GAP_PX
-                    + if fit.mark { mark + MARK_GAP_PX } else { 0.0 };
-                assert!(left <= strip - SAMPLE_SLOT_PX, "{strip}");
-            }
+    fn glyph(toggle: LayerToggle, on: bool, blocked: Option<LayerBlock>) -> LayerGlyph {
+        LayerGlyph {
+            toggle,
+            on,
+            blocked,
         }
+    }
+
+    fn ids(capsule: &Capsule) -> Vec<String> {
+        capsule
+            .items()
+            .map(|item| match item {
+                CapsuleItem::Layer(glyph) => HeaderControl::Layer(glyph.toggle).id_in_header(),
+                CapsuleItem::Sample(which, _) => HeaderControl::Sample(which).id_in_header(),
+                CapsuleItem::SampleOff(which) => {
+                    format!("off.{}", HeaderControl::Sample(which).id_in_header())
+                }
+            })
+            .collect()
+    }
+
+    /// Each side lists its own layers, with its sample right of its bubbles.
+    #[test]
+    fn each_side_holds_its_own_controls() {
+        let on = |toggle| glyph(toggle, true, None);
+        let candles = Capsule::of(CapsuleSide::Candles, on, Some(1.0));
+        assert_eq!(
+            ids(&candles),
+            [
+                "layer.bubbles",
+                "sample.candle",
+                "layer.heatmap",
+                "layer.footprint"
+            ]
+        );
+        let tape = Capsule::of(CapsuleSide::Tape, on, Some(1.0));
+        assert_eq!(
+            ids(&tape),
+            ["layer.tape_bubbles", "sample.tape", "layer.tape_heatmap"]
+        );
+        let time = Capsule::of(CapsuleSide::Time, on, None);
+        assert_eq!(ids(&time), ["layer.footprint"]);
+    }
+
+    /// Book offline takes L2 only; no traded volume takes bubbles with their
+    /// sample and the footprint; both gone, the capsule is empty.
+    #[test]
+    fn what_the_data_blocks_is_left_out() {
+        let book = quantick_layers::blocks::NO_BOOK;
+        let volume = quantick_layers::blocks::NO_TRADED_VOLUME;
+        let no_book = |toggle| {
+            let l2 = matches!(toggle, LayerToggle::Heatmap | LayerToggle::TapeHeatmap);
+            glyph(toggle, true, l2.then_some(book))
+        };
+        assert_eq!(
+            ids(&Capsule::of(CapsuleSide::Candles, no_book, Some(1.0))),
+            ["layer.bubbles", "sample.candle", "layer.footprint"]
+        );
+        let no_volume = |toggle| {
+            let l2 = matches!(toggle, LayerToggle::Heatmap | LayerToggle::TapeHeatmap);
+            glyph(toggle, true, (!l2).then_some(volume))
+        };
+        assert_eq!(
+            ids(&Capsule::of(CapsuleSide::Tape, no_volume, Some(1.0))),
+            ["layer.tape_heatmap"]
+        );
+        let nothing = |toggle| glyph(toggle, true, Some(book));
+        assert!(Capsule::of(CapsuleSide::Tape, nothing, Some(1.0)).is_empty());
+        // The data back, everything is back: the capsule holds no memory.
+        let back = |toggle| glyph(toggle, true, None);
+        assert_eq!(
+            ids(&Capsule::of(CapsuleSide::Tape, back, Some(1.0))).len(),
+            3
+        );
+    }
+
+    /// Off by hand, the bubbles keep their place and their sample's slot; on but
+    /// with nothing to scale, the sample has no slot.
+    #[test]
+    fn a_sample_follows_its_bubbles() {
+        let off = |toggle| glyph(toggle, false, None);
+        assert_eq!(
+            ids(&Capsule::of(CapsuleSide::Tape, off, None)),
+            [
+                "layer.tape_bubbles",
+                "off.sample.tape",
+                "layer.tape_heatmap"
+            ]
+        );
+        let on = |toggle| glyph(toggle, true, None);
+        assert_eq!(
+            ids(&Capsule::of(CapsuleSide::Tape, on, None)),
+            ["layer.tape_bubbles", "layer.tape_heatmap"]
+        );
+    }
+
+    /// The capsule stands 8 points below the header and off the side's right
+    /// edge, with its slots inside its frame, and a side too narrow has none.
+    #[test]
+    fn a_capsule_sits_in_its_sides_corner() {
+        let on = |toggle| glyph(toggle, true, None);
+        let capsule = Capsule::of(CapsuleSide::Candles, on, Some(1.0));
+        let width = 3.0 * GLYPH_SLOT_PX + SAMPLE_SLOT_PX + 3.0 * SLOT_GAP_PX + 10.0;
+        assert_eq!(capsule.width_px(), width);
+        let place = |right, bottom| capsule.place(0.0, right, 40.0, bottom);
+        assert_eq!(place(500.0, 300.0), Some((492.0 - width, 48.0)));
+        assert_eq!(place(width + 8.0, 300.0), Some((0.0, 48.0)));
+        assert_eq!(place(width + 7.0, 300.0), None);
+        assert_eq!(place(500.0, 76.0), Some((492.0 - width, 48.0)));
+        assert_eq!(place(500.0, 75.0), None, "a plot too short holds none");
+    }
+
+    /// A hidden side has no capsule, and a side keeps its own edge.
+    #[test]
+    fn the_view_decides_the_sides() {
+        let candles = |end| Some((CapsuleSide::Candles, 0.0, end));
+        let tape = |start| Some((CapsuleSide::Tape, start, 100.0));
+        let sides = |view, divider| flow_sides(view, 0.0, 100.0, divider);
+        assert_eq!(
+            sides(LaneView::Beside, Some(70.0)),
+            [candles(70.0), tape(70.0)]
+        );
+        assert_eq!(sides(LaneView::Beside, None), [candles(100.0), None]);
+        assert_eq!(sides(LaneView::CandlesOnly, None), [candles(100.0), None]);
+        assert_eq!(
+            sides(LaneView::CandlesOnly, Some(92.0)),
+            [candles(92.0), None]
+        );
+        assert_eq!(sides(LaneView::TapeOnly, Some(0.0)), [tape(0.0), None]);
+        assert_eq!(sides(LaneView::TapeOnly, None), [tape(0.0), None]);
     }
 }
