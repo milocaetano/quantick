@@ -382,8 +382,7 @@ fn view_button(
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
 ) {
-    let id = ui.id().with(("pane_view_button", salt));
-    let response = ui.interact(rect, id, egui::Sense::click());
+    let response = ui.interact(rect, ui.id().with(("view", salt)), egui::Sense::click());
     if response.clicked() {
         *intent = Some(HeaderIntent::SetView(state.view.next()));
     }
