@@ -444,7 +444,7 @@ fn book_depth_path_holds_to_budget() {
     assert_eq!(
         book.engine.health().gaps,
         0,
-        "every counted delta must apply, or the budget measures a rejected feed"
+        "no counted delta may open a gap, or the budget measures a broken feed"
     );
     holds_to_budget(DEPTH_BOOK, work, updates);
 }
