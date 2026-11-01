@@ -27,9 +27,9 @@ fn send_state(ctx: &egui::Context, state: WindowState) {
     }
 }
 
-const HEIGHT: f32 = 32.0;
-const WINDOW_BUTTON_WIDTH: f32 = 30.0;
-const DRAG_WIDTH: f32 = 24.0;
+pub(super) const HEIGHT: f32 = 52.0;
+pub(super) const WINDOW_BUTTON_WIDTH: f32 = 48.0;
+const DRAG_WIDTH: f32 = 32.0;
 
 pub(crate) fn draw(
     ctx: &egui::Context,
@@ -69,10 +69,17 @@ pub(crate) fn draw(
         )
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                let reserve_drag = if ui.available_width() >= 600.0 {
+                    DRAG_WIDTH
+                } else {
+                    0.0
+                };
                 let tab_width =
-                    (ui.available_width() - 3.0 * WINDOW_BUTTON_WIDTH - DRAG_WIDTH - 20.0).max(0.0);
+                    (ui.available_width() - 3.0 * WINDOW_BUTTON_WIDTH - reserve_drag - 8.0)
+                        .max(0.0);
                 ui.allocate_ui_with_layout(
-                    egui::vec2(tab_width, 28.0),
+                    egui::vec2(tab_width, HEIGHT - 4.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
@@ -83,7 +90,7 @@ pub(crate) fn draw(
                     - 3.0 * (WINDOW_BUTTON_WIDTH + ui.spacing().item_spacing.x))
                     .max(0.0);
                 let (_, drag) = ui.allocate_exact_size(
-                    egui::vec2(drag_width, 26.0),
+                    egui::vec2(drag_width, HEIGHT - 4.0),
                     egui::Sense::click_and_drag(),
                 );
                 let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
@@ -96,16 +103,10 @@ pub(crate) fn draw(
                 } else if drag.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
-                for (id, label, hint, state) in [
-                    (
-                        "minimize",
-                        "\u{2212}",
-                        "Minimize window",
-                        Some(WindowState::Minimized),
-                    ),
+                for (id, hint, state) in [
+                    ("minimize", "Minimize window", Some(WindowState::Minimized)),
                     (
                         "maximize",
-                        if maximized { "\u{2750}" } else { "\u{25a1}" },
                         if maximized {
                             "Restore window"
                         } else {
@@ -117,14 +118,9 @@ pub(crate) fn draw(
                             WindowState::Maximized
                         }),
                     ),
-                    ("close", "\u{00d7}", "Close window", None),
+                    ("close", "Close window", None),
                 ] {
-                    let button = ui
-                        .add_sized(
-                            [WINDOW_BUTTON_WIDTH, 26.0],
-                            egui::Button::new(label).frame(false),
-                        )
-                        .on_hover_text(hint);
+                    let button = window_button(ui, id, hint, maximized).on_hover_text(hint);
                     let bounds = button.rect.intersect(ui.clip_rect());
                     if bounds.is_positive() {
                         title.controls.push((id, bounds));
@@ -140,4 +136,60 @@ pub(crate) fn draw(
             });
         });
     action
+}
+
+/// Vector strokes keep native controls crisp and equally legible at every DPI.
+fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> egui::Response {
+    let response = ui.add_sized(
+        [WINDOW_BUTTON_WIDTH, HEIGHT - 4.0],
+        egui::Button::new("").frame(false),
+    );
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), hint));
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(
+            response.rect,
+            4.0,
+            if id == "close" {
+                theme::WARN
+            } else {
+                theme::BARE_HOVER
+            },
+        );
+    }
+    let ink = if id == "close" && (response.hovered() || response.has_focus()) {
+        theme::ink_on(theme::WARN)
+    } else {
+        theme::TEXT_PRIMARY
+    };
+    let stroke = egui::Stroke::new(1.5_f32, ink);
+    let icon = egui::Rect::from_center_size(response.rect.center(), egui::vec2(14.0, 14.0));
+    match id {
+        "minimize" => {
+            ui.painter()
+                .line_segment([icon.left_center(), icon.right_center()], stroke);
+        }
+        "maximize" if maximized => {
+            let back = icon.translate(egui::vec2(2.0, -2.0)).shrink(2.0);
+            ui.painter()
+                .line_segment([back.left_top(), back.right_top()], stroke);
+            ui.painter()
+                .line_segment([back.right_top(), back.right_bottom()], stroke);
+            ui.painter().rect_stroke(
+                icon.translate(egui::vec2(-2.0, 2.0)).shrink(2.0),
+                0.0,
+                stroke,
+            );
+        }
+        "maximize" => {
+            ui.painter().rect_stroke(icon, 0.0, stroke);
+        }
+        _ => {
+            ui.painter()
+                .line_segment([icon.left_top(), icon.right_bottom()], stroke);
+            ui.painter()
+                .line_segment([icon.right_top(), icon.left_bottom()], stroke);
+        }
+    }
+    response
 }

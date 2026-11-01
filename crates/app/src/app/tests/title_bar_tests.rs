@@ -1,4 +1,5 @@
 //! Exercise the painted title-strip controls with actual pointer input.
+use super::super::title_bar::{HEIGHT, WINDOW_BUTTON_WIDTH};
 use super::*;
 use quantick_control_handlers::native_window::NativeWindowHost as _;
 
@@ -31,20 +32,41 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
                 .any(|(index, _)| *index == app.runtime.tabs.active_index())
         );
         assert!(
-            title.strip.tabs.iter().all(|(_, rect)| rect.left() >= 36.0),
+            title
+                .strip
+                .tabs
+                .iter()
+                .all(|(_, rect)| rect.left() >= crate::tabstrip::LOGO_SLOT_WIDTH_PX + 4.0),
             "the leading logo slot never overlaps a market target"
         );
+        for (_, rect) in &title.strip.tabs {
+            assert_eq!(rect.height(), crate::tabstrip::CHIP_HEIGHT);
+            if width >= 1200.0 {
+                assert!(
+                    rect.width() >= 200.0,
+                    "normal market labels use the enlarged width"
+                );
+            }
+        }
         let plus = title.strip.add.unwrap();
+        assert_eq!(plus.height(), crate::tabstrip::CHIP_HEIGHT);
         assert!(
-            plus.right() <= width && plus.top() < 32.0,
+            plus.right() <= width && plus.bottom() <= HEIGHT,
             "plus remains on the title row: {plus:?}"
         );
-        for (_, rect) in &title.controls {
+        for (id, rect) in &title.controls {
+            if *id != "drag" {
+                assert_eq!(rect.width(), WINDOW_BUTTON_WIDTH);
+                assert!(rect.height() >= crate::tabstrip::CHIP_HEIGHT);
+            }
             assert!(
-                rect.right() <= width && rect.top() < 32.0,
+                rect.right() <= width && rect.bottom() <= HEIGHT,
                 "native control is reachable: {rect:?}"
             );
-            assert!(!rect.intersects(plus));
+            assert!(
+                !rect.intersects(plus),
+                "{id} {rect:?} overlaps plus {plus:?}"
+            );
         }
     }
     let overflow = app.chrome.title_bar.strip.overflow.unwrap().center();
@@ -120,7 +142,11 @@ fn title_bar_drag_space_never_covers_market_widgets_and_close_keeps_last_market(
     for (_, tab) in &app.chrome.title_bar.strip.tabs {
         assert!(!drag.intersects(*tab));
     }
-    assert!(!drag.intersects(app.chrome.title_bar.strip.add.unwrap()));
+    let plus = app.chrome.title_bar.strip.add.unwrap();
+    assert!(
+        !drag.intersects(plus),
+        "drag {drag:?} overlaps plus {plus:?}"
+    );
     let at = app.chrome.title_bar.strip.tabs[0].1.center();
     for events in [
         vec![egui::Event::PointerMoved(at), pointer_button(at, true)],
@@ -251,7 +277,10 @@ fn title_bar_inactive_close_target_keeps_hover_and_never_closes_the_last_market(
         .find(|(index, _)| *index == 0)
         .unwrap()
         .1;
-    let close = egui::pos2(first.right() + 12.0, first.center().y);
+    let close = egui::pos2(
+        first.right() + 4.0 + crate::tabstrip::CLOSE_HIT_WIDTH_PX / 2.0,
+        first.center().y,
+    );
     run_frame_sized(
         &mut app,
         &ctx,
@@ -268,7 +297,10 @@ fn title_bar_inactive_close_target_keeps_hover_and_never_closes_the_last_market(
         &mut app,
         &ctx,
         egui::vec2(1200.0, 760.0),
-        egui::pos2(last.right() + 12.0, last.center().y),
+        egui::pos2(
+            last.right() + 4.0 + crate::tabstrip::CLOSE_HIT_WIDTH_PX / 2.0,
+            last.center().y,
+        ),
     );
     assert_eq!(app.runtime.tabs.len(), 1);
 }

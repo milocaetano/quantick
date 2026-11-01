@@ -100,4 +100,4 @@ a bound.
 | 687 | 2026-10-13 | fix/app-ui-free-ceiling | main | 7231 | 5 | `crates/app/src/orderflow_view.rs` (735) |
 | 714 | 2026-10-23 | feat/quick-range-indicator-bands | main | 20224 | 22 | `crates/app/src/indicator_render.rs` (842) |
 | 719 | 2026-10-23 | fix/replay-ui-freeze | main | 29527 | 17 | `crates/app/src/replay_get_data.rs` (962) |
-| 737 | 2026-11-01 | feat/chrome-market-titlebar | main | 29520 | 19 | `crates/app/src/replay_view.rs` (791) |
+| 737 | 2026-11-01 | feat/chrome-market-titlebar | main | 29590 | 19 | `crates/app/src/replay_view.rs` (791) |

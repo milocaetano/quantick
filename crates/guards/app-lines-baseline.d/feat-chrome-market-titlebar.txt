@@ -1,6 +1,8 @@
 # Issue #735: native title-strip egui layout/input, bounded overflow painting, and scene geometry adapters. Native request policy and handlers live in headless crates.
-crates/app +537
-!budget +537
+crates/app +609
+!budget +609
 
 # Final feature accounting: +7 native canvas/geometry repair lines and +117 rounded tab painting, focus outline, and cached bundled-logo drawing.
 # Integration accounting: main PR #741 adds 153 pane-capsule painting/input/geometry lines after PR #739 left 31 headroom, inheriting a 122-line deficit. Carry it here without changing upstream ratchets.
+
+# User sizing amendment: +72 egui-only responsive title-strip geometry, enlarged tab targets, and DPI-independent native-control vector painting/accessibility. No new domain policy or state.

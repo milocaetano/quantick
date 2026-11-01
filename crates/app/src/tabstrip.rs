@@ -10,13 +10,14 @@ use crate::config::AppConfig;
 use crate::symbols_file::AddedSymbols;
 use crate::theme;
 
-const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
-const CHIP_PREFERRED_WIDTH_PX: f32 = 120.0;
-const CHIP_MAX_WIDTH_PX: f32 = 150.0;
-const CHIP_MIN_WIDTH_PX: f32 = 30.0;
-const CHIP_CLOSE_RESERVE_PX: f32 = 32.0;
-const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
-const LOGO_SLOT_WIDTH_PX: f32 = 28.0;
+const STRIP_CONTROLS_WIDTH_PX: f32 = 80.0;
+const CHIP_PREFERRED_WIDTH_PX: f32 = 200.0;
+const CHIP_MAX_WIDTH_PX: f32 = 240.0;
+const CHIP_MIN_WIDTH_PX: f32 = 44.0;
+const CHIP_CLOSE_RESERVE_PX: f32 = 36.0;
+pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 32.0;
+pub(crate) const CHIP_HEIGHT: f32 = 42.0;
+pub(crate) const LOGO_SLOT_WIDTH_PX: f32 = 36.0;
 
 /// Radius of the amber dot marking a background tab whose feed is in trouble.
 const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
@@ -70,17 +71,25 @@ pub(crate) fn draw(
     drawn.tabs.clear();
     drawn.add = None;
     drawn.overflow = None;
-    ui.spacing_mut().item_spacing.x = 4.0;
+    let compact = ui.available_width() < 240.0;
+    ui.spacing_mut().item_spacing.x = if compact { 2.0 } else { 4.0 };
+    ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 8.0);
+    ui.spacing_mut().interact_size.y = CHIP_HEIGHT;
+    let controls_width = if compact {
+        56.0
+    } else {
+        STRIP_CONTROLS_WIDTH_PX
+    };
+    let close_width = if compact { 24.0 } else { CLOSE_HIT_WIDTH_PX };
+    let close_reserve = if compact { 28.0 } else { CHIP_CLOSE_RESERVE_PX };
     draw_logo(ui);
     let mut action = None;
     let closable = chips.len() > 1;
-    let slots = ((ui.available_width() - STRIP_CONTROLS_WIDTH_PX).max(0.0)
-        / CHIP_PREFERRED_WIDTH_PX)
-        .floor() as usize;
+    let slots = ((ui.available_width() - controls_width).max(0.0) / CHIP_PREFERRED_WIDTH_PX).floor()
+        as usize;
     let visible =
         quantick_workspace::arrangement::strip::visible_tabs(chips.len(), active, slots.max(1));
-    let chip_width = ((ui.available_width() - STRIP_CONTROLS_WIDTH_PX)
-        / visible.len().max(1) as f32)
+    let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
         .clamp(CHIP_MIN_WIDTH_PX, CHIP_MAX_WIDTH_PX);
     for (index, chip) in chips
         .iter()
@@ -90,13 +99,13 @@ pub(crate) fn draw(
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = index == active;
             let surface = ui.painter().add(egui::Shape::Noop);
-            let mut text = egui::RichText::new(chip.label);
+            let mut text = egui::RichText::new(chip.label).size(17.0);
             if chip.replaying {
                 text = text.color(theme::AMBER);
             }
             let response = ui
                 .add_sized(
-                    [(chip_width - CHIP_CLOSE_RESERVE_PX).max(0.0), 24.0],
+                    [(chip_width - close_reserve).max(0.0), CHIP_HEIGHT],
                     egui::Button::new(text).frame(false).truncate(),
                 )
                 .on_hover_text(if chip.replaying {
@@ -124,7 +133,7 @@ pub(crate) fn draw(
             {
                 let close_target = egui::Rect::from_min_size(
                     ui.next_widget_position(),
-                    egui::vec2(CLOSE_HIT_WIDTH_PX, 24.0),
+                    egui::vec2(close_width, CHIP_HEIGHT),
                 );
                 let show_close = selected
                     || response.hovered()
@@ -132,7 +141,12 @@ pub(crate) fn draw(
                     || !closable;
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
-                        ui.add_visible(show_close, egui::Button::new("\u{00d7}").frame(false))
+                        ui.add_visible(
+                            show_close,
+                            egui::Button::new(egui::RichText::new("\u{00d7}").size(22.0))
+                                .frame(false)
+                                .min_size(egui::vec2(close_width, CHIP_HEIGHT)),
+                        )
                     })
                     .inner;
                 let close = if closable {
@@ -158,7 +172,7 @@ pub(crate) fn draw(
     }
     if visible.len() < chips.len() {
         let overflow = ui.push_id("market_overflow", |ui| {
-            ui.menu_button("...", |ui| {
+            ui.menu_button(egui::RichText::new("...").size(17.0), |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
                     .show(ui, |ui| {
@@ -184,7 +198,11 @@ pub(crate) fn draw(
     }
     let add = ui
         .push_id("market_new", |ui| {
-            ui.button("+").on_hover_text("Open another market (Ctrl+T)")
+            ui.add_sized(
+                [if compact { 24.0 } else { 36.0 }, CHIP_HEIGHT],
+                egui::Button::new(egui::RichText::new("+").size(24.0)).frame(false),
+            )
+            .on_hover_text("Open another market (Ctrl+T)")
         })
         .inner;
     let bounds = add.rect.intersect(ui.clip_rect());
@@ -215,9 +233,11 @@ fn draw_logo(ui: &mut egui::Ui) {
                 .data_mut(|data| data.insert_temp(key, texture.clone()));
             texture
         });
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(LOGO_SLOT_WIDTH_PX, 24.0), egui::Sense::hover());
-    let image = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 22.0));
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(LOGO_SLOT_WIDTH_PX, CHIP_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let image = egui::Rect::from_center_size(rect.center(), egui::vec2(32.0, 32.0));
     ui.painter().image(
         texture.id(),
         image,
@@ -247,8 +267,8 @@ fn paint_tab_surface(
             egui::Shape::rect_filled(
                 rect,
                 egui::Rounding {
-                    nw: 9.0,
-                    ne: 9.0,
+                    nw: 12.0,
+                    ne: 12.0,
                     sw: 0.0,
                     se: 0.0,
                 },
@@ -257,7 +277,7 @@ fn paint_tab_surface(
         );
         // Small outward feet join the tab to the row below without a box outline.
         for (edge, direction) in [(rect.left(), -1.0), (rect.right(), 1.0)] {
-            let radius = 4.0;
+            let radius = 6.0;
             let mut mesh = egui::Mesh::default();
             mesh.colored_vertex(egui::pos2(edge, rect.bottom()), fill);
             for step in 0..=8 {
