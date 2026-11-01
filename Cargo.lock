@@ -3042,6 +3042,7 @@ dependencies = [
  "quantick-engine",
  "quantick-paper",
  "quantick-session",
+ "quantick-sim",
  "quantick-sources",
  "rust_decimal",
  "schemars",

@@ -33,6 +33,7 @@ mod tabs;
 pub mod tape_fold;
 pub mod tape_view_set;
 pub mod ticket_money;
+pub mod trade;
 
 pub use tabs::{TabDirectory, tab_index};
 

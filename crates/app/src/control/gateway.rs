@@ -359,7 +359,7 @@ pub(crate) use quantick_control_host::authority::GRANTABLE_PROFILE_IDS;
 /// Whether a permission belongs to the trade tier — see the access
 /// panel's read-scope filter for why it is excluded from every section.
 pub(super) fn is_trade_permission(permission: &PermissionId) -> bool {
-    permission.as_str() == super::trade::TRADE_PERMISSION_ID
+    permission.as_str() == quantick_control_handlers::trade::TRADE_PERMISSION_ID
         || permission.as_str().starts_with("trade.")
 }
 

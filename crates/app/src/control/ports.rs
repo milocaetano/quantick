@@ -4,6 +4,7 @@
 
 use quantick_control_handlers::{
     TabDirectory,
+    trade::{TradeAccess, TradeDesk, TradePort},
     history::HistoryPort,
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
@@ -18,6 +19,9 @@ use quantick_paper::report::session_edit::{
 use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
 
 use crate::app::control_host::ControlPort;
+use crate::app::paper_wiring::PaperSettingsChange;
+use crate::control::ControlAccess;
+use crate::paper_trading::PaperTrading;
 use quantick_control_handlers::feed_source::{FeedSelection, FeedSourcePort};
 
 impl FeedSourcePort for dyn ControlPort {
@@ -126,5 +130,64 @@ impl AttentionPort for dyn ControlPort {
     }
     fn sound_alert(&mut self) -> Option<String> {
         self.alerts().sound_alert()
+    }
+}
+
+impl TradeDesk for PaperTrading {
+    fn account(&self) -> &quantick_paper::PaperAccount {
+        PaperTrading::account(self)
+    }
+    fn account_mut(&mut self) -> &mut quantick_paper::PaperAccount {
+        PaperTrading::account_mut(self)
+    }
+    fn ruler_ticks(&self) -> u32 {
+        PaperTrading::ruler_ticks(self)
+    }
+    fn set_ruler_ticks(&mut self, ticks: u32) {
+        PaperTrading::set_ruler_ticks(self, ticks);
+    }
+    fn clear_ruler(&mut self) {
+        PaperTrading::clear_ruler(self);
+    }
+    fn mark_price(&self) -> Option<rust_decimal::Decimal> {
+        PaperTrading::mark_price(self)
+    }
+    fn working_orders(&self) -> &[quantick_sim::Order] {
+        PaperTrading::working_orders(self)
+    }
+    fn armed_bracket(
+        &self,
+        side: quantick_engine::Side,
+        reference: rust_decimal::Decimal,
+        quantity: rust_decimal::Decimal,
+    ) -> quantick_sim::Bracket {
+        PaperTrading::armed_bracket(self, side, reference, quantity)
+    }
+}
+
+impl TradePort for dyn ControlPort {
+    fn active_desk(&self) -> Option<&dyn TradeDesk> {
+        self.tab_reads()
+            .active_paper()
+            .map(|paper| paper as &dyn TradeDesk)
+    }
+    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
+        self.tabs_mut()
+            .active_paper_mut()
+            .map(|paper| paper as &mut dyn TradeDesk)
+    }
+    fn persist_order_strategies(&mut self) {
+        self.paper_settings()
+            .persist(PaperSettingsChange::OrderStrategies);
+    }
+    fn persist_risk_settings(&mut self) {
+        self.paper_settings()
+            .persist(PaperSettingsChange::RiskSettings);
+    }
+}
+
+impl TradeAccess for ControlAccess {
+    fn record_event(&mut self, event: quantick_control_host::journal::NewEvent) {
+        self.append_event(event);
     }
 }

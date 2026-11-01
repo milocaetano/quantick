@@ -27,6 +27,8 @@ quantick-paper = { path = "../paper" }
 # The tab session the History press and its cancel are acts of: the handler
 # picks the act and judges the session's answer.
 quantick-session = { path = "../session" }
+# The order intents, brackets and venue answers a trade action speaks.
+quantick-sim = { path = "../sim" }
 # The history reach and run vocabulary the History press speaks.
 quantick-sources = { path = "../sources" }
 rust_decimal = { workspace = true }

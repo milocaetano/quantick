@@ -25,6 +25,7 @@ use crate::history::HistoryPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
 use crate::tabs::TabDirectory;
+use crate::trade::{TradeAccess, TradeDesk, TradePort};
 
 /// One pane of a fake tab: a real chart model, an optional venue prefix, and
 /// the framing a frame would have laid out.
@@ -325,6 +326,19 @@ impl AttentionPort for FakeWindow {
     }
 }
 
+/// The fake window keeps no paper desk: every trade action finds no
+/// chart open.
+impl TradePort for FakeWindow {
+    fn active_desk(&self) -> Option<&dyn TradeDesk> {
+        None
+    }
+    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
+        None
+    }
+    fn persist_order_strategies(&mut self) {}
+    fn persist_risk_settings(&mut self) {}
+}
+
 impl ChartPort for FakeWindow {
     fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
         for (index, tab) in self.tabs.iter().enumerate() {
@@ -392,6 +406,12 @@ impl FakeAccess {
             retry_after: Duration::from_millis(1_500),
             events: Vec::new(),
         }
+    }
+}
+
+impl TradeAccess for FakeAccess {
+    fn record_event(&mut self, event: NewEvent) {
+        self.events.push(event);
     }
 }
 

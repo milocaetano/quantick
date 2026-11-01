@@ -98,7 +98,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::indicator_guide::register(&mut registry)?;
     super::indicator_picker::register(&mut registry)?;
     super::script::register(&mut registry)?;
-    super::trade::register(&mut registry)?;
+    quantick_control_handlers::trade::register(&mut registry)?;
     Ok(registry)
 }
 

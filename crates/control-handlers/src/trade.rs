@@ -27,29 +27,72 @@
 //! `SIM`. What is real here is the *shape*: when a broker implements
 //! `quantick_trading::TradingVenue`, these actions reach it unchanged, and
 //! the permission that guards them is already carved out.
+//!
+//! The family reaches the desk through [`TradePort`]: the active tab's paper
+//! desk as [`TradeDesk`] — the account, the ruler and the armed bracket —
+//! and the two persistence calls a ticket edit makes. What it decides from
+//! those is all here.
 
-use crate::app::{PaperPort, TabsMutPort, TabsPort};
-pub(crate) use quantick_control_schema::trade::*;
-// The version the tests invoke the trade actions at.
-#[cfg(test)]
-pub(crate) use quantick_control_host::authority::CAPABILITY_VERSION;
+pub use quantick_control_schema::trade::*;
+pub use quantick_control_host::authority::CAPABILITY_VERSION;
 
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-
+use quantick_control_host::journal::NewEvent;
 use quantick_engine::Side;
-
-use quantick_sim::{Bracket, EntryKind, OrderId, OrderIntent, VenueEvent};
-
+use quantick_paper::PaperAccount;
+use quantick_sim::{Bracket, EntryKind, Order, OrderId, OrderIntent, VenueEvent};
+use rust_decimal::Decimal;
 use serde_json::{Value, json};
 
-use crate::paper_trading::PaperTrading;
+use crate::dock::ActionDock;
 
-use super::{actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent};
+pub use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
 
-pub(crate) use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
+/// The active tab's paper desk as a trade action reaches it: the account the
+/// orders rest in, the ruler that shapes one order, and the bracket the
+/// ticket has armed.
+pub trait TradeDesk {
+    /// The simulated account.
+    fn account(&self) -> &PaperAccount;
+    /// The simulated account, to place into.
+    fn account_mut(&mut self) -> &mut PaperAccount;
+    /// How many ticks the ruler is set to.
+    fn ruler_ticks(&self) -> u32;
+    /// Set the ruler to `ticks`.
+    fn set_ruler_ticks(&mut self, ticks: u32);
+    /// Clear the ruler: the next order starts bare.
+    fn clear_ruler(&mut self);
+    /// The last mark price, if the account has seen a print.
+    fn mark_price(&self) -> Option<Decimal>;
+    /// The resting orders.
+    fn working_orders(&self) -> &[Order];
+    /// The bracket the ticket would attach to an order of `quantity` on
+    /// `side` around `reference`, exactly as a click attaches it.
+    fn armed_bracket(&self, side: Side, reference: Decimal, quantity: Decimal) -> Bracket;
+}
+
+/// The window as the trade family reaches it: the active tab's desk, and
+/// the settings store a ticket edit persists into.
+pub trait TradePort {
+    /// The active tab's desk, `None` when no chart is open.
+    fn active_desk(&self) -> Option<&dyn TradeDesk>;
+    /// The active tab's desk, to act on.
+    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk>;
+    /// Persist the named exit strategies and the ticket's selection.
+    fn persist_order_strategies(&mut self);
+    /// Persist the risk per trade, the declared capital and the instrument
+    /// money.
+    fn persist_risk_settings(&mut self);
+}
+
+/// What a trade action needs of the control access it runs in.
+pub trait TradeAccess {
+    /// Journal one event, stamped by the access's own clock.
+    fn record_event(&mut self, event: NewEvent);
+}
 
 /// Turn the venue's answer into the result, whatever the call was.
-fn answer<P: TabsPort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult {
+fn answer<P: TradePort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult {
     let rejected_because = events.iter().find_map(|event| match event {
         VenueEvent::Rejected(reason) => Some(reason.to_string()),
         _ => None,
@@ -59,28 +102,20 @@ fn answer<P: TabsPort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult {
         VenueEvent::Cancelled { order, .. } => Some(order.id.0),
         _ => None,
     });
+    let desk = app.active_desk();
     TradeResult {
-        selected_strategy: app
-            .tab_reads()
-            .active_paper()
-            .and_then(|paper| paper.account().selected_order_strategy())
+        selected_strategy: desk
+            .and_then(|desk| desk.account().selected_order_strategy())
             .map(|strategy| strategy.name.clone()),
-        ruler_ticks: app
-            .tab_reads()
-            .active_paper()
-            .map_or(0, crate::paper_trading::PaperTrading::ruler_ticks),
+        ruler_ticks: desk.map_or(0, TradeDesk::ruler_ticks),
         accepted: rejected_because.is_none(),
         rejected_because,
         order_id,
-        mark_price: app
-            .tab_reads()
-            .active_paper()
-            .and_then(PaperTrading::mark_price)
+        mark_price: desk
+            .and_then(TradeDesk::mark_price)
             .map(|price| price.to_string()),
-        working_orders: app
-            .tab_reads()
-            .active_paper()
-            .map(PaperTrading::working_orders)
+        working_orders: desk
+            .map(TradeDesk::working_orders)
             .unwrap_or_default()
             .iter()
             .map(|order| WorkingOrderView {
@@ -108,8 +143,8 @@ fn answer<P: TabsPort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult {
 /// the honesty contract quietly dropped — and a refusal is worth recording
 /// too, since "the agent tried to buy here and was told no" is precisely the
 /// line a trader reviewing a session wants to find.
-fn journal(
-    access: &mut ControlAccess,
+fn journal<A: TradeAccess>(
+    access: &mut A,
     actor: &ActorContext,
     kind: &str,
     result: &TradeResult,
@@ -122,12 +157,12 @@ fn journal(
         "order_id": result.order_id,
         "simulated": true,
     });
-    access.append_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
+    access.record_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
 }
 
-fn place_order<P: TabsPort + TabsMutPort + ?Sized>(
+fn place_order<P: TradePort + ?Sized, A: TradeAccess>(
     app: &mut P,
-    access: &mut ControlAccess,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
@@ -175,38 +210,35 @@ fn place_order<P: TabsPort + TabsMutPort + ?Sized>(
     // that ladder would be the two-surfaces bug this rule exists to
     // prevent.
     let bracket = if named.is_empty() {
-        let paper = app.tab_reads().active_paper().ok_or_else(no_chart_open)?;
+        let desk = app.active_desk().ok_or_else(no_chart_open)?;
         let reference = intent
             .price
-            .or_else(|| paper.account().mark_price())
+            .or_else(|| desk.account().mark_price())
             .unwrap_or_default();
-        paper.armed_bracket(intent.side, reference, intent.quantity)
+        desk.armed_bracket(intent.side, reference, intent.quantity)
     } else {
         named
     };
     let intent = intent.with_bracket(bracket);
-    let paper = app
-        .tabs_mut()
-        .active_paper_mut()
-        .ok_or_else(no_chart_open)?;
+    let desk = app.active_desk_mut().ok_or_else(no_chart_open)?;
     // The risk per trade is a ceiling on the account, so it holds on this
     // path too. Asked of the same function the ticket asks, so an operator
     // reads the refusal the trader would have read - and gets it as an
     // error rather than as an empty answer it has to interpret.
-    if let Some(refusal) = paper.account().risk_refusal_for(&intent) {
+    if let Some(refusal) = desk.account().risk_refusal_for(&intent) {
         return Err(ControlError::invalid_request(refusal));
     }
-    let events = paper.account_mut().place_intent(intent);
+    let events = desk.account_mut().place_intent(intent);
     // The ruler shaped this one order, as it does a click's; the next starts bare.
-    paper.clear_ruler();
+    desk.clear_ruler();
     let result = answer(app, &events);
     journal(access, actor, PLACE_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-fn bracket_order<P: TabsPort + TabsMutPort + ?Sized>(
+fn bracket_order<P: TradePort + ?Sized, A: TradeAccess>(
     app: &mut P,
-    access: &mut ControlAccess,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
@@ -226,8 +258,7 @@ fn bracket_order<P: TabsPort + TabsMutPort + ?Sized>(
             .transpose()?,
     );
     let events = app
-        .tabs_mut()
-        .active_paper_mut()
+        .active_desk_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
         .set_order_bracket(OrderId(input.order_id), bracket);
@@ -236,9 +267,9 @@ fn bracket_order<P: TabsPort + TabsMutPort + ?Sized>(
     to_value(result)
 }
 
-fn cancel_order<P: TabsPort + TabsMutPort + ?Sized>(
+fn cancel_order<P: TradePort + ?Sized, A: TradeAccess>(
     app: &mut P,
-    access: &mut ControlAccess,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
@@ -246,8 +277,7 @@ fn cancel_order<P: TabsPort + TabsMutPort + ?Sized>(
     let input: CancelInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let events = app
-        .tabs_mut()
-        .active_paper_mut()
+        .active_desk_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
         .cancel_order(OrderId(input.order_id));
@@ -256,20 +286,17 @@ fn cancel_order<P: TabsPort + TabsMutPort + ?Sized>(
     to_value(result)
 }
 
-fn select_strategy<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+fn select_strategy<P: TradePort + ?Sized, A: TradeAccess>(
     app: &mut P,
-    access: &mut ControlAccess,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let asked = input.clone();
     let input: SelectStrategyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let paper = app
-        .tabs_mut()
-        .active_paper_mut()
-        .ok_or_else(no_chart_open)?;
-    let strategies = paper.account().order_strategies().to_vec();
+    let desk = app.active_desk_mut().ok_or_else(no_chart_open)?;
+    let strategies = desk.account().order_strategies().to_vec();
     if let Some(name) = input.name.as_deref()
         && !strategies.iter().any(|strategy| strategy.name == name)
     {
@@ -277,27 +304,24 @@ fn select_strategy<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
             "no exit strategy is named `{name}`"
         )));
     }
-    paper
-        .account_mut()
+    desk.account_mut()
         .set_order_strategies(strategies, input.name.as_deref());
-    app.paper_settings()
-        .persist(crate::app::paper_wiring::PaperSettingsChange::OrderStrategies);
+    app.persist_order_strategies();
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-fn set_ruler<P: TabsPort + TabsMutPort + ?Sized>(
+fn set_ruler<P: TradePort + ?Sized, A: TradeAccess>(
     app: &mut P,
-    access: &mut ControlAccess,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let asked = input.clone();
     let input: SetRulerInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    app.tabs_mut()
-        .active_paper_mut()
+    app.active_desk_mut()
         .ok_or_else(no_chart_open)?
         .set_ruler_ticks(input.ticks);
     let result = answer(app, &[]);
@@ -305,149 +329,64 @@ fn set_ruler<P: TabsPort + TabsMutPort + ?Sized>(
     to_value(result)
 }
 
-fn set_risk<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+fn set_risk<P: TradePort + ?Sized, A: TradeAccess>(
     app: &mut P,
-    access: &mut ControlAccess,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let asked = input.clone();
     let input: SetRiskInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let edit = quantick_control_handlers::ticket_money::risk_edit(&input)?;
-    app.tabs_mut()
-        .active_paper_mut()
+    let edit = crate::ticket_money::risk_edit(&input)?;
+    app.active_desk_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
         .apply_risk_edit(edit);
-    app.paper_settings()
-        .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
+    app.persist_risk_settings();
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-fn set_instrument_money<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+fn set_instrument_money<P: TradePort + ?Sized, A: TradeAccess>(
     app: &mut P,
-    access: &mut ControlAccess,
+    access: &mut A,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let asked = input.clone();
     let input: SetInstrumentMoneyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let paper = app
-        .tabs_mut()
-        .active_paper_mut()
-        .ok_or_else(no_chart_open)?;
-    quantick_control_handlers::ticket_money::declare_money(paper.account_mut(), &input)?;
-    app.paper_settings()
-        .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
+    let desk = app.active_desk_mut().ok_or_else(no_chart_open)?;
+    crate::ticket_money::declare_money(desk.account_mut(), &input)?;
+    app.persist_risk_settings();
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-/// Register the family. One call from `standard_actions`, nothing else opens.
-pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(select_strategy_descriptor(), select_strategy)?;
-    registry.register(set_ruler_descriptor(), set_ruler)?;
-    registry.register(set_risk_descriptor(), set_risk)?;
-    registry.register(set_instrument_money_descriptor(), set_instrument_money)?;
-    registry.register(place_descriptor(), place_order)?;
-    registry.register(bracket_descriptor(), bracket_order)?;
-    registry.register(cancel_descriptor(), cancel_order)?;
+/// Dock the family. One call from the window's action registry, nothing
+/// else opens.
+pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
+where
+    D: ActionDock<H, A>,
+    H: TradePort + ?Sized,
+    A: TradeAccess,
+{
+    registry.register(select_strategy_descriptor(), select_strategy::<H, A>)?;
+    registry.register(set_ruler_descriptor(), set_ruler::<H, A>)?;
+    registry.register(set_risk_descriptor(), set_risk::<H, A>)?;
+    registry.register(
+        set_instrument_money_descriptor(),
+        set_instrument_money::<H, A>,
+    )?;
+    registry.register(place_descriptor(), place_order::<H, A>)?;
+    registry.register(bracket_descriptor(), bracket_order::<H, A>)?;
+    registry.register(cancel_descriptor(), cancel_order::<H, A>)?;
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use quantick_control_host::authority::TRADE_EFFECT_ID;
-    use serde_json::json;
-
-    #[test]
-    fn the_trade_actions_register_and_validate_their_schemas() {
-        let registry = super::super::actions::standard_actions().unwrap();
-        for id in [
-            PLACE_CAPABILITY_ID,
-            BRACKET_CAPABILITY_ID,
-            CANCEL_CAPABILITY_ID,
-        ] {
-            let action = registry
-                .lookup(id, CAPABILITY_VERSION)
-                .unwrap_or_else(|| panic!("{id} is registered"));
-            assert_eq!(action.descriptor.effect.as_str(), TRADE_EFFECT_ID);
-            assert!(!action.descriptor.read_only, "{id} changes the account");
-            assert!(
-                action
-                    .descriptor
-                    .required_permissions
-                    .iter()
-                    .any(|permission| permission.as_str() == TRADE_PERMISSION_ID),
-                "{id} sits behind the trade permission and nothing softer"
-            );
-        }
-
-        let place = registry.lookup(PLACE_CAPABILITY_ID, 1).unwrap();
-        place
-            .input
-            .validate(&json!({
-                "side": "buy",
-                "kind": "limit",
-                "quantity": "2",
-                "price": "95.5",
-                "stop_loss": "90"
-            }))
-            .unwrap();
-        assert!(
-            place
-                .input
-                .validate(&json!({ "side": "buy", "kind": "limit" }))
-                .is_err(),
-            "quantity is not optional"
-        );
-        assert!(
-            place
-                .input
-                .validate(&json!({
-                    "side": "buy",
-                    "kind": "limit",
-                    "quantity": "1",
-                    "price": 95.5
-                }))
-                .is_err(),
-            "a price is a decimal string, never a JSON double"
-        );
-        assert!(
-            place
-                .input
-                .validate(&json!({ "side": "sideways", "kind": "limit", "quantity": "1" }))
-                .is_err()
-        );
-    }
-
-    /// The one thing that must stay true while no profile may trade: the
-    /// permission is real, and it is not the annotate tier's.
-    #[test]
-    fn trading_never_borrows_the_annotate_permission() {
-        let registry = super::super::actions::standard_actions().unwrap();
-        let cancel = registry.lookup(CANCEL_CAPABILITY_ID, 1).unwrap();
-        assert!(
-            !cancel.descriptor.destructive,
-            "a working order is an instruction, not the trader's work"
-        );
-        assert!(
-            cancel.descriptor.risk_reducing,
-            "and taking one off the book can only ever reduce exposure"
-        );
-        assert!(
-            !cancel
-                .descriptor
-                .required_permissions
-                .iter()
-                .any(|permission| permission.as_str().starts_with("annotate")),
-            "annotate promises it never affects a position; a trade cannot borrow it"
-        );
-    }
-}
+#[path = "trade_tests.rs"]
+mod trade_tests;
