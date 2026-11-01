@@ -111,7 +111,20 @@ fn system_reduced_motion() -> bool {
 }
 
 #[cfg(any(feature = "scenario-harness", test))]
-crate::hooks::declare_hooks!["QUANTICK_REDUCED_MOTION"];
+crate::hooks::declare_hooks!["QUANTICK_REDUCED_MOTION", "QUANTICK_FEED_PRESS_AT"];
+
+/// Whether `QUANTICK_FEED_PRESS_AT=<seconds>` is due: the press on Reconnect a
+/// capture has no pointer for, once per run.
+#[cfg(feature = "scenario-harness")]
+pub fn reconnect_press_due(now_ms: i64) -> bool {
+    static START: OnceLock<i64> = OnceLock::new();
+    static PRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let start = *START.get_or_init(|| now_ms);
+    let due = crate::hooks::captured::var("QUANTICK_FEED_PRESS_AT")
+        .and_then(|seconds| seconds.parse::<i64>().ok())
+        .is_some_and(|seconds| now_ms.saturating_sub(start) >= seconds * 1_000);
+    due && !PRESSED.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
 
 /// The mark's cells, sampled once from the plate-less logo.
 fn mark_cells() -> &'static [MarkCell] {

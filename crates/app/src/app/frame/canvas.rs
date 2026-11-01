@@ -67,7 +67,12 @@ pub(super) fn overlays(
     answers: &mut CanvasAnswers,
 ) {
     let now = crate::metrics::wall_clock_ms();
-    let feed_name = tab.feed_display_name(config);
+    // A source with no transport is not the feed the tab was opened on.
+    let feed_name = if tab.capabilities(config).transport {
+        tab.feed_display_name(config)
+    } else {
+        "recording"
+    };
     if let Some(words) = tab.connection.overlay(feed_name, now)
         && let Some(rect) = tab.empty_panes_rect()
     {

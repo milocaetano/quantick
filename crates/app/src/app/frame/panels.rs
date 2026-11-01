@@ -157,6 +157,10 @@ pub(super) fn observe_connections(
     config: &crate::config::AppConfig,
     now_ms: i64,
 ) {
+    #[cfg(feature = "scenario-harness")]
+    if crate::loading::reconnect_press_due(now_ms) {
+        let _ = tabs.runtime_mut(tabs.active_index()).reconnect_feed(config);
+    }
     for tab in tabs.iter_mut() {
         tab.observe_connection(config, now_ms);
     }
