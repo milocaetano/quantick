@@ -32,6 +32,10 @@ pub const CONNECTED_HOLD_MS: i64 = 10_000;
 /// How long after a print the data still counts as flowing, whatever a report
 /// that arrives meanwhile says.
 pub const DATA_FLOWING_MS: i64 = 2_000;
+/// How long a print keeps answering the report standing over it. Longer than
+/// any thin tape's gap, short enough that a feed which died after that print
+/// is called offline rather than live for hours.
+pub const REPORT_ANSWER_MS: i64 = 60_000;
 /// How often a tab nobody is looking at is observed. The one on screen is
 /// observed every frame.
 pub const BACKGROUND_OBSERVE_MS: i64 = 1_000;
@@ -414,18 +418,23 @@ impl ConnectionTracker {
         self.observe_report(facts.verdict, printed);
         self.connected_since =
             (facts.transport == Transport::Connected).then(|| self.connected_since.unwrap_or(now));
+        let answered = self.report_superseded
+            && self
+                .state
+                .last_data_at
+                .is_some_and(|at| now.saturating_sub(at) < REPORT_ANSWER_MS);
         let link = next_link(
             previous,
             LinkFacts {
                 has_transport: facts.has_transport,
                 transport: facts.transport,
-                failed: matches!(facts.verdict, Verdict::Failed { .. }) && !self.report_superseded,
+                failed: matches!(facts.verdict, Verdict::Failed { .. }) && !answered,
                 quiet: matches!(facts.verdict, Verdict::Quiet),
                 data_flowing: self
                     .state
                     .last_data_at
                     .is_some_and(|at| now.saturating_sub(at) < DATA_FLOWING_MS),
-                report_superseded: self.report_superseded,
+                report_superseded: answered,
                 press_holding: now < self.press_hold_until,
                 connected_held: self
                     .connected_since
@@ -1213,6 +1222,29 @@ mod tests {
             run.trades += 1;
             run.step(1);
             thin_tape_stays_live(&mut run);
+        }
+    }
+
+    /// A print answers a report for a while, not for ever: a feed that died
+    /// after it must not read `live` over a frozen chart.
+    #[test]
+    fn a_long_silence_under_an_answered_report_is_offline_again() {
+        for transport in [Transport::Connected, Transport::Reconnecting] {
+            let mut run = Run::new();
+            run.transport = transport;
+            run.verdict = Verdict::Failed {
+                provider_says: Some("MetaTrader 5 is closed"),
+            };
+            run.step(OVERLAY_DELAY_MS);
+            run.trades = 1;
+            run.step(1);
+            run.step(REPORT_ANSWER_MS - 1);
+            assert_eq!(run.link(), Link::Live, "still answered");
+            run.step(1);
+            assert_eq!(run.link(), Link::Offline, "the silence outlived the answer");
+            run.trades += 1;
+            run.step(1);
+            assert_eq!(run.link(), Link::Live, "a print answers it again");
         }
     }
 
