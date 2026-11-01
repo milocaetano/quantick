@@ -33,6 +33,16 @@ pub const fn home_logo_opacity(active: bool) -> f32 {
     }
 }
 
+/// The tab shortcuts pressed this frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TabKeys {
+    pub home: bool,
+    pub new_tab: bool,
+    pub close_tab: bool,
+    pub next: bool,
+    pub previous: bool,
+}
+
 /// What the active market tab held when it was last compared.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarketShown {
@@ -73,6 +83,22 @@ impl StripSurface {
     pub fn observe(&mut self, market: &MarketShown) {
         if self.home_over.as_ref().is_some_and(|over| over != market) {
             self.home_over = None;
+        }
+    }
+
+    /// What the tab shortcuts still mean on this surface. On Home nothing is
+    /// open to close, and cycling lands back on the market it left.
+    #[must_use]
+    pub fn settle_keys(&mut self, keys: TabKeys) -> TabKeys {
+        if !self.is_home() {
+            return keys;
+        }
+        if keys.next || keys.previous {
+            self.show_market();
+        }
+        TabKeys {
+            new_tab: keys.new_tab,
+            ..TabKeys::default()
         }
     }
 
@@ -142,6 +168,30 @@ mod tests {
 
         surface.observe(&market(9, "SOL"));
         assert!(!surface.is_home(), "a market on screen stays on screen");
+    }
+
+    #[test]
+    fn home_refuses_close_and_turns_cycling_into_the_way_back() {
+        let keys = TabKeys {
+            close_tab: true,
+            next: true,
+            ..TabKeys::default()
+        };
+        let mut surface = StripSurface::default();
+        assert_eq!(surface.settle_keys(keys), keys, "a market keeps its keys");
+
+        surface.show_home(market(1, "BTC"));
+        let close_only = TabKeys {
+            close_tab: true,
+            new_tab: true,
+            ..TabKeys::default()
+        };
+        let settled = surface.settle_keys(close_only);
+        assert!(!settled.close_tab && settled.new_tab);
+        assert!(surface.is_home(), "closing nothing stays on Home");
+
+        assert_eq!(surface.settle_keys(keys), TabKeys::default());
+        assert!(!surface.is_home(), "and the cycle does not also move a tab");
     }
 
     #[test]

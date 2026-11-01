@@ -163,8 +163,8 @@ impl QuantickApp {
         let mut commands = Vec::new();
         let context_column =
             self.active_tab().layout.shows_time() && self.active_tab().layout.shows_flow();
-        let chart_on_screen = !self.chrome.title_bar.surface.is_home();
-        commands::read_shortcuts(ctx, context_column, chart_on_screen, &mut commands);
+        let chart_shown = !self.chrome.title_bar.surface.is_home();
+        commands::read_shortcuts(ctx, context_column, chart_shown, &mut commands);
         for command in commands.drain(..) {
             self.apply_menu_command(command);
         }

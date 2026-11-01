@@ -705,8 +705,7 @@ impl quantick_control_handlers::native_window::NativeWindowHost for QuantickApp 
 
 impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
     fn show_home_tab(&mut self) -> Result<(), quantick_control::error::ControlError> {
-        let tabs = &self.runtime.tabs;
-        super::home_wiring::show_home(tabs, &mut self.chrome.title_bar.surface);
+        super::home_wiring::show_home(&self.runtime.tabs, &mut self.chrome.title_bar.surface);
         Ok(())
     }
 }

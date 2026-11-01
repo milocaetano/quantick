@@ -347,12 +347,10 @@ impl QuantickApp {
         scratch.background = Some(pane::background_color(&self.runtime.style));
         self.surfaces.indicator_picker.capture_keyboard(ctx);
         super::home_wiring::observe_market(&self.runtime.tabs, &mut self.chrome.title_bar.surface);
-        // Rail shortcuts (Esc, 1, 2) first: no widget holds the keyboard yet.
-        if !self.chrome.title_bar.surface.is_home() {
-            self.toolrail.handle_keys(ctx);
-        }
         self.handle_tab_keys(ctx);
         if !self.chrome.title_bar.surface.is_home() {
+            // Rail shortcuts (Esc, 1, 2) first: no widget holds the keyboard yet.
+            self.toolrail.handle_keys(ctx);
             let effects = self.drawings.handle_drawing_keys(
                 &mut super::drawing_controller::DrawingAccess::new(&mut self.runtime.tabs),
                 &mut self.toolrail,
@@ -585,7 +583,6 @@ impl QuantickApp {
             .chrome
             .sync_content_editing(&mut self.runtime.tabs);
         let stall = scratch.stall.as_ref();
-        super::home_wiring::observe_market(&self.runtime.tabs, &mut self.chrome.title_bar.surface);
         if self.chrome.title_bar.surface.is_home() {
             scratch.canvas = answers;
             if super::home_wiring::draw_stage(ctx, self.active_tab_mut(), background) {
@@ -642,7 +639,6 @@ impl QuantickApp {
         now: Instant,
         scratch: &FrameScratch,
     ) {
-        // Anchored to a chart, and Home has none on screen.
         if self.chrome.title_bar.surface.is_home() {
             return;
         }

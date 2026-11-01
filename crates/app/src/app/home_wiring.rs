@@ -5,7 +5,7 @@
 //! could mistake for the screen.
 
 use eframe::egui;
-use quantick_workspace::arrangement::strip::{MarketShown, StripSurface};
+use quantick_workspace::arrangement::strip::{MarketShown, StripSurface, TabKeys};
 
 use super::ArrangementHost;
 use super::menu_bar::{
@@ -31,15 +31,6 @@ pub(super) fn observe_market(tabs: &ArrangementHost, surface: &mut StripSurface)
     if surface.is_home() {
         surface.observe(&market_shown(tabs));
     }
-}
-
-/// The tab shortcuts pressed this frame.
-pub(super) struct TabKeys {
-    pub(super) home: bool,
-    pub(super) new_tab: bool,
-    pub(super) close_tab: bool,
-    pub(super) next: bool,
-    pub(super) previous: bool,
 }
 
 pub(super) fn read_tab_keys(ctx: &egui::Context) -> TabKeys {

@@ -305,17 +305,14 @@ impl ArrangementAdapter<'_> {
         false
     }
     /// Carry out the tab shortcuts. Answers as [`Self::apply_tab_action`] does.
-    pub(super) fn apply_tab_keys(&mut self, keys: super::home_wiring::TabKeys) -> bool {
+    pub(super) fn apply_tab_keys(
+        &mut self,
+        keys: quantick_workspace::arrangement::strip::TabKeys,
+    ) -> bool {
         if keys.home {
             super::home_wiring::show_home(self.tabs, self.surface);
         }
-        if self.surface.is_home() {
-            // Nothing is open to close, and the way out lands where it left.
-            if keys.next || keys.previous {
-                self.surface.show_market();
-            }
-            return keys.new_tab;
-        }
+        let keys = self.surface.settle_keys(keys);
         if keys.close_tab {
             self.close_tab(self.tabs.active_index());
         }

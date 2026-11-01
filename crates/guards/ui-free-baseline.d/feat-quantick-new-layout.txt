@@ -1,0 +1,3 @@
+# Home tab: applying strip actions and tab keys on the arrangement adapter, and reading the active tab's label and replay state, must touch app-only Tab and ArrangementHost state. The rules are in crates/workspace strip.rs.
+crates/app +17
+!budget +17
