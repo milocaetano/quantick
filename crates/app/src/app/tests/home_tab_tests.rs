@@ -317,3 +317,51 @@ fn home_runs_feeds_stands_chart_keys_down_and_restores_the_same_canvas() {
     let flow = format!("pane.{}.canvas", app.active_tab().flow_pane.id);
     assert!(scene_control_ids(&scene).contains(&flow));
 }
+
+#[test]
+fn nine_markets_at_1400_leave_only_the_logo_and_few_bring_the_label_back() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx);
+    let labelled = home_rect(&app).width();
+    let output = frame(&mut app, &ctx);
+    assert!(painted_text_center(&output, "Home").is_some());
+    assert!(labelled > crate::tabstrip::HOME_MIN_WIDTH_PX);
+
+    let mut ends = Vec::new();
+    for symbol in ["ETHUSDT"; 8] {
+        ends.push(open_second_tab(&mut app, &ctx, symbol));
+    }
+    assert_eq!(app.runtime.tabs.len(), 9);
+    let output = frame(&mut app, &ctx);
+    let output_again = frame(&mut app, &ctx);
+    assert_eq!(home_rect(&app).width(), crate::tabstrip::HOME_MIN_WIDTH_PX);
+    assert!(painted_text_center(&output, "Home").is_none());
+    assert!(painted_text_center(&output_again, "Home").is_none());
+    assert!(app.chrome.title_bar.strip.overflow.is_some());
+
+    // Still the same command, centred, and it closes nothing.
+    let at = home_rect(&app).center();
+    click_sized(&mut app, &ctx, WINDOW, at);
+    assert!(on_home(&app));
+    assert_eq!(app.runtime.tabs.len(), 9);
+    app.chrome.title_bar.surface.show_market();
+
+    // Closing markets, and a wider window, recompute it.
+    run_frame_sized(
+        &mut app,
+        &ctx,
+        egui::vec2(2400.0, 760.0),
+        Vec::new(),
+        egui::Modifiers::NONE,
+    );
+    assert!(home_rect(&app).width() > crate::tabstrip::HOME_MIN_WIDTH_PX);
+    frame(&mut app, &ctx);
+    while app.runtime.tabs.len() > 2 {
+        app.apply_tab_action(TabAction::Close(0));
+    }
+    frame(&mut app, &ctx);
+    let output = frame(&mut app, &ctx);
+    assert_eq!(home_rect(&app).width(), labelled);
+    assert!(painted_text_center(&output, "Home").is_some());
+}

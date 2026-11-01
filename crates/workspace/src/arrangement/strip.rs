@@ -9,6 +9,16 @@ pub fn visible_tabs(count: usize, active: usize, slots: usize) -> Range<usize> {
     end.saturating_sub(slots)..end
 }
 
+/// Whether Home keeps its label beside `markets` chips.
+///
+/// Asked of the labelled width whatever the tab drew last frame, so dropping the
+/// label can never free the room that would bring it back on the next one.
+#[must_use]
+pub fn home_label_fits(markets: usize, room: f32, labelled_width: f32, chip_width: f32) -> bool {
+    let slots = ((room - labelled_width).max(0.0) / chip_width).floor() as usize;
+    markets <= slots
+}
+
 /// How opaque the Home logo is while another surface is on screen.
 const HOME_LOGO_INACTIVE_OPACITY: f32 = 0.65;
 
@@ -132,6 +142,27 @@ mod tests {
 
         surface.observe(&market(9, "SOL"));
         assert!(!surface.is_home(), "a market on screen stays on screen");
+    }
+
+    #[test]
+    fn home_keeps_its_label_until_the_market_chips_overflow() {
+        // 1130 px of room, a 70 px labelled Home, 200 px chips: five fit.
+        assert!(home_label_fits(1, 1130.0, 70.0, 200.0));
+        assert!(home_label_fits(5, 1130.0, 70.0, 200.0));
+        assert!(!home_label_fits(6, 1130.0, 70.0, 200.0));
+        assert!(!home_label_fits(9, 1130.0, 70.0, 200.0));
+    }
+
+    /// The width that decides is the labelled one, never the width drawn, so a
+    /// room that just misses stays missed however the tab is drawn.
+    #[test]
+    fn the_rule_cannot_flip_flop_at_the_boundary() {
+        let (room, labelled) = (70.0 + 2.0 * 200.0 - 1.0, 70.0);
+        for _ in 0..4 {
+            assert!(!home_label_fits(2, room, labelled, 200.0));
+        }
+        assert!(home_label_fits(2, room + 1.0, labelled, 200.0));
+        assert!(!home_label_fits(1, 10.0, labelled, 200.0), "no room at all");
     }
 
     #[test]

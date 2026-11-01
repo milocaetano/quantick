@@ -99,7 +99,21 @@ pub(crate) fn draw(
     };
     let close_width = if compact { 24.0 } else { CLOSE_HIT_WIDTH_PX };
     let close_reserve = if compact { 28.0 } else { CHIP_CLOSE_RESERVE_PX };
-    let mut action = draw_home_tab(ui, home, compact, drawn).then_some(TabAction::Home);
+    let label = home_label(ui);
+    let labelled = (HOME_PADDING_LEFT_PX
+        + HOME_LOGO_PX
+        + HOME_LOGO_GAP_PX
+        + label.size().x
+        + HOME_PADDING_RIGHT_PX)
+        .max(HOME_MIN_WIDTH_PX);
+    let fits = quantick_workspace::arrangement::strip::home_label_fits(
+        chips.len(),
+        ui.available_width() - controls_width - ui.spacing().item_spacing.x,
+        labelled,
+        CHIP_PREFERRED_WIDTH_PX,
+    );
+    let shown = fits.then_some((label, labelled));
+    let mut action = draw_home_tab(ui, home, compact, shown, drawn).then_some(TabAction::Home);
     let closable = chips.len() > 1;
     let slots = ((ui.available_width() - controls_width).max(0.0) / CHIP_PREFERRED_WIDTH_PX).floor()
         as usize;
@@ -242,9 +256,7 @@ pub(crate) fn home_text_color(active: bool, hovered: bool) -> egui::Color32 {
     }
 }
 
-/// The first tab: logo and "Home". It has no close target. Returns whether it
-/// was pressed.
-fn draw_home_tab(ui: &mut egui::Ui, active: bool, compact: bool, drawn: &mut StripDrawn) -> bool {
+fn home_label(ui: &egui::Ui) -> std::sync::Arc<egui::Galley> {
     let mut job = egui::text::LayoutJob::default();
     job.append(
         "Home",
@@ -256,17 +268,24 @@ fn draw_home_tab(ui: &mut egui::Ui, active: bool, compact: bool, drawn: &mut Str
             ..Default::default()
         },
     );
-    let label = ui.fonts(|fonts| fonts.layout_job(job));
-    let width = if compact {
+    ui.fonts(|fonts| fonts.layout_job(job))
+}
+
+/// The first tab: logo and "Home", or the logo alone and centred when `label`
+/// is `None`. It has no close target. Returns whether it was pressed.
+fn draw_home_tab(
+    ui: &mut egui::Ui,
+    active: bool,
+    compact: bool,
+    label: Option<(std::sync::Arc<egui::Galley>, f32)>,
+    drawn: &mut StripDrawn,
+) -> bool {
+    let logo_only = if compact {
         HOME_COMPACT_WIDTH_PX
     } else {
-        (HOME_PADDING_LEFT_PX
-            + HOME_LOGO_PX
-            + HOME_LOGO_GAP_PX
-            + label.size().x
-            + HOME_PADDING_RIGHT_PX)
-            .max(HOME_MIN_WIDTH_PX)
+        HOME_MIN_WIDTH_PX
     };
+    let width = label.as_ref().map_or(logo_only, |(_, width)| *width);
     let surface = ui.painter().add(egui::Shape::Noop);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());
@@ -285,10 +304,10 @@ fn draw_home_tab(ui: &mut egui::Ui, active: bool, compact: bool, drawn: &mut Str
         response.has_focus(),
         Some(theme::BRAND_GREEN),
     );
-    let logo_x = if compact {
-        rect.center().x
-    } else {
+    let logo_x = if label.is_some() {
         rect.left() + HOME_PADDING_LEFT_PX + HOME_LOGO_PX / 2.0
+    } else {
+        rect.center().x
     };
     let logo = egui::Rect::from_center_size(
         egui::pos2(logo_x, rect.center().y),
@@ -299,7 +318,7 @@ fn draw_home_tab(ui: &mut egui::Ui, active: bool, compact: bool, drawn: &mut Str
         logo,
         quantick_workspace::arrangement::strip::home_logo_opacity(active),
     );
-    if !compact {
+    if let Some((label, _)) = label {
         let at = egui::pos2(
             logo.right() + HOME_LOGO_GAP_PX,
             rect.center().y - label.size().y / 2.0,
