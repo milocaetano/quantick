@@ -391,12 +391,13 @@ impl Capsule {
         (min_x + CAPSULE_FRAME_X_PX, min_y + CAPSULE_FRAME_Y_PX)
     }
 
-    /// The capsule's corner over a side spanning `left..right` of a chart whose
-    /// top edge is `top`; `None` when the side is too narrow to hold it.
+    /// The capsule's corner over a side spanning `left..right` of a chart spanning
+    /// `top..bottom`; `None` when the side is too narrow or short to hold it.
     #[must_use]
-    pub fn place(&self, left: f32, right: f32, top: f32) -> Option<(f32, f32)> {
+    pub fn place(&self, left: f32, right: f32, top: f32, bottom: f32) -> Option<(f32, f32)> {
         let min_x = right - CAPSULE_INSET_PX - self.width_px();
-        (min_x >= left).then_some((min_x, top + CAPSULE_INSET_PX))
+        let min_y = top + CAPSULE_INSET_PX;
+        (min_x >= left && min_y + CAPSULE_HEIGHT_PX <= bottom).then_some((min_x, min_y))
     }
 }
 
@@ -718,9 +719,12 @@ mod tests {
         let capsule = Capsule::of(CapsuleSide::Candles, on, Some(1.0));
         let width = 3.0 * GLYPH_SLOT_PX + SAMPLE_SLOT_PX + 3.0 * SLOT_GAP_PX + 10.0;
         assert_eq!(capsule.width_px(), width);
-        assert_eq!(capsule.place(0.0, 500.0, 40.0), Some((492.0 - width, 48.0)));
-        assert_eq!(capsule.place(0.0, width + 8.0, 40.0), Some((0.0, 48.0)));
-        assert_eq!(capsule.place(0.0, width + 7.0, 40.0), None);
+        let place = |right, bottom| capsule.place(0.0, right, 40.0, bottom);
+        assert_eq!(place(500.0, 300.0), Some((492.0 - width, 48.0)));
+        assert_eq!(place(width + 8.0, 300.0), Some((0.0, 48.0)));
+        assert_eq!(place(width + 7.0, 300.0), None);
+        assert_eq!(place(500.0, 76.0), Some((492.0 - width, 48.0)));
+        assert_eq!(place(500.0, 75.0), None, "a plot too short holds none");
     }
 
     /// A hidden side has no capsule, and a side keeps its own edge.

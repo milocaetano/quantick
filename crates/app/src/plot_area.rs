@@ -61,6 +61,7 @@ pub fn plot_split(
     PlotAreas {
         chart,
         indicator_panes,
+        capsules: [None; 2],
         pane_gutters,
         live_strip: (strip_width > 0.0).then(|| {
             egui::Rect::from_min_max(
@@ -108,6 +109,8 @@ pub struct PlotAreas {
     /// Stacked indicator panes below the candles, top to bottom. Empty when
     /// no pane indicator is visible.
     pub indicator_panes: Vec<crate::indicators::PaneSlot>,
+    /// The layer capsules floating over the chart, as last painted.
+    pub capsules: [Option<egui::Rect>; 2],
     /// The gutter band beside each pane, in the same order: where that pane's
     /// value labels are drawn and where its own zoom gesture lives.
     pub pane_gutters: Vec<egui::Rect>,

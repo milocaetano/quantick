@@ -514,6 +514,53 @@ fn the_status_label_stands_below_the_tape_capsule() {
     assert!(time.capsules[0].is_some(), "a time pane has one too");
 }
 
+/// A press on a capsule is the capsule's. An armed drawing tool places no anchor
+/// under it, a right drag starts no ruler, and neither moves focus.
+#[test]
+fn a_press_on_a_capsule_never_reaches_the_chart() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
+    let before = on(&app, ChartLayer::Bubbles);
+    let focus = app.active_tab().focus;
+    app.toolrail
+        .arm(crate::toolrail::Tool::Drawing(super::drawing_tool(
+            "horizontal-line",
+        )));
+    click_chart(&mut app, &ctx, bubbles.center());
+    run_frame(&mut app, &ctx);
+    assert_ne!(on(&app, ChartLayer::Bubbles), before, "the glyph answered");
+    assert!(
+        app.active_tab().flow_pane.drawings.items().is_empty(),
+        "no anchor landed under the capsule"
+    );
+    app.toolrail.arm(crate::toolrail::Tool::Pointer);
+    run_frame(&mut app, &ctx);
+    let secondary = |at, pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let (from, to) = (bubbles.center(), bubbles.center() + egui::vec2(-60.0, 60.0));
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(from), secondary(from, true)],
+    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(to), secondary(to, false)],
+    );
+    assert!(
+        app.chrome_reads().quick_range_actions().is_none(),
+        "no ruler started under the capsule"
+    );
+    assert_eq!(app.active_tab().focus, focus, "focus stayed");
+}
+
 /// A side narrower than its capsule paints none; the named call still reaches
 /// the layer.
 #[test]

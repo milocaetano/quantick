@@ -505,13 +505,11 @@ impl ChartPane {
         }
     }
 
-    /// The status badge's room: the chart below the capsule at its right end.
+    /// The status badge's room: the chart below the capsules, which share a row,
+    /// so its label can never cross one however long it grows.
     pub(crate) fn status_rect(&self, chart_rect: egui::Rect) -> egui::Rect {
-        let at_right_end = |capsule: &&egui::Rect| {
-            chart_rect.right() - capsule.right() <= quantick_chart::pane_header::CAPSULE_INSET_PX
-        };
         let mut capsules = self.frame.capsules.iter().flatten();
-        capsules.find(at_right_end).map_or(chart_rect, |capsule| {
+        capsules.next().map_or(chart_rect, |capsule| {
             chart_rect.with_min_y(capsule.bottom())
         })
     }

@@ -80,13 +80,13 @@ The three exclusion classes are closed:
 | `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
 | `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9 | `layout.preset.apply` | — |
-| `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a header glyph's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a capsule glyph's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | candles capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
-| `layer.footprint.settings.open` | Open the footprint's settings window | right-click the pane header's footprint glyph; the pane's footprint menu | `chart.settings.set` | — |
+| `layer.footprint.settings.open` | Open the footprint's settings window | right-click the capsule's footprint glyph; the pane's footprint menu | `chart.settings.set` | — |
 | `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu, off until switched on | `layers.visibility.set` | — |
 | `layer.footprint.toggle` | Switch the candle footprint on or off | pane capsule glyph, pane right-click layer menu, Ctrl+F | `layers.visibility.set` | — |
-| `layer.heatmap.toggle` | Switch the L2 depth map on or off | pane header glyph, pane right-click layer menu | `layers.visibility.set` | — |
+| `layer.heatmap.toggle` | Switch the L2 depth map on or off | capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.live_strip.toggle` | Switch the live depth strip on or off | pane header glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_bubbles.toggle` | Switch the bubbles on the tape on or off | tape capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_heatmap.toggle` | Switch the book on the tape on or off | tape capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
@@ -235,8 +235,8 @@ declares nothing here is a guard failure.
 | `layout.flow.collapse` | the right-side canvas rail and divider |
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
 | `layout.pane.resize` | a drag on the divider between two panes |
-| `layer.footprint.settings.open` | a pane header glyph's right click and the pane menu's entry, not entries in the toolbar's action enum |
-| `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no pane header glyph |
+| `layer.footprint.settings.open` | a capsule glyph's right click and the pane menu's entry, not entries in the toolbar's action enum |
+| `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no glyph on a capsule or header |
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `orderflow.tape.fold.set` | the tape lane's divider and rail the pane handles directly |

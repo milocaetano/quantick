@@ -463,11 +463,13 @@ impl ChartPane {
     /// the renderer can never disagree about a boundary.
     pub(super) fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
         let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
-        plot_split(
+        let mut areas = plot_split(
             area,
             self.live_strip_width(capabilities),
             self.indicators.pane_sizing(&mut sizing),
-        )
+        );
+        areas.capsules = self.frame.capsules;
+        areas
     }
 
     /// Why a call takes no anchor on `band`: the last carve's collapse, else the shared rule.
@@ -1115,7 +1117,7 @@ impl ChartPane {
             });
             let glyph = |toggle| self.header_glyph(toggle, style, capabilities);
             let capsule = Capsule::of(side, glyph, scale);
-            let corner = capsule.place(left, right, chart.top());
+            let corner = capsule.place(left, right, chart.top(), chart.bottom());
             let Some(corner) = corner.filter(|_| !capsule.is_empty()) else {
                 continue;
             };

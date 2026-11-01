@@ -138,7 +138,6 @@ impl Tab {
         let picks = self.shared_picks(ui);
         let edits = self.draw_panes(tab_id, ui, chrome, &rects, &picks);
         self.apply_shared_interactions(&edits);
-        self.draw_layer_capsules(ui, chrome);
 
         // Drawings marked "show on all charts" cross here, after both panes
         // have drawn and cached their projections. It happens outside the
@@ -146,6 +145,7 @@ impl Tab {
         // that needs both panes borrowed at once — immutably, which is also
         // the guarantee that a foreign mark can only be looked at.
         self.paint_shared_drawings(ui.painter());
+        self.draw_layer_capsules(ui, chrome);
 
         // A chart menu's object ask applies on the chart it was opened on.
         if let Some(pane) = chrome.drawing_chrome.menu_target() {
@@ -337,7 +337,8 @@ impl Tab {
             })
     }
 
-    /// Each chart side's floating capsule, after the charts so it wins the press.
+    /// Each chart side's floating capsule, after the charts and their shared
+    /// marks, so it wins the press and nothing strokes across it.
     fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
         let mut focus = None;
         for (pane, side) in self.panes_with_sides_mut() {

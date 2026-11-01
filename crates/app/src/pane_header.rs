@@ -36,7 +36,8 @@ const SEMIBOLD_OFFSET_PX: f32 = 0.4;
 /// The indicators button: 12 pt words, an icon and its gap, its padding.
 const INDICATORS_SIZE: f32 = 12.0;
 const INDICATORS_ICON_GAP_PX: f32 = 5.0;
-const INDICATORS_PADDING: egui::Vec2 = egui::vec2(7.0, 3.0);
+const INDICATORS_PADDING_X: f32 = 7.0;
+const INDICATORS_HEIGHT: f32 = 22.0;
 
 /// Corner radii: the capsule's, and a control's hover patch.
 const CAPSULE_ROUNDING: f32 = 6.0;
@@ -87,13 +88,13 @@ fn indicators_text(words: egui::Color32) -> egui::text::LayoutJob {
 /// How wide the indicators button is, before it is laid out.
 pub fn indicators_width(ui: &egui::Ui) -> f32 {
     let galley = ui.fonts(|fonts| fonts.layout_job(indicators_text(theme::PANE_ACTION)));
-    galley.size().x + 2.0 * INDICATORS_PADDING.x
+    galley.size().x + 2.0 * INDICATORS_PADDING_X
 }
 
 /// The indicators button with its left edge at `left`, centred on the strip;
 /// answers whether it was clicked.
 pub fn indicators_button(ui: &egui::Ui, left: f32, strip: egui::Rect, salt: u64) -> bool {
-    let size = egui::vec2(indicators_width(ui), 2.0 * (INDICATORS_SIZE - 1.0));
+    let size = egui::vec2(indicators_width(ui), INDICATORS_HEIGHT);
     let center = egui::pos2(left + size.x / 2.0, strip.center().y);
     let rect = egui::Rect::from_center_size(center, size);
     let id = ui.id().with(("pane_indicators", salt));
@@ -101,6 +102,7 @@ pub fn indicators_button(ui: &egui::Ui, left: f32, strip: egui::Rect, salt: u64)
     #[cfg(test)]
     ui.ctx()
         .data_mut(|data| data.insert_temp(indicators_id(salt), rect));
+    let painter = ui.painter().with_clip_rect(strip.intersect(ui.clip_rect()));
     let hovered = response.hovered();
     let words = if hovered {
         theme::TEXT_PRIMARY
@@ -109,11 +111,11 @@ pub fn indicators_button(ui: &egui::Ui, left: f32, strip: egui::Rect, salt: u64)
     };
     if hovered {
         let rounding = egui::Rounding::same(HOVER_ROUNDING);
-        ui.painter().rect_filled(rect, rounding, theme::BARE_HOVER);
+        painter.rect_filled(rect, rounding, theme::BARE_HOVER);
     }
     let galley = ui.fonts(|fonts| fonts.layout_job(indicators_text(words)));
     let at = rect.center() - galley.size() / 2.0;
-    ui.painter().galley(at, galley, words);
+    painter.galley(at, galley, words);
     response.clicked()
 }
 
@@ -141,11 +143,7 @@ pub fn draw_marked(
     painted.clear();
     let inner = strip.shrink2(CONTENT_PADDING);
     let indicators_px = indicators_width(ui);
-    // The indicators button outranks the right end: on a pane too narrow for
-    // both, it is the one a hand can still reach.
-    let state = row
-        .state
-        .filter(|_| inner.width() >= indicators_px + GROUP_GAP_PX + FLOW_CONTROLS_PX);
+    let state = row.state;
     let right_px = state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
     let left = inner.with_max_x(inner.right() - right_px);
     let mut content = ui.new_child(
