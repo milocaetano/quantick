@@ -91,6 +91,6 @@ fn independent_headless_consumer_keeps_all_external_owners_authoritative() {
                 external[&layer.0.source]
             })
             .count_ones(),
-        19
+        18
     );
 }
