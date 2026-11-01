@@ -192,12 +192,37 @@ fn each_zone_shows_its_own_cursor() {
         app.active_tab_mut().flow_pane.drawings.select(index);
         run_frame(&mut app, &ctx);
         let (left, right) = drawn_sides(&app);
+        let bottom = app.active_tab().flow_pane.drawings.items()[0]
+            .points
+            .iter()
+            .map(|point| price_y(&app, PaneSide::Flow, point.price))
+            .fold(f32::NEG_INFINITY, f32::max);
+        let corner = egui::pos2(right, bottom);
+        let frame = &app.active_tab().flow_pane.frame;
+        assert!(
+            frame.chart_area.is_some_and(|rect| rect.contains(corner))
+                && frame
+                    .capsules
+                    .iter()
+                    .flatten()
+                    .all(|rect| !rect.contains(corner)),
+            "the projected resize corner {corner:?} must be on the chart outside capsules {:?}; placement top was {TOP}",
+            frame.capsules
+        );
+        assert!(
+            app.drawings
+                .chrome
+                .context_bar_rect()
+                .is_none_or(|rect| !rect.contains(corner)),
+            "the projected resize corner {corner:?} must be outside the selected drawing toolbar {:?}",
+            app.drawings.chrome.context_bar_rect()
+        );
         let mut at = |x: f32, y: f32| cursor_at(&mut app, &ctx, egui::pos2(x, y));
         let zones = [
             at(left, MID_Y),
             at(left + BAND_INSET, MID_Y),
             at((left + right) / 2.0, MID_Y),
-            at(left, TOP),
+            at(corner.x, corner.y),
         ];
         assert_eq!(
             zones[..3],
