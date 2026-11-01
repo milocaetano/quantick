@@ -184,15 +184,7 @@ fn pointer_snapshot<P: TabsPort + ?Sized>(
 /// The zero-allocation identity of the selection, compared by the frame
 /// emitter every frame; [`selection_snapshot`] is the owned projection an
 /// event or a capture carries, built only when this changed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct SelectionIdentity {
-    pub active_tab_id: u64,
-    pub focused_pane_id: u64,
-    pub focused_pane_side: PaneSide,
-    /// `(pane_id, drawing_id)` of the selected drawing, if any.
-    pub drawing: Option<(u64, u64)>,
-    pub paper_trade_row: Option<usize>,
-}
+pub(crate) use quantick_control_handlers::semantic::SelectionIdentity;
 
 pub(crate) fn selection_identity<P: TabsPort + ?Sized>(app: &P) -> SelectionIdentity {
     let tab = active_tab(app);
@@ -292,15 +284,7 @@ fn drawing_hit_snapshot(
 
 pub(crate) use quantick_control_schema::interaction::flow_cell_snapshot;
 
-/// The one wire name of a drawing band, used by the pointer hit in the pane
-/// and by the selection scope alike.
-pub(crate) fn drawing_band_name(band: &DrawingBand) -> &'static str {
-    match band {
-        DrawingBand::Price => "price",
-        DrawingBand::Indicator(_) => "indicator_value",
-        DrawingBand::AllBands => "all_bands",
-    }
-}
+pub(crate) use quantick_control_handlers::analysis::drawing_band_name;
 
 fn drawing_band(band: &DrawingBand) -> String {
     drawing_band_name(band).to_owned()

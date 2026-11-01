@@ -3,13 +3,19 @@
 //! makes, on the window as the gateway holds it.
 
 use quantick_control_handlers::{
-    TabDirectory,
+    JournalAccess, TabDirectory,
+    analysis::{AnalysisPane, AnalysisPaneEntry, AnalysisPort},
+    attention::MarkPort,
     history::HistoryPort,
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
+    orderflow::{OrderflowEngine, OrderflowPane, OrderflowPaneEntry, OrderflowPort},
     pnl_display::PnlDisplayPort,
     recovery::{FeedRecoveryPort, RecoveredFeed},
+    session::{ReplayRead, SessionPort, SessionTab},
+    trade::{TradeDesk, TradePort},
 };
+use quantick_control_host::wire::PaneSideDto;
 use quantick_control_schema::notify::AgentPopup;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
@@ -18,6 +24,10 @@ use quantick_paper::report::session_edit::{
 use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
 
 use crate::app::control_host::ControlPort;
+use crate::app::paper_wiring::PaperSettingsChange;
+use crate::control::ControlAccess;
+use crate::paper_trading::PaperTrading;
+use crate::{control::pane_side_dto, orderflow_view::OrderflowView, pane::ChartPane, tab::Tab};
 use quantick_control_handlers::feed_source::{FeedSelection, FeedSourcePort};
 
 impl FeedSourcePort for dyn ControlPort {
@@ -126,5 +136,267 @@ impl AttentionPort for dyn ControlPort {
     }
     fn sound_alert(&mut self) -> Option<String> {
         self.alerts().sound_alert()
+    }
+}
+
+impl TradeDesk for PaperTrading {
+    fn account(&self) -> &quantick_paper::PaperAccount {
+        PaperTrading::account(self)
+    }
+    fn account_mut(&mut self) -> &mut quantick_paper::PaperAccount {
+        PaperTrading::account_mut(self)
+    }
+    fn ruler_ticks(&self) -> u32 {
+        PaperTrading::ruler_ticks(self)
+    }
+    fn set_ruler_ticks(&mut self, ticks: u32) {
+        PaperTrading::set_ruler_ticks(self, ticks);
+    }
+    fn clear_ruler(&mut self) {
+        PaperTrading::clear_ruler(self);
+    }
+    fn mark_price(&self) -> Option<rust_decimal::Decimal> {
+        PaperTrading::mark_price(self)
+    }
+    fn working_orders(&self) -> &[quantick_sim::Order] {
+        PaperTrading::working_orders(self)
+    }
+    fn armed_bracket(
+        &self,
+        side: quantick_engine::Side,
+        reference: rust_decimal::Decimal,
+        quantity: rust_decimal::Decimal,
+    ) -> quantick_sim::Bracket {
+        PaperTrading::armed_bracket(self, side, reference, quantity)
+    }
+    fn risk_report(&self) -> (quantick_paper::risk_sizing::RiskState, bool) {
+        PaperTrading::risk_report(self)
+    }
+    fn position_summary(&self) -> Option<quantick_paper::format::PositionSummary> {
+        PaperTrading::position_summary(self)
+    }
+    fn selected_trade_index(&self) -> Option<usize> {
+        PaperTrading::account(self).selected_trade_index()
+    }
+}
+
+impl TradePort for dyn ControlPort {
+    fn active_desk(&self) -> Option<&dyn TradeDesk> {
+        self.tab_reads()
+            .active_paper()
+            .map(|paper| paper as &dyn TradeDesk)
+    }
+    fn active_desk_mut(&mut self) -> Option<&mut dyn TradeDesk> {
+        self.tabs_mut()
+            .active_paper_mut()
+            .map(|paper| paper as &mut dyn TradeDesk)
+    }
+    fn persist_order_strategies(&mut self) {
+        self.paper_settings()
+            .persist(PaperSettingsChange::OrderStrategies);
+    }
+    fn persist_risk_settings(&mut self) {
+        self.paper_settings()
+            .persist(PaperSettingsChange::RiskSettings);
+    }
+}
+
+impl AnalysisPane for ChartPane {
+    fn pane_id(&self) -> u64 {
+        self.id
+    }
+    fn indicators(&self) -> &quantick_chart::indicator_views::IndicatorViews {
+        &self.indicators
+    }
+    fn drawings(&self) -> &quantick_drawings::Drawings<quantick_drawings::DrawingTool> {
+        &self.drawings
+    }
+}
+
+impl AnalysisPort for dyn ControlPort {
+    fn drawing_magnet(&self) -> bool {
+        self.chrome_reads().tool_rail().magnet()
+    }
+    fn visit_analysis_tabs(&self, visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>])) {
+        for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {
+            let panes: Vec<AnalysisPaneEntry<'_>> = tab
+                .panes()
+                .map(|(pane, side)| AnalysisPaneEntry {
+                    side: pane_side_dto(side),
+                    pane,
+                })
+                .collect();
+            visit(tab_id, &panes);
+        }
+    }
+}
+
+impl MarkPort for dyn ControlPort {
+    fn cursor_snapshot(&self) -> quantick_control_schema::interaction::CursorSnapshot {
+        crate::control::interaction::cursor_snapshot(self)
+    }
+}
+
+impl JournalAccess for ControlAccess {
+    fn record_event(
+        &mut self,
+        event: quantick_control_host::journal::NewEvent,
+    ) -> quantick_control::wire::WireU64 {
+        self.append_event(event)
+    }
+}
+
+impl OrderflowEngine for OrderflowView {
+    fn config(&self) -> &quantick_orderflow::HeatmapConfig {
+        self.cached_config()
+    }
+    fn book(
+        &self,
+    ) -> (
+        &quantick_orderflow::engine::CaptureStatus,
+        Option<&quantick_orderflow::engine::BookLadder>,
+        rust_decimal::Decimal,
+    ) {
+        self.cached_book()
+    }
+    fn health(&self) -> &quantick_orderflow::engine::OrderflowHealth {
+        self.cached_health()
+    }
+    fn live_end_ms(&self) -> Option<i64> {
+        self.cached_live_end_ms()
+    }
+    fn bubbles(&self) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
+        self.bubbles_snapshot()
+    }
+    fn flow_execution(&self) -> Option<quantick_control_schema::orderflow::FlowExecutionSnapshot> {
+        self.flow_execution_snapshot_frame()
+            .map(|frame| (frame.as_ref(), self.flow_execution_progress()).into())
+    }
+}
+
+/// One pane read with its tab and the window's footprint setup, as the
+/// order-flow scopes read a pane.
+struct OrderflowPaneRead<'a> {
+    tab: &'a Tab,
+    pane: &'a ChartPane,
+    window: &'a crate::footprint_config::FootprintConfig,
+}
+
+impl OrderflowPane for OrderflowPaneRead<'_> {
+    fn pane_id(&self) -> u64 {
+        self.pane.id
+    }
+    fn footprint_visible(&self) -> bool {
+        self.pane.footprint.visible
+    }
+    fn footprint_overridden(&self) -> bool {
+        self.pane.footprint.config.is_some()
+    }
+    fn footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
+        self.pane.footprint_config(self.window)
+    }
+    fn opening_scale(&self) -> quantick_control_schema::orderflow::OpeningScaleSnapshot {
+        self.pane.opening_scale_snapshot()
+    }
+    fn tape_age_at(&self, now_ms: i64) -> Option<i64> {
+        self.tab.tape_age_at(now_ms)
+    }
+    fn engine(&self) -> Option<&dyn OrderflowEngine> {
+        self.pane
+            .orderflow
+            .as_ref()
+            .map(|view| view as &dyn OrderflowEngine)
+    }
+}
+
+impl OrderflowPort for dyn ControlPort {
+    fn visit_orderflow_tabs(&self, visit: &mut dyn FnMut(u64, &[OrderflowPaneEntry<'_>])) {
+        let reads = self.tab_reads();
+        let window = reads.footprint_config();
+        for (tab_id, tab) in reads.tabs().iter_with_ids() {
+            let panes: Vec<(PaneSideDto, OrderflowPaneRead<'_>)> = tab
+                .panes()
+                .map(|(pane, side)| (pane_side_dto(side), OrderflowPaneRead { tab, pane, window }))
+                .collect();
+            let entries: Vec<OrderflowPaneEntry<'_>> = panes
+                .iter()
+                .map(|(side, pane)| OrderflowPaneEntry { side: *side, pane })
+                .collect();
+            visit(tab_id, &entries);
+        }
+    }
+}
+
+/// One linked recording, lent for the read.
+struct ReplayLinkRead<'a>(&'a quantick_feed::replay::ReplayLink);
+
+impl ReplayRead for ReplayLinkRead<'_> {
+    fn session(&self) -> &quantick_replay::Session {
+        &self.0.session
+    }
+    fn playing(&self) -> bool {
+        self.0.status.is_playing()
+    }
+    fn finished(&self) -> bool {
+        self.0.status.is_finished()
+    }
+    fn position_ms(&self) -> i64 {
+        self.0.status.position_ms()
+    }
+    fn start_ms(&self) -> i64 {
+        self.0.status.start_ms()
+    }
+    fn end_ms(&self) -> i64 {
+        self.0.status.end_ms()
+    }
+    fn elapsed_ms(&self) -> i64 {
+        self.0.status.elapsed_ms()
+    }
+    fn progress(&self) -> f32 {
+        self.0.status.progress()
+    }
+    fn speed(&self) -> f32 {
+        self.0.status.speed()
+    }
+    fn rewinds(&self) -> u64 {
+        self.0.status.rewinds()
+    }
+    fn day_prints(&self) -> (usize, usize) {
+        self.0.day_prints()
+    }
+    fn trace_file_name(&self) -> String {
+        quantick_control_schema::session::file_name(&super::trace::ReplayTraceFile::path_for(
+            &self.0.session.path,
+        ))
+    }
+}
+
+/// One open tab, lent for the session scopes' read.
+struct SessionTabRead<'a> {
+    tab: &'a Tab,
+    replay: Option<ReplayLinkRead<'a>>,
+}
+
+impl SessionTab for SessionTabRead<'_> {
+    fn symbol(&self) -> &str {
+        &self.tab.symbol
+    }
+    fn desk(&self) -> &dyn TradeDesk {
+        &self.tab.paper
+    }
+    fn replay(&self) -> Option<&dyn ReplayRead> {
+        self.replay.as_ref().map(|link| link as &dyn ReplayRead)
+    }
+}
+
+impl SessionPort for dyn ControlPort {
+    fn visit_session_tabs(&self, visit: &mut dyn FnMut(u64, &dyn SessionTab)) {
+        for (tab_id, tab) in self.tab_reads().tabs().iter_with_ids() {
+            let read = SessionTabRead {
+                tab,
+                replay: tab.replay.as_ref().map(ReplayLinkRead),
+            };
+            visit(tab_id, &read);
+        }
     }
 }

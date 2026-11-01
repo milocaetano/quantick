@@ -6,7 +6,6 @@
 //! the local gateway workers.
 
 mod actions;
-mod analysis;
 mod annotate;
 pub(crate) mod chart;
 mod chart_settings;
@@ -31,7 +30,6 @@ mod bubble_save;
 mod layers;
 mod layout;
 mod notify;
-mod orderflow;
 mod ports;
 mod tape_ports;
 mod tick_bubbles;
@@ -44,10 +42,8 @@ mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
 pub(crate) mod script;
-mod session;
 mod system;
 mod trace;
-pub(crate) mod trade;
 mod types;
 mod workspace;
 
@@ -144,10 +140,10 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     feed::register(&mut registry)?;
     quantick_control_handlers::chart::register(&mut registry)?;
     health::register(&mut registry)?;
-    analysis::register(&mut registry)?;
+    quantick_control_handlers::analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;
-    orderflow::register(&mut registry)?;
-    session::register(&mut registry)?;
+    quantick_control_handlers::orderflow::register(&mut registry)?;
+    quantick_control_handlers::session::register(&mut registry)?;
     scene::register(&mut registry)?;
     layers::register(&mut registry)?;
     Ok(registry)

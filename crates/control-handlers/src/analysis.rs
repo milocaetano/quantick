@@ -27,30 +27,71 @@
 //! `observer_resolves_mirrored_drawings_without_leaking_user_text` guards the
 //! drawing half, and now captures this module's enumerating scope alongside
 //! the pointer scopes it already covered.
+//!
+//! The window hands its panes over through [`AnalysisPort`]: each pane's
+//! indicator views and marks, both already headless, with the tab and side
+//! it sits on, and the tool rail's magnet. Everything the two scopes decide
+//! from those is here.
 
-pub(crate) use quantick_control_schema::analysis::*;
+pub use quantick_control_schema::analysis::*;
 
-use crate::app::{ChromePort, TabsPort};
+use quantick_chart::indicator_views::{IndicatorView, IndicatorViews};
+use quantick_chart_interaction::drawing_model::DrawingScope;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::{CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE, CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE},
     registry::ModuleDescriptor,
     wire::WireU64,
 };
-
-use crate::{
-    drawings::{Drawing, DrawingScope},
-    indicators::IndicatorView,
-    pane::{ChartPane, PaneSide},
+use quantick_control_host::{
+    projection::{CaptureContext, ProjectionRegistryError},
+    wire::{PaneSideDto, wire_usize},
 };
+use quantick_drawings::{Drawing, DrawingBand, DrawingTool, Drawings};
 
-use super::{
-    interaction::drawing_band_name,
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::wire_usize,
-};
+use crate::dock::ProjectionDock;
 
-pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
+/// One chart pane as the analysis scopes read it.
+pub trait AnalysisPane {
+    /// The pane's stable id.
+    fn pane_id(&self) -> u64;
+    /// The indicators on the pane, in slot order.
+    fn indicators(&self) -> &IndicatorViews;
+    /// The marks on the pane.
+    fn drawings(&self) -> &Drawings<DrawingTool>;
+}
+
+/// One pane with the side it sits on.
+pub struct AnalysisPaneEntry<'a> {
+    pub side: PaneSideDto,
+    pub pane: &'a dyn AnalysisPane,
+}
+
+/// The window's tabs and panes as the analysis scopes walk them.
+pub trait AnalysisPort {
+    /// The tool rail's magnet, which the drawings scope publishes.
+    fn drawing_magnet(&self) -> bool;
+    /// Visit every tab in screen order with its panes in the tab's order.
+    fn visit_analysis_tabs(&self, visit: &mut dyn FnMut(u64, &[AnalysisPaneEntry<'_>]));
+}
+
+/// The one wire name of a drawing band, used by the pointer hit in the pane
+/// and by the selection scope alike.
+#[must_use]
+pub fn drawing_band_name(band: &DrawingBand) -> &'static str {
+    match band {
+        DrawingBand::Price => "price",
+        DrawingBand::Indicator(_) => "indicator_value",
+        DrawingBand::AllBands => "all_bands",
+    }
+}
+
+/// Dock the analysis module and its two scopes.
+pub fn register<D, H>(registry: &mut D) -> Result<(), ProjectionRegistryError>
+where
+    D: ProjectionDock<H>,
+    H: AnalysisPort + ?Sized + 'static,
+{
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
         ModuleDescriptor {
@@ -58,7 +99,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
             title: "Analysis".to_owned(),
             description: "Indicators and drawings the trader placed on the chart.".to_owned(),
         },
-        revision,
+        revision::<H>,
     )?;
     registry.register_scope(
         SnapshotScopeId::new(INDICATORS_SCOPE_ID).expect("static scope ID is valid"),
@@ -73,7 +114,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         // defaults, so this scope answers only once the trader grants it
         // rather than leaking script prose to a default observer.
         &["observe", "observe.indicators", "observe.user_text"],
-        project_indicators,
+        project_indicators::<H>,
     )?;
     registry.register_scope(
         SnapshotScopeId::new(DRAWINGS_SCOPE_ID).expect("static scope ID is valid"),
@@ -82,8 +123,18 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         "Drawings",
         "Reports each pane's drawings with tool, band, scope, lock and visibility state, and the author of anything the trader did not place by hand.",
         &["observe", "observe.drawings"],
-        project_drawings,
+        project_drawings::<H>,
     )
+}
+
+/// Every tab's rows, built from one walk over the port.
+fn per_tab<P, T>(app: &P, mut row: impl FnMut(u64, &[AnalysisPaneEntry<'_>]) -> T) -> Vec<T>
+where
+    P: AnalysisPort + ?Sized,
+{
+    let mut rows = Vec::new();
+    app.visit_analysis_tabs(&mut |tab_id, panes| rows.push(row(tab_id, panes)));
+    rows
 }
 
 /// The module's revision key: what the trader placed and how it is
@@ -99,20 +150,18 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// Everything either scope publishes and the readings do not carry belongs
 /// here. A field on the wire that no key covers is a client polling a
 /// revision that never moves while the answer underneath it changed.
-fn revision<P: TabsPort + ChromePort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRevisionKey>) {
-    let magnet = app.chrome_reads().tool_rail().magnet();
-    let tabs = app
-        .tab_reads()
-        .tabs()
-        .iter_with_ids()
-        .map(|(tab_id, tab)| AnalysisRevisionKey {
-            tab_id,
-            panes: tab
-                .panes()
-                .map(|(pane, _side)| PaneAnalysisRevisionKey {
-                    pane_id: pane.id,
+fn revision<P: AnalysisPort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRevisionKey>) {
+    let magnet = app.drawing_magnet();
+    let tabs = per_tab(app, |tab_id, panes| AnalysisRevisionKey {
+        tab_id,
+        panes: panes
+            .iter()
+            .map(|entry| {
+                let pane = entry.pane;
+                PaneAnalysisRevisionKey {
+                    pane_id: pane.pane_id(),
                     indicators: pane
-                        .indicators
+                        .indicators()
                         .all()
                         .iter()
                         .map(|view| IndicatorAnalysisRevisionKey {
@@ -130,7 +179,7 @@ fn revision<P: TabsPort + ChromePort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRe
                         })
                         .collect(),
                     drawings: pane
-                        .drawings
+                        .drawings()
                         .items()
                         .iter()
                         .map(|drawing| {
@@ -146,12 +195,12 @@ fn revision<P: TabsPort + ChromePort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRe
                             )
                         })
                         .collect(),
-                    layer_hidden: pane.drawings.all_hidden(),
-                    selected_drawing: pane.drawings.selected(),
-                })
-                .collect(),
-        })
-        .collect();
+                    layer_hidden: pane.drawings().all_hidden(),
+                    selected_drawing: pane.drawings().selected(),
+                }
+            })
+            .collect(),
+    });
     (magnet, tabs)
 }
 
@@ -196,42 +245,37 @@ struct IndicatorAnalysisRevisionKey {
     declaration: String,
 }
 
-fn project_indicators<P: TabsPort + ?Sized>(
+fn project_indicators<P: AnalysisPort + ?Sized>(
     app: &P,
     _context: CaptureContext,
 ) -> IndicatorsSnapshot {
     indicators_snapshot(app)
 }
 
-fn project_drawings<P: TabsPort + ChromePort + ?Sized>(
+fn project_drawings<P: AnalysisPort + ?Sized>(
     app: &P,
     _context: CaptureContext,
 ) -> DrawingsSnapshot {
     drawings_snapshot(app)
 }
 
-fn indicators_snapshot<P: TabsPort + ?Sized>(app: &P) -> IndicatorsSnapshot {
+fn indicators_snapshot<P: AnalysisPort + ?Sized>(app: &P) -> IndicatorsSnapshot {
     IndicatorsSnapshot {
-        tabs: app
-            .tab_reads()
-            .tabs()
-            .iter_with_ids()
-            .map(|(tab_id, tab)| TabIndicatorsSnapshot {
-                tab_id: WireU64::new(tab_id),
-                panes: tab
-                    .panes()
-                    .map(|(pane, side)| pane_indicators(pane, side))
-                    .collect(),
-            })
-            .collect(),
+        tabs: per_tab(app, |tab_id, panes| TabIndicatorsSnapshot {
+            tab_id: WireU64::new(tab_id),
+            panes: panes
+                .iter()
+                .map(|entry| pane_indicators(entry.pane, entry.side))
+                .collect(),
+        }),
     }
 }
 
-fn pane_indicators(pane: &ChartPane, side: PaneSide) -> PaneIndicatorsSnapshot {
-    let views = pane.indicators.all();
+fn pane_indicators(pane: &dyn AnalysisPane, side: PaneSideDto) -> PaneIndicatorsSnapshot {
+    let views = pane.indicators().all();
     PaneIndicatorsSnapshot {
-        pane_id: WireU64::new(pane.id),
-        side: crate::control::pane_side_dto(side),
+        pane_id: WireU64::new(pane.pane_id()),
+        side,
         indicators: views
             .iter()
             .take(CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE)
@@ -293,29 +337,24 @@ fn failure_snapshot(view: &IndicatorView, script: bool) -> Option<IndicatorFailu
     })
 }
 
-fn drawings_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> DrawingsSnapshot {
+fn drawings_snapshot<P: AnalysisPort + ?Sized>(app: &P) -> DrawingsSnapshot {
     DrawingsSnapshot {
-        magnet: app.chrome_reads().tool_rail().magnet(),
-        tabs: app
-            .tab_reads()
-            .tabs()
-            .iter_with_ids()
-            .map(|(tab_id, tab)| TabDrawingsSnapshot {
-                tab_id: WireU64::new(tab_id),
-                panes: tab
-                    .panes()
-                    .map(|(pane, side)| pane_drawings(pane, side))
-                    .collect(),
-            })
-            .collect(),
+        magnet: app.drawing_magnet(),
+        tabs: per_tab(app, |tab_id, panes| TabDrawingsSnapshot {
+            tab_id: WireU64::new(tab_id),
+            panes: panes
+                .iter()
+                .map(|entry| pane_drawings(entry.pane, entry.side))
+                .collect(),
+        }),
     }
 }
 
-fn pane_drawings(pane: &ChartPane, side: PaneSide) -> PaneDrawingsSnapshot {
-    let items = pane.drawings.items();
+fn pane_drawings(pane: &dyn AnalysisPane, side: PaneSideDto) -> PaneDrawingsSnapshot {
+    let items = pane.drawings().items();
     PaneDrawingsSnapshot {
-        pane_id: WireU64::new(pane.id),
-        side: crate::control::pane_side_dto(side),
+        pane_id: WireU64::new(pane.pane_id()),
+        side,
         drawings: items
             .iter()
             .take(CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE)
@@ -323,17 +362,17 @@ fn pane_drawings(pane: &ChartPane, side: PaneSide) -> PaneDrawingsSnapshot {
             .collect(),
         drawing_count: wire_usize(items.len()),
         drawings_truncated: items.len() > CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE,
-        layer_hidden: pane.drawings.all_hidden(),
-        selected_index: pane.drawings.selected().map(wire_usize),
+        layer_hidden: pane.drawings().all_hidden(),
+        selected_index: pane.drawings().selected().map(wire_usize),
     }
 }
 
-fn drawing_snapshot(drawing: &Drawing) -> DrawingSnapshot {
+fn drawing_snapshot(drawing: &Drawing<DrawingTool>) -> DrawingSnapshot {
     DrawingSnapshot {
         drawing_id: WireU64::new(drawing.id.0),
         tool_id: drawing.tool.id().to_owned(),
         band: drawing_band_name(&drawing.band).to_owned(),
-        annotation_band: quantick_control_handlers::annotate::annotation_band(&drawing.band),
+        annotation_band: crate::annotate::annotation_band(&drawing.band),
         scope: match drawing.scope {
             DrawingScope::ThisChart => "this_chart",
             DrawingScope::AllCharts => "all_charts",

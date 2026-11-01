@@ -17,7 +17,9 @@
 //! Nothing here reads a clock: a handler that stamps an event or a page is
 //! handed the time, or asks its port to stamp it.
 
+pub mod analysis;
 pub mod annotate;
+pub mod attention;
 pub mod bubble_preset;
 pub mod bubble_scale;
 pub mod chart;
@@ -27,14 +29,18 @@ pub mod history;
 pub mod journal_sessions;
 pub mod notify;
 pub mod opening_scale;
+pub mod orderflow;
 pub mod pnl_display;
 pub mod recovery;
+pub mod semantic;
+pub mod session;
 mod tabs;
 pub mod tape_fold;
 pub mod tape_view_set;
 pub mod ticket_money;
+pub mod trade;
 
-pub use tabs::{TabDirectory, tab_index};
+pub use tabs::{JournalAccess, TabDirectory, tab_index};
 
 #[cfg(test)]
 mod test_support;

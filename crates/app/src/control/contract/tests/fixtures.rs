@@ -36,7 +36,7 @@ pub(super) fn request(capability: &str, payload: Value) -> RequestEnvelope {
 }
 
 pub(super) fn mark_output() -> Value {
-    serde_json::to_value(crate::control::actions::MarkResult {
+    serde_json::to_value(quantick_control_handlers::attention::MarkResult {
         sequence: WireU64::new(1),
         target: crate::control::interaction::CursorSnapshot {
             active_tab_id: WireU64::new(1),

@@ -8,11 +8,12 @@ use quantick_control::{
     registry::{CapabilityDescriptor, ModuleDescriptor, RegistryError},
 };
 use quantick_control_host::{
-    actions::{ActionHandler, ActionRegistry},
+    actions::{ActionHandler, ActionRegistry, ActionResolver},
     projection::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
 };
 use schemars::JsonSchema;
 use serde::Serialize;
+use serde_json::Value;
 
 /// Somewhere an action family docks its capabilities, over host `H` and
 /// access `A`.
@@ -31,6 +32,17 @@ pub trait ActionDock<H: ?Sized, A> {
         descriptor: CapabilityDescriptor,
         handler: ActionHandler<H, A>,
     ) -> Result<(), RegistryError>;
+
+    /// Dock one action whose input is settled against live state first:
+    /// `resolve` turns what the caller wrote into what will happen, and the
+    /// control trace records that, validated by `canonical_schema`.
+    fn register_resolved(
+        &mut self,
+        descriptor: CapabilityDescriptor,
+        handler: ActionHandler<H, A>,
+        resolve: ActionResolver<H>,
+        canonical_schema: Value,
+    ) -> Result<(), RegistryError>;
 }
 
 impl<H: ?Sized, A> ActionDock<H, A> for ActionRegistry<H, A> {
@@ -48,6 +60,16 @@ impl<H: ?Sized, A> ActionDock<H, A> for ActionRegistry<H, A> {
         handler: ActionHandler<H, A>,
     ) -> Result<(), RegistryError> {
         ActionRegistry::register_outside_replay(self, descriptor, handler)
+    }
+
+    fn register_resolved(
+        &mut self,
+        descriptor: CapabilityDescriptor,
+        handler: ActionHandler<H, A>,
+        resolve: ActionResolver<H>,
+        canonical_schema: Value,
+    ) -> Result<(), RegistryError> {
+        ActionRegistry::register_resolved(self, descriptor, handler, resolve, canonical_schema)
     }
 }
 

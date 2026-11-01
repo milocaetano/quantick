@@ -1,6 +1,7 @@
 //! Which tab a call names: the one port every tab-scoped family shares.
 
 use quantick_control::{error::ControlError, wire::WireU64};
+use quantick_control_host::journal::NewEvent;
 
 /// The window's tabs as a call addresses them: by stable id, by position,
 /// and the one the trader is looking at.
@@ -29,4 +30,11 @@ pub fn tab_index<P: TabDirectory + ?Sized>(
 /// acts — the words every tab-scoped action uses.
 pub(crate) fn tab_closed() -> ControlError {
     ControlError::invalid_request("the tab closed while the call ran")
+}
+
+/// What an action needs of the control access it journals through.
+pub trait JournalAccess {
+    /// Journal one event, stamped by the access's own clock; answers its
+    /// sequence.
+    fn record_event(&mut self, event: NewEvent) -> WireU64;
 }
