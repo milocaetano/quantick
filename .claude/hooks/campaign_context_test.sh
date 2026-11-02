@@ -231,4 +231,37 @@ identity feature/test "$head" "$base"
 rm "$git_dir/mission-tier"
 stamp
 allow 'feature merge with the mission reviews' gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
+# A plain /implement PR into a feat/* or feature/* branch: no parent, no grant.
+git -C "$fixture/repo" update-ref refs/remotes/origin/feat/test "$base"
+rm -f "$git_dir/arch-review-ok" "$git_dir/delivery-review-ok" "$git_dir/ai-review-complete"
+for target in feat/test feature/test; do
+    printf 'feat/child origin/%s none none\n' "$target" > "$git_dir/mission-base"
+    printf 'feat/child implement\n' > "$git_dir/mission-tier"
+    rm -f "$git_dir/code-review-ok"
+    allow "$target is the review base" test "$(sh "$helper" base "$fixture/repo")" = "origin/$target"
+    allow "$target needs the code-review first" gate Bash "gh pr create --base $target" deny code-review-ok
+    sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
+    allow "$target opens its PR after review" gate Bash "gh pr create --base $target" allow
+    allow "$target accepts the equals form" gate Bash "gh pr create --base=$target" allow
+    allow "$target accepts the short form" gate Bash "gh pr create -B $target" allow
+    allow "$target refuses the default main base" gate Bash 'gh pr create --title x' deny "--base $target"
+    allow "$target refuses another base" gate Bash 'gh pr create --base main' deny "--base $target"
+    allow "$target refuses a longer name" gate Bash "gh pr create --base $target-2" deny "--base $target"
+    allow "$target marks ready on the marker alone" gate Bash 'gh pr ready 42' allow
+    allow "$target merge stays the user's" \
+        gate Bash "gh pr merge 42 --merge --match-head-commit $head" deny "Merge to $target"
+    git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$head"
+    allow "$target advancing stales the review" gate Bash "gh pr create --base $target" deny code-review-ok
+    git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$base"
+    rm "$git_dir/mission-tier"
+    allow "$target without the tier keeps the mission reviews" gate Bash 'gh pr ready 42' deny arch-review-ok
+done
+printf 'feat/child origin/feat/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
+reject 'a feat base takes no parent' sh "$helper" base "$fixture/repo"
+printf 'feat/child origin/feature/test none https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
+reject 'no parent cannot carry a grant' sh "$helper" base "$fixture/repo"
+printf 'feat/child origin/campaign/test none none\n' > "$git_dir/mission-base"
+reject 'a campaign base still needs its parent' sh "$helper" base "$fixture/repo"
+printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
+reject 'a feature child is not a plain implement target' sh "$helper" implement-target "$fixture/repo"
 printf '%s campaign context tests passed\n' "$passed"

@@ -807,18 +807,29 @@ pr_gate() {
 
     # An `implement` branch trades the mission's reviews for one code-review,
     # owed before any PR opens, draft included. Green CI and the user's own
-    # merge are what protect `main` past it. Only against `main`: a campaign
+    # merge are what protect `main` past it. Against `main`, or a feat/* or
+    # feature/* branch recorded with no parent issue; a campaign or /feature
     # base keeps its own authorization and identity checks in the full gate.
+    implement_base=$(review_base "$dir" 2>/dev/null) || implement_base=
     if [ "$(declared_tier "$dir")" = "$IMPLEMENT_TIER" ] &&
-        [ "$(review_base "$dir" 2>/dev/null)" = "origin/$MAIN_BRANCH" ]; then
-        implement_base="origin/$MAIN_BRANCH"
+        { [ "$implement_base" = "origin/$MAIN_BRANCH" ] ||
+            sh "$(dirname "$0")/campaign_context.sh" implement-target "$dir" >/dev/null 2>&1; }; then
+        implement_target=${implement_base#origin/}
+        # `gh pr create` defaults to `main`, which would carry the target's
+        # whole stack into a PR nobody meant to open.
+        if [ "$gate_action" = create ] && [ "$implement_target" != "$MAIN_BRANCH" ]; then
+            case " $(gh_statement "$command" "gh pr create" | tr -d "\"'\\\\") " in
+                *" --base $implement_target "*|*" --base=$implement_target "*|*" -B $implement_target "*) ;;
+                *) deny "\"This branch targets $implement_target: run \`gh pr create --base $implement_target\`.\"" ;;
+            esac
+        fi
         implement_key=$(review_key "$dir")
         [ -n "$implement_key" ] || implement_key=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
         require_marker "$dir" "$implement_key" "$IMPLEMENT_MARKER" \
             "an implement branch opens its PR only after code-review" \
             "Run the code-review skill over \`git diff $implement_base...HEAD\` and fix its valid findings"
         if [ "$gate_action" = merge ]; then
-            deny '"Merge to main is reserved exclusively for the user; do not enable auto-merge or enqueue it."'
+            deny "\"Merge to $implement_target is reserved exclusively for the user; do not enable auto-merge or enqueue it.\""
         fi
         pass_pr_gate "$dir"
     fi

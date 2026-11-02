@@ -18,9 +18,17 @@ if [ -e "$context_file" ]; then
     [ "$(wc -l < "$context_file" | tr -d ' ')" = 1 ] || fail 'Invalid campaign context record.'
     read -r recorded_branch context_base context_parent context_grant extra < "$context_file"
     [ "$recorded_branch" = "$context_branch" ] && [ -z "$extra" ] || fail 'Campaign context belongs to another branch or is malformed.'
-    case "$context_base" in origin/campaign/?*|origin/feature/?*) ;; *) fail 'Campaign base must be an explicit origin/campaign or origin/feature branch.' ;; esac
+    case "$context_base" in origin/campaign/?*|origin/feature/?*|origin/feat/?*) ;; *) fail 'Campaign base must be an explicit origin/campaign, origin/feature or origin/feat branch.' ;; esac
     git check-ref-format "refs/remotes/$context_base" >/dev/null || fail 'Invalid campaign base ref.'
-    printf '%s\n' "$context_parent" | grep -Eq '^https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[0-9]+$' || fail 'Campaign parent must be an issue URL.'
+    # A plain /implement PR names no parent and so can hold no merge grant. A
+    # feat/* base is only ever that; feature/* is that or a /feature child.
+    if [ "$context_parent" = none ]; then
+        case "$context_base" in origin/campaign/*) fail 'Campaign parent must be an issue URL.' ;; esac
+        [ "$context_grant" = none ] || fail 'A base without a parent issue cannot carry a merge grant.'
+    else
+        case "$context_base" in origin/feat/*) fail 'A feat base takes no parent issue.' ;; esac
+        printf '%s\n' "$context_parent" | grep -Eq '^https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[0-9]+$' || fail 'Campaign parent must be an issue URL.'
+    fi
     if [ "$context_grant" != none ]; then
         printf '%s\n' "$context_grant" | grep -Eq '^https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[0-9]+(#issuecomment-[0-9]+)?$' || fail 'Campaign merge grant must reference a persisted user decision.'
     fi
@@ -74,5 +82,10 @@ case "$operation" in
         context_body=$(cd "$context_dir" && gh issue view "$context_parent" --json body --jq .body) || fail 'Cannot read the feature parent issue.'
         case "$context_body" in *'<!-- quantick-feature:v1 -->'*) ;; *) fail 'The parent issue is not a feature parent.' ;; esac
         ;;
-    *) fail 'Usage: campaign_context.sh base|key|feature|check-pr WORKTREE [PR ready|merge]' ;;
+    implement-target)
+        # A plain /implement PR into a feat/* or feature/* branch: a record
+        # exists and names no parent, so only the user can merge it.
+        [ -e "$context_file" ] && [ "$context_parent" = none ] || fail 'Not a plain implement target.'
+        ;;
+    *) fail 'Usage: campaign_context.sh base|key|feature|implement-target|check-pr WORKTREE [PR ready|merge]' ;;
 esac
