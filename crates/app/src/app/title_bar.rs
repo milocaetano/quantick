@@ -48,6 +48,8 @@ fn send_state(ctx: &egui::Context, state: WindowState) {
 pub(super) const HEIGHT: f32 = 36.0;
 pub(super) const WINDOW_BUTTON_WIDTH: f32 = 46.0;
 const DRAG_WIDTH: f32 = 32.0;
+/// The window buttons' strokes, at the size the Windows Terminal draws its own.
+const WINDOW_GLYPH_PX: f32 = 10.0;
 /// Keeps the drag region's edge off the `+`, so a press on one never reads as
 /// the other.
 const DRAG_GAP: f32 = 1.0;
@@ -211,14 +213,17 @@ pub(crate) fn draw(
 /// The `⋮` button. Returns whether it was pressed.
 fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
     let glyph = egui::RichText::new(super::menu_bar::KEBAB_GLYPH).size(KEBAB_GLYPH_PX);
+    let surface = ui.painter().add(egui::Shape::Noop);
     let button = ui
         .add_sized(
             [KEBAB_WIDTH, crate::tabstrip::CHIP_HEIGHT],
-            egui::Button::new(glyph)
-                .frame(false)
-                .selected(title.menu_open),
+            egui::Button::new(glyph).frame(false),
         )
         .on_hover_text("Window menu (F10)");
+    if title.menu_open {
+        let fill = egui::Shape::rect_filled(button.rect, 0.0, theme::CHROME);
+        ui.painter().set(surface, fill);
+    }
     let bounds = button.rect.intersect(ui.clip_rect());
     if bounds.is_positive() {
         title.controls.push((KEBAB_CONTROL, bounds));
@@ -289,11 +294,14 @@ fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> eg
     }
     let ink = if id == "close" && (response.hovered() || response.has_focus()) {
         theme::ink_on(theme::WARN)
-    } else {
+    } else if response.hovered() || response.has_focus() {
         theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
     };
-    let stroke = egui::Stroke::new(1.5_f32, ink);
-    let icon = egui::Rect::from_center_size(response.rect.center(), egui::vec2(14.0, 14.0));
+    let stroke = egui::Stroke::new(1.0_f32, ink);
+    let icon =
+        egui::Rect::from_center_size(response.rect.center(), egui::Vec2::splat(WINDOW_GLYPH_PX));
     match id {
         "minimize" => {
             ui.painter()

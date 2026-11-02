@@ -49,13 +49,14 @@ pub(in crate::app) struct WindowMenuState {
 }
 
 impl WindowMenuState {
-    /// Open or close the menu on this window, its first row ready for the keys.
-    pub(in crate::app) fn toggle(&mut self, viewport: egui::ViewportId) {
+    /// Open or close the menu on this window. Opened from the keyboard, its first
+    /// row is ready for the keys; opened by the mouse, no row wears a focus ring.
+    pub(in crate::app) fn toggle(&mut self, viewport: egui::ViewportId, by_keyboard: bool) {
         let open = !self.open;
         self.close();
         self.open = open;
         self.viewport = Some(viewport);
-        self.focus_pane = open.then_some(0);
+        self.focus_pane = (open && by_keyboard).then_some(0);
     }
 
     fn close(&mut self) {
@@ -135,6 +136,10 @@ impl WindowMenu<'_> {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                         ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+                        // Rows read as lines of a list until the pointer is on one.
+                        let idle = &mut ui.visuals_mut().widgets.inactive;
+                        idle.weak_bg_fill = egui::Color32::TRANSPARENT;
+                        idle.bg_stroke = egui::Stroke::NONE;
                         for item in items {
                             match *item {
                                 Item::Separator => {
@@ -247,7 +252,8 @@ impl WindowMenu<'_> {
         };
         let mut button = egui::Button::new(label).selected(self.selected(id));
         if let Some(shortcut) = shortcut_of(id) {
-            button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
+            let keys = ui.ctx().format_shortcut(&shortcut).replace("Comma", ",");
+            button = button.shortcut_text(keys);
         }
         let mut response = ui.add_enabled(self.enabled(id), button);
         if let Some(hover) = row.hover {

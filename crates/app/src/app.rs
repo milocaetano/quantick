@@ -767,6 +767,7 @@ impl eframe::App for QuantickApp {
                 ScriptedMenu::History => self.chrome.history_menu_rect,
             }
             .map(|rect| rect.center())
+            && self.chrome.harness.menu_button_settled(position)
         {
             self.chrome.harness.menu_pressed(position);
             raw_input.events.push(egui::Event::PointerMoved(position));

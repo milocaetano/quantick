@@ -183,7 +183,7 @@ impl QuantickApp {
         let action = super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar);
         super::native_windows::apply_tab_action(self, action);
         if std::mem::take(&mut self.chrome.title_bar.kebab_clicked) {
-            self.chrome.window_menu.toggle(ctx.viewport_id());
+            self.chrome.window_menu.toggle(ctx.viewport_id(), false);
         }
         if std::mem::take(&mut self.chrome.title_bar.agent_clicked) {
             commands.push(MenuCommand::OpenAgentAccess);
@@ -221,7 +221,7 @@ impl QuantickApp {
     fn apply_menu_command_on(&mut self, ctx: &egui::Context, command: MenuCommand) {
         let viewport = ctx.viewport_id();
         match command {
-            MenuCommand::ToggleWindowMenu => self.chrome.window_menu.toggle(viewport),
+            MenuCommand::ToggleWindowMenu => self.chrome.window_menu.toggle(viewport, true),
             MenuCommand::OpenSettings => {
                 self.chrome.window_menu.viewport = Some(viewport);
                 self.chrome.window_menu.settings_open = true;
