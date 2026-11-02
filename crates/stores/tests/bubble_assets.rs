@@ -463,11 +463,12 @@ fn a_presets_old_tape_fold_closes_once_and_a_pick_after_reopening_does_not() {
         "saved without"
     );
 
-    // Opened on it: closed, and waiting for the layer restore to have spoken.
+    // Opened on it and worn: waiting for the layer restore to have spoken.
     let mut config = HeatmapConfig::default();
     let mut look = BubbleLook::open((presets.clone(), PresetSource::Embedded, None), &mut config);
-    assert_eq!(config.live_lane.view(), LaneView::CandlesOnly);
     assert_eq!(config.live_lane.width_share, 0.42);
+    assert_eq!(config.live_lane.view(), LaneView::Beside, "not worn yet");
+    look.wear(&declared_look(&presets, "old"), false, &mut config);
     config.live_lane.restore_enabled(true);
     assert!(look.take_old_tape_fold(&config), "it survives the restore");
     assert!(look.apply_preset("old", &mut config, false));
@@ -491,6 +492,133 @@ fn a_presets_old_tape_fold_closes_once_and_a_pick_after_reopening_does_not() {
     // A hand-edited switch is ignored, at every pick.
     assert!(look.apply_preset("off", &mut config, false));
     assert_eq!(config.live_lane.view(), LaneView::Beside, "no old fold");
+}
+
+/// A folder of this test's own under the build's temporary directory, empty.
+fn scratch_folder(name: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch folder");
+    dir
+}
+
+fn declared_look(presets: &BubblePresetFile, name: &str) -> AssetBubbles {
+    AssetBubbles::declared(presets.get(name).expect("the preset"), false)
+}
+
+/// Spending a preset's old closed tape rewrites the file it came from, so a launch,
+/// a new tab or a reload reads no fold and leaves a tape reopened since alone. The
+/// other look in the file survives the rewrite.
+#[test]
+fn a_spent_preset_fold_leaves_the_file_and_stays_gone_across_a_reload() {
+    let dir = scratch_folder("old-preset-fold");
+    let path = dir.join("bubbles.toml");
+    std::fs::write(&path, OLD_PRESET).expect("an old file");
+
+    let mut config = HeatmapConfig::default();
+    let loaded = bubble_presets::load_from(Some(path.clone()));
+    let mut look = BubbleLook::open(loaded, &mut config);
+    let worn = declared_look(look.presets(), "old");
+    look.wear(&worn, false, &mut config);
+    assert!(look.take_old_tape_fold(&config), "closed the once");
+
+    let text = std::fs::read_to_string(&path).expect("rewritten");
+    assert!(!text.contains("fold ="), "{text}");
+    let reread = bubble_presets::load_from(Some(path.clone())).0;
+    assert!(reread.get("off").is_some() && reread.active == "old");
+    assert_eq!(reread.get("old").unwrap().live_lane.width_share, 0.42);
+
+    // The next launch or tab, and a reload on the view: the reopened tape stays.
+    let mut config = HeatmapConfig::default();
+    let loaded = bubble_presets::load_from(Some(path.clone()));
+    let mut look = BubbleLook::open(loaded, &mut config);
+    look.wear(&worn, false, &mut config);
+    assert!(!look.take_old_tape_fold(&config), "nothing left to close");
+    look.reload(bubble_presets::load_from(Some(path.clone())), &mut config);
+    assert_eq!(config.live_lane.view(), LaneView::Beside);
+
+    // Spent by a pick, the same rewrite.
+    std::fs::write(&path, OLD_PRESET).expect("an old file");
+    let mut config = HeatmapConfig::default();
+    let loaded = bubble_presets::load_from(Some(path.clone()));
+    let mut look = BubbleLook::open(loaded, &mut config);
+    assert!(look.apply_preset("old", &mut config, false));
+    assert_eq!(config.live_lane.view(), LaneView::CandlesOnly, "the pick");
+    let text = std::fs::read_to_string(&path).expect("rewritten");
+    assert!(!text.contains("fold ="), "{text}");
+    std::fs::remove_dir_all(&dir).expect("the scratch folder goes");
+}
+
+/// The active preset's old fold is that look's: a tab wearing an asset's own look
+/// neither closes nor files it, and it waits for the look that holds it. A look worn
+/// over a tape still waiting ends that wait too.
+#[test]
+fn a_preset_fold_never_reaches_an_asset_wearing_another_look() {
+    let presets = bubble_presets::parse(OLD_PRESET).expect("reads");
+    let mut config = HeatmapConfig::default();
+    let mut look = BubbleLook::open((presets.clone(), PresetSource::Embedded, None), &mut config);
+    let (other, old) = (
+        declared_look(&presets, "off"),
+        declared_look(&presets, "old"),
+    );
+    look.wear(&other, false, &mut config);
+    assert_eq!(config.live_lane.view(), LaneView::Beside);
+    assert_eq!(look.settings(&config, false, false).fold, LaneFold::Open);
+    assert!(!look.take_old_tape_fold(&config), "not this asset's tape");
+    assert!(look.presets().get("old").unwrap().live_lane.old_tape_fold.0);
+
+    look.wear(&old, false, &mut config);
+    look.wear(&other, false, &mut config);
+    assert_eq!(look.settings(&config, false, false).fold, LaneFold::Open);
+    assert!(!look.take_old_tape_fold(&config), "the wait ended with it");
+}
+
+/// A fold held only in an asset's `look.live_lane` leaves the store file at the first
+/// filing, whichever view won: no later launch reads it again.
+#[test]
+fn an_assets_look_marker_leaves_the_store_and_never_closes_again() {
+    for tape_only in [false, true] {
+        let dir = scratch_folder(&format!("old-look-fold-{tape_only}"));
+        let path = dir.join("assets.toml");
+        let (_, declared) = bind(&memory(), "BTCUSDT");
+        let mut file = AssetBubblesFile::default();
+        let off = AssetBubbles {
+            bubbles: false,
+            ..declared.clone()
+        };
+        assert!(file.record("BTCUSDT", &off, &declared));
+        let text = bubble_assets::render(&file).expect("the store renders");
+        let table = "[assets.BTCUSDT.look.live_lane]\n";
+        let old = text.replacen(table, &format!("{table}fold = \"tape\"\n"), 1);
+        assert_ne!(old, text, "the look's lane table is where it is expected");
+        std::fs::write(&path, old).expect("an old store");
+
+        let store = AssetBubblesStore::load(path.clone()).shared();
+        let (binding, stored) = bind(&store, "BTCUSDT");
+        assert!(stored.look.live_lane.old_tape_fold.0, "the marker alone");
+        let (mut look, mut config) = btc_screen(&declared);
+        look.bind(binding);
+        look.wear(&stored, false, &mut config);
+        config.live_lane.tape_only = tape_only;
+        let closes = look.take_old_tape_fold(&config);
+        assert_eq!(closes, !tape_only, "tape only won");
+        if closes {
+            config.live_lane.set_view(LaneView::CandlesOnly);
+        }
+        look.sync(&config, stored.candle_aggression, false);
+        look.settle_old_tape_fold(&config);
+        config.live_lane.set_view(LaneView::Beside);
+        look.sync(&config, stored.candle_aggression, false);
+        store.borrow_mut().flush();
+
+        let written = std::fs::read_to_string(&path).expect("the store");
+        assert!(!written.contains("fold ="), "{written}");
+        let reopened = AssetBubblesStore::load(path).shared();
+        let (_, again) = bind(&reopened, "BTCUSDT");
+        assert_eq!(again.fold, LaneFold::Open);
+        assert!(!again.look.live_lane.old_tape_fold.0);
+        std::fs::remove_dir_all(&dir).expect("the scratch folder goes");
+    }
 }
 
 /// A fold's own view, tape only won over a candle fold saved with it too: the view

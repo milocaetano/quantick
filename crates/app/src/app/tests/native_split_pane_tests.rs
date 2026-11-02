@@ -132,6 +132,57 @@ fn dragging_the_candles_pans_them_and_the_shared_axis_but_never_the_tapes_time()
     );
 }
 
+/// With the tape off the time labels and the candles share the right edge left of
+/// the rail, so every label stands exactly under its bar.
+#[test]
+fn candles_only_time_labels_stand_under_their_bars() {
+    let (mut app, _commands) = app_with_history(50);
+    let ctx = egui::Context::default();
+    pin_frame_clock(&ctx);
+    switch_layer(&mut app, ChartLayer::TapeChart, false);
+    run_frame(&mut app, &ctx);
+    // A spacing the rail's 8 px is no whole number of bars of, so a shifted label
+    // cannot land on a neighbour.
+    let px_per_bar = 11.0;
+    let flow = &mut app.active_tab_mut().flow_pane;
+    flow.model.viewport.set_px_per_bar(px_per_bar);
+    let output = run_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane;
+    let frame = &pane.frame;
+    let strip = frame.time_strip.expect("the draw published the strip");
+    let candles_right = frame.candles_right.expect("the rail");
+    assert!(
+        candles_right < strip.right(),
+        "the rail stands left of the edge"
+    );
+    let (viewport, total) = (pane.shown_viewport(), pane.slots());
+    let bars: Vec<f32> = (0..total)
+        .map(|index| viewport.x_center(index, candles_right, total))
+        .collect();
+    let labels: Vec<f32> = output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if strip.contains(text.visual_bounding_rect().center()) => {
+                Some(text.visual_bounding_rect().center().x)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(!labels.is_empty(), "the strip writes its clock");
+    // The bars' own stretch: the strip's captions stand off to the left of it.
+    let first_bar = bars[0] - px_per_bar;
+    let labels: Vec<f32> = labels.into_iter().filter(|x| *x >= first_bar).collect();
+    assert!(!labels.is_empty(), "a label stands under the bars");
+    for x in labels {
+        let nearest = bars
+            .iter()
+            .map(|bar| (bar - x).abs())
+            .fold(f32::MAX, f32::min);
+        assert!(nearest <= 1.0, "label at {x} is {nearest} px off its bar");
+    }
+}
+
 /// The native tape advances on the market clock beside the candles, as the
 /// tape-only pane's did; an ordinary lane still never receives it.
 #[test]

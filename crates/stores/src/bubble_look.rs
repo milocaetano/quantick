@@ -8,7 +8,8 @@
 //! to the caller, who puts it on screen and tells its worker
 //! ([`BubbleLook::follow_declared`], [`BubbleLook::sync`]). Saving and
 //! reloading take the presets file's writer and reader from the caller,
-//! which resolves where the file lives.
+//! which resolves where the file lives; only spending an old fold rewrites the
+//! file it was read from.
 
 use std::path::PathBuf;
 
@@ -16,7 +17,7 @@ use quantick_orderflow::{HeatmapConfig, LaneFold, LaneView, LaneWindow};
 
 use crate::bubble_asset_store::{Adoption, AssetBinding, RunHold, SaveSwitch};
 use crate::bubble_assets::AssetBubbles;
-use crate::bubble_presets::{BubblePreset, BubblePresetFile, PresetSource};
+use crate::bubble_presets::{BubblePreset, BubblePresetFile, PresetSource, save_to};
 mod preset;
 mod tick;
 pub use preset::PRESET_PAGE_MAX;
@@ -42,7 +43,7 @@ pub struct Worn {
 enum OldTape {
     #[default]
     Gone,
-    /// Worn or read, and not yet closed.
+    /// Worn, and not yet closed.
     Waiting,
     /// Closed on this view, and not yet in the layer file.
     Closed,
@@ -81,10 +82,7 @@ impl BubbleLook {
     /// file is the record of how the tape should look, so the chart opens on
     /// it instead of the compiled defaults.
     #[must_use]
-    pub fn open(
-        (mut presets, source, load_error): LoadedPresets,
-        config: &mut HeatmapConfig,
-    ) -> Self {
+    pub fn open((presets, source, load_error): LoadedPresets, config: &mut HeatmapConfig) -> Self {
         let status = load_error.map(|message| {
             log_unreadable(&message);
             format!("presets not loaded — {message}")
@@ -105,12 +103,6 @@ impl BubbleLook {
             "bubble presets resolved"
         );
         let name_draft = presets.active.clone();
-        let old_tape = if presets.spend_old_tape_fold(&name_draft) {
-            config.live_lane.set_view(LaneView::CandlesOnly);
-            OldTape::Waiting
-        } else {
-            OldTape::Gone
-        };
         Self {
             presets,
             source,
@@ -118,7 +110,7 @@ impl BubbleLook {
             status,
             look_name,
             asset: None,
-            old_tape,
+            old_tape: OldTape::Gone,
             held: RunHold::default(),
             lane_setting: config.live_lane.window,
         }
@@ -249,8 +241,10 @@ impl BubbleLook {
     /// view's own gestures put them, and what a launch hook holds stays. An old
     /// file's closed side opens as that view: the candles' now, filed away at the
     /// next sync; the tape's through [`Self::take_old_tape_fold`] once layer
-    /// visibility is restored, and kept until [`Self::settle_old_tape_fold`]. The
-    /// flow pane's opening rule is the caller's to apply.
+    /// visibility is restored, and kept until [`Self::settle_old_tape_fold`]. Any
+    /// other look ends a tape still waiting: an old preset's fold is that look's
+    /// alone, and a store keeps its own until it is filed away. The flow pane's
+    /// opening rule is the caller's to apply.
     pub fn wear(
         &mut self,
         settings: &AssetBubbles,
@@ -260,19 +254,18 @@ impl BubbleLook {
         let (window, width_share) = (config.live_lane.window, config.live_lane.width_share);
         settings.look.apply_to(config);
         let marked = settings.look.live_lane.old_tape_fold.0;
+        let spent = self.spend_old_tape_fold(&settings.look.name);
         if marked {
-            self.presets.spend_old_tape_fold(&settings.look.name);
+            self.note_edit();
         }
         if keep_navigation {
             config.live_lane.window = window;
             config.live_lane.width_share = width_share;
         }
-        if marked || settings.fold == LaneFold::Tape {
+        if marked || spent || settings.fold == LaneFold::Tape {
             self.old_tape = OldTape::Waiting;
         } else {
-            if self.old_tape == OldTape::Closed {
-                self.old_tape = OldTape::Gone;
-            }
+            self.old_tape = OldTape::Gone;
             config.live_lane.read_old_fold(settings.fold);
             if !settings.fold.is_open() {
                 self.note_edit();
@@ -417,7 +410,7 @@ impl BubbleLook {
             return false;
         };
         dress(&preset, config, spheres);
-        if self.presets.spend_old_tape_fold(name) {
+        if self.spend_old_tape_fold(name) {
             config.live_lane.set_view(LaneView::CandlesOnly);
         }
         self.look_name = preset.name.clone();
@@ -508,6 +501,22 @@ impl BubbleLook {
         let asset = self.asset.as_ref();
         let refusal = asset.and_then(|asset| asset.refuses_preset_name(name, &self.presets));
         refusal.map(|refusal| self.status = Some(refusal)).is_some()
+    }
+
+    /// Spend the old closed tape of the preset under `name`: whether it had one.
+    /// The file it was read from is rewritten at once, as any save writes it, or
+    /// every later read would hold the fold again and close a tape reopened since.
+    fn spend_old_tape_fold(&mut self, name: &str) -> bool {
+        if !self.presets.spend_old_tape_fold(name) {
+            return false;
+        }
+        if let PresetSource::EnvPath(path) | PresetSource::WorkingDir(path) = &self.source {
+            let path = path.clone();
+            self.persist(format!("'{name}' old fold spent"), |file| {
+                save_to(path, file)
+            });
+        }
+        true
     }
 
     fn persist(

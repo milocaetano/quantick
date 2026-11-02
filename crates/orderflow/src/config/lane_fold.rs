@@ -102,18 +102,11 @@ impl MarketHold {
 }
 
 /// A file's old `fold = "tape"`, read and not yet carried out. Runtime only, like
-/// the hold, and never written. It says nothing about the look, so two lanes differ
-/// by it in no comparison; the bubble look spends it, once.
-#[derive(Debug, Clone, Copy, Default)]
+/// the hold, and never written. Compared, so a store entry holding it differs from
+/// what the view files and the next filing writes it out; the bubble look spends
+/// it, once.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OldTapeFold(pub bool);
-
-impl PartialEq for OldTapeFold {
-    fn eq(&self, _: &Self) -> bool {
-        true
-    }
-}
-
-impl Eq for OldTapeFold {}
 
 /// Where a closed side's rail is, in pixels from the chart's left edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
