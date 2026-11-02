@@ -24,7 +24,7 @@ fn frame(
 }
 
 #[test]
-fn native_resize_all_edges_and_both_arms_of_each_corner_emit_the_native_direction() {
+fn native_resize_all_edges_and_both_arms_of_each_free_corner_emit_the_native_direction() {
     use egui::CursorIcon as C;
     for width in [300.0, 1200.0] {
         let (mut app, _, _, _) = test_app();
@@ -39,8 +39,6 @@ fn native_resize_all_edges_and_both_arms_of_each_corner_emit_the_native_directio
             (2.0, 8.0, D::NorthWest, C::ResizeNwSe),
             (8.0, 2.0, D::NorthWest, C::ResizeNwSe),
             (width / 2.0, 2.0, D::North, C::ResizeVertical),
-            (width - 8.0, 2.0, D::NorthEast, C::ResizeNeSw),
-            (width - 2.0, 8.0, D::NorthEast, C::ResizeNeSw),
             (2.0, 380.0, D::West, C::ResizeHorizontal),
             (width - 2.0, 380.0, D::East, C::ResizeHorizontal),
             (2.0, 752.0, D::SouthWest, C::ResizeNeSw),

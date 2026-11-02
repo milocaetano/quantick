@@ -139,6 +139,11 @@ const WINDOW_MENU_SHORTCUT: egui::KeyboardShortcut =
 const SETTINGS_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Comma);
 
+/// A shortcut as the chrome prints it, with the one key egui spells out.
+fn shortcut_text(ctx: &egui::Context, shortcut: &egui::KeyboardShortcut) -> String {
+    ctx.format_shortcut(shortcut).replace("Comma", ",")
+}
+
 impl QuantickApp {
     /// The tape key, on a focused flow pane: tape only, and from there back
     /// beside the candles. Consumed whatever the focus, before `Ctrl+T` is read:
@@ -174,7 +179,11 @@ impl QuantickApp {
             self.apply_menu_command_on(ctx, command);
         }
 
-        self.chrome.title_bar.menu_open = self.chrome.window_menu.open;
+        self.chrome.title_bar.menu_open = self.chrome.window_menu.is_open_on(ctx.viewport_id());
+        if self.chrome.title_bar.menu_hint.is_empty() {
+            let keys = shortcut_text(ctx, &WINDOW_MENU_SHORTCUT);
+            self.chrome.title_bar.menu_hint = format!("Window menu ({keys})");
+        }
         self.chrome.title_bar.agent_on = self
             .control
             .control_access
@@ -212,6 +221,7 @@ impl QuantickApp {
             startup_saved: self.runtime.workspace.session().saved(),
             save_on_exit: self.runtime.workspace.session().save_on_exit(),
             recent: self.runtime.workspace.recent_on_disk(),
+            focus_live_row: std::cell::Cell::new(false),
         }
         .show(ctx, &mut state, kebab, commands);
         self.chrome.window_menu = state;
@@ -223,11 +233,11 @@ impl QuantickApp {
         match command {
             MenuCommand::ToggleWindowMenu => self.chrome.window_menu.toggle(viewport, true),
             MenuCommand::OpenSettings => {
-                self.chrome.window_menu.viewport = Some(viewport);
+                self.chrome.window_menu.windows_viewport = Some(viewport);
                 self.chrome.window_menu.settings_open = true;
             }
             MenuCommand::OpenHelp(page) => {
-                self.chrome.window_menu.viewport = Some(viewport);
+                self.chrome.window_menu.windows_viewport = Some(viewport);
                 self.chrome.window_menu.help = Some(page);
             }
             command => self.apply_menu_command(command),

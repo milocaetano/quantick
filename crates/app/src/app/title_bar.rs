@@ -17,6 +17,7 @@ pub(crate) struct TitleBarState {
     /// Local agent access is on, so the strip shows its pill.
     pub(crate) agent_on: bool,
     pub(crate) menu_open: bool,
+    pub(crate) menu_hint: String,
     pub(crate) kebab_clicked: bool,
     pub(crate) agent_clicked: bool,
 }
@@ -219,7 +220,7 @@ fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
             [KEBAB_WIDTH, crate::tabstrip::CHIP_HEIGHT],
             egui::Button::new(glyph).frame(false),
         )
-        .on_hover_text("Window menu (F10)");
+        .on_hover_text(title.menu_hint.as_str());
     if title.menu_open {
         let fill = egui::Shape::rect_filled(button.rect, 0.0, theme::CHROME);
         ui.painter().set(surface, fill);

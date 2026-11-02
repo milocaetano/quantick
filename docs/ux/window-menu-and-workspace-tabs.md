@@ -1,6 +1,7 @@
 # Window menu, Chrome-style tabs and a workspace per tab
 
-Status: design approved by the trader on 2026-10-31, not built yet. This page
+Status: design approved by the trader on 2026-10-31. Phase 1 is being built:
+the strip, the `⋮` menu and the "this tab" row, without per-tab workspaces. This page
 is the brief to implement from; the prototype beside it shows the behaviour.
 It extends [`market-shelf-onboarding.md`](market-shelf-onboarding.md) (Home
 tab, `+` palette, My markets), which stays the brief for the Home page itself.

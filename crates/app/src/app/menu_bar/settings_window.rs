@@ -2,7 +2,9 @@
 //! the Help pages.
 
 use eframe::egui;
-use quantick_control_schema::window_menu::{ABOUT_WORKSPACES, HelpPage};
+use quantick_control_schema::window_menu::{
+    ABOUT_WORKSPACES, HelpPage, PROGRESSIVE_HISTORY_HOVER, VENUE_LEAD_IN_HOVER,
+};
 
 use crate::surfaces::ChartSettingsTab::Candles;
 use crate::timezone::TzOffset;
@@ -18,7 +20,7 @@ use super::{
 const WINDOW_WIDTH_PX: f32 = 420.0;
 
 fn on_this_window(app: &QuantickApp, ctx: &egui::Context) -> bool {
-    app.chrome.window_menu.viewport == Some(ctx.viewport_id())
+    app.chrome.window_menu.windows_viewport == Some(ctx.viewport_id())
 }
 
 /// Draw whichever of the two windows is up.
@@ -76,12 +78,7 @@ fn settings_body(app: &mut QuantickApp, ui: &mut egui::Ui, commands: &mut Vec<Me
     let mut progressive = app.runtime.history.progressive_history;
     if ui
         .checkbox(&mut progressive, "Progressive venue history")
-        .on_hover_text(
-            "Build the venue's candle history from now backwards, a week at \
-             a time, so the chart fills in while the rest arrives. Off asks \
-             for the whole span in one request: fewer calls, nothing on \
-             screen until all of it lands.",
-        )
+        .on_hover_text(PROGRESSIVE_HISTORY_HOVER)
         .changed()
     {
         commands.push(MenuCommand::SetProgressiveHistory(progressive));
@@ -89,16 +86,7 @@ fn settings_body(app: &mut QuantickApp, ui: &mut egui::Ui, commands: &mut Vec<Me
     let mut lead_in = app.runtime.history.venue_lead_in;
     if ui
         .checkbox(&mut lead_in, "Venue candles on charts cut by trades")
-        .on_hover_text(
-            "A tick, volume, dollar or imbalance chart cannot fold venue \
-             candles into its own bars, so it opens holding only the prints \
-             this session saw. Switch this on to put the venue's 1-minute \
-             candles in front of them anyway — counted apart from built bars \
-             on the status bar — so yesterday is on screen to compare \
-             against. They stay candles: a minute never becomes a tick bar, \
-             and an indicator running across the seam is averaging both \
-             kinds.",
-        )
+        .on_hover_text(VENUE_LEAD_IN_HOVER)
         .changed()
     {
         commands.push(MenuCommand::SetVenueLeadIn(lead_in));
@@ -166,7 +154,7 @@ fn shortcuts_body(ui: &mut egui::Ui) {
     egui::Grid::new("window_help_shortcuts").show(ui, |ui| {
         for (label, shortcut) in rows {
             ui.label(label);
-            ui.weak(ui.ctx().format_shortcut(&shortcut));
+            ui.weak(super::shortcut_text(ui.ctx(), &shortcut));
             ui.end_row();
         }
     });

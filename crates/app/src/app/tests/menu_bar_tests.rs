@@ -221,3 +221,54 @@ fn the_toolbar_labels_the_market_instead_of_offering_dropdowns() {
     assert!(painted_text_center(&output, "symbol").is_none());
     assert!(painted_text_center(&output, "feed").is_none());
 }
+
+#[test]
+fn the_kebab_on_another_window_opens_the_menu_there_and_not_on_the_first() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let (first, second) = (
+        egui::ViewportId::ROOT,
+        egui::ViewportId::from_hash_of("second"),
+    );
+    let menu = &mut app.chrome.window_menu;
+    menu.toggle(first, false);
+    menu.toggle(second, false);
+    assert!(menu.is_open_on(second), "one press is enough");
+    assert!(!menu.is_open_on(first));
+    menu.toggle(second, false);
+    assert!(!menu.open);
+}
+
+#[test]
+fn the_top_right_corner_of_a_restored_window_closes_rather_than_resizes() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let close = app.chrome.title_bar.control_rect("close").unwrap();
+    let corner = close.right_top() + egui::vec2(-1.0, 1.0);
+    run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![
+            egui::Event::PointerMoved(corner),
+            pointer_button(corner, true),
+        ],
+    );
+    let output = run_sized_frame(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        vec![pointer_button(corner, false)],
+    );
+    let commands: Vec<_> = output
+        .viewport_output
+        .values()
+        .flat_map(|viewport| &viewport.commands)
+        .collect();
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Close)),
+        "{commands:?}"
+    );
+}

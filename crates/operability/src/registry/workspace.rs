@@ -26,14 +26,14 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "workspace.export",
         title: "Write the whole cockpit to a file",
-        reach: "window menu, Desk, Export to file…",
+        reach: "window menu, Desk, Export desk to file…",
         keys: &[(Source::MenuEntry, "Export desk to file…")],
         mapping: AUTHORITY_ARBITRARY_PATH,
     },
     UiBehaviour {
         id: "workspace.import",
         title: "Open a cockpit from a file",
-        reach: "window menu, Desk, Open from file…",
+        reach: "window menu, Desk, Import desk from file…",
         keys: &[(Source::MenuEntry, "Import desk from file…")],
         mapping: AUTHORITY_ARBITRARY_PATH,
     },
@@ -59,7 +59,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "workspace.save",
         title: "Remember this arrangement as what quantick opens on",
-        reach: "window menu, Desk, Ctrl+Shift+S",
+        reach: "window menu, Save desk, Ctrl+Shift+S",
         keys: &[
             (Source::Hotkey, "SAVE_WORKSPACE_SHORTCUT"),
             (Source::MenuEntry, "Save desk"),

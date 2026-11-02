@@ -78,7 +78,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         descriptor(
             APPLY_PRESET_CAPABILITY_ID,
             "Apply a layout preset",
-            "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
+            "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the window menu read.",
             generated_schema::<ApplyPresetInput>(),
         ),
         apply_preset,
@@ -195,7 +195,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     // destroys its indicator set and every drawing kept under it, and no
     // effect policy in the control contract allows a destructive capability
     // yet (`contract.rs`, `allows_destructive: false` on all three). The
-    // trader deletes from the strip or the View menu; the operator gets the
+    // trader deletes from the strip or the window menu; the operator gets the
     // call the day the contract grows a confirmed-destructive effect.
     v2::register(registry)
 }
@@ -421,7 +421,7 @@ fn move_pane<P: TabsPort + LayoutPort + ?Sized>(
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let tab_id = app.tab_reads().tabs().id_at(index);
-    // The one reposition path — the same call the View menu takes, which
+    // The one reposition path — the same call the window menu takes, which
     // moves the slot bookkeeping and the drawing keys with the pane.
     let changed = app.layout_adapter().move_context_pane_at(tab_id, from, to);
     result(app, index, changed)

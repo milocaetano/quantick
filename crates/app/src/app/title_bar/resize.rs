@@ -1,4 +1,5 @@
 //! Native resize gestures on the undecorated viewport's outer border.
+use super::{HEIGHT, WINDOW_BUTTON_WIDTH};
 use eframe::egui;
 
 const BORDER: f32 = 4.0;
@@ -29,7 +30,9 @@ pub(super) fn draw(ctx: &egui::Context) {
     use egui::CursorIcon as C;
     use egui::viewport::ResizeDirection as D;
     // Corners are L-shaped: their longer reach stays inside the outer border,
-    // leaving the interiors of title buttons and chart widgets untouched.
+    // leaving chart widgets untouched. The window buttons reach the top right
+    // corner, as the Windows Terminal's do, so no border runs over them: a flick
+    // to that corner closes the window rather than resizing it.
     let regions = [
         (
             D::NorthWest,
@@ -39,22 +42,12 @@ pub(super) fn draw(ctx: &egui::Context) {
         (
             D::North,
             C::ResizeVertical,
-            [x[1], y[0], x[2], y[0] + BORDER],
-        ),
-        (
-            D::NorthEast,
-            C::ResizeNeSw,
-            [x[2], y[0], x[3], y[0] + BORDER],
+            [x[1], y[0], x[3] - 3.0 * WINDOW_BUTTON_WIDTH, y[0] + BORDER],
         ),
         (
             D::NorthWest,
             C::ResizeNwSe,
             [x[0], y[0] + BORDER, x[0] + BORDER, y[1]],
-        ),
-        (
-            D::NorthEast,
-            C::ResizeNeSw,
-            [x[3] - BORDER, y[0] + BORDER, x[3], y[1]],
         ),
         (
             D::West,
@@ -64,7 +57,7 @@ pub(super) fn draw(ctx: &egui::Context) {
         (
             D::East,
             C::ResizeHorizontal,
-            [x[3] - BORDER, y[1], x[3], y[2]],
+            [x[3] - BORDER, bounds.top() + HEIGHT, x[3], y[2]],
         ),
         (
             D::SouthWest,

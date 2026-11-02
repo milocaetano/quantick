@@ -40,6 +40,8 @@ const MAX_SUBMENU_LEVELS: usize = 2;
 pub(in crate::app) struct WindowMenuState {
     pub(in crate::app) open: bool,
     pub(in crate::app) viewport: Option<egui::ViewportId>,
+    /// The window Settings and Help opened on, apart from the menu's own.
+    pub(in crate::app) windows_viewport: Option<egui::ViewportId>,
     pub(in crate::app) settings_open: bool,
     pub(in crate::app) help: Option<HelpPage>,
     path: [Option<SubmenuId>; MAX_SUBMENU_LEVELS],
@@ -52,11 +54,16 @@ impl WindowMenuState {
     /// Open or close the menu on this window. Opened from the keyboard, its first
     /// row is ready for the keys; opened by the mouse, no row wears a focus ring.
     pub(in crate::app) fn toggle(&mut self, viewport: egui::ViewportId, by_keyboard: bool) {
-        let open = !self.open;
+        // Open on another window, this press still opens it here.
+        let open = !self.is_open_on(viewport);
         self.close();
         self.open = open;
         self.viewport = Some(viewport);
         self.focus_pane = (open && by_keyboard).then_some(0);
+    }
+
+    pub(in crate::app) fn is_open_on(&self, viewport: egui::ViewportId) -> bool {
+        self.open && self.viewport == Some(viewport)
     }
 
     fn close(&mut self) {
@@ -80,6 +87,8 @@ pub(super) struct WindowMenu<'a> {
     pub(super) startup_saved: bool,
     pub(super) save_on_exit: bool,
     pub(super) recent: &'a [std::path::PathBuf],
+    /// Whether the next computed row takes the keyboard.
+    pub(super) focus_live_row: std::cell::Cell<bool>,
 }
 
 impl WindowMenu<'_> {
@@ -91,7 +100,7 @@ impl WindowMenu<'_> {
         kebab: egui::Rect,
         commands: &mut Vec<MenuCommand>,
     ) {
-        if !state.open || state.viewport != Some(ctx.viewport_id()) {
+        if !state.is_open_on(ctx.viewport_id()) {
             return;
         }
         let recorded = commands.len();
@@ -149,7 +158,9 @@ impl WindowMenu<'_> {
                                     ui.weak(text);
                                 }
                                 Item::Row(id) => self.row(ui, state, level, id, commands),
-                                Item::Live(rows) => self.live_rows(ui, rows, commands),
+                                Item::Live(rows) => {
+                                    self.live_rows(ui, state, level, rows, commands)
+                                }
                                 Item::Submenu(id) => {
                                     let Some(row) = self.submenu_row(ui, state, level, id) else {
                                         continue;
@@ -214,7 +225,7 @@ impl WindowMenu<'_> {
                 state.path[level + 1] = None;
             }
             state.path[level] = Some(id);
-            if response.clicked() {
+            if response.clicked() && !response.clicked_by(egui::PointerButton::Primary) {
                 state.focus_pane = Some(level + 1);
             }
         }
@@ -252,8 +263,7 @@ impl WindowMenu<'_> {
         };
         let mut button = egui::Button::new(label).selected(self.selected(id));
         if let Some(shortcut) = shortcut_of(id) {
-            let keys = ui.ctx().format_shortcut(&shortcut).replace("Comma", ",");
-            button = button.shortcut_text(keys);
+            button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
         }
         let mut response = ui.add_enabled(self.enabled(id), button);
         if let Some(hover) = row.hover {
@@ -319,7 +329,16 @@ impl WindowMenu<'_> {
         });
     }
 
-    fn live_rows(&self, ui: &mut egui::Ui, rows: LiveRows, commands: &mut Vec<MenuCommand>) {
+    fn live_rows(
+        &self,
+        ui: &mut egui::Ui,
+        state: &mut WindowMenuState,
+        level: usize,
+        rows: LiveRows,
+        commands: &mut Vec<MenuCommand>,
+    ) {
+        let wants_focus = state.focus_pane == Some(level);
+        self.focus_live_row.set(wants_focus);
         match rows {
             LiveRows::LayoutBook => self.layout_book(ui, commands),
             LiveRows::LayoutPresets => self.layout_presets(ui, commands),
@@ -330,6 +349,24 @@ impl WindowMenu<'_> {
             LiveRows::ChartMoves => self.chart_moves(ui, commands),
             LiveRows::RecentFiles => self.recent_files(ui, commands),
         }
+        if wants_focus && !self.focus_live_row.get() {
+            state.focus_pane = None;
+        }
+    }
+
+    /// A computed row, which takes the keyboard when its pane is being entered.
+    fn live_row(
+        &self,
+        ui: &mut egui::Ui,
+        enabled: bool,
+        button: egui::Button<'_>,
+    ) -> egui::Response {
+        let response = ui.add_enabled(enabled, button);
+        if enabled && self.focus_live_row.get() {
+            response.request_focus();
+            self.focus_live_row.set(false);
+        }
+        response
     }
 
     /// The strip's tabs, from the book: switch the focused pane by name,
@@ -340,25 +377,31 @@ impl WindowMenu<'_> {
         for (index, layout) in layouts.iter().enumerate() {
             let mut button = egui::Button::new(layout.name.as_str());
             if let Some(shortcut) = layout_tab_shortcut(index) {
-                button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
+                button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
             }
-            if ui.add(button.selected(layout.id == active)).clicked() {
+            if self
+                .live_row(ui, true, button.selected(layout.id == active))
+                .clicked()
+            {
                 commands.push(MenuCommand::Strip(StripAction::Switch(layout.id)));
             }
         }
         ui.separator();
         let can_add = layouts.len() < crate::layouts::MAX_LAYOUTS;
-        if ui
-            .add_enabled(can_add, egui::Button::new("New layout"))
+        if self
+            .live_row(ui, can_add, egui::Button::new("New layout"))
             .clicked()
         {
             commands.push(MenuCommand::Strip(StripAction::Create));
         }
-        if ui.button("Rename layout…").clicked() {
+        if self
+            .live_row(ui, true, egui::Button::new("Rename layout…"))
+            .clicked()
+        {
             commands.push(MenuCommand::Strip(StripAction::BeginRename(active)));
         }
-        if ui
-            .add_enabled(layouts.len() > 1, egui::Button::new("Delete layout"))
+        if self
+            .live_row(ui, layouts.len() > 1, egui::Button::new("Delete layout"))
             .clicked()
         {
             commands.push(MenuCommand::Strip(StripAction::Delete(active)));
@@ -374,9 +417,9 @@ impl WindowMenu<'_> {
             // binding beside the name.
             let mut button = egui::Button::new(preset.label).selected(current.id == preset.id);
             if let Some(shortcut) = layout_preset_shortcut(index) {
-                button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
+                button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
             }
-            if ui.add(button).clicked() {
+            if self.live_row(ui, true, button).clicked() {
                 commands.push(MenuCommand::ApplyLayoutPreset(preset));
             }
         }
@@ -393,13 +436,9 @@ impl WindowMenu<'_> {
         } else {
             "Hide context charts"
         };
-        if ui
-            .add(
-                egui::Button::new(label)
-                    .shortcut_text(ui.ctx().format_shortcut(&COLLAPSE_CONTEXT_SHORTCUT)),
-            )
-            .clicked()
-        {
+        let button = egui::Button::new(label)
+            .shortcut_text(super::shortcut_text(ui.ctx(), &COLLAPSE_CONTEXT_SHORTCUT));
+        if self.live_row(ui, ui.is_enabled(), button).clicked() {
             commands.push(MenuCommand::ToggleContextCharts);
         }
     }
@@ -410,8 +449,8 @@ impl WindowMenu<'_> {
     fn chart_moves(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
         let context_panes = self.tab.pane_count().saturating_sub(1);
         for slot in 1..=context_panes {
-            let up = ui
-                .add_enabled(slot > 1, egui::Button::new(format!("Chart {slot} up")))
+            let up = self
+                .live_row(ui, slot > 1, egui::Button::new(format!("Chart {slot} up")))
                 .on_disabled_hover_text("already the top chart");
             if up.clicked() {
                 commands.push(MenuCommand::MoveContextChart {
@@ -419,8 +458,9 @@ impl WindowMenu<'_> {
                     to: slot - 1,
                 });
             }
-            let down = ui
-                .add_enabled(
+            let down = self
+                .live_row(
+                    ui,
                     slot < context_panes,
                     egui::Button::new(format!("Chart {slot} down")),
                 )
@@ -456,11 +496,12 @@ impl WindowMenu<'_> {
             .indicators
             .all()
             .is_empty();
-        if ui
-            .add_enabled(
+        let keys = super::shortcut_text(ui.ctx(), &LEGEND_SHORTCUT);
+        if self
+            .live_row(
+                ui,
                 has_legend && self.chart_shown,
-                egui::Button::new(legend_label)
-                    .shortcut_text(ui.ctx().format_shortcut(&LEGEND_SHORTCUT)),
+                egui::Button::new(legend_label).shortcut_text(keys),
             )
             .on_hover_text(
                 "Folds the healthy rows to a count on the focused chart. Errored and stale \
@@ -477,8 +518,12 @@ impl WindowMenu<'_> {
     /// menu is open.
     fn recent_files(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
         for path in self.recent {
-            if ui
-                .button(crate::workspace_bundle::recent_label(path))
+            if self
+                .live_row(
+                    ui,
+                    true,
+                    egui::Button::new(crate::workspace_bundle::recent_label(path)),
+                )
                 // A trader mid-tape has to read this before the click.
                 .on_hover_text(format!(
                     "Replaces the cockpit on screen\n{}",

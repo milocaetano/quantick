@@ -327,6 +327,22 @@ pub const ABOUT_WORKSPACES: &[&str] = &[
      the focused chart, and Save desk keeps the whole window.",
 ];
 
+/// A Settings switch's tooltip.
+pub const PROGRESSIVE_HISTORY_HOVER: &str = "Build the venue's candle history from now backwards, a week at \
+             a time, so the chart fills in while the rest arrives. Off asks \
+             for the whole span in one request: fewer calls, nothing on \
+             screen until all of it lands.";
+
+/// A Settings switch's tooltip.
+pub const VENUE_LEAD_IN_HOVER: &str = "A tick, volume, dollar or imbalance chart cannot fold venue \
+             candles into its own bars, so it opens holding only the prints \
+             this session saw. Switch this on to put the venue's 1-minute \
+             candles in front of them anyway — counted apart from built bars \
+             on the status bar — so yesterday is on screen to compare \
+             against. They stay candles: a minute never becomes a tick bar, \
+             and an indicator running across the seam is averaging both \
+             kinds.";
+
 /// The window's menu button, in the scene's list of title-strip controls.
 pub const KEBAB_CONTROL: &str = "kebab";
 /// The local-agent access pill, in the same list.

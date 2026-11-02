@@ -119,7 +119,7 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.market.close",
         title: "Close the active market tab",
-        reach: "tab strip chip, File menu, Ctrl+W",
+        reach: "tab strip chip, Ctrl+W",
         keys: &[
             (Source::TabAction, "Close"),
             (Source::Hotkey, "CLOSE_TAB_SHORTCUT"),
@@ -163,7 +163,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.create",
         title: "Add a layout tab",
-        reach: "layout strip +, View → Layouts",
+        reach: "layout strip +, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "Create"),
             (Source::MenuEntry, "New layout"),
@@ -173,7 +173,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.delete",
         title: "Delete a layout tab",
-        reach: "layout strip context menu, View → Layouts",
+        reach: "layout strip context menu, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "Delete"),
             (Source::MenuEntry, "Delete layout"),
@@ -183,13 +183,13 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
             "`crate::control::layout` states it: `layout.tab.delete` is deliberately not \
              registered, because deleting a layout destroys its indicator set and every \
              drawing under it and no effect policy in the control contract allows a \
-             destructive capability yet. The trader deletes from the strip or the View menu"
+             destructive capability yet. The trader deletes from the strip or the window menu"
         ),
     },
     UiBehaviour {
         id: "layout.tab.rename",
         title: "Rename a layout tab",
-        reach: "layout strip double-click, View → Layouts",
+        reach: "layout strip double-click, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "BeginRename"),
             (Source::StripAction, "CommitRename"),
@@ -212,7 +212,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.switch",
         title: "Show another layout on the focused chart",
-        reach: "layout strip, View → Layouts, Alt+1 … Alt+9",
+        reach: "layout strip, window menu, Workspace, Layouts, Alt+1 … Alt+9",
         keys: &[(Source::StripAction, "Switch")],
         mapping: capability!("layout.tab.switch"),
     },
@@ -253,10 +253,10 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
         id: "feed.deal_recording.set",
         title: "Record the venue's deal counter, stop, load a recorded day, or show the pane as \
                 trades bars",
-        reach: "the REC control beside the symbol and its popover; the Tools menu's \
+        reach: "the REC control beside the symbol and its popover; the Settings window's \
                 `Record deals by default` checkbox",
         // One registry key: the matrix counts a row carrying an `Authored` key
-        // as one no registry stands behind. The Tools menu checkbox is drawn by
+        // as one no registry stands behind. The Settings window checkbox is drawn by
         // `app/deal_recording_wiring.rs`, not an entry in the menu registry;
         // the call's `record_by_default` is the same choice.
         keys: &[(Source::ToolbarAction, "DealRecording")],
@@ -346,7 +346,7 @@ pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "view.timezone.set",
         title: "Change the timezone the time axis is labelled in",
-        reach: "View menu, Timezone",
+        reach: "Settings window, Timezone",
         keys: &[(Source::MenuEntry, "Timezone")],
         mapping: excluded!(
             PendingCapability,

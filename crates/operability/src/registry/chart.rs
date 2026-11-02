@@ -121,7 +121,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.pane.move",
         title: "Move a context chart up or down the column",
-        reach: "View → Move chart, and the drag the menu entry exists to replace",
+        reach: "window menu, Workspace, Move chart, and the drag the menu entry exists to replace",
         keys: &[(Source::MenuEntry, "Move chart")],
         mapping: capability!("layout.pane.move"),
     },
@@ -135,7 +135,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.preset.apply",
         title: "Switch the canvas to another arrangement",
-        reach: "toolbar layout picker, View → Layout, Ctrl+Shift+1 … Ctrl+Shift+9",
+        reach: "toolbar layout picker, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9",
         keys: &[
             (Source::ToolbarAction, "SetLayout"),
             (Source::LayoutPreset, "flow"),
