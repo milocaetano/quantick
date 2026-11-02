@@ -14828,7 +14828,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Folds one side of a pane that shows the tape beside its candles to a thin rail, as dragging the divider to that edge does: candles leaves the tape the whole pane, tape leaves the candles it. Open unfolds at the width share the tape had before the fold, which folding never changes. Presentation only: executions, grouping and the tape's own switches (tape on, tape only) are untouched, and tape only wins over a fold while it is on. One of the asset's bubble settings (orderflow.bubbles names it), saved for it while its save switch is on.",
+      "description": "Sets a flow pane's view by the side it closes, as dragging the divider to that edge does, an alias over orderflow.tape.view.set: candles closes the candles, which is tape only, tape closes the tape, which is the candles alone, open shows both at the default width share. Allowed from any view; a side keeps a thin rail at its edge either way. Open also stands down the market-closed hold, as a click on the rail does. Presentation only: executions are untouched.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -14842,21 +14842,21 @@
       "input_schema": {
         "$defs": {
           "TapeFold": {
-            "description": "Which side of the pane is folded to a rail.",
+            "description": "Which side of the pane is closed to a rail.",
             "oneOf": [
               {
                 "const": "open",
-                "description": "Candles and tape side by side at the tape's width share.",
+                "description": "Candles and tape side by side: the view `beside`.",
                 "type": "string"
               },
               {
                 "const": "candles",
-                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "description": "The candles closed to a rail on the left: the view `tape`, tape only.",
                 "type": "string"
               },
               {
                 "const": "tape",
-                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "description": "The tape closed to a rail on the right: the view `candles`, the tape off.",
                 "type": "string"
               }
             ]
@@ -14871,7 +14871,7 @@
         "properties": {
           "fold": {
             "$ref": "#/$defs/TapeFold",
-            "description": "`open` unfolds at the width the tape had before it was folded."
+            "description": "`open` shows both sides at the default width share, from any view."
           },
           "pane_id": {
             "$ref": "#/$defs/WireU64"
@@ -14892,21 +14892,21 @@
       "output_schema": {
         "$defs": {
           "TapeFold": {
-            "description": "Which side of the pane is folded to a rail.",
+            "description": "Which side of the pane is closed to a rail.",
             "oneOf": [
               {
                 "const": "open",
-                "description": "Candles and tape side by side at the tape's width share.",
+                "description": "Candles and tape side by side: the view `beside`.",
                 "type": "string"
               },
               {
                 "const": "candles",
-                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "description": "The candles closed to a rail on the left: the view `tape`, tape only.",
                 "type": "string"
               },
               {
                 "const": "tape",
-                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "description": "The tape closed to a rail on the right: the view `candles`, the tape off.",
                 "type": "string"
               }
             ]
@@ -14941,12 +14941,7 @@
         "type": "object"
       },
       "persistence": "durable",
-      "preconditions": [
-        {
-          "description": "Folding a side needs the tape switched on beside the candles, not off and not tape only.",
-          "id": "orderflow.tape.beside_candles"
-        }
-      ],
+      "preconditions": [],
       "read_only": false,
       "required_permissions": [
         "cockpit",
@@ -14956,8 +14951,8 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a fold has no further effect, and the result and orderflow.bubbles report the fold kept.",
-      "title": "Fold the tape or the candles",
+      "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a word has no further effect, and the result and orderflow.bubbles report the side closed.",
+      "title": "Close the tape or the candles",
       "version": 1
     },
     {
@@ -15173,7 +15168,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape at the tape's width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view. Presentation only: executions, grouping, the width share and a fold of the divider (orderflow.tape.fold.set) are untouched, and the layer switches keep their state.",
+      "description": "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape, arriving at the default width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view, and a side closed by dragging the divider to its edge already is one of these views. Presentation only: executions are untouched, and the tape's layer switches keep their state.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -21361,7 +21356,7 @@
               },
               "fold_market_closed": {
                 "default": true,
-                "description": "The tape folds by itself while the market is closed: the asset's setting,\nset by `orderflow.tape.market_fold.set`. It never writes `tape_fold`.",
+                "description": "The tape goes away by itself while the market is closed: the asset's\nsetting, set by `orderflow.tape.market_fold.set`. It never writes `tape_view`.",
                 "type": "boolean"
               },
               "forward_book_preview": {
@@ -21422,11 +21417,11 @@
               "tape_fold": {
                 "$ref": "#/$defs/TapeFold",
                 "default": "open",
-                "description": "Which side of the pane is folded to a rail: `open`, `candles` (the\ntape takes the pane) or `tape` (the candles do). Set by dragging the\ndivider to an edge or by `orderflow.tape.fold.set`; tape only and the\ntape's own switch win over it."
+                "description": "Which side the pane's view closes to a rail: `open`, `candles` (tape only)\nor `tape` (the candles alone). A reading of `tape_view`, the one state:\ndragging the divider to an edge and `orderflow.tape.fold.set` write that."
               },
               "tape_fold_held_by_market": {
                 "default": false,
-                "description": "The market holds the tape folded right now. Runtime only; the first print,\nthe setting, an explicit fold or a view change releases it.",
+                "description": "The market holds the tape away right now. Runtime only; the first print,\nthe setting, a hand on the rail or a view change releases it.",
                 "type": "boolean"
               },
               "tape_only": {
@@ -21437,7 +21432,7 @@
               "tape_view": {
                 "$ref": "#/$defs/TapeView",
                 "default": "beside",
-                "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's Trail and Tape switches,\nCtrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`; a fold\n(`tape_fold`) is apart from it."
+                "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's Trail and Tape switches,\nCtrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`, and by dragging the\ndivider to an edge."
               },
               "tape_viewport_scale": {
                 "anyOf": [
@@ -21947,21 +21942,21 @@
             "type": "object"
           },
           "TapeFold": {
-            "description": "Which side of the pane is folded to a rail.",
+            "description": "Which side of the pane is closed to a rail.",
             "oneOf": [
               {
                 "const": "open",
-                "description": "Candles and tape side by side at the tape's width share.",
+                "description": "Candles and tape side by side: the view `beside`.",
                 "type": "string"
               },
               {
                 "const": "candles",
-                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "description": "The candles closed to a rail on the left: the view `tape`, tape only.",
                 "type": "string"
               },
               {
                 "const": "tape",
-                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "description": "The tape closed to a rail on the right: the view `candles`, the tape off.",
                 "type": "string"
               }
             ]

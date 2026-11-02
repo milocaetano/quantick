@@ -2,7 +2,7 @@
 //! asset opens on, the trader's changes are filed under that asset alone, and
 //! a filed asset reopens exactly as it was left.
 
-use quantick_orderflow::{HeatmapConfig, LaneFold, LaneWindow};
+use quantick_orderflow::{HeatmapConfig, LaneFold, LaneView, LaneWindow};
 use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, SharedAssetBubbles};
 use quantick_stores::bubble_assets::{self, AssetBubbles, AssetBubblesFile, AssetSource};
 use quantick_stores::bubble_look::BubbleLook;
@@ -353,28 +353,79 @@ fn btc_screen(settings: &AssetBubbles) -> (BubbleLook, HeatmapConfig) {
     (look, config)
 }
 
-#[test]
-fn an_assets_tape_fold_is_saved_and_reopens_folded() {
+/// A store written while a closed side was filed apart from its view: what an old
+/// `fold` key under an asset's entry reads as.
+fn old_store_entry(fold: &str) -> AssetBubbles {
     let (_, declared) = bind(&memory(), "BTCUSDT");
-    let (look, config) = btc_screen(&declared);
-    let open = look.settings(&config, declared.candle_aggression, false);
-    assert_eq!(open, declared, "an open lane is the declared look");
+    let mut file = AssetBubblesFile::default();
+    let off = AssetBubbles {
+        bubbles: false,
+        ..declared.clone()
+    };
+    assert!(file.record("BTCUSDT", &off, &declared));
+    let text = bubble_assets::render(&file).expect("the store renders");
+    let old = text.replacen(
+        "[assets.BTCUSDT]\n",
+        &format!("[assets.BTCUSDT]\nfold = \"{fold}\"\n"),
+        1,
+    );
+    assert_ne!(old, text, "the entry's table is where it is expected");
+    let reloaded = bubble_assets::parse(&old).expect("an old store reads");
+    reloaded.get("BTCUSDT").expect("its entry").clone()
+}
 
-    for fold in [LaneFold::Candles, LaneFold::Tape] {
-        let (look, mut config) = btc_screen(&declared);
-        config.live_lane.fold = fold;
-        let folded = look.settings(&config, declared.candle_aggression, false);
-        let mut file = AssetBubblesFile::default();
-        assert!(
-            file.record("BTCUSDT", &folded, &declared),
-            "{fold:?} is a change the asset files"
-        );
-        let text = bubble_assets::render(&file).expect("the store renders");
-        let reloaded = bubble_assets::parse(&text).expect("the store reloads");
-        let stored = reloaded.get("BTCUSDT").expect("the fold is filed");
-        let (_, reopened) = btc_screen(stored);
-        assert_eq!(reopened.live_lane.fold, fold, "{fold:?} survives a restart");
-    }
+/// An old store's closed candles open as tape only, at the share it saved; written
+/// again the store says the view and no fold, and it reads as the same side.
+#[test]
+fn an_old_stores_candle_fold_opens_as_tape_only_and_is_never_written_back() {
+    let stored = old_store_entry("candles");
+    assert_eq!(stored.fold, LaneFold::Candles);
+    let saved_share = stored.look.live_lane.width_share;
+    let (look, reopened) = btc_screen(&stored);
+    assert_eq!(reopened.live_lane.view(), LaneView::TapeOnly);
+    assert_eq!(reopened.live_lane.width_share, saved_share);
+
+    let settings = look.settings(&reopened, stored.candle_aggression, false);
+    assert_eq!(settings.fold, LaneFold::Open, "no fold left to file");
+    let (_, declared) = bind(&memory(), "BTCUSDT");
+    let mut file = AssetBubblesFile::default();
+    assert!(file.record("BTCUSDT", &settings, &declared));
+    let text = bubble_assets::render(&file).expect("the store renders");
+    assert!(!text.contains("\nfold ="), "{text}");
+    let reread = bubble_assets::parse(&text).expect("the store reads");
+    let (_, again) = btc_screen(reread.get("BTCUSDT").expect("filed"));
+    assert_eq!(again.live_lane.view(), LaneView::TapeOnly, "the same side");
+}
+
+/// An old store's closed tape waits for the layer restore that owns the tape's
+/// switch, then closes once, where the view is beside; a view other than beside
+/// won on screen and wins here.
+#[test]
+fn an_old_stores_tape_fold_closes_the_tape_once_and_only_beside() {
+    let stored = old_store_entry("tape");
+    assert_eq!(stored.fold, LaneFold::Tape);
+    let (mut look, config) = btc_screen(&stored);
+    assert_eq!(config.live_lane.view(), LaneView::Beside, "not worn yet");
+    assert!(look.take_old_tape_fold(&config));
+    assert!(!look.take_old_tape_fold(&config), "asked once");
+
+    let (mut look, mut alone) = btc_screen(&stored);
+    alone.live_lane.tape_only = true;
+    assert!(!look.take_old_tape_fold(&alone), "tape only won");
+
+    let settings = look.settings(&alone, stored.candle_aggression, false);
+    assert_eq!(settings.fold, LaneFold::Open);
+}
+
+/// A fold's own view, tape only won over a candle fold saved with it too: the view
+/// the look already shows is not moved.
+#[test]
+fn an_old_stores_fold_leaves_a_view_other_than_beside() {
+    let mut stored = old_store_entry("candles");
+    stored.look.live_lane.enabled = true;
+    stored.look.live_lane.tape_only = true;
+    let (_, config) = btc_screen(&stored);
+    assert_eq!(config.live_lane.view(), LaneView::TapeOnly);
 }
 
 /// What the market holds is not the asset's: a held pane files what it would
@@ -384,7 +435,7 @@ fn a_market_hold_is_never_filed_and_the_setting_is() {
     let (_, declared) = bind(&memory(), "BTCUSDT");
     let (look, mut config) = btc_screen(&declared);
     config.live_lane.market_hold.held = true;
-    assert_eq!(config.live_lane.shown_fold(), LaneFold::Tape);
+    assert_eq!(config.live_lane.shown_view(), LaneView::CandlesOnly);
     let held = look.settings(&config, declared.candle_aggression, false);
     assert_eq!(held, declared, "the store cannot tell it was held");
     let mut file = AssetBubblesFile::default();
@@ -417,8 +468,9 @@ fn a_stored_asset_without_a_fold_reopens_open() {
     assert!(!text.contains("fold"), "{text}");
     let file = bubble_assets::parse(&text).expect("an old store reads");
     let stored = file.get("BTCUSDT").expect("its entry");
-    let (mut look, mut folded) = btc_screen(&declared);
-    folded.live_lane.fold = LaneFold::Candles;
-    look.wear(stored, false, &mut folded);
-    assert_eq!(folded.live_lane.fold, LaneFold::Open, "no fold reads open");
+    let (mut look, mut screen) = btc_screen(&declared);
+    screen.live_lane.set_view(LaneView::CandlesOnly);
+    look.wear(stored, false, &mut screen);
+    assert_eq!(screen.live_lane.view(), LaneView::CandlesOnly, "not moved");
+    assert_eq!(stored.fold, LaneFold::Open, "no fold reads open");
 }

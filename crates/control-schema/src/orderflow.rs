@@ -429,24 +429,23 @@ pub struct BubblesStateSnapshot {
     /// `tape_only`, switched by `layers.visibility.set` as layer `tape_only`.
     #[serde(default)]
     pub tape_only: bool,
-    /// Which side of the pane is folded to a rail: `open`, `candles` (the
-    /// tape takes the pane) or `tape` (the candles do). Set by dragging the
-    /// divider to an edge or by `orderflow.tape.fold.set`; tape only and the
-    /// tape's own switch win over it.
+    /// Which side the pane's view closes to a rail: `open`, `candles` (tape only)
+    /// or `tape` (the candles alone). A reading of `tape_view`, the one state:
+    /// dragging the divider to an edge and `orderflow.tape.fold.set` write that.
     #[serde(default)]
     pub tape_fold: crate::tape_fold::TapeFold,
-    /// The tape folds by itself while the market is closed: the asset's setting,
-    /// set by `orderflow.tape.market_fold.set`. It never writes `tape_fold`.
+    /// The tape goes away by itself while the market is closed: the asset's
+    /// setting, set by `orderflow.tape.market_fold.set`. It never writes `tape_view`.
     #[serde(default = "market_fold_default")]
     pub fold_market_closed: bool,
-    /// The market holds the tape folded right now. Runtime only; the first print,
-    /// the setting, an explicit fold or a view change releases it.
+    /// The market holds the tape away right now. Runtime only; the first print,
+    /// the setting, a hand on the rail or a view change releases it.
     #[serde(default)]
     pub tape_fold_held_by_market: bool,
     /// Which view the tape's two switches ask for: `beside`, `candles` (alone)
     /// or `tape` (alone). Set by the pane header's Trail and Tape switches,
-    /// Ctrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`; a fold
-    /// (`tape_fold`) is apart from it.
+    /// Ctrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`, and by dragging the
+    /// divider to an edge.
     #[serde(default)]
     pub tape_view: crate::tape_view_set::TapeView,
     /// Exclude the first recorded 100 ms burst from automatic tape-only
@@ -588,7 +587,7 @@ impl BubblesStateSnapshot {
                 .map(canonical_decimal),
             tape_viewport_scale: config.bubbles.viewport_scale.map(Into::into),
             tape_only: config.live_lane.tape_only,
-            tape_fold: config.live_lane.fold.into(),
+            tape_fold: config.live_lane.view().fold().into(),
             fold_market_closed: config.live_lane.fold_market_closed,
             tape_fold_held_by_market: config.live_lane.market_held(),
             tape_view: config.live_lane.view().into(),

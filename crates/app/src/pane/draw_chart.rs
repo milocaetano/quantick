@@ -33,7 +33,7 @@ use crate::plot_area::split_time_strip;
 use crate::theme;
 use quantick_layers::ChartLayer;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
-use quantick_orderflow::{LaneFold, reserved_span_ms};
+use quantick_orderflow::{LaneView, reserved_span_ms};
 
 use super::draw_frame::{AxisChips, DrawFrame};
 use super::frame_layout::{
@@ -364,7 +364,6 @@ impl ChartPane {
         // it, even before the tape has a live edge to run to. The native tape
         // beside the candles keeps its share and fits the shared price axis.
         let (tape_only, native_tape) = self.tape_modes();
-        let candles_folded = super::lane_rail::shown_fold(self) == LaneFold::Candles;
         let live_lane = self.lay_out_lane(chart_rect);
         if total == 0 {
             return None;
@@ -384,19 +383,15 @@ impl ChartPane {
         // rule holds — pushed fully left, the newest bar stops at the left
         // edge and the rest of the window is empty canvas to project into.
         //
-        // Folded to a rail or hidden by tape only, the candles keep the view the
-        // trader left for their return, unclamped, and the frame reads the live
-        // edge instead: the price axis fits the tape, not a stale window.
+        // Hidden by tape only, the candles keep the view the trader left for
+        // their return, unclamped, and the frame reads the live edge instead: the
+        // price axis fits the tape, not a stale window.
         let width = history_rect.width();
-        if !tape_only && !candles_folded {
+        if !tape_only {
             self.model.viewport.clamp_to_window(width, total);
         }
         let view = self.shown_viewport();
-        let mut read_at = view;
-        if candles_folded {
-            read_at.snap_to_live();
-        }
-        let (start, end) = read_at.visible_range(width, total);
+        let (start, end) = view.visible_range(width, total);
         Some(FrameLayout {
             areas,
             chart_rect,
@@ -410,7 +405,7 @@ impl ChartPane {
             cw: view.candle_width(),
             indicator_guide_x,
             tape_only,
-            fits_tape: tape_only || candles_folded,
+            fits_tape: tape_only,
             native_tape,
             // The lane setting's band, on screen yet or not.
             tape_padding_px: self.orderflow.as_ref().map_or(0.0, |view| {
@@ -441,21 +436,21 @@ impl ChartPane {
             .orderflow
             .as_mut()
             .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
-        // Tape only and a folded side included: the band is the lane's own.
+        // Tape only included: the band is the lane's own.
         let lane_width_px = self
             .orderflow
             .as_ref()
             .map_or(0.0, |view| view.lane_width_px(chart_rect.width()));
-        // Everything left of the divider is the candles' pane. They pan and
-        // zoom inside it exactly as they did when it was the whole chart.
-        self.frame.lane_divider_x =
-            crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
+        // Everything left of the divider is the candles' pane. They pan and zoom
+        // inside it exactly as they did when it was the whole chart, and a closed
+        // tape's rail stands past it, never over a candle.
+        let clear_px = self.orderflow.as_ref().map_or(0.0, |view| {
+            let lane = &view.cached_config().live_lane;
+            lane.candles_clear_px(chart_rect.width())
+        });
+        self.frame.lane_divider_x = crate::orderflow_render::lane_divider_x(chart_rect, clear_px);
         self.frame.chart_rect = Some(chart_rect);
-        let rungs = lane_rungs(
-            self.frame
-                .lane_divider_x
-                .map_or(0.0, |divider| chart_rect.right() - divider),
-        );
+        let rungs = lane_rungs(lane_width_px);
         if self.lane.set_rungs(rungs) {
             let command = self
                 .lane
@@ -670,10 +665,10 @@ impl ChartPane {
         clock: Option<(i64, crate::timezone::TzOffset)>,
     ) -> Option<i64> {
         let orderflow = self.orderflow.as_ref()?;
-        // A tape folded to a rail leaves its strip to the rail: no labels.
-        let tape_folded = super::lane_rail::shown_fold(self) == LaneFold::Tape;
+        // A closed tape leaves its strip to the rail: no labels.
+        let closed = orderflow.cached_config().live_lane.shown_view() == LaneView::CandlesOnly;
         let lane_strip = split_time_strip(frame.areas.time_strip, self.frame.lane_divider_x).1;
-        let lane_strip = lane_strip.filter(|_| !tape_folded);
+        let lane_strip = lane_strip.filter(|_| !closed);
         let clock = clock.map(|(end_ms, tz)| {
             let geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
                 lane_strip.map_or(0.0, |strip| strip.width()),

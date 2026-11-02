@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use quantick_orderflow::{HeatmapConfig, LaneWindow};
+use quantick_orderflow::{HeatmapConfig, LaneFold, LaneView, LaneWindow};
 
 use crate::bubble_asset_store::{Adoption, AssetBinding, RunHold, SaveSwitch};
 use crate::bubble_assets::AssetBubbles;
@@ -51,6 +51,8 @@ pub struct BubbleLook {
     look_name: String,
     /// The asset these settings belong to, bound by the tab.
     asset: Option<AssetBinding>,
+    /// An old store's closed tape, worn and not yet carried out.
+    old_tape_fold: bool,
     /// What launch hooks hold for this run, never filed: put back whenever
     /// the view wears an asset's settings, so it reaches the asset a replay
     /// autostart switches to. Empty outside a capture run.
@@ -94,6 +96,7 @@ impl BubbleLook {
             status,
             look_name,
             asset: None,
+            old_tape_fold: false,
             held: RunHold::default(),
             lane_setting: config.live_lane.window,
         }
@@ -195,8 +198,7 @@ impl BubbleLook {
     }
 
     /// The settings on `config`, with the flow pane's `candle_aggression`
-    /// and its opening rule. The lane's fold is the asset's, filed beside
-    /// the look a preset captures without it.
+    /// and its opening rule.
     #[must_use]
     pub fn settings(
         &self,
@@ -208,7 +210,7 @@ impl BubbleLook {
             bubbles: self.held.filed(config.show_aggressions, self.asset()),
             candle_aggression,
             flow_ignore_opening,
-            fold: config.live_lane.fold,
+            fold: LaneFold::Open,
             fold_market_closed: config.live_lane.fold_market_closed,
             look: BubblePreset::capture(&self.look_name, config),
         }
@@ -222,9 +224,11 @@ impl BubbleLook {
 
     /// Put `settings` on `config` without counting it as an edit;
     /// `keep_navigation` leaves the lane's width and window where this
-    /// view's own gestures put them, and what a launch hook holds stays. The
-    /// lane's fold is the asset's, worn either way. The flow pane's opening
-    /// rule is the caller's to apply.
+    /// view's own gestures put them, and what a launch hook holds stays. An old
+    /// store's closed side opens as that view and files itself away at the next
+    /// sync: the candles' now, the tape's through [`Self::take_old_tape_fold`] once
+    /// layer visibility is restored, since that restore owns the tape's switch. The
+    /// flow pane's opening rule is the caller's to apply.
     pub fn wear(
         &mut self,
         settings: &AssetBubbles,
@@ -237,12 +241,25 @@ impl BubbleLook {
             config.live_lane.window = window;
             config.live_lane.width_share = width_share;
         }
-        config.live_lane.fold = settings.fold;
+        if settings.fold == LaneFold::Tape {
+            self.old_tape_fold = true;
+        } else {
+            config.live_lane.read_old_fold(settings.fold);
+        }
+        if !settings.fold.is_open() {
+            self.note_edit();
+        }
         config.live_lane.fold_market_closed = settings.fold_market_closed;
         config.show_aggressions = settings.bubbles;
         self.held.wear(config);
         self.look_name.clone_from(&settings.look.name);
         self.name_draft.clone_from(&settings.look.name);
+    }
+
+    /// Whether an old store's closed tape waits to close on `config`, where the
+    /// view is beside: asked once.
+    pub fn take_old_tape_fold(&mut self, config: &HeatmapConfig) -> bool {
+        std::mem::take(&mut self.old_tape_fold) && config.live_lane.view() == LaneView::Beside
     }
 
     /// Take the presets another view reloaded: whether any arrived, and the

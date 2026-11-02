@@ -116,8 +116,8 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "orderflow.tape.fold.set",
-        title: "Fold the candles or the tape to a rail, or bring it back",
-        reach: "drag the tape lane's divider to the left or right edge of the pane; click the rail it leaves",
+        title: "Close the candles or the tape to a rail, or bring it back",
+        reach: "drag the tape lane's divider to the left or right edge of the pane; click or drag the rail either single view keeps",
         keys: &[(
             Source::Authored,
             "the tape lane's divider and rail the pane handles directly",

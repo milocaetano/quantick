@@ -36,11 +36,8 @@ impl BubbleScalePort for dyn ControlPort {
     }
 }
 impl TapeFoldPort for dyn ControlPort {
-    fn tape_fold_pane(&mut self, tab: u64, id: u64) -> Result<TapeFoldPane, ControlError> {
-        Ok(TapeFoldPane::of(tape(self, tab, id)?.cached_config()))
-    }
     fn set_tape_fold(&mut self, tab: u64, id: u64, fold: TapeFold) -> Result<bool, ControlError> {
-        Ok(tape(self, tab, id)?.edit_config(|c| _ = c.live_lane.set_fold(fold.into())))
+        Ok(tape(self, tab, id)?.set_lane_fold(fold.into()))
     }
     fn set_tape_market_fold(&mut self, tab: u64, id: u64, on: bool) -> Result<bool, ControlError> {
         Ok(tape(self, tab, id)?.edit_config(|c| c.live_lane.fold_market_closed = on))

@@ -312,8 +312,8 @@ fn the_lane_divider_resizes_under_an_armed_ticket_and_over_a_line() {
     }
 }
 
-/// A folded side's rail is chrome like the divider: Shift on it rests
-/// nothing. Folded candles leave the aim the tape, and a folded tape leaves
+/// A closed side's rail is chrome like the divider: Shift on it rests
+/// nothing. Closed candles leave the aim the tape, and a closed tape leaves
 /// it the candles, each resting at the pointer's price.
 #[test]
 fn a_fold_rail_is_chrome_and_the_open_side_still_aims() {
@@ -321,9 +321,7 @@ fn a_fold_rail_is_chrome_and_the_open_side_still_aims() {
     for fold in [LaneFold::Candles, LaneFold::Tape] {
         let ctx = egui::Context::default();
         let mut app = tape_app(&ctx, TapeMode::Chart);
-        app.active_tab_mut()
-            .tape_mut()
-            .edit_config(|config| _ = config.live_lane.set_fold(fold));
+        app.active_tab_mut().tape_mut().set_lane_fold(fold);
         run_frame(&mut app, &ctx);
         let chart = app
             .active_tab()

@@ -1189,8 +1189,7 @@ impl ChartPane {
 
     /// The view and sizes a flow pane's chrome shows; `None` without an
     /// order-flow view. A sample is there only while its target is on, the one
-    /// size rule `orderflow.bubbles.size.set` judges by too; a folded side is
-    /// not off.
+    /// size rule `orderflow.bubbles.size.set` judges by too.
     pub(crate) fn flow_header_state(&self) -> Option<FlowHeaderState> {
         let owner = self.orderflow.as_ref()?;
         let facts = self.bubble_scale_facts()?;

@@ -26,8 +26,12 @@ fn the_requested_tape_boundary_survives_missing_book_and_clock() {
 
     pane.orderflow.as_mut().unwrap().set_lane_enabled(false);
     pane.lay_out_lane(narrow);
-    assert_eq!(pane.frame.lane_divider_x, None);
-    pane.orderflow.as_mut().unwrap().set_lane_enabled(true);
+    // Only the rail's band is left, and no lane to fill it.
+    let rail = quantick_orderflow::LANE_FOLD_RAIL_PX;
+    assert_eq!(pane.frame.lane_divider_x, Some(narrow.right() - rail));
+    let flow = pane.orderflow.as_mut().unwrap();
+    flow.set_lane_enabled(true);
+    let width = flow.lane_width_px(narrow.width());
     pane.lay_out_lane(narrow);
     assert_eq!(pane.frame.lane_divider_x, Some(narrow.right() - width));
 }

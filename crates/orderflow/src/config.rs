@@ -885,7 +885,6 @@ mod tests {
                 forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
-                fold: LaneFold::Open,
                 fold_market_closed: true,
                 market_hold: MarketHold::default(),
             },

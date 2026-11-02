@@ -187,7 +187,10 @@ pub(crate) fn placement(
                 continue;
             }
             let distance = rect.center().distance(bbox.center());
-            if best.is_none_or(|(_, best)| distance > best) {
+            // A closed tape's rail narrows what an object spans by its width:
+            // no reason to send the panel across the chart.
+            if best.is_none_or(|(_, best)| distance > best + quantick_orderflow::LANE_FOLD_RAIL_PX)
+            {
                 best = Some((position, distance));
             }
         }

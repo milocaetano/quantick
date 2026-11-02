@@ -706,7 +706,9 @@ fn a_press_on_a_capsule_never_reaches_the_chart() {
 fn a_side_too_narrow_for_its_capsule_paints_none() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    set_fold(&mut app, LaneFold::Tape);
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.live_lane.width_share = 0.05);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(
@@ -808,11 +810,11 @@ fn a_sample_hides_with_its_target_and_its_slot_stays() {
 fn the_header_is_painted_in_all_three_views() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    for (control, view, lane) in [
-        (TAPE, LaneView::CandlesOnly, false),
-        (TAPE, LaneView::Beside, true),
-        (TRAIL, LaneView::TapeOnly, true),
-        (TRAIL, LaneView::Beside, true),
+    for (control, view) in [
+        (TAPE, LaneView::CandlesOnly),
+        (TAPE, LaneView::Beside),
+        (TRAIL, LaneView::TapeOnly),
+        (TRAIL, LaneView::Beside),
     ] {
         let button = flow_control(&app, control);
         click_chart(&mut app, &ctx, button.center());
@@ -833,7 +835,16 @@ fn the_header_is_painted_in_all_three_views() {
         let flow = &app.active_tab().flow_pane;
         let chart = flow.frame.area.expect("flow chart");
         assert!(button.bottom() <= chart.top(), "{view:?}: off the chart");
-        assert_eq!(flow.frame.lane_divider_x.is_some(), lane, "{view:?}");
+        let band = flow
+            .frame
+            .lane_divider_x
+            .map(|x| flow.frame.chart_rect.unwrap().right() - x);
+        let rail = (view == LaneView::CandlesOnly).then_some(quantick_orderflow::LANE_FOLD_RAIL_PX);
+        if rail.is_some() {
+            assert_eq!(band, rail, "{view:?}: only the rail's band is left");
+        } else {
+            assert!(band.is_some_and(|px| px > 100.0), "{view:?}: {band:?}");
+        }
     }
 }
 
@@ -1099,104 +1110,65 @@ fn a_panned_view_survives_tape_only_and_the_way_back() {
     }
 }
 
-/// Fold a side of the lane as the divider does.
+/// Close a side of the lane as the divider does.
 fn set_fold(app: &mut QuantickApp, fold: LaneFold) {
-    app.active_tab_mut()
-        .tape_mut()
-        .edit_config(|config| _ = config.live_lane.set_fold(fold));
+    app.active_tab_mut().tape_mut().set_lane_fold(fold);
 }
 
-fn flow_fold(app: &QuantickApp) -> LaneFold {
-    app.active_tab().tape().cached_config().live_lane.fold
-}
-
-/// Candles folded to their rail: a fold is not a view, so both switches stay lit.
-/// It moves no layer gate, so the glyphs and their keys stay live and both samples
-/// stay. The stored view is what the switches set, and stored tape only is what
-/// greys the glyphs.
+/// The candles closed by name read as tape only, whichever door closed them: Trail
+/// unlit, Tape the last lit and refusing, the glyphs grey in place.
 #[test]
-fn candles_folded_leave_the_switches_lit_and_the_gates_alone() {
+fn candles_closed_are_tape_only_and_the_last_lit_rule_sees_them() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    let heatmap = HeaderControl::Layer(LayerToggle::Heatmap);
     let toggles = [
         LayerToggle::Bubbles,
         LayerToggle::Heatmap,
         LayerToggle::Footprint,
     ];
-    let gates = |app: &QuantickApp| {
-        let caps = app.active_tab().capabilities(&app.config);
-        let flow = &app.active_tab().flow_pane;
-        toggles.map(|toggle| flow.layer_blocked(toggle.layer(), caps))
-    };
     let pane_id = app.active_tab().flow_pane.id;
     let id = |control: &str| format!("pane.{pane_id}.header.{control}");
-    let l2_gate = |app: &QuantickApp| {
-        scene_control(&observer_scene(app), &id("layer.heatmap"))["availability"].clone()
-    };
-    app.active_tab_mut()
-        .tape_mut()
-        .edit_config(|config| config.show_aggressions = true);
-    run_frame(&mut app, &ctx);
-    let open_gates = gates(&app);
-    let open_l2 = l2_gate(&app);
-    flow_control(&app, heatmap);
-
     set_fold(&mut app, LaneFold::Candles);
     run_frame(&mut app, &ctx);
-    assert_eq!(view_of(&app), LaneView::Beside, "the stored view stays");
-    assert!(
-        control_rect(&app, PaneSide::Flow, heatmap).is_none(),
-        "a folded side has no capsule"
+    assert_eq!(view_of(&app), LaneView::TapeOnly);
+    let caps = app.active_tab().capabilities(&app.config);
+    let flow = &app.active_tab().flow_pane;
+    assert_eq!(
+        toggles.map(|toggle| flow.layer_blocked(toggle.layer(), caps)),
+        [Some(quantick_layers::blocks::TAPE_ONLY_CANDLES); 3],
     );
-    flow_control(&app, HeaderControl::Sample(BubbleSample::Tape));
-    assert_eq!(gates(&app), open_gates, "a fold moves no gate");
     let scene = observer_scene(&app);
-    for side in ["side.trail", "side.tape"] {
-        assert_eq!(scene_control(&scene, &id(side))["selected"], true, "{side}");
-    }
-
-    let before = on(&app, ChartLayer::Bubbles);
-    press_key(&mut app, &ctx, egui::Key::B, egui::Modifiers::CTRL);
-    assert_ne!(
-        on(&app, ChartLayer::Bubbles),
-        before,
-        "its key still answers"
+    assert_eq!(scene_control(&scene, &id("side.trail"))["selected"], false);
+    let tape = scene_control(&scene, &id("side.tape"));
+    assert_eq!(tape["selected"], true);
+    assert_eq!(
+        tape["availability"]["reason"],
+        "the_last_side_showing_stays"
     );
-    assert_eq!(open_l2["available"], true);
 
     click_side(&mut app, &ctx, TAPE);
-    assert_eq!(
-        view_of(&app),
-        LaneView::CandlesOnly,
-        "the stored view moves"
-    );
-
-    app.active_tab_mut()
-        .tape_mut()
-        .set_lane_view(LaneView::TapeOnly);
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        gates(&app),
-        [Some(quantick_layers::blocks::TAPE_ONLY_CANDLES); 3],
-        "stored tape only greys them"
-    );
+    assert_eq!(view_of(&app), LaneView::TapeOnly, "the last lit refuses");
+    click_side(&mut app, &ctx, TRAIL);
+    assert_eq!(view_of(&app), LaneView::Beside);
 }
 
-/// The tape folded to its rail: its switch stays lit, its capsule folds away with
-/// its side.
+/// The tape closed by name is the tape off: its switch unlit and the way back at
+/// the default width, Trail the last lit.
 #[test]
-fn a_tape_folded_keeps_its_switch_lit_and_folds_its_capsule() {
+fn a_tape_closed_unlights_its_switch_and_the_switch_brings_it_back() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     app.active_tab_mut()
         .tape_mut()
         .edit_config(|config| config.show_aggressions = true);
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.live_lane.width_share = 0.6);
     run_frame(&mut app, &ctx);
 
     set_fold(&mut app, LaneFold::Tape);
     run_frame(&mut app, &ctx);
-    assert_eq!(view_of(&app), LaneView::Beside, "the stored view stays");
+    assert_eq!(view_of(&app), LaneView::CandlesOnly);
     flow_control(&app, HeaderControl::Sample(BubbleSample::Candle));
     let tape = HeaderControl::Sample(BubbleSample::Tape);
     assert!(
@@ -1207,14 +1179,27 @@ fn a_tape_folded_keeps_its_switch_lit_and_folds_its_capsule() {
     let pane_id = app.active_tab().flow_pane.id;
     let scene = observer_scene(&app);
     let view = scene_control(&scene, &format!("pane.{pane_id}.header.side.tape"));
-    assert_eq!(view["selected"], true);
+    assert_eq!(view["selected"], false);
+    let trail = scene_control(&scene, &format!("pane.{pane_id}.header.side.trail"));
+    assert_eq!(
+        trail["availability"]["reason"],
+        "the_last_side_showing_stays"
+    );
+
+    click_side(&mut app, &ctx, TAPE);
+    assert_eq!(view_of(&app), LaneView::Beside);
+    let lane = &app.active_tab().tape().cached_config().live_lane;
+    assert_eq!(
+        lane.width_share,
+        quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE
+    );
 }
 
 /// Held by the market: the scene says why Tape refuses, under its own code and
 /// its own word, Trail is the last side showing, the readback names the hold and
-/// the saved fold stays open. A click on the rail is the hand that ends it.
+/// the stored view stays beside. A hand on the rail is what ends it.
 #[test]
-fn a_market_hold_reads_in_the_scene_and_never_in_the_saved_fold() {
+fn a_market_hold_reads_in_the_scene_and_never_in_the_stored_view() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     run_frame(&mut app, &ctx);
@@ -1224,7 +1209,7 @@ fn a_market_hold_reads_in_the_scene_and_never_in_the_saved_fold() {
     };
     let tape = app.active_tab_mut().tape_mut();
     tape.observe_market(quiet);
-    assert_eq!(tape.cached_config().live_lane.fold, LaneFold::Open);
+    assert_eq!(tape.cached_config().live_lane.view(), LaneView::Beside);
     let read = tape.bubbles_snapshot();
     assert!(read.tape_fold_held_by_market && read.fold_market_closed);
     assert_eq!(
@@ -1247,7 +1232,7 @@ fn a_market_hold_reads_in_the_scene_and_never_in_the_saved_fold() {
     );
 
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.edit_config(|config| _ = config.live_lane.set_fold(LaneFold::Open)));
+    assert!(tape.set_lane_fold(LaneFold::Open));
     assert!(!tape.cached_config().live_lane.market_held());
     tape.observe_market(quiet);
     assert!(
@@ -1275,7 +1260,7 @@ fn a_symbol_change_forgets_the_markets_hold_and_the_hands_stand_down() {
     assert!(!hold.held && !hold.closed_spell, "no hold carried over");
 
     tape.observe_market(quiet);
-    assert!(tape.edit_config(|config| _ = config.live_lane.set_fold(LaneFold::Open)));
+    assert!(tape.set_lane_fold(LaneFold::Open));
     assert!(tape.cached_config().live_lane.market_hold.stood_down);
     tape.reset_for_symbol("AFTER");
     assert!(!tape.cached_config().live_lane.market_hold.stood_down);
@@ -1286,43 +1271,43 @@ fn a_symbol_change_forgets_the_markets_hold_and_the_hands_stand_down() {
     );
 }
 
-/// A fold outlives every view, on the header too, and on the way back beside the
-/// candles its rail is still the way out of it.
+/// A held rail is the hand's way through: a click stands the hold down and brings
+/// the tape back at the default width, and a segment click on a side closed in a
+/// closed spell is not taken straight back.
 #[test]
-fn a_fold_survives_every_view_and_its_rail_still_opens_it() {
+fn a_rail_click_ends_a_hold_at_the_default_and_a_switch_is_not_held_again() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    set_fold(&mut app, LaneFold::Candles);
     run_frame(&mut app, &ctx);
-
-    for (control, view) in [
-        (TAPE, LaneView::CandlesOnly),
-        (TAPE, LaneView::Beside),
-        (TRAIL, LaneView::TapeOnly),
-        (TRAIL, LaneView::Beside),
-    ] {
-        click_side(&mut app, &ctx, control);
-        assert_eq!(view_of(&app), view);
-        assert_eq!(flow_fold(&app), LaneFold::Candles, "{view:?}");
-    }
-
-    let flow = &app.active_tab().flow_pane;
-    let chart = flow.frame.chart_rect.expect("the canvas laid out");
-    let lane = &app.active_tab().tape().cached_config().live_lane;
-    assert_eq!(
-        lane.shown_view(),
-        LaneView::TapeOnly,
-        "folded again on the way back"
-    );
-
+    let quiet = quantick_chart::connection_state::ConnectionState {
+        link: quantick_chart::connection_state::Link::Quiet,
+        ..app.active_tab().connection.state()
+    };
+    let tape = app.active_tab_mut().tape_mut();
+    tape.edit_config(|config| config.live_lane.width_share = 0.6);
+    tape.observe_market(quiet);
+    assert!(tape.cached_config().live_lane.market_held());
+    assert_eq!(tape.cached_config().live_lane.width_share, 0.6, "untouched");
+    run_frame(&mut app, &ctx);
+    let chart = app.active_tab().flow_pane.frame.chart_rect.unwrap();
     click_chart(
         &mut app,
         &ctx,
-        egui::pos2(chart.left() + 4.0, chart.center().y),
+        egui::pos2(chart.right() - 4.0, chart.center().y),
     );
-    run_frame(&mut app, &ctx);
-    assert_eq!(flow_fold(&app), LaneFold::Open, "the rail opened it");
-    assert_eq!(view_of(&app), LaneView::Beside);
+    let lane = &app.active_tab().tape().cached_config().live_lane;
+    assert!(!lane.market_held());
+    assert_eq!(
+        lane.width_share,
+        quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE
+    );
+
+    let tape = app.active_tab_mut().tape_mut();
+    tape.set_lane_view(LaneView::CandlesOnly);
+    tape.observe_market(quiet);
+    tape.set_lane_view(LaneView::Beside);
+    tape.observe_market(quiet);
+    assert!(!tape.cached_config().live_lane.market_held());
 }
 
 /// An indicator pane shares the candles' time axis, but with the candles hidden

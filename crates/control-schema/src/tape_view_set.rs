@@ -1,6 +1,6 @@
 //! Which of its three views the flow pane shows. Not to be confused with
 //! `chart.tape_view.set`, which moves the tape's end and window ([`crate::tape_view`]),
-//! nor with a fold ([`crate::tape_fold`]), which this neither reads nor writes.
+//! A side closed by name ([`crate::tape_fold`]) is one of these views.
 
 use quantick_control::{
     registry::{CapabilityDescriptor, IdempotencyPolicy},
@@ -80,7 +80,7 @@ pub fn descriptor() -> CapabilityDescriptor {
         TAPE_VIEW_SET_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
         "Show the trail, the tape, or both",
-        "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape at the tape's width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view. Presentation only: executions, grouping, the width share and a fold of the divider (orderflow.tape.fold.set) are untouched, and the layer switches keep their state.",
+        "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape, arriving at the default width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view, and a side closed by dragging the divider to its edge already is one of these views. Presentation only: executions are untouched, and the tape's layer switches keep their state.",
         "Stable tab and pane IDs select the pane; repeating a view has no further effect, and the result and orderflow.bubbles report the view kept.",
     );
     descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;

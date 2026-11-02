@@ -119,7 +119,9 @@ fn dragging_the_candles_pans_them_and_the_shared_axis_but_never_the_tapes_time()
     // Tape off: the original tick chart, candle fit and original gestures.
     switch_layer(&mut app, ChartLayer::TapeChart, false);
     run_frame(&mut app, &ctx);
-    assert!(app.active_tab().flow_pane.frame.lane_divider_x.is_none());
+    let off = &app.active_tab().flow_pane.frame;
+    let rail = off.lane_divider_x.map(|x| chart.right() - x);
+    assert_eq!(rail, Some(quantick_orderflow::LANE_FOLD_RAIL_PX));
     assert!(!facts(&app).native_tape);
     drag_sized(&mut app, &ctx, TEST_WINDOW, start, end);
     run_frame(&mut app, &ctx);

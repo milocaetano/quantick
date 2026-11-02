@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::bubbles::{
     BubbleStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
-use super::lane_fold::{LaneFold, MarketHold};
+use super::lane_fold::{LaneFold, MarketHold, rail_px};
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
 
@@ -27,7 +27,7 @@ pub const DEFAULT_LIVE_LANE_SHARE: f32 = 0.35;
 pub const MIN_LIVE_LANE_SHARE: f32 = 0.05;
 /// Widest live lane accepted. The divider travels the whole chart, so the
 /// tape may take nearly all of it; a lane that wants the rest folds the
-/// candles to a rail instead ([`LaneFold`]).
+/// candles instead, which is tape only ([`super::lane_view::LaneView`]).
 pub const MAX_LIVE_LANE_SHARE: f32 = 1.0 - MIN_LIVE_LANE_SHARE;
 /// Narrowest lane the layout will draw, in pixels. A floor rather than a
 /// setting: below this the band stops being a tape whatever share was asked
@@ -427,14 +427,10 @@ pub struct LiveLaneStyle {
     /// only, and always on the native tape. Off by default, so every other
     /// pane keeps its candles.
     pub tape_only: bool,
-    /// Which side the divider folded to a rail, if any. The share stays
-    /// where it was, so unfolding returns the band the lane had; `tape_only`
-    /// and the tape's own switch win over it.
-    pub fold: LaneFold,
-    /// Fold the tape to its rail while the market is closed. The asset's, never
-    /// a preset's, like the fold.
+    /// Show the candles alone while the market is closed. The asset's, never a
+    /// preset's.
     pub fold_market_closed: bool,
-    /// Whether the market holds the tape folded now, and what that remembers.
+    /// Whether the market holds the tape away now, and what that remembers.
     /// Runtime only: nothing writes it to a file.
     pub market_hold: MarketHold,
 }
@@ -455,7 +451,6 @@ impl Default for LiveLaneStyle {
             forward_book_preview: false,
             stable_size: false,
             tape_only: false,
-            fold: LaneFold::Open,
             fold_market_closed: true,
             market_hold: MarketHold::default(),
         }
@@ -507,8 +502,9 @@ struct LiveLaneStyleRepr {
     /// Written only when on, like `native_tape`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     tape_only: bool,
-    /// Written only when folded, so an open lane keeps its file.
-    #[serde(skip_serializing_if = "LaneFold::is_open")]
+    /// Read from a file written while a closed side was stored apart from its
+    /// view, and never written ([`LiveLaneStyle::read_old_fold`]).
+    #[serde(skip_serializing)]
     fold: LaneFold,
     /// Written only when off, so a file from before the setting reads on.
     #[serde(skip_serializing_if = "std::clone::Clone::clone")]
@@ -523,7 +519,7 @@ impl Default for LiveLaneStyleRepr {
 
 impl From<LiveLaneStyleRepr> for LiveLaneStyle {
     fn from(repr: LiveLaneStyleRepr) -> Self {
-        Self {
+        let mut style = Self {
             width_share: repr.width_share,
             // A pinned window is the explicit choice; without one the file is
             // asking to follow the bars, at whatever zoom it recorded.
@@ -548,10 +544,11 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
                 .unwrap_or(repr.depth_time_averaging),
             stable_size: repr.stable_size,
             tape_only: repr.tape_only,
-            fold: repr.fold,
             fold_market_closed: repr.fold_market_closed,
             market_hold: MarketHold::default(),
-        }
+        };
+        style.read_old_fold(repr.fold);
+        style
     }
 }
 
@@ -580,7 +577,7 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
                 .then_some(style.forward_book_preview),
             stable_size: style.stable_size,
             tape_only: style.tape_only,
-            fold: style.fold,
+            fold: LaneFold::Open,
             fold_market_closed: style.fold_market_closed,
         }
     }
@@ -640,8 +637,8 @@ impl LiveLaneStyle {
         if self.tape_only {
             return chart_width;
         }
-        if let Some(folded) = self.folded_width_px(chart_width) {
-            return folded;
+        if self.market_held() {
+            return rail_px(chart_width);
         }
         // The floor yields on a narrow window: half a small chart beats a
         // fixed band that would eat all of it.

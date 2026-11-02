@@ -418,6 +418,29 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                 capability_id: Some(capability.to_owned()),
             });
         }
+        let Some((closed, rect)) = crate::pane::lane_rail::painted_rail(pane) else {
+            continue;
+        };
+        let bounds = rect_bounds(rect);
+        controls.push(SceneControlSnapshot {
+            control_id: format!("pane.{}.lane_rail", pane.id),
+            label: quantick_chart::pane_header::rail_word(closed).to_owned(),
+            role: SceneRoleDto::Action,
+            owner: SceneOwnerSnapshot {
+                kind: SceneOwnerKindDto::Tab,
+                id: tab_control_id(tab_id),
+            },
+            selected: false,
+            availability: available(),
+            bounds_availability: match &bounds {
+                Bounds::Rect(_) => available(),
+                _ => unavailable("the_rail_is_off_screen_or_its_rectangle_unreportable"),
+            },
+            bounds: bounds.into_snapshot(),
+            capability_id: Some(
+                quantick_control_schema::tape_fold::TAPE_FOLD_CAPABILITY_ID.to_owned(),
+            ),
+        });
     }
 }
 

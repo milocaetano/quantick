@@ -1,8 +1,8 @@
-//! The tape lane divider's pointer, and the rail a folded side leaves; the
-//! fold itself is [`quantick_orderflow::LaneDividerDrag`]'s.
+//! The tape lane divider's pointer, and the rail a closed side leaves; the
+//! decisions are [`quantick_orderflow::LaneDividerDrag`]'s.
 use eframe::egui;
 use quantick_chart_interaction::{pane::Intent, pane_axis::AxisGesture};
-use quantick_orderflow::{LaneFold, LiveLaneStyle};
+use quantick_orderflow::{FoldRail, LaneFold, LaneSide, LiveLaneStyle};
 
 use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX};
 use crate::canvas_layout as canvas;
@@ -21,15 +21,24 @@ fn lane(pane: &ChartPane) -> Option<&LiveLaneStyle> {
     Some(&pane.orderflow.as_ref()?.cached_config().live_lane)
 }
 
-/// The side folded to a rail on this pane, if any: what drops its chrome.
-pub(super) fn shown_fold(pane: &ChartPane) -> LaneFold {
-    lane(pane).map_or(LaneFold::Open, LiveLaneStyle::shown_fold)
+fn rail(pane: &ChartPane, chart: egui::Rect) -> Option<FoldRail> {
+    lane(pane)?.fold_rail(chart.width())
+}
+
+/// The rail this pane painted, for the scene: the side it closes and its rectangle.
+pub(crate) fn painted_rail(pane: &ChartPane) -> Option<(LaneSide, egui::Rect)> {
+    let chart = pane.frame.chart_rect?;
+    let rail = rail(pane, chart)?;
+    Some((
+        rail.side,
+        span(chart, (rail.paint_from_px, rail.paint_to_px)),
+    ))
 }
 
 /// The jump-to-live chip at the candles' end of the time strip: `None`
-/// while following live, or with the candles folded under their rail.
+/// while following live.
 pub(super) fn live_chip(pane: &ChartPane, strip: egui::Rect) -> Option<egui::Rect> {
-    let away = !pane.model.viewport.follows_live() && shown_fold(pane) != LaneFold::Candles;
+    let away = !pane.model.viewport.follows_live();
     let (history_strip, _) = split_time_strip(strip, pane.frame.lane_divider_x);
     away.then(|| super::live_chip_rect(history_strip))
 }
@@ -41,23 +50,26 @@ pub(super) fn lane_handle(pane: &ChartPane, chart: egui::Rect) -> Option<egui::R
     Some(span(chart, hit))
 }
 
-/// Drag the divider to move it or fold a side; click a rail to unfold.
-/// Registered after the chart body so it takes the drag that would pan.
+/// Drag the divider to move it or close a side; click a rail to reopen at the
+/// default width, drag it to reopen under the hand. Registered after the chart
+/// body so it takes the drag that would pan.
 pub(super) fn handle_lane_divider(pane: &mut ChartPane, ui: &egui::Ui, chart: egui::Rect) {
     let Some(rect) = lane_handle(pane, chart) else {
         return;
     };
-    let fold = shown_fold(pane);
-    let sense = if fold.is_open() {
+    let closed = rail(pane, chart).map(|rail| rail.side);
+    let sense = if closed.is_none() {
         egui::Sense::drag()
     } else {
         egui::Sense::click_and_drag()
     };
     let mut handle = ui.interact(rect, pane.interaction_id("lane_divider"), sense);
-    handle = match fold {
-        LaneFold::Open => handle,
-        LaneFold::Candles => handle.on_hover_text("click to show the candles again, or drag right"),
-        LaneFold::Tape => handle.on_hover_text("click to show the tape again, or drag left"),
+    handle = match closed {
+        None => handle,
+        Some(LaneSide::Trail) => {
+            handle.on_hover_text("click to show the candles again, or drag right")
+        }
+        Some(LaneSide::Tape) => handle.on_hover_text("click to show the tape again, or drag left"),
     };
     if handle.hovered() || handle.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -69,7 +81,7 @@ pub(super) fn handle_lane_divider(pane: &mut ChartPane, ui: &egui::Ui, chart: eg
         tape.release_lane_drag();
     }
     if handle.clicked() {
-        tape.edit_config(|config| _ = config.live_lane.set_fold(LaneFold::Open));
+        tape.set_lane_fold(LaneFold::Open);
     }
     if handle.dragged() {
         // Drag left → a wider tape, at the expense of the candles.
@@ -79,9 +91,9 @@ pub(super) fn handle_lane_divider(pane: &mut ChartPane, ui: &egui::Ui, chart: eg
     }
 }
 
-/// A folded side's rail over what the side drew, as the canvas rail looks.
+/// A closed side's rail over what the side drew, as the canvas rail looks.
 pub(super) fn paint_lane_rail(pane: &ChartPane, painter: &egui::Painter, chart: egui::Rect) {
-    let Some(rail) = lane(pane).and_then(|lane| lane.fold_rail(chart.width())) else {
+    let Some(rail) = rail(pane, chart) else {
         return;
     };
     let paint = span(chart, (rail.paint_from_px, rail.paint_to_px));
