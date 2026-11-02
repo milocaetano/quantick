@@ -819,8 +819,10 @@ pr_gate() {
         # whole stack into a PR nobody meant to open. Read from the unquoted
         # words, one value exactly: `gh` takes the last of several, and a title
         # may name the flag. Whichever verb ranks highest on the line.
-        if [ "$implement_target" != "$MAIN_BRANCH" ] && runs_command "$command" "gh pr create"; then
+        if [ "$implement_target" != "$MAIN_BRANCH" ] &&
+            runs_command "$(unquoted_arguments "$command")" "gh pr create"; then
             implement_named=$(unquoted_arguments "$(gh_statement "$command" "gh pr create")" |
+                sed 's/\\[nrt]/ /g' |
                 tr -s ' \t\r\n\\' '\n' |
                 awk 'named { print; named = 0; next }
                     /^(--base|-B)$/ { named = 1; next }
@@ -840,6 +842,13 @@ pr_gate() {
             "Run the code-review skill over \`git diff $implement_base...HEAD\` and fix its valid findings"
         if [ "$gate_action" = merge ]; then
             deny "\"Merge to $implement_target is reserved exclusively for the user; do not enable auto-merge or enqueue it.\""
+        fi
+        # A reused worktree may hold a PR into another base, and this review
+        # covered only the diff against the target.
+        if [ "$gate_action" = ready ] && [ "$implement_target" != "$MAIN_BRANCH" ]; then
+            implement_pr=$(pr_number "$(gh_statement "$command" "gh pr ready")")
+            sh "$(dirname "$0")/campaign_context.sh" check-pr "$dir" "$implement_pr" ready >/dev/null 2>&1 ||
+                deny "\"Name one PR number whose base is $implement_target and whose head is this reviewed branch, after a fetch.\""
         fi
         pass_pr_gate "$dir"
     fi

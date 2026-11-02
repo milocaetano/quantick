@@ -244,6 +244,9 @@ for target in feat/test feature/test; do
     allow "$target opens its PR after review" gate Bash "gh pr create --base $target" allow
     allow "$target accepts the equals form" gate Bash "gh pr create --base=$target" allow
     allow "$target accepts the short form" gate Bash "gh pr create -B $target" allow
+    allow "$target accepts the attached short form" gate Bash "gh pr create -B$target" allow
+    allow "$target accepts an unindented continuation" gate Bash "gh pr create \\\\\\n--base $target" allow
+    allow "$target ignores the verb inside a message" gate Bash "git commit -m \\\"note; gh pr create is next\\\"" allow
     allow "$target refuses the default main base" gate Bash 'gh pr create --title x' deny "--base $target"
     allow "$target refuses another base" gate Bash 'gh pr create --base main' deny "--base $target"
     allow "$target refuses a longer name" gate Bash "gh pr create --base $target-2" deny "--base $target"
@@ -253,7 +256,12 @@ for target in feat/test feature/test; do
         gate Bash "gh pr create --title \\\"Note --base $target here\\\"" deny "--base $target"
     allow "$target refuses a second base" \
         gate Bash "gh pr create --base $target --base main" deny "--base $target"
-    allow "$target marks ready on the marker alone" gate Bash 'gh pr ready 42' allow
+    identity "$target" "$head" "$base"
+    allow "$target marks its own PR ready" gate Bash 'gh pr ready 42' allow
+    identity main "$head" "$base"
+    allow "$target refuses ready on a PR into another base" gate Bash 'gh pr ready 42' deny "$target"
+    allow "$target refuses ready with no PR number" gate Bash 'gh pr ready' deny "$target"
+    identity "$target" "$head" "$base"
     unrelated=$(git -C "$fixture/repo" -c user.name=t -c user.email=t@example.test commit-tree "HEAD^{tree}" -m unrelated)
     git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$unrelated"
     git -C "$fixture/repo" rev-parse HEAD > "$git_dir/code-review-ok"
@@ -262,11 +270,19 @@ for target in feat/test feature/test; do
     sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
     allow "$target merge stays the user's" \
         gate Bash "gh pr merge 42 --merge --match-head-commit $head" deny "Merge to $target"
-    git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$head"
-    allow "$target advancing stales the review" gate Bash "gh pr create --base $target" deny code-review-ok
+    sibling=$(git -C "$fixture/repo" -c user.name=t -c user.email=t@example.test commit-tree "$base^{tree}" -p "$base" -m sibling)
+    git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$sibling"
+    allow "$target advancing keeps the review of an unchanged diff" gate Bash "gh pr create --base $target" allow
     git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$base"
     rm "$git_dir/mission-tier"
     allow "$target without the tier keeps the mission reviews" gate Bash 'gh pr ready 42' deny arch-review-ok
+    printf 'feat/child implement\n' > "$git_dir/mission-tier"
+    rm -f "$git_dir/code-review-ok"
+    printf '{"hook_event_name":"SubagentStop","last_assistant_message":"REVIEW-VERDICT: pass %s %s"}' "$fixture/repo" "$head" |
+        sh "$fixture/hooks/guardrails.sh" review-verdict
+    allow "$target records the verdict under its own key" \
+        test "$(cat "$git_dir/code-review-ok")" = "$(sh "$helper" key "$fixture/repo")"
+    rm "$git_dir/mission-tier"
 done
 printf 'feat/child origin/feat/test https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
 reject 'a feat base takes no parent' sh "$helper" base "$fixture/repo"

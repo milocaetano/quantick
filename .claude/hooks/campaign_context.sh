@@ -40,9 +40,11 @@ case "$operation" in
     key)
         context_tip=$(git -C "$context_dir" rev-parse --verify "$context_base^{commit}")
         git -C "$context_dir" merge-base "$context_base" HEAD >/dev/null
-        # Preserve legacy main review keys. Campaign keys additionally bind the
-        # target ref and its tip, so another child merge invalidates reviews.
-        if [ "$context_base" = origin/main ]; then
+        # Preserve legacy main review keys, which a parent-free target shares:
+        # only the user merges there, so the target moving stales nothing.
+        # Campaign keys additionally bind the target ref and its tip, so another
+        # child merge invalidates reviews.
+        if [ "$context_parent" = none ]; then
             git -C "$context_dir" diff "$context_base...HEAD" | git -C "$context_dir" hash-object --stdin
         else
             context_diff=$(git -C "$context_dir" diff "$context_base...HEAD" | git -C "$context_dir" hash-object --stdin)
