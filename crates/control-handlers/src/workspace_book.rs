@@ -16,17 +16,18 @@ use quantick_control::{
 use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::workspace::MODULE_ID;
 use quantick_control_schema::workspace_book::{
-    TAB_WORKSPACE_SET_EVENT_KIND, TabWorkspaceSetInput, TabWorkspaceSetResult, WRITE_FAILED_CODE,
+    TAB_WORKSPACE_SET_EVENT_KIND, TabWorkspaceSetInput, TabWorkspaceSetResult,
     WORKSPACE_DELETED_EVENT_KIND, WORKSPACE_RENAMED_EVENT_KIND, WORKSPACE_REVERTED_EVENT_KIND,
-    WORKSPACE_SAVED_EVENT_KIND, WorkspaceDeleteInput, WorkspaceDeleteResult, WorkspaceEntry,
-    WorkspaceListInput, WorkspaceListResult, WorkspaceRenameInput, WorkspaceRenameResult,
-    WorkspaceRevertResult, WorkspaceSaveAsInput, WorkspaceSaveResult, WorkspaceTabInput,
-    tab_workspace_set_descriptor, workspace_delete_descriptor, workspace_list_descriptor,
-    workspace_rename_descriptor, workspace_revert_descriptor, workspace_save_as_descriptor,
-    workspace_save_to_descriptor,
+    WORKSPACE_SAVED_EVENT_KIND, WRITE_FAILED_CODE, WorkspaceDeleteInput, WorkspaceDeleteResult,
+    WorkspaceEntry, WorkspaceListInput, WorkspaceListResult, WorkspaceRenameInput,
+    WorkspaceRenameResult, WorkspaceRevertResult, WorkspaceSaveAsInput, WorkspaceSaveResult,
+    WorkspaceTabInput, tab_workspace_set_descriptor, workspace_delete_descriptor,
+    workspace_list_descriptor, workspace_rename_descriptor, workspace_revert_descriptor,
+    workspace_save_as_descriptor, workspace_save_to_descriptor,
 };
 use quantick_stores::workspaces::{
-    DEFAULT_WORKSPACE, WorkspaceBook, WorkspaceRecipe, WorkspaceRefusal,
+    DEFAULT_WORKSPACE, DeleteOutcome, SaveOutcome, SetOutcome, WorkspaceBook, WorkspaceRecipe,
+    WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -163,6 +164,96 @@ fn workspace_of<H: WorkspaceBookHost + ?Sized>(
         .ok_or_else(|| refused(&WorkspaceRefusal::UnknownTab(tab)))
 }
 
+/// Put a tab on a workspace and redraw it: the one path the call and the
+/// window's rows share, so the two cannot disagree.
+///
+/// # Errors
+/// No such tab or workspace, or no book.
+pub fn set_tab_workspace<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+    name: &str,
+) -> Result<SetOutcome, ControlError> {
+    let outcome = book(app)?
+        .set(tab, name)
+        .map_err(|refusal| refused(&refusal))?;
+    if outcome.changed {
+        show(app, &[tab])?;
+    }
+    Ok(outcome)
+}
+
+/// Write a tab's edits into its workspace and redraw the tabs that follow.
+///
+/// # Errors
+/// No such tab, no book, or the write failed and the book was restored.
+pub fn save_tab_to<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+) -> Result<SaveOutcome, ControlError> {
+    let outcome = written(app, |book| book.save_to(tab), |saved| saved.changed)?;
+    if outcome.changed {
+        show(app, &outcome.tabs_changed)?;
+    }
+    Ok(outcome)
+}
+
+/// Make a new workspace of a tab's copy.
+///
+/// # Errors
+/// The name is refused, no such tab, no book, or the write failed.
+pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+    name: &str,
+) -> Result<SaveOutcome, ControlError> {
+    written(app, |book| book.save_as(tab, name), |saved| saved.changed)
+}
+
+/// Drop a tab's edits and redraw it. Answers whether there were any.
+///
+/// # Errors
+/// No such tab, or no book.
+pub fn revert_tab<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+) -> Result<bool, ControlError> {
+    let changed = book(app)?
+        .revert(tab)
+        .map_err(|refusal| refused(&refusal))?;
+    if changed {
+        show(app, &[tab])?;
+    }
+    Ok(changed)
+}
+
+/// Rename a workspace. Answers whether the name moved.
+///
+/// # Errors
+/// The name is refused, no book, or the write failed.
+pub fn rename_workspace<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    name: &str,
+    to: &str,
+) -> Result<bool, ControlError> {
+    written(app, |book| book.rename(name, to), |moved| *moved)
+}
+
+/// Delete a workspace, moving its tabs to `Default` and redrawing the clean ones.
+///
+/// # Errors
+/// `Default`, no book, or the write failed.
+pub fn delete_workspace<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    name: &str,
+) -> Result<DeleteOutcome, ControlError> {
+    let outcome = written(app, |book| book.delete(name), |gone| gone.changed)?;
+    if outcome.changed {
+        show(app, &outcome.adopted)?;
+    }
+    Ok(outcome)
+}
+
 fn journal<A: NotifyAccess>(
     access: &mut A,
     kind: &'static str,
@@ -180,12 +271,10 @@ fn set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let TabWorkspaceSetInput { tab_id, name } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = book(app)?
-        .set(tab, &name)
-        .map_err(|refusal| refused(&refusal))?;
+    let outcome = set_tab_workspace(app, tab, &name)?;
     if outcome.changed {
-        show(app, &[tab])?;
-        let payload = json!({ "tab_id": tab, "workspace": name, "dropped_edits": outcome.dropped_edits });
+        let payload =
+            json!({ "tab_id": tab, "workspace": name, "dropped_edits": outcome.dropped_edits });
         journal(access, TAB_WORKSPACE_SET_EVENT_KIND, actor, payload);
     }
     answer(&TabWorkspaceSetResult {
@@ -204,10 +293,10 @@ fn save_to<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let WorkspaceTabInput { tab_id } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = written(app, |book| book.save_to(tab), |saved| saved.changed)?;
+    let outcome = save_tab_to(app, tab)?;
     if outcome.changed {
-        show(app, &outcome.tabs_changed)?;
-        let payload = json!({ "workspace": outcome.workspace, "tabs_changed": outcome.tabs_changed });
+        let payload =
+            json!({ "workspace": outcome.workspace, "tabs_changed": outcome.tabs_changed });
         journal(access, WORKSPACE_SAVED_EVENT_KIND, actor, payload);
     }
     answer(&WorkspaceSaveResult {
@@ -225,7 +314,7 @@ fn save_as<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let WorkspaceSaveAsInput { tab_id, name } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = written(app, |book| book.save_as(tab, &name), |saved| saved.changed)?;
+    let outcome = save_tab_as(app, tab, &name)?;
     if outcome.changed {
         let payload = json!({ "workspace": outcome.workspace, "tabs_changed": [] });
         journal(access, WORKSPACE_SAVED_EVENT_KIND, actor, payload);
@@ -245,12 +334,9 @@ fn revert<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let WorkspaceTabInput { tab_id } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let changed = book(app)?
-        .revert(tab)
-        .map_err(|refusal| refused(&refusal))?;
+    let changed = revert_tab(app, tab)?;
     let workspace = workspace_of(app, tab)?;
     if changed {
-        show(app, &[tab])?;
         let payload = json!({ "tab_id": tab, "workspace": workspace });
         journal(access, WORKSPACE_REVERTED_EVENT_KIND, actor, payload);
     }
@@ -268,7 +354,7 @@ fn rename<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceRenameInput { name, to } = input(value)?;
-    let changed = written(app, |book| book.rename(&name, &to), |moved| *moved)?;
+    let changed = rename_workspace(app, &name, &to)?;
     let workspace = to.split_whitespace().collect::<Vec<_>>().join(" ");
     if changed {
         let payload = json!({ "from": name, "workspace": workspace });
@@ -284,10 +370,10 @@ fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceDeleteInput { name } = input(value)?;
-    let outcome = written(app, |book| book.delete(&name), |gone| gone.changed)?;
+    let outcome = delete_workspace(app, &name)?;
     if outcome.changed {
-        show(app, &outcome.adopted)?;
-        let payload = json!({ "workspace": name, "moved": outcome.moved, "kept_edits": outcome.kept_edits });
+        let payload =
+            json!({ "workspace": name, "moved": outcome.moved, "kept_edits": outcome.kept_edits });
         journal(access, WORKSPACE_DELETED_EVENT_KIND, actor, payload);
     }
     answer(&WorkspaceDeleteResult {

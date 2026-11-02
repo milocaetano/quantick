@@ -446,7 +446,7 @@ impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
         self,
         replay_view: &'a crate::replay_view::ReplayView,
     ) -> WorkspaceSaveAdapter<'a> {
-        let (session, path) = self.workspace.commit_parts();
+        let (session, path, workspace_book) = self.workspace.commit_parts();
         WorkspaceSaveAdapter {
             arrangement: super::arrangement_adapter::ArrangementRead {
                 tabs: self.tabs,
@@ -458,6 +458,7 @@ impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
                 record_deals: *self.record_deals,
                 history: self.history,
                 drawing_chrome: self.drawing_chrome,
+                workspace_book,
             },
             session,
             path,

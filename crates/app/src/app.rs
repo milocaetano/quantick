@@ -54,6 +54,7 @@ mod menu_bar;
 pub(crate) mod native_windows;
 pub(crate) mod paper_wiring;
 mod replay_and_history;
+mod tab_workspaces;
 mod tabs;
 pub(crate) mod title_bar;
 mod toolbar_wiring;
@@ -306,6 +307,7 @@ impl QuantickApp {
             record_deals: self.chrome.record_deals,
             history: &self.runtime.history,
             drawing_chrome: &self.drawings.chrome,
+            workspace_book: self.runtime.workspace.book.book(),
         }
     }
 

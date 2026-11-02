@@ -22,7 +22,8 @@ use super::super::layout_wiring::LayoutRead;
 use super::commands::MenuCommand;
 use super::{
     COLLAPSE_CONTEXT_SHORTCUT, DOCK_SHORTCUT, LEGEND_SHORTCUT, REPLAY_SHORTCUT,
-    SAVE_WORKSPACE_SHORTCUT, SETTINGS_SHORTCUT, layout_preset_shortcut, layout_tab_shortcut,
+    SAVE_TO_WORKSPACE_SHORTCUT, SAVE_WORKSPACE_SHORTCUT, SETTINGS_SHORTCUT, layout_preset_shortcut,
+    layout_tab_shortcut,
 };
 
 /// The `⋮` button's glyph.
@@ -47,6 +48,8 @@ pub(in crate::app) struct WindowMenuState {
     /// The section Settings shows; the section list and every door write it.
     pub(in crate::app) settings_section: SettingsSection,
     pub(in crate::app) help: Option<HelpPage>,
+    /// The chip's menu, the armed delete and the name dialog.
+    pub(in crate::app) tab_workspace: quantick_session::workspace_menu::WorkspaceMenuState,
     path: [Option<SubmenuId>; MAX_SUBMENU_LEVELS],
     /// The pane whose first row takes the keyboard next.
     focus_pane: Option<usize>,
@@ -97,6 +100,7 @@ impl WindowMenuState {
 pub(super) struct WindowMenu<'a> {
     /// False while Home covers the canvas: the chart rows grey out.
     pub(super) chart_shown: bool,
+    pub(super) workspace: super::workspace_rows::WorkspaceRows<'a>,
     pub(super) replaying: bool,
     pub(super) layouts: LayoutRead<'a>,
     pub(super) tab: &'a Tab,
@@ -262,6 +266,18 @@ impl WindowMenu<'_> {
         if id == RowId::CloseReplay && !self.replaying {
             return;
         }
+        if id == RowId::SaveToWorkspace {
+            let keys = super::shortcut_text(ui.ctx(), &SAVE_TO_WORKSPACE_SHORTCUT);
+            let response = self.workspace.save_to_row(ui, keys, commands);
+            take_focus(state, level, &response);
+            return;
+        }
+        if self
+            .workspace
+            .action_row(ui, id, &mut state.tab_workspace, commands)
+        {
+            return;
+        }
         let row = row_of(id);
         if id == RowId::ReopenLastTabs {
             let mut save_on_exit = self.save_on_exit;
@@ -367,6 +383,7 @@ impl WindowMenu<'_> {
             LiveRows::Legend => self.legend_entry(ui, commands),
             LiveRows::ChartMoves => self.chart_moves(ui, commands),
             LiveRows::RecentFiles => self.recent_files(ui, commands),
+            LiveRows::WorkspaceList => self.workspace.list(ui, commands),
         }
         if wants_focus && !self.focus_live_row.get() {
             state.focus_pane = None;

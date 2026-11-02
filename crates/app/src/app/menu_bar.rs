@@ -18,6 +18,7 @@ pub(in crate::app) use menus::{KEBAB_GLYPH, WindowMenuState};
 mod commands;
 mod menus;
 mod settings_window;
+mod workspace_rows;
 
 /// Opens the Market Replay browser (§10).
 const REPLAY_SHORTCUT: egui::KeyboardShortcut =
@@ -84,13 +85,15 @@ const LEGEND_SHORTCUT: egui::KeyboardShortcut =
 /// Saves the workspace — the arrangement the next launch opens on.
 ///
 /// Ctrl+Shift+S rather than the Ctrl+S every editor uses, deliberately: a
-/// chart has no document, and a trader who reaches for Ctrl+S out of habit
-/// mid-session should hit nothing rather than silently redefine what their
-/// platform opens on.
+/// trader who reaches for Ctrl+S out of habit mid-session must not silently
+/// redefine what their platform opens on.
 const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
     egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
     egui::Key::S,
 );
+/// Saves the active tab's edits to its workspace; with none it does nothing.
+const SAVE_TO_WORKSPACE_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
 /// Opens the source picker for a new tab (§10).
 pub(super) const NEW_TAB_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::T);
@@ -177,7 +180,7 @@ impl QuantickApp {
         let chart_shown = !self.chrome.title_bar.surface.is_home();
         commands::read_shortcuts(ctx, context_column, chart_shown, &mut commands);
         for command in commands.drain(..) {
-            self.apply_menu_command_on(ctx, command);
+            apply_menu_command_on(self, ctx, command);
         }
 
         self.chrome.title_bar.menu_open = self.chrome.window_menu.is_open_on(ctx.viewport_id());
@@ -186,7 +189,15 @@ impl QuantickApp {
             .control_access
             .as_ref()
             .is_some_and(crate::control::ControlAccess::is_enabled);
-        let action = super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar);
+        let action = super::title_bar::draw(
+            ctx,
+            &self.runtime.tabs,
+            &self.runtime.workspace.book,
+            &mut self.chrome.title_bar,
+        );
+        if action == Some(crate::tabstrip::TabAction::WorkspaceMenu) {
+            self.chrome.window_menu.tab_workspace.toggle_chip_menu();
+        }
         super::native_windows::apply_tab_action(self, action);
         if std::mem::take(&mut self.chrome.title_bar.kebab_clicked) {
             self.chrome.window_menu.toggle(ctx.viewport_id(), false);
@@ -194,49 +205,11 @@ impl QuantickApp {
         if std::mem::take(&mut self.chrome.title_bar.agent_clicked) {
             commands.push(MenuCommand::OpenSettings(SettingsSection::AgentAccess));
         }
-        self.draw_window_menu(ctx, &mut commands);
+        draw_window_menu(self, ctx, &mut commands);
         settings_window::show(self, ctx, &mut commands);
+        workspace_rows::name_dialog(self, ctx, &mut commands);
         for command in commands {
-            self.apply_menu_command_on(ctx, command);
-        }
-    }
-
-    /// The menu's panes, each handed exactly the state it shows.
-    fn draw_window_menu(&mut self, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
-        let Some(kebab) = self.chrome.title_bar.control_rect(KEBAB_CONTROL) else {
-            return;
-        };
-        let mut state = std::mem::take(&mut self.chrome.window_menu);
-        menus::WindowMenu {
-            chart_shown: !self.chrome.title_bar.surface.is_home(),
-            replaying: self.active_tab().replay.is_some(),
-            layouts: self.layout_state(),
-            tab: self.active_tab(),
-            dock_visible: self.dock.visible(),
-            dock_tab: self.dock.tab(),
-            toolrail: &self.toolrail,
-            startup_saved: self.runtime.workspace.session().saved(),
-            save_on_exit: self.runtime.workspace.session().save_on_exit(),
-            recent: self.runtime.workspace.recent_on_disk(),
-            focus_live_row: std::cell::Cell::new(false),
-        }
-        .show(ctx, &mut state, kebab, commands);
-        self.chrome.window_menu = state;
-    }
-
-    /// The commands that need to know which window asked, then all the others.
-    fn apply_menu_command_on(&mut self, ctx: &egui::Context, command: MenuCommand) {
-        let viewport = ctx.viewport_id();
-        match command {
-            MenuCommand::ToggleWindowMenu => self.chrome.window_menu.toggle(viewport, true),
-            MenuCommand::OpenSettings(section) => {
-                self.chrome.window_menu.open_settings(viewport, section);
-            }
-            MenuCommand::OpenHelp(page) => {
-                self.chrome.window_menu.windows_viewport = Some(viewport);
-                self.chrome.window_menu.help = Some(page);
-            }
-            command => self.apply_menu_command(command),
+            apply_menu_command_on(self, ctx, command);
         }
     }
 
@@ -292,6 +265,9 @@ impl QuantickApp {
             MenuCommand::SaveWorkspace(reason) => {
                 self.workspace_save_adapter().save_workspace(reason);
             }
+            MenuCommand::Workspace(command) => {
+                super::tab_workspaces::apply_workspace_command(self, command);
+            }
             MenuCommand::ForgetWorkspace => {
                 self.workspace_save_adapter().forget_workspace();
             }
@@ -332,5 +308,55 @@ impl QuantickApp {
             | MenuCommand::OpenSettings(_)
             | MenuCommand::OpenHelp(_) => {}
         }
+    }
+}
+
+/// The menu's panes, each handed exactly the state it shows.
+fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
+    let Some(kebab) = app.chrome.title_bar.control_rect(KEBAB_CONTROL) else {
+        return;
+    };
+    let mut state = std::mem::take(&mut app.chrome.window_menu);
+    let workspace = workspace_rows::WorkspaceRows {
+        book: app.runtime.workspace.book.book(),
+        tabs: &app.runtime.tabs,
+        tab: app.runtime.tabs.active_id(),
+        symbol: app.active_tab().symbol.as_str(),
+    };
+    menus::WindowMenu {
+        workspace,
+        chart_shown: !app.chrome.title_bar.surface.is_home(),
+        replaying: app.active_tab().replay.is_some(),
+        layouts: app.layout_state(),
+        tab: app.active_tab(),
+        dock_visible: app.dock.visible(),
+        dock_tab: app.dock.tab(),
+        toolrail: &app.toolrail,
+        startup_saved: app.runtime.workspace.session().saved(),
+        save_on_exit: app.runtime.workspace.session().save_on_exit(),
+        recent: app.runtime.workspace.recent_on_disk(),
+        focus_live_row: std::cell::Cell::new(false),
+    }
+    .show(ctx, &mut state, kebab, commands);
+    if let Some(anchor) = app.chrome.title_bar.strip.workspace_button {
+        let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
+        workspace.chip_menu(ctx, anchor, &mut state.tab_workspace, keys, commands);
+    }
+    app.chrome.window_menu = state;
+}
+
+/// The commands that need to know which window asked, then all the others.
+fn apply_menu_command_on(app: &mut QuantickApp, ctx: &egui::Context, command: MenuCommand) {
+    let viewport = ctx.viewport_id();
+    match command {
+        MenuCommand::ToggleWindowMenu => app.chrome.window_menu.toggle(viewport, true),
+        MenuCommand::OpenSettings(section) => {
+            app.chrome.window_menu.open_settings(viewport, section);
+        }
+        MenuCommand::OpenHelp(page) => {
+            app.chrome.window_menu.windows_viewport = Some(viewport);
+            app.chrome.window_menu.help = Some(page);
+        }
+        command => app.apply_menu_command(command),
     }
 }

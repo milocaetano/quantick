@@ -57,6 +57,25 @@ pub(crate) struct WorkspaceStore {
 #[cfg(test)]
 pub(crate) use crate::workspace_picker::WorkspacePick;
 
+/// The book beside the layouts file. Under test every app holds a file of its
+/// own: the tests of one process share a scratch home, and one test's seeded
+/// workspaces must not decide how another test's tabs open.
+#[cfg(not(test))]
+fn open_book(layouts: &Path) -> quantick_stores::workspaces::WorkspaceBookStore {
+    quantick_stores::workspaces::WorkspaceBookStore::open_beside(layouts)
+}
+
+#[cfg(test)]
+fn open_book(layouts: &Path) -> quantick_stores::workspaces::WorkspaceBookStore {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let index = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = layouts.with_file_name(format!("workspaces-{index}.toml"));
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder).expect("a scratch folder");
+    }
+    quantick_stores::workspaces::WorkspaceBookStore::open_at(path)
+}
+
 impl WorkspaceStore {
     /// Build the handle from paths each store has already resolved for itself.
     ///
@@ -65,7 +84,7 @@ impl WorkspaceStore {
     /// store pointed at a scratch file by `QUANTICK_*` still writes there.
     pub(crate) fn new(paths: StorePaths, layouts: LayoutStore, trades_dir: PathBuf) -> Self {
         Self {
-            book: quantick_stores::workspaces::WorkspaceBookStore::open_beside(layouts.path()),
+            book: open_book(layouts.path()),
             layouts,
             layers: SavedLayers::default(),
             session: WorkspaceCommitSession::default(),
@@ -148,8 +167,14 @@ impl WorkspaceStore {
     pub(crate) fn set_recent_on_disk(&mut self, existing: Vec<PathBuf>) {
         self.recent_on_disk = existing;
     }
-    pub(crate) fn commit_parts(&mut self) -> (&mut WorkspaceCommitSession, &Path) {
-        (&mut self.session, &self.paths.ui_state)
+    pub(crate) fn commit_parts(
+        &mut self,
+    ) -> (
+        &mut WorkspaceCommitSession,
+        &Path,
+        &quantick_stores::workspaces::WorkspaceBook,
+    ) {
+        (&mut self.session, &self.paths.ui_state, self.book.book())
     }
 
     #[cfg(test)]

@@ -388,6 +388,17 @@ impl ChartPane {
         self.footprint.config.as_ref().unwrap_or(window)
     }
 
+    /// This chart's footprint setup on `style`, and its own from here on.
+    pub fn set_footprint_style(
+        &mut self,
+        style: crate::footprint_config::FootprintStyle,
+        window: &crate::footprint_config::FootprintConfig,
+    ) {
+        let mut config = self.footprint_config(window).clone();
+        config.style = style;
+        self.footprint.config = Some(config);
+    }
+
     /// Put this pane on `spec` outright, selectors included. Startup-scoped: the caller is a
     /// workspace restoring the bar rule this pane was last read on, into a pane that has not drawn
     /// a frame yet; a live change goes through [`SpecSelector::pending`] so the frame carrying it

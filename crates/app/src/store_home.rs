@@ -77,6 +77,14 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         local_keys: &[],
     },
     CockpitStore {
+        key: "workspaces",
+        file: quantick_stores::workspaces::WORKSPACES_FILE,
+        validate: quantick_stores::workspaces::validate,
+        path: crate::layouts::workspaces_path,
+        in_bundle: true,
+        local_keys: &[],
+    },
+    CockpitStore {
         key: "market_settings",
         file: crate::layouts::MARKET_SETTINGS_FILE,
         validate: quantick_stores::market_settings::validate,

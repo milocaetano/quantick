@@ -14,9 +14,9 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
              dialog is the ceiling's other side, not a gap in it",
 };
 
-/// Named ahead of the rows that paint them: the calls ship first, and each key
-/// becomes the entry it claims when the strip and the menu draw it.
-const NOT_PAINTED_YET: &str = "the workspace rows are painted in the next seam of this feature";
+/// The list's rows are computed from the book, so a label is a workspace's name
+/// and not an entry to look up.
+const COMPUTED_ROWS: &str = "each row of the workspace list is named by the trader";
 
 /// Every row this family owns.
 pub(super) const ROWS: &[UiBehaviour] = &[
@@ -81,49 +81,52 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         id: "tab.workspace.set",
         title: "Put a tab on a saved workspace",
         reach: "the active tab's workspace button",
-        keys: &[(Source::Authored, NOT_PAINTED_YET)],
+        keys: &[(Source::Authored, COMPUTED_ROWS)],
         mapping: Mapping::Capabilities(&["tab.workspace.set"]),
     },
     UiBehaviour {
         id: "workspace.save_to",
         title: "Save a tab's edits to its workspace",
         reach: "window menu, Save to",
-        keys: &[(Source::Authored, NOT_PAINTED_YET)],
+        keys: &[
+            (Source::MenuEntry, "Save to workspace"),
+            (Source::Hotkey, "SAVE_TO_WORKSPACE_SHORTCUT"),
+        ],
         mapping: Mapping::Capabilities(&["workspace.save_to"]),
     },
     UiBehaviour {
         id: "workspace.save_as",
         title: "Save a tab as a new workspace",
         reach: "window menu, Workspace, Save as new",
-        keys: &[(Source::Authored, NOT_PAINTED_YET)],
+        keys: &[(Source::MenuEntry, "Save as new\u{2026}")],
         mapping: Mapping::Capabilities(&["workspace.save_as"]),
     },
     UiBehaviour {
         id: "workspace.revert",
         title: "Drop a tab's unsaved edits",
         reach: "window menu, Workspace, Revert",
-        keys: &[(Source::Authored, NOT_PAINTED_YET)],
+        keys: &[(Source::MenuEntry, "Revert edits")],
         mapping: Mapping::Capabilities(&["workspace.revert"]),
     },
     UiBehaviour {
         id: "workspace.rename",
         title: "Rename a workspace",
         reach: "window menu, Workspace, Rename",
-        keys: &[(Source::Authored, NOT_PAINTED_YET)],
+        keys: &[(Source::MenuEntry, "Rename workspace\u{2026}")],
         mapping: Mapping::Capabilities(&["workspace.rename"]),
     },
     UiBehaviour {
         id: "workspace.delete",
         title: "Delete a workspace, moving its tabs to Default",
         reach: "window menu, Workspace, Delete",
-        keys: &[(Source::Authored, NOT_PAINTED_YET)],
+        keys: &[(Source::MenuEntry, "Delete workspace")],
         mapping: Mapping::Capabilities(&["workspace.delete"]),
     },
     UiBehaviour {
         id: "workspace.list",
         title: "List the workspaces and the tabs using each",
         reach: "the active tab's workspace menu",
-        keys: &[(Source::Authored, NOT_PAINTED_YET)],
+        keys: &[(Source::Authored, COMPUTED_ROWS)],
         mapping: Mapping::Capabilities(&["workspace.list"]),
     },
 ];

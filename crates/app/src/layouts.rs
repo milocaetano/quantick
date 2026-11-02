@@ -33,6 +33,12 @@ pub(crate) fn default_path() -> PathBuf {
     crate::store_home::resolve(LAYOUTS_FILE)
 }
 
+/// The workspaces file, which lives beside the layouts file.
+#[must_use]
+pub(crate) fn workspaces_path() -> PathBuf {
+    quantick_stores::workspaces::path_beside(&default_path())
+}
+
 /// The market store this cockpit opens with. A run pointed at a scratch layouts
 /// file and no market file stays beside it: its migration must never write
 /// into the trader's home.

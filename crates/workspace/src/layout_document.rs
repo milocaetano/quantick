@@ -227,6 +227,9 @@ pub struct LegacyDrawings {
 pub struct ChartLayout {
     pub id: LayoutId,
     pub name: String,
+    /// The strip layout a pane's own copy came from; `None` on a strip layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<LayoutId>,
     /// The indicator set every pane shows while this layout is active, in
     /// display order.
     #[serde(default)]
@@ -248,6 +251,11 @@ pub struct LayoutBook {
     /// that version may not even have.
     #[serde(default)]
     layouts: Vec<ChartLayout>,
+    /// Each pane's own copy of a set: never on the strip and never counted
+    /// against it. A tab that shared a strip layout with another would reach
+    /// it with every edit; see `crate::workspace_recipe`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    private: Vec<ChartLayout>,
 }
 
 impl Default for LayoutBook {
@@ -271,8 +279,10 @@ impl LayoutBook {
                 id,
                 name: format!("{DEFAULT_NAME_PREFIX}1"),
                 indicators,
+                origin: None,
                 drawings: Vec::new(),
             }],
+            private: Vec::new(),
         }
     }
 
@@ -335,12 +345,56 @@ impl LayoutBook {
     /// The layout with `id`.
     #[must_use]
     pub fn get(&self, id: LayoutId) -> Option<&ChartLayout> {
-        self.layouts.iter().find(|layout| layout.id == id)
+        self.layouts
+            .iter()
+            .chain(&self.private)
+            .find(|layout| layout.id == id)
     }
 
     /// See [`Self::get`].
     pub fn get_mut(&mut self, id: LayoutId) -> Option<&mut ChartLayout> {
-        self.layouts.iter_mut().find(|layout| layout.id == id)
+        self.layouts
+            .iter_mut()
+            .chain(&mut self.private)
+            .find(|layout| layout.id == id)
+    }
+
+    /// Whether `id` is a pane's own copy rather than a strip layout.
+    #[must_use]
+    pub fn is_private(&self, id: LayoutId) -> bool {
+        self.private.iter().any(|layout| layout.id == id)
+    }
+
+    /// A new private copy of `of`, remembering the strip layout it came from.
+    pub fn make_private_copy(&mut self, of: LayoutId) -> Option<LayoutId> {
+        let source = self.get(of)?;
+        let id = LayoutId(self.next_id);
+        let copy = ChartLayout {
+            id,
+            name: source.name.clone(),
+            origin: Some(source.origin.unwrap_or(of)),
+            indicators: source.indicators.clone(),
+            drawings: Vec::new(),
+        };
+        self.next_id += 1;
+        self.private.push(copy);
+        Some(id)
+    }
+
+    /// A private copy is gone with the last pane on it.
+    pub fn remove_private(&mut self, id: LayoutId) {
+        self.private.retain(|layout| layout.id != id);
+    }
+
+    /// The layout the strip lights for `id`: a copy's origin, or the active
+    /// layout once that origin was deleted.
+    #[must_use]
+    pub fn strip_layout(&self, id: LayoutId) -> LayoutId {
+        match self.get(id).and_then(|layout| layout.origin) {
+            Some(origin) if self.index_of(origin).is_some() => origin,
+            Some(_) => self.active,
+            None => id,
+        }
     }
 
     /// Where `id` sits in the strip.
@@ -394,6 +448,7 @@ impl LayoutBook {
             id,
             name,
             indicators: Vec::new(),
+            origin: None,
             drawings: Vec::new(),
         });
         Ok(id)

@@ -122,7 +122,10 @@ fn a_failed_write_restores_the_book_journals_nothing_and_says_why() {
     assert_eq!(detail(&error), WRITE_FAILED_CODE);
     assert!(error.message.contains("saving is off"));
     assert!(access.events.is_empty());
-    assert!(host.book.recipe("Scalp").is_none(), "memory matches the file");
+    assert!(
+        host.book.recipe("Scalp").is_none(),
+        "memory matches the file"
+    );
 
     host.write_fails = false;
     let retried = save_as(&mut host, &mut access, &actor, &value).unwrap();
@@ -136,7 +139,13 @@ fn bad_names_are_refused_with_a_stable_code_and_the_reason() {
     assert_eq!(empty.code.as_str(), codes::INVALID_REQUEST);
     assert_eq!(detail(&empty), "workspace.name_empty");
     assert_eq!(empty.message, "a workspace needs a name");
-    let taken = save_as(&mut host, &mut access, &actor, &json!({ "name": "default" })).unwrap_err();
+    let taken = save_as(
+        &mut host,
+        &mut access,
+        &actor,
+        &json!({ "name": "default" }),
+    )
+    .unwrap_err();
     assert_eq!(detail(&taken), "workspace.name_taken");
     let unknown = set(&mut host, &mut access, &actor, &json!({ "name": "Nope" })).unwrap_err();
     assert_eq!(detail(&unknown), "workspace.unknown");

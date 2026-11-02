@@ -9,6 +9,7 @@ pub use quantick_workspace::workspace_book::{
     WorkspaceRefusal, apply_canvas, capture_recipe, parse_book,
 };
 pub use quantick_workspace::workspace_recipe::{ContextPaneIndicators, WorkspaceRecipe};
+pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
 
 /// The file beside a layouts file.
 #[must_use]
@@ -96,18 +97,25 @@ pub struct WorkspaceBookStore {
     book: WorkspaceBook,
     path: PathBuf,
     blocked: bool,
+    sync: TabRecipeSync,
 }
 
 impl WorkspaceBookStore {
     /// Read the book beside a layouts file.
     #[must_use]
     pub fn open_beside(layouts: &Path) -> Self {
-        let path = path_beside(layouts);
+        Self::open_at(path_beside(layouts))
+    }
+
+    /// Read the book at `path`.
+    #[must_use]
+    pub fn open_at(path: PathBuf) -> Self {
         let (book, blocked) = load(&path);
         Self {
             book,
             path,
             blocked,
+            sync: TabRecipeSync::default(),
         }
     }
 
@@ -128,6 +136,33 @@ impl WorkspaceBookStore {
             || (DEFAULT_WORKSPACE.to_owned(), false),
             |state| (state.workspace.to_owned(), state.modified),
         )
+    }
+
+    /// The window's side of the book.
+    #[must_use]
+    pub fn sync(&self) -> &TabRecipeSync {
+        &self.sync
+    }
+
+    pub fn sync_mut(&mut self) -> &mut TabRecipeSync {
+        &mut self.sync
+    }
+
+    /// The book and the window's side of it, together.
+    pub fn parts_mut(&mut self) -> (&mut WorkspaceBook, &mut TabRecipeSync) {
+        (&mut self.book, &mut self.sync)
+    }
+
+    /// A tab closed: nothing of it stays.
+    pub fn forget_tab(&mut self, tab: u64) {
+        self.book.close_tab(tab);
+        self.sync.forget(tab);
+    }
+
+    /// Read the file again: an import wrote it under the running window.
+    pub fn reload(&mut self) {
+        (self.book, self.blocked) = load(&self.path);
+        self.sync.restart();
     }
 
     /// Follow a layouts file moved to another folder.

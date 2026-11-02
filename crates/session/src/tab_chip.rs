@@ -99,6 +99,17 @@ pub struct ChipFit {
     pub width: f32,
 }
 
+/// The first `letters` of a name, with the ellipsis when that cuts it.
+#[must_use]
+pub fn shortened_name(name: &str, letters: usize) -> String {
+    if letters >= name.chars().count() {
+        return name.to_owned();
+    }
+    let mut cut: String = name.chars().take(letters).collect();
+    cut.push('\u{2026}');
+    cut
+}
+
 /// Fit one chip.
 #[must_use]
 pub fn fit_chip(measure: &ChipMeasure<'_>) -> ChipFit {
@@ -186,6 +197,12 @@ mod tests {
             name_letters: letters,
             name_width: &width,
         })
+    }
+
+    #[test]
+    fn a_cut_name_says_so_and_a_whole_one_does_not() {
+        assert_eq!(shortened_name("Scalping", 4), "Scal\u{2026}");
+        assert_eq!(shortened_name("Scalp", 5), "Scalp");
     }
 
     #[test]

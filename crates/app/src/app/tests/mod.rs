@@ -79,6 +79,7 @@ mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
 mod settled_frame;
+mod tab_workspace_tests;
 mod time_strip_cursor_tests;
 mod title_bar_tests;
 mod toolrail_launch_baselines;

@@ -89,12 +89,14 @@ impl QuantickApp {
             let popup = crate::pane_header::menu_id(self.focused_pane().id);
             ctx.memory_mut(|memory| memory.open_popup(popup));
         }
+        let workspace_edits = super::tab_workspaces::edits_of_active(self);
         let tab = self.active_tab_mut();
         let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {
             layout_preset: Some(tab.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
             layout_picker_request_open: layout_picker_autostart,
+            workspace_edits,
             feeds,
             feed_id: &mut tab.feed_id,
             feed_display_name,
@@ -167,6 +169,8 @@ impl QuantickApp {
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
             ToolbarAction::RollContract => contract_roll::roll_active(self as &mut dyn ControlPort),
+            ToolbarAction::SaveToWorkspace => super::tab_workspaces::save_active(self),
+            ToolbarAction::RevertWorkspace => super::tab_workspaces::revert_active(self),
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
             }

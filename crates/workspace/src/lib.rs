@@ -14,6 +14,7 @@ pub mod workspace_book;
 pub mod workspace_commit;
 pub mod workspace_document;
 pub mod workspace_recipe;
+pub mod workspace_sync;
 pub mod write_refusal;
 
 pub mod lifetime;

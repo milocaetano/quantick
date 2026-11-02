@@ -91,6 +91,8 @@ pub struct ToolbarModel<'a> {
     /// The roll on offer: the target, and why it is greyed when it is. Absent
     /// when the config names no next contract.
     pub contract_roll: Option<(String, Option<&'static str>)>,
+    /// The workspace this tab holds unsaved edits against, while it holds any.
+    pub workspace_edits: Option<String>,
     /// Present while a recording is the source; replaces the market label.
     pub replay: Option<ReplaySource>,
     /// The deal recorder shown beside the symbol, when supported.
@@ -165,6 +167,10 @@ pub enum ToolbarAction {
     CancelHistory,
     /// Roll the tab to the contract the config names next.
     RollContract,
+    /// Write this tab's edits into its workspace.
+    SaveToWorkspace,
+    /// Drop this tab's edits.
+    RevertWorkspace,
     /// What the REC control beside the symbol asked for.
     DealRecording(crate::deal_recording::DealRecordingAction),
     /// Fetch and prepend one more span of older venue candles.
@@ -343,6 +349,18 @@ fn draw_source(
         .response
         .on_hover_text("Switch this tab's feed");
     });
+    if let Some(workspace) = &model.workspace_edits {
+        let save = quantick_control_schema::window_menu::save_to_short_label(workspace);
+        if ui.button(save).clicked() {
+            actions.push(ToolbarAction::SaveToWorkspace);
+        }
+        if ui
+            .button(quantick_control_schema::window_menu::TOOLBAR_REVERT)
+            .clicked()
+        {
+            actions.push(ToolbarAction::RevertWorkspace);
+        }
+    }
     if let Some(view) = &model.deal_recording
         && let Some(action) = crate::deal_recording_ui::draw_button(
             ui,
@@ -784,6 +802,7 @@ mod tests {
                         layout_preset: None,
                         layout_picker_open: &mut layout_picker_open,
                         layout_picker_request_open: false,
+                        workspace_edits: None,
                         feed_display_name: "Binance".to_owned(),
                         feeds: Vec::new(),
                         feed_id: &mut String::new(),
@@ -842,6 +861,7 @@ mod tests {
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
+                    workspace_edits: None,
                     feed_display_name: "MetaTrader 5".to_owned(),
                     feeds: Vec::new(),
                     feed_id: &mut String::new(),
@@ -947,6 +967,7 @@ mod tests {
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
+                    workspace_edits: None,
                     feed_display_name: "Binance".to_owned(),
                     feeds: Vec::new(),
                     feed_id: &mut String::new(),

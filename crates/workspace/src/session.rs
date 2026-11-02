@@ -168,10 +168,56 @@ impl LayoutSession {
     pub fn remove_pane(&mut self, pane: u64) {
         if let Some(state) = self.panes.remove(&pane) {
             let mut value = state.get();
+            let held = value.layout;
             value.layout = None;
             value.seeded = false;
             state.set(value);
+            if let Some(held) = held {
+                self.drop_if_unheld(held);
+            }
         }
+    }
+    /// A private copy no pane holds any more leaves the book.
+    fn drop_if_unheld(&mut self, layout: LayoutId) {
+        let held = self
+            .panes
+            .values()
+            .any(|state| state.get().layout == Some(layout));
+        if !held && self.book.is_private(layout) {
+            self.book.remove_private(layout);
+        }
+    }
+    /// Put every seeded pane on a copy of its set that no other pane holds, so
+    /// an edit on one reaches no other. Slots and entries keep their positions.
+    /// Answers whether any pane moved.
+    pub fn own_copies(&mut self, panes: impl IntoIterator<Item = u64>) -> bool {
+        let mut held = std::collections::BTreeSet::new();
+        let mut changed = false;
+        for pane in panes {
+            let Some(state) = self.panes.get(&pane).cloned() else {
+                continue;
+            };
+            let mut value = state.get();
+            let Some(layout) = value.layout.filter(|_| value.seeded) else {
+                continue;
+            };
+            if self.book.is_private(layout) && held.insert(layout) {
+                continue;
+            }
+            let Some(copy) = self.book.make_private_copy(layout) else {
+                continue;
+            };
+            self.next_generation = self
+                .next_generation
+                .checked_add(1)
+                .expect("layout generation exhausted");
+            value.generation = self.next_generation;
+            value.layout = Some(copy);
+            state.set(value);
+            held.insert(copy);
+            changed = true;
+        }
+        changed
     }
     pub fn replace_book(&mut self, book: LayoutBook) {
         let panes = std::mem::take(&mut self.panes);
@@ -270,9 +316,13 @@ impl LayoutSession {
             value.seeded = true;
         }
         state.set(value);
+        let generation = value.generation;
+        if selection.changed() {
+            self.drop_if_unheld(selection.from);
+        }
         Ok(CommittedSelection {
             selection,
-            generation: value.generation,
+            generation,
         })
     }
     /// Last-pick default changes only after incoming indicators are restored.

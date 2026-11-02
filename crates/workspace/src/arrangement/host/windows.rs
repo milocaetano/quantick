@@ -16,6 +16,15 @@ impl<R> Arrangement<R> {
             .map(|index| &self.runtimes[index].runtime)
     }
 
+    /// The ids [`Self::iter_presented`] walks, in the same order.
+    pub fn iter_presented_ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.windows
+            .windows()
+            .iter()
+            .flat_map(|window| self.window_indices(window.id))
+            .map(|index| self.id_at(index))
+    }
+
     pub fn captured_active_index(&self) -> usize {
         let selected = self
             .windows

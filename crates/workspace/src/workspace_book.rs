@@ -209,6 +209,12 @@ fn clean(name: &str) -> Result<String, WorkspaceRefusal> {
 }
 
 impl WorkspaceBook {
+    /// Whether nothing but `Default` was ever saved here.
+    #[must_use]
+    pub fn is_unused(&self) -> bool {
+        self.recipes.len() == 1
+    }
+
     /// The recipe called `name`.
     #[must_use]
     pub fn recipe(&self, name: &str) -> Option<&WorkspaceRecipe> {

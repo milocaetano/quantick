@@ -103,7 +103,9 @@ impl<'a> LayoutRead<'a> {
             .by_id(tab)
             .and_then(|tab| tab.pane_at(side.index()))
             .and_then(ChartPane::layout_id);
-        self.session.resolve_layout(named)
+        self.session
+            .book()
+            .strip_layout(self.session.resolve_layout(named))
     }
     pub(crate) fn focused_pane_layout(&self) -> LayoutId {
         let tab_id = self.tabs.id_at(self.active);
@@ -235,9 +237,28 @@ impl LayoutAdapter<'_> {
     /// The layout a pane shows: its own, or the book's default for a pane
     /// that has not been given one yet.
     pub(crate) fn pane_layout(&self, tab: u64, side: PaneSide) -> LayoutId {
+        let own = self.pane_own_layout(tab, side);
+        self.store.session().book().strip_layout(own)
+    }
+
+    /// The entry an edit on this pane writes to: its own copy, once it has one.
+    fn pane_own_layout(&self, tab: u64, side: PaneSide) -> LayoutId {
         self.store
             .session()
             .resolve_layout(self.pane_at(tab, side).and_then(ChartPane::layout_id))
+    }
+
+    /// Every seeded pane on a set no other pane holds; see
+    /// [`quantick_workspace::session::LayoutSession::own_copies`].
+    pub(in crate::app) fn own_indicator_copies(&mut self) {
+        let panes = self
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.panes())
+            .map(|(pane, _)| pane.id);
+        if self.store.session_mut().own_copies(panes) {
+            self.mark_layouts_dirty();
+        }
     }
 
     /// Attach the core's read-only membership view to an actual pane.
