@@ -1,48 +1,7 @@
 //! Stable saved arrangement vocabulary; runtime conversion stays in the app.
+pub use crate::workspace_recipe::DeclaredLayout;
+use crate::workspace_recipe::WorkspaceRecipe;
 use serde::{Deserialize, Serialize};
-
-/// The canvas layout a feed declares its tabs open on (`default_layout` in
-/// the TOML), named for what each layout shows.
-///
-/// A config-side twin of `crate::tab::CanvasLayout` rather than that enum
-/// itself, so the TOML vocabulary — part of the user-facing config contract —
-/// cannot drift when the canvas grows a layout a config should not name.
-/// Serialized as well as deserialized: the saved workspace
-/// (`crate::ui_state`) writes a canvas layout back out, and it must speak
-/// the vocabulary the config reads — one name for one layout, in one place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-pub enum DeclaredLayout {
-    /// The flow pane alone — the factory default.
-    #[serde(rename = "flow")]
-    Flow,
-    /// A full-window timeframe chart.
-    #[serde(rename = "time")]
-    Time,
-    /// Timeframe left, flow right, on the draggable divider.
-    #[serde(rename = "time+flow")]
-    TimeAndFlow,
-    /// Two timeframe charts stacked left, flow right.
-    #[serde(rename = "time+time+flow")]
-    TimeTimeAndFlow,
-}
-
-impl DeclaredLayout {
-    /// Parse the same names the serde renames above accept, for callers
-    /// outside serde (the `QUANTICK_LAYOUT` env hook). One vocabulary, one
-    /// place: a name added here must be added to the renames, and the
-    /// `layout_names_agree_between_serde_and_parse` test holds the two
-    /// together.
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        match text.trim() {
-            "flow" => Some(DeclaredLayout::Flow),
-            "time" => Some(DeclaredLayout::Time),
-            "time+flow" => Some(DeclaredLayout::TimeAndFlow),
-            "time+time+flow" => Some(DeclaredLayout::TimeTimeAndFlow),
-            _ => None,
-        }
-    }
-}
 
 /// Which pane the chrome spoke for, in the file's vocabulary.
 ///
@@ -175,6 +134,14 @@ pub struct SavedTab {
     /// simply never had one to fold.
     #[serde(default)]
     pub time_legend_collapsed: bool,
+    /// The workspace this tab uses. Absent in a desk written before workspaces
+    /// existed: the first run seeds one from what the tab shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// The tab's unsaved copy of that recipe, present only while it differs, so
+    /// an edited tab comes back still marked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_copy: Option<WorkspaceRecipe>,
 }
 
 /// The single-instance chrome around the tabs.
@@ -286,6 +253,7 @@ mod tests {
         assert_eq!(tab.flow_layout, None);
         assert!(tab.context_layouts.is_empty());
         assert!(tab.context_bars.is_empty());
+        assert_eq!((&tab.workspace, &tab.workspace_copy), (&None, &None));
         assert_eq!(
             toml::to_string(&tab).unwrap(),
             concat!(
@@ -304,6 +272,20 @@ mod tests {
                 "time_legend_collapsed = false\n"
             )
         );
+    }
+    #[test]
+    fn a_tab_with_a_marked_copy_round_trips_through_the_file() {
+        let mut tab: SavedTab = toml::from_str(
+            "feed = \"mt5\"\nsymbol = \"WINV26\"\nlayout = \"flow\"\nflow_bars = \"tick:50\"\n",
+        )
+        .unwrap();
+        tab.workspace = Some("Scalp".to_owned());
+        tab.workspace_copy = Some(WorkspaceRecipe {
+            layout: DeclaredLayout::Time,
+            ..WorkspaceRecipe::default()
+        });
+        let text = toml::to_string(&tab).unwrap();
+        assert_eq!(toml::from_str::<SavedTab>(&text).unwrap(), tab);
     }
     #[test]
     fn old_chrome_keeps_legacy_right_dock_and_progressive_default() {

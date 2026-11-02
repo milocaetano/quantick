@@ -38,5 +38,6 @@ pub mod script_library;
 pub mod symbol_catalog;
 pub mod symbols_file;
 pub mod ui_state;
+pub mod workspaces;
 
 pub mod indicator_picker;

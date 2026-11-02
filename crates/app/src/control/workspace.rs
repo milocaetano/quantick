@@ -117,6 +117,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     })
                     .collect();
                 let location = windows.tab_location(WireU64::new(tabs.id_at(index)));
+                let (workspace, modified) = app.tab_workspace_row(tabs.id_at(index));
                 WorkspaceTab {
                     window_id: location.0,
                     window_index: location.1,
@@ -137,6 +138,9 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     context_collapsed: tab.context_collapsed,
                     flow_collapsed: tab.flow_collapsed,
                     panes,
+                    venue: app.tab_reads().config().feed_name(&tab.feed_id).to_string(),
+                    workspace,
+                    modified,
                 }
             })
             .collect(),

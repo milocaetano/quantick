@@ -222,7 +222,7 @@ fn about_workspaces_says_what_is_not_built_yet() {
     assert!(
         painted_text(&output)
             .iter()
-            .any(|text| text.starts_with("Not built yet"))
+            .any(|text| text.starts_with("Deleting a workspace moves"))
     );
 }
 

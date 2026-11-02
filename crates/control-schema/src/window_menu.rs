@@ -324,18 +324,20 @@ pub fn legend_label(collapsed: bool, split: Option<&str>) -> String {
     }
 }
 
-/// What `About workspaces…` says. Written for what ships: choosing a workspace
-/// per tab is named as not built, because an About page that describes a control
-/// the trader cannot find is a false statement.
+/// What `About workspaces…` says. Written for what ships: an About page that
+/// describes a control the trader cannot find is a false statement.
 pub const ABOUT_WORKSPACES: &[&str] = &[
     "A workspace is a saved way of reading a market: which charts the tab shows (Flow, Time \
      or both), the context panes and their intervals, the indicators on each pane, the layer \
-     toggles and the footprint style. Keep one per kind of strategy: Scalp for the open, Tape \
-     for a quiet range, Swing for the daily picture.",
+     toggles and the footprint style. Keep one per kind of strategy and switch the tab between \
+     them: Scalp for the open, Tape for a quiet range, Swing for the daily picture.",
+    "Every tab is one market and uses one workspace; a new tab opens on Default. Any number of \
+     tabs can share a workspace. Editing a tab marks only that tab (•); nothing reaches the \
+     other tabs until you choose Save to, and that step names the tabs it will change.",
     "Drawings, anchored studies, bar size and the paper position belong to the market, never \
-     to the workspace.",
-    "Not built yet: choosing a workspace per tab. Today the layouts under Workspace apply to \
-     the focused chart, and Save desk keeps the whole window.",
+     to the workspace: switching WINV26 from Scalp to Tape keeps its levels.",
+    "Deleting a workspace moves the tabs on it to Default. A tab with unsaved edits keeps them, \
+     marked Default •, so nothing is lost. Default cannot be deleted.",
 ];
 
 /// A Settings switch's tooltip.
@@ -434,6 +436,19 @@ mod tests {
         assert_eq!(
             legend_label(false, Some("Flow")),
             "Collapse indicator legend (Flow)"
+        );
+    }
+
+    #[test]
+    fn about_workspaces_reads_the_four_paragraphs_verbatim() {
+        assert_eq!(
+            ABOUT_WORKSPACES,
+            [
+                "A workspace is a saved way of reading a market: which charts the tab shows (Flow, Time or both), the context panes and their intervals, the indicators on each pane, the layer toggles and the footprint style. Keep one per kind of strategy and switch the tab between them: Scalp for the open, Tape for a quiet range, Swing for the daily picture.",
+                "Every tab is one market and uses one workspace; a new tab opens on Default. Any number of tabs can share a workspace. Editing a tab marks only that tab (•); nothing reaches the other tabs until you choose Save to, and that step names the tabs it will change.",
+                "Drawings, anchored studies, bar size and the paper position belong to the market, never to the workspace: switching WINV26 from Scalp to Tape keeps its levels.",
+                "Deleting a workspace moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •, so nothing is lost. Default cannot be deleted.",
+            ]
         );
     }
 

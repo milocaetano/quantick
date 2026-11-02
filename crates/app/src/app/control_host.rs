@@ -111,6 +111,7 @@ pub(crate) trait ChromePort:
     quantick_control_handlers::native_window::NativeWindowHost
     + quantick_control_handlers::home_tab::HomeTabHost
     + quantick_control_handlers::desk::DeskHost
+    + quantick_control_handlers::workspace_book::WorkspaceBookHost
 {
     fn chrome_reads(&self) -> ChromeReads<'_>;
 }
@@ -737,6 +738,18 @@ impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
 impl quantick_control_handlers::desk::DeskHost for QuantickApp {
     fn desk(&mut self, act: DeskAct) -> Result<bool, quantick_control::error::ControlError> {
         Ok(super::desk_wiring::apply(self, act))
+    }
+}
+
+impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickApp {
+    fn workspace_book(&mut self) -> Option<&mut quantick_stores::workspaces::WorkspaceBook> {
+        Some(self.runtime.workspace.book.book_mut())
+    }
+    fn persist_workspace_book(&mut self) -> Result<(), String> {
+        self.runtime.workspace.book.persist()
+    }
+    fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
+        self.runtime.workspace.book.tab_row(tab)
     }
 }
 

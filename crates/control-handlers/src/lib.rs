@@ -26,6 +26,7 @@ pub mod chart;
 pub mod connection;
 pub mod contract_roll;
 pub mod desk;
+pub mod workspace_book;
 pub mod dock;
 pub mod feed_source;
 pub mod history;

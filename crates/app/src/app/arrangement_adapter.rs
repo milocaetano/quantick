@@ -429,6 +429,8 @@ impl ArrangementRead<'_> {
                 // is what it will restore into when one is opened: a pane
                 // that never existed cannot have been folded.
                 time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
+                workspace: None,
+                workspace_copy: None,
             })
             .collect();
         let chrome = ui_state::SavedChrome {

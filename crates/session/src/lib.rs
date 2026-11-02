@@ -25,6 +25,7 @@
 
 mod button;
 mod paging;
+pub mod tab_chip;
 mod venue;
 mod view;
 

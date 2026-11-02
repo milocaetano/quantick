@@ -8,6 +8,54 @@ use quantick_control::schema::generated_schema as schema;
 pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     let mut documents = vec![
         (
+            "tab-workspace-set-input-v1.schema.json",
+            schema::<crate::workspace_book::TabWorkspaceSetInput>(),
+        ),
+        (
+            "tab-workspace-set-result-v1.schema.json",
+            schema::<crate::workspace_book::TabWorkspaceSetResult>(),
+        ),
+        (
+            "workspace-tab-input-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceTabInput>(),
+        ),
+        (
+            "workspace-save-as-input-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceSaveAsInput>(),
+        ),
+        (
+            "workspace-save-result-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceSaveResult>(),
+        ),
+        (
+            "workspace-revert-result-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceRevertResult>(),
+        ),
+        (
+            "workspace-rename-input-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceRenameInput>(),
+        ),
+        (
+            "workspace-rename-result-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceRenameResult>(),
+        ),
+        (
+            "workspace-delete-input-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceDeleteInput>(),
+        ),
+        (
+            "workspace-delete-result-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceDeleteResult>(),
+        ),
+        (
+            "workspace-list-input-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceListInput>(),
+        ),
+        (
+            "workspace-list-result-v1.schema.json",
+            schema::<crate::workspace_book::WorkspaceListResult>(),
+        ),
+        (
             "native-window-input-v1.schema.json",
             schema::<crate::native_window::WindowInput>(),
         ),

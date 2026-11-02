@@ -36,6 +36,8 @@ use quantick_layers::SavedLayers;
 pub(crate) struct WorkspaceStore {
     paths: StorePaths,
     layouts: LayoutStore,
+    /// The workspace book, beside the layouts file.
+    pub(crate) book: quantick_stores::workspaces::WorkspaceBookStore,
     layers: SavedLayers,
     session: WorkspaceCommitSession,
     recent_on_disk: Vec<PathBuf>,
@@ -63,6 +65,7 @@ impl WorkspaceStore {
     /// store pointed at a scratch file by `QUANTICK_*` still writes there.
     pub(crate) fn new(paths: StorePaths, layouts: LayoutStore, trades_dir: PathBuf) -> Self {
         Self {
+            book: quantick_stores::workspaces::WorkspaceBookStore::open_beside(layouts.path()),
             layouts,
             layers: SavedLayers::default(),
             session: WorkspaceCommitSession::default(),
@@ -186,6 +189,7 @@ impl WorkspaceStore {
     /// See [`Self::set_ui_state_path`].
     #[cfg(test)]
     pub(crate) fn set_layouts_path(&mut self, path: PathBuf) {
+        self.book.move_beside(&path);
         self.layouts.set_path(path);
     }
 

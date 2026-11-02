@@ -775,6 +775,32 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "reopen": false }),
             Readback::Moves,
         ),
+        (
+            "workspace.save_as",
+            1,
+            json!({ "name": "Retried" }),
+            Readback::Moves,
+        ),
+        ("workspace.save_to", 1, json!({}), Readback::Stays),
+        ("workspace.revert", 1, json!({}), Readback::Stays),
+        (
+            "tab.workspace.set",
+            1,
+            json!({ "name": "Retried" }),
+            Readback::Stays,
+        ),
+        (
+            "workspace.rename",
+            1,
+            json!({ "name": "Retried", "to": "Renamed" }),
+            Readback::Moves,
+        ),
+        (
+            "workspace.delete",
+            1,
+            json!({ "name": "Renamed" }),
+            Readback::Moves,
+        ),
         ("home.leave", 1, json!({}), Readback::Moves),
         ("layout.tab.create", 1, json!({}), Readback::Moves),
         (
