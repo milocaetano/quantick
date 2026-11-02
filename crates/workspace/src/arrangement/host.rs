@@ -1,9 +1,10 @@
-//! Sole physical tab order and runtime effects for the arrangement model.
+//! Sole runtime store and lifetime effects for the arrangement model.
 use super::{
     ArrangementError, ArrangementLifecycle, Command, Effect, RestoreMode, RestoreStep, TabFacts,
     TabId, Topology, Transition,
 };
 use std::ops::Index;
+mod windows;
 
 /// What the arrangement needs from a tab runtime: its market facts and the
 /// one settle step before it is dropped.
@@ -37,12 +38,14 @@ impl<R: TabRuntime> Topology for Entries<'_, R> {
 pub struct Arrangement<R> {
     lifecycle: ArrangementLifecycle,
     runtimes: Vec<TabEntry<R>>,
+    windows: super::windows::TabWindows,
 }
 impl<R> Arrangement<R> {
     pub fn new(owner: crate::lifetime::WorkspaceId, id: TabId, runtime: R) -> Self {
         Self {
             lifecycle: ArrangementLifecycle::new(owner, id),
             runtimes: vec![TabEntry { id, runtime }],
+            windows: super::windows::TabWindows::new(owner, id),
         }
     }
     #[cfg(any(test, feature = "test-support"))]
@@ -128,19 +131,27 @@ impl<R: TabRuntime> Arrangement<R> {
             self.lifecycle
                 .commit(plan, &Entries(&self.runtimes))
                 .expect("selection does not alter topology");
+            self.windows
+                .select(self.lifecycle.active.id)
+                .expect("owned tab");
         }
     }
     pub fn cycle(&mut self, delta: isize) {
-        if self.len() < 2 {
+        let window = self
+            .windows
+            .window(self.windows.presented())
+            .expect("live window");
+        if window.tabs().len() < 2 {
             return;
         }
-        let plan = self
-            .lifecycle
-            .plan(Command::Cycle(delta), &Entries(&self.runtimes))
-            .expect("valid arrangement");
-        self.lifecycle
-            .commit(plan, &Entries(&self.runtimes))
-            .expect("selection does not alter topology");
+        let current = window
+            .tabs()
+            .iter()
+            .position(|id| *id == window.selected())
+            .unwrap();
+        let next =
+            (current as i128 + delta as i128).rem_euclid(window.tabs().len() as i128) as usize;
+        self.select(self.position(window.tabs()[next].0).expect("owned tab"));
     }
     pub fn begin_restore(
         &mut self,
@@ -179,6 +190,9 @@ impl<R: TabRuntime> Arrangement<R> {
         self.lifecycle
             .commit(plan, &Entries(&self.runtimes))
             .expect("selection landed");
+        self.windows
+            .select(self.lifecycle.active.id)
+            .expect("owned tab");
     }
     pub fn plan_open(&self) -> Transition {
         self.lifecycle
@@ -196,6 +210,7 @@ impl<R: TabRuntime> Arrangement<R> {
         self.lifecycle
             .commit(plan, &Entries(&self.runtimes))
             .expect("append landed exactly once");
+        self.windows.append(id);
     }
     pub fn plan_close(&self, index: usize) -> Result<Transition, ArrangementError> {
         self.lifecycle
@@ -213,6 +228,8 @@ impl<R: TabRuntime> Arrangement<R> {
         self.lifecycle
             .commit(plan, &Entries(&self.runtimes))
             .expect("removal landed exactly once");
+        self.windows.remove(id);
+        self.align_presented_selection();
         Ok(ClosedTab { id: id.0, runtime })
     }
 }
