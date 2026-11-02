@@ -1,0 +1,74 @@
+version = 1
+name = "Dark"
+dark = true
+
+[colors]
+canvas = "#131722"
+chrome = "#171B26"
+inset = "#10141D"
+control = "#232936"
+border = "#2E3648"
+text_primary = "#D2DAE2"
+text_muted = "#96A0AF"
+text_faint = "#6E7887"
+buy = "#26A69A"
+sell = "#EF5350"
+poc = "#FFD54F"
+accent = "#8AB4F8"
+amber = "#F0B90B"
+pane_mark = { premultiplied = [190, 156, 63, 217] }
+pane_action = "#AAB0BF"
+off = "#F29A4B"
+capsule_fill = { premultiplied = [8, 10, 15, 189] }
+capsule_border = { premultiplied = [23, 23, 23, 23] }
+capsule_shadow = { premultiplied = [0, 0, 0, 115] }
+bare_hover = { premultiplied = [15, 15, 15, 15] }
+seam_line = { premultiplied = [60, 60, 60, 60] }
+day_rule = { premultiplied = [30, 30, 30, 30] }
+seam_label = { premultiplied = [80, 80, 80, 80] }
+warn = "#FF6347"
+rec = "#FF4D4D"
+gap_line = { premultiplied = [120, 92, 10, 150] }
+gap_label = "#9A823A"
+tag_bg = "#373F50"
+text_support = "#8692A4"
+chip_ink = "#0E121A"
+casing = { premultiplied = [5, 7, 12, 235] }
+draw_violet = "#C58AF9"
+draw_cyan = "#4DD0E1"
+float_shadow = { premultiplied = [0, 0, 0, 96] }
+candle_bull_outline = "#68E0C9"
+candle_bear_outline = "#FF898B"
+candle_wick = "#A0A9B8"
+
+buy_ink = "#88CEC7"
+sell_ink = "#F6A09F"
+
+# Logical pixels. Both families retain the bundled glyph fallback chain.
+[typography.heading]
+family = "proportional"
+size = 18.0
+[typography.body]
+family = "proportional"
+size = 12.5
+[typography.button]
+family = "proportional"
+size = 12.5
+[typography.monospace]
+family = "monospace"
+size = 12.0
+[typography.small]
+family = "proportional"
+size = 9.0
+[typography.chart_axis]
+family = "monospace"
+size = 11.0
+[typography.chart_label]
+family = "proportional"
+size = 11.0
+[typography.footprint]
+family = "monospace"
+size = 10.0
+[typography.drawing]
+family = "proportional"
+size = 12.0

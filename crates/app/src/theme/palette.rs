@@ -3,73 +3,78 @@
 
 use eframe::egui::Color32;
 
+const fn rendered(color: quantick_appearance::PremultipliedRgba) -> Color32 {
+    let [r, g, b, a] = color.to_array();
+    Color32::from_rgba_premultiplied(r, g, b, a)
+}
+
 /// `bg/canvas` — default chart canvas (user-configurable in the appearance
 /// dialog; [`crate::style::CanvasStyle`] holds the editable copy, and the
 /// parity test below keeps the two in agreement — the reason this token
 /// exists without a chrome consumer).
 #[allow(dead_code)]
-pub const CANVAS: Color32 = Color32::from_rgb(0x13, 0x17, 0x22);
+pub const CANVAS: Color32 = rendered(quantick_appearance::palette::CANVAS);
 
 /// `bg/chrome` — menu bar, toolbar, tool rail, dock and status bar.
-pub const CHROME: Color32 = Color32::from_rgb(0x17, 0x1B, 0x26);
+pub const CHROME: Color32 = rendered(quantick_appearance::palette::CHROME);
 
 /// `bg/inset` — sub-panes and wells sunk into the chrome.
-pub const INSET: Color32 = Color32::from_rgb(0x10, 0x14, 0x1D);
+pub const INSET: Color32 = rendered(quantick_appearance::palette::INSET);
 
 /// `bg/control` — buttons, combos and inputs (also the default grid colour).
-pub const CONTROL: Color32 = Color32::from_rgb(0x23, 0x29, 0x36);
+pub const CONTROL: Color32 = rendered(quantick_appearance::palette::CONTROL);
 
 /// `border` — panel and control borders.
-pub const BORDER: Color32 = Color32::from_rgb(0x2E, 0x36, 0x48);
+pub const BORDER: Color32 = rendered(quantick_appearance::palette::BORDER);
 
 /// `text/primary` — labels and values.
-pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xD2, 0xDA, 0xE2);
+pub const TEXT_PRIMARY: Color32 = rendered(quantick_appearance::palette::TEXT_PRIMARY);
 
 /// `text/muted` — secondary labels.
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x96, 0xA0, 0xAF);
+pub const TEXT_MUTED: Color32 = rendered(quantick_appearance::palette::TEXT_MUTED);
 
 /// `text/faint` — hints, disabled text and the crosshair.
-pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x6E, 0x78, 0x87);
+pub const TEXT_FAINT: Color32 = rendered(quantick_appearance::palette::TEXT_FAINT);
 
 /// `buy` — bull candles, buy flow and the healthy/live status dot.
-pub const BUY: Color32 = Color32::from_rgb(0x26, 0xA6, 0x9A);
+pub const BUY: Color32 = rendered(quantick_appearance::palette::BUY);
 
 /// `sell` — bear candles, sell flow, and the chrome's SELL affordances
 /// (paper trading). Candles read their editable copy from [`crate::style`];
 /// the parity test below pins the two together.
-pub const SELL: Color32 = Color32::from_rgb(0xEF, 0x53, 0x50);
+pub const SELL: Color32 = rendered(quantick_appearance::palette::SELL);
 
 /// `poc` — the footprint's point-of-control line. Yellow, the user's call
 /// after the reference charts (exocharts red would collide with the sell
 /// side here). Close in hue to [`AMBER`] but a different surface: AMBER is
 /// provenance *text* in the chrome, this is a line inside a candle — the
 /// two never sit side by side.
-pub const POC: Color32 = Color32::from_rgb(0xFF, 0xD5, 0x4F);
+pub const POC: Color32 = rendered(quantick_appearance::palette::POC);
 
 /// `accent/overlay` — selection accent and the future first indicator plot.
-pub const ACCENT: Color32 = Color32::from_rgb(0x8A, 0xB4, 0xF8);
+pub const ACCENT: Color32 = rendered(quantick_appearance::palette::ACCENT);
 
 /// `honest/amber` — not-live provenance only: replay, backfill, inferred data.
-pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
+pub const AMBER: Color32 = rendered(quantick_appearance::palette::AMBER);
 
 /// `pane/mark` — the name on a pane's header line: gold `#E0B84A` at 85%, softer
 /// than [`AMBER`], so it reads at a glance and never as the not-live warning.
-pub const PANE_MARK: Color32 = Color32::from_rgba_premultiplied(190, 156, 63, 217);
+pub const PANE_MARK: Color32 = rendered(quantick_appearance::palette::PANE_MARK);
 
 /// `pane/action` — a word on a header line that does something: quieter than the
 /// bars it follows, louder than muted text.
-pub const PANE_ACTION: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
+pub const PANE_ACTION: Color32 = rendered(quantick_appearance::palette::PANE_ACTION);
 
 /// `layer/off` — a layer switched off by hand. Not in the heatmap, not a side.
-pub const OFF: Color32 = Color32::from_rgb(0xF2, 0x9A, 0x4B);
+pub const OFF: Color32 = rendered(quantick_appearance::palette::OFF);
 
 /// `capsule/*` — the backdrop of the layer capsule floating over a chart side:
 /// `rgba(11,14,20,.74)`, a 9% white hairline and a soft black shadow.
-pub const CAPSULE_FILL: Color32 = Color32::from_rgba_premultiplied(8, 10, 15, 189);
-pub const CAPSULE_BORDER: Color32 = Color32::from_rgba_premultiplied(23, 23, 23, 23);
-pub const CAPSULE_SHADOW: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 115);
+pub const CAPSULE_FILL: Color32 = rendered(quantick_appearance::palette::CAPSULE_FILL);
+pub const CAPSULE_BORDER: Color32 = rendered(quantick_appearance::palette::CAPSULE_BORDER);
+pub const CAPSULE_SHADOW: Color32 = rendered(quantick_appearance::palette::CAPSULE_SHADOW);
 /// `control/hover` — the 6% white under a bare control the pointer is on.
-pub const BARE_HOVER: Color32 = Color32::from_rgba_premultiplied(15, 15, 15, 15);
+pub const BARE_HOVER: Color32 = rendered(quantick_appearance::palette::BARE_HOVER);
 
 /// `seam/line` — the venue/prints boundary: white, and mostly transparent.
 ///
@@ -82,26 +87,26 @@ pub const BARE_HOVER: Color32 = Color32::from_rgba_premultiplied(15, 15, 15, 15)
 /// no hue that already means something on this chart, which is exactly why a
 /// merely *dimmer* amber would not do: dimming a reserved colour keeps the
 /// promise it makes while making the promise harder to read.
-pub const SEAM_LINE: Color32 = Color32::from_rgba_premultiplied(0x3C, 0x3C, 0x3C, 0x3C);
+pub const SEAM_LINE: Color32 = rendered(quantick_appearance::palette::SEAM_LINE);
 
 /// `day/rule` — the full-height rule where the display day turns: white at
 /// an alpha low enough to be found when looked for and never to compete with
 /// a candle or the flow, a step quieter than [`SEAM_LINE`].
-pub const DAY_RULE: Color32 = Color32::from_rgba_premultiplied(0x1E, 0x1E, 0x1E, 0x1E);
+pub const DAY_RULE: Color32 = rendered(quantick_appearance::palette::DAY_RULE);
 
 /// `seam/label` — the "venue" caption beside [`SEAM_LINE`], at the same
 /// weight as the line it names so the pair reads as one quiet mark rather
 /// than a faint rule under a legible word.
-pub const SEAM_LABEL: Color32 = Color32::from_rgba_premultiplied(0x50, 0x50, 0x50, 0x50);
+pub const SEAM_LABEL: Color32 = rendered(quantick_appearance::palette::SEAM_LABEL);
 
 /// `warn` — threshold breaches and errors.
-pub const WARN: Color32 = Color32::from_rgb(0xFF, 0x63, 0x47);
+pub const WARN: Color32 = rendered(quantick_appearance::palette::WARN);
 
 /// The recording red: the REC control while the venue's deal counter is
 /// being written down. Distinct from [`SELL`] on purpose — a sell candle
 /// and a recorder are not the same kind of fact — and from [`WARN`], because
 /// recording is the healthy state.
-pub const REC: Color32 = Color32::from_rgb(0xFF, 0x4D, 0x4D);
+pub const REC: Color32 = rendered(quantick_appearance::palette::REC);
 
 /// `gap/line` — the dashed mark where the tape has a hole a reconnect left.
 ///
@@ -111,24 +116,24 @@ pub const REC: Color32 = Color32::from_rgb(0xFF, 0x4D, 0x4D);
 /// honesty rule says it is labelled at the point of reading. It is still not
 /// an alarm: nothing is wrong with the chart, there is simply a stretch of the
 /// market it never saw.
-pub const GAP_LINE: Color32 = Color32::from_rgba_premultiplied(0x78, 0x5C, 0x0A, 0x96);
+pub const GAP_LINE: Color32 = rendered(quantick_appearance::palette::GAP_LINE);
 
 /// `gap/label` — the caption beside [`GAP_LINE`], naming how long the silence
 /// was. Readable without competing with price.
-pub const GAP_LABEL: Color32 = Color32::from_rgb(0x9A, 0x82, 0x3A);
+pub const GAP_LABEL: Color32 = rendered(quantick_appearance::palette::GAP_LABEL);
 
 /// `tag/bg` — tooltips and the axis price tag.
-pub const TAG_BG: Color32 = Color32::from_rgb(0x37, 0x3F, 0x50);
+pub const TAG_BG: Color32 = rendered(quantick_appearance::palette::TAG_BG);
 
 /// `text/support` — small explanatory lines that carry real information
 /// (the inspector's locked/hidden notes). [`TEXT_FAINT`] stays reserved for
 /// decoration and disabled states, where 4.5:1 contrast is not required.
-pub const TEXT_SUPPORT: Color32 = Color32::from_rgb(0x86, 0x92, 0xA4);
+pub const TEXT_SUPPORT: Color32 = rendered(quantick_appearance::palette::TEXT_SUPPORT);
 
 /// `chip/ink` — dark text inside a solid semantic-color chip: the last-price
 /// chip's ink, shared by every surface that speaks the chip language (trade
 /// buttons, the position HUD's side tag, the jump-to-live chip).
-pub const CHIP_INK: Color32 = Color32::from_rgb(0x0E, 0x12, 0x1A);
+pub const CHIP_INK: Color32 = rendered(quantick_appearance::palette::CHIP_INK);
 
 /// `casing` — the dark base under ink that has to survive whatever is behind
 /// it: the liquidity map, a candle body at any of the four appearance
@@ -144,7 +149,7 @@ pub const CHIP_INK: Color32 = Color32::from_rgb(0x0E, 0x12, 0x1A);
 /// the depth map; promoted here the day the footprint's ladder needed the
 /// same guarantee. A colour copied by hand goes stale the day the theme
 /// moves, with no test to notice.
-pub const CASING: Color32 = Color32::from_rgba_premultiplied(5, 7, 12, 235);
+pub const CASING: Color32 = rendered(quantick_appearance::palette::CASING);
 
 /// How far a casing extends past the ink it carries: one pixel a side.
 pub const CASING_EXTRA_PX: f32 = 2.0;
@@ -154,10 +159,10 @@ pub const CASING_EXTRA_PX: f32 = 2.0;
 /// not collide with meaning: green and red are the candles, blue is
 /// [`ACCENT`], yellow is [`POC`]. Without these two, every drawing colour
 /// borrows something that already says something else.
-pub const DRAW_VIOLET: Color32 = Color32::from_rgb(0xC5, 0x8A, 0xF9);
+pub const DRAW_VIOLET: Color32 = rendered(quantick_appearance::palette::DRAW_VIOLET);
 
 /// See [`DRAW_VIOLET`].
-pub const DRAW_CYAN: Color32 = Color32::from_rgb(0x4D, 0xD0, 0xE1);
+pub const DRAW_CYAN: Color32 = rendered(quantick_appearance::palette::DRAW_CYAN);
 
 /// The drawing palette offered as one-click swatches on the context bar.
 ///
@@ -185,4 +190,4 @@ pub const DRAWING_SWATCHES: [Color32; 8] = [
 /// canvas. Docked chrome never uses it: a panel glued to an edge separates
 /// itself with its hairline border. A floating strip has no anchored side,
 /// and [`CHROME`] over [`CANVAS`] is too close in value to read alone.
-pub const FLOAT_SHADOW: Color32 = Color32::from_black_alpha(96);
+pub const FLOAT_SHADOW: Color32 = rendered(quantick_appearance::palette::FLOAT_SHADOW);
