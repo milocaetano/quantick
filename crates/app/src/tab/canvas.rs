@@ -382,6 +382,9 @@ impl Tab {
         self.connection.observe(&facts, &self.loading);
         let feed = self.connection.state();
         self.tape_mut().observe_market(feed);
+        let (view, state) = (self.flow_pane.orderflow.as_mut(), &self.flow_pane.state);
+        view.expect("the flow pane keeps a tape")
+            .hold_tape_window(feed.link, state);
     }
 
     /// The pane whose header asked for the indicator library this frame. Taken in

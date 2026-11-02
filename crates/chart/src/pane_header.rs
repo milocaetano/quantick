@@ -488,6 +488,14 @@ pub const FLOW_CONTROLS_PX: f32 = 2.0 * SEGMENT_BARE_PX
     + GROUP_GAP_PX
     + GLYPH_SLOT_PX;
 
+impl HeaderControl {
+    /// A section's header, as the flow pane's line lists it, on screen or not.
+    #[must_use]
+    pub const fn section(section: PanelSection) -> Self {
+        Self::Settings(PanelControl::Section(section))
+    }
+}
+
 /// The layer glyph a section of the panel configures, for the gear's menu: the
 /// right click that opens that section from a capsule's glyph.
 #[must_use]
@@ -543,13 +551,17 @@ pub struct HeaderWidths {
     pub slot: f32,
     pub chip_with_words: f32,
     pub chip_dots: f32,
+    /// The market holds the tape: the side words are the fold's only trace.
+    pub market_held: bool,
 }
 
 /// The narrow rule of a flow pane's header, in the order things go: the slot,
 /// then the words beside the view control's glyphs, then the mark, then the
 /// chip's words, then the chip's dots. What still does not fit is the bars text,
 /// clipped short of the indicators button, and when the button itself no longer
-/// fits beside the right end it gives up its word and keeps its icon.
+/// fits beside the right end it gives up its word and keeps its icon. While the
+/// market holds the tape its words outlast the status, the bars' text clipping for
+/// them: "Market closed" is all that says where the tape went.
 #[must_use]
 pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
     let core = widths.bars + GROUP_GAP_PX + widths.indicators + widths.controls;
@@ -564,10 +576,15 @@ pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
     let fits = |extra: f32| core + extra <= widths.strip;
     let (full_chip, dots) = (item(widths.chip_with_words), item(widths.chip_dots));
     let slot = fits(widths.side_words + mark + full_chip + item(widths.slot));
-    let side_words = fits(widths.side_words + mark + full_chip);
-    let keep_mark = fits(mark + full_chip);
-    let chip_words = fits(full_chip);
-    let chip = chip_words || fits(dots);
+    let (side_words, kept) = if widths.market_held {
+        let keep = widths.indicators + widths.controls + widths.side_words <= widths.strip;
+        (keep, if keep { widths.side_words } else { 0.0 })
+    } else {
+        (fits(widths.side_words + mark + full_chip), 0.0)
+    };
+    let keep_mark = fits(kept + mark + full_chip);
+    let chip_words = fits(kept + full_chip);
+    let chip = chip_words || fits(kept + dots);
     HeaderFit {
         // The mark goes before the chip's words, but with no chip to make room
         // for it answers only to its own width.
@@ -990,6 +1007,7 @@ mod tests {
             slot: 120.0,
             chip_with_words: 150.0,
             chip_dots: 48.0,
+            market_held: false,
         }
     }
 
@@ -1054,6 +1072,45 @@ mod tests {
         assert_eq!(keeps(without), (false, true));
         assert_eq!(keeps(without - 1.0), (false, false));
         assert!(!flow_fit(&widths(10_000.0)).side_words, "no words, no flag");
+    }
+
+    /// Held by the market the order turns over: the pills and the mark go first and
+    /// the words "Market closed" last, with the bars clipping for them.
+    #[test]
+    fn a_held_tape_keeps_its_words_after_the_status_is_gone() {
+        let words = 100.0;
+        let line = |strip| HeaderWidths {
+            side_words: words,
+            market_held: true,
+            ..widths(strip)
+        };
+        let w = line(0.0);
+        let core = w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let gap = GROUP_GAP_PX;
+        let (mark, pills, dots) = (w.mark + gap, w.chip_with_words + gap, w.chip_dots + gap);
+        let keeps = |strip: f32| {
+            let fit = flow_fit(&line(strip));
+            (fit.mark, fit.chip_words, fit.chip, fit.side_words)
+        };
+        assert_eq!(keeps(core + words + mark + pills), (true, true, true, true));
+        assert_eq!(keeps(core + words + pills), (false, true, true, true));
+        assert_eq!(keeps(core + words + dots), (false, false, true, true));
+        assert_eq!(keeps(core + words), (false, false, false, true));
+        assert_eq!(
+            keeps(w.indicators + w.controls + words),
+            (false, false, false, true),
+            "the bars clip for the words"
+        );
+        assert!(
+            !keeps(w.indicators + w.controls + words - 1.0).3,
+            "and only then the dot"
+        );
+        let unheld = HeaderWidths {
+            market_held: false,
+            ..line(core + words)
+        };
+        let fit = flow_fit(&unheld);
+        assert!(fit.chip && !fit.side_words, "an ordinary word goes first");
     }
 
     /// The bars clip away first; only then does the button lose its word, so it

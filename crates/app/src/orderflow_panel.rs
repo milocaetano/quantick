@@ -18,8 +18,8 @@ use crate::ui_state::{AssetFolds, OrderFlowPanel, PanelSection};
 /// The title line's words, and a header's state on its right.
 const TITLE_SIZE: f32 = 15.0;
 const STATE_SIZE: f32 = 11.0;
-/// The most of its header a state may take; a long preset name is cut, not over the title.
-const STATE_MAX_SHARE: f32 = 0.45;
+/// What a state leaves between itself and its title; a long preset name is cut.
+const STATE_GAP_PX: f32 = 8.0;
 
 /// Whether the tab has the pane its panel attaches to: no flow pane, no gear.
 pub(crate) fn flow_pane_shown(tab: &Tab) -> bool {
@@ -54,7 +54,12 @@ pub(crate) fn draw(
     let tick_chart = pane.state.tick_membership().is_some();
     let painted = &mut pane.frame.header_controls;
     let view = pane.orderflow.as_mut().expect("the flow pane keeps a tape");
-    if !view.settings_panel.is_open() || !OrderFlowPanel::fits(chart.width()) {
+    if !view.settings_panel.is_open() {
+        return chart;
+    }
+    if !OrderFlowPanel::fits(chart.width()) {
+        painted
+            .extend(PanelSection::ALL.map(|at| (HeaderControl::section(at), egui::Rect::NOTHING)));
         return chart;
     }
     let mut seat = ui.new_child(
@@ -62,7 +67,7 @@ pub(crate) fn draw(
             .id_salt(("orderflow_panel_seat", id))
             .max_rect(chart),
     );
-    let scroll_to = view.settings_panel.take_request(symbol, folds);
+    let landing = view.settings_panel.take_request(symbol, folds);
     let mut close = false;
     let mut restart_capture = false;
     let shown = egui::SidePanel::right(egui::Id::new(("orderflow_panel", id)))
@@ -91,7 +96,7 @@ pub(crate) fn draw(
                                 PanelSection::L2 => view.draw_l2_tab(ui),
                                 PanelSection::Bubbles => view.draw_bubbles_tab(ui, tick_chart),
                             },
-                            scroll_to,
+                            landing,
                             painted,
                         );
                         restart_capture |= restart;
@@ -139,7 +144,7 @@ fn section_block(
     open: bool,
     state: &str,
     body: impl FnOnce(&mut egui::Ui) -> bool,
-    scroll_to: Option<PanelSection>,
+    landing: Option<PanelSection>,
     painted: &mut PaintedControls,
 ) -> (bool, bool) {
     let words = egui::RichText::new(section.title().to_uppercase()).color(theme::TEXT_PRIMARY);
@@ -148,21 +153,27 @@ fn section_block(
         .open(Some(open))
         .show_unindented(ui, body);
     let header = &block.header_response;
-    if scroll_to == Some(section) {
+    if landing == Some(section) {
         header.scroll_to_me(Some(egui::Align::TOP));
+        ui.ctx().request_repaint();
     }
-    let control = HeaderControl::Settings(PanelControl::Section(section));
-    record(ui, control, header.rect, painted);
-    let room = header.rect.right() - header.rect.width() * STATE_MAX_SHARE;
-    ui.painter()
-        .with_clip_rect(header.rect.with_min_x(room).intersect(ui.clip_rect()))
-        .text(
-            header.rect.right_center(),
-            egui::Align2::RIGHT_CENTER,
-            state,
-            egui::FontId::monospace(STATE_SIZE),
-            theme::TEXT_FAINT,
-        );
+    let seen = Some(header.rect).filter(|rect| ui.clip_rect().contains_rect(*rect));
+    painted.push((
+        HeaderControl::section(section),
+        seen.unwrap_or(egui::Rect::NOTHING),
+    ));
+    let right = ui.max_rect().right();
+    let room = right - header.rect.right() - STATE_GAP_PX;
+    if room > 0.0 {
+        let font = egui::FontId::monospace(STATE_SIZE);
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(state.to_owned(), font, theme::TEXT_FAINT);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+        let galley = ui.fonts(|fonts| fonts.layout_job(job));
+        let y = header.rect.center().y - galley.size().y / 2.0;
+        let at = egui::pos2(right - galley.size().x, y);
+        ui.painter().galley(at, galley, theme::TEXT_FAINT);
+    }
     (header.clicked(), block.body_returned.unwrap_or(false))
 }
 

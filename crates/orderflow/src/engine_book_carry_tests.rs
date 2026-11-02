@@ -94,6 +94,7 @@ fn request(now_ms: i64) -> ProjectionRequest {
         on_newest_bar: true,
         lane_reference_ms: Some(6_000),
         lane_now_ms: Some(now_ms),
+        lane_end_cap_ms: None,
         price_range: (90.0, 115.0),
         dot_zoom: Some(DotZoom {
             native_tape: true,
@@ -436,6 +437,7 @@ fn bench_the_live_book_on_the_worker_and_the_render_thread() {
             on_newest_bar: true,
             lane_reference_ms: Some(BAR_MS),
             lane_now_ms: Some(now_ms),
+            lane_end_cap_ms: None,
             price_range: (59_900.0, 60_100.0),
             dot_zoom: Some(DotZoom {
                 native_tape: true,

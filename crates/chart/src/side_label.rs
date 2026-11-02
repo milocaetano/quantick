@@ -23,6 +23,8 @@ pub const SIDE_LABEL_PADDING_PX: f32 = 7.0;
 /// How far below the header's rule the plate ends: what stands under it starts
 /// here.
 pub const SIDE_LABEL_BOTTOM_PX: f32 = CAPSULE_INSET_TOP_PX + CAPSULE_HEIGHT_PX;
+/// Where the tape's Buy/Sell key starts, below the side's plate.
+pub const TAPE_KEY_TOP_PX: f32 = SIDE_LABEL_BOTTOM_PX + 4.0;
 
 const SEPARATOR: &str = " · ";
 

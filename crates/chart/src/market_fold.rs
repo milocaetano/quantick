@@ -7,6 +7,7 @@
 //! ever writing the fold a workspace saves.
 //!
 
+use quantick_orderflow::tape_clock::TapeHold;
 use quantick_orderflow::{LaneSide, LaneView, LiveLaneStyle, MarketHold};
 
 use crate::connection_state::{ConnectionState, Link};
@@ -89,11 +90,37 @@ pub fn last_print_ms(state: &ChartState) -> Option<i64> {
     })
 }
 
+/// Whether nothing is coming to the tape: every link but one delivering, and a
+/// source with no transport, whose clock is its own.
+const fn nothing_coming(link: Link) -> bool {
+    matches!(link, Link::Quiet | Link::Attempting | Link::Offline)
+}
+
 /// Whether the tape on screen gets the seam: it shows beside or alone, and the
 /// link says nothing is coming. A hold leaves no tape on screen to mark.
 #[must_use]
 pub fn seam_shown(shown_view: LaneView, link: Option<Link>) -> bool {
-    shown_view.shows(LaneSide::Tape) && link.is_some_and(says_closed)
+    shown_view.shows(LaneSide::Tape) && link.is_some_and(nothing_coming)
+}
+
+/// What holds the tape's window this frame: `None` on a link delivering prints, so
+/// a live tape moves exactly as it did, and on a replay.
+#[must_use]
+pub fn tape_hold(link: Link, state: &ChartState, window_ms: i64) -> Option<TapeHold> {
+    let last_print_ms = last_print_ms(state)?;
+    nothing_coming(link).then_some(TapeHold {
+        last_print_ms,
+        window_ms,
+    })
+}
+
+/// Where the seam's line starts when it is `words_px` wide: centred in the empty
+/// part right of the seam, and only once that part has room to say it.
+#[must_use]
+pub fn seam_words_x(seam_x: f32, right: f32, words_px: f32) -> Option<f32> {
+    let room = right - seam_x;
+    (words_px + 2.0 * crate::side_label::SIDE_LABEL_PADDING_PX <= room)
+        .then_some(seam_x + (room - words_px) / 2.0)
 }
 
 /// Where the seam stands on a tape whose window runs `inset_px` in from `left_px`
@@ -347,12 +374,75 @@ mod tests {
             (LaneView::Beside, Some(Link::Quiet), true),
             (LaneView::CandlesOnly, Some(Link::Quiet), false),
             (LaneView::TapeOnly, Some(Link::Live), false),
-            (LaneView::TapeOnly, Some(Link::Attempting), false),
+            (LaneView::TapeOnly, Some(Link::Attempting), true),
             (LaneView::TapeOnly, Some(Link::NoTransport), false),
             (LaneView::TapeOnly, None, false),
         ] {
             assert_eq!(seam_shown(view, link), shown, "{view:?} {link:?}");
         }
+    }
+
+    fn state_printed_at(at: i64) -> ChartState {
+        let mut state = ChartState::new(quantick_engine::BarSpec::Tick(100));
+        state.ingest_live(&quantick_engine::Trade {
+            agg_id: 1,
+            timestamp_ms: at,
+            price: 100.into(),
+            quantity: 1.into(),
+            side: quantick_engine::Side::Buy,
+        });
+        state
+    }
+
+    /// A link delivering prints, and a replay, leave the window to the clock; the
+    /// other three hold it, on the last print's time.
+    #[test]
+    fn only_a_link_with_nothing_coming_holds_the_window() {
+        let state = state_printed_at(100_000);
+        for (link, holds) in [
+            (Link::Live, false),
+            (Link::NoTransport, false),
+            (Link::Quiet, true),
+            (Link::Attempting, true),
+            (Link::Offline, true),
+        ] {
+            let hold = tape_hold(link, &state, 15_000);
+            assert_eq!(hold.is_some(), holds, "{link:?}");
+            if let Some(hold) = hold {
+                assert_eq!(hold.last_print_ms, 100_000);
+                assert_eq!(hold.window_end_ms(160_000), 106_750, "{link:?}");
+            }
+        }
+        let empty = ChartState::new(quantick_engine::BarSpec::Tick(100));
+        assert_eq!(tape_hold(Link::Quiet, &empty, 15_000), None, "no print yet");
+    }
+
+    /// Held, the seam stands at 55 % of the window and the tape never empties, a
+    /// minute on or an hour; the first print puts the window back on the clock.
+    #[test]
+    fn a_held_seam_parks_at_fifty_five_percent_and_the_first_print_frees_it() {
+        let hold = tape_hold(Link::Quiet, &state_printed_at(100_000), 15_000).unwrap();
+        let tape = (0.0, 0.0, 1_000.0);
+        for now in [106_750, 160_000, 3_700_000] {
+            let end = hold.window_end_ms(now);
+            let x = seam_x_px(tape, end, 100_000, 15_000).unwrap();
+            assert!((x - 550.0).abs() < 0.5, "{now}: {x}");
+        }
+        let early = seam_x_px(tape, hold.window_end_ms(103_000), 100_000, 15_000).unwrap();
+        assert!((early - 800.0).abs() < 0.5, "it walks there first: {early}");
+        let freed = tape_hold(Link::Quiet, &state_printed_at(160_000), 15_000).unwrap();
+        assert_eq!(freed.window_end_ms(160_000), 160_000);
+    }
+
+    /// The line stands in the empty part or nowhere, and a held seam leaves room for
+    /// it where the one just after the last print does not.
+    #[test]
+    fn the_seams_line_shows_once_the_empty_part_has_room() {
+        let words = 110.0;
+        assert_eq!(seam_words_x(460.0, 500.0, words), None, "at the edge");
+        let held = seam_words_x(275.0, 500.0, words).expect("45 % of the side");
+        assert!(held > 275.0 && held + words < 500.0);
+        assert!((held + words / 2.0 - 387.5).abs() < 0.01, "centred");
     }
 
     /// The tape's clock is the newest print's time, on every bar rule, whether a

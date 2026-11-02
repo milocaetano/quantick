@@ -20,6 +20,10 @@ pub const PANEL_DEFAULT_WIDTH_PX: f32 = 340.0;
 /// screen: a chart too narrow to read is not one a settings panel may ask for.
 pub const CHART_BESIDE_PANEL_MIN_PX: f32 = 160.0;
 
+/// How many frames an asked-for section keeps being brought to the top: long enough
+/// for the fold animations under and over it to settle.
+pub const LANDING_FRAMES: u8 = 20;
+
 /// One collapsible section of the panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -157,6 +161,9 @@ pub struct OrderFlowPanel {
     width: f32,
     #[serde(skip)]
     requested: Option<PanelSection>,
+    /// The section being brought to the top, and the frames that may still take.
+    #[serde(skip)]
+    landing: Option<(PanelSection, u8)>,
 }
 
 impl Default for OrderFlowPanel {
@@ -165,6 +172,7 @@ impl Default for OrderFlowPanel {
             open: false,
             width: PANEL_DEFAULT_WIDTH_PX,
             requested: None,
+            landing: None,
         }
     }
 }
@@ -198,6 +206,7 @@ impl OrderFlowPanel {
     /// Close it; answers whether it was open.
     pub fn close(&mut self) -> bool {
         self.requested = None;
+        self.landing = None;
         std::mem::replace(&mut self.open, false)
     }
 
@@ -207,6 +216,7 @@ impl OrderFlowPanel {
         if self.requested == Some(section) {
             self.requested = None;
         }
+        self.landing = self.landing.filter(|(landing, _)| *landing != section);
     }
 
     /// The gear's left click and the key.
@@ -216,11 +226,17 @@ impl OrderFlowPanel {
         }
     }
 
-    /// What a frame drawing the panel does first: expands the section asked for
-    /// on `asset` and answers it, once, for the scroll.
+    /// What a frame drawing the panel does first: expands the section asked for on
+    /// `asset`, once, and answers the section to bring to the top for
+    /// [`LANDING_FRAMES`] frames, as what is above it may still be unfolding. A hand
+    /// is free to fold it after the first.
     pub fn take_request(&mut self, asset: &str, folds: &mut AssetFolds) -> Option<PanelSection> {
-        let section = self.requested.take()?;
-        folds.set(asset, section, true);
+        if let Some(section) = self.requested.take() {
+            folds.set(asset, section, true);
+            self.landing = Some((section, LANDING_FRAMES));
+        }
+        let (section, left) = self.landing?;
+        self.landing = (left > 1).then_some((section, left - 1));
         Some(section)
     }
 
@@ -268,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_on_a_section_expands_it_and_asks_for_the_scroll_once() {
+    fn opening_on_a_section_expands_it_once_and_lands_it_over_a_bounded_run_of_frames() {
         let mut folds = AssetFolds::default();
         folds.set(BTC, PanelSection::L2, false);
         let mut panel = OrderFlowPanel::default();
@@ -280,6 +296,33 @@ mod tests {
             "the frame scrolls to it"
         );
         assert!(folds.section_open(BTC, PanelSection::L2));
+        folds.set(BTC, PanelSection::L2, false);
+        for _ in 1..LANDING_FRAMES {
+            assert_eq!(panel.take_request(BTC, &mut folds), Some(PanelSection::L2));
+        }
+        assert!(
+            !folds.section_open(BTC, PanelSection::L2),
+            "a hand's fold stands: only the first frame expands"
+        );
+        assert_eq!(panel.take_request(BTC, &mut folds), None, "and it ends");
+    }
+
+    #[test]
+    fn a_fold_or_a_close_ends_the_landing() {
+        let mut folds = AssetFolds::default();
+        let mut panel = OrderFlowPanel::default();
+        panel.open_on(Some(PanelSection::L2));
+        panel.take_request(BTC, &mut folds);
+        panel.drop_request(PanelSection::Bubbles);
+        assert!(
+            panel.take_request(BTC, &mut folds).is_some(),
+            "not that one"
+        );
+        panel.drop_request(PanelSection::L2);
+        assert_eq!(panel.take_request(BTC, &mut folds), None);
+        panel.open_on(Some(PanelSection::L2));
+        panel.take_request(BTC, &mut folds);
+        panel.close();
         assert_eq!(panel.take_request(BTC, &mut folds), None);
     }
 

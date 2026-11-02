@@ -536,6 +536,7 @@ impl View {
             on_newest_bar,
             lane_reference_ms,
             lane_now_ms: self.lane_now_ms(),
+            lane_end_cap_ms: None,
             price_range,
             dot_zoom: Some(dot_zoom),
         };

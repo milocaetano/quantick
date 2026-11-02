@@ -78,3 +78,55 @@ fn replay_clock_uses_applied_prints_to_bound_playhead_motion_and_pause() {
     app.active_tab_mut().update_tape_clock_at(52_016);
     assert_eq!(app.active_tab().tape().lane_now_ms(), Some(start + 19_000));
 }
+
+/// A quiet tape's window stops once the last print has walked 45 % of it, a minute
+/// on as much as ten seconds; the clock under it runs on, so a link that delivers
+/// again and a first print both land on the time it really is. A replay's link
+/// never holds it, and what the worker hears is the same hold.
+#[test]
+fn a_tape_with_nothing_coming_holds_its_window_until_the_link_or_a_print_frees_it() {
+    use quantick_chart::connection_state::Link;
+    let (mut app, _events, _commands, _book) = test_app();
+    enable_tape_only(&mut app);
+    let print = trade(1);
+    let at = print.timestamp_ms;
+    let tab = app.active_tab_mut();
+    tab.ingest_live_trade_at(&print, 10_000);
+    tab.update_tape_clock_at(10_000);
+    let window = tab.tape().live_lane_window_ms(tab.flow_pane.state.bars());
+    let cap = at + window * 45 / 100;
+    let hold = |tab: &mut crate::tab::Tab, link| {
+        let pane = &mut tab.flow_pane;
+        let view = pane.orderflow.as_mut().unwrap();
+        view.hold_tape_window(link, &pane.state);
+    };
+
+    tab.update_tape_clock_at(11_000);
+    hold(tab, Link::Quiet);
+    assert_eq!(tab.tape().lane_now_ms(), Some(at + 1_000), "it walks there");
+    let far = 10_000 + u64::try_from(window).unwrap() * 4;
+    tab.update_tape_clock_at(far);
+    for link in [Link::Quiet, Link::Attempting, Link::Offline] {
+        hold(tab, link);
+        assert_eq!(tab.tape().lane_now_ms(), Some(cap), "{link:?}");
+        assert_eq!(tab.tape().cached_live_end_ms(), Some(cap), "{link:?}");
+    }
+    let clock = at + window * 4;
+    for link in [Link::Live, Link::NoTransport] {
+        hold(tab, link);
+        assert_eq!(tab.tape().lane_now_ms(), Some(clock), "{link:?}");
+        hold(tab, Link::Quiet);
+    }
+    let next = quantick_engine::Trade {
+        timestamp_ms: clock,
+        ..trade(2)
+    };
+    tab.ingest_live_trade_at(&next, i64::try_from(far).unwrap());
+    tab.update_tape_clock_at(far);
+    hold(tab, Link::Quiet);
+    assert_eq!(
+        tab.tape().lane_now_ms(),
+        Some(clock),
+        "the first print frees it"
+    );
+}

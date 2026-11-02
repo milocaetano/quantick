@@ -6,6 +6,7 @@
 //! already-built frame so a dense book never blocks the UI.
 
 use eframe::egui;
+use quantick_chart::{connection_state::Link, state::ChartState};
 use quantick_engine::{Bar, Trade};
 use quantick_orderbook::DepthEvent;
 pub(crate) use quantick_orderflow::FlowCellHit;
@@ -498,6 +499,13 @@ impl OrderflowView {
         let before = (next != self.config.live_lane.market_hold).then(|| self.config.clone());
         self.config.live_lane.market_hold = next;
         before.map(|before| self.apply_config(before));
+    }
+
+    /// Stop the tape's window short of the clock while nothing is coming.
+    pub(crate) fn hold_tape_window(&mut self, link: Link, state: &ChartState) {
+        let window_ms = self.live_lane_window_ms(state.bars());
+        let hold = quantick_chart::market_fold::tape_hold(link, state, window_ms);
+        self.pane_tape.set_hold(hold);
     }
 
     fn commit_lane_switch(&mut self, before: HeatmapConfig) {

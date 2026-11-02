@@ -1164,17 +1164,17 @@ impl ChartPane {
         chrome: &SideChrome<'_>,
         side: egui::Rect,
     ) -> Option<f32> {
-        use quantick_chart::market_fold::{seam_shown, tape_seam_x};
+        use quantick_chart::market_fold::{last_print_ms, seam_shown, tape_seam_x};
         let shown = seam_shown(state.shown_view, chrome.link);
-        let owner = self
-            .orderflow
-            .as_ref()
-            .filter(|owner| shown && owner.tape_end().is_live())?;
-        let (now, print) = (
-            owner.lane_now_ms()?,
-            quantick_chart::market_fold::last_print_ms(&self.state)?,
+        let owner = self.orderflow.as_ref().filter(|_| shown)?;
+        let now = owner
+            .cached_live_end_ms()
+            .filter(|_| owner.tape_end().is_live())?;
+        let times = (
+            now,
+            last_print_ms(&self.state)?,
+            owner.live_lane_window_ms(self.state.bars()),
         );
-        let times = (now, print, owner.live_lane_window_ms(self.state.bars()));
         tape_seam_x(
             owner.cached_config(),
             [side.left(), side.width(), side.height()],

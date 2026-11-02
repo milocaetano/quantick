@@ -158,6 +158,7 @@ fn play_zooming(
             on_newest_bar: true,
             lane_reference_ms: Some(6_000),
             lane_now_ms: Some(now_ms),
+            lane_end_cap_ms: None,
             price_range: (80.0, 130.0),
             dot_zoom: Some(DotZoom {
                 native_tape: true,
@@ -548,6 +549,7 @@ fn grid_request(bars: &TickBarBuilder, closed: &[Bar], now_ms: i64) -> Projectio
         on_newest_bar: true,
         lane_reference_ms: Some(6_000),
         lane_now_ms: Some(now_ms),
+        lane_end_cap_ms: None,
         price_range: (90.0, 110.0),
         dot_zoom: Some(DotZoom {
             native_tape: true,

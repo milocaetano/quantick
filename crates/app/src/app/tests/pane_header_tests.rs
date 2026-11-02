@@ -1881,3 +1881,260 @@ fn the_panel_survives_a_save_and_a_restore() {
     let folds = app.runtime.tabs.panel_folds();
     assert!(!folds.section_open(&symbol, PanelSection::L2));
 }
+
+/// The rectangles of every painted text saying exactly this.
+fn painted_text_rects(output: &egui::FullOutput, wanted: &str) -> Vec<egui::Rect> {
+    fn walk(shape: &egui::Shape, wanted: &str, found: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == wanted => {
+                found.push(text.visual_bounding_rect());
+            }
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    walk(shape, wanted, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for clipped in &output.shapes {
+        walk(&clipped.shape, wanted, &mut found);
+    }
+    found
+}
+
+/// A section's state stands at the panel's right, level with the title line's ×,
+/// and clear of its own title, for both headers.
+#[test]
+fn a_sections_state_stands_right_and_never_over_its_title() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
+    let fold = json!({ "section": "l2", "open": false });
+    settings_call(&mut app, SECTION_CAPABILITY_ID, fold).unwrap();
+    for _ in 0..30 {
+        run_frame(&mut app, &ctx);
+    }
+    let close = flow_control(&app, PANEL_CLOSE);
+    let output = run_frame(&mut app, &ctx);
+    for section in PanelSection::ALL {
+        let header = flow_control(&app, section_control(section));
+        let words = app.active_tab().tape().panel_section_state(section);
+        let state = painted_text_rects(&output, &words)
+            .into_iter()
+            .find(|rect| rect.y_range().contains(header.center().y))
+            .expect("its state is painted on its header's line");
+        assert!(state.left() >= header.right(), "{section:?}: {state:?}");
+        assert!(
+            (close.right() - state.right()).abs() < 20.0,
+            "{section:?} stands at the content's right: {state:?}, × at {close:?}"
+        );
+        assert!(
+            (state.center().y - header.center().y).abs() < 2.0,
+            "{section:?}"
+        );
+    }
+}
+
+/// Tape alone, the Buy/Sell key stands below the side's plate, never under it.
+#[test]
+fn the_tape_key_stands_below_the_sides_plate() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = charted_fixture(&ctx);
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    for _ in 0..40 {
+        run_frame(&mut app, &ctx);
+    }
+    let flow = &app.active_tab().flow_pane;
+    let area = flow.frame.area.expect("flow chart");
+    let key = flow.frame.flow_legend.expect("the tape's key");
+    let plate = area.top() + quantick_chart::side_label::SIDE_LABEL_BOTTOM_PX;
+    assert!(
+        key.top() >= plate,
+        "{key:?} under the plate ending at {plate}"
+    );
+}
+
+/// The panel open, the scene names both sections whether their headers are in view
+/// or scrolled out; one out of view has no rectangle and says why, and its call works.
+#[test]
+fn the_scene_lists_both_sections_while_the_panel_is_open() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let (l2, bubbles) = (
+        section_control(PanelSection::L2),
+        section_control(PanelSection::Bubbles),
+    );
+    assert_eq!(
+        scene_selected(&app, l2),
+        None,
+        "a closed panel lists neither"
+    );
+    settings_call(
+        &mut app,
+        OPEN_CAPABILITY_ID,
+        json!({ "section": "bubbles" }),
+    )
+    .unwrap();
+    for _ in 0..30 {
+        run_frame(&mut app, &ctx);
+    }
+    let pane_id = app.active_tab().flow_pane.id;
+    let scene = observer_scene(&app);
+    let read = |control: HeaderControl| {
+        scene_control(
+            &scene,
+            &format!("pane.{pane_id}.header.{}", control.id_in_header()),
+        )
+        .clone()
+    };
+    let (above, landed) = (read(l2), read(bubbles));
+    assert_eq!(landed["bounds_availability"]["available"], true);
+    assert_eq!(above["availability"]["available"], true, "its call works");
+    assert_eq!(above["bounds_availability"]["available"], false);
+    assert_eq!(
+        above["bounds_availability"]["reason"],
+        "the_control_is_off_screen_or_its_rectangle_unreportable"
+    );
+    assert_eq!(above["selected"], true, "open, wherever it has scrolled to");
+
+    let size = egui::vec2(300.0, 700.0);
+    for _ in 0..3 {
+        run_frame_at(&mut app, &ctx, size);
+    }
+    for section in [l2, bubbles] {
+        assert!(
+            scene_selected(&app, section).is_some(),
+            "{section:?}: open with no room beside the chart is still named"
+        );
+    }
+}
+
+/// egui's scroll target keeps one item spacing above what it brings to the top.
+const LANDED_WITHIN_PX: f32 = 6.0;
+
+/// A section asked for lands its header at the top of the scroll, the last one too,
+/// on a panel opening for the first time and on one already open.
+#[test]
+fn a_section_asked_for_lands_at_the_top_of_the_scroll() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
+    for _ in 0..30 {
+        run_frame(&mut app, &ctx);
+    }
+    let top = flow_control(&app, section_control(PanelSection::L2)).top();
+    for section in ["bubbles", "l2", "bubbles"] {
+        settings_call(&mut app, OPEN_CAPABILITY_ID, json!({ "section": section })).unwrap();
+        for _ in 0..60 {
+            run_frame(&mut app, &ctx);
+        }
+        let section = if section == "l2" {
+            PanelSection::L2
+        } else {
+            PanelSection::Bubbles
+        };
+        let landed = flow_control(&app, section_control(section)).top();
+        assert!(
+            (landed - top).abs() < LANDED_WITHIN_PX,
+            "{section:?}: {landed}, top {top}"
+        );
+    }
+
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    settings_call(
+        &mut app,
+        OPEN_CAPABILITY_ID,
+        json!({ "section": "bubbles" }),
+    )
+    .unwrap();
+    for _ in 0..30 {
+        run_frame(&mut app, &ctx);
+    }
+    let landed = flow_control(&app, section_control(PanelSection::Bubbles)).top();
+    assert!(
+        (landed - top).abs() < LANDED_WITHIN_PX,
+        "from closed: {landed}, top {top}"
+    );
+}
+
+/// Each entry of the gear's right-click menu opens the panel on its own section,
+/// unfolded, and switches no layer.
+#[test]
+fn each_gear_menu_entry_opens_its_section() {
+    for section in PanelSection::ALL {
+        let ctx = egui::Context::default();
+        let (mut app, _ends) = flow_fixture(&ctx);
+        let fold = json!({ "section": section.id(), "open": false });
+        settings_call(&mut app, SECTION_CAPABILITY_ID, fold).unwrap();
+        run_frame(&mut app, &ctx);
+        let layers = (on(&app, ChartLayer::Bubbles), on(&app, ChartLayer::Heatmap));
+        let at = flow_control(&app, GEAR).center();
+        let secondary = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        run_frame_with_events(&mut app, &ctx, vec![secondary(true)]);
+        run_frame_with_events(&mut app, &ctx, vec![secondary(false)]);
+        let output = run_frame(&mut app, &ctx);
+        let entry = painted_text_center(&output, section.title()).expect("the menu's entry");
+        click_chart(&mut app, &ctx, entry);
+        for _ in 0..30 {
+            run_frame(&mut app, &ctx);
+        }
+        assert!(panel_open(&app), "{section:?}");
+        let symbol = app.active_tab().symbol.clone();
+        assert!(
+            app.runtime
+                .tabs
+                .panel_folds()
+                .section_open(&symbol, section),
+            "{section:?} comes unfolded"
+        );
+        assert_eq!(
+            (on(&app, ChartLayer::Bubbles), on(&app, ChartLayer::Heatmap)),
+            layers,
+            "looking is not enabling"
+        );
+    }
+}
+
+/// Held by the market, both segments and both keys do nothing: the view stands and
+/// the hold stands, and a hand on the fold is the way out.
+#[test]
+fn a_market_hold_refuses_both_segments_and_both_keys() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let quiet = quantick_chart::connection_state::ConnectionState {
+        link: quantick_chart::connection_state::Link::Quiet,
+        ..app.active_tab().connection.state()
+    };
+    app.active_tab_mut().tape_mut().observe_market(quiet);
+    let held = |app: &QuantickApp| {
+        app.active_tab()
+            .tape()
+            .cached_config()
+            .live_lane
+            .market_held()
+    };
+    assert!(held(&app));
+    run_frame(&mut app, &ctx);
+    for control in [TAPE, TRAIL] {
+        click_side(&mut app, &ctx, control);
+        assert_eq!(view_of(&app), LaneView::Beside, "{control:?}");
+        assert!(held(&app), "{control:?}");
+    }
+    let mods = egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT);
+    for key in [egui::Key::T, egui::Key::R] {
+        press_key(&mut app, &ctx, key, mods);
+        assert_eq!(view_of(&app), LaneView::Beside, "{key:?}");
+        assert!(held(&app), "{key:?}");
+    }
+}

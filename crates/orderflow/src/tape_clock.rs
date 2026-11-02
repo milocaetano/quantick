@@ -2,6 +2,40 @@
 //! Live time advances between observed prints; replay time is already advanced
 //! by the replay source and stops at a print the chart has not applied yet.
 
+/// How much of its window a quiet tape leaves empty after its last print: the
+/// print stops at 55 % of the side, where the seam stands.
+pub const TAPE_HOLD_ROOM_PERCENT: i64 = 45;
+
+/// A tape nothing is coming to: its window stops advancing once the last print
+/// has walked [`TAPE_HOLD_ROOM_PERCENT`] of it, so what it retains stays on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TapeHold {
+    pub last_print_ms: i64,
+    pub window_ms: i64,
+}
+
+impl TapeHold {
+    /// The latest instant the window may end at.
+    #[must_use]
+    pub const fn cap_ms(self) -> i64 {
+        let window = if self.window_ms > 0 {
+            self.window_ms
+        } else {
+            0
+        };
+        let room =
+            window / 100 * TAPE_HOLD_ROOM_PERCENT + window % 100 * TAPE_HOLD_ROOM_PERCENT / 100;
+        self.last_print_ms.saturating_add(room)
+    }
+
+    /// Where the window ends with the clock at `now_ms`.
+    #[must_use]
+    pub const fn window_end_ms(self, now_ms: i64) -> i64 {
+        let cap = self.cap_ms();
+        if now_ms < cap { now_ms } else { cap }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct TapeClock {
     now_ms: Option<i64>,
@@ -57,5 +91,51 @@ impl TapeClock {
                 .max(applied_ms)
         });
         self.now_ms
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HOLD: TapeHold = TapeHold {
+        last_print_ms: 100_000,
+        window_ms: 15_000,
+    };
+
+    #[test]
+    fn the_window_runs_on_until_the_print_has_walked_its_share_then_stops() {
+        assert_eq!(HOLD.cap_ms(), 106_750);
+        assert_eq!(HOLD.window_end_ms(100_000), 100_000);
+        assert_eq!(HOLD.window_end_ms(106_749), 106_749);
+        assert_eq!(HOLD.window_end_ms(106_750), 106_750);
+        assert_eq!(HOLD.window_end_ms(160_000), 106_750, "a minute on");
+    }
+
+    #[test]
+    fn the_print_stands_at_fifty_five_percent_of_the_held_window() {
+        for window_ms in [1_000, 15_000, 60_000, 299] {
+            let hold = TapeHold {
+                last_print_ms: 5_000,
+                window_ms,
+            };
+            let start = hold.cap_ms() - window_ms;
+            let at = (5_000 - start) as f64 / window_ms as f64;
+            assert!((at - 0.55).abs() < 0.01, "{window_ms}: {at}");
+        }
+    }
+
+    #[test]
+    fn a_degenerate_window_holds_at_the_print_and_an_extreme_one_does_not_wrap() {
+        let empty = TapeHold {
+            last_print_ms: 5_000,
+            window_ms: -1,
+        };
+        assert_eq!(empty.cap_ms(), 5_000);
+        let huge = TapeHold {
+            last_print_ms: i64::MAX - 1,
+            window_ms: i64::MAX,
+        };
+        assert_eq!(huge.cap_ms(), i64::MAX);
     }
 }

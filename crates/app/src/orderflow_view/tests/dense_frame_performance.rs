@@ -240,6 +240,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
             on_newest_bar: true,
             lane_reference_ms: Some(WINDOW_MS),
             lane_now_ms: Some(NOW_MS),
+            lane_end_cap_ms: None,
             price_range: PRICES,
             dot_zoom: Some(DotZoom {
                 native_tape: true,

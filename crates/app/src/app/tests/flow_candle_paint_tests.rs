@@ -426,7 +426,8 @@ fn flow_legend_keeps_native_swatches_in_tape_and_preserves_depth_and_hide_switch
     let frame = settled_flow_frame(&mut app, &ctx);
     let pane = &app.active_tab().flow_pane.frame;
     let divider = pane.lane_divider_x.unwrap();
-    let top = pane.chart_rect.unwrap().top();
+    // Below the tape's plate, never under it.
+    let top = pane.chart_rect.unwrap().top() + quantick_chart::side_label::TAPE_KEY_TOP_PX;
     let shown: Vec<_> = keys(&frame)
         .into_iter()
         .filter(|(label, _)| label != "liquidity")

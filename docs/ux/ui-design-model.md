@@ -358,7 +358,11 @@ view keys obey their switches. It is red because it is the only explanation of
 why a control the trader relies on is refusing, not because anything broke; the
 corner chip stays amber. Beside the candles with the setting off, or with the
 tape alone, the tape keeps its prints up to a dashed amber seam at the last
-print, with this section's one muted line in the empty part after it. Neither
+print, with this section's one muted line in the empty part after it once that
+has room. While its link is quiet, attempting or offline the tape's window stops
+at the last print plus 45 % of itself, so the seam parks at 55 % of the side and
+the tape never empties; the first print frees it, and a live link's window is
+untouched. Neither
 is saved: the hold never writes the fold a workspace stores, and it ends at the
 first print, not at a change of link.
 

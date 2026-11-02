@@ -220,6 +220,10 @@ pub struct ProjectionRequest {
     /// Current market time supplied by the caller for an independent tape.
     /// Ordinary lanes retain their event-anchored clock when this is `None`.
     pub lane_now_ms: Option<i64>,
+    /// The latest instant the lane may end at while nothing is coming to the tape
+    /// ([`crate::tape_clock::TapeHold`]): a book still moving does not walk the
+    /// prints out of it. `None` is every live tape.
+    pub lane_end_cap_ms: Option<i64>,
     pub price_range: (f64, f64),
     /// The rungs the view chose for volume dots
     /// ([`HeatmapConfig::volume_dots`]). `None` from a caller with no
@@ -1111,13 +1115,8 @@ impl BookEngine {
         // Both print-only and book-backed feeds have a factual latest event.
         // Only the independent tape advances on the supplied market clock.
         let latest_ms = self.history.latest_ms()?;
-        let now_ms = if self.config.native_tape() {
-            request.lane_now_ms.unwrap_or(latest_ms).max(latest_ms)
-        } else {
-            latest_ms
-        };
         Some(LiveEdge {
-            now_ms,
+            now_ms: request.lane_end_ms(self.config.native_tape(), latest_ms),
             window_ms: self.config.lane_window_ms(reference_ms),
             reference_ms,
             on_newest_bar: request.on_newest_bar,
@@ -1706,6 +1705,7 @@ mod tests {
             on_newest_bar: true,
             lane_reference_ms: None,
             lane_now_ms: None,
+            lane_end_cap_ms: None,
             price_range,
             dot_zoom: None,
         }

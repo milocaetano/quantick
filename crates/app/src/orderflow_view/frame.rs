@@ -87,6 +87,7 @@ impl OrderflowView {
             on_newest_bar,
             lane_reference_ms,
             lane_now_ms: self.lane_now_ms(),
+            lane_end_cap_ms: self.pane_tape.window_cap_ms(),
             price_range,
             // The tape's level follows its own prints, never the candle axis.
             dot_zoom: pane_geometry.map(|geometry| {
@@ -314,11 +315,8 @@ impl OrderflowView {
 
     /// Draw the canvas's compact visual key.
     ///
-    /// Its own pass, not a tail of the bubbles: the legend is chrome about
-    /// what the canvas is showing — it names the depth layers too — so hiding
-    /// the bubbles must not take it down, and hiding it must not take the
-    /// bubbles down. The trader switches it from the canvas's right-click
-    /// menu (`ChartLayer::FlowLegend`).
+    /// Its own pass, as hiding the bubbles must not take it down, nor it them.
+    /// The canvas's right-click menu switches it (`ChartLayer::FlowLegend`).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_legend(
         &self,
@@ -351,7 +349,7 @@ impl OrderflowView {
                 let header = egui::Rect::from_min_size(
                     egui::pos2(
                         chart_rect.right() - lane_width_px + TAPE_HEADER_INSET_PX,
-                        chart_rect.top(),
+                        chart_rect.top() + quantick_chart::side_label::TAPE_KEY_TOP_PX,
                     ),
                     egui::vec2(
                         (lane_width_px * 0.5 - TAPE_HEADER_INSET_PX).max(0.0),

@@ -217,6 +217,7 @@ pub fn draw_marked(
         slot: slot_px,
         chip_with_words,
         chip_dots,
+        market_held: row.state.is_some_and(|state| state.market_held),
     });
     let controls_px = bare_controls_px + if fit.side_words { side_words } else { 0.0 };
     let indicators_px = indicators_width(ui, fit.indicators_words);
@@ -421,8 +422,7 @@ fn side_label_text(ctx: &egui::Context, label: &SideLabel, fit: LabelFit) -> egu
     text
 }
 
-/// The tape's seam: a dashed line at the last print, and the one muted line in
-/// the empty part after it, when that has room to say it.
+/// The tape's seam: a dashed line at the last print, and the muted line after it.
 pub fn draw_tape_seam(ui: &egui::Ui, side: egui::Rect, x: f32, words: Option<&str>) {
     let painter = ui.painter().with_clip_rect(side);
     let ends = [egui::pos2(x, side.top()), egui::pos2(x, side.bottom())];
@@ -433,9 +433,9 @@ pub fn draw_tape_seam(ui: &egui::Ui, side: egui::Rect, x: f32, words: Option<&st
     };
     let font = egui::FontId::proportional(SEGMENT_WORD_SIZE);
     let galley = painter.layout_no_wrap(words.to_owned(), font, theme::TEXT_MUTED);
-    let empty = egui::Rect::from_x_y_ranges(x..=side.right(), side.y_range());
-    if galley.size().x + 2.0 * SIDE_LABEL_PADDING_PX <= empty.width() {
-        let at = empty.center() - galley.size() / 2.0;
+    let at = quantick_chart::market_fold::seam_words_x(x, side.right(), galley.size().x);
+    if let Some(left) = at {
+        let at = egui::pos2(left, side.center().y - galley.size().y / 2.0);
         painter.galley(at, galley, theme::TEXT_MUTED);
     }
 }
