@@ -103,6 +103,7 @@ mod price_axis;
 
 pub use chart_pane::ChartPane;
 use chart_pane::DrawPass;
+pub(crate) use chart_pane::SideChrome;
 pub use chrome::PaneChrome;
 use drag::region_pause;
 use hint::paint_placement_hint;

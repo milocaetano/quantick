@@ -82,7 +82,7 @@ The three exclusion classes are closed:
 | `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9 | `layout.preset.apply` | — |
 | `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a capsule glyph's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `layer.bubbles.toggle` | Switch the aggression bubbles on or off | candles capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
+| `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
 | `layer.footprint.settings.open` | Open the footprint's settings window | right-click the capsule's footprint glyph; the pane's footprint menu | `chart.settings.set` | — |
 | `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu, off until switched on | `layers.visibility.set` | — |
 | `layer.footprint.toggle` | Switch the candle footprint on or off | pane capsule glyph, pane right-click layer menu, Ctrl+F | `layers.visibility.set` | — |
@@ -90,10 +90,10 @@ The three exclusion classes are closed:
 | `layer.live_strip.toggle` | Switch the live depth strip on or off | pane header glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_bubbles.toggle` | Switch the bubbles on the tape on or off | tape capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_heatmap.toggle` | Switch the book on the tape on or off | tape capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
-| `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide candles) | `layers.visibility.set` | — |
+| `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide trail) | `layers.visibility.set` | — |
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
 | `orderflow.tape.fold.set` | Fold the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click the rail it leaves | `orderflow.tape.fold.set` | — |
-| `orderflow.tape.view.set` | Show the candles and tape, the candles alone or the tape alone | pane header's view button; Ctrl+Shift+T on a focused flow pane | `orderflow.tape.view.set` | — |
+| `orderflow.tape.view.set` | Show the trail and tape, the trail alone or the tape alone | pane header's Trail and Tape switches; Ctrl+Shift+R and Ctrl+Shift+T on a focused flow pane | `orderflow.tape.view.set` | — |
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
 | `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
 | `orderflow.bubbles.size.set` | Adjust Tape and tick-chart bubble size independently | drag a sample bubble on the flow pane's header; double-click it for 1x | `orderflow.bubbles.size.set` | — |
@@ -210,7 +210,7 @@ matrix fails the build.
 | `toolbox_dock` | 3 |
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
-| `hotkey` | 17 |
+| `hotkey` | 18 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
 | `authored` | 53 |

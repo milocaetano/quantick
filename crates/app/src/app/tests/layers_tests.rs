@@ -1222,7 +1222,8 @@ fn the_header_controls_are_listed_the_way_the_trader_reads_them() {
     assert_eq!(
         listed,
         vec![
-            "view",
+            "side.trail",
+            "side.tape",
             "layer.live_strip",
             "layer.bubbles",
             "layer.heatmap",

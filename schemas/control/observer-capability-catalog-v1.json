@@ -14767,7 +14767,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets what a flow pane shows, as its view button and Ctrl+Shift+T do: beside shows candles and tape at the tape's width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view. Presentation only: executions, grouping, the width share and a fold of the divider (orderflow.tape.fold.set) are untouched, and the layer switches keep their state.",
+      "description": "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape at the tape's width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view. Presentation only: executions, grouping, the width share and a fold of the divider (orderflow.tape.fold.set) are untouched, and the layer switches keep their state.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -14890,7 +14890,7 @@
       "risk_flags": [],
       "risk_reducing": false,
       "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a view has no further effect, and the result and orderflow.bubbles report the view kept.",
-      "title": "Show the candles, the tape, or both",
+      "title": "Show the trail, the tape, or both",
       "version": 1
     },
     {
@@ -21021,7 +21021,7 @@
               "tape_view": {
                 "$ref": "#/$defs/TapeView",
                 "default": "beside",
-                "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or\n`orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it."
+                "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's Trail and Tape switches,\nCtrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`; a fold\n(`tape_fold`) is apart from it."
               },
               "tape_viewport_scale": {
                 "anyOf": [

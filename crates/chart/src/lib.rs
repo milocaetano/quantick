@@ -34,6 +34,7 @@ pub mod logo_shatter;
 pub mod pane_header;
 pub mod price_axis_fit;
 pub mod price_view;
+pub mod side_label;
 pub mod state;
 pub mod style;
 pub mod tick_membership;

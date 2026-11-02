@@ -6,8 +6,8 @@
 //! pass, whatever the book is doing.
 
 use crate::orderflow_render::constants::{
-    GAP_LABEL_INSET_PX, GAP_LABEL_TOP_PX, LANE_DIVIDER_DASH_PX, LANE_DIVIDER_GAP_PX,
-    LANE_MARK_WIDTH_PX, LANE_NOW_DASH_PX, LANE_NOW_GAP_PX,
+    GAP_LABEL_INSET_PX, GAP_LABEL_TOP_PX, LANE_DIVIDER_WIDTH_PX, LANE_MARK_WIDTH_PX,
+    LANE_NOW_DASH_PX, LANE_NOW_GAP_PX,
 };
 use eframe::egui;
 use quantick_orderflow::LiquidityEvidence;
@@ -229,14 +229,10 @@ pub(crate) fn draw_lane_boundary(
         return;
     }
     if let Some(x) = super::lane_divider_x(rect, lane_width) {
-        draw_dashed_vertical(
-            &painter.with_clip_rect(rect),
+        painter.with_clip_rect(rect).vline(
             x,
-            rect,
-            LANE_DIVIDER_DASH_PX,
-            LANE_DIVIDER_GAP_PX,
-            super::palette_for_theme(style.theme).lane_divider,
-            LANE_MARK_WIDTH_PX,
+            rect.y_range(),
+            egui::Stroke::new(LANE_DIVIDER_WIDTH_PX, crate::theme::BORDER),
         );
     }
 }

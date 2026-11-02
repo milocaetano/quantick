@@ -197,7 +197,7 @@ impl LiveLaneSection<'_> {
         {
             lane.native_tape = native;
         }
-        ui.checkbox(&mut lane.tape_only, "Tape only (hide candles)")
+        ui.checkbox(&mut lane.tape_only, "Tape only (hide trail)")
             .on_hover_text(ChartLayer::TapeOnly.hint());
         let native_tape = lane.native() && volume_dots;
         let mut lane_set = false;

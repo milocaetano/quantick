@@ -5,5 +5,7 @@
 //! read the envelope's caps, and these tests drive the workers, so living
 //! inside the envelope module would weld the three into one module cycle.
 
-mod burst;
-mod measure;
+mod tests {
+    mod burst;
+    mod measure;
+}

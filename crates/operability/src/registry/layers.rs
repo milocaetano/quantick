@@ -37,7 +37,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layer.bubbles.toggle",
         title: "Switch the aggression bubbles on or off",
-        reach: "candles capsule glyph, pane right-click layer menu, Ctrl+B",
+        reach: "trail capsule glyph, pane right-click layer menu, Ctrl+B",
         keys: &[(Source::LayerToggle, "Bubbles")],
         mapping: LAYER_SWITCH,
     },
@@ -99,7 +99,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layer.tape_only.toggle",
         title: "Give the tape its own canvas without candles",
-        reach: "pane right-click layer menu; Bubbles settings, Tape only (hide candles)",
+        reach: "pane right-click layer menu; Bubbles settings, Tape only (hide trail)",
         keys: &[(
             Source::Authored,
             "the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries",
@@ -128,9 +128,12 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "orderflow.tape.view.set",
-        title: "Show the candles and tape, the candles alone or the tape alone",
-        reach: "pane header's view button; Ctrl+Shift+T on a focused flow pane",
-        keys: &[(Source::Hotkey, "TAPE_VIEW_SHORTCUT")],
+        title: "Show the trail and tape, the trail alone or the tape alone",
+        reach: "pane header's Trail and Tape switches; Ctrl+Shift+R and Ctrl+Shift+T on a focused flow pane",
+        keys: &[
+            (Source::Hotkey, "TAPE_VIEW_SHORTCUT"),
+            (Source::Hotkey, "TRAIL_VIEW_SHORTCUT"),
+        ],
         mapping: capability!("orderflow.tape.view.set"),
     },
     UiBehaviour {

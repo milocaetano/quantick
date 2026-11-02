@@ -665,7 +665,8 @@ impl ConnectionTracker {
 
     /// The link as every surface speaks it. A blip keeps the word it
     /// interrupted; a session opening has none.
-    fn spoken_link(&self, now_ms: i64) -> Option<Link> {
+    #[must_use]
+    pub fn spoken_link(&self, now_ms: i64) -> Option<Link> {
         match self.state.link {
             Link::Attempting if !self.attempt_shown(now_ms) => {
                 matches!(self.before_attempt, Link::Live | Link::Quiet)

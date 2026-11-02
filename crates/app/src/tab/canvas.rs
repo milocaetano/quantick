@@ -396,8 +396,17 @@ impl Tab {
     /// marks, so it wins the press and nothing strokes across it.
     fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
         let mut focus = None;
+        let focused = self.focused_side();
+        let link = self.connection.spoken_link(crate::metrics::wall_clock_ms());
         for (pane, side) in self.panes_with_sides_mut() {
-            let intent = pane.draw_capsules(ui, side, chrome.style, chrome.capabilities);
+            let sides = crate::pane::SideChrome {
+                style: chrome.style,
+                capabilities: chrome.capabilities,
+                focused: side == focused,
+                tz: chrome.tz,
+                link,
+            };
+            let intent = pane.draw_capsules(ui, side, &sides);
             if let Some(intent) = intent {
                 // A settings window edits the focused chart, and this is the
                 // one the hand asked about.
@@ -413,7 +422,8 @@ impl Tab {
     }
 
     /// The flow pane's header line: its mark, its own bars, its indicators
-    /// button, its view and its strip, read and changed here wherever focus sits.
+    /// button, its side switches and its strip, read and changed here wherever
+    /// focus sits.
     fn draw_flow_header(
         &mut self,
         ui: &mut egui::Ui,

@@ -229,7 +229,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
             pane.price_view.set_inverted(true);
         }
     }
-    // The view button on the pane's header — the one control
+    // The Tape switch on the pane's header — the one control
     // that decides whether there is a band at all. The switch that view
     // reads, so a capture shows what a click shows. Anything but `on`/`off`
     // leaves the tape alone rather than guessing.

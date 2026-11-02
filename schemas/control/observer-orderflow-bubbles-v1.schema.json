@@ -181,7 +181,7 @@
         "tape_view": {
           "$ref": "#/$defs/TapeView",
           "default": "beside",
-          "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or\n`orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it."
+          "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's Trail and Tape switches,\nCtrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`; a fold\n(`tape_fold`) is apart from it."
         },
         "tape_viewport_scale": {
           "anyOf": [

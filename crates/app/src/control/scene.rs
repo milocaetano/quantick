@@ -62,7 +62,7 @@ use quantick_control::{
 };
 
 use eframe::egui;
-use quantick_chart::pane_header::{HeaderControl, view_name};
+use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment};
 
 use crate::{
     dock::DockTab,
@@ -360,20 +360,28 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     for (pane, _) in tab.panes() {
         for &(control, rect) in &pane.frame.header_controls {
             let (label, role, selected, blocked, capability) = match control {
-                HeaderControl::View => (
-                    pane.orderflow.as_ref().map_or("", |tape| {
-                        view_name(tape.cached_config().live_lane.shown_view())
-                    }),
-                    SceneRoleDto::Action,
-                    false,
-                    None,
-                    quantick_control_schema::tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
-                ),
+                HeaderControl::Side(side) => {
+                    let segment = pane
+                        .flow_header_state()
+                        .map(|state| SideSegment::of(side, &state));
+                    (
+                        segment.map_or("", SideSegment::word),
+                        SceneRoleDto::Toggle,
+                        segment.is_some_and(|segment| {
+                            segment.ink == quantick_chart::pane_header::SegmentInk::Lit
+                        }),
+                        segment
+                            .and_then(|segment| segment.refusal)
+                            .map(SideRefusal::code),
+                        quantick_control_schema::tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
+                    )
+                }
                 HeaderControl::Layer(toggle) => (
                     toggle.name(),
                     SceneRoleDto::Toggle,
                     pane.layer_switched_on(toggle.layer(), style),
-                    pane.layer_blocked(toggle.layer(), capabilities),
+                    pane.layer_blocked(toggle.layer(), capabilities)
+                        .map(|block| block.code),
                     quantick_control_schema::layers::SET_VISIBILITY_CAPABILITY_ID,
                 ),
                 HeaderControl::Sample(sample) => (
@@ -396,7 +404,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                 selected,
                 // The very gate the glyph reads, in its coded rendering: one
                 // condition, two audiences, no chance of drift.
-                availability: blocked.map_or_else(available, |block| unavailable(block.code)),
+                availability: blocked.map_or_else(available, unavailable),
                 bounds_availability: match &bounds {
                     Bounds::Rect(_) => available(),
                     _ => unavailable("the_controls_rectangle_is_not_reportable"),

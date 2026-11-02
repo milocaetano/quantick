@@ -7,6 +7,7 @@ use quantick_chart::pane_header::{
     BubbleSample, Capsule, CapsuleSide, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle,
     flow_sides,
 };
+use quantick_chart::side_label::SideLabel;
 use quantick_control_handlers::bubble_scale::BubbleScalePane;
 use quantick_control_schema::bubble_scale::BubbleScaleTarget;
 use quantick_layers::{ChartLayer, LayerActions};
@@ -1057,6 +1058,17 @@ fn target(sample: BubbleSample) -> BubbleScaleTarget {
     }
 }
 
+/// What a pane's capsules and side labels read from the window.
+pub(crate) struct SideChrome<'a> {
+    pub style: &'a ChartStyle,
+    pub capabilities: FeedCapabilities,
+    /// This pane has focus.
+    pub focused: bool,
+    pub tz: quantick_civil::TzOffset,
+    /// The word the feed speaks this frame, if any yet.
+    pub link: Option<quantick_chart::connection_state::Link>,
+}
+
 impl ChartPane {
     /// One layer glyph: its lamp the *switch*, not what the source lets through
     /// it, with what blocks it beside it, read through the calls the pane's layer
@@ -1084,15 +1096,32 @@ impl ChartPane {
         glyph.blocked.is_none().then_some(glyph)
     }
 
-    /// Paint this pane's capsules, one per chart side on screen, over the chart
-    /// just drawn; answers what a press on one asked for.
+    /// The label of a flow-pane side, reading how far its data reaches: every
+    /// print cuts into the flow bars, so the newest bar's close is the newest
+    /// print's time.
+    fn side_label(&self, side: CapsuleSide, chrome: &SideChrome<'_>) -> Option<SideLabel> {
+        let state = &self.state;
+        let last = state
+            .partial()
+            .or_else(|| state.bars().last())
+            .map(|bar| bar.close_time);
+        match side {
+            CapsuleSide::Candles => Some(SideLabel::trail(last, chrome.tz)),
+            CapsuleSide::Tape => Some(SideLabel::tape(last, chrome.tz, chrome.link)),
+            CapsuleSide::Time => None,
+        }
+    }
+
+    /// Paint this pane's capsules and side labels, one of each per chart side on
+    /// screen, over the chart just drawn; answers what a press on a capsule asked
+    /// for.
     pub(crate) fn draw_capsules(
         &mut self,
         ui: &mut egui::Ui,
         side: PaneSide,
-        style: &ChartStyle,
-        capabilities: FeedCapabilities,
+        chrome: &SideChrome<'_>,
     ) -> Option<HeaderIntent> {
+        let (style, capabilities) = (chrome.style, chrome.capabilities);
         self.frame.capsules = [None; 2];
         // Nothing on the chart, nothing to switch: the overlay owns it.
         if self.slots() == 0 {
@@ -1122,15 +1151,27 @@ impl ChartPane {
             });
             let glyph = |toggle| self.header_glyph(toggle, style, capabilities);
             let capsule = Capsule::of(side, glyph, scale);
-            let corner = capsule.place(left, right, top, chart.bottom());
-            let Some(corner) = corner.filter(|_| !capsule.is_empty()) else {
+            let corner = capsule
+                .place(left, right, top, chart.bottom())
+                .filter(|_| !capsule.is_empty());
+            let side_rect = egui::Rect::from_x_y_ranges(left..=right, top..=chart.bottom());
+            if let Some(label) = self.side_label(side, chrome) {
+                let capsule_left = corner.map_or(right, |corner| corner.0);
+                crate::pane_header::draw_side_label(ui, &label, side_rect, capsule_left);
+            }
+            let Some(corner) = corner else {
                 continue;
+            };
+            let spot = crate::pane_header::CapsuleSpot {
+                corner,
+                side,
+                side_rect,
+                pane_focused: chrome.focused,
             };
             let rect = crate::pane_header::draw_capsule(
                 ui,
                 &capsule,
-                corner,
-                side,
+                &spot,
                 self.id,
                 &mut self.frame.header_controls,
                 &mut intent,

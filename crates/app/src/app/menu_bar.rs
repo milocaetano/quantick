@@ -127,19 +127,19 @@ pub(super) const PAPER_CANCEL_SHORTCUT: egui::KeyboardShortcut =
 const MENU_BAR_HEIGHT: f32 = 28.0;
 
 impl QuantickApp {
-    /// The tape key, on a focused flow pane: tape only, and from there back
-    /// beside the candles. Consumed whatever the focus, before `Ctrl+T` is read:
-    /// that one would match it too and open a tab.
-    pub(super) fn read_tape_view_key(&mut self, ctx: &egui::Context) {
-        if !crate::chart_layers::shortcuts::take_tape_view_press(ctx) {
+    /// The two view keys, on a focused flow pane: one side alone, and from
+    /// there back beside the other. Consumed whatever the focus, before `Ctrl+T`
+    /// and `Ctrl+R` are read: those would match them too.
+    pub(super) fn read_view_keys(&mut self, ctx: &egui::Context) {
+        let Some(key) = crate::chart_layers::shortcuts::take_view_key(ctx) else {
             return;
-        }
+        };
         let tab = self.active_tab_mut();
         if tab.focused_side() == crate::pane::PaneSide::Flow
             && let Some(tape) = tab.flow_pane.orderflow.as_mut()
         {
             let view = tape.cached_config().live_lane.view();
-            tape.set_lane_view(view.tape_key());
+            tape.set_lane_view(key(view));
         }
     }
 

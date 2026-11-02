@@ -417,8 +417,9 @@ pub struct BubblesStateSnapshot {
     #[serde(default)]
     pub tape_fold: crate::tape_fold::TapeFold,
     /// Which view the tape's two switches ask for: `beside`, `candles` (alone)
-    /// or `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or
-    /// `orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it.
+    /// or `tape` (alone). Set by the pane header's Trail and Tape switches,
+    /// Ctrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`; a fold
+    /// (`tape_fold`) is apart from it.
     #[serde(default)]
     pub tape_view: crate::tape_view_set::TapeView,
     /// Exclude the first recorded 100 ms burst from automatic tape-only

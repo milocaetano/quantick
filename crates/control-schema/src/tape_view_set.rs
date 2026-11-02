@@ -79,8 +79,8 @@ pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::layout::transient_descriptor::<TapeViewSetInput, TapeViewSetResult>(
         TAPE_VIEW_SET_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
-        "Show the candles, the tape, or both",
-        "Sets what a flow pane shows, as its view button and Ctrl+Shift+T do: beside shows candles and tape at the tape's width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view. Presentation only: executions, grouping, the width share and a fold of the divider (orderflow.tape.fold.set) are untouched, and the layer switches keep their state.",
+        "Show the trail, the tape, or both",
+        "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape at the tape's width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view. Presentation only: executions, grouping, the width share and a fold of the divider (orderflow.tape.fold.set) are untouched, and the layer switches keep their state.",
         "Stable tab and pane IDs select the pane; repeating a view has no further effect, and the result and orderflow.bubbles report the view kept.",
     );
     descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;

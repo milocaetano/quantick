@@ -1,8 +1,9 @@
 //! The flow pane's three views, a layer over the lane's two switches.
 //!
 //! The pane shows the candles and the tape side by side, the candles alone or
-//! the tape alone. [`LaneView`] is not a third switch: it is the lane's
-//! `enabled` and `tape_only` read together, so nothing can disagree with them.
+//! the tape alone. The screen calls the candles side the Trail. [`LaneView`] is
+//! not a third switch: it is the lane's `enabled` and `tape_only` read together,
+//! so nothing can disagree with them.
 //!
 //! A view is not a fold. Moving between views writes only those two switches,
 //! so a side the divider folded to its rail is still folded on the way back
@@ -22,14 +23,38 @@ pub enum LaneView {
     TapeOnly,
 }
 
+/// One of the two sides of the flow pane, as its header's switches name them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneSide {
+    /// The candles side.
+    Trail,
+    /// The prints as they arrive.
+    Tape,
+}
+
 impl LaneView {
-    /// The view after this one on the pane's view button.
+    /// Whether this view shows `side`.
     #[must_use]
-    pub fn next(self) -> Self {
-        match self {
-            Self::Beside => Self::CandlesOnly,
-            Self::CandlesOnly => Self::TapeOnly,
-            Self::TapeOnly => Self::Beside,
+    pub fn shows(self, side: LaneSide) -> bool {
+        match (self, side) {
+            (Self::Beside, _)
+            | (Self::CandlesOnly, LaneSide::Trail)
+            | (Self::TapeOnly, LaneSide::Tape) => true,
+            (Self::CandlesOnly, LaneSide::Tape) | (Self::TapeOnly, LaneSide::Trail) => false,
+        }
+    }
+
+    /// The view with `side` switched the other way, or `None` when it is the
+    /// last side showing: the pane is never left with nothing on it.
+    #[must_use]
+    pub fn toggled(self, side: LaneSide) -> Option<Self> {
+        match (self, side) {
+            (Self::Beside, LaneSide::Trail) => Some(Self::TapeOnly),
+            (Self::Beside, LaneSide::Tape) => Some(Self::CandlesOnly),
+            (Self::CandlesOnly, LaneSide::Tape) | (Self::TapeOnly, LaneSide::Trail) => {
+                Some(Self::Beside)
+            }
+            (Self::CandlesOnly, LaneSide::Trail) | (Self::TapeOnly, LaneSide::Tape) => None,
         }
     }
 
@@ -41,6 +66,17 @@ impl LaneView {
             Self::Beside
         } else {
             Self::TapeOnly
+        }
+    }
+
+    /// The tape key's mirror: the trail alone, and from there back beside the
+    /// tape.
+    #[must_use]
+    pub fn trail_key(self) -> Self {
+        if self == Self::CandlesOnly {
+            Self::Beside
+        } else {
+            Self::CandlesOnly
         }
     }
 }
@@ -155,8 +191,7 @@ mod tests {
             };
             let rail = style.fold_rail(CHART);
             assert!(rail.is_some(), "{fold:?}");
-            for _ in VIEWS {
-                let next = style.view().next();
+            for next in [LaneView::CandlesOnly, LaneView::TapeOnly, LaneView::Beside] {
                 assert!(style.set_view(next));
                 assert_eq!(style.fold, fold, "{fold:?} at {next:?}");
             }
@@ -199,12 +234,24 @@ mod tests {
         assert_eq!(style.view(), LaneView::Beside);
     }
 
-    /// One button walks the three views in one order and comes home.
+    /// Both lit is beside, one lit is that side alone, and the last lit side
+    /// refuses to go out, whichever it is.
     #[test]
-    fn the_view_button_cycles_through_the_three_views() {
-        assert_eq!(LaneView::Beside.next(), LaneView::CandlesOnly);
-        assert_eq!(LaneView::CandlesOnly.next(), LaneView::TapeOnly);
-        assert_eq!(LaneView::TapeOnly.next(), LaneView::Beside);
+    fn the_last_side_showing_stays() {
+        use LaneSide::{Tape, Trail};
+        for (view, side, after) in [
+            (LaneView::Beside, Trail, Some(LaneView::TapeOnly)),
+            (LaneView::Beside, Tape, Some(LaneView::CandlesOnly)),
+            (LaneView::CandlesOnly, Tape, Some(LaneView::Beside)),
+            (LaneView::TapeOnly, Trail, Some(LaneView::Beside)),
+            (LaneView::CandlesOnly, Trail, None),
+            (LaneView::TapeOnly, Tape, None),
+        ] {
+            assert_eq!(view.toggled(side), after, "{view:?} {side:?}");
+            if let Some(after) = after {
+                assert_ne!(after.shows(side), view.shows(side), "{view:?} {side:?}");
+            }
+        }
     }
 
     /// The key goes to tape only and back to beside; there is no remembered view,
@@ -214,6 +261,14 @@ mod tests {
         assert_eq!(LaneView::Beside.tape_key(), LaneView::TapeOnly);
         assert_eq!(LaneView::CandlesOnly.tape_key(), LaneView::TapeOnly);
         assert_eq!(LaneView::TapeOnly.tape_key(), LaneView::Beside);
+    }
+
+    /// The two keys are mirrors: each leads to its side alone and back beside.
+    #[test]
+    fn the_trail_key_mirrors_the_tape_key() {
+        assert_eq!(LaneView::Beside.trail_key(), LaneView::CandlesOnly);
+        assert_eq!(LaneView::TapeOnly.trail_key(), LaneView::CandlesOnly);
+        assert_eq!(LaneView::CandlesOnly.trail_key(), LaneView::Beside);
     }
 
     /// Beside the candles the lane takes its share's band; alone it is the chart,

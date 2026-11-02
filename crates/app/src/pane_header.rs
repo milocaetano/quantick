@@ -1,21 +1,28 @@
 //! Paints the header line every pane carries (the rule, the mark, the bars and
-//! the indicators button on the left; the view and the strip on a flow pane's
-//! right) and the capsule floating over each chart side. What they say and what
-//! a press asks for are `quantick_chart::pane_header`'s call; this file holds
-//! the shapes and the pointer.
+//! the indicators button on the left; the Trail and Tape switches and the strip
+//! on a flow pane's right), the capsule floating over each chart side and the
+//! label beside it. What they say and what a press asks for are
+//! `quantick_chart`'s call; this file holds the shapes and the pointer.
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_chart::connection_state::Dot;
 use quantick_chart::pane_header::{
-    BubbleSample, CAPSULE_HEIGHT_PX, CAPSULE_SLOT_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide,
-    FLOW_CONTROLS_PX, FlowHeaderState, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk, HeaderControl,
-    HeaderIntent, HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle,
-    PaneHeader, SAMPLE_RESET_SCALE, SLOT_GAP_PX, VIEW_SLOT_PX, dragged_scale, flow_fit,
-    sample_diameter_px, sample_value_text, view_name,
+    BubbleSample, CAPSULE_HEIGHT_PX, CAPSULE_INSET_TOP_PX, CAPSULE_SLOT_HEIGHT_PX, Capsule,
+    CapsuleAttention, CapsuleItem, CapsuleSide, FLOW_CONTROLS_PX, FlowHeaderState, GLYPH_SLOT_PX,
+    GROUP_GAP_PX, GlyphInk, HAIRLINE_GAP_PX, HeaderControl, HeaderIntent, HeaderWidths,
+    INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle, PaneHeader, SAMPLE_RESET_SCALE,
+    SEGMENT_FRAME_HEIGHT_PX, SEGMENT_FRAME_PAD_PX, SEGMENT_GAP_PX, SEGMENT_GLYPH_PX,
+    SEGMENT_HEIGHT_PX, SEGMENT_PAD_WORDS_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX, SegmentInk,
+    SideSegment, dragged_scale, flow_fit, sample_diameter_px, sample_value_text, segment_px,
+    side_word, side_words_px,
+};
+use quantick_chart::side_label::{
+    LabelFit, LabelInk, SIDE_LABEL_GAP_PX, SIDE_LABEL_INSET_LEFT_PX, SIDE_LABEL_PADDING_PX,
+    SideLabel,
 };
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
-use quantick_orderflow::LaneView;
+use quantick_orderflow::LaneSide;
 use smallvec::SmallVec;
 
 use crate::chart_layers::shortcuts;
@@ -55,14 +62,23 @@ const SLASH_PX: f32 = 1.8;
 /// The outlined sample of bubbles switched off by hand.
 const SAMPLE_OFF_DIAMETER_PX: f32 = 12.0;
 const SAMPLE_OFF_STROKE_PX: f32 = 1.2;
-/// The view glyph's drawing box: both sides of the pane, wider than tall.
-const VIEW_BOX: egui::Vec2 = egui::vec2(30.0, 22.0);
+/// The trail glyph's drawing box.
+const TRAIL_BOX: f32 = 20.0;
+/// A segment's word, and the corners of the control's frame and of a lit segment.
+const SEGMENT_WORD_SIZE: f32 = 12.0;
+const SEGMENT_FRAME_ROUNDING: f32 = 5.0;
+const SEGMENT_ROUNDING: f32 = 3.0;
+/// How long the capsule takes to change tier.
+const CAPSULE_FADE_S: f32 = 0.14;
+/// The side label's plate corner and its mono text.
+const SIDE_LABEL_ROUNDING: f32 = 3.0;
+const SIDE_LABEL_SIZE: f32 = 11.0;
 /// How high the sample's value floats over the chart below it.
 const VALUE_GAP_PX: f32 = 4.0;
 
 /// What the header painted this frame, in reading order: the scene reads it,
 /// so it lists a control only while a hand can reach it.
-pub type PaintedControls = SmallVec<[(HeaderControl, egui::Rect); LayerToggle::ALL.len() + 3]>;
+pub type PaintedControls = SmallVec<[(HeaderControl, egui::Rect); LayerToggle::ALL.len() + 4]>;
 
 /// The rule closing the strip against the chart below it.
 pub fn paint_rule(ui: &egui::Ui, strip: egui::Rect) {
@@ -76,29 +92,39 @@ pub fn paint_rule(ui: &egui::Ui, strip: egui::Rect) {
 }
 
 /// The `ƒx` icon and the words, as the button writes them.
-fn indicators_text(words: egui::Color32) -> egui::text::LayoutJob {
+fn indicators_text(words: Option<egui::Color32>) -> egui::text::LayoutJob {
     let mut text = egui::text::LayoutJob::default();
     let icon = egui::TextFormat {
         italics: true,
         ..egui::TextFormat::simple(egui::FontId::monospace(INDICATORS_SIZE), theme::TEXT_MUTED)
     };
     text.append(INDICATORS_GLYPH, 0.0, icon);
-    let font = egui::FontId::proportional(INDICATORS_SIZE);
-    let words = egui::TextFormat::simple(font, words);
-    text.append(INDICATORS_LABEL, INDICATORS_ICON_GAP_PX, words);
+    if let Some(words) = words {
+        let font = egui::FontId::proportional(INDICATORS_SIZE);
+        let words = egui::TextFormat::simple(font, words);
+        text.append(INDICATORS_LABEL, INDICATORS_ICON_GAP_PX, words);
+    }
     text
 }
 
-/// How wide the indicators button is, before it is laid out.
-pub fn indicators_width(ui: &egui::Ui) -> f32 {
-    let galley = ui.fonts(|fonts| fonts.layout_job(indicators_text(theme::PANE_ACTION)));
+/// How wide the indicators button is, before it is laid out, with its word or
+/// without it.
+pub fn indicators_width(ui: &egui::Ui, words: bool) -> f32 {
+    let job = indicators_text(words.then_some(theme::PANE_ACTION));
+    let galley = ui.fonts(|fonts| fonts.layout_job(job));
     galley.size().x + 2.0 * INDICATORS_PADDING_X
 }
 
 /// The indicators button with its left edge at `left`, centred on the strip;
 /// answers whether it was clicked.
-pub fn indicators_button(ui: &egui::Ui, left: f32, strip: egui::Rect, salt: u64) -> bool {
-    let size = egui::vec2(indicators_width(ui), INDICATORS_HEIGHT);
+pub fn indicators_button(
+    ui: &egui::Ui,
+    left: f32,
+    strip: egui::Rect,
+    salt: u64,
+    words: bool,
+) -> bool {
+    let size = egui::vec2(indicators_width(ui, words), INDICATORS_HEIGHT);
     let center = egui::pos2(left + size.x / 2.0, strip.center().y);
     let rect = egui::Rect::from_center_size(center, size);
     let id = ui.id().with(("pane_indicators", salt));
@@ -108,7 +134,7 @@ pub fn indicators_button(ui: &egui::Ui, left: f32, strip: egui::Rect, salt: u64)
         .data_mut(|data| data.insert_temp(indicators_id(salt), rect));
     let painter = ui.painter().with_clip_rect(strip.intersect(ui.clip_rect()));
     let hovered = response.hovered();
-    let words = if hovered {
+    let colour = if hovered {
         theme::TEXT_PRIMARY
     } else {
         theme::PANE_ACTION
@@ -117,10 +143,15 @@ pub fn indicators_button(ui: &egui::Ui, left: f32, strip: egui::Rect, salt: u64)
         let rounding = egui::Rounding::same(HOVER_ROUNDING);
         painter.rect_filled(rect, rounding, theme::BARE_HOVER);
     }
-    let galley = ui.fonts(|fonts| fonts.layout_job(indicators_text(words)));
+    let job = indicators_text(words.then_some(colour));
+    let galley = ui.fonts(|fonts| fonts.layout_job(job));
     let at = rect.center() - galley.size() / 2.0;
-    painter.galley(at, galley, words);
-    response.clicked()
+    painter.galley(at, galley, colour);
+    let clicked = response.clicked();
+    if !words {
+        response.on_hover_text(INDICATORS_LABEL);
+    }
+    clicked
 }
 
 /// What a flow pane's row draws besides its bars: `None` without a tape.
@@ -152,8 +183,10 @@ pub fn draw_marked(
     paint_rule(ui, strip);
     painted.clear();
     let inner = strip.shrink2(CONTENT_PADDING);
-    let indicators_px = indicators_width(ui);
-    let controls_px = row.state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
+    let indicators_px = indicators_width(ui, true);
+    let bare_controls_px = row.state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
+    let word_widths = segment_word_widths(ui);
+    let side_words = row.state.map_or(0.0, |_| side_words_px(word_widths));
     let mark = header.mark.map(mark_text);
     let mark_px = mark.as_ref().map_or(0.0, |job| {
         ui.fonts(|fonts| fonts.layout_job(job.clone())).size().x
@@ -174,11 +207,14 @@ pub fn draw_marked(
         mark: mark_px,
         bars: bars_width(ui, header),
         indicators: indicators_px,
-        controls: controls_px,
+        controls: bare_controls_px,
+        side_words,
         slot: slot_px,
         chip_with_words,
         chip_dots,
     });
+    let controls_px = bare_controls_px + if fit.side_words { side_words } else { 0.0 };
+    let indicators_px = indicators_width(ui, fit.indicators_words);
     let chip_px = match (fit.chip, fit.chip_words) {
         (true, true) => chip_with_words + GROUP_GAP_PX,
         (true, false) => chip_dots + GROUP_GAP_PX,
@@ -213,7 +249,7 @@ pub fn draw_marked(
         row.rebuilding,
     );
     let button_left = (content.cursor().left() + GROUP_GAP_PX).min(limit);
-    let indicators = indicators_button(ui, button_left, strip, salt);
+    let indicators = indicators_button(ui, button_left, strip, salt, fit.indicators_words);
     let chip_right = inner.right() - controls_px;
     if let Some(dots) = row.chip.as_ref().filter(|_| fit.chip) {
         loading::draw_chip(ui, chip_right, strip, dots, fit.chip_words);
@@ -223,14 +259,18 @@ pub fn draw_marked(
     }
     let mut intent = None;
     if let Some(state) = row.state {
-        let room = inner.with_min_x(inner.right() - FLOW_CONTROLS_PX);
+        let room = inner.with_min_x(inner.right() - (controls_px - GROUP_GAP_PX));
         let right = clipped_child(ui, room, strip, ("pane_header_right", salt));
         let height = inner.y_range();
-        let view_right = room.left() + VIEW_SLOT_PX;
-        let rect = egui::Rect::from_x_y_ranges(room.left()..=view_right, height);
-        view_button(&right, rect, salt, state, painted, &mut intent);
+        let words = fit.side_words.then_some(word_widths);
+        side_control(&right, room, salt, &state, words, painted, &mut intent);
         if let Some(glyph) = row.strip {
             let glyph_left = inner.right() - GLYPH_SLOT_PX;
+            let hairline = glyph_left - HAIRLINE_GAP_PX;
+            let around = inner.center().y - 8.0..=inner.center().y + 8.0;
+            right
+                .painter()
+                .vline(hairline, around, egui::Stroke::new(1.0_f32, theme::BORDER));
             let rect = egui::Rect::from_x_y_ranges(glyph_left..=inner.right(), height);
             layer_glyph(&right, rect, salt, glyph, painted, &mut intent);
         }
@@ -251,24 +291,105 @@ fn clipped_child(
     child
 }
 
-/// One capsule with its corner at `corner`: its backdrop takes the pointer so a
-/// press between the slots never reaches the chart. Registered after the chart,
-/// so it wins the press. Answers the capsule's rect.
+/// Where a capsule stands and what it may notice there.
+pub struct CapsuleSpot {
+    pub corner: (f32, f32),
+    pub side: CapsuleSide,
+    /// The whole chart side it floats over.
+    pub side_rect: egui::Rect,
+    pub pane_focused: bool,
+}
+
+/// The side's label on its plate, on the capsule's own line, in the room left of
+/// `capsule_left`. Painted only: a press goes through it to the chart.
+pub fn draw_side_label(ui: &egui::Ui, label: &SideLabel, side: egui::Rect, capsule_left: f32) {
+    let min = egui::pos2(
+        side.left() + SIDE_LABEL_INSET_LEFT_PX,
+        side.top() + CAPSULE_INSET_TOP_PX,
+    );
+    if min.y + CAPSULE_HEIGHT_PX > side.bottom() {
+        return;
+    }
+    let room = capsule_left - SIDE_LABEL_GAP_PX - min.x - 2.0 * SIDE_LABEL_PADDING_PX;
+    let measure = |fit| {
+        let job = side_label_text(ui.ctx(), label, fit);
+        ui.fonts(|fonts| fonts.layout_job(job))
+    };
+    let (whole, short) = (measure(LabelFit::Whole), measure(LabelFit::NoClock));
+    let galley = match LabelFit::of(whole.size().x, short.size().x, room) {
+        LabelFit::Whole => whole,
+        LabelFit::NoClock => short,
+        LabelFit::None => return,
+    };
+    let plate = egui::Rect::from_min_size(
+        min,
+        egui::vec2(
+            galley.size().x + 2.0 * SIDE_LABEL_PADDING_PX,
+            CAPSULE_HEIGHT_PX,
+        ),
+    );
+    let painter = ui.painter().with_clip_rect(side);
+    painter.rect_filled(
+        plate,
+        egui::Rounding::same(SIDE_LABEL_ROUNDING),
+        theme::CASING,
+    );
+    let at = plate.left_center() + egui::vec2(SIDE_LABEL_PADDING_PX, -galley.size().y / 2.0);
+    painter.galley(at, galley, theme::TEXT_MUTED);
+}
+
+/// The label's runs in their inks: one job, so its width is what it paints.
+fn side_label_text(ctx: &egui::Context, label: &SideLabel, fit: LabelFit) -> egui::text::LayoutJob {
+    let mut text = egui::text::LayoutJob::default();
+    for (run, ink) in label.runs(fit) {
+        let color = match ink {
+            LabelInk::Mark => theme::PANE_MARK,
+            LabelInk::Muted => theme::TEXT_MUTED,
+            LabelInk::Amber => theme::AMBER,
+            LabelInk::FaintPulse => theme::TEXT_FAINT.gamma_multiply(loading::pulse(ctx)),
+            LabelInk::Warn => theme::WARN,
+        };
+        let format = egui::TextFormat {
+            font_id: egui::FontId::monospace(SIDE_LABEL_SIZE),
+            color,
+            ..Default::default()
+        };
+        text.append(run, 0.0, format);
+    }
+    text
+}
+
+/// One capsule at its spot: its backdrop takes the pointer so a press between
+/// the slots never reaches the chart. Registered after the chart, so it wins the
+/// press. Answers the capsule's rect.
 pub fn draw_capsule(
     ui: &mut egui::Ui,
     capsule: &Capsule,
-    corner: (f32, f32),
-    side: CapsuleSide,
+    spot: &CapsuleSpot,
     salt: u64,
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
 ) -> egui::Rect {
+    let corner = spot.corner;
     let rect = egui::Rect::from_min_size(
         egui::pos2(corner.0, corner.1),
         egui::vec2(capsule.width_px(), CAPSULE_HEIGHT_PX),
     );
+    let tier = capsule.tier(CapsuleAttention {
+        pointer_over_capsule: ui.rect_contains_pointer(rect),
+        pointer_over_side: ui.rect_contains_pointer(spot.side_rect),
+        pane_focused: spot.pane_focused,
+    });
     let clip = rect.expand(CAPSULE_SHADOW_ROOM_PX);
-    let ui = clipped_child(ui, rect, clip, ("pane_capsule", salt, side as u8));
+    let mut ui = clipped_child(ui, rect, clip, ("pane_capsule", salt, spot.side as u8));
+    let opacity = if loading::reduced_motion() {
+        tier.opacity()
+    } else {
+        ui.ctx()
+            .animate_value_with_time(ui.id(), tier.opacity(), CAPSULE_FADE_S)
+    };
+    ui.set_opacity(opacity);
+    let ui = ui;
     let _ = ui.interact(rect, ui.id(), egui::Sense::click_and_drag());
     let rounding = egui::Rounding::same(CAPSULE_ROUNDING);
     let shadow = egui::Shadow {
@@ -278,7 +399,9 @@ pub fn draw_capsule(
         color: theme::CAPSULE_SHADOW,
     };
     let painter = ui.painter();
-    painter.add(shadow.as_shape(rect, rounding));
+    if tier.shadowed() {
+        painter.add(shadow.as_shape(rect, rounding));
+    }
     painter.rect(
         rect,
         rounding,
@@ -347,12 +470,11 @@ fn sample(
     if shown != scale {
         *intent = Some(HeaderIntent::SetSample(which, shown));
     }
-    let colour = match which {
-        BubbleSample::Candle => theme::ACCENT,
-        BubbleSample::Tape => theme::BUY,
-    };
-    ui.painter()
-        .circle_filled(rect.center(), sample_diameter_px(shown) / 2.0, colour);
+    ui.painter().circle_filled(
+        rect.center(),
+        sample_diameter_px(shown) / 2.0,
+        theme::TEXT_PRIMARY,
+    );
     record(ui, HeaderControl::Sample(which), rect, painted);
     response.on_hover_text(which.name());
 }
@@ -420,24 +542,130 @@ pub fn layer_glyph(
     });
 }
 
-/// The button that walks the stored views; its glyph is the side on screen.
-fn view_button(
+/// The words' widths, as the segments will paint them: Trail, then Tape.
+fn segment_word_widths(ui: &egui::Ui) -> [f32; 2] {
+    [LaneSide::Trail, LaneSide::Tape].map(|side| {
+        ui.fonts(|fonts| {
+            fonts
+                .layout_no_wrap(
+                    side_word(side).to_owned(),
+                    egui::FontId::proportional(SEGMENT_WORD_SIZE),
+                    theme::TEXT_PRIMARY,
+                )
+                .size()
+                .x
+        })
+    })
+}
+
+/// The Trail and Tape switches in their frame, from `room`'s left edge. `words`
+/// holds their widths while the line has room for them.
+fn side_control(
     ui: &egui::Ui,
-    rect: egui::Rect,
+    room: egui::Rect,
     salt: u64,
-    state: FlowHeaderState,
+    state: &FlowHeaderState,
+    words: Option<[f32; 2]>,
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
 ) {
-    let response = ui.interact(rect, ui.id().with(("view", salt)), egui::Sense::click());
-    if response.clicked() {
-        *intent = Some(HeaderIntent::SetView(state.view.next()));
+    let widths = [0, 1].map(|at| segment_px(words.map(|words| words[at])));
+    let inner_px = widths[0] + SEGMENT_GAP_PX + widths[1];
+    let frame = egui::Rect::from_center_size(
+        egui::pos2(
+            room.left() + SEGMENT_FRAME_PAD_PX + inner_px / 2.0,
+            room.center().y,
+        ),
+        egui::vec2(
+            inner_px + 2.0 * SEGMENT_FRAME_PAD_PX,
+            SEGMENT_FRAME_HEIGHT_PX.min(room.height()),
+        ),
+    );
+    ui.painter().rect(
+        frame,
+        egui::Rounding::same(SEGMENT_FRAME_ROUNDING),
+        theme::INSET,
+        egui::Stroke::new(1.0_f32, theme::BORDER),
+    );
+    let mut left = frame.left() + SEGMENT_FRAME_PAD_PX;
+    for (segment, width) in SideSegment::pair(state).into_iter().zip(widths) {
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(left + width / 2.0, frame.center().y),
+            egui::vec2(width, SEGMENT_HEIGHT_PX.min(frame.height())),
+        );
+        side_segment(ui, rect, salt, segment, words.is_some(), painted, intent);
+        left = rect.right() + SEGMENT_GAP_PX;
     }
-    paint_view(ui.painter(), rect, state.shown_view, theme::ACCENT);
-    record(ui, HeaderControl::View, rect, painted);
+}
+
+/// One switch: lit, or faint and brighter under the pointer. A refusing segment
+/// takes the click and does nothing; its tooltip says why.
+fn side_segment(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    salt: u64,
+    segment: SideSegment,
+    words: bool,
+    painted: &mut PaintedControls,
+    intent: &mut Option<HeaderIntent>,
+) {
+    let id = ui.id().with(("side", salt, segment.side as u8));
+    let response = ui.interact(rect, id, egui::Sense::click());
+    if response.clicked()
+        && let Some(asked) = segment.click()
+    {
+        *intent = Some(asked);
+    }
+    let lit = segment.ink == SegmentInk::Lit;
+    let colour = match (lit, response.hovered()) {
+        (true, _) => theme::TEXT_PRIMARY,
+        (false, true) => theme::PANE_ACTION,
+        (false, false) => theme::TEXT_FAINT,
+    };
+    let painter = ui.painter();
+    if lit {
+        painter.rect_filled(rect, egui::Rounding::same(SEGMENT_ROUNDING), theme::CONTROL);
+    }
+    let glyph_center = if words {
+        egui::pos2(
+            rect.left() + SEGMENT_PAD_WORDS_PX + SEGMENT_GLYPH_PX / 2.0,
+            rect.center().y,
+        )
+    } else {
+        rect.center()
+    };
+    match segment.side {
+        LaneSide::Trail => paint_trail(painter, glyph_center, colour, lit),
+        LaneSide::Tape => {
+            painter.text(
+                glyph_center,
+                egui::Align2::CENTER_CENTER,
+                icons::CASSETTE_TAPE,
+                egui::FontId::proportional(SEGMENT_GLYPH_PX),
+                colour,
+            );
+        }
+    }
+    if words {
+        painter.text(
+            egui::pos2(
+                glyph_center.x + SEGMENT_GLYPH_PX / 2.0 + SEGMENT_WORD_GAP_PX,
+                rect.center().y,
+            ),
+            egui::Align2::LEFT_CENTER,
+            segment.word(),
+            egui::FontId::proportional(SEGMENT_WORD_SIZE),
+            colour,
+        );
+    }
+    record(ui, HeaderControl::Side(segment.side), rect, painted);
     response.on_hover_ui(|ui| {
-        let key = Some(shortcuts::TAPE_VIEW_SHORTCUT);
-        ui.label(with_key(ui.ctx(), view_name(state.shown_view), key));
+        let key = Some(shortcuts::side_shortcut(segment.side));
+        let name = with_key(ui.ctx(), segment.word(), key);
+        ui.label(match segment.note() {
+            Some(note) => format!("{name} · {note}"),
+            None => name,
+        });
     });
 }
 
@@ -515,7 +743,7 @@ impl Pen<'_> {
         }
     }
 
-    /// A candle body: the only mark the view glyphs share with the chart.
+    /// A candle body, outlined and filled while lit.
     fn body(&self, x: f32, y: f32, width: f32, height: f32) {
         self.outline(x, y, width, height);
         self.band(x, y, width, height, 1.0);
@@ -524,7 +752,7 @@ impl Pen<'_> {
 
 fn paint_layer(painter: &egui::Painter, boxed: egui::Rect, toggle: LayerToggle, ink: GlyphInk) {
     let lit = ink == GlyphInk::Lit;
-    let colour = if lit { theme::ACCENT } else { theme::OFF };
+    let colour = if lit { theme::TEXT_PRIMARY } else { theme::OFF };
     let pen = Pen {
         painter,
         origin: boxed.min,
@@ -570,39 +798,25 @@ fn paint_layer(painter: &egui::Painter, boxed: egui::Rect, toggle: LayerToggle, 
     }
 }
 
-fn paint_view(painter: &egui::Painter, slot: egui::Rect, view: LaneView, colour: egui::Color32) {
-    let unit = (slot.width() / VIEW_BOX.x).min(slot.height() / VIEW_BOX.y);
-    let boxed = egui::Rect::from_center_size(slot.center(), VIEW_BOX * unit);
+/// Three candles with their wicks: filled while the side is lit.
+fn paint_trail(painter: &egui::Painter, center: egui::Pos2, colour: egui::Color32, lit: bool) {
+    let unit = SEGMENT_GLYPH_PX / TRAIL_BOX;
     let pen = Pen {
         painter,
-        origin: boxed.min,
+        origin: center - egui::Vec2::splat(SEGMENT_GLYPH_PX / 2.0),
         unit,
         colour,
-        filled: true,
+        filled: lit,
     };
-    match view {
-        LaneView::Beside => {
-            pen.line((7.0, 2.0), (7.0, 20.0));
-            pen.body(4.0, 5.0, 6.0, 11.0);
-            pen.line((15.0, 2.0), (15.0, 20.0));
-            pen.dot(23.0, 4.0, 1.5);
-            pen.dot(23.0, 9.5, 2.4);
-            pen.dot(23.0, 15.5, 1.8);
-            pen.dot(23.0, 19.5, 1.1);
-        }
-        LaneView::CandlesOnly => {
-            pen.line((9.0, 2.0), (9.0, 20.0));
-            pen.body(6.0, 5.0, 6.0, 11.0);
-            pen.line((19.0, 4.0), (19.0, 18.0));
-            pen.body(16.0, 6.5, 6.0, 7.5);
-        }
-        LaneView::TapeOnly => {
-            pen.dot(9.0, 4.0, 1.5);
-            pen.dot(15.0, 9.5, 2.6);
-            pen.dot(21.0, 5.5, 1.4);
-            pen.dot(10.0, 16.0, 2.0);
-            pen.dot(20.0, 15.5, 1.7);
-        }
+    for (x, top, body_top, body, bottom) in [
+        (3.0, 4.0, 7.0, 7.0, 16.0),
+        (8.5, 2.0, 4.0, 8.0, 16.0),
+        (14.0, 6.0, 9.0, 5.0, 17.0),
+    ] {
+        let wick = x + 1.5;
+        pen.line((wick, top), (wick, body_top));
+        pen.line((wick, body_top + body), (wick, bottom));
+        pen.body(x, body_top, 3.0, body);
     }
 }
 
