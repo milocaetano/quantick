@@ -204,7 +204,9 @@ impl BubblePreset {
             config.live_lane.market_hold,
         );
         config.live_lane = self.live_lane.clone();
-        config.live_lane.enabled = visibility.0;
+        // A capture always stores the tape on, so only a file saved with the
+        // old tape fold reads as off here: it opens showing the side it showed.
+        config.live_lane.enabled = visibility.0 && self.live_lane.enabled;
         config.live_lane.show_depth = visibility.1;
         config.live_lane.show_aggressions = visibility.2;
         config.live_lane.fold_market_closed = visibility.3;
@@ -912,8 +914,8 @@ name = "old"
     }
 
     /// A preset file with the old fold in it reads as the view it names, at the
-    /// share it saved, and is written back without it. The tape's own switch stays
-    /// the pane's whatever the file says; tape only is the look's, as it always was.
+    /// share it saved, and is written back without it. Either side opens as the
+    /// file showed it; a look saved today never takes the tape away.
     #[test]
     fn a_presets_old_fold_reads_as_its_view_and_is_never_written() {
         use quantick_orderflow::LaneView;
@@ -936,7 +938,7 @@ name = "old"
         preset.live_lane = tape;
         let mut pane = HeatmapConfig::default();
         preset.apply_to(&mut pane);
-        assert!(pane.live_lane.enabled, "a look never takes the tape away");
+        assert_eq!(pane.live_lane.view(), LaneView::CandlesOnly);
     }
 
     #[test]

@@ -232,7 +232,8 @@ fn a_drag_closed_side_reopens_by_rail_click_at_the_default() {
 /// Every door back beside the candles that is not a hand lands on the default.
 #[test]
 fn every_door_back_beside_is_the_default_width() {
-    let doors: [(LaneView, fn(&mut LiveLaneStyle) -> bool); 5] = [
+    type Door = fn(&mut LiveLaneStyle) -> bool;
+    let doors: [(LaneView, Door); 5] = [
         (LaneView::CandlesOnly, |s| s.set_view(LaneView::Beside)),
         (LaneView::TapeOnly, |s| s.set_view(LaneView::Beside)),
         (LaneView::CandlesOnly, |s| s.set_enabled(true)),
