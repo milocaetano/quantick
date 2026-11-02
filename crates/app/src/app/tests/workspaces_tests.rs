@@ -525,6 +525,7 @@ fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
         symbols: vec!["WINQ26".to_string()],
         bubble_preset: Some("live lane pie".to_string()),
         symbol_bubble_presets: Default::default(),
+        asset_families: Vec::new(),
         symbol_asset_modes: Default::default(),
         contract_rolls: Default::default(),
         default_layout: None,

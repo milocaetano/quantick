@@ -32,7 +32,7 @@ pub const fn to_color32(color: PremultipliedRgba) -> egui::Color32 {
 }
 
 #[must_use]
-pub fn from_color32(color: egui::Color32) -> PremultipliedRgba {
+fn from_color32(color: egui::Color32) -> PremultipliedRgba {
     PremultipliedRgba::from_premultiplied(color.to_array())
 }
 

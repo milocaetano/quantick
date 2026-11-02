@@ -7,6 +7,7 @@ use crate::app::chrome::LayoutRename;
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::layouts::{self, LayoutBook, LayoutError, LayoutId};
 use crate::pane::PaneSide;
+use quantick_stores::market_settings;
 use smallvec::SmallVec;
 use std::time::Instant;
 
@@ -27,11 +28,14 @@ impl LayoutAdapter<'_> {
     /// so that case migrates the imported set into "Layout 1" instead —
     /// the same migration a launch performs.
     pub(in crate::app) fn reload_layouts(&mut self, imported: &[&str]) {
+        // An import that brings no market store lands on this one, edits included.
+        self.persist_changed_drawings();
         self.clear_indicators();
         for tab in self.tabs.iter_mut() {
             for pane in tab.panes_mut() {
                 pane.drawings.take_all();
                 pane.layout.drawings_key = None;
+                pane.layout.drawings_source = None;
                 pane.request_opening_layout(pane.layout_id());
                 pane.layout.view = quantick_workspace::session::LayoutView::default();
             }
@@ -39,7 +43,7 @@ impl LayoutAdapter<'_> {
         let legacy = crate::indicators::state_file::default_path();
         let migrate_imported_indicators =
             imported.contains(&"indicators") && !imported.contains(&"layouts");
-        let (book, blocked) = if migrate_imported_indicators {
+        let (mut book, blocked) = if migrate_imported_indicators {
             let set = crate::indicators::state_file::load(&legacy);
             tracing::info!(
                 target: "quantick::app",
@@ -51,10 +55,17 @@ impl LayoutAdapter<'_> {
             );
             (LayoutBook::starter(set), false)
         } else {
-            Self::load_layouts(self.store.path(), &legacy)
+            layouts::load_or_starter(self.store.path(), &legacy)
         };
+        let layouts_path = self.store.path().to_owned();
+        let market_kept_back = market_settings::reload(
+            self.store.market_mut(),
+            imported.contains(&"market_settings"),
+            &layouts_path,
+            &mut book,
+        );
         self.store.set_book(book);
-        self.store.set_blocked(blocked);
+        self.store.set_blocked(blocked || market_kept_back);
         *self.rename = None;
         *self.delete_confirm = None;
         self.seed_new_panes();
@@ -134,7 +145,6 @@ impl LayoutAdapter<'_> {
             return;
         };
         let name = layout.name.clone();
-        let drawings: usize = layout.drawing_count();
         // Counted, not collected: the window repaints continuously and only
         // the number is read.
         let showing = self.panes_on_count(id);
@@ -146,13 +156,8 @@ impl LayoutAdapter<'_> {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.label(format!("Delete \"{name}\"?"));
-                let mut what = if drawings == 0 {
-                    "Its indicator set goes with it. Nothing is drawn under it.".to_owned()
-                } else {
-                    format!(
-                        "Its indicator set and the {drawings} drawing(s) kept under it go with it. This cannot be undone."
-                    )
-                };
+                let mut what =
+                    "Its indicator set goes with it. Drawings stay with their markets.".to_owned();
                 if showing > 0 {
                     what.push_str(&format!(
                         " {showing} chart(s) showing it move to the layout beside it."

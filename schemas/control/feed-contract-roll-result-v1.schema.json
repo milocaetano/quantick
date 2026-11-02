@@ -12,7 +12,7 @@
       "type": "boolean"
     },
     "drawings_carried": {
-      "description": "Drawings added to the new contract, across every layout. Those the new\ncontract already held are not counted.",
+      "description": "Drawings copied to the new contract. Zero when both contracts are one\nasset: they already share one set. Those it already held are not counted.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"

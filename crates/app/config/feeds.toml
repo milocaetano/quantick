@@ -38,6 +38,9 @@ default_symbol = "BTCUSDT"
 #                   recording replayed there) takes the key another feed
 #                   declares for it. A key two feeds declare opens on the
 #                   first one's preset.
+#   asset_families — optional: dated-contract families that are one market for
+#                   their drawings and anchored studies ("WDO*"), on top of the
+#                   symbol_bubble_presets keys. Moves no saved bubble look.
 #   symbol_asset_modes — optional: per asset, keyed like symbol_bubble_presets,
 #                   behaviour the asset gets only because this file switches
 #                   it on, never because of its name. A mode is a table:
@@ -171,6 +174,7 @@ bubble_preset = "live lane pie"
 # made to it. The mini dollar keeps the feed-wide look above. Every other
 # symbol is its own asset and opens on its own look.
 symbol_bubble_presets = { "WIN*" = "mini index regions" }
+asset_families = ["WDO*"]
 # The mini index wears the tick-chart spheres its preset carries; a quantity
 # on it counts contracts. The look key stays `WIN*`, the key its saved look
 # has always used.

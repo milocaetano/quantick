@@ -57,6 +57,8 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
         );
         let price = app.active_tab().pane(side).price_view.resolve((0.0, 0.0));
         assert!(!app.active_tab().pane(side).price_view.is_auto());
+        // Context charts on one bar rule hold one set: the last pane's line is here too.
+        let held = app.active_tab().pane(side).drawings.items().len();
         app.toolrail.arm(Tool::Drawing(drawing_tool("trend-line")));
         click_chart(&mut app, &ctx, at);
         let anchor = app
@@ -94,7 +96,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
         assert_eq!(ctx.memory(|memory| memory.focused()), focus);
         click_chart(&mut app, &ctx, at + egui::vec2(35.0, 20.0));
         assert!(app.active_tab().pane(side).drawings.draft().is_none());
-        assert_eq!(app.active_tab().pane(side).drawings.items().len(), 1);
+        assert_eq!(app.active_tab().pane(side).drawings.items().len(), held + 1);
     }
 }
 

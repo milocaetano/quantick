@@ -44,8 +44,8 @@ pub struct ContractRollResult {
     /// False when the tab already showed the target: the feed did not move.
     /// The drawings are still copied, so a tab switched there by hand gets them.
     pub changed: bool,
-    /// Drawings added to the new contract, across every layout. Those the new
-    /// contract already held are not counted.
+    /// Drawings copied to the new contract. Zero when both contracts are one
+    /// asset: they already share one set. Those it already held are not counted.
     pub drawings_carried: u64,
 }
 

@@ -139,6 +139,7 @@ mod tests {
                 symbols: vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                asset_families: Vec::new(),
                 symbol_asset_modes: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,

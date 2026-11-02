@@ -66,7 +66,7 @@ pub struct ChartPane {
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
     /// Headless pane binding; the workspace session owns authoritative membership.
-    pub(crate) layout: quantick_workspace::pane_layout::PaneLayout,
+    pub(crate) layout: quantick_workspace::pane_layout::PaneLayout<BarConfiguration>,
     /// Whether this pane's on-chart indicator legend is folded to its count puck. Per pane, not per
     /// window: a split is two readings of the same market, and the corner pressure that makes a
     /// trader fold the flow pane's legend (bubbles, book, the position HUD) is absent on the time
