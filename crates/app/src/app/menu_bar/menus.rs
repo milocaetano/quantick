@@ -9,7 +9,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_control_schema::window_menu::{
-    HelpPage, Item, LiveRows, ROOT, RowId, SubmenuId, row_of, submenu,
+    HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId, row_of, submenu,
 };
 
 use crate::dock::DockTab;
@@ -503,10 +503,7 @@ impl WindowMenu<'_> {
                 has_legend && self.chart_shown,
                 egui::Button::new(legend_label).shortcut_text(keys),
             )
-            .on_hover_text(
-                "Folds the healthy rows to a count on the focused chart. Errored and stale \
-                 indicators stay on it.",
-            )
+            .on_hover_text(LEGEND_HOVER)
             .on_disabled_hover_text("This chart has no indicators, so there is no legend to fold")
             .clicked()
         {

@@ -343,6 +343,10 @@ pub const VENUE_LEAD_IN_HOVER: &str = "A tick, volume, dollar or imbalance chart
              and an indicator running across the seam is averaging both \
              kinds.";
 
+/// The legend row's tooltip.
+pub const LEGEND_HOVER: &str = "Folds the healthy rows to a count on the focused chart. Errored \
+     and stale indicators stay on it.";
+
 /// The window's menu button, in the scene's list of title-strip controls.
 pub const KEBAB_CONTROL: &str = "kebab";
 /// The local-agent access pill, in the same list.
