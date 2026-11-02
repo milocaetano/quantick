@@ -142,7 +142,7 @@ impl ChartPane {
     pub(crate) fn tape_modes(&self) -> (bool, bool) {
         self.orderflow.as_ref().map_or((false, false), |view| {
             let config = view.cached_config();
-            (config.tape_only(), config.native_tape())
+            (config.shows_tape_alone(), config.native_tape())
         })
     }
 
@@ -551,14 +551,14 @@ impl ChartPane {
         self.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
         self.frame.chart_area = Some(areas.chart);
-        let candles_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
+        let candles_right = self.frame.candles_right.unwrap_or(areas.chart.right());
         self.model.candles_px = candles_right - areas.chart.left();
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
         let bands = crate::bands::BandGeometry {
             auto_range: self.frame.auto_range,
             price_view: &self.price_view,
-            lane_divider_x: self.frame.lane_divider_x,
+            candles_right: self.frame.candles_right,
             indicators: &self.indicators,
             price_label: &self.price_band_label,
         }
@@ -600,7 +600,7 @@ impl ChartPane {
                 areas: &areas,
                 bands: &bands,
                 id: placement_id,
-                history_right: self.frame.lane_divider_x.unwrap_or(areas.chart.right()),
+                history_right: self.frame.candles_right.unwrap_or(areas.chart.right()),
             },
             options,
             gesture::PlacementDefaults {
@@ -635,7 +635,7 @@ impl ChartPane {
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
-        let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
+        let history_right = self.frame.candles_right.unwrap_or(areas.chart.right());
         self.quick_range_view(chrome.tab, chrome.side).handle(
             ui,
             (&bands, &areas),
@@ -1108,7 +1108,7 @@ impl ChartPane {
         let sides = match (side, state) {
             (PaneSide::Time(_), _) => [Some((CapsuleSide::Time, left, right)), None],
             (PaneSide::Flow, Some(state)) => {
-                flow_sides(state.shown_view, left, right, self.frame.lane_divider_x)
+                flow_sides(state.shown_view, left, right, self.frame.candles_right)
             }
             (PaneSide::Flow, None) => [None, None],
         };

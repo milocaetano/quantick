@@ -136,7 +136,7 @@ pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
     let (start, end) = visible_slots(pane);
     let price_range = pane.price_view.manual_range().or(pane.frame.auto_range);
     let chart_width_px = pane.frame.chart_area.map(|chart| {
-        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+        let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
         (right - chart.left()).max(0.0)
     });
     ViewportSnapshot {
@@ -172,7 +172,7 @@ fn visible_slots(pane: &ChartPane) -> (usize, usize) {
     let Some(chart) = pane.frame.chart_area else {
         return (0, 0);
     };
-    let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+    let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
     pane.shown_viewport()
         .visible_range((right - chart.left()).max(0.0), total)
 }

@@ -3,7 +3,7 @@
 use super::*;
 use crate::bubble_presets::BubblePreset;
 use quantick_orderflow::LaneWindow;
-use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
+use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, SharedAssetBubbles};
 use quantick_stores::bubble_assets::{AssetBubbles, AssetSource};
 
 pub(super) fn shipped_config() -> AppConfig {
@@ -193,6 +193,62 @@ fn candle_aggression_on_a_win_tab_does_not_reach_a_btc_tab_after_a_restart() {
         !candle_aggression(&btc),
         "the BTC tab opens without WIN's candle aggression"
     );
+}
+
+/// An old store's closed tape on a tab no mask has observed closes that tab and
+/// stays in its asset's file; only when that tab is the active one does the Tape
+/// layer save it, global as the switch is, and the file let go of it.
+#[test]
+fn an_inactive_tabs_old_closed_tape_is_never_lost_unapplied() {
+    use quantick_orderflow::{LaneFold, LaneView};
+    let dir = crate::scratch::ScratchDir::new("old-tape-inactive");
+    let path = dir.join("chart-layers.toml");
+    let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
+    app.runtime.workspace.set_chart_layers_path(path.clone());
+    let config = shipped_config();
+    let store = app.runtime.workspace.bubble_assets().clone();
+    let (binding, mut settings) = AssetBinding::bind(
+        store.clone(),
+        &config,
+        ("metatrader-b3", "WINV26"),
+        app.active_tab().tape().bubble_presets(),
+        false,
+    );
+    let key = binding.key().to_owned();
+    settings.fold = LaneFold::Tape;
+    app.active_tab_mut()
+        .tape_mut()
+        .bind_asset(binding, &settings);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "BTCUSDT".to_owned(), None);
+    assert_eq!(app.runtime.tabs.active_index(), 1, "WIN is inactive");
+    let filed = |store: &SharedAssetBubbles| store.borrow().get(&key).map(|entry| entry.fold);
+
+    maintain(&mut app);
+    maintain(&mut app);
+    let win = app.runtime.tabs.runtime_mut(0).tape().cached_config();
+    assert_eq!(
+        win.live_lane.view(),
+        LaneView::CandlesOnly,
+        "it opens closed"
+    );
+    assert_eq!(filed(&store), Some(LaneFold::Tape), "and is not lost");
+    assert!(
+        crate::chart_layers::load(&path)
+            .get(&ChartLayer::TapeChart)
+            .is_none_or(|on| *on),
+        "another tab's mask says nothing for it"
+    );
+
+    app.runtime.tabs.select(0);
+    maintain(&mut app);
+    assert_eq!(
+        crate::chart_layers::load(&path).get(&ChartLayer::TapeChart),
+        Some(&false),
+        "the Tape layer saved it"
+    );
+    maintain(&mut app);
+    assert_ne!(filed(&store), Some(LaneFold::Tape), "and the file let go");
 }
 
 /// A recorded mini index session replayed in a BTC tab wears the mini index

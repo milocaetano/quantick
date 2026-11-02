@@ -46,10 +46,104 @@ fn a_drag_from_the_markets_rail_never_saves_the_held_view() {
     assert!(!drag.drag(&mut held, -300.0, CHART), "open under the hand");
     assert_eq!(held.view(), LaneView::Beside);
     assert!(
-        drag.drag(&mut held, 300.0, CHART),
-        "back there, it is the hand's"
+        !drag.drag(&mut held, 300.0, CHART),
+        "back there, only shown"
     );
+    assert_eq!(held.shown_view(), LaneView::CandlesOnly);
+    assert_eq!(held.view(), LaneView::Beside);
+    assert!(held.release_drag_close(), "and let go, it is the hand's");
     assert_eq!(held.view(), LaneView::CandlesOnly);
+}
+
+/// Crossing a close threshold mid-drag writes neither switch and costs the tape
+/// nothing: a close is only shown, however many times the hand crosses, and the
+/// release writes it once, if the hand is still past the threshold.
+#[test]
+fn folding_never_regroups_the_tape() {
+    let open = HeatmapConfig::default();
+    let mut shown = open.clone();
+    let mut hand = None;
+    for delta in [10_000.0, -10_000.0, 10_000.0] {
+        assert!(!shown.drag_lane_divider(&mut hand, delta, CHART));
+        assert!(open.same_tape_grouping(&shown), "{delta}");
+        assert!(shown.same_tape_grouping(&open), "{delta}");
+        assert!(open.same_tape_settings(&shown), "{delta}");
+        assert_eq!(shown.live_lane.view(), LaneView::Beside, "{delta}");
+        assert_eq!(shown.native_tape(), open.native_tape(), "{delta}");
+        assert!(shown.live_lane.enabled && !shown.live_lane.tape_only);
+    }
+    assert_eq!(shown.live_lane.shown_view(), LaneView::CandlesOnly);
+    assert!(!open.identical(&shown), "what is shown still differs");
+
+    // Back open, the release writes nothing.
+    assert!(!shown.drag_lane_divider(&mut hand, -10_000.0, CHART));
+    assert_eq!(shown.live_lane.drag_close, None);
+    assert!(!shown.live_lane.release_drag_close());
+
+    // Past it, the release writes once.
+    assert!(!shown.drag_lane_divider(&mut hand, 10_000.0, CHART));
+    assert!(shown.live_lane.release_drag_close());
+    assert_eq!(shown.live_lane.view(), LaneView::CandlesOnly);
+    assert!(!shown.live_lane.release_drag_close(), "once");
+
+    let text = toml::to_string(&LiveLaneStyle {
+        drag_close: Some(LaneView::TapeOnly),
+        ..LiveLaneStyle::default()
+    })
+    .unwrap();
+    assert_eq!(text, toml::to_string(&LiveLaneStyle::default()).unwrap());
+}
+
+/// A close shown lays the pane out as that view: the rail, the band and the candles'
+/// clearance all follow it.
+#[test]
+fn a_shown_close_lays_out_as_its_view() {
+    let shown = |view| LiveLaneStyle {
+        drag_close: Some(view),
+        ..LiveLaneStyle::default()
+    };
+    let tape = shown(LaneView::CandlesOnly);
+    assert_eq!(tape.resolved_width_px(CHART), LANE_FOLD_RAIL_PX);
+    assert_eq!(tape.fold_rail(CHART).unwrap().side, LaneSide::Tape);
+    let candles = shown(LaneView::TapeOnly);
+    assert_eq!(candles.resolved_width_px(CHART), CHART);
+    assert_eq!(candles.fold_rail(CHART).unwrap().side, LaneSide::Trail);
+}
+
+/// One step across the whole chart from a closed side opens it and only shows the
+/// other: never a close written over a close, and never a tape with no band.
+#[test]
+fn one_step_from_a_closed_side_past_the_other_opens_first() {
+    let mut style = lane(LaneView::CandlesOnly);
+    let mut drag = LaneDividerDrag::begin(&style, CHART);
+    assert!(drag.drag(&mut style, -10_000.0, CHART), "the tape opened");
+    assert_eq!(style.view(), LaneView::Beside);
+    assert_eq!(style.shown_view(), LaneView::TapeOnly);
+    assert!(style.release_drag_close());
+    assert_eq!(style.view(), LaneView::TapeOnly);
+}
+
+/// Restoring a saved layer is no hand: the switch moves, and the saved share and the
+/// market's hold stay. The doors a hand takes still land on the default.
+#[test]
+fn restoring_the_switch_writes_the_switch_alone() {
+    let mut style = LiveLaneStyle {
+        width_share: 0.42,
+        enabled: false,
+        ..LiveLaneStyle::default()
+    };
+    style.market_hold.held = true;
+    assert!(style.restore_enabled(true));
+    assert!(style.enabled);
+    assert_eq!(style.width_share, 0.42, "the saved share");
+    assert!(style.market_held(), "the hold");
+    assert!(!style.market_hold.stood_down);
+    assert!(!style.restore_enabled(true), "a retry moves nothing");
+
+    assert!(style.restore_enabled(false));
+    assert_eq!(style.width_share, 0.42);
+    assert!(style.set_enabled(true));
+    assert_eq!(style.width_share, DEFAULT_LIVE_LANE_SHARE);
 }
 
 /// A drag off the market's rail stands the hold down and follows the hand.
@@ -140,7 +234,9 @@ fn dragging_right_is_tape_off_and_the_segment_reopens_at_the_default() {
     };
     let mut drag = LaneDividerDrag::begin(&style, CHART);
     // 420 - 301 = 119 px of tape: past the threshold.
-    assert!(drag.drag(&mut style, 301.0, CHART));
+    assert!(!drag.drag(&mut style, 301.0, CHART), "only shown");
+    assert!(style.enabled);
+    assert!(style.release_drag_close());
     assert_eq!(style.view(), LaneView::CandlesOnly);
     assert!(!style.enabled, "the very switch the segment reads");
     assert!(!style.view().shows(LaneSide::Tape), "the segment is unlit");
@@ -161,7 +257,9 @@ fn dragging_left_is_tape_only_and_the_trail_segment_reopens_at_the_default() {
     };
     let mut drag = LaneDividerDrag::begin(&style, CHART);
     // 420 + 461 = 881 px of tape: 119 px of candles left.
-    assert!(drag.drag(&mut style, -461.0, CHART));
+    assert!(!drag.drag(&mut style, -461.0, CHART), "only shown");
+    assert!(!style.tape_only);
+    assert!(style.release_drag_close());
     assert_eq!(style.view(), LaneView::TapeOnly);
     assert!(style.tape_only, "the very switch the segment reads");
     assert!(!style.view().shows(LaneSide::Trail), "the segment is unlit");
@@ -181,7 +279,8 @@ fn the_last_lit_rule_sees_a_drag_closed_side() {
     ] {
         let mut style = LiveLaneStyle::default();
         let mut drag = LaneDividerDrag::begin(&style, CHART);
-        assert!(drag.drag(&mut style, delta, CHART));
+        assert!(!drag.drag(&mut style, delta, CHART));
+        assert!(style.release_drag_close());
         assert_eq!(style.view().toggled(last_lit), None, "{last_lit:?}");
         assert_eq!(
             style.view().toggled(other),
@@ -201,7 +300,8 @@ fn a_button_closed_side_reopens_under_the_hand_with_no_snap() {
     assert_eq!(style.view(), LaneView::CandlesOnly);
     assert!(drag.drag(&mut style, -250.0, CHART));
     assert_under_the_hand(&style, LANE_FOLD_RAIL_PX + 300.0);
-    assert!(drag.drag(&mut style, 300.0, CHART), "and shut again");
+    assert!(!drag.drag(&mut style, 300.0, CHART), "and shut again");
+    assert!(style.release_drag_close());
     assert_eq!(style.view(), LaneView::CandlesOnly);
 
     let mut style = lane(LaneView::TapeOnly);
@@ -221,6 +321,7 @@ fn a_drag_closed_side_reopens_by_rail_click_at_the_default() {
             ..LiveLaneStyle::default()
         };
         LaneDividerDrag::begin(&style, CHART).drag(&mut style, delta, CHART);
+        assert!(style.release_drag_close());
         assert_ne!(style.view(), LaneView::Beside);
         assert!(style.set_fold(LaneFold::Open));
         assert_eq!(style.view(), LaneView::Beside);
@@ -267,7 +368,7 @@ fn the_divider_travels_the_whole_chart_short_of_the_edge() {
 
     // On past the threshold, then back: open again where the hand is.
     drag.drag(&mut style, -200.0, CHART);
-    assert_eq!(style.view(), LaneView::TapeOnly);
+    assert_eq!(style.shown_view(), LaneView::TapeOnly);
     assert_eq!(style.width_share, DEFAULT_LIVE_LANE_SHARE);
     drag.drag(&mut style, 300.0, CHART);
     assert_eq!(style.view(), LaneView::Beside);
@@ -279,7 +380,7 @@ fn the_divider_travels_the_whole_chart_short_of_the_edge() {
     drag.drag(&mut edge, 350.0 - LANE_FOLD_AT_PX, CHART);
     assert_eq!(edge.view(), LaneView::Beside, "at the threshold holds");
     drag.drag(&mut edge, 1.0, CHART);
-    assert_eq!(edge.view(), LaneView::CandlesOnly);
+    assert_eq!(edge.shown_view(), LaneView::CandlesOnly);
 }
 
 /// Bad input moves nothing; a chart that changed width mid-drag rebases the
@@ -334,13 +435,15 @@ fn the_mark_budget_moves_only_for_the_markets_hold() {
     }
 }
 
-/// What a file from before the state became one reads as: the side it saved, at
-/// the share it saved, and a view other than beside wins, as it won on screen.
+/// What a file from before the state became one reads as: the candles' side as its
+/// view and the tape's as a marker the look carries out, at the share it saved, and
+/// a view other than beside wins, as it won on screen.
 #[test]
 fn an_old_files_fold_reads_as_the_view_it_showed() {
     let read = |text: &str| toml::from_str::<LiveLaneStyle>(text).expect("reads");
     let tape = read("width_share = 0.42\nfold = \"tape\"\n");
-    assert_eq!(tape.view(), LaneView::CandlesOnly);
+    assert_eq!(tape.view(), LaneView::Beside);
+    assert!(tape.old_tape_fold.0);
     assert_eq!(tape.width_share, 0.42);
     let candles = read("width_share = 0.42\nfold = \"candles\"\n");
     assert_eq!(candles.view(), LaneView::TapeOnly);
@@ -351,6 +454,7 @@ fn an_old_files_fold_reads_as_the_view_it_showed() {
     // Tape only won over the tape's fold, and the tape off over the candles'.
     let alone = read("tape_only = true\nfold = \"tape\"\n");
     assert_eq!(alone.view(), LaneView::TapeOnly);
+    assert!(!alone.old_tape_fold.0, "no marker where the view won");
     let off = read("enabled = false\nfold = \"candles\"\n");
     assert_eq!(off.view(), LaneView::CandlesOnly);
     assert!(!off.tape_only, "not moved");
@@ -398,10 +502,16 @@ fn a_drag_says_when_the_view_changed() {
         !drag.drag(&mut style, -10.0, CHART),
         "a wider tape is no view"
     );
-    assert!(drag.drag(&mut style, 300.0, CHART), "closed the tape");
-    assert!(!drag.drag(&mut style, 10.0, CHART), "still closed");
-    assert!(drag.drag(&mut style, -300.0, CHART), "open again");
+    assert!(!drag.drag(&mut style, 300.0, CHART), "shown, not written");
+    assert!(!drag.drag(&mut style, 10.0, CHART), "still shown");
+    assert!(
+        !drag.drag(&mut style, -300.0, CHART),
+        "open again, as stored"
+    );
     assert!(!drag.drag(&mut style, f32::NAN, CHART));
+    let mut closed = lane(LaneView::CandlesOnly);
+    let mut drag = LaneDividerDrag::begin(&closed, CHART);
+    assert!(drag.drag(&mut closed, -300.0, CHART), "opening is written");
 }
 
 /// A pane keeps its drag in one slot across frames: the first step begins a
@@ -413,8 +523,8 @@ fn a_pane_carries_its_divider_drag_in_one_slot() {
     let mut hand = None;
     assert!(!config.drag_lane_divider(&mut hand, -10.0, CHART));
     assert!(hand.is_some(), "the first step began the drag");
-    assert!(config.drag_lane_divider(&mut hand, 10_000.0, CHART));
-    assert_eq!(config.live_lane.view(), LaneView::CandlesOnly);
+    assert!(!config.drag_lane_divider(&mut hand, 10_000.0, CHART));
+    assert_eq!(config.live_lane.shown_view(), LaneView::CandlesOnly);
 
     let mut alone = HeatmapConfig::default();
     alone.live_lane.tape_only = true;
@@ -461,15 +571,15 @@ fn on_a_wide_chart_the_divider_stays_under_the_hand_until_it_closes() {
         let mut style = LiveLaneStyle::default();
         let mut drag = LaneDividerDrag::begin(&style, WIDE);
         let mut wanted = style.resolved_width_px(WIDE);
-        while style.view() == LaneView::Beside {
+        while style.shown_view() == LaneView::Beside {
             drag.drag(&mut style, step, WIDE);
             wanted -= step;
-            if style.view() == LaneView::Beside {
+            if style.shown_view() == LaneView::Beside {
                 let drawn = style.resolved_width_px(WIDE);
                 assert!((drawn - wanted).abs() < 0.05, "{drawn} under {wanted}");
             }
         }
-        assert_eq!(style.view(), closes_to);
+        assert_eq!(style.shown_view(), closes_to);
         assert_eq!(style.width_share, DEFAULT_LIVE_LANE_SHARE);
     }
     // The tape closes at its share's floor, 150 px, not 30 px past it.
@@ -478,7 +588,7 @@ fn on_a_wide_chart_the_divider_stays_under_the_hand_until_it_closes() {
     drag.drag(&mut style, 1_050.0 - 150.0, WIDE);
     assert_eq!(style.view(), LaneView::Beside, "exactly at the floor holds");
     drag.drag(&mut style, 1.0, WIDE);
-    assert_eq!(style.view(), LaneView::CandlesOnly);
+    assert_eq!(style.shown_view(), LaneView::CandlesOnly);
 }
 
 /// A lane kept outside the open range, narrower than the threshold or wider
@@ -514,7 +624,7 @@ fn a_lane_kept_outside_the_open_range_drags_from_where_it_is() {
         assert!((style.resolved_width_px(chart) - start).abs() < 0.05);
         // One pixel past the share's own floor or ceiling closes.
         drag.drag(&mut style, toward_edge, chart);
-        assert_eq!(style.view(), closes_to, "{share} on {chart}");
+        assert_eq!(style.shown_view(), closes_to, "{share} on {chart}");
         assert_eq!(style.width_share, share);
     }
 }

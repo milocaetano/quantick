@@ -12,6 +12,10 @@
 //! constants, which assert they agree with these): the same rail, the same
 //! threshold and the same hit area, so the two feel alike.
 //!
+//! Mid-drag the close is only shown ([`LiveLaneStyle::drag_close`]): nothing is
+//! written until the hand lets go past the threshold, so crossing it and coming
+//! back leaves the tape as it was.
+//!
 //! [`LaneFold`] survives only as a word: what a file written while a closed side
 //! was stored apart still says, read once and never written, and what
 //! `orderflow.tape.fold.set` calls a view.
@@ -97,6 +101,20 @@ impl MarketHold {
     }
 }
 
+/// A file's old `fold = "tape"`, read and not yet carried out. Runtime only, like
+/// the hold, and never written. It says nothing about the look, so two lanes differ
+/// by it in no comparison; the bubble look spends it, once.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OldTapeFold(pub bool);
+
+impl PartialEq for OldTapeFold {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for OldTapeFold {}
+
 /// Where a closed side's rail is, in pixels from the chart's left edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FoldRail {
@@ -137,11 +155,17 @@ fn measurable(chart_width: f32) -> bool {
 }
 
 impl LiveLaneStyle {
-    /// What a file written with a closed side apart from its view still says:
-    /// that side closes where the view was beside, since a view other than beside
-    /// won on screen. The share stays as saved.
+    /// What a file written with a closed side apart from its view still says,
+    /// where the view was beside, since a view other than beside won on screen:
+    /// the candles' side closes; the tape's waits as [`Self::old_tape_fold`], since
+    /// the tape's switch is not a look's to carry. The share stays as saved.
     pub fn read_old_fold(&mut self, fold: LaneFold) {
-        if self.view() == LaneView::Beside {
+        if self.view() != LaneView::Beside {
+            return;
+        }
+        if fold == LaneFold::Tape {
+            self.old_tape_fold = OldTapeFold(true);
+        } else {
             self.write_view(fold.view());
         }
     }
@@ -152,15 +176,7 @@ impl LiveLaneStyle {
     /// moved, so a retry does not.
     pub fn set_fold(&mut self, fold: LaneFold) -> bool {
         match fold.view() {
-            LaneView::Beside => {
-                let released = self.market_held();
-                let opened = self.open_beside();
-                self.market_hold.stand_down();
-                if released {
-                    self.width_share = DEFAULT_LIVE_LANE_SHARE;
-                }
-                opened || released
-            }
+            LaneView::Beside => self.open_beside(),
             view => self.show_by_hand(view),
         }
     }
@@ -193,6 +209,15 @@ impl LiveLaneStyle {
         true
     }
 
+    /// A saved answer put back on the tape's switch, and nothing else: restoring
+    /// is no hand, so the saved share and the market's hold stay. Answers whether
+    /// it changed.
+    pub fn restore_enabled(&mut self, enabled: bool) -> bool {
+        let changed = self.enabled != enabled;
+        self.enabled = enabled;
+        changed
+    }
+
     /// Ask for the tape alone, or not; answers whether it changed. Back beside
     /// the candles is at the default width ([`Self::open_beside`]).
     pub fn set_tape_only(&mut self, tape_only: bool) -> bool {
@@ -218,7 +243,8 @@ impl LiveLaneStyle {
     }
 
     /// The share of the frame's mark budget the tape spends: its share, or the
-    /// least while the market holds it away.
+    /// least while the market holds it away. Its share even alone on the pane,
+    /// since the live strip still reads the forming bar from the candles' marks.
     #[must_use]
     pub fn budget_share(&self) -> f32 {
         if self.market_held() {
@@ -286,6 +312,14 @@ impl LiveLaneStyle {
             |rail| chart_width - rail.edge_px(),
         )
     }
+
+    /// The hand let go: a close still shown is written now, the one write it
+    /// makes. Answers whether the view changed.
+    pub fn release_drag_close(&mut self) -> bool {
+        self.drag_close
+            .take()
+            .is_some_and(|view| self.show_by_hand(view))
+    }
 }
 
 /// The tape widths the divider can leave open on a chart this wide: from
@@ -328,7 +362,9 @@ fn drag_range_px(lane: &LiveLaneStyle, chart_width: f32) -> (f32, f32) {
 /// Follows the hand rather than summing clamped steps: the tape is as wide as
 /// the distance from the pointer to the chart's right edge, so dragging past
 /// an edge and back puts the divider under the pointer again. Closing a side
-/// gives the lane back the share the drag started from.
+/// gives the lane back the share the drag started from, and is only shown until
+/// the release ([`LiveLaneStyle::release_drag_close`]); opening one is written as
+/// the hand crosses, since a closed side has nothing to show.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaneDividerDrag {
     chart_width: f32,
@@ -354,9 +390,9 @@ impl LaneDividerDrag {
     }
 
     /// Move the divider by `delta_px` (left is negative: a wider tape) and
-    /// decide the lane: one side alone past either threshold, beside under the
-    /// hand otherwise. Answers whether the view changed; unmeasurable input moves
-    /// nothing.
+    /// decide the lane: one side alone shown past either threshold, beside under
+    /// the hand otherwise. Answers whether the stored view changed; unmeasurable
+    /// input moves nothing.
     pub fn drag(&mut self, lane: &mut LiveLaneStyle, delta_px: f32, chart_width: f32) -> bool {
         if !delta_px.is_finite() || !measurable(chart_width) {
             return false;
@@ -379,11 +415,24 @@ impl LaneDividerDrag {
         };
         lane.width_share = share;
         self.on_market_rail &= view == LaneView::CandlesOnly;
-        // A step that leaves the view where it is writes none: a wiggle on the
-        // market's rail is not the trader's. Nor is a step still in the rail's
-        // range once a print has released the hold under the hand: the view
-        // saved must never be the held one.
-        !self.on_market_rail && view != lane.shown_view() && lane.show_by_hand(view)
+        lane.drag_close = None;
+        // A wiggle on the market's rail is not the trader's. Nor is a step still in
+        // the rail's range once a print has released the hold under the hand: the
+        // view saved must never be the held one.
+        if self.on_market_rail {
+            return false;
+        }
+        if view == LaneView::Beside {
+            return lane.shown_view() != view && lane.show_by_hand(view);
+        }
+        if view == lane.view() {
+            return false;
+        }
+        // One step from a closed side past the other's threshold still opens first:
+        // a close is only ever shown over a lane beside the candles.
+        let opened = lane.view() != LaneView::Beside && lane.show_by_hand(LaneView::Beside);
+        lane.drag_close = Some(view);
+        opened
     }
 }
 

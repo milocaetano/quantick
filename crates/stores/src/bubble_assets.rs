@@ -62,9 +62,11 @@ pub struct AssetBubbles {
     #[serde(default)]
     pub flow_ignore_opening: bool,
     /// Read from a store written while a closed side was filed apart from its
-    /// view, and never written: worn once as that view
-    /// ([`BubbleLook::wear`](crate::bubble_look::BubbleLook::wear)).
-    #[serde(default, skip_serializing)]
+    /// view: worn as that view
+    /// ([`BubbleLook::wear`](crate::bubble_look::BubbleLook::wear)). Never written
+    /// but for a closed tape the Tape layer has not yet saved, kept so it is not
+    /// lost unapplied; absent reads open.
+    #[serde(default, skip_serializing_if = "LaneFold::is_open")]
     pub fold: LaneFold,
     /// The tape goes away while the market is closed: the asset's. Absent reads
     /// on, and on writes nothing.

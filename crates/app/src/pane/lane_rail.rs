@@ -45,7 +45,7 @@ pub(super) fn live_chip(pane: &ChartPane, strip: egui::Rect) -> Option<egui::Rec
 
 /// Where the divider takes the pointer; `None` without a divider to move.
 pub(super) fn lane_handle(pane: &ChartPane, chart: egui::Rect) -> Option<egui::Rect> {
-    pane.frame.lane_divider_x?;
+    pane.frame.candles_right?;
     let hit = lane(pane)?.divider_hit(chart.width(), LANE_HANDLE_HALF_WIDTH_PX)?;
     Some(span(chart, hit))
 }
@@ -58,26 +58,18 @@ pub(super) fn handle_lane_divider(pane: &mut ChartPane, ui: &egui::Ui, chart: eg
         return;
     };
     let closed = rail(pane, chart).map(|rail| rail.side);
-    let sense = if closed.is_none() {
-        egui::Sense::drag()
-    } else {
-        egui::Sense::click_and_drag()
-    };
+    let sense = closed.map_or(egui::Sense::drag(), |_| egui::Sense::click_and_drag());
     let mut handle = ui.interact(rect, pane.interaction_id("lane_divider"), sense);
-    handle = match closed {
-        None => handle,
-        Some(LaneSide::Trail) => {
-            handle.on_hover_text("click to show the candles again, or drag right")
-        }
-        Some(LaneSide::Tape) => handle.on_hover_text("click to show the tape again, or drag left"),
-    };
+    if let Some(closed) = closed {
+        handle = handle.on_hover_text(quantick_chart::pane_header::rail_hint(closed));
+    }
     if handle.hovered() || handle.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
     let Some(tape) = pane.orderflow.as_mut() else {
         return;
     };
-    if handle.drag_started() || handle.drag_stopped() {
+    if handle.drag_started() || !handle.dragged() {
         tape.release_lane_drag();
     }
     if handle.clicked() {

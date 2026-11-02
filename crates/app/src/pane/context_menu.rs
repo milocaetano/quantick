@@ -157,7 +157,7 @@ impl ContextPress {
         if !areas.chart.contains(position) {
             return None;
         }
-        let history_right = frame.lane_divider_x.unwrap_or(areas.chart.right());
+        let history_right = frame.candles_right.unwrap_or(areas.chart.right());
         // The most specific thing under the click: a drawing, resolved on the
         // band the click actually landed in (a CVD line and a price line can
         // share the pixel).

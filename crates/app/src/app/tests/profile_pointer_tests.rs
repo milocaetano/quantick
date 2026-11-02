@@ -55,7 +55,7 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
 fn target(app: &QuantickApp, bar: f32, price: f64) -> egui::Pos2 {
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_area.unwrap();
-    let right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let right = pane.frame.candles_right.unwrap_or(chart.right());
     let (low, high) = pane.frame.auto_range.unwrap();
     let scale = pane.price_view.scale(
         (low, high),

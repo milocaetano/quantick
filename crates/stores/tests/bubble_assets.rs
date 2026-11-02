@@ -417,6 +417,82 @@ fn an_old_stores_tape_fold_closes_the_tape_once_and_only_beside() {
     assert_eq!(settings.fold, LaneFold::Open);
 }
 
+/// An old store's closed tape stays in the asset's file until the Tape layer can
+/// save it, so a tab no mask has observed never loses it; once settled it is gone,
+/// and only a tape still closed asks for the layer to be saved.
+#[test]
+fn an_old_tape_fold_stays_filed_until_the_layer_mask_has_seen_it() {
+    let stored = old_store_entry("tape");
+    let (mut look, mut config) = btc_screen(&stored);
+    let filed = |look: &BubbleLook, config: &HeatmapConfig| {
+        look.settings(config, stored.candle_aggression, false).fold
+    };
+    assert_eq!(filed(&look, &config), LaneFold::Tape, "waiting");
+    assert!(!look.settle_old_tape_fold(&config), "nothing closed yet");
+
+    assert!(look.take_old_tape_fold(&config));
+    config.live_lane.set_view(LaneView::CandlesOnly);
+    assert_eq!(filed(&look, &config), LaneFold::Tape, "closed, still kept");
+    let text = toml::to_string(&look.settings(&config, stored.candle_aggression, false));
+    assert!(text.unwrap().contains("fold = \"tape\""), "and written");
+
+    assert!(look.settle_old_tape_fold(&config), "the mask saves it");
+    assert_eq!(filed(&look, &config), LaneFold::Open, "gone from the file");
+    assert!(!look.settle_old_tape_fold(&config), "once");
+
+    // Reopened by a word before the mask saw it: nothing is left to carry.
+    let (mut look, config) = btc_screen(&stored);
+    assert!(look.take_old_tape_fold(&config));
+    assert_eq!(config.live_lane.view(), LaneView::Beside, "a word kept it");
+    assert_eq!(filed(&look, &config), LaneFold::Open);
+    assert!(!look.settle_old_tape_fold(&config));
+}
+
+const OLD_PRESET: &str = "active = \"old\"\n\n[[presets]]\nname = \"old\"\n\
+                          [presets.live_lane]\nwidth_share = 0.42\nfold = \"tape\"\n\n\
+                          [[presets]]\nname = \"off\"\n[presets.live_lane]\nenabled = false\n";
+
+/// A preset's old closed tape closes it once, at the first apply after the file is
+/// read, and the file saves without it; picks after that never close it again, and
+/// a hand-edited switch never did.
+#[test]
+fn a_presets_old_tape_fold_closes_once_and_a_pick_after_reopening_does_not() {
+    let presets = bubble_presets::parse(OLD_PRESET).expect("reads");
+    assert!(
+        !toml::to_string(&presets).unwrap().contains("fold ="),
+        "saved without"
+    );
+
+    // Opened on it: closed, and waiting for the layer restore to have spoken.
+    let mut config = HeatmapConfig::default();
+    let mut look = BubbleLook::open((presets.clone(), PresetSource::Embedded, None), &mut config);
+    assert_eq!(config.live_lane.view(), LaneView::CandlesOnly);
+    assert_eq!(config.live_lane.width_share, 0.42);
+    config.live_lane.restore_enabled(true);
+    assert!(look.take_old_tape_fold(&config), "it survives the restore");
+    assert!(look.apply_preset("old", &mut config, false));
+    assert!(
+        config.live_lane.enabled,
+        "spent: the trader's reopened tape"
+    );
+
+    // Picked first: closed by that pick, and only that pick.
+    let mut unmarked = presets.clone();
+    unmarked.active.clear();
+    let mut config = HeatmapConfig::default();
+    let mut look = BubbleLook::open((unmarked, PresetSource::Embedded, None), &mut config);
+    assert!(config.live_lane.enabled);
+    assert!(look.apply_preset("old", &mut config, false));
+    assert_eq!(config.live_lane.view(), LaneView::CandlesOnly, "the first");
+    assert!(config.live_lane.set_view(LaneView::Beside), "reopened");
+    assert!(look.apply_preset("old", &mut config, false));
+    assert_eq!(config.live_lane.view(), LaneView::Beside, "not again");
+
+    // A hand-edited switch is ignored, at every pick.
+    assert!(look.apply_preset("off", &mut config, false));
+    assert_eq!(config.live_lane.view(), LaneView::Beside, "no old fold");
+}
+
 /// A fold's own view, tape only won over a candle fold saved with it too: the view
 /// the look already shows is not moved.
 #[test]

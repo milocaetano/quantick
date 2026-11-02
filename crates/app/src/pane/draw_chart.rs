@@ -368,7 +368,7 @@ impl ChartPane {
         if total == 0 {
             return None;
         }
-        let history_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
+        let history_right = self.frame.candles_right.unwrap_or(chart_rect.right());
         let history_rect = egui::Rect::from_min_max(
             chart_rect.min,
             egui::pos2(history_right, chart_rect.bottom()),
@@ -405,7 +405,6 @@ impl ChartPane {
             cw: view.candle_width(),
             indicator_guide_x,
             tape_only,
-            fits_tape: tape_only,
             native_tape,
             // The lane setting's band, on screen yet or not.
             tape_padding_px: self.orderflow.as_ref().map_or(0.0, |view| {
@@ -437,20 +436,21 @@ impl ChartPane {
             .as_mut()
             .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
         // Tape only included: the band is the lane's own.
-        let lane_width_px = self
+        let lane_px = self
             .orderflow
             .as_ref()
             .map_or(0.0, |view| view.lane_width_px(chart_rect.width()));
         // Everything left of the divider is the candles' pane. They pan and zoom
-        // inside it exactly as they did when it was the whole chart, and a closed
-        // tape's rail stands past it, never over a candle.
+        // inside it exactly as they did when it was the whole chart. A tape switched
+        // off has no divider, only a rail no candle may stand under.
         let clear_px = self.orderflow.as_ref().map_or(0.0, |view| {
             let lane = &view.cached_config().live_lane;
             lane.candles_clear_px(chart_rect.width())
         });
-        self.frame.lane_divider_x = crate::orderflow_render::lane_divider_x(chart_rect, clear_px);
+        self.frame.lane_divider_x = crate::orderflow_render::lane_divider_x(chart_rect, lane_px);
+        self.frame.candles_right = crate::orderflow_render::lane_divider_x(chart_rect, clear_px);
         self.frame.chart_rect = Some(chart_rect);
-        let rungs = lane_rungs(lane_width_px);
+        let rungs = lane_rungs(lane_px);
         if self.lane.set_rungs(rungs) {
             let command = self
                 .lane
@@ -501,7 +501,7 @@ impl ChartPane {
         crate::bands::BandGeometry {
             auto_range: self.frame.auto_range,
             price_view: &self.price_view,
-            lane_divider_x: self.frame.lane_divider_x,
+            candles_right: self.frame.candles_right,
             indicators: &self.indicators,
             price_label: &self.price_band_label,
         }
@@ -630,7 +630,7 @@ impl ChartPane {
         };
         // Tags anchor in the band the input pass tests their ✕ against, so a
         // painted ✕ and its press agree about where it is.
-        let candles = crate::bands::drawing_area(chart_rect, self.frame.lane_divider_x);
+        let candles = crate::bands::drawing_area(chart_rect, self.frame.candles_right);
         let tag_right = crate::paper_trading::tag_band(candles, chart_rect).right();
         // Hover affordances paint only on the pane whose pointer feeds the
         // paper input; the others keep display-only tags. Every pane still

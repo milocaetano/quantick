@@ -73,7 +73,7 @@ fn app_with_candles() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
 fn bar_x(app: &QuantickApp, bar: f32) -> f32 {
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_area.expect("the pane reported its rect");
-    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     pane.model
         .viewport
         .x_at_bar_position(bar, history_right, pane.slots())
@@ -638,7 +638,7 @@ fn shared_mirror_drag(rail: bool, own: bool) -> f64 {
     let slot = pane.slots() - 3;
     let high = pane.state.bars()[slot].high.to_f64().unwrap();
     let chart = pane.frame.chart_area.expect("the time pane drew");
-    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     let x = pane
         .model
         .viewport

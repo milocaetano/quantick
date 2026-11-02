@@ -22,9 +22,11 @@ use crate::bands::Bands;
 /// neither: a pane is a place, not a value, and the bands it last painted
 /// hold no cheaper copy than the draw that produced them.
 pub struct PaneFrame {
-    /// Where the history pane ended last frame — the lane's divider, and the
-    /// handle that resizes it. The input pass runs before the draw computes it.
+    /// The lane's divider last frame, and the handle that resizes it: `None` means
+    /// no lane. The input pass runs before the draw computes it.
     pub lane_divider_x: Option<f32>,
+    /// Where the candles ended last frame: the divider, or a closed tape's rail.
+    pub candles_right: Option<f32>,
     /// Actual visible legend footprint, published by its painter for chrome placement.
     pub flow_legend: Option<egui::Rect>,
     /// Actual indicator legend footprint, published before floating chrome.
@@ -104,6 +106,7 @@ impl Default for PaneFrame {
     fn default() -> Self {
         Self {
             lane_divider_x: None,
+            candles_right: None,
             flow_legend: None,
             indicator_legend: None,
             chart_rect: None,
@@ -131,6 +134,7 @@ impl PaneFrame {
     pub(crate) fn clear_hidden(&mut self) {
         self.header_controls.clear();
         self.lane_divider_x = None;
+        self.candles_right = None;
         self.flow_legend = None;
         self.indicator_legend = None;
         self.chart_rect = None;

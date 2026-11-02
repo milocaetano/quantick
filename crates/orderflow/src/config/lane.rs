@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use super::bubbles::{
     BubbleStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
-use super::lane_fold::{LaneFold, MarketHold, rail_px};
+use super::lane_fold::{LaneFold, MarketHold, OldTapeFold, rail_px};
+use super::lane_view::LaneView;
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
 
@@ -433,6 +434,11 @@ pub struct LiveLaneStyle {
     /// Whether the market holds the tape away now, and what that remembers.
     /// Runtime only: nothing writes it to a file.
     pub market_hold: MarketHold,
+    /// A file's old closed tape, waiting for the look to carry it out.
+    pub old_tape_fold: OldTapeFold,
+    /// The side a drag past its threshold would close, shown over the stored view
+    /// until the release writes it. Runtime only, like the hold.
+    pub drag_close: Option<LaneView>,
 }
 
 impl Default for LiveLaneStyle {
@@ -453,6 +459,8 @@ impl Default for LiveLaneStyle {
             tape_only: false,
             fold_market_closed: true,
             market_hold: MarketHold::default(),
+            old_tape_fold: OldTapeFold::default(),
+            drag_close: None,
         }
     }
 }
@@ -546,6 +554,8 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             tape_only: repr.tape_only,
             fold_market_closed: repr.fold_market_closed,
             market_hold: MarketHold::default(),
+            old_tape_fold: OldTapeFold::default(),
+            drag_close: None,
         };
         style.read_old_fold(repr.fold);
         style
@@ -634,11 +644,10 @@ impl LiveLaneStyle {
         if !chart_width.is_finite() || chart_width <= 0.0 {
             return 0.0;
         }
-        if self.tape_only {
-            return chart_width;
-        }
-        if self.market_held() {
-            return rail_px(chart_width);
+        match self.shown_view() {
+            LaneView::TapeOnly => return chart_width,
+            LaneView::CandlesOnly => return rail_px(chart_width),
+            LaneView::Beside => {}
         }
         // The floor yields on a narrow window: half a small chart beats a
         // fixed band that would eat all of it.

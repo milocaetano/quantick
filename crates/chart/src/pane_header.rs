@@ -353,6 +353,15 @@ pub fn rail_word(closed: LaneSide) -> &'static str {
     }
 }
 
+/// A rail's hover hint: what a click and a drag on it do.
+#[must_use]
+pub fn rail_hint(closed: LaneSide) -> &'static str {
+    match closed {
+        LaneSide::Trail => "click to show the candles again, or drag right",
+        LaneSide::Tape => "click to show the tape again, or drag left",
+    }
+}
+
 /// The market-closed setting's words in the settings.
 pub const MARKET_FOLD_SETTING: &str = "Fold the tape while the market is closed";
 /// What it does, on hover.

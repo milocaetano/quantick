@@ -1116,7 +1116,7 @@ fn dragging_the_divider_to_an_edge_is_that_view_and_its_rail_reopens_at_the_defa
     let open = pane.frame.lane_divider_x.expect("the divider");
     let y = chart.center().y;
     let pane_id = pane.id;
-    let divider = |app: &QuantickApp| app.active_tab().flow_pane.frame.lane_divider_x;
+    let divider = |app: &QuantickApp| app.active_tab().flow_pane.frame.candles_right;
     let rail = format!("pane.{pane_id}.lane_rail");
 
     primary_drag(

@@ -111,11 +111,13 @@ impl LiveLaneStyle {
         (!self.market_held()).then(|| key(self.view()))
     }
 
-    /// The side on screen: [`Self::view`], except that the market's hold shows the
-    /// candles alone over a stored view it never writes.
+    /// The side on screen: [`Self::view`], except that a drag's close and the
+    /// market's hold show one side alone over a stored view they never write.
     #[must_use]
     pub fn shown_view(&self) -> LaneView {
-        if self.market_held() {
+        if let Some(close) = self.drag_close {
+            close
+        } else if self.market_held() {
             LaneView::CandlesOnly
         } else {
             self.view()
@@ -136,11 +138,12 @@ impl LiveLaneStyle {
     }
 
     /// Move beside the candles at the default width: the one door every way back
-    /// but a hand's takes, however the side closed. A pane already beside the
-    /// candles stays where it is. Asked for inside a closed spell it stands the
-    /// market's hold down, or the hold would take straight back what was opened.
+    /// but a hand's takes, however the side closed, the market's hold included. A
+    /// pane already showing beside the candles stays where it is. It stands the hold
+    /// down, or the hold would take straight back what was opened.
     pub fn open_beside(&mut self) -> bool {
-        if !self.write_view(LaneView::Beside) {
+        let released = self.market_held();
+        if !self.write_view(LaneView::Beside) && !released {
             return false;
         }
         self.width_share = DEFAULT_LIVE_LANE_SHARE;
@@ -347,6 +350,21 @@ mod tests {
         let mut style = lane(LaneView::CandlesOnly);
         assert!(style.set_view(LaneView::Beside));
         assert!(style.market_hold.stood_down);
+    }
+
+    /// Beside on a held pane is the same word as asking the fold open: one door.
+    #[test]
+    fn beside_on_a_held_pane_releases_it_at_the_default_width() {
+        let mut style = LiveLaneStyle {
+            width_share: 0.42,
+            ..LiveLaneStyle::default()
+        };
+        style.market_hold.held = true;
+        assert!(style.set_view(LaneView::Beside), "the pane moved");
+        assert!(!style.market_held());
+        assert!(style.market_hold.stood_down);
+        assert_eq!(style.width_share, crate::config::DEFAULT_LIVE_LANE_SHARE);
+        assert!(!style.set_view(LaneView::Beside), "a retry moves nothing");
     }
 
     /// The key goes to tape only and back to beside; there is no remembered view,

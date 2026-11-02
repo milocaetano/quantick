@@ -15168,7 +15168,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape, arriving at the default width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view, and a side closed by dragging the divider to its edge already is one of these views. Presentation only: executions are untouched, and the tape's layer switches keep their state.",
+      "description": "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape, arriving at the default width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view, and a side closed by dragging the divider to its edge already is one of these views. Beside on a pane the market holds away releases the hold, as orderflow.tape.fold.set open does. Presentation only: executions are untouched, and the tape's layer switches keep their state.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",

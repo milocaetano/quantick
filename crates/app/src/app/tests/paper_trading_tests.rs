@@ -1337,7 +1337,7 @@ fn clicking_the_chart_tag_close_cancels_the_order() {
         .active_tab()
         .flow_pane
         .frame
-        .lane_divider_x
+        .candles_right
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
     let close = crate::paper_trading::close_button_rect(
@@ -1399,7 +1399,7 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
         .active_tab()
         .flow_pane
         .frame
-        .lane_divider_x
+        .candles_right
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
     let close = crate::paper_trading::close_button_rect(
@@ -1457,7 +1457,7 @@ fn a_right_button_with_no_quick_range_leaves_the_close_live() {
         .active_tab()
         .flow_pane
         .frame
-        .lane_divider_x
+        .candles_right
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
     let close = crate::paper_trading::close_button_rect(

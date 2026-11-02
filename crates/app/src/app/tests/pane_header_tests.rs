@@ -837,7 +837,7 @@ fn the_header_is_painted_in_all_three_views() {
         assert!(button.bottom() <= chart.top(), "{view:?}: off the chart");
         let band = flow
             .frame
-            .lane_divider_x
+            .candles_right
             .map(|x| flow.frame.chart_rect.unwrap().right() - x);
         let rail = (view == LaneView::CandlesOnly).then_some(quantick_orderflow::LANE_FOLD_RAIL_PX);
         if rail.is_some() {

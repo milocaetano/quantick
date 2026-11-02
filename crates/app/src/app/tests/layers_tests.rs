@@ -1,6 +1,61 @@
 use super::*;
 use crate::drawings::StyleColor32;
 
+/// Restoring saved layers writes the tape's switch alone: the saved share and the
+/// market's hold stay, and an old file's closed tape, waiting for this very restore,
+/// survives it.
+#[test]
+fn restoring_the_layers_keeps_the_share_the_hold_and_an_old_closed_tape() {
+    use quantick_orderflow::LaneView;
+    let dir = crate::scratch::ScratchDir::new("restore-tape-switch");
+    let path = dir.join("chart-layers.toml");
+    std::fs::write(&path, "version = 1\n[layers]\ntape_chart = true\n").unwrap();
+    let (mut app, _events, _commands, _book) = test_app();
+    app.runtime.workspace.set_chart_layers_path(path);
+    let tape = app.active_tab_mut().tape_mut();
+    tape.edit_config(|config| {
+        config.live_lane.enabled = false;
+        config.live_lane.width_share = 0.42;
+        config.live_lane.market_hold.held = true;
+    });
+    app.layer_wiring().restore();
+    let lane = &app.active_tab().tape().cached_config().live_lane;
+    assert!(lane.enabled, "the saved switch");
+    assert_eq!(lane.width_share, 0.42, "the saved share, not the default");
+    assert!(
+        lane.market_held() && !lane.market_hold.stood_down,
+        "the hold"
+    );
+
+    // An old preset's closed tape closes after the restore, on the next sync.
+    let dress = "active = \"old\"\n[[presets]]\nname = \"old\"\n\
+                 [presets.live_lane]\nwidth_share = 0.42\nfold = \"tape\"\n";
+    let presets = crate::bubble_presets::parse(dress).unwrap();
+    let loaded = (presets, crate::bubble_presets::PresetSource::Embedded, None);
+    let (mut app, _events, _commands, _book) = test_app();
+    let dir = crate::scratch::ScratchDir::new("restore-old-preset");
+    let path = dir.join("chart-layers.toml");
+    std::fs::write(&path, "version = 1\n[layers]\ntape_chart = true\n").unwrap();
+    app.runtime.workspace.set_chart_layers_path(path);
+    let store = app.runtime.workspace.bubble_assets().clone();
+    with_config(&mut app, |tab, config| {
+        tab.tape_mut().open_look_for_test(loaded);
+        tab.bind_asset_bubbles(config, &store);
+    });
+    app.layer_wiring().restore();
+    assert_eq!(
+        app.active_tab().tape().cached_config().live_lane.view(),
+        LaneView::Beside,
+        "the restore put the switch back"
+    );
+    app.layer_wiring().maintain(&egui::Context::default());
+    assert_eq!(
+        app.active_tab().tape().cached_config().live_lane.view(),
+        LaneView::CandlesOnly,
+        "and the old preset's closure survived it"
+    );
+}
+
 /// The layer menu writes through to whoever owns the layer, and touches
 /// nothing else. A menu holding its own copy of "is the heatmap on" would
 /// disagree with the toolbar the moment either one was used.

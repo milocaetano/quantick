@@ -4029,7 +4029,7 @@ fn observer_cursor_resolves_the_exact_bar_under_the_pointer() {
     let position = {
         let pane = &app.active_tab().flow_pane;
         let chart = pane.frame.chart_area.expect("the pane reported its rect");
-        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+        let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
         egui::pos2(
             pane.model
                 .viewport
