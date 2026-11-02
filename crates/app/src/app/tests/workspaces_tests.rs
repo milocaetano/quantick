@@ -527,6 +527,7 @@ fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
         symbol_bubble_presets: Default::default(),
         asset_families: Vec::new(),
         symbol_asset_modes: Default::default(),
+        contract_rolls: Default::default(),
         default_layout: None,
         default_bars: None,
         record_deals: false,

@@ -20,9 +20,9 @@ pub use quantick_workspace::layout_document::{
 };
 #[cfg(test)]
 pub(crate) use quantick_workspace::layout_document::{SavedBand, SavedDrawing, SavedPoint};
-pub use quantick_workspace::market_settings::DrawingKey;
 #[cfg(test)]
-pub(crate) use quantick_workspace::market_settings::{MarketKey, PaneRole};
+pub(crate) use quantick_workspace::market_settings::PaneRole;
+pub use quantick_workspace::market_settings::{DrawingKey, MarketKey};
 
 /// The layouts file this cockpit opens with and writes back to.
 #[must_use]

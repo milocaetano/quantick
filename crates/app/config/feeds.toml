@@ -159,7 +159,11 @@ bubble_preset = "live lane pie"
 id = "metatrader-b3"
 name = "MetaTrader 5 — B3"
 provider = "metatrader"
-symbols = ["WIN$N", "WDO$N", "WINV26"]
+symbols = ["WIN$N", "WDO$N", "WINV26", "WINZ26", "WING27"]
+# What "Roll to ..." on the symbol list offers: the contract that follows,
+# one row per roll. The tab keeps its workspace and drawings. Add the next row
+# when the exchange lists the next contract; no calendar lives in code.
+contract_rolls = { "WINV26" = "WINZ26", "WINZ26" = "WING27" }
 # The B3 mini index reads best as per-bar pie summaries: bars close in seconds
 # and the candle summary keeps the last bars carrying marks instead of leaving
 # the lane window bare.

@@ -42,7 +42,7 @@ use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
 use std::time::Instant;
 
 use crate::indicator_worker::{IndicatorCommand, SlotId};
-use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId};
+use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId, MarketKey};
 use crate::pane::{ChartPane, DrawingDrag, PaneIndex, PaneSide};
 
 use super::TabSlot;
@@ -81,6 +81,19 @@ pub(crate) struct LayoutRead<'a> {
     pub(super) session: &'a quantick_workspace::session::LayoutSession,
 }
 impl<'a> LayoutRead<'a> {
+    /// A drawing gesture in flight on a pane holding `from`'s or `to`'s marks.
+    pub(crate) fn drawing_gesture_on(&self, feed: &str, from: &str, to: &str) -> bool {
+        self.tabs.iter_with_ids().any(|(_, tab)| {
+            tab.panes().any(|(pane, _)| {
+                let source = pane.layout.drawings_source.as_ref();
+                pane.drawings.in_gesture()
+                    && source.is_some_and(|(venue, symbol)| {
+                        venue == feed && (symbol == from || symbol == to)
+                    })
+            })
+        })
+    }
+
     pub(crate) fn layouts(&self) -> &'a LayoutBook {
         self.session.book()
     }
@@ -737,6 +750,41 @@ impl LayoutAdapter<'_> {
         pane.layout.saved_revision = pane.drawings.revision();
     }
 
+    /// A contract roll's half of the drawings. Contracts of one asset are one
+    /// market, so nothing moves; a roll onto another asset copies what is on
+    /// screen to it, and a pane already there shows the result instead of
+    /// writing its old set back. The roll's rule refused a gesture on either
+    /// contract before this.
+    pub(crate) fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
+        self.persist_changed_drawings();
+        let market = self.store.market_mut();
+        let of = |asset: String| MarketKey {
+            venue: feed.to_owned(),
+            asset,
+        };
+        let (from, to) = (of(market.asset(feed, from)), of(market.asset(feed, to)));
+        let carried = market.settings_mut().carry_market(&from, &to);
+        if carried == 0 {
+            return 0;
+        }
+        let holding: Vec<(u64, PaneSide, DrawingKey)> = self
+            .tabs
+            .iter_with_ids()
+            .flat_map(|(tab_id, tab)| {
+                tab.panes().filter_map(move |(pane, side)| {
+                    let key = pane.layout.drawings_key.clone()?;
+                    Some((tab_id, side, key))
+                })
+            })
+            .filter(|(_, _, key)| key.market == to)
+            .collect();
+        for (tab, side, key) in holding {
+            self.rebuild_keeping_selection(tab, side, &key);
+        }
+        self.mark_market_dirty();
+        carried
+    }
+
     /// A tab whose market moved out from under a pane, or a context chart cut
     /// to other bars: the drawings go to the key they were drawn on and the new
     /// key's come out. A roll inside one asset lands on the same key. A chart
@@ -823,30 +871,35 @@ impl LayoutAdapter<'_> {
             .filter(|target| *target != (tab, side))
             .collect();
         for (twin_tab, twin_side) in twins {
-            let selected_id = self.pane_at(twin_tab, twin_side).and_then(|twin| {
-                let index = twin.drawings.selected()?;
-                Some(twin.drawings.items().get(index)?.id)
-            });
             self.leave_pane_gestures(twin_tab, twin_side);
-            if let Some(twin) = self.pane_mut_at(twin_tab, twin_side) {
-                twin.drawings.take_all();
-            }
-            // Under the key it holds, which a chart held by a strategy keeps
-            // whatever its bars are now.
-            self.adopt_marks(twin_tab, twin_side, key);
-            // By id, not by index: the set that came back may hold one
-            // more object than the one that went away, and the index the
-            // trader selected now points at a different mark.
-            if let Some(id) = selected_id
-                && let Some(twin) = self.pane_mut_at(twin_tab, twin_side)
-            {
-                let index = twin
-                    .drawings
-                    .items()
-                    .iter()
-                    .position(|drawing| drawing.id == id);
-                twin.drawings.select(index);
-            }
+            self.rebuild_keeping_selection(twin_tab, twin_side, key);
+        }
+    }
+
+    /// Bring a pane to what its layout now holds for its market.
+    fn rebuild_keeping_selection(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
+        let selected_id = self.pane_at(tab, side).and_then(|pane| {
+            let index = pane.drawings.selected()?;
+            Some(pane.drawings.items().get(index)?.id)
+        });
+        if let Some(pane) = self.pane_mut_at(tab, side) {
+            pane.drawings.take_all();
+        }
+        // Under the key it holds, which a chart held by a strategy keeps whatever
+        // its bars are now.
+        self.adopt_marks(tab, side, key);
+        // By id, not by index: the set that came back may hold one more
+        // object than the one that went away, and the index the trader
+        // selected now points at a different mark.
+        if let Some(id) = selected_id
+            && let Some(pane) = self.pane_mut_at(tab, side)
+        {
+            let index = pane
+                .drawings
+                .items()
+                .iter()
+                .position(|drawing| drawing.id == id);
+            pane.drawings.select(index);
         }
     }
 }

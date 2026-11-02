@@ -88,6 +88,9 @@ pub struct ToolbarModel<'a> {
     pub symbols: Vec<String>,
     /// The tab's symbol.
     pub symbol: &'a mut String,
+    /// The roll on offer: the target, and why it is greyed when it is. Absent
+    /// when the config names no next contract.
+    pub contract_roll: Option<(String, Option<&'static str>)>,
     /// Present while a recording is the source; replaces the market label.
     pub replay: Option<ReplaySource>,
     /// The deal recorder shown beside the symbol, when supported.
@@ -160,6 +163,8 @@ pub enum ToolbarAction {
     LoadHistory(HistoryReach),
     /// Stop the history run in flight and keep what arrived.
     CancelHistory,
+    /// Roll the tab to the contract the config names next.
+    RollContract,
     /// What the REC control beside the symbol asked for.
     DealRecording(crate::deal_recording::DealRecordingAction),
     /// Fetch and prepend one more span of older venue candles.
@@ -302,6 +307,19 @@ fn draw_source(
         idle.bg_stroke = egui::Stroke::NONE;
         let symbol = egui::RichText::new(model.symbol.as_str()).color(theme::TEXT_PRIMARY);
         ui.menu_button(symbol, |ui| {
+            if let Some((target, refusal)) = &model.contract_roll {
+                let label = format!("Roll to {target}");
+                let row = ui.add_enabled(refusal.is_none(), egui::Button::new(label));
+                let row = match refusal {
+                    Some(reason) => row.on_disabled_hover_text(*reason),
+                    None => row.on_hover_text("Keeps this tab's workspace and drawings"),
+                };
+                if row.clicked() {
+                    actions.push(ToolbarAction::RollContract);
+                    ui.close_menu();
+                }
+                ui.separator();
+            }
             for symbol in &model.symbols {
                 let row = ui.selectable_value(model.symbol, symbol.clone(), symbol);
                 if row.clicked() {
@@ -770,6 +788,7 @@ mod tests {
                         feeds: Vec::new(),
                         feed_id: &mut String::new(),
                         symbols: vec!["BTCUSDT".to_owned()],
+                        contract_roll: None,
                         symbol: &mut "BTCUSDT".to_owned(),
                         replay: replaying.then(|| ReplaySource {
                             label: "BTCUSDT · 2026-03-16".to_owned(),
@@ -827,6 +846,7 @@ mod tests {
                     feeds: Vec::new(),
                     feed_id: &mut String::new(),
                     symbols: vec!["US500".to_owned()],
+                    contract_roll: None,
                     symbol: &mut "US500".to_owned(),
                     replay: None,
                     deal_recording: None,
@@ -931,6 +951,7 @@ mod tests {
                     feeds: Vec::new(),
                     feed_id: &mut String::new(),
                     symbols: vec!["BTCUSDT".to_owned()],
+                    contract_roll: None,
                     symbol: &mut "BTCUSDT".to_owned(),
                     replay: None,
                     deal_recording: None,

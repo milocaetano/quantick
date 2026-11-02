@@ -28,11 +28,13 @@ impl FeedSourcePort for Window {
                 feed_id: "spot".into(),
                 display_name: "Spot".into(),
                 symbols: vec!["BTCUSDT".into()],
+                contract_rolls: Default::default(),
             },
             FeedSourceChoice {
                 feed_id: "futures".into(),
                 display_name: "Futures".into(),
                 symbols: vec!["BTCUSDT.p".into()],
+                contract_rolls: Default::default(),
             },
         ]
     }

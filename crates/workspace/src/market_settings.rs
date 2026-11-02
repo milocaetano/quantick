@@ -237,6 +237,42 @@ impl MarketSettings {
         }
     }
 
+    /// Copy a market's drawings onto another, role for role, for a contract roll
+    /// between two assets; one asset is one market and nothing moves. `from`
+    /// keeps its own: a tab still on the old contract and a later return to it
+    /// lose nothing. What `to` holds stays, and a mark it already holds is not
+    /// added twice, so rolling again duplicates nothing. Returns how many were
+    /// added.
+    pub fn carry_market(&mut self, from: &MarketKey, to: &MarketKey) -> usize {
+        if from == to {
+            return 0;
+        }
+        let leaving: Vec<(PaneRole, Vec<SavedDrawing>)> = self
+            .drawings
+            .iter()
+            .filter(|set| set.venue == from.venue && set.asset == from.asset)
+            .map(|set| (set.role.clone(), set.items.clone()))
+            .collect();
+        let mut carried = 0;
+        for (role, items) in leaving {
+            let key = DrawingKey {
+                market: to.clone(),
+                role,
+            };
+            for item in items {
+                if !self
+                    .drawings(&key)
+                    .iter()
+                    .any(|held| same_mark(held, &item))
+                {
+                    self.push_renumbered(&key, item);
+                    carried += 1;
+                }
+            }
+        }
+        carried
+    }
+
     /// Move every drawing a layout book still holds into this store, each
     /// labelled with the layout, contract and pane it came from.
     ///
@@ -331,6 +367,21 @@ fn legacy_role(pane: usize) -> PaneRole {
     } else {
         PaneRole::ContextSlot(pane)
     }
+}
+
+/// The same mark, whatever a pane did to it since. Its id is the holding pane's
+/// and its bar offsets the series it was last anchored on, so neither says
+/// whether two entries are one object.
+fn same_mark(held: &SavedDrawing, item: &SavedDrawing) -> bool {
+    let plain = |drawing: &SavedDrawing| {
+        let mut drawing = drawing.clone();
+        drawing.id = None;
+        for point in &mut drawing.points {
+            point.bar = 0.0;
+        }
+        drawing
+    };
+    plain(held) == plain(item)
 }
 
 /// An entry's tool and anchors as a migration found them. FNV-1a: stable across

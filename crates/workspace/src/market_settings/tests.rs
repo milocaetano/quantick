@@ -196,6 +196,61 @@ fn a_different_mark_under_a_reused_id_is_kept() {
 }
 
 #[test]
+fn a_roll_inside_one_asset_moves_nothing() {
+    let mut settings = absorbed();
+    let before = settings.clone();
+    let market = win("metatrader-b3");
+    assert_eq!(settings.carry_market(&market, &market), 0);
+    assert_eq!(settings, before);
+}
+
+#[test]
+fn a_roll_onto_another_asset_copies_each_role_and_never_duplicates() {
+    let market = |asset: &str| MarketKey {
+        venue: "binance".to_owned(),
+        asset: asset.to_owned(),
+    };
+    let on = |asset: &str, role: PaneRole| DrawingKey {
+        market: market(asset),
+        role,
+    };
+    let (flow, top) = (PaneRole::Flow, context("time:1m"));
+    let mut settings = MarketSettings::default();
+    settings.replace(&on("OLD", flow.clone()), vec![level(Some(1), 90.0)], known);
+    settings.replace(&on("OLD", top.clone()), vec![level(Some(1), 100.0)], known);
+    settings.replace(&on("NEW", top.clone()), vec![level(Some(1), 120.0)], known);
+
+    assert_eq!(settings.carry_market(&market("OLD"), &market("NEW")), 2);
+    assert_eq!(settings.drawings(&on("NEW", flow.clone())).len(), 1);
+    assert_eq!(
+        settings.drawings(&on("NEW", top.clone()))[0].points[0].price,
+        120.0,
+        "what the new contract held stays"
+    );
+    assert_eq!(settings.drawings(&on("NEW", top.clone())).len(), 2);
+    assert_eq!(
+        settings.drawings(&on("OLD", flow.clone())).len(),
+        1,
+        "the old contract keeps its copy"
+    );
+    assert_eq!(
+        settings.carry_market(&market("OLD"), &market("NEW")),
+        0,
+        "rolling again adds nothing"
+    );
+
+    // A visit re-anchors the copy and a pane may renumber it: still one mark.
+    let mut visited = level(Some(40), 90.0);
+    visited.points[0].bar += 17.0;
+    settings.replace(&on("NEW", flow), vec![visited], known);
+    assert_eq!(
+        settings.carry_market(&market("OLD"), &market("NEW")),
+        0,
+        "a mark the new contract already shows is not added twice"
+    );
+}
+
+#[test]
 fn a_venue_is_part_of_the_market() {
     let settings = absorbed();
     assert_eq!(settings.drawings(&key("replay", PaneRole::Flow)).len(), 1);

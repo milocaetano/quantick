@@ -8907,6 +8907,134 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Switches the tab to the contract feed.status.sources[].contract_rolls names after from_symbol, on the same feed. The workspace, pane layout and bar specs stay, and the tab's drawings are copied to the new contract in every layout; the old contract keeps its copy. Every pane timeline is rebuilt from the new contract and armed strategies are disarmed by name. Refuses while replay owns the tab, while a paper position or working order is open, while a drawing gesture is in flight on either contract, when no roll is configured, or when the feed does not offer the target. Requires the same cockpit.recover permission as feed.source.set. Repeating a roll whose target the tab already shows does not move the feed and adds no drawing twice. A roll through this capability journals `feed.contract.rolled` under the caller's name; the toolbar's does not, like the toolbar's own source switch. Read active_symbol and feed_generation in feed.status.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit.recover",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.contract.roll",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "from_symbol": {
+            "description": "The contract the caller read in feed.status. Naming it is what makes a\nretry safe: a second call cannot roll a contract further.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "from_symbol"
+        ],
+        "title": "ContractRollInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "False when the tab already showed the target: the feed did not move.\nThe drawings are still copied, so a tab switched there by hand gets them.",
+            "type": "boolean"
+          },
+          "drawings_carried": {
+            "description": "Drawings copied to the new contract. Zero when both contracts are one\nasset: they already share one set. Those it already held are not counted.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "feed_id": {
+            "type": "string"
+          },
+          "from_symbol": {
+            "type": "string"
+          },
+          "symbol": {
+            "description": "The contract the tab shows now.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "feed_id",
+          "symbol",
+          "from_symbol",
+          "changed",
+          "drawings_carried"
+        ],
+        "title": "ContractRollResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [
+        {
+          "description": "The tab is on a live feed, not a recorded session.",
+          "id": "feed.contract.live_source"
+        },
+        {
+          "description": "The tab shows from_symbol, or the contract configured to follow it.",
+          "id": "feed.contract.from_symbol"
+        },
+        {
+          "description": "The feed config names a contract after from_symbol (contract_rolls).",
+          "id": "feed.contract.roll_configured"
+        },
+        {
+          "description": "The feed offers the configured next contract (symbols).",
+          "id": "feed.contract.target_offered"
+        },
+        {
+          "description": "The tab holds no paper position or working order.",
+          "id": "feed.contract.paper_flat"
+        },
+        {
+          "description": "No drawing gesture is in flight on a pane of either contract.",
+          "id": "feed.contract.no_gesture"
+        }
+      ],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.recover"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "timeline_rebuilt"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "from_symbol is checked against the tab before anything changes: a stale caller is refused, or answered changed:false when the tab already shows the target. A roll rebuilds the pane timelines and disarms strategies; it never touches a paper position, which refuses it.",
+      "title": "Roll the tab to its next contract",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the standing choice the Settings window's checkbox sets, saved with the workspace, and every answer reports it.",
       "destructive": false,
       "dry_run_supported": false,
@@ -20775,6 +20903,13 @@
           },
           "FeedSourceChoice": {
             "properties": {
+              "contract_rolls": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Which contract follows which on this feed, for feed.contract.roll.",
+                "type": "object"
+              },
               "display_name": {
                 "type": "string"
               },
