@@ -85,6 +85,14 @@ impl ControlAccess {
         }
     }
 
+    /// What the Settings row must say: why access cannot start, or what starting
+    /// it is doing, since the panel that also shows this may be closed.
+    pub fn problem(&self) -> Option<&str> {
+        self.initialization_error
+            .as_deref()
+            .or(self.notice.as_deref())
+    }
+
     /// The same two acts as the panel's own buttons; the scopes stay the ones
     /// the panel shows.
     pub fn set_switch(&mut self, ctx: &eframe::egui::Context, on: bool) {

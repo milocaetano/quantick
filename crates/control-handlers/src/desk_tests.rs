@@ -43,7 +43,11 @@ impl DeskHost for FakeHost {
             }
             DeskAct::ReadReopen => self.reopen,
             DeskAct::SetReopen(reopen) => {
-                self.reopen = reopen;
+                self.reopen = if self.write_fails {
+                    self.reopen
+                } else {
+                    reopen
+                };
                 !self.write_fails
             }
         })
@@ -149,6 +153,23 @@ fn reopen_set_moves_the_choice_once_and_a_repeat_writes_nothing() {
     assert_eq!(answer["changed"], false);
     assert_eq!(answer["written"], false);
     assert_eq!(access.events.len(), 1, "a repeat journals nothing");
+}
+
+#[test]
+fn a_failed_reopen_write_journals_nothing_and_a_retry_writes_again() {
+    let (mut host, mut access, actor) = parts();
+    host.write_fails = true;
+    let value = json!({ "reopen": true });
+    let answer = reopen(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(answer["reopen"], false, "the old choice is still in force");
+    assert_eq!(answer["changed"], false);
+    assert_eq!(answer["written"], false);
+    assert!(access.events.is_empty());
+
+    host.write_fails = false;
+    let answer = reopen(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(answer["written"], true);
+    assert_eq!(access.events.len(), 1);
 }
 
 #[test]

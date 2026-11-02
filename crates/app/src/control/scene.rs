@@ -594,7 +594,8 @@ fn push_settings<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot
             label: section.title().to_owned(),
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
-                kind: SceneOwnerKindDto::Settings,
+                // The published kinds are closed; Settings opens from the strip.
+                kind: SceneOwnerKindDto::TabStrip,
                 id: "settings".to_owned(),
             },
             selected: shown == section,

@@ -24595,11 +24595,6 @@
                 "type": "string"
               },
               {
-                "const": "settings",
-                "description": "The Settings window.",
-                "type": "string"
-              },
-              {
                 "const": "tab",
                 "description": "One open chart tab, owning its panes.",
                 "type": "string"

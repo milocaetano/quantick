@@ -806,10 +806,7 @@ fn saving_the_startup_screen_keeps_the_bookmarks() {
         .workspace
         .set_ui_state_path(scratch_ui_state("bookmarks-survive"));
     let bookmark = seeded_bookmark(&app, "scalp");
-    app.runtime
-        .workspace
-        .session_mut()
-        .keep_bookmark(bookmark);
+    app.runtime.workspace.session_mut().keep_bookmark(bookmark);
 
     app.workspace_save_adapter().save_workspace("test");
 
@@ -836,10 +833,7 @@ fn resetting_the_startup_layout_keeps_the_bookmarks() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let bookmark = seeded_bookmark(&app, "before the mess");
-    app.runtime
-        .workspace
-        .session_mut()
-        .keep_bookmark(bookmark);
+    app.runtime.workspace.session_mut().keep_bookmark(bookmark);
     app.workspace_save_adapter().save_workspace("test");
 
     app.workspace_save_adapter().forget_workspace();
@@ -1057,7 +1051,7 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
     assert_eq!(names, vec!["opening", "levels revisited"]);
 }
 
-/// A bookmark already in the file, as an older build wrote it.
+/// A bookmark the session holds, as one read from an older build's file would be.
 fn seeded_bookmark(app: &QuantickApp, name: &str) -> ui_state::NamedArrangement {
     let saved = app.workspace_state().capture_workspace();
     ui_state::NamedArrangement {

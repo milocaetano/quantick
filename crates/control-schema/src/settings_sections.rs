@@ -108,8 +108,8 @@ impl SettingRow {
                 "Start writing the venue's deal counter when a MetaTrader B3 symbol connects"
             }
             Self::AgentSwitch => {
-                "Lets a local tool reach this window over the control plane, with the scopes \
-                 chosen under Manage clients…"
+                "Lets a local tool such as Codex or Claude read this window, with the scopes \
+                 chosen under Manage clients…. Granted data may be sent to the model provider."
             }
             Self::ManageClients => "Who is connected, what each may do, and how to revoke it",
         }

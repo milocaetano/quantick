@@ -159,6 +159,37 @@ fn reopen_on_launch_moves_the_choice_writes_it_and_a_repeat_changes_nothing() {
 }
 
 #[test]
+fn the_reopen_choice_leaves_the_saved_desk_alone() {
+    let (mut app, ctx, directory) = granted("desk-reopen-standing");
+    let mut client = connect(&directory, &options("cockpit", COCKPIT_SCOPES));
+    let before = app.runtime.workspace.session().save_on_exit();
+    let input = json!({ "reopen": !before });
+    let (moved, _) = unkeyed_call(&mut app, &mut client, "desk.reopen_on_launch.set", input);
+    assert_eq!(success_result(&moved)["written"], true);
+    let file = crate::ui_state::load(app.runtime.workspace.ui_state_path());
+    assert_eq!(file.save_on_exit, !before);
+    assert!(
+        file.tabs.is_empty(),
+        "writing the choice did not make what is on screen the startup desk"
+    );
+    disable_test_gateway(&mut app, &ctx);
+}
+
+#[test]
+fn forgetting_with_nothing_saved_says_nothing_changed() {
+    let (mut app, ctx, directory) = granted("desk-forget-nothing");
+    let mut client = connect(&directory, &options("cockpit", COCKPIT_SCOPES));
+    let (answer, _) = unkeyed_call(&mut app, &mut client, "desk.forget", json!({}));
+    assert_eq!(success_result(&answer)["written"], false);
+    let forgotten = journal_kinds(&app)
+        .iter()
+        .filter(|kind| *kind == DESK_FORGOTTEN_EVENT_KIND)
+        .count();
+    assert_eq!(forgotten, 0);
+    disable_test_gateway(&mut app, &ctx);
+}
+
+#[test]
 fn export_and_import_refuse_a_path_before_any_dialog() {
     let (mut app, ctx, directory) = granted("desk-no-path");
     let mut client = connect(&directory, &options("cockpit", COCKPIT_SCOPES));
@@ -179,6 +210,12 @@ fn the_agent_on_pill_is_amber_and_opens_agent_access() {
     assert_eq!(label, "Agent on");
     assert!(painted_text_center(&output, label).is_some());
     assert!(painted_text_center(&output, "agent").is_none());
+    let amber = output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text)
+            if text.galley.text() == label
+                && text.galley.job.sections[0].format.color == crate::theme::AMBER)
+    });
+    assert!(amber, "the pill's words wear amber");
     let pill = app.chrome.title_bar.control_rect("agent").unwrap();
     click_sized(&mut app, &ctx, TEST_WINDOW, pill.center());
     run_frame(&mut app, &ctx);

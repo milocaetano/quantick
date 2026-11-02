@@ -244,8 +244,6 @@ pub enum SceneOwnerKindDto {
     ToolRail,
     /// The right-hand dock.
     Dock,
-    /// The Settings window.
-    Settings,
     /// One open chart tab, owning its panes.
     Tab,
     /// The feed's offline corner, bottom-right of the chart.

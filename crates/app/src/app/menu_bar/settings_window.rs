@@ -28,6 +28,14 @@ const SWITCH_INSET_PX: f32 = 2.0;
 
 /// Draw whichever of the two windows is up.
 pub(super) fn show(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
+    // The window they opened on may have closed since; the root takes them over,
+    // or a call would report a section nobody can see.
+    let owner = app.chrome.window_menu.windows_viewport;
+    let owner_live =
+        owner.is_some_and(|id| ctx.input(|input| input.raw.viewports.contains_key(&id)));
+    if !owner_live && owner.is_some() && ctx.viewport_id() == egui::ViewportId::ROOT {
+        app.chrome.window_menu.windows_viewport = Some(egui::ViewportId::ROOT);
+    }
     if app.chrome.window_menu.windows_viewport != Some(ctx.viewport_id()) {
         return;
     }
@@ -98,8 +106,19 @@ fn draw_row(
                     .color(theme::TEXT_FAINT),
             );
         });
-        row_control(app, ui, row, commands);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            row_control(app, ui, row, commands);
+        });
     });
+    if row == SettingRow::AgentSwitch
+        && let Some(problem) = app
+            .control
+            .control_access
+            .as_ref()
+            .and_then(ControlAccess::problem)
+    {
+        ui.colored_label(theme::WARN, problem);
+    }
 }
 
 fn row_control(
@@ -110,7 +129,7 @@ fn row_control(
 ) {
     match row {
         SettingRow::Appearance => {
-            if ui.button("Open").clicked() {
+            if ui.button(row.label()).clicked() {
                 commands.push(MenuCommand::OpenAppearance);
             }
         }
@@ -165,7 +184,7 @@ fn row_control(
             }
         }
         SettingRow::ManageClients => {
-            if ui.button("Open").clicked() {
+            if ui.button(row.label()).clicked() {
                 commands.push(MenuCommand::OpenAgentAccess);
             }
         }

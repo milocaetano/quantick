@@ -39,7 +39,6 @@ pub(super) mod stack;
 
 mod v2;
 
-
 /// The strip as the control plane reports it — one reading for the layout
 /// calls and `observe.workspace` alike.
 pub(crate) fn layout_tabs<P: LayoutPort + ?Sized>(app: &P) -> Vec<LayoutTabSnapshot> {

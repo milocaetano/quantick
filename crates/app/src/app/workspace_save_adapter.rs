@@ -152,6 +152,14 @@ impl WorkspaceSaveAdapter<'_> {
         );
         saved
     }
+    /// Write the file's standing choices, `save_on_exit` among them, leaving the
+    /// saved arrangement exactly as it was.
+    pub(super) fn write_standing_choices(&mut self) -> bool {
+        let written =
+            self.edit_workspace_file("UI_STATE_STANDING_WRITTEN", DocumentEdit::Bookmarks);
+        self.session.note_write(WritePurpose::Bookmarks, written);
+        written
+    }
     /// Change one standing choice in the workspace file, leaving everything
     /// else in it exactly as it was. `true` when the change reached the disk.
     ///

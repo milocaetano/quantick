@@ -212,11 +212,14 @@ fn reopen<H: DeskHost + ?Sized, A: NotifyAccess>(
         });
     }
     let written = app.desk(DeskAct::SetReopen(reopen))?;
-    let payload = json!({ "reopen": reopen, "written": written });
-    access.record_event(event(DESK_REOPEN_EVENT_KIND, actor, payload));
+    if written {
+        let payload = json!({ "reopen": reopen, "written": true });
+        access.record_event(event(DESK_REOPEN_EVENT_KIND, actor, payload));
+    }
+    // A failed write leaves the old choice in force, so a retry writes again.
     answer(&DeskReopenResult {
-        reopen,
-        changed: true,
+        reopen: if written { reopen } else { !reopen },
+        changed: written,
         written,
     })
 }

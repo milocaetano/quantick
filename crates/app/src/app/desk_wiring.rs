@@ -17,7 +17,11 @@ pub(super) fn apply(app: &mut QuantickApp, act: DeskAct) -> bool {
             true
         }
         DeskAct::Save => app.workspace_save_adapter().save_workspace("control"),
-        DeskAct::Forget => app.workspace_save_adapter().forget_workspace(),
+        // With nothing saved the row is disabled; the call says nothing changed.
+        DeskAct::Forget => {
+            app.runtime.workspace.session().saved()
+                && app.workspace_save_adapter().forget_workspace()
+        }
         DeskAct::PickExport => {
             let free = !app.runtime.workspace.picker_mut().is_open();
             open_export(app);
@@ -48,10 +52,16 @@ pub(super) fn open_export(app: &mut QuantickApp) {
     app.runtime.workspace.picker_mut().open_export(symbol, spec);
 }
 
-/// Change the choice and write it; `true` once it reached the disk.
+/// Change the choice and write only it, leaving the saved desk alone; `true`
+/// once it reached the disk. A failed write takes the choice back, so memory and
+/// the file never disagree and a retry writes again.
 pub(super) fn write_reopen(app: &mut QuantickApp, reopen: bool) -> bool {
     let session = app.runtime.workspace.session_mut();
+    let before = session.save_on_exit();
     session.set_save_on_exit(reopen);
-    app.workspace_save_adapter()
-        .save_workspace("save_on_exit_toggled")
+    let written = app.workspace_save_adapter().write_standing_choices();
+    if !written {
+        app.runtime.workspace.session_mut().set_save_on_exit(before);
+    }
+    written
 }

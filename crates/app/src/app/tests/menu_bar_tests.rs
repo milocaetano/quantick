@@ -189,7 +189,15 @@ fn the_kebab_reads_pressed_while_held_and_while_its_menu_is_open() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     assert!(!app.chrome.title_bar.kebab_pressed);
-    let output = open_menu(&mut app, &ctx);
+    let at = kebab(&app).center();
+    let held = vec![egui::Event::PointerMoved(at), pointer_button(at, true)];
+    run_sized_frame(&mut app, &ctx, TEST_WINDOW, held);
+    assert!(
+        app.chrome.title_bar.kebab_pressed,
+        "held, before any release"
+    );
+    run_sized_frame(&mut app, &ctx, TEST_WINDOW, vec![pointer_button(at, false)]);
+    let output = run_frame(&mut app, &ctx);
     assert!(app.chrome.title_bar.kebab_pressed);
     let rect = kebab(&app);
     let filled = output.shapes.iter().any(|clipped| {
