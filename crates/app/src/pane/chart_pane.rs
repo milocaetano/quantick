@@ -1094,6 +1094,10 @@ impl ChartPane {
         capabilities: FeedCapabilities,
     ) -> Option<HeaderIntent> {
         self.frame.capsules = [None; 2];
+        // Nothing on the chart, nothing to switch: the overlay owns it.
+        if self.slots() == 0 {
+            return None;
+        }
         let chart = self.frame.chart_rect?;
         let top = self.frame.area.map_or(chart.top(), |area| area.top());
         let state = self.flow_header_state();

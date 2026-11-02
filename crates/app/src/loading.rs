@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_chart::connection_state::{Dot, DotLook, OverlayWords};
+use quantick_chart::connection_state::{ATTEMPT_DOT_MS, Dot, DotLook, OverlayWords};
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
 use quantick_chart::logo_shatter::{LogoRun, symbol_seed};
 
@@ -55,6 +55,7 @@ const PULSE_PERIOD_S: f64 = 2.4;
 const PULSE_REPAINT: std::time::Duration = std::time::Duration::from_millis(50);
 /// How often the shattering logo asks for a frame.
 const LOGO_REPAINT: std::time::Duration = std::time::Duration::from_millis(16);
+const DOT_REPAINT: std::time::Duration = std::time::Duration::from_millis(ATTEMPT_DOT_MS as u64);
 
 /// A spinner + `label…` pair added to the current layout, for embedding in
 /// windows and toolbars. Adds two widgets rather than opening its own row, so
@@ -421,6 +422,9 @@ fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>) -> SlotGalleys {
 pub fn draw_slot(ui: &egui::Ui, right: f32, strip: egui::Rect, slot: &Slot<'_>) {
     let layer = egui::LayerId::new(LOADING_ORDER, ui.id().with("loading_slot"));
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(strip);
+    if slot.job && !reduced_motion() {
+        ui.ctx().request_repaint_after(DOT_REPAINT);
+    }
     let (glyph, words) = slot_galleys(ui, slot);
     let width = slot_width(ui, slot);
     let mut x = right - width;

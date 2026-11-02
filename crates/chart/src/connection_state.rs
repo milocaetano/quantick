@@ -32,6 +32,9 @@ pub const CONNECTED_HOLD_MS: i64 = 10_000;
 /// How long after a print the data still counts as flowing, whatever a report
 /// that arrives meanwhile says.
 pub const DATA_FLOWING_MS: i64 = 2_000;
+/// How long each step of the attempt's `.` `..` `...` lasts: the one sign,
+/// besides the logo, that the attempt is doing something.
+pub const ATTEMPT_DOT_MS: i64 = 500;
 /// How long a print keeps answering the report standing over it. Longer than
 /// any thin tape's gap, short enough that a feed which died after that print
 /// is called offline rather than live for hours.
@@ -124,6 +127,16 @@ pub fn next_link(previous: Link, facts: LinkFacts) -> Link {
         Link::Live
     } else {
         Link::Attempting
+    }
+}
+
+/// `.`, `..`, `...` and round again, one step per [`ATTEMPT_DOT_MS`].
+#[must_use]
+fn attempt_dots(elapsed_ms: i64) -> &'static str {
+    match (elapsed_ms.max(0) / ATTEMPT_DOT_MS) % 3 {
+        0 => ".",
+        1 => "..",
+        _ => "...",
     }
 }
 
@@ -619,7 +632,12 @@ impl ConnectionTracker {
     #[must_use]
     pub fn slot(&self, note: Option<&str>) -> Option<(String, bool)> {
         match self.state.current_job {
-            Some(job) => Some((job.text(), true)),
+            // A measured percent moves on its own; words alone get the walk.
+            Some(job) if job.fraction.is_some() => Some((job.text(), true)),
+            Some(job) => {
+                let since = self.observed_ms.unwrap_or(0);
+                Some((format!("{}{}", job.text(), attempt_dots(since)), true))
+            }
             None => note.map(|note| (note.to_owned(), false)),
         }
     }
@@ -658,6 +676,8 @@ impl ConnectionTracker {
     }
 
     /// The overlay's words, or `None` when it is not up. Formats only then.
+    /// The attempt's dots step every [`ATTEMPT_DOT_MS`], so the caller repaints
+    /// at least that often while an attempt is on screen.
     #[must_use]
     pub fn overlay(&self, feed: &str, now_ms: i64) -> Option<OverlayWords> {
         if !self.overlay_up(now_ms) {
@@ -686,7 +706,10 @@ impl ConnectionTracker {
                 } else {
                     "Connecting to"
                 },
-                meta: format!("{feed} · attempting"),
+                meta: format!(
+                    "{feed} · attempting{}",
+                    attempt_dots(now_ms.saturating_sub(self.attempting_since))
+                ),
                 reconnect: false,
             },
             Link::Offline => {
@@ -1403,6 +1426,31 @@ mod tests {
         assert_eq!(run.word(), Some("live"));
     }
 
+    /// The attempt's dots walk `.` `..` `...` and round again, so a trader
+    /// can see the attempt is alive without reading the logo.
+    #[test]
+    fn the_attempt_shows_it_is_alive_with_walking_dots() {
+        let mut run = Run::new();
+        run.step(OVERLAY_DELAY_MS);
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            seen.push(run.overlay().expect("up").meta);
+            run.step(ATTEMPT_DOT_MS);
+        }
+        let dots: Vec<&str> = seen
+            .iter()
+            .map(|meta| meta.trim_start_matches("Binance · attempting"))
+            .collect();
+        let next = |dots: &str| match dots {
+            "." => "..",
+            ".." => "...",
+            _ => ".",
+        };
+        for pair in dots.windows(2) {
+            assert_eq!(pair[1], next(pair[0]), "{dots:?}");
+        }
+    }
+
     #[test]
     fn the_overlay_waits_two_seconds_and_says_what_is_true_in_each_state() {
         let mut run = Run::new();
@@ -1411,7 +1459,11 @@ mod tests {
         run.step(1);
         let words = run.overlay().expect("up");
         assert_eq!(words.verb, "Connecting to");
-        assert_eq!(words.meta, "Binance · attempting");
+        assert!(
+            words.meta.starts_with("Binance · attempting."),
+            "{}",
+            words.meta
+        );
         assert!(!words.reconnect);
 
         run.verdict = FAILED;
@@ -1916,9 +1968,18 @@ mod tests {
         run.jobs.begin(LoadingTask::History);
         run.step(0);
         run.step(SLOT_DELAY_MS);
+        let (text, job) = run.tracker.slot(note).expect("the job speaks");
+        assert!(job);
+        assert!(text.starts_with("loading history."), "{text}");
+        let mut seen = vec![text];
+        for _ in 0..3 {
+            run.step(ATTEMPT_DOT_MS);
+            seen.push(run.tracker.slot(note).expect("still running").0);
+        }
         assert_eq!(
-            run.tracker.slot(note),
-            Some(("loading history".to_owned(), true))
+            seen.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            3,
+            "the dots walk: {seen:?}"
         );
     }
 
