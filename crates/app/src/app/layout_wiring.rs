@@ -38,18 +38,14 @@
 //! frame; when it moved, the set is written into the market store and the
 //! debounced save follows.
 //!
-//! Per-frame cost: one integer compare and two short string compares per
-//! pane, and a flag test per pane for seeding. Nothing here allocates on a
-//! quiet frame.
+//! Per-frame cost: integer and short string compares per pane. Nothing here
+//! allocates on a quiet frame.
 
-use crate::layouts::SavedDrawingExt;
 use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
 use std::time::Instant;
 
 use crate::indicator_worker::{IndicatorCommand, SlotId};
-use crate::layouts::{
-    self, DrawingKey, LayoutBook, LayoutError, LayoutId, Loaded, MarketKey, PaneRole, SavedDrawing,
-};
+use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId};
 use crate::pane::{ChartPane, DrawingDrag, PaneIndex, PaneSide};
 
 use super::TabSlot;
@@ -123,7 +119,7 @@ pub(crate) struct LayoutAdapter<'a> {
 pub(super) fn open_layout_store(config: &crate::config::AppConfig) -> LayoutStore {
     let path = layouts::default_path();
     let (book, blocked) =
-        LayoutAdapter::load_layouts(&path, &crate::indicators::state_file::default_path());
+        layouts::load_or_starter(&path, &crate::indicators::state_file::default_path());
     let config = config.clone();
     let assets =
         std::rc::Rc::new(move |venue: &str, symbol: &str| config.market_asset(venue, symbol));
@@ -176,36 +172,6 @@ impl LayoutAdapter<'_> {
     // ------------------------------------------------------------------
     // Boot and file
     // ------------------------------------------------------------------
-
-    /// Read the layouts file, or migrate the indicator set a cockpit kept
-    /// before layouts existed, or start with one empty layout.
-    ///
-    /// The flag says whether the file may be written back: a file this build
-    /// could not read *and* could not set aside is the trader's only copy,
-    /// and the empty book the session opens on must never be saved over it.
-    pub(super) fn load_layouts(
-        path: &std::path::Path,
-        legacy_indicators: &std::path::Path,
-    ) -> (LayoutBook, bool) {
-        match layouts::load(path) {
-            Loaded::Book(book) => (book, false),
-            Loaded::Refused { set_aside, .. } => (LayoutBook::default(), !set_aside),
-            Loaded::Missing => {
-                let legacy = crate::indicators::state_file::load(legacy_indicators);
-                if !legacy.is_empty() {
-                    tracing::info!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "LAYOUTS_MIGRATED",
-                        indicators = legacy.len(),
-                        action = "indicator_state_moved_into_layout_1",
-                        "the indicator set became Layout 1"
-                    );
-                }
-                (LayoutBook::starter(legacy), false)
-            }
-        }
-    }
 
     /// The book, for the strip, the menu and the control plane to read.
     pub(crate) fn layouts(&self) -> &LayoutBook {
@@ -694,19 +660,9 @@ impl LayoutAdapter<'_> {
     fn drawing_key(&self, tab: u64, side: PaneSide) -> Option<DrawingKey> {
         let pane = self.pane_at(tab, side)?;
         let (venue, symbol) = Self::market_of(self.tabs.by_id(tab)?);
-        Some(DrawingKey {
-            market: MarketKey {
-                venue: venue.to_owned(),
-                asset: self.store.market().asset(venue, symbol),
-            },
-            role: if side == PaneSide::Flow {
-                PaneRole::Flow
-            } else {
-                PaneRole::Context {
-                    bars: pane.state.spec().to_config_string(),
-                }
-            },
-        })
+        let bars = (side != PaneSide::Flow).then(|| pane.state.spec().to_config_string());
+        let asset = self.store.market().asset(venue, symbol);
+        Some(DrawingKey::of_pane(venue, asset, bars))
     }
 
     /// Serialise what a pane holds into the market store under the key the pane
@@ -721,19 +677,9 @@ impl LayoutAdapter<'_> {
             pane.drawings.take_all();
             return;
         };
-        let items: Vec<SavedDrawing> = pane
-            .drawings
-            .take_all()
-            .iter()
-            .map(SavedDrawing::from_drawing)
-            .collect();
+        let marks = pane.drawings.take_all();
         pane.layout.saved_revision = pane.drawings.revision();
-        self.store
-            .market_mut()
-            .settings_mut()
-            .replace(&key, items, |tool| {
-                crate::drawings::DrawingTool::by_id(tool).is_some()
-            });
+        quantick_drawings::store_marks(self.store.market_mut().settings_mut(), &key, &marks);
     }
 
     /// Adopt the drawings of the pane's current market and role. A context
@@ -742,35 +688,13 @@ impl LayoutAdapter<'_> {
         let Some(key) = self.drawing_key(tab, side) else {
             return;
         };
-        if let PaneRole::Context { bars } = &key.role
-            && self
-                .store
-                .market_mut()
-                .settings_mut()
-                .claim_slot(&key.market, side.index(), bars)
-        {
+        let market = self.store.market_mut();
+        if market.settings_mut().claim_for(&key, side.index()) {
             self.mark_market_dirty();
         }
-        let source = self.tabs.by_id(tab).map(|tab| Self::market_of(tab));
+        let source = self.tabs.by_id(tab).map(Self::market_of);
         let source = source.map(|(venue, symbol)| (venue.to_owned(), symbol.to_owned()));
-        let saved = self.store.market().settings().drawings(&key);
-        let mut items: Vec<crate::drawings::Drawing> = Vec::with_capacity(saved.len());
-        for entry in saved {
-            match entry.to_drawing(crate::drawings::DrawingId(entry.id.unwrap_or(0))) {
-                Some(drawing) => items.push(drawing),
-                None => tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "LAYOUT_DRAWING_TOOL_UNKNOWN",
-                    tool = %entry.tool,
-                    venue = %key.market.venue,
-                    asset = %key.market.asset,
-                    role = ?key.role,
-                    action = "kept_in_file_not_drawn",
-                    "a saved drawing uses a tool this build does not have"
-                ),
-            }
-        }
+        let items = quantick_drawings::live_marks(self.store.market().settings(), &key);
         let Some(pane) = self.pane_mut_at(tab, side) else {
             return;
         };
@@ -802,16 +726,8 @@ impl LayoutAdapter<'_> {
                 let (feed, symbol) = Self::market_of(tab);
                 tab.panes()
                     .filter(move |(pane, side)| {
-                        let moved = pane
-                            .layout
-                            .drawings_source
-                            .as_ref()
-                            .is_some_and(|held| held.0 != feed || held.1 != symbol);
-                        let recut = *side != PaneSide::Flow
-                            && pane.layout.drawings_spec != Some(*pane.state.spec());
-                        pane.layout_seeded()
-                            && pane.layout.drawings_key.is_some()
-                            && (moved || recut)
+                        let bars = (*side != PaneSide::Flow).then(|| pane.state.spec());
+                        pane.layout.needs_rekey(feed, symbol, bars)
                     })
                     .map(move |(_, side)| (tab_id, side))
             })
@@ -846,19 +762,9 @@ impl LayoutAdapter<'_> {
             let Some(key) = pane.layout.drawings_key.clone() else {
                 continue;
             };
-            let items: Vec<SavedDrawing> = pane
-                .drawings
-                .items()
-                .iter()
-                .map(SavedDrawing::from_drawing)
-                .collect();
             pane.layout.saved_revision = pane.drawings.revision();
-            self.store
-                .market_mut()
-                .settings_mut()
-                .replace(&key, items, |tool| {
-                    crate::drawings::DrawingTool::by_id(tool).is_some()
-                });
+            let marks = pane.drawings.items().to_vec();
+            quantick_drawings::store_marks(self.store.market_mut().settings_mut(), &key, &marks);
             self.mark_market_dirty();
             // Two panes on one market and role show one set of drawings: the
             // other pane holding this key is brought to what was just written, rather than keeping a

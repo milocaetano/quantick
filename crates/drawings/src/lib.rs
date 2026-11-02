@@ -58,7 +58,6 @@ pub use family::{
 };
 pub use geometry::{distance_to_segment, level_with, off_line_by, pos2, unit_normal, vec2};
 mod saved;
-pub use saved::SavedDrawingExt;
 pub use object::{
     ChartPoint, DeleteOutcome, Drawing, DrawingAuthor, DrawingBand, DrawingId, DrawingScope,
     Duplicated, NewDrawing, PaneKey,
@@ -66,6 +65,7 @@ pub use object::{
 pub use payload::{DrawingPayload, NoPayload};
 pub use placement::reanchor_points;
 pub use rect::{Align, Align2, PxRange, PxRect};
+pub use saved::{SavedDrawingExt, live_marks, store_marks};
 pub use scene::{
     FontFamily, FontSpec, MarkScene, MarkShape, Stroke, TextMetrics, UNMEASURED, Unmeasured,
     dashed_segment_within,

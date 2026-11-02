@@ -55,7 +55,7 @@ impl LayoutAdapter<'_> {
             );
             (LayoutBook::starter(set), false)
         } else {
-            Self::load_layouts(self.store.path(), &legacy)
+            layouts::load_or_starter(self.store.path(), &legacy)
         };
         let layouts_path = self.store.path().to_owned();
         let market_kept_back = market_settings::reload(

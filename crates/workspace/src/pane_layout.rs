@@ -40,6 +40,20 @@ impl<Bars> PaneLayout<Bars> {
     pub fn seeded(&self) -> bool {
         self.view.seeded()
     }
+    /// Whether the held drawings no longer belong on this pane: the tab left
+    /// the feed and symbol they were resolved from, or a context chart
+    /// (`context_bars`) left their bars. Compares; allocates nothing.
+    pub fn needs_rekey(&self, feed: &str, symbol: &str, context_bars: Option<&Bars>) -> bool
+    where
+        Bars: PartialEq,
+    {
+        let moved = self
+            .drawings_source
+            .as_ref()
+            .is_some_and(|held| held.0 != feed || held.1 != symbol);
+        let recut = context_bars.is_some_and(|bars| self.drawings_spec.as_ref() != Some(bars));
+        self.seeded() && self.drawings_key.is_some() && (moved || recut)
+    }
     pub fn drawings_dirty(&self, revision: u64) -> bool {
         self.drawings_key.is_some() && revision != self.saved_revision
     }
@@ -58,5 +72,18 @@ mod tests {
         assert_eq!(pane.layout_id(), None);
         assert!(!pane.seeded());
         assert!(!pane.drawings_dirty(3));
+    }
+
+    #[test]
+    fn an_unkeyed_pane_never_asks_for_a_new_key() {
+        let pane = PaneLayout::<u32> {
+            drawings_source: Some(("f".to_owned(), "s".to_owned())),
+            drawings_spec: Some(1),
+            ..PaneLayout::default()
+        };
+        assert!(
+            !pane.needs_rekey("other", "s", Some(&2)),
+            "not seeded, no key"
+        );
     }
 }

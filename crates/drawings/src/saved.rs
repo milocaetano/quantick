@@ -5,6 +5,7 @@ use crate::{
     DrawingTool, PaneKey,
 };
 use quantick_workspace::layout_document::{SavedAuthor, SavedBand, SavedDrawing, SavedPoint};
+use quantick_workspace::market_settings::{DrawingKey, MarketSettings};
 
 pub trait SavedDrawingExt {
     #[must_use]
@@ -116,4 +117,39 @@ impl SavedDrawingExt for SavedDrawing {
             payload,
         })
     }
+}
+
+/// Write a pane's marks under `key`. Entries of a tool this build lacks stay.
+pub fn store_marks(
+    settings: &mut MarketSettings,
+    key: &DrawingKey,
+    marks: &[Drawing<DrawingTool>],
+) {
+    let items = marks.iter().map(SavedDrawing::from_drawing).collect();
+    settings.replace(key, items, |tool| DrawingTool::by_id(tool).is_some());
+}
+
+/// The live marks of `key`. An entry of a tool this build lacks stays in the
+/// file and draws nothing.
+#[must_use]
+pub fn live_marks(settings: &MarketSettings, key: &DrawingKey) -> Vec<Drawing<DrawingTool>> {
+    let saved = settings.drawings(key);
+    let mut items = Vec::with_capacity(saved.len());
+    for entry in saved {
+        match entry.to_drawing(DrawingId(entry.id.unwrap_or(0))) {
+            Some(drawing) => items.push(drawing),
+            None => tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "LAYOUT_DRAWING_TOOL_UNKNOWN",
+                tool = %entry.tool,
+                venue = %key.market.venue,
+                asset = %key.market.asset,
+                role = ?key.role,
+                action = "kept_in_file_not_drawn",
+                "a saved drawing uses a tool this build does not have"
+            ),
+        }
+    }
+    items
 }

@@ -107,6 +107,34 @@ pub fn save(path: &Path, book: &LayoutBook) {
     }
 }
 
+/// Read the layouts file, or migrate the indicator set a cockpit kept before
+/// layouts existed, or start with one empty layout.
+///
+/// The flag says whether the file must not be written back: a file this build
+/// could not read *and* could not set aside is the trader's only copy, and the
+/// empty book the session opens on must never be saved over it.
+#[must_use]
+pub fn load_or_starter(path: &Path, legacy_indicators: &Path) -> (LayoutBook, bool) {
+    match load(path) {
+        Loaded::Book(book) => (book, false),
+        Loaded::Refused { set_aside, .. } => (LayoutBook::default(), !set_aside),
+        Loaded::Missing => {
+            let legacy = crate::indicator_state::load(legacy_indicators);
+            if !legacy.is_empty() {
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LAYOUTS_MIGRATED",
+                    indicators = legacy.len(),
+                    action = "indicator_state_moved_into_layout_1",
+                    "the indicator set became Layout 1"
+                );
+            }
+            (LayoutBook::starter(legacy), false)
+        }
+    }
+}
+
 /// Carry out what the commit policy decided, which owns the debounce and the
 /// blocked condition and has consumed the pending change before this runs.
 pub fn act_on(path: &Path, book: &LayoutBook, decision: LayoutSave) {

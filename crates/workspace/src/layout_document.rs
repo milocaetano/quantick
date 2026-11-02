@@ -1,4 +1,37 @@
 //! Layout documents and compatibility rules, independent of chart runtime and storage.
+//!
+//! Layout tabs: named sets of indicators and drawings a chart pane switches
+//! between — the strip along the bottom of the canvas, acting on the focused
+//! pane. Two panes may show two layouts side by side.
+//!
+//! A trader keeps more than one way of reading a market. One layout holds
+//! the moving averages and the session profile; another holds nothing but
+//! the levels drawn by hand; a third is the one for the open. The strip
+//! keeps them a click apart, and the file keeps them across launches, so a
+//! set of indicators is placed once and never again.
+//!
+//! **Two scopes, deliberately different.** A layout's *indicators* are shared
+//! by every pane of every open market: the moment the layout holding `EMA
+//! 20` is active, every chart shows an `EMA 20` computed over its own bars.
+//! *Drawings* are not the layout's at all: a level belongs to its market,
+//! whichever layout shows it, and is kept in the market store under
+//! `DrawingKey`: venue, asset and pane role
+//! ([`crate::market_settings`]). A drawing marked "show on all
+//! charts" is stored once, under the role it was drawn on, and mirrored onto
+//! the other panes of that market by the tab.
+//!
+//! **The layout is the source of truth; panes materialise it.** The app
+//! holds one [`LayoutBook`] and keeps every pane's indicator set equal to the
+//! active layout's, so "add an indicator" is one edit here and a fan-out to
+//! the panes, never a per-pane collection that drifts. Autosaved, debounced,
+//! off the frame path, into one file in the cockpit home that travels in the
+//! workspace bundle.
+//!
+//! **Migration.** The layouts file replaces `indicators-state.toml`, which
+//! remembered one tab's flow pane. A cockpit that has the old file and not
+//! this one opens with its set inside "Layout 1", so nobody loses the
+//! indicators they had.
+//!
 use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 
@@ -242,7 +275,9 @@ impl LayoutBook {
     /// Whether an old file left drawings in any layout.
     #[must_use]
     pub fn has_legacy_drawings(&self) -> bool {
-        self.layouts.iter().any(|layout| !layout.drawings.is_empty())
+        self.layouts
+            .iter()
+            .any(|layout| !layout.drawings.is_empty())
     }
 
     /// Take every drawing an old file left in the layouts, in strip and file

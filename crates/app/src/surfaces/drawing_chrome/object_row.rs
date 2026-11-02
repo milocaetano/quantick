@@ -23,7 +23,10 @@ impl ManagerRow {
             shared: drawing.scope == DrawingScope::AllCharts,
             off_series: drawing.off_series,
             foreign_market: drawing.foreign_market,
-            origin: drawing.origin.as_ref().map(crate::layouts::SavedOrigin::label),
+            origin: drawing
+                .origin
+                .as_ref()
+                .map(crate::layouts::SavedOrigin::label),
             author: drawing.author.as_ref().map(DrawingAuthor::label),
             band,
         }

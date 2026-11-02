@@ -222,7 +222,7 @@ on today's model; phase 3 is the model change.
 |---|---|---|
 | 1 | Undecorated window; tab strip in the title bar with drawn window controls and drag region; `⋮` with today's entries regrouped (Workspace, Panels, Desk, Help); Agent pill; clickable clock; View stays until chart-identity ships | S |
 | 2 | Settings window with sections; one command registry behind menu, right-click and `>` palette | M |
-| 3 | Drawings and anchored studies move to a per-market store keyed by asset + venue, panes addressed by role; migration with golden fixtures; old bundle exports still import | L |
+| 3 | Drawings and anchored studies move to a per-market store keyed by asset + venue, panes addressed by role; migration with golden fixtures; old bundle exports still import  Built: `market-settings.toml`, `crates/workspace/src/market_settings.rs`. A layout switch no longer touches drawings; two context charts on one bar rule show one set; a legacy context pane index waits as `context-slot:N` until the pane at that address claims it | L |
 | 4 | Workspace per tab: `SavedTab` gains a workspace id and its own unsaved state; the "this tab" row control; tab title suffix; save bar; palette selectors; first-launch migration seeds one workspace per open tab, named "from WINZ26" and deduplicated, so nothing changes on screen on day one | L |
 | 5 | Tab tear-off by drag into its own window; closing it returns the tab | M |
 

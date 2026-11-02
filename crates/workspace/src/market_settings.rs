@@ -87,6 +87,20 @@ pub struct DrawingKey {
     pub role: PaneRole,
 }
 
+impl DrawingKey {
+    /// The key of a pane: the flow chart, or a context chart at `context_bars`.
+    #[must_use]
+    pub fn of_pane(venue: &str, asset: String, context_bars: Option<String>) -> Self {
+        Self {
+            market: MarketKey {
+                venue: venue.to_owned(),
+                asset,
+            },
+            role: context_bars.map_or(PaneRole::Flow, |bars| PaneRole::Context { bars }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct DrawingSet {
     venue: String,
@@ -213,6 +227,14 @@ impl MarketSettings {
             self.push_renumbered(&claimed, item);
         }
         true
+    }
+
+    /// [`Self::claim_slot`] for the pane about to show `key` from address `slot`.
+    pub fn claim_for(&mut self, key: &DrawingKey, slot: usize) -> bool {
+        match &key.role {
+            PaneRole::Context { bars } => self.claim_slot(&key.market, slot, bars),
+            _ => false,
+        }
     }
 
     /// Move every drawing a layout book still holds into this store, each

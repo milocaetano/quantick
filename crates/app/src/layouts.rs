@@ -1,55 +1,28 @@
-//! Layout tabs: named sets of indicators and drawings a chart pane switches
-//! between — the strip along the bottom of the canvas, acting on the focused
-//! pane. Two panes may show two layouts side by side.
-//!
-//! A trader keeps more than one way of reading a market. One layout holds
-//! the moving averages and the session profile; another holds nothing but
-//! the levels drawn by hand; a third is the one for the open. The strip
-//! keeps them a click apart, and the file keeps them across launches, so a
-//! set of indicators is placed once and never again.
-//!
-//! **Two scopes, deliberately different.** A layout's *indicators* are shared
-//! by every pane of every open market: the moment the layout holding `EMA
-//! 20` is active, every chart shows an `EMA 20` computed over its own bars.
-//! *Drawings* are not the layout's at all: a level belongs to its market,
-//! whichever layout shows it, and is kept in the market store under
-//! [`DrawingKey`]: venue, asset and pane role
-//! ([`quantick_workspace::market_settings`]). A drawing marked "show on all
-//! charts" is stored once, under the role it was drawn on, and mirrored onto
-//! the other panes of that market by the tab.
-//!
-//! **The layout is the source of truth; panes materialise it.** The app
-//! holds one [`LayoutBook`] and keeps every pane's indicator set equal to the
-//! active layout's, so "add an indicator" is one edit here and a fan-out to
-//! the panes, never a per-pane collection that drifts. Autosaved, debounced,
-//! off the frame path, into one file in the cockpit home that travels in the
-//! workspace bundle.
-//!
-//! **Migration.** The layouts file replaces `indicators-state.toml`, which
-//! remembered one tab's flow pane. A cockpit that has the old file and not
-//! this one opens with its set inside "Layout 1", so nobody loses the
-//! indicators they had.
-//!
-//! The headless document owner is `quantick_workspace`; this module adapts
-//! runtime drawings and resolves the path for `quantick_stores::layouts`.
+//! Where the layouts and market files live, and the names the app reads them by.
+//! The documents and their rules are `quantick_workspace` and `quantick_stores`.
 
 use std::path::PathBuf;
 
+#[cfg(test)]
 pub(crate) use quantick_drawings::SavedDrawingExt;
 
 #[cfg(test)]
 pub(crate) use quantick_stores::layouts::save;
-pub(crate) use quantick_stores::layouts::{LAYOUTS_FILE, Loaded, act_on, load, validate};
+pub(crate) use quantick_stores::layouts::{LAYOUTS_FILE, act_on, load_or_starter, validate};
+#[cfg(test)]
+pub(crate) use quantick_stores::layouts::{Loaded, load};
 pub(crate) use quantick_stores::market_settings::MARKET_SETTINGS_FILE;
 #[cfg(test)]
 use quantick_workspace::layout_document::parse;
 pub use quantick_workspace::layout_document::{
-    ChartLayout, LayoutBook, LayoutError, LayoutId, MAX_LAYOUT_NAME, MAX_LAYOUTS, SavedDrawing,
-    SavedOrigin, clean_name,
+    ChartLayout, LayoutBook, LayoutError, LayoutId, MAX_LAYOUT_NAME, MAX_LAYOUTS, SavedOrigin,
+    clean_name,
 };
 #[cfg(test)]
-pub(crate) use quantick_workspace::layout_document::{SavedBand, SavedPoint};
-pub use quantick_workspace::market_settings::{DrawingKey, MarketKey, PaneRole};
+pub(crate) use quantick_workspace::layout_document::{SavedBand, SavedDrawing, SavedPoint};
+pub use quantick_workspace::market_settings::DrawingKey;
+#[cfg(test)]
+pub(crate) use quantick_workspace::market_settings::{MarketKey, PaneRole};
 
 /// The layouts file this cockpit opens with and writes back to.
 #[must_use]
