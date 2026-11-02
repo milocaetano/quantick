@@ -98,7 +98,7 @@ fn a_tape_with_nothing_coming_holds_its_window_until_the_link_or_a_print_frees_i
     let hold = |tab: &mut crate::tab::Tab, link| {
         let pane = &mut tab.flow_pane;
         let view = pane.orderflow.as_mut().unwrap();
-        view.hold_tape_window(link, &pane.state);
+        view.hold_tape_window(Some(link), &pane.state);
     };
 
     tab.update_tape_clock_at(11_000);

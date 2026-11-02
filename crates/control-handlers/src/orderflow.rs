@@ -1,7 +1,7 @@
 //! Order-flow projections — the book, the tape, and the three layers drawn
 //! over them.
 //!
-//! Five scopes under one owner module. Every one of them reads the frame the
+//! Six scopes under one owner module. Every one of them reads the frame the
 //! application last published and nothing else: a capture never asks the book
 //! worker for fresh state, because one requested scope must not advance
 //! another scope underneath the same capture, and never rebuilds a projection,
@@ -21,8 +21,9 @@
 //!
 //! The window hands each pane over through [`OrderflowPane`]: its footprint
 //! setup, its opening-scale rule, and — where it has one — its engine's
-//! published frame as [`OrderflowEngine`]. Everything the five scopes decide
-//! from those is here.
+//! published frame as [`OrderflowEngine`]. Everything the scopes decide from
+//! those is here. The sixth, the settings panel's state, reads the tab and not
+//! a pane, painted or not.
 
 pub use quantick_control_schema::orderflow::*;
 
@@ -34,6 +35,9 @@ use quantick_control::{
 use quantick_control_host::{
     projection::{CaptureContext, ProjectionRegistryError},
     wire::{AvailabilitySnapshot, PaneSideDto, available, unavailable},
+};
+use quantick_control_schema::orderflow_settings::{
+    AssetFolds, OrderFlowPanel, SETTINGS_SCOPE_ID, SettingsSnapshot, TabSettingsSnapshot,
 };
 use quantick_orderflow::{
     HeatmapConfig,
@@ -61,6 +65,8 @@ pub trait OrderflowEngine {
     fn health(&self) -> &OrderflowHealth;
     /// Where the live lane ends, when the tape knows.
     fn live_end_ms(&self) -> Option<i64>;
+    /// Where a hold has stopped the heat while the book goes on arriving.
+    fn book_held_at_ms(&self) -> Option<i64>;
     /// The bubble layer as the bubble scope reports it.
     fn bubbles(&self) -> BubblesStateSnapshot;
     /// The flow execution's published frame, when one is drawn.
@@ -85,6 +91,9 @@ pub trait OrderflowPane {
     fn engine(&self) -> Option<&dyn OrderflowEngine>;
 }
 
+/// What sees each tab's panel: its id, its asset, its panel, the window's folds.
+pub type PanelVisit<'a> = dyn FnMut(u64, &str, &OrderFlowPanel, &AssetFolds) + 'a;
+
 /// One pane with the side it sits on.
 pub struct OrderflowPaneEntry<'a> {
     pub side: PaneSideDto,
@@ -95,9 +104,12 @@ pub struct OrderflowPaneEntry<'a> {
 pub trait OrderflowPort {
     /// Visit every tab in screen order with its panes in the tab's order.
     fn visit_orderflow_tabs(&self, visit: &mut dyn FnMut(u64, &[OrderflowPaneEntry<'_>]));
+    /// Visit every tab in screen order with the asset it shows, its order-flow
+    /// panel and the window's section folds, whatever was painted.
+    fn visit_orderflow_panels(&self, visit: &mut PanelVisit<'_>);
 }
 
-/// Dock the order-flow module and its five scopes.
+/// Dock the order-flow module and its six scopes.
 pub fn register<D, H>(registry: &mut D) -> Result<(), ProjectionRegistryError>
 where
     D: ProjectionDock<H>,
@@ -150,12 +162,21 @@ where
     )?;
     registry.register_scope(
         SnapshotScopeId::new(L2_SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
+        module_id.clone(),
         SCHEMA_VERSION,
         "Order book",
         "Reports the published book around the spread: best bid and ask, the clipped ladders, and the capture state.",
         &["observe", "observe.orderflow", "observe.market"],
         project_l2::<H>,
+    )?;
+    registry.register_scope(
+        SnapshotScopeId::new(SETTINGS_SCOPE_ID).expect("static scope ID is valid"),
+        module_id,
+        SCHEMA_VERSION,
+        "Order-flow settings panel",
+        "Reports whether each tab's order-flow settings panel is open and which of its sections the tab's asset keeps open, whether or not the panel was painted.",
+        &["observe", "observe.orderflow"],
+        project_settings::<H>,
     )
 }
 
@@ -178,8 +199,10 @@ where
 /// averages. What this tracks is a change a person made or a connection
 /// underwent: a layer switched, a grouping changed, a setup edited, the
 /// capture state moving between disabled, syncing and live.
-fn revision<P: OrderflowPort + ?Sized>(app: &P) -> Vec<OrderflowRevisionKey> {
-    per_tab(app, |tab_id, panes| OrderflowRevisionKey {
+fn revision<P: OrderflowPort + ?Sized>(
+    app: &P,
+) -> (Vec<OrderflowRevisionKey>, Vec<TabSettingsSnapshot>) {
+    let engines = per_tab(app, |tab_id, panes| OrderflowRevisionKey {
         tab_id,
         panes: panes
             .iter()
@@ -191,13 +214,37 @@ fn revision<P: OrderflowPort + ?Sized>(app: &P) -> Vec<OrderflowRevisionKey> {
                     footprint_overridden: pane.footprint_overridden(),
                     footprint_setup: format!("{:?}", pane.footprint_config()),
                     engine: pane.engine().map(|view| {
-                        let (status, _ladder, grouping, _gaps) = view.book();
+                        let (status, _ladder, grouping, gaps) = view.book();
                         EngineRevisionKey::from_config(view.config(), status, grouping)
+                            .with_book(gaps, view.book_held_at_ms())
                     }),
                 }
             })
             .collect(),
-    })
+    });
+    (engines, settings_rows(app))
+}
+
+fn settings_rows<P: OrderflowPort + ?Sized>(app: &P) -> Vec<TabSettingsSnapshot> {
+    let mut rows = Vec::new();
+    app.visit_orderflow_panels(&mut |tab_id, asset, panel, folds| {
+        rows.push(TabSettingsSnapshot::read(
+            WireU64::new(tab_id),
+            asset,
+            panel,
+            folds,
+        ));
+    });
+    rows
+}
+
+fn project_settings<P: OrderflowPort + ?Sized>(
+    app: &P,
+    _context: CaptureContext,
+) -> SettingsSnapshot {
+    SettingsSnapshot {
+        tabs: settings_rows(app),
+    }
 }
 
 fn project_tape<P: OrderflowPort + ?Sized>(app: &P, context: CaptureContext) -> TapeSnapshot {
@@ -306,6 +353,7 @@ fn heatmap_state(view: &dyn OrderflowEngine) -> HeatmapStateSnapshot {
     let (_status, _ladder, grouping, gaps) = view.book();
     HeatmapStateSnapshot {
         gaps: quantick_control_schema::orderflow::book_gap_rows(gaps),
+        book_held_at_unix_ms: view.book_held_at_ms(),
         ..HeatmapStateSnapshot::from_config(view.config(), grouping)
     }
 }
@@ -340,5 +388,137 @@ fn engine_availability(pane: &dyn OrderflowPane) -> AvailabilitySnapshot {
         available()
     } else {
         unavailable(NO_ENGINE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quantick_control_schema::orderflow_settings::PanelSection;
+    use quantick_orderflow::projection::GapPrimitive;
+    use std::cell::Cell;
+
+    /// One tab with one pane, on the facts these tests move.
+    #[derive(Default)]
+    struct Fake {
+        config: HeatmapConfig,
+        status: Option<CaptureStatus>,
+        footprint: FootprintConfig,
+        gaps: Vec<GapPrimitive>,
+        held: Cell<Option<i64>>,
+        panel: OrderFlowPanel,
+        folds: AssetFolds,
+    }
+
+    impl OrderflowEngine for Fake {
+        fn config(&self) -> &HeatmapConfig {
+            &self.config
+        }
+        fn book(
+            &self,
+        ) -> (
+            &CaptureStatus,
+            Option<&BookLadder>,
+            rust_decimal::Decimal,
+            &[GapPrimitive],
+        ) {
+            let status = self.status.as_ref().expect("the fake has a status");
+            (status, None, rust_decimal::Decimal::ONE, &self.gaps)
+        }
+        fn health(&self) -> &OrderflowHealth {
+            unreachable!("the revision and these scopes read no health")
+        }
+        fn live_end_ms(&self) -> Option<i64> {
+            None
+        }
+        fn book_held_at_ms(&self) -> Option<i64> {
+            self.held.get()
+        }
+        fn bubbles(&self) -> BubblesStateSnapshot {
+            unreachable!("the revision and these scopes read no bubbles")
+        }
+        fn flow_execution(&self) -> Option<FlowExecutionSnapshot> {
+            None
+        }
+    }
+
+    impl OrderflowPane for Fake {
+        fn pane_id(&self) -> u64 {
+            7
+        }
+        fn footprint_visible(&self) -> bool {
+            false
+        }
+        fn footprint_overridden(&self) -> bool {
+            false
+        }
+        fn footprint_config(&self) -> &FootprintConfig {
+            &self.footprint
+        }
+        fn opening_scale(&self) -> OpeningScaleSnapshot {
+            unreachable!("the revision and these scopes read no opening scale")
+        }
+        fn tape_age_at(&self, _now_ms: i64) -> Option<i64> {
+            None
+        }
+        fn engine(&self) -> Option<&dyn OrderflowEngine> {
+            Some(self)
+        }
+    }
+
+    impl OrderflowPort for Fake {
+        fn visit_orderflow_tabs(&self, visit: &mut dyn FnMut(u64, &[OrderflowPaneEntry<'_>])) {
+            let side = PaneSideDto::Flow;
+            visit(1, &[OrderflowPaneEntry { side, pane: self }]);
+        }
+        fn visit_orderflow_panels(&self, visit: &mut PanelVisit<'_>) {
+            visit(1, "WIN", &self.panel, &self.folds);
+        }
+    }
+
+    fn fake() -> Fake {
+        Fake {
+            status: Some(CaptureStatus::Connecting),
+            ..Fake::default()
+        }
+    }
+
+    #[test]
+    fn the_revision_moves_with_the_books_gaps_and_a_held_book() {
+        let mut port = fake();
+        let before = revision(&port);
+        assert!(before == revision(&port));
+        port.gaps.push(GapPrimitive {
+            from_generation: None,
+            to_generation: None,
+            x0: 0.0,
+            x1: 0.1,
+            reason: "sequence_gap".to_owned(),
+        });
+        let gapped = revision(&port);
+        assert!(gapped != before, "a gap the heatmap scope reports");
+        port.held.set(Some(5_000));
+        assert!(revision(&port) != gapped, "a book held");
+    }
+
+    #[test]
+    fn the_settings_scope_reads_the_tab_and_the_revision_moves_with_it() {
+        let mut port = fake();
+        let before = revision(&port);
+        port.panel.open_on(None);
+        port.folds.set("WIN", PanelSection::L2, false);
+        assert!(revision(&port) != before);
+        let rows = settings_rows(&port);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].asset, "WIN");
+        assert!(rows[0].open && !rows[0].l2_open && rows[0].bubbles_open);
+    }
+
+    #[test]
+    fn the_heatmap_scope_carries_the_book_held() {
+        let port = fake();
+        assert_eq!(heatmap_state(&port).book_held_at_unix_ms, None);
+        port.held.set(Some(5_000));
+        assert_eq!(heatmap_state(&port).book_held_at_unix_ms, Some(5_000));
     }
 }

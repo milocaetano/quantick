@@ -181,6 +181,12 @@ impl Book {
         }
     }
 
+    /// The book's dot where it is drawn; [`Self::Off`] where it is not.
+    #[must_use]
+    pub fn when_drawn(drawn: bool, status: &CaptureStatus) -> Self {
+        if drawn { Self::of(status) } else { Self::Off }
+    }
+
     const fn is_settled_ok(self) -> bool {
         matches!(self, Self::Synced | Self::Off)
     }
@@ -745,10 +751,11 @@ impl ConnectionTracker {
 
     /// The one muted line in the empty part of a tape with nothing coming: the
     /// overlay's headline and no more (§8.1 of the design model). `None` while
-    /// the link says something is, or may be, coming.
+    /// the link says something is, or may be, coming. Reads the link as it is
+    /// spoken, so a blip keeps these words as it keeps the overlay's.
     #[must_use]
-    pub fn seam_line(&self, symbol: &str) -> Option<String> {
-        let verb = match self.state.link {
+    pub fn seam_line(&self, symbol: &str, now_ms: i64) -> Option<String> {
+        let verb = match self.spoken_link(now_ms)? {
             Link::Quiet => NO_TRADES_VERB,
             Link::Offline => NO_CONNECTION_VERB,
             Link::Live | Link::Attempting | Link::NoTransport => return None,
@@ -903,6 +910,10 @@ mod tests {
     }
 
     impl Run {
+        fn seam(&self) -> Option<String> {
+            self.tracker.seam_line("WIN", self.now)
+        }
+
         fn new() -> Self {
             let mut run = Self {
                 tracker: ConnectionTracker::new(),
@@ -1386,23 +1397,63 @@ mod tests {
     #[test]
     fn the_seam_says_the_overlays_headline_and_only_when_closed() {
         let mut run = Run::new();
-        assert_eq!(run.tracker.seam_line("WIN"), None, "still attempting");
+        assert_eq!(run.seam(), None, "still attempting");
         run.offline();
-        assert_eq!(
-            run.tracker.seam_line("WIN").as_deref(),
-            Some("No connection to WIN")
-        );
+        assert_eq!(run.seam().as_deref(), Some("No connection to WIN"));
         let mut run = Run::new();
         run.transport = Transport::Connected;
         run.verdict = Verdict::Quiet;
         run.step(1);
-        assert_eq!(
-            run.tracker.seam_line("WIN").as_deref(),
-            Some("No trades on WIN")
-        );
+        assert_eq!(run.seam().as_deref(), Some("No trades on WIN"));
         run.verdict = Verdict::None;
         run.step(1);
-        assert_eq!(run.tracker.seam_line("WIN"), None, "live");
+        assert_eq!(run.seam(), None, "live");
+    }
+
+    /// A transport blip under a quiet tape keeps the seam's words and its held
+    /// window; under a live one it leaves the window alone. Standing, it is spoken.
+    #[test]
+    fn a_blip_neither_blinks_the_seam_nor_rewinds_a_live_tape() {
+        let held = |run: &Run| {
+            let mut state = crate::state::ChartState::new(quantick_engine::BarSpec::Tick(100));
+            state.ingest_live(&quantick_engine::Trade {
+                agg_id: 1,
+                timestamp_ms: 100_000,
+                price: 100.into(),
+                quantity: 1.into(),
+                side: quantick_engine::Side::Buy,
+            });
+            let spoken = run.tracker.spoken_link(run.now);
+            crate::market_fold::tape_hold(spoken, &state, || 15_000).is_some()
+        };
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.verdict = Verdict::Quiet;
+        run.step(1);
+        assert!(held(&run));
+        run.transport = Transport::Reconnecting;
+        run.verdict = Verdict::None;
+        run.step(0);
+        run.step(BLIP_MS - 1);
+        assert_eq!(run.link(), Link::Attempting);
+        assert_eq!(run.seam().as_deref(), Some("No trades on WIN"), "the blip");
+        assert!(held(&run));
+        run.step(1);
+        assert_eq!(run.seam(), None, "standing, nothing to say");
+        assert!(held(&run));
+
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.step(1);
+        assert_eq!(run.link(), Link::Live);
+        assert!(!held(&run));
+        run.transport = Transport::Reconnecting;
+        run.step(0);
+        run.step(BLIP_MS - 1);
+        assert_eq!(run.link(), Link::Attempting);
+        assert!(!held(&run), "a live tape's window is untouched");
+        run.step(1);
+        assert!(held(&run), "standing, nothing is coming");
     }
 
     /// A tab nobody is looking at is judged once a second, not once a frame.

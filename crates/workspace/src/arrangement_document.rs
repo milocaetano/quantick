@@ -198,12 +198,16 @@ pub struct SavedTab {
 }
 
 impl SavedTab {
-    /// The panel this tab opens with: its own, or, on the tab that was active when
-    /// an old file left an L2 or Bubbles dock tab open, opened on that section.
+    /// The panel this tab opens with: its own, or, on the tab that was active and
+    /// is `showing` its flow pane when an old file left an L2 or Bubbles dock tab
+    /// on screen, opened on that section. A hidden dock showed no tab.
     #[must_use]
-    pub fn restored_panel(&self, old_dock_tab: Option<SavedDockTab>) -> OrderFlowPanel {
+    pub fn restored_panel(&self, chrome: Option<&SavedChrome>, showing: bool) -> OrderFlowPanel {
         let mut panel = self.orderflow_panel.clone();
-        if let Some(section) = old_dock_tab.and_then(SavedDockTab::panel_section) {
+        let old_tab = chrome
+            .filter(|chrome| chrome.dock_visible && showing)
+            .and_then(|chrome| chrome.dock_tab);
+        if let Some(section) = old_tab.and_then(SavedDockTab::panel_section) {
             panel.open_on(Some(section));
         }
         panel

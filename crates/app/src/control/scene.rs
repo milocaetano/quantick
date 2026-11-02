@@ -1,15 +1,22 @@
 //! The semantic scene: what is on screen, named rather than rasterised.
 //!
-//! One entry per control the trader can see, each with a label, an identifier
-//! that survives the next frame, whether it is selected, and, when it cannot be
-//! operated, *why*: a code, never the sentence the button shows a human.
+//! An assistant that can only see pixels has to guess at everything a screen
+//! reader would be told outright — what this button is, whether pressing it
+//! would do anything, which chart it belongs to. This module answers those
+//! questions directly: one entry per control the trader can see, each with a
+//! label, an identifier that survives the next frame, whether it is selected,
+//! and, when it cannot be operated, *why* — as a code, never as the sentence
+//! the button shows a human.
 //!
 //! ## One list, never two
 //!
 //! Nothing here declares a control of its own. Every entry resolves to the
 //! registry that already drives the interface: [`ChartLayer`] through what each
 //! pane's header painted, [`DRAWING_TOOLS`] for the tool rail, [`DockTab::ALL`]
-//! for the dock, and the application's own tabs and panes for the rest.
+//! for the dock, and the application's own tabs and panes for the rest. A
+//! hand-kept list beside those would drift the day someone adds a tool and
+//! forgets this file, and an operator would be told about a button that is not
+//! there — or, worse, never told about one that is.
 //!
 //! ## What is on screen, and only that
 //!
@@ -25,13 +32,24 @@
 //! The scene enumerates the regions listed in [`SceneOwnerKindDto`] and no
 //! others: the SOURCE, HISTORY and TRADE toolbar groups, the window menus, the
 //! rail's trailing cluster and every dialog are still unnamed. A capture says so
-//! in [`SceneSnapshot::coverage`], which is never `available` for that reason.
+//! in [`SceneSnapshot::coverage`], which is never `available` for that reason,
+//! rather than reporting a short list as the whole screen — a client that read
+//! this as complete would conclude those controls do not exist, and inferred or
+//! incomplete data is labelled here as everywhere else.
 //!
 //! ## Cost
 //!
-//! Nothing here runs unless a client asks; the projection reads state the frame
-//! already keeps. A capture builds the list twice, for the module revision and
-//! for the scope, as module revisions are capture-derived across every module.
+//! Nothing here runs unless a client asks, and the frame writes down nothing
+//! for its benefit but the rail's stage — one enum store per frame, which is
+//! what lets the rail be reported honestly instead of guessed at. The
+//! projection then reads state the frame already keeps: no rectangle is
+//! recorded beyond a pane header's painted controls, no hit test is run, no
+//! layout is measured. Note that a capture
+//! builds the list *twice* — once for the module revision and once for the
+//! scope — because module revisions are capture-derived across every module
+//! (PR 2's recorded deferral); this is the largest projection in the registry
+//! and the first that would benefit from the journal-driven change counters
+//! that replace it.
 
 pub(crate) use quantick_control_schema::scene::*;
 
@@ -403,12 +421,19 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
     }
 }
 
-/// The drawing tool rail, when it is on screen: a folded rail contributes nothing
-/// ([`crate::toolrail::ToolRail::painted_controls`] holds the rule).
+/// The drawing tool rail, when it is on screen.
+///
+/// A folded rail contributes nothing: the scene reports what the trader can
+/// see, and the keyboard shortcuts that still arm a tool are not controls.
+/// [`crate::toolrail::ToolRail::painted_controls`] answers with nothing in
+/// that case, so the rule lives with the rail rather than here.
 fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
     let rail = app.chrome_reads().tool_rail();
-    // What the rail *painted*, not the registry: thirteen tools live behind a
-    // family flyout, the band scrolls others out and narrow stages drop two more.
+    // What the rail *painted*, folded through the same slots the draw folds
+    // through and cut by the stage and the band window the draw recorded.
+    // Listing the registry instead would name thirteen tools that live behind
+    // a family flyout, the ones the band has scrolled out of sight, and two
+    // more the narrow stages drop entirely.
     for control in rail.painted_controls() {
         controls.push(SceneControlSnapshot {
             control_id: rail_control_id(&control),

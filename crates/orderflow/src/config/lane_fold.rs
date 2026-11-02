@@ -307,6 +307,9 @@ pub struct LaneDividerDrag {
     wanted_px: f32,
     restore_share: f32,
     open_px: (f32, f32),
+    /// It began on the market's rail and has not left the rail's range: nothing
+    /// it does here is the trader's fold, even after a print ends the hold.
+    on_market_rail: bool,
 }
 
 impl LaneDividerDrag {
@@ -318,6 +321,7 @@ impl LaneDividerDrag {
             wanted_px: lane.resolved_width_px(chart_width),
             restore_share: lane.width_share,
             open_px: drag_range_px(lane, chart_width),
+            on_market_rail: lane.market_held(),
         }
     }
 
@@ -346,9 +350,12 @@ impl LaneDividerDrag {
             (LaneFold::Open, self.wanted_px / chart_width)
         };
         lane.width_share = share;
+        self.on_market_rail &= fold == LaneFold::Tape;
         // A step that leaves the fold where it is writes none: a wiggle on the
-        // market's rail is not the trader's fold.
-        fold != lane.live_fold() && lane.set_fold(fold)
+        // market's rail is not the trader's fold. Nor is a step still in the
+        // rail's range once a print has released the hold under the hand: the
+        // fold saved must never be the held one.
+        !self.on_market_rail && fold != lane.live_fold() && lane.set_fold(fold)
     }
 }
 

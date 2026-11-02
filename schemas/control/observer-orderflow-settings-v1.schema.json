@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "TabSettingsSnapshot": {
+      "description": "One tab's panel and its asset's folds, whether or not anything painted them.",
+      "properties": {
+        "asset": {
+          "description": "The asset whose sections these are.",
+          "type": "string"
+        },
+        "bubbles_open": {
+          "type": "boolean"
+        },
+        "l2_open": {
+          "type": "boolean"
+        },
+        "open": {
+          "type": "boolean"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "asset",
+        "open",
+        "l2_open",
+        "bubbles_open"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Every tab's panel, as it would save.",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabSettingsSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "SettingsSnapshot",
+  "type": "object"
+}

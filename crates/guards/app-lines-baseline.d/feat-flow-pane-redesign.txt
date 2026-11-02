@@ -2,6 +2,9 @@
 crates/app -495
 !budget -495
 # The order-flow panel paints inside the flow pane and reads the app-only Tab and
-# OrderflowView; the dock state went below app and the bodies moved, leaving this.
-crates/app +86
-!budget +86
+# OrderflowView; the dock state went below app and the bodies moved, leaving 86.
+# Then 66 more: 37 are doc prose an earlier trim deleted for the ratchet and that
+# states real facts, restored on purpose; the rest are the book-held read, the
+# panel's port and the hold's reset on a symbol change, each over a headless call.
+crates/app +152
+!budget +152

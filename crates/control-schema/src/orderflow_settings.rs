@@ -17,6 +17,8 @@ use crate::scene::SceneRoleDto;
 pub const OPEN_CAPABILITY_ID: &str = "orderflow.settings.open";
 pub const CLOSE_CAPABILITY_ID: &str = "orderflow.settings.close";
 pub const SECTION_CAPABILITY_ID: &str = "orderflow.settings.section.set";
+/// The panel's state, read off the tab: no paint needed, unlike the scene's controls.
+pub const SETTINGS_SCOPE_ID: &str = "orderflow.settings";
 
 /// A section of the panel, as a call names it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -91,6 +93,37 @@ impl SettingsResult {
     }
 }
 
+/// Every tab's panel, as it would save.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SettingsSnapshot {
+    pub tabs: Vec<TabSettingsSnapshot>,
+}
+
+/// One tab's panel and its asset's folds, whether or not anything painted them.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TabSettingsSnapshot {
+    pub tab_id: WireU64,
+    /// The asset whose sections these are.
+    pub asset: String,
+    pub open: bool,
+    pub l2_open: bool,
+    pub bubbles_open: bool,
+}
+
+impl TabSettingsSnapshot {
+    /// What `panel` and `folds` say now about `asset`.
+    #[must_use]
+    pub fn read(tab_id: WireU64, asset: &str, panel: &OrderFlowPanel, folds: &AssetFolds) -> Self {
+        Self {
+            tab_id,
+            asset: asset.to_owned(),
+            open: panel.is_open(),
+            l2_open: folds.section_open(asset, PanelSection::L2),
+            bubbles_open: folds.section_open(asset, PanelSection::Bubbles),
+        }
+    }
+}
+
 /// One panel control in the scene: its label, role, whether it is selected, why it
 /// cannot be operated, and the call that operates it.
 #[must_use]
@@ -131,44 +164,61 @@ pub fn scene_row(
     }
 }
 
-pub fn open_descriptor() -> CapabilityDescriptor {
-    crate::layout::transient_descriptor::<SettingsOpenInput, SettingsResult>(
-        OPEN_CAPABILITY_ID,
+/// A call on the panel: a tab saves its panel and the window its asset's folds.
+fn durable_descriptor<Input: JsonSchema>(
+    id: &str,
+    title: &str,
+    description: &str,
+    stale_input_safety: &str,
+) -> CapabilityDescriptor {
+    let mut descriptor = crate::layout::transient_descriptor::<Input, SettingsResult>(
+        id,
         crate::orderflow::MODULE_ID,
-        "Open the order-flow settings panel",
-        "Opens the panel attached to the tab's flow pane, holding the L2 and Bubbles settings. With a section (l2 or bubbles) it also expands that section and scrolls to it. Refused on a tab not showing its flow pane. Presentation only: looking is not enabling, so no layer switches.",
-        "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the scene's settings controls report the state.",
-    )
-}
-
-pub fn close_descriptor() -> CapabilityDescriptor {
-    crate::layout::transient_descriptor::<SettingsCloseInput, SettingsResult>(
-        CLOSE_CAPABILITY_ID,
-        crate::orderflow::MODULE_ID,
-        "Close the order-flow settings panel",
-        "Closes the panel attached to the tab's flow pane, and the chart takes back its width. Presentation only.",
-        "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the scene's settings control report the state.",
-    )
-}
-
-pub fn section_descriptor() -> CapabilityDescriptor {
-    let mut descriptor = crate::layout::transient_descriptor::<SettingsSectionInput, SettingsResult>(
-        SECTION_CAPABILITY_ID,
-        crate::orderflow::MODULE_ID,
-        "Fold or open a section of the order-flow settings panel",
-        "Folds or opens the L2 or the Bubbles section for the asset the tab shows; every tab on that asset reads the same. Whether or not the panel is open. Presentation only.",
-        "A stable tab ID selects the asset; repeating a value has no further effect, and the result and, while the panel is open, the scene's section control report it.",
+        title,
+        description,
+        stale_input_safety,
     );
     descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;
     descriptor
 }
 
-const fn readback(capability: &'static str, applied_when: &'static str) -> Readback {
+pub fn open_descriptor() -> CapabilityDescriptor {
+    durable_descriptor::<SettingsOpenInput>(
+        OPEN_CAPABILITY_ID,
+        "Open the order-flow settings panel",
+        "Opens the panel attached to the tab's flow pane, holding the L2 and Bubbles settings. With a section (l2 or bubbles) it also expands that section and scrolls to it. Refused on a tab not showing its flow pane. Presentation only: looking is not enabling, so no layer switches.",
+        "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the orderflow.settings scope report the state.",
+    )
+}
+
+pub fn close_descriptor() -> CapabilityDescriptor {
+    durable_descriptor::<SettingsCloseInput>(
+        CLOSE_CAPABILITY_ID,
+        "Close the order-flow settings panel",
+        "Closes the panel attached to the tab's flow pane, and the chart takes back its width. Presentation only.",
+        "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the orderflow.settings scope report the state.",
+    )
+}
+
+pub fn section_descriptor() -> CapabilityDescriptor {
+    durable_descriptor::<SettingsSectionInput>(
+        SECTION_CAPABILITY_ID,
+        "Fold or open a section of the order-flow settings panel",
+        "Folds or opens the L2 or the Bubbles section for the asset the tab shows; every tab on that asset reads the same. Whether or not the panel is open. Presentation only.",
+        "A stable tab ID selects the asset; repeating a value has no further effect, and the result and the orderflow.settings scope report it, the panel open or not.",
+    )
+}
+
+const fn readback(
+    capability: &'static str,
+    field: &'static str,
+    applied_when: &'static str,
+) -> Readback {
     snapshot(
         capability,
         IdempotencyPolicy::Optional,
-        crate::scene::CONTROLS_SCOPE_ID,
-        "controls[].selected",
+        SETTINGS_SCOPE_ID,
+        field,
         applied_when,
         &[EVERY_OPTIONAL_TEST],
     )
@@ -177,15 +227,18 @@ const fn readback(capability: &'static str, applied_when: &'static str) -> Readb
 pub const READBACKS: &[Readback] = &[
     readback(
         OPEN_CAPABILITY_ID,
-        "pane.<id>.header.settings is selected, and the section asked for is too",
+        "tabs[].open",
+        "the tab's row reads open, and the section asked for reads open too",
     ),
     readback(
         CLOSE_CAPABILITY_ID,
-        "pane.<id>.header.settings is no longer selected",
+        "tabs[].open",
+        "the tab's row no longer reads open",
     ),
     readback(
         SECTION_CAPABILITY_ID,
-        "pane.<id>.header.settings.<section> reads the value asked for",
+        "tabs[].l2_open",
+        "the tab's row reads the value asked for in l2_open or bubbles_open",
     ),
 ];
 

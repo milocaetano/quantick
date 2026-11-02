@@ -49,6 +49,16 @@
     },
     "HeatmapStateSnapshot": {
       "properties": {
+        "book_held_at_unix_ms": {
+          "default": null,
+          "description": "Where the heat stops, in venue time, while the book goes on arriving: the\ntape's window is held short of the clock because no print is coming, and\nthe book behind this instant is not drawn. Absent otherwise. The status\ncan read a live book beside it; both are true.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
         "capture_price_grouping": {
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "The bucket the engine is capturing at. The auto-base logic can move it\nwith no user action, so it is mirrored rather than assumed."

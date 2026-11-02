@@ -1128,8 +1128,13 @@ impl ChartPane {
             if side == CapsuleSide::Tape
                 && let Some(x) = state.and_then(|state| self.seam_x(&state, chrome, side_rect))
             {
-                let words = chrome.seam_words.as_deref();
-                crate::pane_header::draw_tape_seam(ui, side_rect, x, words);
+                let held = self
+                    .orderflow
+                    .as_ref()
+                    .and_then(|tape| tape.book_held_at_ms());
+                let line = chrome.seam_words.as_deref();
+                let words = quantick_chart::market_fold::seam_words(line, held, chrome.tz);
+                crate::pane_header::draw_tape_seam(ui, side_rect, x, words.as_deref());
             }
             if let Some(label) = SideLabel::of(side, &self.state, chrome.tz, chrome.link) {
                 let capsule_left = corner.map_or(right, |corner| corner.0);

@@ -249,7 +249,6 @@ pub struct Palette<C> {
     pub bubble_text: C,
     pub gap_fill: C,
     pub gap_boundary: C,
-    /// Boundary between the forming bar's candle and its live lane.
     /// The line market time has walked to inside the lane.
     pub lane_now: C,
     pub muted_text: C,

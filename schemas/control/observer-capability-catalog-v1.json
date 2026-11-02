@@ -14587,7 +14587,7 @@
         "title": "SettingsResult",
         "type": "object"
       },
-      "persistence": "transient",
+      "persistence": "durable",
       "preconditions": [],
       "read_only": false,
       "required_permissions": [
@@ -14598,7 +14598,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the scene's settings control report the state.",
+      "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the orderflow.settings scope report the state.",
       "title": "Close the order-flow settings panel",
       "version": 1
     },
@@ -14699,7 +14699,7 @@
         "title": "SettingsResult",
         "type": "object"
       },
-      "persistence": "transient",
+      "persistence": "durable",
       "preconditions": [],
       "read_only": false,
       "required_permissions": [
@@ -14710,7 +14710,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the scene's settings controls report the state.",
+      "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the orderflow.settings scope report the state.",
       "title": "Open the order-flow settings panel",
       "version": 1
     },
@@ -14819,7 +14819,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "A stable tab ID selects the asset; repeating a value has no further effect, and the result and, while the panel is open, the scene's section control report it.",
+      "stale_input_safety": "A stable tab ID selects the asset; repeating a value has no further effect, and the result and the orderflow.settings scope report it, the panel open or not.",
       "title": "Fold or open a section of the order-flow settings panel",
       "version": 1
     },
@@ -22366,6 +22366,16 @@
           },
           "HeatmapStateSnapshot": {
             "properties": {
+              "book_held_at_unix_ms": {
+                "default": null,
+                "description": "Where the heat stops, in venue time, while the book goes on arriving: the\ntape's window is held short of the clock because no print is coming, and\nthe book behind this instant is not drawn. Absent otherwise. The status\ncan read a live book beside it; both are true.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
               "capture_price_grouping": {
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "The bucket the engine is capturing at. The auto-base logic can move it\nwith no user action, so it is mirrored rather than assumed."
@@ -22713,6 +22723,69 @@
       },
       "schema_version": 1,
       "title": "Order book"
+    },
+    {
+      "description": "Reports whether each tab's order-flow settings panel is open and which of its sections the tab's asset keeps open, whether or not the panel was painted.",
+      "id": "orderflow.settings",
+      "module_id": "orderflow",
+      "required_permissions": [
+        "observe",
+        "observe.orderflow"
+      ],
+      "schema": {
+        "$defs": {
+          "TabSettingsSnapshot": {
+            "description": "One tab's panel and its asset's folds, whether or not anything painted them.",
+            "properties": {
+              "asset": {
+                "description": "The asset whose sections these are.",
+                "type": "string"
+              },
+              "bubbles_open": {
+                "type": "boolean"
+              },
+              "l2_open": {
+                "type": "boolean"
+              },
+              "open": {
+                "type": "boolean"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "asset",
+              "open",
+              "l2_open",
+              "bubbles_open"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Every tab's panel, as it would save.",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabSettingsSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "SettingsSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Order-flow settings panel"
     },
     {
       "description": "Reports how current each pane's tape is, where its live lane ends, and where its aggressor side comes from.",

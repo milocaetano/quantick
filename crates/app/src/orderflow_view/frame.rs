@@ -315,8 +315,11 @@ impl OrderflowView {
 
     /// Draw the canvas's compact visual key.
     ///
-    /// Its own pass, as hiding the bubbles must not take it down, nor it them.
-    /// The canvas's right-click menu switches it (`ChartLayer::FlowLegend`).
+    /// Its own pass, not a tail of the bubbles: the legend is chrome about
+    /// what the canvas is showing — it names the depth layers too — so hiding
+    /// the bubbles must not take it down, and hiding it must not take the
+    /// bubbles down. The trader switches it from the canvas's right-click
+    /// menu (`ChartLayer::FlowLegend`).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_legend(
         &self,

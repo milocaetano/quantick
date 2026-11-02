@@ -100,6 +100,8 @@ pub struct EngineRevisionKey {
     lane_enabled: bool,
     status: &'static str,
     grouping: rust_decimal::Decimal,
+    gaps: Vec<BookGapSnapshot>,
+    book_held_at_ms: Option<i64>,
     config: IdenticalConfig,
 }
 
@@ -132,7 +134,24 @@ impl EngineRevisionKey {
             lane_enabled: config.lane_enabled(),
             status: status.code(),
             grouping,
+            gaps: Vec::new(),
+            book_held_at_ms: None,
             config: IdenticalConfig(config.clone()),
+        }
+    }
+
+    /// The same key over what the heatmap scope reports of the book besides its
+    /// setup: why it is missing, and where a hold stopped it.
+    #[must_use]
+    pub fn with_book(
+        self,
+        gaps: &[quantick_orderflow::projection::GapPrimitive],
+        book_held_at_ms: Option<i64>,
+    ) -> Self {
+        Self {
+            gaps: book_gap_rows(gaps),
+            book_held_at_ms,
+            ..self
         }
     }
 }
@@ -754,6 +773,13 @@ pub struct HeatmapStateSnapshot {
     /// Why the book is missing where the last frame marks a gap, if anywhere.
     #[serde(default)]
     pub gaps: Vec<BookGapSnapshot>,
+    /// Where the heat stops, in venue time, while the book goes on arriving: the
+    /// tape's window is held short of the clock because no print is coming, and
+    /// the book behind this instant is not drawn. Absent otherwise. The status
+    /// can read a live book beside it; both are true.
+    #[serde(default)]
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub book_held_at_unix_ms: Option<i64>,
     /// Depth heat is drawn over the chart.
     pub visible: bool,
     /// And over the live lane, which is a separate switch.
@@ -780,6 +806,7 @@ impl HeatmapStateSnapshot {
     pub fn from_config(config: &HeatmapConfig, grouping: rust_decimal::Decimal) -> Self {
         Self {
             gaps: Vec::new(),
+            book_held_at_unix_ms: None,
             visible: config.depth_visible(),
             lane_visible: config.lane_depth_visible(),
             retention_ms: config.retention_ms,

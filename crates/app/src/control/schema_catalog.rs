@@ -131,6 +131,9 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         ),
         document::<HeatmapSnapshot>("observer-orderflow-heatmap-v1.schema.json"),
         document::<L2Snapshot>("observer-orderflow-l2-v1.schema.json"),
+        document::<quantick_control_schema::orderflow_settings::SettingsSnapshot>(
+            "observer-orderflow-settings-v1.schema.json",
+        ),
         document::<ReplaySnapshot>("observer-session-replay-v1.schema.json"),
         document::<PaperSnapshot>("observer-session-paper-v1.schema.json"),
         document::<SceneSnapshot>("observer-scene-controls-v1.schema.json"),

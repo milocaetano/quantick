@@ -1256,6 +1256,36 @@ fn a_market_hold_reads_in_the_scene_and_never_in_the_saved_fold() {
     );
 }
 
+/// Another market on a reused view starts fresh both ways: no hold from the last
+/// one, and no hand's stand-down either, so its own closed spell folds.
+#[test]
+fn a_symbol_change_forgets_the_markets_hold_and_the_hands_stand_down() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    run_frame(&mut app, &ctx);
+    let quiet = quantick_chart::connection_state::ConnectionState {
+        link: quantick_chart::connection_state::Link::Quiet,
+        ..app.active_tab().connection.state()
+    };
+    let tape = app.active_tab_mut().tape_mut();
+    tape.observe_market(quiet);
+    assert!(tape.cached_config().live_lane.market_held());
+    tape.reset_for_symbol("NEXT");
+    let hold = tape.cached_config().live_lane.market_hold;
+    assert!(!hold.held && !hold.closed_spell, "no hold carried over");
+
+    tape.observe_market(quiet);
+    assert!(tape.edit_config(|config| _ = config.live_lane.set_fold(LaneFold::Open)));
+    assert!(tape.cached_config().live_lane.market_hold.stood_down);
+    tape.reset_for_symbol("AFTER");
+    assert!(!tape.cached_config().live_lane.market_hold.stood_down);
+    tape.observe_market(quiet);
+    assert!(
+        tape.cached_config().live_lane.market_held(),
+        "the new market's own closed spell folds"
+    );
+}
+
 /// A fold outlives every view, on the header too, and on the way back beside the
 /// candles its rail is still the way out of it.
 #[test]
@@ -1855,6 +1885,70 @@ fn an_old_l2_or_bubbles_dock_tab_restores_to_the_panel() {
         assert_eq!(chrome.dock_tab, None);
         assert!(saved[0].orderflow_panel.is_open(), "written the new way");
     }
+}
+
+/// The panel reads back with nothing painted: the call that closes it, and a fold
+/// made while it is closed, on a tab whose flow pane is folded away.
+#[test]
+fn the_settings_scope_reads_the_panel_without_a_paint() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let read = |app: &QuantickApp| {
+        let scope = observer_scope("orderflow.settings");
+        let capture = crate::control::standard_registry()
+            .unwrap()
+            .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let row = &capture.scopes[&scope].value["tabs"][0];
+        (
+            row["open"] == true,
+            row["l2_open"] == true,
+            row["bubbles_open"] == true,
+        )
+    };
+    assert_eq!(read(&app), (false, true, true));
+    settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
+    assert_eq!(read(&app), (true, true, true));
+    settings_call(&mut app, CLOSE_CAPABILITY_ID, json!({})).unwrap();
+    let fold = json!({ "section": "bubbles", "open": false });
+    settings_call(&mut app, SECTION_CAPABILITY_ID, fold).unwrap();
+    assert_eq!(read(&app), (false, true, false));
+    app.active_tab_mut().set_flow_collapsed(true);
+    run_frame(&mut app, &ctx);
+    assert_eq!(read(&app), (false, true, false), "nothing of it painted");
+}
+
+/// An old file's L2 tab behind a hidden dock was not on screen, and a tab whose flow
+/// pane is folded has nothing to attach a panel to: neither opens it.
+#[test]
+fn an_old_dock_tab_that_was_not_showing_opens_no_panel() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let (mut tabs, mut chrome) = app.arrangement_state().capture_arrangement();
+    chrome.dock_tab = Some(ui_state::SavedDockTab::L2);
+    chrome.dock_visible = false;
+    tabs[0].orderflow_panel = Default::default();
+    let restore =
+        |app: &mut QuantickApp, tabs: &[ui_state::SavedTab], chrome: &ui_state::SavedChrome| {
+            let file = ui_state::Workspace::new(true, None, 0, tabs.to_vec(), Some(chrome.clone()));
+            app.arrangement_adapter().restore_workspace(file);
+        };
+    restore(&mut app, &tabs, &chrome);
+    assert!(!panel_open(&app), "a hidden dock showed no tab");
+
+    chrome.dock_visible = true;
+    tabs[0].flow_collapsed = true;
+    restore(&mut app, &tabs, &chrome);
+    assert!(!panel_open(&app), "a folded flow pane has no panel");
+
+    tabs[0].flow_collapsed = false;
+    restore(&mut app, &tabs, &chrome);
+    assert!(
+        panel_open(&app),
+        "on screen, on a tab showing flow, it opens"
+    );
 }
 
 /// Open and folded survive a save and a restore.

@@ -10,7 +10,10 @@
 use quantick_orderflow::tape_clock::TapeHold;
 use quantick_orderflow::{LaneSide, LaneView, LiveLaneStyle, MarketHold};
 
-use crate::connection_state::{ConnectionState, Link};
+use quantick_civil::TzOffset;
+
+use crate::connection_state::{Book, ConnectionState, Link};
+use crate::geometry::{TimeLabelFormat, time_label};
 use crate::state::ChartState;
 
 /// What one step of [`next_hold`] decides from.
@@ -33,6 +36,9 @@ fn says_closed(link: Link) -> bool {
 }
 
 /// The hold after this frame's facts.
+///
+/// Reads the feed's link and not the spoken one because a blip cannot move it:
+/// it is always Attempting, which neither starts a hold nor ends one or a spell.
 ///
 /// It starts beside the candles when the link says Quiet or Offline, the setting
 /// is on, no trader's fold stands, and no hand opened the tape during this closed
@@ -90,28 +96,62 @@ pub fn last_print_ms(state: &ChartState) -> Option<i64> {
     })
 }
 
-/// Whether nothing is coming to the tape: every link but one delivering, and a
-/// source with no transport, whose clock is its own.
-const fn nothing_coming(link: Link) -> bool {
-    matches!(link, Link::Quiet | Link::Attempting | Link::Offline)
+/// Whether nothing is coming to the tape, by the link as it is spoken
+/// ([`crate::connection_state::ConnectionTracker::spoken_link`]): every link but
+/// one delivering, and a source with no transport, whose clock is its own. A blip
+/// over a live tape still says Live, so its window never rewinds. An attempt not
+/// yet spoken with no word to keep is nothing coming too: the attempts a dead
+/// feed retries must not walk a held window on and back.
+fn nothing_coming(spoken: Option<Link>) -> bool {
+    spoken.is_none_or(|link| matches!(link, Link::Quiet | Link::Attempting | Link::Offline))
 }
 
 /// Whether the tape on screen gets the seam: it shows beside or alone, and the
 /// link says nothing is coming. A hold leaves no tape on screen to mark.
 #[must_use]
-pub fn seam_shown(shown_view: LaneView, link: Option<Link>) -> bool {
-    shown_view.shows(LaneSide::Tape) && link.is_some_and(nothing_coming)
+pub fn seam_shown(shown_view: LaneView, spoken: Option<Link>) -> bool {
+    shown_view.shows(LaneSide::Tape) && nothing_coming(spoken)
 }
 
 /// What holds the tape's window this frame: `None` on a link delivering prints, so
-/// a live tape moves exactly as it did, and on a replay.
+/// a live tape moves exactly as it did, and on a replay. The window is asked for
+/// only when it holds: working it out costs a sort, every frame of a live tape.
 #[must_use]
-pub fn tape_hold(link: Link, state: &ChartState, window_ms: i64) -> Option<TapeHold> {
-    let last_print_ms = last_print_ms(state)?;
-    nothing_coming(link).then_some(TapeHold {
-        last_print_ms,
-        window_ms,
+pub fn tape_hold(
+    spoken: Option<Link>,
+    state: &ChartState,
+    window_ms: impl FnOnce() -> i64,
+) -> Option<TapeHold> {
+    if !nothing_coming(spoken) {
+        return None;
+    }
+    Some(TapeHold {
+        last_print_ms: last_print_ms(state)?,
+        window_ms: window_ms(),
     })
+}
+
+/// Where a hold has stopped a book that went on arriving: the cap, when the newest
+/// event recorded is past it and the book is synced and drawn. A print-only feed
+/// has no event past the cap, as its last print is what the cap is counted from.
+#[must_use]
+pub fn book_held_at(cap_ms: Option<i64>, newest_event_ms: Option<i64>, book: Book) -> Option<i64> {
+    let cap = cap_ms?;
+    (book == Book::Synced && newest_event_ms? > cap).then_some(cap)
+}
+
+/// The seam's muted line, saying so when the heat stops at the cap while the book
+/// goes on: a status of "book live" beside heat that has stopped must not read as
+/// a book that stopped.
+#[must_use]
+pub fn seam_words(line: Option<&str>, book_held_at: Option<i64>, tz: TzOffset) -> Option<String> {
+    let held = book_held_at
+        .map(|at| format!("book held at {}", time_label(at, tz, TimeLabelFormat::Full)));
+    match (line, held) {
+        (Some(line), Some(held)) => Some(format!("{line} \u{b7} {held}")),
+        (Some(line), None) => Some(line.to_owned()),
+        (None, held) => held,
+    }
 }
 
 /// Where the seam's line starts when it is `words_px` wide: centred in the empty
@@ -376,7 +416,7 @@ mod tests {
             (LaneView::TapeOnly, Some(Link::Live), false),
             (LaneView::TapeOnly, Some(Link::Attempting), true),
             (LaneView::TapeOnly, Some(Link::NoTransport), false),
-            (LaneView::TapeOnly, None, false),
+            (LaneView::TapeOnly, None, true),
         ] {
             assert_eq!(seam_shown(view, link), shown, "{view:?} {link:?}");
         }
@@ -406,7 +446,7 @@ mod tests {
             (Link::Attempting, true),
             (Link::Offline, true),
         ] {
-            let hold = tape_hold(link, &state, 15_000);
+            let hold = tape_hold(Some(link), &state, || 15_000);
             assert_eq!(hold.is_some(), holds, "{link:?}");
             if let Some(hold) = hold {
                 assert_eq!(hold.last_print_ms, 100_000);
@@ -414,14 +454,89 @@ mod tests {
             }
         }
         let empty = ChartState::new(quantick_engine::BarSpec::Tick(100));
-        assert_eq!(tape_hold(Link::Quiet, &empty, 15_000), None, "no print yet");
+        let quiet = Some(Link::Quiet);
+        assert_eq!(tape_hold(quiet, &empty, || 15_000), None, "no print yet");
+    }
+
+    /// A live tape pays nothing for the question: the window is not worked out.
+    #[test]
+    fn a_link_delivering_prints_never_asks_for_the_window() {
+        let state = state_printed_at(100_000);
+        for link in [Link::Live, Link::NoTransport] {
+            let asked = || panic!("{link:?} asked for the window");
+            assert_eq!(tape_hold(Some(link), &state, asked), None);
+        }
+    }
+
+    /// A retry of a dead feed, not yet spoken and with no word to keep, stays held
+    /// and keeps its seam: neither walks on for two seconds and back.
+    #[test]
+    fn an_attempt_with_no_word_to_keep_holds_the_window_and_the_seam() {
+        let state = state_printed_at(100_000);
+        assert!(tape_hold(None, &state, || 15_000).is_some());
+        assert!(seam_shown(LaneView::TapeOnly, None));
+    }
+
+    /// A transport blip, step by step: from Live it starts nothing, from Quiet it
+    /// ends nothing, and a tape a hand opened stays open.
+    #[test]
+    fn a_blip_cannot_move_the_fold() {
+        let mut live = settled(false);
+        for link in [Link::Live, Link::Attempting, Link::Live] {
+            live = next_hold(live, facts(link));
+            assert!(!live.held, "{link:?}");
+        }
+        let mut quiet = next_hold(settled(false), facts(Link::Quiet));
+        let mut opened = quiet;
+        opened.stand_down();
+        for link in [Link::Attempting, Link::Quiet] {
+            quiet = next_hold(quiet, facts(link));
+            opened = next_hold(opened, facts(link));
+            assert!(quiet.held, "{link:?}");
+            assert!(!opened.held, "{link:?}");
+        }
+    }
+
+    /// Only a synced book with an event past the cap is a book held.
+    #[test]
+    fn a_book_is_held_only_when_it_went_on_past_the_cap() {
+        let cap = Some(10_000);
+        assert_eq!(book_held_at(cap, Some(10_001), Book::Synced), Some(10_000));
+        assert_eq!(book_held_at(cap, Some(10_000), Book::Synced), None, "at it");
+        assert_eq!(book_held_at(cap, None, Book::Synced), None);
+        assert_eq!(
+            book_held_at(None, Some(10_001), Book::Synced),
+            None,
+            "no hold"
+        );
+        for book in [Book::Off, Book::Lost, Book::Connecting, Book::Idle] {
+            assert_eq!(book_held_at(cap, Some(10_001), book), None, "{book:?}");
+        }
+    }
+
+    #[test]
+    fn the_seams_line_adds_the_book_held() {
+        const UTC: TzOffset = TzOffset::new(0);
+        let at = Some(3_723_000);
+        let line = Some("No trades on WIN");
+        assert_eq!(seam_words(line, None, UTC).as_deref(), line);
+        assert_eq!(
+            seam_words(line, at, UTC).as_deref(),
+            Some("No trades on WIN \u{b7} book held at 01:02:03")
+        );
+        assert_eq!(
+            seam_words(None, at, UTC).as_deref(),
+            Some("book held at 01:02:03")
+        );
+        assert_eq!(seam_words(None, None, UTC), None);
     }
 
     /// Held, the seam stands at 55 % of the window and the tape never empties, a
     /// minute on or an hour; the first print puts the window back on the clock.
     #[test]
     fn a_held_seam_parks_at_fifty_five_percent_and_the_first_print_frees_it() {
-        let hold = tape_hold(Link::Quiet, &state_printed_at(100_000), 15_000).unwrap();
+        let quiet = Some(Link::Quiet);
+        let hold = tape_hold(quiet, &state_printed_at(100_000), || 15_000).unwrap();
         let tape = (0.0, 0.0, 1_000.0);
         for now in [106_750, 160_000, 3_700_000] {
             let end = hold.window_end_ms(now);
@@ -430,7 +545,7 @@ mod tests {
         }
         let early = seam_x_px(tape, hold.window_end_ms(103_000), 100_000, 15_000).unwrap();
         assert!((early - 800.0).abs() < 0.5, "it walks there first: {early}");
-        let freed = tape_hold(Link::Quiet, &state_printed_at(160_000), 15_000).unwrap();
+        let freed = tape_hold(quiet, &state_printed_at(160_000), || 15_000).unwrap();
         assert_eq!(freed.window_end_ms(160_000), 160_000);
     }
 

@@ -15,6 +15,37 @@ fn lane(fold: LaneFold) -> LiveLaneStyle {
     }
 }
 
+/// A drag begun on the market's rail is no fold of the trader's, even when a print
+/// releases the hold under the hand; once it has left the rail, it is.
+#[test]
+fn a_drag_from_the_markets_rail_never_saves_the_held_fold() {
+    let mut held = lane(LaneFold::Open);
+    held.market_hold.held = true;
+    let mut drag = LaneDividerDrag::begin(&held, CHART);
+    assert!(!drag.drag(&mut held, 1.0, CHART), "a wiggle writes nothing");
+    assert_eq!(held.fold, LaneFold::Open);
+
+    held.market_hold.held = false;
+    assert!(
+        !drag.drag(&mut held, 1.0, CHART),
+        "still on the rail's range"
+    );
+    assert!(!drag.drag(&mut held, -1.0, CHART));
+    assert_eq!(
+        held.fold,
+        LaneFold::Open,
+        "the saved fold is not the held one"
+    );
+
+    assert!(!drag.drag(&mut held, -300.0, CHART), "open under the hand");
+    assert_eq!(held.fold, LaneFold::Open);
+    assert!(
+        drag.drag(&mut held, 300.0, CHART),
+        "back there, it is the hand's"
+    );
+    assert_eq!(held.fold, LaneFold::Tape);
+}
+
 /// An open lane is the lane every pane had before folding existed: the same
 /// band at every share it could already hold.
 #[test]

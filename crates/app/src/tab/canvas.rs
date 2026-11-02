@@ -382,9 +382,10 @@ impl Tab {
         self.connection.observe(&facts, &self.loading);
         let feed = self.connection.state();
         self.tape_mut().observe_market(feed);
+        let spoken = self.connection.spoken_link(now_ms);
         let (view, state) = (self.flow_pane.orderflow.as_mut(), &self.flow_pane.state);
         view.expect("the flow pane keeps a tape")
-            .hold_tape_window(feed.link, state);
+            .hold_tape_window(spoken, state);
     }
 
     /// The pane whose header asked for the indicator library this frame. Taken in
@@ -404,8 +405,9 @@ impl Tab {
     fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
         let mut focus = None;
         let focused = self.focused_side();
-        let seam_words = self.connection.seam_line(&self.symbol);
-        let link = self.connection.spoken_link(crate::metrics::wall_clock_ms());
+        let now_ms = crate::metrics::wall_clock_ms();
+        let seam_words = self.connection.seam_line(&self.symbol, now_ms);
+        let link = self.connection.spoken_link(now_ms);
         for (pane, side) in self.panes_with_sides_mut() {
             let sides = crate::pane::SideChrome {
                 style: chrome.style,

@@ -362,7 +362,9 @@ print, with this section's one muted line in the empty part after it once that
 has room. While its link is quiet, attempting or offline the tape's window stops
 at the last print plus 45 % of itself, so the seam parks at 55 % of the side and
 the tape never empties; the first print frees it, and a live link's window is
-untouched. Neither
+untouched, through a transport blip too. The heat stops at the same instant, so
+when the book goes on arriving behind it the muted line adds "book held at
+HH:MM:SS" and the `orderflow.heatmap` scope says the same. Neither
 is saved: the hold never writes the fold a workspace stores, and it ends at the
 first print, not at a change of link.
 
