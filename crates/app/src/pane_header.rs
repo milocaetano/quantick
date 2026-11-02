@@ -384,19 +384,15 @@ pub fn draw_side_label(ui: &egui::Ui, label: &SideLabel, side: egui::Rect, capsu
         LabelFit::NoClock => short,
         LabelFit::None => return,
     };
-    let plate = egui::Rect::from_min_size(
-        min,
-        egui::vec2(
-            galley.size().x + 2.0 * SIDE_LABEL_PADDING_PX,
-            CAPSULE_HEIGHT_PX,
-        ),
-    );
-    let painter = ui.painter().with_clip_rect(side);
-    painter.rect_filled(
-        plate,
-        egui::Rounding::same(SIDE_LABEL_ROUNDING),
-        theme::CASING,
-    );
+    plated_text(&ui.painter().with_clip_rect(side), min, galley);
+}
+
+/// Words on the casing plate that keeps them readable over heat, its corner at `min`.
+fn plated_text(painter: &egui::Painter, min: egui::Pos2, galley: std::sync::Arc<egui::Galley>) {
+    let width = galley.size().x + 2.0 * SIDE_LABEL_PADDING_PX;
+    let plate = egui::Rect::from_min_size(min, egui::vec2(width, CAPSULE_HEIGHT_PX));
+    let rounding = egui::Rounding::same(SIDE_LABEL_ROUNDING);
+    painter.rect_filled(plate, rounding, theme::CASING);
     let at = plate.left_center() + egui::vec2(SIDE_LABEL_PADDING_PX, -galley.size().y / 2.0);
     painter.galley(at, galley, theme::TEXT_MUTED);
 }
@@ -422,21 +418,21 @@ fn side_label_text(ctx: &egui::Context, label: &SideLabel, fit: LabelFit) -> egu
     text
 }
 
-/// The tape's seam: a dashed line at the last print, and the muted line after it.
-pub fn draw_tape_seam(ui: &egui::Ui, side: egui::Rect, x: f32, words: Option<&str>) {
+/// The tape's seam: a dashed line at the last print, and its plated lines after it.
+pub fn draw_tape_seam(ui: &egui::Ui, side: egui::Rect, x: f32, lines: [Option<&str>; 2]) {
     let painter = ui.painter().with_clip_rect(side);
     let ends = [egui::pos2(x, side.top()), egui::pos2(x, side.bottom())];
     let stroke = egui::Stroke::new(1.0_f32, theme::AMBER);
     painter.add(egui::Shape::dashed_line(&ends, stroke, 4.0, 5.0));
-    let Some(words) = words else {
-        return;
-    };
     let font = egui::FontId::proportional(SEGMENT_WORD_SIZE);
-    let galley = painter.layout_no_wrap(words.to_owned(), font, theme::TEXT_MUTED);
-    let at = quantick_chart::market_fold::seam_words_x(x, side.right(), galley.size().x);
-    if let Some(left) = at {
-        let at = egui::pos2(left, side.center().y - galley.size().y / 2.0);
-        painter.galley(at, galley, theme::TEXT_MUTED);
+    let ink = theme::TEXT_MUTED;
+    let lines = lines.map(|line| line.map(|l| painter.layout_no_wrap(l.into(), font.clone(), ink)));
+    let px = [0, 1].map(|at| lines[at].as_ref().map(|line| line.size().x));
+    let at = quantick_chart::market_fold::seam_plates(x, side.right(), side.y_range().into(), px);
+    for (line, plate) in lines.into_iter().zip(at) {
+        if let (Some(line), Some((left, top))) = (line, plate) {
+            plated_text(&painter, egui::pos2(left, top), line);
+        }
     }
 }
 

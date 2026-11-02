@@ -1887,6 +1887,130 @@ fn an_old_l2_or_bubbles_dock_tab_restores_to_the_panel() {
     }
 }
 
+/// A panel restored from an old workspace, on Bubbles.
+fn restored_on_bubbles(
+    ctx: &egui::Context,
+) -> (QuantickApp, impl Sized, mpsc::Receiver<FeedCommand>) {
+    let (mut app, events, commands) = context_fixture(ctx);
+    set_flow_bars(&mut app, BarSpec::Tick(2000));
+    app.active_tab_mut().focus = PaneSide::Flow;
+    for _ in 0..2 {
+        run_frame(&mut app, ctx);
+    }
+    let (mut tabs, mut chrome) = app.arrangement_state().capture_arrangement();
+    chrome.dock_tab = Some(ui_state::SavedDockTab::Bubbles);
+    tabs[0].orderflow_panel = Default::default();
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(true, None, 0, tabs, Some(chrome)));
+    (app, events, commands)
+}
+
+fn run_frame_every(app: &mut QuantickApp, ctx: &egui::Context, dt: f32) {
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, TEST_WINDOW)),
+        predicted_dt: dt,
+        ..Default::default()
+    };
+    let now = frame_instant(ctx);
+    let _ = ctx.run(input, |ctx| app.draw_frame(ctx, now));
+}
+
+const LANDED_Y: f32 = 138.0;
+
+fn bubbles_header_y(app: &QuantickApp) -> f32 {
+    flow_control(app, section_control(PanelSection::Bubbles)).top()
+}
+
+/// Frames are not a duration: at any rate a restored panel ends on top.
+#[test]
+fn a_restored_section_lands_on_top_at_any_frame_rate() {
+    for dt in [1.0 / 60.0, 1.0 / 240.0, 1.0 / 1000.0] {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) = restored_on_bubbles(&ctx);
+        for _ in 0..600 {
+            run_frame_every(&mut app, &ctx, dt);
+        }
+        let y = bubbles_header_y(&app);
+        assert!((y - LANDED_Y).abs() < 1.0, "{dt}: {y}");
+    }
+}
+
+/// On a launch the book's first ladder comes after the landing and adds rows to the
+/// L2 body above: the section stays on top.
+#[test]
+fn a_restored_section_stays_on_top_when_the_book_arrives_above_it() {
+    use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
+    let ctx = egui::Context::default();
+    let (mut app, _events, mut commands) = restored_on_bubbles(&ctx);
+    for _ in 0..30 {
+        run_frame(&mut app, &ctx);
+    }
+    assert!((bubbles_header_y(&app) - LANDED_Y).abs() < 1.0);
+    let mut generation = None;
+    while let Ok(command) = commands.try_recv() {
+        if let FeedCommand::SetBookCapture {
+            enabled: true,
+            initial_generation,
+            ..
+        } = command
+        {
+            generation = Some(initial_generation);
+        }
+    }
+    let symbol = app.active_tab().symbol.clone();
+    let view = app.active_tab_mut().tape_mut();
+    view.handle_depth_event(DepthEvent::Snapshot {
+        symbol,
+        generation: generation.expect("capture follows the feed"),
+        observed_at_ms: 1_100,
+        effective_at_ms: 999,
+        price_step: None,
+        snapshot: BookSnapshot::new(
+            10,
+            vec![BookLevel::new(Decimal::from(99), Decimal::from(5)).unwrap()],
+            vec![BookLevel::new(Decimal::from(101), Decimal::from(6)).unwrap()],
+            BookCoverage::Limited {
+                levels_per_side: 1_000,
+            },
+        ),
+    });
+    view.flush_for_test();
+    let mut lowest = LANDED_Y;
+    for _ in 0..60 {
+        run_frame(&mut app, &ctx);
+        lowest = lowest.max(bubbles_header_y(&app));
+    }
+    assert!(lowest > LANDED_Y + 10.0, "the rows pushed it: {lowest}");
+    let y = bubbles_header_y(&app);
+    assert!((y - LANDED_Y).abs() < 1.0, "back on top: {y}");
+}
+
+/// A hand's wheel ends the landing: it does not fight the trader for the panel.
+#[test]
+fn a_wheel_over_the_panel_ends_a_landing() {
+    let ctx = egui::Context::default();
+    let (mut app, _events, _commands) = restored_on_bubbles(&ctx);
+    for _ in 0..30 {
+        run_frame(&mut app, &ctx);
+    }
+    let over = flow_control(&app, section_control(PanelSection::Bubbles)).center();
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(over)]);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 120.0),
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    for _ in 0..30 {
+        run_frame(&mut app, &ctx);
+    }
+    let y = bubbles_header_y(&app);
+    assert!(y > LANDED_Y + 50.0, "the hand's scroll stands: {y}");
+}
+
 /// The panel reads back with nothing painted: the call that closes it, and a fold
 /// made while it is closed, on a tab whose flow pane is folded away.
 #[test]

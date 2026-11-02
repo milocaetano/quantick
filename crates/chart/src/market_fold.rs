@@ -140,18 +140,64 @@ pub fn book_held_at(cap_ms: Option<i64>, newest_event_ms: Option<i64>, book: Boo
     (book == Book::Synced && newest_event_ms? > cap).then_some(cap)
 }
 
-/// The seam's muted line, saying so when the heat stops at the cap while the book
-/// goes on: a status of "book live" beside heat that has stopped must not read as
-/// a book that stopped.
-#[must_use]
-pub fn seam_words(line: Option<&str>, book_held_at: Option<i64>, tz: TzOffset) -> Option<String> {
-    let held = book_held_at
-        .map(|at| format!("book held at {}", time_label(at, tz, TimeLabelFormat::Full)));
-    match (line, held) {
-        (Some(line), Some(held)) => Some(format!("{line} \u{b7} {held}")),
-        (Some(line), None) => Some(line.to_owned()),
-        (None, held) => held,
+/// The seam's two lines, stacked: its muted line, and under it the one saying so when
+/// the heat stops at the cap while the book goes on: a status of "book live" beside
+/// heat that has stopped must not read as a book that stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeamWords {
+    pub line: Option<String>,
+    pub book_held: Option<String>,
+}
+
+impl SeamWords {
+    /// The two lines top to bottom, as [`seam_plates`] places them.
+    #[must_use]
+    pub fn lines(&self) -> [Option<&str>; 2] {
+        [self.line.as_deref(), self.book_held.as_deref()]
     }
+}
+
+#[must_use]
+pub fn seam_words(line: Option<&str>, book_held_at: Option<i64>, tz: TzOffset) -> SeamWords {
+    SeamWords {
+        line: line.map(str::to_owned),
+        book_held: book_held_at
+            .map(|at| format!("book held at {}", time_label(at, tz, TimeLabelFormat::Full))),
+    }
+}
+
+/// What the seam leaves between its two plates.
+const SEAM_PLATE_GAP_PX: f32 = 2.0;
+
+/// Where each plate's corner stands for lines `widths_px` wide, `[line, book_held]`,
+/// centred in the empty part right of the seam and stacked on the side's middle. Each
+/// line stands by its own fit; where the side's height has room for one, the book
+/// held takes it, being the data-honesty label.
+#[must_use]
+pub fn seam_plates(
+    seam_x: f32,
+    right: f32,
+    side_y: std::ops::RangeInclusive<f32>,
+    widths_px: [Option<f32>; 2],
+) -> [Option<(f32, f32)>; 2] {
+    const PLATE_PX: f32 = crate::pane_header::CAPSULE_HEIGHT_PX;
+    let height = side_y.end() - side_y.start();
+    let left = |width: Option<f32>| {
+        let words = seam_words_x(seam_x, right, width?)?;
+        (height >= PLATE_PX).then_some(words - crate::side_label::SIDE_LABEL_PADDING_PX)
+    };
+    let (mut line, held) = (left(widths_px[0]), left(widths_px[1]));
+    let both_px = 2.0 * PLATE_PX + SEAM_PLATE_GAP_PX;
+    if held.is_some() && height < both_px {
+        line = None;
+    }
+    let middle = (side_y.start() + side_y.end()) / 2.0;
+    if line.is_some() && held.is_some() {
+        let top = middle - both_px / 2.0;
+        let under = top + PLATE_PX + SEAM_PLATE_GAP_PX;
+        return [line.map(|x| (x, top)), held.map(|x| (x, under))];
+    }
+    [line, held].map(|left| left.map(|x| (x, middle - PLATE_PX / 2.0)))
 }
 
 /// Where the seam's line starts when it is `words_px` wide: centred in the empty
@@ -515,20 +561,59 @@ mod tests {
     }
 
     #[test]
-    fn the_seams_line_adds_the_book_held() {
+    fn the_seams_two_lines_are_separate() {
         const UTC: TzOffset = TzOffset::new(0);
         let at = Some(3_723_000);
-        let line = Some("No trades on WIN");
-        assert_eq!(seam_words(line, None, UTC).as_deref(), line);
-        assert_eq!(
-            seam_words(line, at, UTC).as_deref(),
-            Some("No trades on WIN \u{b7} book held at 01:02:03")
-        );
-        assert_eq!(
-            seam_words(None, at, UTC).as_deref(),
-            Some("book held at 01:02:03")
-        );
-        assert_eq!(seam_words(None, None, UTC), None);
+        let words = seam_words(Some("No trades on WIN"), at, UTC);
+        assert_eq!(words.line.as_deref(), Some("No trades on WIN"));
+        assert_eq!(words.book_held.as_deref(), Some("book held at 01:02:03"));
+        let none = seam_words(None, None, UTC);
+        assert_eq!((none.line, none.book_held), (None, None));
+    }
+
+    /// The seam at 200 of a side 300 wide: 100 of room less the padding fits 86.
+    const WIDE: Option<f32> = Some(80.0);
+    const TOO_WIDE: Option<f32> = Some(90.0);
+
+    fn plates(height: f32, widths: [Option<f32>; 2]) -> [Option<(f32, f32)>; 2] {
+        seam_plates(200.0, 300.0, 0.0..=height, widths)
+    }
+
+    #[test]
+    fn both_lines_fit_and_stack_the_book_held_underneath() {
+        let [line, held] = plates(400.0, [WIDE, WIDE]);
+        let ((line_x, line_y), (held_x, held_y)) = (line.unwrap(), held.unwrap());
+        assert_eq!(line_x, held_x);
+        let plate = crate::pane_header::CAPSULE_HEIGHT_PX;
+        assert!(line_y + plate <= held_y, "the book held is underneath");
+        assert_eq!(line_y + held_y + plate, 400.0, "centred on the side");
+    }
+
+    #[test]
+    fn a_line_that_does_not_fit_leaves_the_other_centred() {
+        let [line, held] = plates(400.0, [TOO_WIDE, WIDE]);
+        assert_eq!(line, None);
+        let (_, y) = held.expect("the book held fits on its own");
+        let plate = crate::pane_header::CAPSULE_HEIGHT_PX;
+        assert_eq!(y, 200.0 - plate / 2.0);
+        let [line, held] = plates(400.0, [WIDE, TOO_WIDE]);
+        assert!(line.is_some(), "the muted line fits on its own");
+        assert_eq!(held, None);
+    }
+
+    #[test]
+    fn a_side_with_room_for_one_line_gives_it_to_the_book_held() {
+        let plate = crate::pane_header::CAPSULE_HEIGHT_PX;
+        let [line, held] = plates(plate + 1.0, [WIDE, WIDE]);
+        assert_eq!(line, None);
+        assert!(held.is_some());
+    }
+
+    #[test]
+    fn no_line_stands_when_neither_fits() {
+        assert_eq!(plates(400.0, [TOO_WIDE, TOO_WIDE]), [None, None]);
+        assert_eq!(plates(1.0, [WIDE, WIDE]), [None, None]);
+        assert_eq!(plates(400.0, [None, None]), [None, None]);
     }
 
     /// Held, the seam stands at 55 % of the window and the tape never empties, a

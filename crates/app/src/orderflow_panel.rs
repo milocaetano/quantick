@@ -80,6 +80,7 @@ pub(crate) fn draw(
         )
         .show_inside(&mut seat, |ui| {
             close = title_line(ui, symbol, painted);
+            let (top, gap) = (ui.cursor().top(), ui.spacing().item_spacing.y);
             egui::ScrollArea::vertical()
                 .id_salt("orderflow_panel_scroll")
                 .auto_shrink([false, false])
@@ -96,7 +97,7 @@ pub(crate) fn draw(
                                 PanelSection::L2 => view.draw_l2_tab(ui),
                                 PanelSection::Bubbles => view.draw_bubbles_tab(ui, tick_chart),
                             },
-                            landing,
+                            landing.map(|asked| (asked, top, gap)),
                             painted,
                         );
                         restart_capture |= restart;
@@ -107,6 +108,9 @@ pub(crate) fn draw(
                 });
         });
     let left = shown.response.rect.left();
+    let moved = ui.input(|i| i.pointer.any_down() || i.raw_scroll_delta != egui::Vec2::ZERO);
+    view.settings_panel
+        .hand_moved(moved && ui.rect_contains_pointer(shown.response.rect));
     view.settings_panel
         .remember_width(shown.response.rect.width());
     if close {
@@ -144,7 +148,7 @@ fn section_block(
     open: bool,
     state: &str,
     body: impl FnOnce(&mut egui::Ui) -> bool,
-    landing: Option<PanelSection>,
+    landing: Option<(PanelSection, f32, f32)>,
     painted: &mut PaintedControls,
 ) -> (bool, bool) {
     let words = egui::RichText::new(section.title().to_uppercase()).color(theme::TEXT_PRIMARY);
@@ -153,7 +157,7 @@ fn section_block(
         .open(Some(open))
         .show_unindented(ui, body);
     let header = &block.header_response;
-    if landing == Some(section) {
+    if quantick_workspace::orderflow_panel::still_landing(landing, section, header.rect.top()) {
         header.scroll_to_me(Some(egui::Align::TOP));
         ui.ctx().request_repaint();
     }
