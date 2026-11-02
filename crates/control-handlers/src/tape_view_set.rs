@@ -1,5 +1,6 @@
-//! The flow pane's view over the pane owner's narrow port: allowed from any
-//! view, and it reads and writes the view alone, never a fold.
+//! The flow pane's view over the pane owner's narrow port: allowed from any view.
+//! Beside stands the market's hold down at the default width, as
+//! `orderflow.tape.fold.set` open does.
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_schema::tape_view_set::{TapeView, TapeViewSetInput, descriptor};

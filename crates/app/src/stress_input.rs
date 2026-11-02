@@ -57,7 +57,7 @@ impl StressInput {
             .chart_rect
             .zip(flow.frame.time_strip)
             .map(|(chart, time)| Targets {
-                candles: area(crate::bands::drawing_area(chart, flow.frame.lane_divider_x)),
+                candles: area(crate::bands::drawing_area(chart, flow.frame.candles_right)),
                 time_axis: area(time),
             });
         // What a gesture changes when answered: the view, or a mark a press

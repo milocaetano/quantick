@@ -284,7 +284,6 @@ pub struct SideSegment {
     pub ink: SegmentInk,
     pub refusal: Option<SideRefusal>,
     view: LaneView,
-    shown: LaneView,
 }
 
 impl SideSegment {
@@ -316,7 +315,6 @@ impl SideSegment {
                     .then_some(SideRefusal::LastSideShowing),
             },
             view,
-            shown: state.shown_view,
         }
     }
 
@@ -339,13 +337,28 @@ impl SideSegment {
         self.view.toggled(self.side).map(HeaderIntent::SetView)
     }
 
-    /// What the tooltip adds to the name and the key: why it refuses, or the
-    /// side a fold leaves on screen.
+    /// What the tooltip adds to the name and the key: why it refuses.
     #[must_use]
     pub fn note(self) -> Option<&'static str> {
-        self.refusal
-            .map(SideRefusal::note)
-            .or_else(|| (self.shown != self.view).then(|| view_name(self.shown)))
+        self.refusal.map(SideRefusal::note)
+    }
+}
+
+/// A rail's name in the scene: what a click on it brings back.
+#[must_use]
+pub fn rail_word(closed: LaneSide) -> &'static str {
+    match closed {
+        LaneSide::Trail => "Trail rail",
+        LaneSide::Tape => "Tape rail",
+    }
+}
+
+/// A rail's hover hint: what a click and a drag on it do.
+#[must_use]
+pub fn rail_hint(closed: LaneSide) -> &'static str {
+    match closed {
+        LaneSide::Trail => "click to show the candles again, or drag right",
+        LaneSide::Tape => "click to show the tape again, or drag left",
     }
 }
 
@@ -354,7 +367,7 @@ pub const MARKET_FOLD_SETTING: &str = "Fold the tape while the market is closed"
 /// What it does, on hover.
 pub const MARKET_FOLD_SETTING_HOVER: &str = "beside the candles, while the feed is quiet or offline; the first print brings it back. Off, or with the tape alone, the tape stays up to a seam at the last print";
 
-/// What the tape's segment reads while the market holds it folded.
+/// What the tape's segment reads while the market holds it away.
 pub const MARKET_CLOSED_WORD: &str = "Market closed";
 
 /// Width of a segment's glyph.
@@ -425,9 +438,10 @@ pub fn sample_value_text(scale: f32) -> String {
 pub struct FlowHeaderState {
     /// The stored view, which the segments light and switch.
     pub view: LaneView,
-    /// The side on screen, which the capsules and labels follow.
+    /// The side on screen, the market's hold included, which the capsules and
+    /// labels follow.
     pub shown_view: LaneView,
-    /// The market holds the tape folded: it reads so, and both segments refuse.
+    /// The market holds the tape away: it reads so, and both segments refuse.
     pub market_held: bool,
     pub candle_sample: Option<f32>,
     pub tape_sample: Option<f32>,
@@ -1123,10 +1137,10 @@ mod tests {
         assert!(!flow_fit(&widths(least - 1.0)).indicators_words);
     }
 
-    fn state(view: LaneView, shown_view: LaneView) -> FlowHeaderState {
+    fn state(view: LaneView) -> FlowHeaderState {
         FlowHeaderState {
             view,
-            shown_view,
+            shown_view: view,
             market_held: false,
             candle_sample: None,
             tape_sample: None,
@@ -1137,7 +1151,7 @@ mod tests {
     /// segment stays lit, refuses the click and says why, under one code.
     #[test]
     fn the_last_lit_segment_stays_lit_and_refuses_the_click() {
-        let [trail, tape] = SideSegment::pair(&state(LaneView::Beside, LaneView::Beside));
+        let [trail, tape] = SideSegment::pair(&state(LaneView::Beside));
         assert_eq!((trail.ink, tape.ink), (SegmentInk::Lit, SegmentInk::Lit));
         assert_eq!(
             trail.click(),
@@ -1149,7 +1163,7 @@ mod tests {
         );
         assert_eq!((trail.note(), tape.note()), (None, None));
 
-        let [trail, tape] = SideSegment::pair(&state(LaneView::CandlesOnly, LaneView::CandlesOnly));
+        let [trail, tape] = SideSegment::pair(&state(LaneView::CandlesOnly));
         assert_eq!((trail.ink, tape.ink), (SegmentInk::Lit, SegmentInk::Unlit));
         assert_eq!(trail.click(), None);
         assert_eq!(trail.refusal, Some(SideRefusal::LastSideShowing));
@@ -1160,22 +1174,10 @@ mod tests {
         );
         assert_eq!(tape.click(), Some(HeaderIntent::SetView(LaneView::Beside)));
 
-        let [trail, tape] = SideSegment::pair(&state(LaneView::TapeOnly, LaneView::TapeOnly));
+        let [trail, tape] = SideSegment::pair(&state(LaneView::TapeOnly));
         assert_eq!((trail.ink, tape.ink), (SegmentInk::Unlit, SegmentInk::Lit));
         assert_eq!(tape.click(), None);
         assert_eq!(trail.click(), Some(HeaderIntent::SetView(LaneView::Beside)));
-    }
-
-    /// A fold is not a view: both stay lit and take their press, and the tooltip
-    /// says which side is on screen.
-    #[test]
-    fn a_fold_leaves_the_segments_lit_and_names_the_side_on_screen() {
-        let [trail, tape] = SideSegment::pair(&state(LaneView::Beside, LaneView::TapeOnly));
-        assert_eq!((trail.ink, tape.ink), (SegmentInk::Lit, SegmentInk::Lit));
-        assert_eq!(tape.refusal, None);
-        assert_eq!(trail.note(), Some("Tape only"));
-        let [trail, _] = SideSegment::pair(&state(LaneView::Beside, LaneView::CandlesOnly));
-        assert_eq!(trail.note(), Some("Trail only"));
     }
 
     /// While the market holds the tape: Tape reads so in its own ink and refuses
@@ -1184,8 +1186,9 @@ mod tests {
     #[test]
     fn a_market_hold_turns_the_tape_segment_and_refuses_both() {
         let held = FlowHeaderState {
+            shown_view: LaneView::CandlesOnly,
             market_held: true,
-            ..state(LaneView::Beside, LaneView::CandlesOnly)
+            ..state(LaneView::Beside)
         };
         let [trail, tape] = SideSegment::pair(&held);
         assert_eq!(tape.ink, SegmentInk::MarketClosed);

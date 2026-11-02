@@ -41,7 +41,7 @@ pub use lane::{
 };
 pub use lane_fold::{
     FoldRail, LANE_FOLD_AT_PX, LANE_FOLD_HIT_PX, LANE_FOLD_RAIL_PX, LaneDividerDrag, LaneFold,
-    MarketHold,
+    MarketHold, OldTapeFold,
 };
 pub use lane_view::{LaneSide, LaneView};
 
@@ -566,6 +566,13 @@ impl HeatmapConfig {
         self.lane_enabled() && self.live_lane.tape_only
     }
 
+    /// Whether the pane shows the tape alone this frame: [`Self::tape_only`], or a
+    /// drag past the candles' threshold, which writes it only at the release.
+    #[must_use]
+    pub fn shows_tape_alone(&self) -> bool {
+        self.live_lane.shown_view() == LaneView::TapeOnly
+    }
+
     /// Whether the tape on the canvas is the native tape: execution
     /// coordinates, the market clock, the whole window and a price axis
     /// fitted by its prints, beside the candles or alone. Every processing
@@ -885,9 +892,10 @@ mod tests {
                 forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
-                fold: LaneFold::Open,
                 fold_market_closed: true,
                 market_hold: MarketHold::default(),
+                old_tape_fold: OldTapeFold::default(),
+                drag_close: None,
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,

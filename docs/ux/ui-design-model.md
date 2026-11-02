@@ -351,7 +351,7 @@ than not being connected.**
   why; the way out is still the corner.
 
 **The one red exception: market closed.** A closed market is amber everywhere
-but one place. While the market holds the tape folded beside the candles, the
+but one place. While the market holds the tape away beside the candles, the
 Tape switch reads `Market closed` in the warning red, an outline with a dot and
 no fill, and takes no press; Trail counts as the last side showing, and both
 view keys obey their switches. It is red because it is the only explanation of
@@ -365,8 +365,9 @@ the tape never empties; the first print frees it, and a live link's window is
 untouched, through a transport blip too. The heat stops at the same instant, so
 when the book goes on arriving behind it the muted line adds "book held at
 HH:MM:SS" and the `orderflow.heatmap` scope says the same. Neither
-is saved: the hold never writes the fold a workspace stores, and it ends at the
-first print, not at a change of link.
+is saved: the hold is shown over the view and writes neither the view nor the
+width a workspace stores, and it ends at the first print, not at a change of link,
+with the band back at the width it had.
 
 Progress never reaches the corner. A first connection and a history block
 still arriving are a *wait*, and a wait already has the loading overlay on the
@@ -532,20 +533,22 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   last lit stays lit, refuses the click and says why. `Ctrl+Shift+T`, on a
   focused flow pane, goes to tape only and from there back beside the trail;
   `Ctrl+Shift+R` is its mirror. `orderflow.tape.view.set` names the same three,
-  with its wire words `beside`, `candles` and `tape`. A view writes no fold: a
-  side the divider folded to its rail is still folded on the way back, its
-  segment stays lit, the tooltip names the side on screen, and the rail stays
-  the way back.
+  with its wire words `beside`, `candles` and `tape`. Dragging the divider to the
+  right edge is the Tape switch off and to the left edge is tape only: the one
+  state, reopenable either way however it closed. Either single view keeps an
+  8 px rail at the closed edge. Back to both sides by a switch, a key, a click on
+  the rail or a named call is always the default width; dragging the rail open
+  follows the hand. `orderflow.tape.fold.set` names the same views by the side
+  they close: `open`, `candles` (tape only) and `tape` (the candles alone).
 - **Each side says what it is.** A plate at the capsule's height, top left:
   `TRAIL · bars to HH:MM:SS`, `TAPE · prints to HH:MM:SS · <status>`, also in
   single-side views. The status is the word the feed speaks: muted `live`, amber
   `quiet`, faint and pulsing `reconnecting`, red `offline`, and none for a source
-  with no transport. A 2 px `border` rule divides the sides and stays the fold
-  handle.
+  with no transport. A 2 px `border` rule divides the sides and is the handle
+  that closes them.
 - **Candles hidden keeps their look.** In tape only, bubbles, L2 and footprint
   grey out in place and keep their state; `Ctrl+B` and `Ctrl+F` do nothing
-  there. A fold is not tape only: they stay live with the candles folded to
-  their rail. The strip stays live. The tape holds its own switches for
+  there, however the candles closed. The strip stays live. The tape holds its own switches for
   book and bubbles, reached by right-clicking it; the header's L2 and bubbles
   govern the *candles* and never the tape, in either direction — one pane's
   switch may not move another pane's pixels.
@@ -554,8 +557,7 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   the value shows only while dragging. Both samples are `text/primary`, since
   green means buy on this pane: the one in the trail's capsule sizes the candles'
   bubbles, the one in the tape's the tape's. Each is
-  gone while its target is off, and a folded side is not off; the candle
-  sample's slot stays, so no glyph shifts.
+  gone while its target is off; the candle sample's slot stays, so no glyph shifts.
 - **A narrow line drops, then clips.** The switches' words go first, then the
   mark; what still does not fit is clipped by the strip, and nothing overlaps.
 - **Focus**: clicking a pane focuses it; the focused pane drives the status

@@ -373,7 +373,7 @@ fn regional_circles_with_colours(
 ) -> Vec<egui::Mesh> {
     let frame = &app.active_tab().flow_pane.frame;
     let rect = frame.chart_rect.unwrap();
-    let history = rect.with_max_x(frame.lane_divider_x.unwrap_or(rect.right()));
+    let history = rect.with_max_x(frame.candles_right.unwrap_or(rect.right()));
     output
         .shapes
         .iter()
@@ -478,7 +478,7 @@ fn assert_regional_circles(
     assert!(marks.iter().all(|mark| mark["opening_oversized"] == false));
     let pane = &app.active_tab().flow_pane;
     let rect = pane.frame.chart_rect.unwrap();
-    let right = pane.frame.lane_divider_x.unwrap_or(rect.right());
+    let right = pane.frame.candles_right.unwrap_or(rect.right());
     let (low, high) = pane.price_view.resolve(pane.frame.auto_range.unwrap());
     let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
     let history = rect.with_max_x(right);

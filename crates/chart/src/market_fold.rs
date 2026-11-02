@@ -1,10 +1,11 @@
-//! The market-closed fold: a tape with nothing to say folds away by itself and
+//! The market-closed hold: a tape with nothing to say goes away by itself and
 //! comes back with the first print. Decided here from what the feed reports, so
-//! a replay, which has no transport to go quiet, never folds; the lane only
+//! a replay, which has no transport to go quiet, never holds; the lane only
 //! holds the answer ([`MarketHold`]) and the window only passes the facts on.
 //!
-//! The hold goes through the lane's fold ([`LiveLaneStyle::shown_fold`]) without
-//! ever writing the fold a workspace saves.
+//! The hold is a display over the lane ([`LiveLaneStyle::shown_view`]): it shows
+//! the candles alone and writes neither the view nor the share a workspace saves,
+//! so the first print brings back what was showing, at the width it had.
 //!
 
 use quantick_orderflow::tape_clock::TapeHold;
@@ -19,13 +20,11 @@ use crate::state::ChartState;
 /// What one step of [`next_hold`] decides from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MarketFacts {
-    /// The stored view: a fold is not one.
+    /// The stored view: the hold starts only beside the candles.
     pub view: LaneView,
     pub link: Link,
     /// The asset's "Fold the tape while the market is closed".
     pub setting: bool,
-    /// A fold the trader left is standing.
-    pub trader_fold: bool,
     /// When the last print arrived; the clock is the tracker's, compared and
     /// never read.
     pub last_data_at: Option<i64>,
@@ -41,12 +40,12 @@ fn says_closed(link: Link) -> bool {
 /// it is always Attempting, which neither starts a hold nor ends one or a spell.
 ///
 /// It starts beside the candles when the link says Quiet or Offline, the setting
-/// is on, no trader's fold stands, and no hand opened the tape during this closed
-/// spell. It ends at the first print, not at a change of link, so Offline to
-/// Attempting does not flicker; also with the setting off, a view change or a
-/// source with no transport. A hand's fold ([`MarketHold::stand_down`]) holds it
-/// off until the next entry: an attempt inside a spell is not one, as the feed's
-/// retries would otherwise fold what the trader just opened.
+/// is on and no hand opened the tape during this closed spell. It ends at the first
+/// print, not at a change of link, so Offline to Attempting does not flicker; also
+/// with the setting off, a view change or a source with no transport. A hand's word
+/// ([`MarketHold::stand_down`]) holds it off until the next entry: an attempt inside
+/// a spell is not one, as the feed's retries would otherwise take away what the
+/// trader just opened.
 #[must_use]
 pub fn next_hold(hold: MarketHold, facts: MarketFacts) -> MarketHold {
     let printed = facts.last_data_at.is_some() && facts.last_data_at != hold.seen_print_at;
@@ -55,7 +54,6 @@ pub fn next_hold(hold: MarketHold, facts: MarketFacts) -> MarketHold {
     let stood_down = hold.stood_down && !entered;
     let may_hold = facts.setting
         && facts.view == LaneView::Beside
-        && !facts.trader_fold
         && !printed
         && facts.link != Link::NoTransport;
     MarketHold {
@@ -79,7 +77,6 @@ pub fn next_for(lane: &LiveLaneStyle, feed: ConnectionState) -> MarketHold {
             view: lane.view(),
             link: feed.link,
             setting: lane.fold_market_closed,
-            trader_fold: !lane.fold.is_open(),
             last_data_at: feed.last_data_at,
         },
     )
@@ -258,7 +255,6 @@ mod tests {
             view: LaneView::Beside,
             link,
             setting: true,
-            trader_fold: false,
             last_data_at: AT,
         }
     }
@@ -303,17 +299,6 @@ mod tests {
             };
             assert!(!held_after(settled(false), off));
         }
-    }
-
-    /// The trader's own fold is not overruled, nor taken over.
-    #[test]
-    fn a_standing_trader_fold_is_left_alone() {
-        let folded = MarketFacts {
-            trader_fold: true,
-            ..facts(Link::Quiet)
-        };
-        assert!(!held_after(settled(false), folded));
-        assert!(!held_after(settled(true), folded), "and it ends a hold");
     }
 
     /// The first print releases, whatever the link; a change of link alone never
@@ -425,10 +410,11 @@ mod tests {
         assert!(hold.held);
     }
 
-    /// A saved fold is the lane's own, and a hold never writes it: through a
-    /// whole hold it stays what the trader left, and the trader's stays standing.
+    /// The hold is a display: through a whole hold the stored view and share stay
+    /// what the trader left, a side the trader closed is not taken over, and the
+    /// first print shows the band at the width it had.
     #[test]
-    fn a_saved_fold_is_untouched_by_a_hold() {
+    fn a_hold_leaves_the_stored_view_and_share_untouched() {
         let quiet = ConnectionState {
             link: Link::Quiet,
             feed: crate::connection_state::Stream::Idle,
@@ -438,18 +424,33 @@ mod tests {
             last_data_at: None,
             current_job: None,
         };
-        let mut lane = LiveLaneStyle::default();
-        lane.market_hold = next_for(&lane, quiet);
-        assert!(lane.market_held());
-        assert_eq!(lane.fold, quantick_orderflow::LaneFold::Open);
-
-        let mut trader = LiveLaneStyle {
-            fold: quantick_orderflow::LaneFold::Candles,
+        let mut lane = LiveLaneStyle {
+            width_share: 0.42,
             ..LiveLaneStyle::default()
         };
-        trader.market_hold = next_for(&trader, quiet);
-        assert!(!trader.market_held());
-        assert_eq!(trader.fold, quantick_orderflow::LaneFold::Candles);
+        let band = lane.resolved_width_px(1_000.0);
+        lane.market_hold = next_for(&lane, quiet);
+        assert!(lane.market_held());
+        assert_eq!(lane.shown_view(), LaneView::CandlesOnly);
+        assert_eq!(lane.view(), LaneView::Beside);
+        assert_eq!(lane.width_share, 0.42);
+
+        let printed = ConnectionState {
+            last_data_at: AT,
+            ..quiet
+        };
+        lane.market_hold = next_for(&lane, printed);
+        assert!(!lane.market_held(), "the first print");
+        assert_eq!(lane.shown_view(), LaneView::Beside);
+        assert_eq!(lane.resolved_width_px(1_000.0), band, "the width it had");
+
+        for view in [LaneView::CandlesOnly, LaneView::TapeOnly] {
+            let mut closed = LiveLaneStyle::default();
+            closed.set_view(view);
+            closed.market_hold = next_for(&closed, quiet);
+            assert!(!closed.market_held(), "{view:?}");
+            assert_eq!(closed.view(), view);
+        }
     }
 
     #[test]

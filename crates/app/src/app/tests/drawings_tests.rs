@@ -15,7 +15,7 @@ mod placement_characterization {
         let pane = &app.active_tab().flow_pane;
         let chart = pane.frame.chart_area.unwrap();
         let slot = pane.slots() - 30;
-        let right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+        let right = pane.frame.candles_right.unwrap_or(chart.right());
         let target = egui::pos2(
             pane.model.viewport.x_center(slot, right, pane.slots()),
             chart.center().y,
@@ -286,7 +286,7 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
         .chart_area
         .expect("the first frame laid out the chart");
     let pane = &app.active_tab().flow_pane;
-    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     let start = egui::pos2(
         pane.model
             .viewport
@@ -652,7 +652,7 @@ fn a_future_space_range_still_creates_a_volume_profile() {
     run_frame(&mut app, &ctx);
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_area.expect("the chart was laid out");
-    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     let start = egui::pos2(
         pane.model
             .viewport
@@ -697,7 +697,7 @@ pub(super) fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, eg
         .frame
         .chart_area
         .expect("the first frame laid out the chart");
-    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     let x_at = |bar: f32| {
         pane.model
             .viewport
@@ -3248,7 +3248,7 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
         app.active_tab()
             .drawing_pane()
             .frame
-            .lane_divider_x
+            .candles_right
             .unwrap_or(chart.right()),
         app.drawings
             .drawing_bbox_on_screen(
@@ -3602,7 +3602,7 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     // history area.
     let chart = pane.frame.chart_area.expect("chart laid out");
     let width = pane.model.viewport.candle_width();
-    let right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let right = pane.frame.candles_right.unwrap_or(chart.right());
     let x = right - width * 0.5;
 
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");

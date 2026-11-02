@@ -61,7 +61,7 @@ fn drawn_sides(app: &QuantickApp) -> (f32, f32) {
         .frame
         .chart_area
         .expect("the first frame laid out the chart");
-    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     let xs: Vec<f32> = pane.drawings.items()[0]
         .points
         .iter()

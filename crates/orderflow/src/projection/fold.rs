@@ -40,8 +40,8 @@ fn side_key(side: AggressorSide) -> u8 {
 /// The split is the tape's own width share ([`LiveLaneStyle::width_share`]),
 /// not a number of its own: marks need room to be read, so the pane with a
 /// third of the canvas gets a third of the marks, and a trader who drags the
-/// divider moves both together. A folded side keeps only a rail, so the open
-/// side spends the budget ([`LiveLaneStyle::budget_share`]).
+/// divider moves both together. While the market holds the tape away the candles
+/// spend it ([`LiveLaneStyle::budget_share`]).
 ///
 /// With the tape switched off there is no second pane, and the candles get the
 /// whole budget — reserving a share for a band nobody is drawing would fold the
@@ -357,22 +357,20 @@ mod tests {
         assert_eq!((all, none), (100, 0), "the candles get the whole budget");
     }
 
-    /// A fold left on a tape-only pane, or on a tape switched off, never
-    /// moves its budget: both split the frame as they did before folding.
+    /// A side closed by drag is the side closed by click, so a tape-only pane
+    /// splits the frame by its share and a tape off gives the candles it all.
     #[test]
-    fn a_fold_never_moves_a_tape_only_or_switched_off_budget() {
-        use crate::config::LaneFold;
-        for (enabled, tape_only) in [(true, true), (false, false)] {
-            let lane_of = |fold: LaneFold| LiveLaneStyle {
-                enabled,
-                tape_only,
-                fold,
-                ..LiveLaneStyle::default()
-            };
-            let open = pane_budgets(100, &lane_of(LaneFold::Open));
-            for fold in [LaneFold::Candles, LaneFold::Tape] {
-                assert_eq!(pane_budgets(100, &lane_of(fold)), open, "{fold:?}");
-            }
-        }
+    fn a_closed_sides_budget_is_the_views() {
+        let alone = LiveLaneStyle {
+            tape_only: true,
+            width_share: 0.3,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(pane_budgets(100, &alone), (70, 30));
+        let off = LiveLaneStyle {
+            enabled: false,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(pane_budgets(100, &off), (100, 0));
     }
 }

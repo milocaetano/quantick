@@ -12,7 +12,7 @@ use quantick_orderflow::config::labels::{
 use quantick_orderflow::engine::OrderflowHealth;
 use quantick_orderflow::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig,
-    LANE_WINDOW_PRESETS_MS, LaneFold, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
+    LANE_WINDOW_PRESETS_MS, LaneView, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
     MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
     MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE,
     MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_window_label,
@@ -198,8 +198,14 @@ impl LiveLaneSection<'_> {
         {
             lane.native_tape = native;
         }
-        ui.checkbox(&mut lane.tape_only, "Tape only (hide trail)")
-            .on_hover_text(ChartLayer::TapeOnly.hint());
+        let mut tape_only = lane.tape_only;
+        let tape_only_box = ui.checkbox(&mut tape_only, "Tape only (hide trail)");
+        if tape_only_box
+            .on_hover_text(ChartLayer::TapeOnly.hint())
+            .changed()
+        {
+            lane.set_tape_only(tape_only);
+        }
         let native_tape = lane.native() && volume_dots;
         let mut lane_set = false;
         egui::CollapsingHeader::new("live lane")
@@ -220,13 +226,13 @@ impl LiveLaneSection<'_> {
                     )
                 });
                 if width.inner.changed() {
-                    // The slider sets the open band, so a folded lane opens to show it.
-                    lane.set_fold(LaneFold::Open);
+                    // The slider sets the open band, so a closed tape opens to show it.
+                    lane.show_by_hand(LaneView::Beside);
                     lane_set = true;
                 }
                 width.response
                 .on_hover_text(
-                    "how much of the chart the rolling tape takes, up to nearly all of it. Also set by dragging the divider on the chart, where an edge folds that side to a rail this slider opens again; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
+                    "how much of the chart the rolling tape takes, up to nearly all of it. Also set by dragging the divider on the chart, where an edge closes that side to a rail this slider opens again; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
                 }
                 lane_set |= window_rows(ui, lane, native_tape);

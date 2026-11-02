@@ -13,7 +13,7 @@ pub(crate) use quantick_orderflow::FlowCellHit;
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::pane_tape::PaneTape;
 use quantick_orderflow::projection::GapPrimitive;
-use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
+use quantick_orderflow::{HeatmapConfig, LaneWindow, LiveLaneStyle, reserved_span_ms};
 use quantick_stores::bubble_asset_store::AssetBinding;
 use quantick_stores::bubble_asset_store::SaveSwitch;
 use quantick_stores::bubble_assets::AssetBubbles;
@@ -470,26 +470,31 @@ impl OrderflowView {
 
     /// Put the tape on the canvas, or take it off. Off, the lane reserves no width and asks for no
     /// projection; its two layer switches stay as they were, so switching it back on returns the
-    /// same tape, opened if it was folded ([`quantick_orderflow::LiveLaneStyle::set_enabled`]).
+    /// same tape, beside the candles at the default width ([`quantick_orderflow::LiveLaneStyle::set_enabled`]).
     pub fn set_lane_enabled(&mut self, enabled: bool) {
-        if self.config.live_lane.enabled == enabled {
-            return;
-        }
-        let before = self.config.clone();
-        self.config.live_lane.set_enabled(enabled);
-        self.commit_lane_switch(before);
+        self.edit_lane(|lane| lane.set_enabled(enabled));
     }
 
-    /// Show `view`, from any view, through the one write every door shares
-    /// (the header's button, its key, the named call); a fold stays as it was.
-    /// Answers whether it changed.
-    pub fn set_lane_view(&mut self, view: quantick_orderflow::LaneView) -> bool {
+    /// One write to the lane's switches, committed if it moved anything.
+    pub(crate) fn edit_lane(&mut self, edit: impl FnOnce(&mut LiveLaneStyle) -> bool) -> bool {
         let before = self.config.clone();
-        let changed = self.config.live_lane.set_view(view);
+        let changed = edit(&mut self.config.live_lane);
         if changed {
             self.commit_lane_switch(before);
         }
         changed
+    }
+
+    /// Show `view`, from any view, through the one write every door shares
+    /// (the header's switches, their keys, the named call). Answers whether it changed.
+    pub fn set_lane_view(&mut self, view: quantick_orderflow::LaneView) -> bool {
+        self.edit_lane(|lane| lane.set_view(view))
+    }
+
+    /// The view by the side it closes, with the market's hold standing down: the
+    /// rail's click and `orderflow.tape.fold.set`. Answers whether it changed.
+    pub fn set_lane_fold(&mut self, fold: quantick_orderflow::LaneFold) -> bool {
+        self.edit_lane(|lane| lane.set_fold(fold))
     }
 
     /// One step of the market-closed fold: only a hold that moves is news.
@@ -687,24 +692,26 @@ impl OrderflowView {
 
     /// Widen or narrow the lane by a pixel drag on its divider. Dragging left
     /// (negative `delta_px`) gives the tape more room, at the expense of the
-    /// history beside it; near either edge that side folds
+    /// history beside it; near either edge that side closes
     /// ([`HeatmapConfig::drag_lane_divider`]).
     pub fn resize_live_lane(&mut self, delta_px: f32, chart_width: f32) {
         let before = self.config.clone();
-        let step = self
+        let moved = self
             .config
             .drag_lane_divider(&mut self.lane_drag, delta_px, chart_width);
-        // The width is navigation; a fold is a setting the asset keeps.
-        match step {
-            Some(true) => self.commit_config_changes(before),
-            Some(false) => self.apply_config(before),
-            None => false,
-        };
+        // The width is navigation; a view is a setting.
+        if moved {
+            self.commit_lane_switch(before);
+        } else {
+            self.apply_config(before);
+        }
     }
 
-    /// The divider let go, or taken again: the next drag starts afresh.
+    /// The divider let go, or taken again: a close only shown is written, once.
     pub fn release_lane_drag(&mut self) {
-        self.lane_drag = None;
+        if self.lane_drag.take().is_some() {
+            self.edit_lane(LiveLaneStyle::release_drag_close);
+        }
     }
 
     /// Zoom the lane's time window by a multiplicative factor: `> 1` shows less market time in the
@@ -1189,11 +1196,19 @@ impl OrderflowView {
         self.wear_asset(settings, false);
     }
 
+    /// The layer mask observes this view's tab ([`BubbleLook::settle_old_tape_fold`]).
+    pub(crate) fn settle_old_tape_fold(&mut self) -> bool {
+        self.look.settle_old_tape_fold(&self.config)
+    }
+
     /// Take the presets another view reloaded, file what this one changed,
     /// then wear what another view filed since ([`BubbleLook::sync`]).
     /// Returns the candle aggression to put on the flow pane when it adopted.
     pub(crate) fn sync_asset(&mut self, candle_aggression: bool) -> Option<bool> {
         self.look.asset()?;
+        if self.look.take_old_tape_fold(&self.config) {
+            self.set_lane_enabled(false);
+        }
         if self.look.take_reloaded_presets() {
             self.follow_declared_look(false);
         }
@@ -1245,7 +1260,7 @@ mod tests {
     use super::*;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
     use quantick_orderflow::{
-        BubbleSizeReference, BubbleStyle, ConsumptionMark, LaneFold, MAX_LIVE_LANE_WINDOW_MS,
+        BubbleSizeReference, BubbleStyle, ConsumptionMark, LaneView, MAX_LIVE_LANE_WINDOW_MS,
         MAX_LIVE_LANE_ZOOM, MIN_LIVE_LANE_ZOOM,
     };
 
@@ -1630,9 +1645,10 @@ mod tests {
                 forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
-                fold: LaneFold::Open,
                 fold_market_closed: true,
                 market_hold: Default::default(),
+                old_tape_fold: Default::default(),
+                drag_close: None,
             },
         });
         view.look = BubbleLook::open(
@@ -1978,10 +1994,45 @@ mod tests {
         }
     }
 
-    /// Dragging the divider is the width slider by another route, and past
-    /// either edge's threshold it folds that side instead of squeezing it.
+    impl OrderflowView {
+        /// Open on `loaded`, as a launch does, without a process-global presets file.
+        pub(crate) fn open_look_for_test(&mut self, loaded: LoadedPresets) {
+            self.look = BubbleLook::open(loaded, &mut self.config);
+        }
+    }
+
+    /// Crossing a close threshold mid-drag tears nothing down, and asks nothing of
+    /// the asset; the release writes the view once. Beside on a held pane releases
+    /// it, the call `orderflow.tape.fold.set` open makes.
     #[test]
-    fn dragging_the_divider_resizes_the_lane_and_folds_at_the_edges() {
+    fn a_drag_past_the_threshold_commits_only_at_the_release() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.config.live_lane.width_share = 0.42;
+        let before = view.config.clone();
+        for delta in [10_000.0, -10_000.0, 10_000.0] {
+            view.resize_live_lane(delta, 1_000.0);
+            assert!(view.config.same_tape_grouping(&before), "{delta}");
+            assert!(view.config.live_lane.enabled && !view.config.live_lane.tape_only);
+        }
+        view.release_lane_drag();
+        assert_eq!(view.config.live_lane.view(), LaneView::CandlesOnly);
+        assert_eq!(view.config.live_lane.drag_close, None);
+
+        let mut held = OrderflowView::new("BTCUSDT");
+        held.config.live_lane.width_share = 0.42;
+        held.config.live_lane.market_hold.held = true;
+        assert!(held.set_lane_view(LaneView::Beside), "changed");
+        assert!(!held.config.live_lane.market_held());
+        assert_eq!(
+            held.config.live_lane.width_share,
+            quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE
+        );
+    }
+
+    /// Dragging the divider is the width slider by another route, and past
+    /// either edge's threshold it closes that side instead of squeezing it.
+    #[test]
+    fn dragging_the_divider_resizes_the_lane_and_closes_at_the_edges() {
         let mut view = OrderflowView::new("BTCUSDT");
         let chart = 1_000.0;
         let before = view.config.live_lane.resolved_width_px(chart);
@@ -1993,20 +2044,26 @@ mod tests {
         view.resize_live_lane(60.0, chart);
         assert!((view.config.live_lane.resolved_width_px(chart) - before).abs() < 0.01);
 
-        // Past either edge a side folds, and the share it opens at is kept.
+        // Past either edge a side closes, and the share it started from is kept.
         let share = view.config.live_lane.width_share;
         view.resize_live_lane(-10_000.0, chart);
-        assert_eq!(view.config.live_lane.fold, LaneFold::Candles);
+        assert_eq!(view.config.live_lane.shown_view(), LaneView::TapeOnly);
+        assert_eq!(view.config.live_lane.view(), LaneView::Beside, "only shown");
         view.resize_live_lane(10_000.0, chart);
         assert_eq!(
-            view.config.live_lane.fold,
-            LaneFold::Open,
+            view.config.live_lane.view(),
+            LaneView::Beside,
             "back under the hand"
         );
         view.resize_live_lane(10_000.0, chart);
-        assert_eq!(view.config.live_lane.fold, LaneFold::Tape);
+        assert_eq!(view.config.live_lane.shown_view(), LaneView::CandlesOnly);
         assert_eq!(view.config.live_lane.width_share, share);
         view.release_lane_drag();
+        assert_eq!(
+            view.config.live_lane.view(),
+            LaneView::CandlesOnly,
+            "written"
+        );
 
         // A degenerate chart or a lost pointer changes nothing at all.
         let steady = view.config.live_lane.clone();

@@ -30,17 +30,11 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tape_fold::TapeFoldPane;
     use serde_json::json;
 
     struct Pane(bool);
 
     impl TapeFoldPort for Pane {
-        fn tape_fold_pane(&mut self, _: u64, _: u64) -> Result<TapeFoldPane, ControlError> {
-            Ok(TapeFoldPane {
-                beside_candles: true,
-            })
-        }
         fn set_tape_fold(
             &mut self,
             _: u64,

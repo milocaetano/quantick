@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use quantick_orderflow::{
-    BubbleStyle, HeatmapConfig, LiveLaneStyle,
+    BubbleStyle, HeatmapConfig, LiveLaneStyle, OldTapeFold,
     config::{DEFAULT_BUBBLE_CLUSTER_MS, DEFAULT_BUBBLE_DUST_MERGE_MS, DEFAULT_BUBBLE_REGION_MS},
 };
 
@@ -166,11 +166,10 @@ impl BubblePreset {
                 enabled: LiveLaneStyle::default().enabled,
                 show_depth: LiveLaneStyle::default().show_depth,
                 show_aggressions: LiveLaneStyle::default().show_aggressions,
-                // Nor where the pane's lane sits: a fold is the pane's, and
-                // its asset files it beside the look (`AssetBubbles::fold`).
-                fold: LiveLaneStyle::default().fold,
                 fold_market_closed: LiveLaneStyle::default().fold_market_closed,
                 market_hold: LiveLaneStyle::default().market_hold,
+                old_tape_fold: LiveLaneStyle::default().old_tape_fold,
+                drag_close: None,
                 ..config.live_lane.clone()
             },
         }
@@ -197,23 +196,25 @@ impl BubblePreset {
         // The lane's visibility is not the preset's to carry: choosing a look
         // may not blank the tape, take it off the canvas, or put it back, and
         // a preset file edited by hand may not switch layers on behind the
-        // trader, nor fold the pane's lane. Everything else in the lane's
-        // style is exactly what the preset stored.
+        // trader. Everything else in the lane's style is exactly what the
+        // preset stored.
         let visibility = (
             config.live_lane.enabled,
             config.live_lane.show_depth,
             config.live_lane.show_aggressions,
-            config.live_lane.fold,
             config.live_lane.fold_market_closed,
             config.live_lane.market_hold,
+            config.live_lane.drag_close,
         );
         config.live_lane = self.live_lane.clone();
         config.live_lane.enabled = visibility.0;
         config.live_lane.show_depth = visibility.1;
         config.live_lane.show_aggressions = visibility.2;
-        config.live_lane.fold = visibility.3;
-        config.live_lane.fold_market_closed = visibility.4;
-        config.live_lane.market_hold = visibility.5;
+        config.live_lane.fold_market_closed = visibility.3;
+        config.live_lane.market_hold = visibility.4;
+        config.live_lane.drag_close = visibility.5;
+        // Only the bubble look may carry an old file's closed tape out, once.
+        config.live_lane.old_tape_fold = OldTapeFold::default();
     }
 }
 
@@ -251,6 +252,13 @@ pub struct BubblePresetFile {
 }
 
 impl BubblePresetFile {
+    /// Spend the old closed tape the preset under `name` was read with: whether it
+    /// had one, which only the first ask hears. Never written, so a save drops it.
+    pub(crate) fn spend_old_tape_fold(&mut self, name: &str) -> bool {
+        let preset = self.presets.iter_mut().find(|preset| preset.name == name);
+        preset.is_some_and(|preset| std::mem::take(&mut preset.live_lane.old_tape_fold.0))
+    }
+
     /// The preset stored under `name`, if any.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&BubblePreset> {
@@ -916,24 +924,50 @@ name = "old"
         assert!(!cleared.live_lane.show_depth);
     }
 
-    /// A fold is where the pane's lane sits, not a look: a preset records the
-    /// lane open and choosing one leaves the target pane's fold alone.
+    /// A preset file with the old fold in it keeps the share it saved and is
+    /// written back without it. The candles' side reads as its view; the tape's is a
+    /// marker alone, which the look spends once
+    /// (`crates/stores/tests/bubble_assets.rs`). A look may not take the tape away.
     #[test]
-    fn a_preset_never_carries_the_lanes_fold() {
-        use quantick_orderflow::LaneFold;
-        let mut config = HeatmapConfig::default();
-        config.live_lane.fold = LaneFold::Candles;
-        let mut preset = BubblePreset::capture("mine", &config);
-        assert_eq!(preset.live_lane.fold, LaneFold::Open, "captured open");
+    fn a_presets_old_fold_reads_as_its_view_and_is_never_written() {
+        use quantick_orderflow::LaneView;
+        let read = |fold: &str| {
+            let text = format!("width_share = 0.42\nfold = \"{fold}\"\n");
+            toml::from_str::<LiveLaneStyle>(&text).expect("reads")
+        };
+        let (candles, tape) = (read("candles"), read("tape"));
+        assert_eq!(candles.view(), LaneView::TapeOnly);
+        assert_eq!(tape.view(), LaneView::Beside);
+        assert!(tape.old_tape_fold.0, "the marker waits for the look");
+        assert_eq!((candles.width_share, tape.width_share), (0.42, 0.42));
 
-        // Even a hand-edited fold in the file never moves a pane's lane.
-        preset.live_lane.fold = LaneFold::Tape;
-        for kept in [LaneFold::Open, LaneFold::Candles] {
-            let mut other = HeatmapConfig::default();
-            other.live_lane.fold = kept;
-            preset.apply_to(&mut other);
-            assert_eq!(other.live_lane.fold, kept);
-        }
+        let mut preset = BubblePreset::capture("old", &HeatmapConfig::default());
+        preset.live_lane = candles;
+        let mut pane = HeatmapConfig::default();
+        preset.apply_to(&mut pane);
+        assert_eq!(pane.live_lane.view(), LaneView::TapeOnly);
+        assert!(!toml::to_string(&preset).unwrap().contains("fold ="));
+
+        preset.live_lane = tape;
+        assert!(!toml::to_string(&preset).unwrap().contains("fold ="));
+        let mut pane = HeatmapConfig::default();
+        preset.apply_to(&mut pane);
+        assert_eq!(pane.live_lane.view(), LaneView::Beside, "apply_to may not");
+        assert!(
+            !pane.live_lane.old_tape_fold.0,
+            "nor does it rest on a pane"
+        );
+    }
+
+    /// A hand-edited `enabled = false` is no old fold: choosing the look leaves the
+    /// tape on the canvas, every time.
+    #[test]
+    fn a_hand_edited_tape_off_never_closes_the_tape() {
+        let text = "[[presets]]\nname = \"off\"\n[presets.live_lane]\nenabled = false\n";
+        let file = parse(text).expect("a hand-edited file");
+        let mut pane = HeatmapConfig::default();
+        file.get("off").unwrap().apply_to(&mut pane);
+        assert!(pane.live_lane.enabled, "choosing a look may not close it");
     }
 
     #[test]

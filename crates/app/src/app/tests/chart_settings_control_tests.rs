@@ -205,7 +205,7 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
     assert!(!app.surfaces.chart_settings.is_open());
     // On a candle's body, through the geometry the frame painted.
     let (right, total) = (
-        pane.frame.lane_divider_x.unwrap_or(chart.right()),
+        pane.frame.candles_right.unwrap_or(chart.right()),
         pane.slots(),
     );
     let slot = total - 20;

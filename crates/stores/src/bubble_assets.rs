@@ -3,7 +3,7 @@
 //! An asset is what [`FeedConfig::bubble_asset`](crate::config::FeedConfig::bubble_asset)
 //! names: a symbol, or a family of dated contracts one config key declares
 //! (`WIN*`). Each asset keeps its own aggression-bubble settings — the panel's
-//! look, the tape mode, the tape lane's fold, the tape's and the candles'
+//! look, the tape mode, the tape's and the candles'
 //! opening-burst scale and the flow pane's aggression bubbles and candle
 //! aggression switches — so a
 //! change made while one market is on
@@ -61,13 +61,15 @@ pub struct AssetBubbles {
     /// their scale.
     #[serde(default)]
     pub flow_ignore_opening: bool,
-    /// Which side of the tape lane is folded to a rail: the pane's, never a
-    /// preset's, so it is kept here beside the look. Absent reads open, and
-    /// an open lane writes nothing.
+    /// Read from a store written while a closed side was filed apart from its
+    /// view: worn as that view
+    /// ([`BubbleLook::wear`](crate::bubble_look::BubbleLook::wear)). Never written
+    /// but for a closed tape the Tape layer has not yet saved, kept so it is not
+    /// lost unapplied; absent reads open.
     #[serde(default, skip_serializing_if = "LaneFold::is_open")]
     pub fold: LaneFold,
-    /// The tape folds while the market is closed: the asset's, beside its fold.
-    /// Absent reads on, and on writes nothing.
+    /// The tape goes away while the market is closed: the asset's. Absent reads
+    /// on, and on writes nothing.
     #[serde(
         default = "fold_market_closed_default",
         skip_serializing_if = "std::clone::Clone::clone"

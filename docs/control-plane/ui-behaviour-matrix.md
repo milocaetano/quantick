@@ -92,7 +92,7 @@ The three exclusion classes are closed:
 | `layer.tape_heatmap.toggle` | Switch the book on the tape on or off | tape capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide trail) | `layers.visibility.set` | — |
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
-| `orderflow.tape.fold.set` | Fold the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click the rail it leaves | `orderflow.tape.fold.set` | — |
+| `orderflow.tape.fold.set` | Close the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click or drag the rail either single view keeps | `orderflow.tape.fold.set` | — |
 | `orderflow.tape.market_fold.set` | Fold the tape while the market is closed | the checkbox in the tape section of the Bubbles settings | `orderflow.tape.market_fold.set` | — |
 | `orderflow.settings.open` | Open the order-flow panel, on the L2 or the Bubbles section if one is named | the flow pane's gear and its right-click menu; View menu; a capsule glyph's right-click; Ctrl+Shift+O | `orderflow.settings.open` | — |
 | `orderflow.settings.close` | Close the order-flow panel | the panel's ×; the gear's left click; Ctrl+Shift+O | `orderflow.settings.close` | — |

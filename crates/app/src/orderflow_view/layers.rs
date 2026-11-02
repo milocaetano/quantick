@@ -23,7 +23,7 @@ const SWITCHES: [Switch; 11] = [
     ),
     Switch(
         |view| view.cached_config().live_lane.tape_only,
-        |view, on| commit(view, |config| config.live_lane.tape_only = on),
+        |view, on| commit(view, |config| _ = config.live_lane.set_tape_only(on)),
     ),
     // The request, like tape only: whether the pane builds the native tape
     // is `HeatmapConfig::native_tape`, and the layer policy says why not.
