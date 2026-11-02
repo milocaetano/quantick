@@ -154,6 +154,8 @@ fn the_shipped_config_switches_the_mode_on_for_binance_btc_and_the_mini_index() 
             "binance-futures/BTCUSDT.p",
             "metatrader-b3/WIN$N",
             "metatrader-b3/WINV26",
+            "metatrader-b3/WINZ26",
+            "metatrader-b3/WING27",
         ],
         "the mini dollar beside the mini index keeps no mode"
     );

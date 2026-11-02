@@ -1944,6 +1944,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         bubble_preset: None,
         symbol_bubble_presets: Default::default(),
         symbol_asset_modes: Default::default(),
+        contract_rolls: Default::default(),
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
         default_bars: Some("tick:7".to_string()),
         record_deals: false,

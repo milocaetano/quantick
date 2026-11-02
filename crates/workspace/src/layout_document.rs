@@ -168,6 +168,23 @@ struct DrawingSet {
     items: Vec<SavedDrawing>,
 }
 
+impl SavedDrawing {
+    /// The same mark, whatever a pane did to it since. Its id is the holding
+    /// pane's and its bar offsets are the series it was last anchored on, so
+    /// neither says whether two entries are one object.
+    fn same_mark(&self, other: &Self) -> bool {
+        let plain = |drawing: &Self| {
+            let mut drawing = drawing.clone();
+            drawing.id = None;
+            for point in &mut drawing.points {
+                point.bar = 0.0;
+            }
+            drawing
+        };
+        plain(self) == plain(other)
+    }
+}
+
 impl DrawingSet {
     fn key(&self) -> DrawingKey {
         DrawingKey {
@@ -203,6 +220,48 @@ impl ChartLayout {
             .iter()
             .find(|set| set.is(key))
             .map(|set| set.items.as_slice())
+    }
+
+    /// Copy this layout's drawings on `from` onto `to`, pane for pane, for a
+    /// contract roll. `from` keeps its own: a tab still on the old contract
+    /// and a later return to it lose nothing. What `to` already holds stays,
+    /// and a mark it already holds ([`SavedDrawing::same_mark`]) is not added
+    /// twice, so rolling again duplicates nothing. Returns how many objects were added.
+    pub fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
+        let leaving: Vec<(usize, Vec<SavedDrawing>)> = self
+            .drawings
+            .iter()
+            .filter(|set| set.feed == feed && set.symbol == from)
+            .map(|set| (set.pane, set.items.clone()))
+            .collect();
+        let mut carried = 0;
+        for (pane, items) in leaving {
+            let key = DrawingKey {
+                feed: feed.to_owned(),
+                symbol: to.to_owned(),
+                pane,
+            };
+            let index = match self.drawings.iter().position(|set| set.is(&key)) {
+                Some(index) => index,
+                None => {
+                    self.drawings.push(DrawingSet {
+                        feed: key.feed,
+                        symbol: key.symbol,
+                        pane,
+                        items: Vec::new(),
+                    });
+                    self.drawings.len() - 1
+                }
+            };
+            let target = &mut self.drawings[index].items;
+            for item in items {
+                if !target.iter().any(|held| held.same_mark(&item)) {
+                    target.push(item);
+                    carried += 1;
+                }
+            }
+        }
+        carried
     }
 
     /// Replace the drawings kept for `key`. An empty set removes the entry:
@@ -338,6 +397,15 @@ impl LayoutBook {
     /// See [`Self::get`].
     pub fn get_mut(&mut self, id: LayoutId) -> Option<&mut ChartLayout> {
         self.layouts.iter_mut().find(|layout| layout.id == id)
+    }
+
+    /// [`ChartLayout::carry_market_drawings`], in every layout: a workspace
+    /// the trader switches to after the roll holds its marks too.
+    pub fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
+        self.layouts
+            .iter_mut()
+            .map(|layout| layout.carry_market_drawings(feed, from, to))
+            .sum()
     }
 
     /// Where `id` sits in the strip.

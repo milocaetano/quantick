@@ -324,6 +324,17 @@ pub const FEED_GENERATION_TEST: &str =
 /// here, beside the capability it reconciles.
 pub const READBACKS: &[Readback] = &[
     snapshot(
+        crate::contract_roll::CONTRACT_ROLL_CAPABILITY_ID,
+        Optional,
+        SCOPE_ID,
+        "tabs[].active_symbol",
+        "the tab reports the configured next contract; feed_generation advances by one when the call rolled and not when the tab had already rolled",
+        &[
+            "a_roll_keeps_the_drawings_and_a_repeat_rolls_nothing",
+            EVERY_OPTIONAL_TEST,
+        ],
+    ),
+    snapshot(
         crate::feed_source::FEED_SOURCE_CAPABILITY_ID,
         Optional,
         SCOPE_ID,
