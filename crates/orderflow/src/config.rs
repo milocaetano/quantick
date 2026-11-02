@@ -41,6 +41,7 @@ pub use lane::{
 };
 pub use lane_fold::{
     FoldRail, LANE_FOLD_AT_PX, LANE_FOLD_HIT_PX, LANE_FOLD_RAIL_PX, LaneDividerDrag, LaneFold,
+    MarketHold,
 };
 pub use lane_view::{LaneSide, LaneView};
 
@@ -885,6 +886,8 @@ mod tests {
                 stable_size: false,
                 tape_only: false,
                 fold: LaneFold::Open,
+                fold_market_closed: true,
+                market_hold: MarketHold::default(),
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,

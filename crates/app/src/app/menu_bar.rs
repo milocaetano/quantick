@@ -137,9 +137,9 @@ impl QuantickApp {
         let tab = self.active_tab_mut();
         if tab.focused_side() == crate::pane::PaneSide::Flow
             && let Some(tape) = tab.flow_pane.orderflow.as_mut()
+            && let Some(view) = tape.cached_config().live_lane.keyed_view(key)
         {
-            let view = tape.cached_config().live_lane.view();
-            tape.set_lane_view(key(view));
+            tape.set_lane_view(view);
         }
     }
 

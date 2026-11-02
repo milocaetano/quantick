@@ -14651,6 +14651,98 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets whether a pane showing the tape beside its candles folds the tape to its rail by itself while the feed is quiet or offline. The first print brings it back. Turning it off brings it back at once and leaves a retained tape up to a seam at the last print. A replay never folds. Presentation only. One of the asset's bubble settings (orderflow.bubbles names it), saved for it while its save switch is on.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.tape.market_fold.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "description": "On, the tape folds by itself while the feed is quiet or offline.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "enabled"
+        ],
+        "title": "TapeMarketFoldInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "enabled",
+          "changed"
+        ],
+        "title": "TapeMarketFoldResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a value has no further effect, and the result and orderflow.bubbles report the setting kept.",
+      "title": "Fold the tape while the market is closed",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference. Target candle requires active tick FLOW bubbles and has an independent pane preference. Both belong to the asset the pane shows (orderflow.bubbles names it): saved for it, and back whenever a tab shows it, while its save switch is on (asset.save_changes); off, the change lasts on this pane for the session only. Target candle: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
       "destructive": false,
       "dry_run_supported": false,
@@ -20953,6 +21045,11 @@
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
               },
+              "fold_market_closed": {
+                "default": true,
+                "description": "The tape folds by itself while the market is closed: the asset's setting,\nset by `orderflow.tape.market_fold.set`. It never writes `tape_fold`.",
+                "type": "boolean"
+              },
               "forward_book_preview": {
                 "default": false,
                 "description": "The strip between the last candle and the tape previews the current\nbook, read exactly while it is current. The lane setting\n`forward_book_preview`, one of the asset's bubble settings.",
@@ -21012,6 +21109,11 @@
                 "$ref": "#/$defs/TapeFold",
                 "default": "open",
                 "description": "Which side of the pane is folded to a rail: `open`, `candles` (the\ntape takes the pane) or `tape` (the candles do). Set by dragging the\ndivider to an edge or by `orderflow.tape.fold.set`; tape only and the\ntape's own switch win over it."
+              },
+              "tape_fold_held_by_market": {
+                "default": false,
+                "description": "The market holds the tape folded right now. Runtime only; the first print,\nthe setting, an explicit fold or a view change releases it.",
+                "type": "boolean"
               },
               "tape_only": {
                 "default": false,
@@ -21919,6 +22021,31 @@
             ],
             "type": "object"
           },
+          "BookGapSnapshot": {
+            "description": "Why the book is missing over some stretches of the chart: one row per reason,\nsorted by it. The marks on the chart carry no words, so these and their hover\nare what says so.",
+            "properties": {
+              "label": {
+                "description": "The same reason in the words the mark's hover shows.",
+                "type": "string"
+              },
+              "reason": {
+                "description": "The stable reason history recorded, such as `sequence_gap`.",
+                "type": "string"
+              },
+              "stretches": {
+                "description": "How many stretches of the last published frame carry it.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reason",
+              "label",
+              "stretches"
+            ],
+            "type": "object"
+          },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
@@ -21943,6 +22070,14 @@
                   }
                 ],
                 "x-unit": "ratio"
+              },
+              "gaps": {
+                "default": [],
+                "description": "Why the book is missing where the last frame marks a gap, if anywhere.",
+                "items": {
+                  "$ref": "#/$defs/BookGapSnapshot"
+                },
+                "type": "array"
               },
               "lane_visible": {
                 "description": "And over the live lane, which is a separate switch.",

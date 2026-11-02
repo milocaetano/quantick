@@ -66,10 +66,21 @@ pub struct AssetBubbles {
     /// an open lane writes nothing.
     #[serde(default, skip_serializing_if = "LaneFold::is_open")]
     pub fold: LaneFold,
+    /// The tape folds while the market is closed: the asset's, beside its fold.
+    /// Absent reads on, and on writes nothing.
+    #[serde(
+        default = "fold_market_closed_default",
+        skip_serializing_if = "std::clone::Clone::clone"
+    )]
+    pub fold_market_closed: bool,
     /// Every panel value, named after the preset it started from: the look,
     /// the tape mode (`live_lane.native_tape`, `live_lane.tape_only`) and the
     /// tape's opening-burst scale.
     pub look: BubblePreset,
+}
+
+fn fold_market_closed_default() -> bool {
+    true
 }
 
 impl AssetBubbles {
@@ -83,6 +94,7 @@ impl AssetBubbles {
             candle_aggression,
             flow_ignore_opening: false,
             fold: LaneFold::Open,
+            fold_market_closed: true,
             look: BubblePreset::capture(&preset.name, &config),
         }
     }

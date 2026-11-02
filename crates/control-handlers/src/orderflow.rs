@@ -47,8 +47,16 @@ use crate::dock::ProjectionDock;
 pub trait OrderflowEngine {
     /// The heatmap, bubble and tape setup the engine is drawn with.
     fn config(&self) -> &HeatmapConfig;
-    /// The capture state, the clipped ladder and the capture grouping.
-    fn book(&self) -> (&CaptureStatus, Option<&BookLadder>, rust_decimal::Decimal);
+    /// The capture state, the clipped ladder, the capture grouping and the gaps
+    /// of the frame last painted.
+    fn book(
+        &self,
+    ) -> (
+        &CaptureStatus,
+        Option<&BookLadder>,
+        rust_decimal::Decimal,
+        &[quantick_orderflow::projection::GapPrimitive],
+    );
     /// The published health counters.
     fn health(&self) -> &OrderflowHealth;
     /// Where the live lane ends, when the tape knows.
@@ -183,7 +191,7 @@ fn revision<P: OrderflowPort + ?Sized>(app: &P) -> Vec<OrderflowRevisionKey> {
                     footprint_overridden: pane.footprint_overridden(),
                     footprint_setup: format!("{:?}", pane.footprint_config()),
                     engine: pane.engine().map(|view| {
-                        let (status, _ladder, grouping) = view.book();
+                        let (status, _ladder, grouping, _gaps) = view.book();
                         EngineRevisionKey::from_config(view.config(), status, grouping)
                     }),
                 }
@@ -295,8 +303,11 @@ fn project_heatmap<P: OrderflowPort + ?Sized>(
 }
 
 fn heatmap_state(view: &dyn OrderflowEngine) -> HeatmapStateSnapshot {
-    let (_status, _ladder, grouping) = view.book();
-    HeatmapStateSnapshot::from_config(view.config(), grouping)
+    let (_status, _ladder, grouping, gaps) = view.book();
+    HeatmapStateSnapshot {
+        gaps: quantick_control_schema::orderflow::book_gap_rows(gaps),
+        ..HeatmapStateSnapshot::from_config(view.config(), grouping)
+    }
 }
 
 fn project_l2<P: OrderflowPort + ?Sized>(app: &P, _context: CaptureContext) -> L2Snapshot {
@@ -317,7 +328,7 @@ fn project_l2<P: OrderflowPort + ?Sized>(app: &P, _context: CaptureContext) -> L
 }
 
 fn book_snapshot(view: &dyn OrderflowEngine) -> BookSnapshot {
-    let (status, ladder, grouping) = view.book();
+    let (status, ladder, grouping, _gaps) = view.book();
     BookSnapshot::from_ladder(status, ladder, grouping)
 }
 

@@ -64,7 +64,6 @@ pub struct OrderflowRenderStyle {
     pub native_tape: bool,
     /// Exclude known first recorded native bursts only from the tape's auto scale.
     pub ignore_opening_burst_in_scale: bool,
-    pub show_gap_labels: bool,
     pub show_legend: bool,
     /// Whether the L2 depth layer is active over the candles. The legend only
     /// advertises keys for layers that can actually draw something.
@@ -128,7 +127,6 @@ impl Default for OrderflowRenderStyle {
             dot_sizing: None,
             native_tape: false,
             ignore_opening_burst_in_scale: false,
-            show_gap_labels: true,
             show_legend: true,
             depth_layer: true,
             aggression_layer: true,

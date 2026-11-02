@@ -1194,6 +1194,52 @@ fn a_tape_folded_keeps_its_switch_lit_and_folds_its_capsule() {
     assert_eq!(view["selected"], true);
 }
 
+/// Held by the market: the scene says why Tape refuses, under its own code and
+/// its own word, Trail is the last side showing, the readback names the hold and
+/// the saved fold stays open. A click on the rail is the hand that ends it.
+#[test]
+fn a_market_hold_reads_in_the_scene_and_never_in_the_saved_fold() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    run_frame(&mut app, &ctx);
+    let quiet = quantick_chart::connection_state::ConnectionState {
+        link: quantick_chart::connection_state::Link::Quiet,
+        ..app.active_tab().connection.state()
+    };
+    let tape = app.active_tab_mut().tape_mut();
+    tape.observe_market(quiet);
+    assert_eq!(tape.cached_config().live_lane.fold, LaneFold::Open);
+    let read = tape.bubbles_snapshot();
+    assert!(read.tape_fold_held_by_market && read.fold_market_closed);
+    assert_eq!(
+        read.tape_fold,
+        quantick_control_schema::tape_fold::TapeFold::Open
+    );
+
+    let pane_id = app.active_tab().flow_pane.id;
+    let scene = observer_scene(&app);
+    let tape = scene_control(&scene, &format!("pane.{pane_id}.header.side.tape"));
+    assert_eq!(tape["label"], "Market closed");
+    assert_eq!(tape["selected"], false);
+    assert_eq!(tape["availability"]["available"], false);
+    assert_eq!(tape["availability"]["reason"], "market_closed");
+    let trail = scene_control(&scene, &format!("pane.{pane_id}.header.side.trail"));
+    assert_eq!(trail["label"], "Trail");
+    assert_eq!(
+        trail["availability"]["reason"],
+        "the_last_side_showing_stays"
+    );
+
+    let tape = app.active_tab_mut().tape_mut();
+    assert!(tape.edit_config(|config| _ = config.live_lane.set_fold(LaneFold::Open)));
+    assert!(!tape.cached_config().live_lane.market_held());
+    tape.observe_market(quiet);
+    assert!(
+        !tape.cached_config().live_lane.market_held(),
+        "a hand holds it off for the rest of the spell"
+    );
+}
+
 /// A fold outlives every view, on the header too, and on the way back beside the
 /// candles its rail is still the way out of it.
 #[test]

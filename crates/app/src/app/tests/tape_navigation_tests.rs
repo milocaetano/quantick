@@ -991,19 +991,20 @@ fn a_tape_panned_into_the_past_keeps_its_book() {
     );
 }
 
-/// A held tape whose window opens before the first captured book says so
-/// from the lane's opening, where the clamp puts the gap's edge.
+/// A held tape whose window opens before the first captured book marks it from
+/// the lane's opening, where the clamp puts the gap's edge, and writes nothing
+/// over it: the reason is the hover's and the read's.
 #[test]
-fn a_held_tape_before_the_captured_book_labels_it() {
+fn a_held_tape_before_the_captured_book_marks_it_without_words() {
     let ctx = egui::Context::default();
     let mut app = recorded_book(&ctx);
     let (output, lane) = held_at(&mut app, &ctx, 22_500);
     let texts = lane_texts(&output, lane);
     assert!(
-        texts
+        !texts
             .iter()
             .any(|text| text == "L2 unavailable before capture"),
-        "the stretch before capture is labelled on the tape: {texts:?}"
+        "the stretch before capture carries no words: {texts:?}"
     );
 }
 

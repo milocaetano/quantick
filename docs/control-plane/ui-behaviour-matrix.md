@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 78 |
+| Reachable by capability | 79 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 3 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **137** |
+| **Total** | **138** |
 
-84 of the 137 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 53 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+84 of the 138 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 54 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -93,6 +93,7 @@ The three exclusion classes are closed:
 | `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide trail) | `layers.visibility.set` | — |
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
 | `orderflow.tape.fold.set` | Fold the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click the rail it leaves | `orderflow.tape.fold.set` | — |
+| `orderflow.tape.market_fold.set` | Fold the tape while the market is closed | the checkbox in the tape section of the Bubbles settings | `orderflow.tape.market_fold.set` | — |
 | `orderflow.tape.view.set` | Show the trail and tape, the trail alone or the tape alone | pane header's Trail and Tape switches; Ctrl+Shift+R and Ctrl+Shift+T on a focused flow pane | `orderflow.tape.view.set` | — |
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
 | `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
@@ -213,7 +214,7 @@ matrix fails the build.
 | `hotkey` | 18 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 53 |
+| `authored` | 54 |
 
 ## Appendix: rows no registry stands behind
 
@@ -241,6 +242,7 @@ declares nothing here is a guard failure.
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `orderflow.tape.fold.set` | the tape lane's divider and rail the pane handles directly |
+| `orderflow.tape.market_fold.set` | the per-asset checkbox in the Bubbles settings is not a pane header control |
 | `orderflow.tape.opening_scale.set` | opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu |
 | `orderflow.bubbles.save_changes.set` | the per-asset save switch is a checkbox under the bubble preset picker |
 | `orderflow.bubbles.size.set` | independent sample bubbles appear while their bubble display is active |

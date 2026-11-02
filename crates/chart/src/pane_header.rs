@@ -233,6 +233,9 @@ pub enum SegmentInk {
     Lit,
     /// Its side is not chosen: faint, on the frame's own fill.
     Unlit,
+    /// The tape's, while the market holds it folded: the one red control, an
+    /// outline with a dot and no fill.
+    MarketClosed,
 }
 
 /// Why a segment takes no press. Painted as the tooltip's note and listed in the
@@ -241,6 +244,8 @@ pub enum SegmentInk {
 pub enum SideRefusal {
     /// It is the last side showing, and the pane is never left empty.
     LastSideShowing,
+    /// The market holds the tape folded; the first print brings it back.
+    MarketClosed,
 }
 
 impl SideRefusal {
@@ -249,6 +254,7 @@ impl SideRefusal {
     pub fn code(self) -> &'static str {
         match self {
             Self::LastSideShowing => "the_last_side_showing_stays",
+            Self::MarketClosed => "market_closed",
         }
     }
 
@@ -257,6 +263,7 @@ impl SideRefusal {
     pub fn note(self) -> &'static str {
         match self {
             Self::LastSideShowing => "the last side showing stays",
+            Self::MarketClosed => "the first print brings it back",
         }
     }
 }
@@ -285,17 +292,23 @@ impl SideSegment {
     #[must_use]
     pub fn of(side: LaneSide, state: &FlowHeaderState) -> Self {
         let view = state.view;
+        let held = state.market_held;
         Self {
             side,
-            ink: if view.shows(side) {
-                SegmentInk::Lit
-            } else {
-                SegmentInk::Unlit
+            ink: match (held, side) {
+                (true, LaneSide::Tape) => SegmentInk::MarketClosed,
+                _ if view.shows(side) => SegmentInk::Lit,
+                _ => SegmentInk::Unlit,
             },
-            refusal: view
-                .toggled(side)
-                .is_none()
-                .then_some(SideRefusal::LastSideShowing),
+            refusal: match (held, side) {
+                (true, LaneSide::Tape) => Some(SideRefusal::MarketClosed),
+                // The tape is away, so the trail is what is left showing.
+                (true, LaneSide::Trail) => Some(SideRefusal::LastSideShowing),
+                _ => view
+                    .toggled(side)
+                    .is_none()
+                    .then_some(SideRefusal::LastSideShowing),
+            },
             view,
             shown: state.shown_view,
         }
@@ -304,7 +317,11 @@ impl SideSegment {
     /// The word beside the glyph, and the control's name in the scene.
     #[must_use]
     pub fn word(self) -> &'static str {
-        side_word(self.side)
+        if self.ink == SegmentInk::MarketClosed {
+            MARKET_CLOSED_WORD
+        } else {
+            side_word(self.side)
+        }
     }
 
     /// What a left click asks for: nothing while the segment refuses.
@@ -325,6 +342,14 @@ impl SideSegment {
             .or_else(|| (self.shown != self.view).then(|| view_name(self.shown)))
     }
 }
+
+/// The market-closed setting's words in the settings.
+pub const MARKET_FOLD_SETTING: &str = "Fold the tape while the market is closed";
+/// What it does, on hover.
+pub const MARKET_FOLD_SETTING_HOVER: &str = "beside the candles, while the feed is quiet or offline; the first print brings it back. Off, or with the tape alone, the tape stays up to a seam at the last print";
+
+/// What the tape's segment reads while the market holds it folded.
+pub const MARKET_CLOSED_WORD: &str = "Market closed";
 
 /// Width of a segment's glyph.
 pub const SEGMENT_GLYPH_PX: f32 = 15.0;
@@ -396,8 +421,38 @@ pub struct FlowHeaderState {
     pub view: LaneView,
     /// The side on screen, which the capsules and labels follow.
     pub shown_view: LaneView,
+    /// The market holds the tape folded: it reads so, and both segments refuse.
+    pub market_held: bool,
     pub candle_sample: Option<f32>,
     pub tape_sample: Option<f32>,
+}
+
+impl FlowHeaderState {
+    /// The scale of the sample this side's capsule carries, if it has one.
+    #[must_use]
+    pub fn sample_of(&self, side: CapsuleSide) -> Option<f32> {
+        match side {
+            CapsuleSide::Candles => self.candle_sample,
+            CapsuleSide::Tape => self.tape_sample,
+            CapsuleSide::Time => None,
+        }
+    }
+
+    /// What this lane shows, with each sample's scale while it may be scaled.
+    #[must_use]
+    pub fn of(
+        lane: &quantick_orderflow::LiveLaneStyle,
+        candle_sample: Option<f32>,
+        tape_sample: Option<f32>,
+    ) -> Self {
+        Self {
+            view: lane.view(),
+            shown_view: lane.shown_view(),
+            market_held: lane.market_held(),
+            candle_sample,
+            tape_sample,
+        }
+    }
 }
 
 /// What a flow pane's header line keeps at a given width.
@@ -968,6 +1023,7 @@ mod tests {
         FlowHeaderState {
             view,
             shown_view,
+            market_held: false,
             candle_sample: None,
             tape_sample: None,
         }
@@ -1016,6 +1072,29 @@ mod tests {
         assert_eq!(trail.note(), Some("Tape only"));
         let [trail, _] = SideSegment::pair(&state(LaneView::Beside, LaneView::CandlesOnly));
         assert_eq!(trail.note(), Some("Trail only"));
+    }
+
+    /// While the market holds the tape: Tape reads so in its own ink and refuses
+    /// under its own code, and Trail is the last side showing. Neither click asks
+    /// for anything, and the view stays what the trader chose.
+    #[test]
+    fn a_market_hold_turns_the_tape_segment_and_refuses_both() {
+        let held = FlowHeaderState {
+            market_held: true,
+            ..state(LaneView::Beside, LaneView::CandlesOnly)
+        };
+        let [trail, tape] = SideSegment::pair(&held);
+        assert_eq!(tape.ink, SegmentInk::MarketClosed);
+        assert_eq!(tape.word(), "Market closed");
+        assert_eq!(tape.click(), None);
+        assert_eq!(tape.refusal.map(SideRefusal::code), Some("market_closed"));
+        assert_eq!(trail.ink, SegmentInk::Lit);
+        assert_eq!(trail.word(), "Trail");
+        assert_eq!(trail.click(), None);
+        assert_eq!(
+            trail.refusal.map(SideRefusal::code),
+            Some("the_last_side_showing_stays")
+        );
     }
 
     /// The screen says Trail; the wire keeps its words elsewhere.

@@ -256,6 +256,7 @@ impl OrderflowEngine for OrderflowView {
         &quantick_orderflow::engine::CaptureStatus,
         Option<&quantick_orderflow::engine::BookLadder>,
         rust_decimal::Decimal,
+        &[quantick_orderflow::projection::GapPrimitive],
     ) {
         self.cached_book()
     }

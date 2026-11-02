@@ -31,6 +31,7 @@ pub mod indicator_views;
 pub mod live_strip;
 pub mod loading;
 pub mod logo_shatter;
+pub mod market_fold;
 pub mod pane_header;
 pub mod price_axis_fit;
 pub mod price_view;

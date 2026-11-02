@@ -377,6 +377,31 @@ fn an_assets_tape_fold_is_saved_and_reopens_folded() {
     }
 }
 
+/// What the market holds is not the asset's: a held pane files what it would
+/// have filed open, and the setting is filed only when it is off.
+#[test]
+fn a_market_hold_is_never_filed_and_the_setting_is() {
+    let (_, declared) = bind(&memory(), "BTCUSDT");
+    let (look, mut config) = btc_screen(&declared);
+    config.live_lane.market_hold.held = true;
+    assert_eq!(config.live_lane.shown_fold(), LaneFold::Tape);
+    let held = look.settings(&config, declared.candle_aggression, false);
+    assert_eq!(held, declared, "the store cannot tell it was held");
+    let mut file = AssetBubblesFile::default();
+    assert!(!file.record("BTCUSDT", &held, &declared), "nothing to file");
+
+    let (look, mut config) = btc_screen(&declared);
+    config.live_lane.fold_market_closed = false;
+    let off = look.settings(&config, declared.candle_aggression, false);
+    assert_ne!(off, declared);
+    let mut file = AssetBubblesFile::default();
+    assert!(file.record("BTCUSDT", &off, &declared));
+    let text = bubble_assets::render(&file).expect("the store renders");
+    let reloaded = bubble_assets::parse(&text).expect("the store reloads");
+    let (_, reopened) = btc_screen(reloaded.get("BTCUSDT").expect("filed"));
+    assert!(!reopened.live_lane.fold_market_closed, "survives a restart");
+}
+
 #[test]
 fn a_stored_asset_without_a_fold_reopens_open() {
     let (_, declared) = bind(&memory(), "BTCUSDT");

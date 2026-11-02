@@ -68,6 +68,8 @@ const TRAIL_BOX: f32 = 20.0;
 const SEGMENT_WORD_SIZE: f32 = 12.0;
 const SEGMENT_FRAME_ROUNDING: f32 = 5.0;
 const SEGMENT_ROUNDING: f32 = 3.0;
+/// The dot a closed market's segment wears where its glyph stands.
+const MARKET_DOT_RADIUS: f32 = 3.0;
 /// How long the capsule takes to change tier.
 const CAPSULE_FADE_S: f32 = 0.14;
 /// The side label's plate corner and its mono text.
@@ -185,7 +187,7 @@ pub fn draw_marked(
     let inner = strip.shrink2(CONTENT_PADDING);
     let indicators_px = indicators_width(ui, true);
     let bare_controls_px = row.state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
-    let word_widths = segment_word_widths(ui);
+    let word_widths = segment_word_widths(ui, row.state.as_ref());
     let side_words = row.state.map_or(0.0, |_| side_words_px(word_widths));
     let mark = header.mark.map(mark_text);
     let mark_px = mark.as_ref().map_or(0.0, |job| {
@@ -357,6 +359,25 @@ fn side_label_text(ctx: &egui::Context, label: &SideLabel, fit: LabelFit) -> egu
         text.append(run, 0.0, format);
     }
     text
+}
+
+/// The tape's seam: a dashed line at the last print, and the one muted line in
+/// the empty part after it, when that has room to say it.
+pub fn draw_tape_seam(ui: &egui::Ui, side: egui::Rect, x: f32, words: Option<&str>) {
+    let painter = ui.painter().with_clip_rect(side);
+    let ends = [egui::pos2(x, side.top()), egui::pos2(x, side.bottom())];
+    let stroke = egui::Stroke::new(1.0_f32, theme::AMBER);
+    painter.add(egui::Shape::dashed_line(&ends, stroke, 4.0, 5.0));
+    let Some(words) = words else {
+        return;
+    };
+    let font = egui::FontId::proportional(SEGMENT_WORD_SIZE);
+    let galley = painter.layout_no_wrap(words.to_owned(), font, theme::TEXT_MUTED);
+    let empty = egui::Rect::from_x_y_ranges(x..=side.right(), side.y_range());
+    if galley.size().x + 2.0 * SIDE_LABEL_PADDING_PX <= empty.width() {
+        let at = empty.center() - galley.size() / 2.0;
+        painter.galley(at, galley, theme::TEXT_MUTED);
+    }
 }
 
 /// One capsule at its spot: its backdrop takes the pointer so a press between
@@ -543,12 +564,13 @@ pub fn layer_glyph(
 }
 
 /// The words' widths, as the segments will paint them: Trail, then Tape.
-fn segment_word_widths(ui: &egui::Ui) -> [f32; 2] {
+fn segment_word_widths(ui: &egui::Ui, state: Option<&FlowHeaderState>) -> [f32; 2] {
     [LaneSide::Trail, LaneSide::Tape].map(|side| {
+        let word = state.map_or(side_word(side), |state| SideSegment::of(side, state).word());
         ui.fonts(|fonts| {
             fonts
                 .layout_no_wrap(
-                    side_word(side).to_owned(),
+                    word.to_owned(),
                     egui::FontId::proportional(SEGMENT_WORD_SIZE),
                     theme::TEXT_PRIMARY,
                 )
@@ -617,14 +639,23 @@ fn side_segment(
         *intent = Some(asked);
     }
     let lit = segment.ink == SegmentInk::Lit;
-    let colour = match (lit, response.hovered()) {
-        (true, _) => theme::TEXT_PRIMARY,
-        (false, true) => theme::PANE_ACTION,
-        (false, false) => theme::TEXT_FAINT,
+    let closed = segment.ink == SegmentInk::MarketClosed;
+    let colour = match (segment.ink, response.hovered()) {
+        (SegmentInk::Lit, _) => theme::TEXT_PRIMARY,
+        (SegmentInk::MarketClosed, _) => theme::WARN,
+        (SegmentInk::Unlit, true) => theme::PANE_ACTION,
+        (SegmentInk::Unlit, false) => theme::TEXT_FAINT,
     };
     let painter = ui.painter();
     if lit {
         painter.rect_filled(rect, egui::Rounding::same(SEGMENT_ROUNDING), theme::CONTROL);
+    }
+    if closed {
+        painter.rect_stroke(
+            rect,
+            egui::Rounding::same(SEGMENT_ROUNDING),
+            (1.0, theme::WARN),
+        );
     }
     let glyph_center = if words {
         egui::pos2(
@@ -635,6 +666,7 @@ fn side_segment(
         rect.center()
     };
     match segment.side {
+        _ if closed => _ = painter.circle_filled(glyph_center, MARKET_DOT_RADIUS, theme::WARN),
         LaneSide::Trail => paint_trail(painter, glyph_center, colour, lit),
         LaneSide::Tape => {
             painter.text(

@@ -43,6 +43,11 @@ pub const REPORT_ANSWER_MS: i64 = 60_000;
 /// observed every frame.
 pub const BACKGROUND_OBSERVE_MS: i64 = 1_000;
 
+/// The overlay's verb over a quiet feed, and the seam's.
+const NO_TRADES_VERB: &str = "No trades on";
+/// The overlay's verb over a feed that is down, and the seam's.
+const NO_CONNECTION_VERB: &str = "No connection to";
+
 /// The transport as the feed reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -692,7 +697,7 @@ impl ConnectionTracker {
                 reconnect: false,
             },
             Link::Quiet => OverlayWords {
-                verb: "No trades on",
+                verb: NO_TRADES_VERB,
                 meta: format!("{feed} connected · market may be closed"),
                 reconnect: false,
             },
@@ -730,12 +735,25 @@ impl ConnectionTracker {
                     lead
                 };
                 OverlayWords {
-                    verb: "No connection to",
+                    verb: NO_CONNECTION_VERB,
                     meta,
                     reconnect: self.control_fits,
                 }
             }
         })
+    }
+
+    /// The one muted line in the empty part of a tape with nothing coming: the
+    /// overlay's headline and no more (§8.1 of the design model). `None` while
+    /// the link says something is, or may be, coming.
+    #[must_use]
+    pub fn seam_line(&self, symbol: &str) -> Option<String> {
+        let verb = match self.state.link {
+            Link::Quiet => NO_TRADES_VERB,
+            Link::Offline => NO_CONNECTION_VERB,
+            Link::Live | Link::Attempting | Link::NoTransport => return None,
+        };
+        Some(format!("{verb} {symbol}"))
     }
 
     /// The status bar's word, or `None` while a fresh session settles and there
@@ -1362,6 +1380,29 @@ mod tests {
         assert_eq!(offers(&run), (true, false));
         run.tracker.set_overlay_control_fits(false);
         assert_eq!(offers(&run), (false, true));
+    }
+
+    /// The seam's line is the overlay's headline, on the two links it stands for.
+    #[test]
+    fn the_seam_says_the_overlays_headline_and_only_when_closed() {
+        let mut run = Run::new();
+        assert_eq!(run.tracker.seam_line("WIN"), None, "still attempting");
+        run.offline();
+        assert_eq!(
+            run.tracker.seam_line("WIN").as_deref(),
+            Some("No connection to WIN")
+        );
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.verdict = Verdict::Quiet;
+        run.step(1);
+        assert_eq!(
+            run.tracker.seam_line("WIN").as_deref(),
+            Some("No trades on WIN")
+        );
+        run.verdict = Verdict::None;
+        run.step(1);
+        assert_eq!(run.tracker.seam_line("WIN"), None, "live");
     }
 
     /// A tab nobody is looking at is judged once a second, not once a frame.

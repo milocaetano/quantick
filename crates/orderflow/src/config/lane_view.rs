@@ -93,6 +93,13 @@ impl LiveLaneStyle {
         }
     }
 
+    /// The view a key's move leads to, or `None` while the market holds the
+    /// tape: both keys obey the switches they speak for, and those refuse.
+    #[must_use]
+    pub fn keyed_view(&self, key: fn(LaneView) -> LaneView) -> Option<LaneView> {
+        (!self.market_held()).then(|| key(self.view()))
+    }
+
     /// The side on screen: [`Self::view`], except that beside the candles a
     /// fold leaves only the other side showing.
     #[must_use]
@@ -251,6 +258,62 @@ mod tests {
             if let Some(after) = after {
                 assert_ne!(after.shows(side), view.shows(side), "{view:?} {side:?}");
             }
+        }
+    }
+
+    /// Held by the market, a hold shows as the tape's fold and neither key moves
+    /// the pane; the saved fold is untouched, so a file never learns of it.
+    #[test]
+    fn a_hold_folds_the_tape_refuses_the_keys_and_saves_nothing() {
+        let mut style = LiveLaneStyle::default();
+        style.market_hold.held = true;
+        assert!(style.market_held());
+        assert_eq!(style.shown_fold(), LaneFold::Tape);
+        assert_eq!(style.shown_view(), LaneView::CandlesOnly);
+        assert_eq!(style.view(), LaneView::Beside);
+        assert!(style.fold_rail(CHART).is_some());
+        assert_eq!(style.fold, LaneFold::Open, "the saved fold stays");
+        assert_eq!(style.keyed_view(LaneView::tape_key), None);
+        assert_eq!(style.keyed_view(LaneView::trail_key), None);
+
+        let written = toml::to_string(&style).expect("writes");
+        assert!(!written.contains("hold"), "{written}");
+        assert!(!written.contains("fold"), "{written}");
+        let read: LiveLaneStyle = toml::from_str(&written).expect("reads");
+        assert!(!read.market_held());
+        assert!(read.fold_market_closed);
+
+        style.market_hold.held = false;
+        assert_eq!(
+            style.keyed_view(LaneView::tape_key),
+            Some(LaneView::TapeOnly)
+        );
+    }
+
+    /// Off is the only value a file stores, and it comes back off.
+    #[test]
+    fn the_market_setting_round_trips_and_defaults_on() {
+        let style = LiveLaneStyle {
+            fold_market_closed: false,
+            ..LiveLaneStyle::default()
+        };
+        let written = toml::to_string(&style).expect("writes");
+        assert!(written.contains("fold_market_closed = false"), "{written}");
+        let read: LiveLaneStyle = toml::from_str(&written).expect("reads");
+        assert!(!read.fold_market_closed);
+    }
+
+    /// A hand on the fold releases the hold and says so, whichever fold it asks.
+    #[test]
+    fn a_hand_on_the_fold_releases_the_hold() {
+        for fold in [LaneFold::Open, LaneFold::Tape, LaneFold::Candles] {
+            let mut style = LiveLaneStyle::default();
+            style.market_hold.held = true;
+            assert!(style.set_fold(fold), "{fold:?}");
+            assert!(!style.market_held());
+            assert!(style.market_hold.stood_down);
+            assert_eq!(style.fold, fold);
+            assert!(!style.set_fold(fold), "a retry moves nothing");
         }
     }
 

@@ -24,6 +24,14 @@ impl TapeFoldPane {
     pub fn admits(self, fold: TapeFold) -> bool {
         fold == TapeFold::Open || self.beside_candles
     }
+
+    /// What the rule reads off a lane.
+    #[must_use]
+    pub fn of(config: &quantick_orderflow::HeatmapConfig) -> Self {
+        Self {
+            beside_candles: config.live_lane.beside_candles(),
+        }
+    }
 }
 
 /// The fold capability's narrow port.
@@ -37,12 +45,20 @@ pub trait TapeFoldPort {
         pane_id: u64,
         fold: TapeFold,
     ) -> Result<bool, ControlError>;
+    /// Keep the asset's market-closed fold setting; answers whether it changed.
+    fn set_tape_market_fold(
+        &mut self,
+        tab_id: u64,
+        pane_id: u64,
+        enabled: bool,
+    ) -> Result<bool, ControlError>;
 }
 
 pub fn register<D: ActionDock<H, A>, H: TapeFoldPort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
-    registry.register(descriptor(), set)
+    registry.register(descriptor(), set)?;
+    crate::tape_market_fold::register(registry)
 }
 
 fn set<H: TapeFoldPort + ?Sized, A>(

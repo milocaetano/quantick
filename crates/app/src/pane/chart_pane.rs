@@ -8,8 +8,7 @@ use quantick_chart::pane_header::{
     flow_sides,
 };
 use quantick_chart::side_label::SideLabel;
-use quantick_control_handlers::bubble_scale::BubbleScalePane;
-use quantick_control_schema::bubble_scale::BubbleScaleTarget;
+use quantick_control_handlers::bubble_scale::{BubbleScalePane, sample_target as target};
 use quantick_layers::{ChartLayer, LayerActions};
 
 use crate::bands;
@@ -171,12 +170,8 @@ impl ChartPane {
     /// an order-flow view.
     pub(crate) fn bubble_scale_facts(&self) -> Option<BubbleScalePane> {
         let config = self.orderflow.as_ref()?.cached_config();
-        Some(BubbleScalePane {
-            tick_chart: self.state.tick_membership().is_some(),
-            candle_bubbles: config.show_aggressions,
-            tape_only: config.tape_only(),
-            tape_bubbles: config.lane_aggressions_drawn(),
-        })
+        let tick_chart = self.state.tick_membership().is_some();
+        Some(BubbleScalePane::of(config, tick_chart))
     }
 
     /// Every mode-entry path starts at its own fit, including source presets:
@@ -1051,13 +1046,6 @@ impl ChartPane {
     }
 }
 
-fn target(sample: BubbleSample) -> BubbleScaleTarget {
-    match sample {
-        BubbleSample::Candle => BubbleScaleTarget::Candle,
-        BubbleSample::Tape => BubbleScaleTarget::Tape,
-    }
-}
-
 /// What a pane's capsules and side labels read from the window.
 pub(crate) struct SideChrome<'a> {
     pub style: &'a ChartStyle,
@@ -1067,6 +1055,8 @@ pub(crate) struct SideChrome<'a> {
     pub tz: quantick_civil::TzOffset,
     /// The word the feed speaks this frame, if any yet.
     pub link: Option<quantick_chart::connection_state::Link>,
+    /// What the empty part of a tape with nothing coming says.
+    pub seam_words: Option<String>,
 }
 
 impl ChartPane {
@@ -1094,22 +1084,6 @@ impl ChartPane {
     ) -> Option<LayerGlyph> {
         let glyph = self.header_glyph(LayerToggle::LiveStrip, style, capabilities);
         glyph.blocked.is_none().then_some(glyph)
-    }
-
-    /// The label of a flow-pane side, reading how far its data reaches: every
-    /// print cuts into the flow bars, so the newest bar's close is the newest
-    /// print's time.
-    fn side_label(&self, side: CapsuleSide, chrome: &SideChrome<'_>) -> Option<SideLabel> {
-        let state = &self.state;
-        let last = state
-            .partial()
-            .or_else(|| state.bars().last())
-            .map(|bar| bar.close_time);
-        match side {
-            CapsuleSide::Candles => Some(SideLabel::trail(last, chrome.tz)),
-            CapsuleSide::Tape => Some(SideLabel::tape(last, chrome.tz, chrome.link)),
-            CapsuleSide::Time => None,
-        }
     }
 
     /// Paint this pane's capsules and side labels, one of each per chart side on
@@ -1144,18 +1118,20 @@ impl ChartPane {
             .enumerate()
             .filter_map(|(slot, side)| side.map(|side| (slot, side)))
         {
-            let scale = state.and_then(|state| match side {
-                CapsuleSide::Candles => state.candle_sample,
-                CapsuleSide::Tape => state.tape_sample,
-                CapsuleSide::Time => None,
-            });
+            let scale = state.and_then(|state| state.sample_of(side));
             let glyph = |toggle| self.header_glyph(toggle, style, capabilities);
             let capsule = Capsule::of(side, glyph, scale);
             let corner = capsule
                 .place(left, right, top, chart.bottom())
                 .filter(|_| !capsule.is_empty());
             let side_rect = egui::Rect::from_x_y_ranges(left..=right, top..=chart.bottom());
-            if let Some(label) = self.side_label(side, chrome) {
+            if side == CapsuleSide::Tape
+                && let Some(x) = state.and_then(|state| self.seam_x(&state, chrome, side_rect))
+            {
+                let words = chrome.seam_words.as_deref();
+                crate::pane_header::draw_tape_seam(ui, side_rect, x, words);
+            }
+            if let Some(label) = SideLabel::of(side, &self.state, chrome.tz, chrome.link) {
                 let capsule_left = corner.map_or(right, |corner| corner.0);
                 crate::pane_header::draw_side_label(ui, &label, side_rect, capsule_left);
             }
@@ -1181,6 +1157,31 @@ impl ChartPane {
         intent
     }
 
+    /// Where the tape's seam stands, on a live tape with nothing coming.
+    fn seam_x(
+        &self,
+        state: &FlowHeaderState,
+        chrome: &SideChrome<'_>,
+        side: egui::Rect,
+    ) -> Option<f32> {
+        use quantick_chart::market_fold::{seam_shown, tape_seam_x};
+        let shown = seam_shown(state.shown_view, chrome.link);
+        let owner = self
+            .orderflow
+            .as_ref()
+            .filter(|owner| shown && owner.tape_end().is_live())?;
+        let (now, print) = (
+            owner.lane_now_ms()?,
+            quantick_chart::market_fold::last_print_ms(&self.state)?,
+        );
+        let times = (now, print, owner.live_lane_window_ms(self.state.bars()));
+        tape_seam_x(
+            owner.cached_config(),
+            [side.left(), side.width(), side.height()],
+            times,
+        )
+    }
+
     /// The view and sizes a flow pane's chrome shows; `None` without an
     /// order-flow view. A sample is there only while its target is on, the one
     /// size rule `orderflow.bubbles.size.set` judges by too; a folded side is
@@ -1194,13 +1195,11 @@ impl ChartPane {
                 .may_scale(target)
                 .then(|| owner.bubble_display_scale(target.into()))
         };
-        let lane = &owner.cached_config().live_lane;
-        Some(FlowHeaderState {
-            view: lane.view(),
-            shown_view: lane.shown_view(),
-            candle_sample: scale(BubbleSample::Candle),
-            tape_sample: scale(BubbleSample::Tape),
-        })
+        Some(FlowHeaderState::of(
+            &owner.cached_config().live_lane,
+            scale(BubbleSample::Candle),
+            scale(BubbleSample::Tape),
+        ))
     }
 
     /// Carry out a press on this pane's header, through the door each control

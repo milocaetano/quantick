@@ -6,13 +6,11 @@
 //! pass, whatever the book is doing.
 
 use crate::orderflow_render::constants::{
-    GAP_LABEL_INSET_PX, GAP_LABEL_TOP_PX, LANE_DIVIDER_WIDTH_PX, LANE_MARK_WIDTH_PX,
-    LANE_NOW_DASH_PX, LANE_NOW_GAP_PX,
+    GAP_HOVER_PX, LANE_DIVIDER_WIDTH_PX, LANE_MARK_WIDTH_PX, LANE_NOW_DASH_PX, LANE_NOW_GAP_PX,
 };
 use eframe::egui;
 use quantick_orderflow::LiquidityEvidence;
 use quantick_orderflow::config::theme::{heat_fill_parts, quantize_heat};
-use quantick_orderflow::projection::gap_label;
 
 use super::bubbles::{bubble_radius, side_offset_y};
 use super::layout::{EventBand, RenderContext};
@@ -152,30 +150,16 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 draw_dashed_vertical(&clip, x, rect, 4.0, 5.0, palette.gap_boundary, 1.0);
             }
         }
-
-        if style.show_gap_labels && rect.width() >= 112.0 {
-            let label = gap_label(&gap.reason);
-            // Centering the leading label would park text in the middle of an
-            // otherwise clean chart; it belongs to the divider, so it hugs it.
-            let (anchor, align) = if leading {
-                (
-                    rect.right_top() + egui::vec2(-GAP_LABEL_INSET_PX, GAP_LABEL_TOP_PX),
-                    egui::Align2::RIGHT_TOP,
-                )
-            } else {
-                (
-                    rect.center_top() + egui::vec2(0.0, GAP_LABEL_TOP_PX),
-                    egui::Align2::CENTER_TOP,
-                )
-            };
-            draw_text_with_shadow(
-                &clip,
-                anchor,
-                align,
-                label,
-                egui::FontId::proportional(SMALL_PRINT_FONT_PX),
-                palette.muted_text,
-            );
+        // The marks carry no words; the reason reads beside the pointer over one.
+        if let Some(at) = clip.ctx().pointer_hover_pos()
+            && rect.contains(at)
+            && (marks.fill || rect.right() - at.x <= GAP_HOVER_PX)
+        {
+            let label = quantick_orderflow::projection::gap_label(&gap.reason);
+            let font = egui::FontId::proportional(SMALL_PRINT_FONT_PX);
+            let anchor = at - egui::vec2(GAP_HOVER_PX, GAP_HOVER_PX);
+            let align = egui::Align2::RIGHT_BOTTOM;
+            draw_text_with_shadow(&clip, anchor, align, label, font, palette.muted_text);
         }
     }
 }

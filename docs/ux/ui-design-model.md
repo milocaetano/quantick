@@ -330,6 +330,18 @@ than not being connected.**
   no more — no border, no fill, no buttons. A blank canvas has room to say
   why; the way out is still the corner.
 
+**The one red exception: market closed.** A closed market is amber everywhere
+but one place. While the market holds the tape folded beside the candles, the
+Tape switch reads `Market closed` in the warning red, an outline with a dot and
+no fill, and takes no press; Trail counts as the last side showing, and both
+view keys obey their switches. It is red because it is the only explanation of
+why a control the trader relies on is refusing, not because anything broke; the
+corner chip stays amber. Beside the candles with the setting off, or with the
+tape alone, the tape keeps its prints up to a dashed amber seam at the last
+print, with this section's one muted line in the empty part after it. Neither
+is saved: the hold never writes the fold a workspace stores, and it ends at the
+first print, not at a change of link.
+
 Progress never reaches the corner. A first connection and a history block
 still arriving are a *wait*, and a wait already has the loading overlay on the
 pane that is waiting.

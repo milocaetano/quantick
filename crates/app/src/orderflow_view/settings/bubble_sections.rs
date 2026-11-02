@@ -4,6 +4,7 @@
 //! `show`; the tab composes them in order and commits whatever changed once.
 
 use eframe::egui;
+use quantick_chart::pane_header::{MARKET_FOLD_SETTING, MARKET_FOLD_SETTING_HOVER};
 use quantick_orderflow::config::labels::{
     cluster_label, consumption_mark_label, dust_label, lane_cluster_label, region_label,
     region_window_label, render_mode_label, size_reference_label,
@@ -205,6 +206,8 @@ impl LiveLaneSection<'_> {
             .id_salt("bubble_live_lane_section")
             .default_open(false)
             .show(ui, |ui| {
+                let fold_setting = ui.checkbox(&mut lane.fold_market_closed, MARKET_FOLD_SETTING);
+                lane_set |= fold_setting.on_hover_text(MARKET_FOLD_SETTING_HOVER).changed();
                 if !lane.tape_only {
                 let width = ui.horizontal(|ui| {
                     ui.label("width");

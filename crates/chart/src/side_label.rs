@@ -9,6 +9,9 @@ use quantick_civil::TzOffset;
 
 use crate::connection_state::Link;
 use crate::geometry::{TimeLabelFormat, time_label};
+use crate::market_fold::last_print_ms;
+use crate::pane_header::{CAPSULE_HEIGHT_PX, CAPSULE_INSET_TOP_PX, CapsuleSide};
+use crate::state::ChartState;
 
 /// The room a label leaves before the capsule beside it.
 pub const SIDE_LABEL_GAP_PX: f32 = 8.0;
@@ -16,6 +19,10 @@ pub const SIDE_LABEL_GAP_PX: f32 = 8.0;
 pub const SIDE_LABEL_INSET_LEFT_PX: f32 = 14.0;
 /// The plate's padding across.
 pub const SIDE_LABEL_PADDING_PX: f32 = 7.0;
+
+/// How far below the header's rule the plate ends: what stands under it starts
+/// here.
+pub const SIDE_LABEL_BOTTOM_PX: f32 = CAPSULE_INSET_TOP_PX + CAPSULE_HEIGHT_PX;
 
 const SEPARATOR: &str = " · ";
 
@@ -76,6 +83,26 @@ pub struct SideLabel {
 }
 
 impl SideLabel {
+    /// The label of a flow-pane side, reading how far its data reaches: the
+    /// newest bar's close on the trail, the newest print's time on the tape. A
+    /// time pane has none.
+    #[must_use]
+    pub fn of(
+        side: CapsuleSide,
+        state: &ChartState,
+        tz: TzOffset,
+        link: Option<Link>,
+    ) -> Option<Self> {
+        match side {
+            CapsuleSide::Candles => {
+                let bar = state.partial().or_else(|| state.bars().last());
+                Some(Self::trail(bar.map(|bar| bar.close_time), tz))
+            }
+            CapsuleSide::Tape => Some(Self::tape(last_print_ms(state), tz, link)),
+            CapsuleSide::Time => None,
+        }
+    }
+
     /// The candles side, its bars reaching `last_ms`.
     #[must_use]
     pub fn trail(last_ms: Option<i64>, tz: TzOffset) -> Self {

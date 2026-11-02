@@ -11,6 +11,7 @@ use quantick_orderbook::DepthEvent;
 pub(crate) use quantick_orderflow::FlowCellHit;
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::pane_tape::PaneTape;
+use quantick_orderflow::projection::GapPrimitive;
 use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
 use quantick_stores::bubble_asset_store::AssetBinding;
 use quantick_stores::bubble_asset_store::SaveSwitch;
@@ -172,11 +173,21 @@ impl OrderflowView {
     /// contract as [`Self::cached_health`]. The ladder is `None` while capture is off or the book
     /// has no snapshot yet: an honest absence, never an empty book.
     #[must_use]
-    pub(crate) fn cached_book(&self) -> (&CaptureStatus, Option<&BookLadder>, Decimal) {
+    pub(crate) fn cached_book(
+        &self,
+    ) -> (
+        &CaptureStatus,
+        Option<&BookLadder>,
+        Decimal,
+        &[GapPrimitive],
+    ) {
         (
             &self.published.status,
             self.published.ladder.as_deref(),
             self.published.base_price_grouping,
+            self.pane_tape
+                .drawn(self.published.frame.as_ref())
+                .map_or(&[], |frame| frame.projection.gaps.as_slice()),
         )
     }
 
@@ -473,6 +484,17 @@ impl OrderflowView {
             self.commit_lane_switch(before);
         }
         changed
+    }
+
+    /// One step of the market-closed fold: only a hold that moves is news.
+    pub(crate) fn observe_market(
+        &mut self,
+        feed: quantick_chart::connection_state::ConnectionState,
+    ) {
+        let next = quantick_chart::market_fold::next_for(&self.config.live_lane, feed);
+        let before = (next != self.config.live_lane.market_hold).then(|| self.config.clone());
+        self.config.live_lane.market_hold = next;
+        before.map(|before| self.apply_config(before));
     }
 
     fn commit_lane_switch(&mut self, before: HeatmapConfig) {
@@ -1581,6 +1603,8 @@ mod tests {
                 stable_size: false,
                 tape_only: false,
                 fold: LaneFold::Open,
+                fold_market_closed: true,
+                market_hold: Default::default(),
             },
         });
         view.look = BubbleLook::open(

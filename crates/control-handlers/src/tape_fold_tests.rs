@@ -25,6 +25,9 @@ impl TapeFoldPort for Pane {
         self.fold = fold;
         Ok(changed)
     }
+    fn set_tape_market_fold(&mut self, _: u64, _: u64, _: bool) -> Result<bool, ControlError> {
+        Ok(false)
+    }
 }
 
 const BESIDE: TapeFoldPane = TapeFoldPane {

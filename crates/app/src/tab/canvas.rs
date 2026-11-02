@@ -378,6 +378,8 @@ impl Tab {
             fraction: None,
         };
         self.connection.observe(&facts, &self.loading);
+        let feed = self.connection.state();
+        self.tape_mut().observe_market(feed);
     }
 
     /// The pane whose header asked for the indicator library this frame. Taken in
@@ -397,6 +399,7 @@ impl Tab {
     fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
         let mut focus = None;
         let focused = self.focused_side();
+        let seam_words = self.connection.seam_line(&self.symbol);
         let link = self.connection.spoken_link(crate::metrics::wall_clock_ms());
         for (pane, side) in self.panes_with_sides_mut() {
             let sides = crate::pane::SideChrome {
@@ -405,6 +408,7 @@ impl Tab {
                 focused: side == focused,
                 tz: chrome.tz,
                 link,
+                seam_words: seam_words.clone(),
             };
             let intent = pane.draw_capsules(ui, side, &sides);
             if let Some(intent) = intent {

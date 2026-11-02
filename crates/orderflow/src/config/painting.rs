@@ -39,12 +39,10 @@ pub const LANE_MARK_WIDTH_PX: f32 = 1.0;
 /// exact comparison would miss by a rounding bit and draw a stray frame line.
 pub const GAP_EDGE_EPSILON: f32 = 0.5;
 
-/// Gap between the leading span's label and the divider it annotates. Small
-/// enough that the text reads as belonging to the line rather than floating.
-pub const GAP_LABEL_INSET_PX: f32 = 6.0;
-/// How far down a pane a gap's label stands: below the layer capsule and the
-/// book status label at the chart's top, so neither covers it.
-pub const GAP_LABEL_TOP_PX: f32 = 52.0;
+/// How near a leading gap's boundary the pointer brings out its reason, and how
+/// far from the pointer the reason stands. A pointer in the stretch itself is
+/// just reading the chart.
+pub const GAP_HOVER_PX: f32 = 6.0;
 
 /// How far down the canvas the stack above the key may push it, as a share
 /// of the canvas height.

@@ -53,6 +53,38 @@ impl LaneFold {
     }
 }
 
+/// The market-closed fold's memory: runtime only, never in a file, and the
+/// saved [`LaneFold`] is never written for it. Decided by the chart crate's
+/// `market_fold`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MarketHold {
+    /// The tape is folded because the market is closed.
+    pub held: bool,
+    /// A hand moved the fold: no hold until the next entry into a closed spell.
+    pub stood_down: bool,
+    /// The link has said closed, and nothing has answered it yet.
+    pub closed_spell: bool,
+    /// The last print's date as of the last step.
+    pub seen_print_at: Option<i64>,
+}
+
+/// Only whether it is held changes what a lane looks like; the rest is memory.
+impl PartialEq for MarketHold {
+    fn eq(&self, other: &Self) -> bool {
+        self.held == other.held
+    }
+}
+
+impl Eq for MarketHold {}
+
+impl MarketHold {
+    /// A hand moved the fold: release, and hold off until the next entry.
+    pub fn stand_down(&mut self) {
+        self.held = false;
+        self.stood_down = true;
+    }
+}
+
 /// Where a folded side's rail is, in pixels from the chart's left edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FoldRail {
@@ -96,9 +128,27 @@ impl LiveLaneStyle {
     /// Fold the lane, or open it at the share it kept: the one write every
     /// fold goes through. Answers whether the fold changed.
     pub fn set_fold(&mut self, fold: LaneFold) -> bool {
+        let released = self.market_hold.held;
+        self.market_hold.stand_down();
         let changed = self.fold != fold;
         self.fold = fold;
-        changed
+        changed || released
+    }
+
+    /// The fold in force, the market's included: the saved one, or the tape's
+    /// while the market holds an open lane.
+    fn live_fold(&self) -> LaneFold {
+        if self.market_hold.held && self.fold.is_open() {
+            LaneFold::Tape
+        } else {
+            self.fold
+        }
+    }
+
+    /// Whether the market is holding the tape folded on this pane.
+    #[must_use]
+    pub fn market_held(&self) -> bool {
+        self.beside_candles() && self.market_hold.held && self.fold.is_open()
     }
 
     /// Whether the tape sits beside the candles, switched on and not alone
@@ -114,7 +164,7 @@ impl LiveLaneStyle {
     #[must_use]
     pub fn shown_fold(&self) -> LaneFold {
         if self.beside_candles() {
-            self.fold
+            self.live_fold()
         } else {
             LaneFold::Open
         }
@@ -148,7 +198,7 @@ impl LiveLaneStyle {
     /// The lane's width on a measurable chart when folded; `None` while open.
     #[must_use]
     pub(super) fn folded_width_px(&self, chart_width: f32) -> Option<f32> {
-        match self.fold {
+        match self.live_fold() {
             LaneFold::Open => None,
             LaneFold::Candles => Some(chart_width - rail_px(chart_width)),
             LaneFold::Tape => Some(rail_px(chart_width)),
@@ -228,7 +278,7 @@ fn open_range_px(chart_width: f32) -> (f32, f32) {
 /// hand from where it is rather than folding on the first pixel.
 fn drag_range_px(lane: &LiveLaneStyle, chart_width: f32) -> (f32, f32) {
     let (low, high) = open_range_px(chart_width);
-    if !lane.fold.is_open() {
+    if !lane.live_fold().is_open() {
         return (low, high);
     }
     let start = lane.resolved_width_px(chart_width);
@@ -296,7 +346,9 @@ impl LaneDividerDrag {
             (LaneFold::Open, self.wanted_px / chart_width)
         };
         lane.width_share = share;
-        lane.set_fold(fold)
+        // A step that leaves the fold where it is writes none: a wiggle on the
+        // market's rail is not the trader's fold.
+        fold != lane.live_fold() && lane.set_fold(fold)
     }
 }
 

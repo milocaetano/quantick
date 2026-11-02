@@ -209,6 +209,7 @@ impl BubbleLook {
             candle_aggression,
             flow_ignore_opening,
             fold: config.live_lane.fold,
+            fold_market_closed: config.live_lane.fold_market_closed,
             look: BubblePreset::capture(&self.look_name, config),
         }
     }
@@ -237,6 +238,7 @@ impl BubbleLook {
             config.live_lane.width_share = width_share;
         }
         config.live_lane.fold = settings.fold;
+        config.live_lane.fold_market_closed = settings.fold_market_closed;
         config.show_aggressions = settings.bubbles;
         self.held.wear(config);
         self.look_name.clone_from(&settings.look.name);

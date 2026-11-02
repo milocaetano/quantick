@@ -127,6 +127,16 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: capability!("orderflow.tape.fold.set"),
     },
     UiBehaviour {
+        id: "orderflow.tape.market_fold.set",
+        title: "Fold the tape while the market is closed",
+        reach: "the checkbox in the tape section of the Bubbles settings",
+        keys: &[(
+            Source::Authored,
+            "the per-asset checkbox in the Bubbles settings is not a pane header control",
+        )],
+        mapping: capability!("orderflow.tape.market_fold.set"),
+    },
+    UiBehaviour {
         id: "orderflow.tape.view.set",
         title: "Show the trail and tape, the trail alone or the tape alone",
         reach: "pane header's Trail and Tape switches; Ctrl+Shift+R and Ctrl+Shift+T on a focused flow pane",
