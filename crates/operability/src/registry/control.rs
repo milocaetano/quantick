@@ -62,8 +62,8 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "app.exit",
         title: "Close the application",
-        reach: "File menu, and the window's own close button",
-        keys: &[(Source::MenuEntry, "Exit")],
+        reach: "the window's own close button",
+        keys: &[(Source::Authored, "native window close button")],
         mapping: excluded!(
             Authority,
             "`docs/control-plane/observer-threat-model.md` section 6 refuses starting or \
@@ -123,7 +123,6 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
         keys: &[
             (Source::TabAction, "Close"),
             (Source::Hotkey, "CLOSE_TAB_SHORTCUT"),
-            (Source::MenuEntry, "Close Tab"),
         ],
         mapping: excluded!(
             PendingCapability,
@@ -135,11 +134,10 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.market.open",
         title: "Open a new market tab",
-        reach: "tab strip +, File menu, Ctrl+T",
+        reach: "tab strip +, Ctrl+T",
         keys: &[
             (Source::TabAction, "New"),
             (Source::Hotkey, "NEW_TAB_SHORTCUT"),
-            (Source::MenuEntry, "New Tab…"),
         ],
         mapping: excluded!(
             PendingCapability,
@@ -273,10 +271,59 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
 /// The rest of the chrome.
 pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "window.menu.open",
+        title: "Open the window menu",
+        reach: "the kebab button on the title strip, F10",
+        keys: &[(Source::Hotkey, "WINDOW_MENU_SHORTCUT")],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "the menu holds rows, and every row names its own behaviour; an operator calls \
+             those directly, and a transient popup is not state worth driving"
+        ),
+    },
+    UiBehaviour {
+        id: "window.settings.open",
+        title: "Open the Settings window",
+        reach: "window menu, Ctrl+Comma",
+        keys: &[
+            (Source::Hotkey, "SETTINGS_SHORTCUT"),
+            (Source::MenuEntry, "Settings…"),
+        ],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "a window of switches for the trader; each switch is its own behaviour"
+        ),
+    },
+    UiBehaviour {
+        id: "window.help.open",
+        title: "Read a help page: keyboard shortcuts, workspaces, the version",
+        reach: "window menu, Help",
+        keys: &[
+            (Source::MenuEntry, "Keyboard shortcuts…"),
+            (Source::MenuEntry, "About workspaces…"),
+            (Source::MenuEntry, "About quantick"),
+        ],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "reference text for a human; the shortcuts and the workspace rules are the \
+             contract an operator already reads"
+        ),
+    },
+    UiBehaviour {
+        id: "window.command_palette.open",
+        title: "Open the command palette",
+        reach: "window menu, disabled until the market palette ships",
+        keys: &[(Source::MenuEntry, "Command palette…")],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "not built: the row is greyed out and says so, and nothing runs behind it"
+        ),
+    },
+    UiBehaviour {
         id: "control.access.open",
         title: "Open the local agent access panel",
-        reach: "Tools menu, and the menu row access chip",
-        keys: &[(Source::MenuEntry, "Agent access: on")],
+        reach: "the agent pill on the title strip, and Settings",
+        keys: &[(Source::Authored, "agent pill on the title strip")],
         mapping: excluded!(
             Authority,
             "the panel is where the trader grants and revokes an operator's access. A \
@@ -287,7 +334,7 @@ pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "view.perf_readings.toggle",
         title: "Show fps, frame time and trade count on the status bar",
-        reach: "View menu",
+        reach: "Settings window",
         keys: &[(Source::MenuEntry, "Perf readings")],
         mapping: excluded!(
             PendingCapability,

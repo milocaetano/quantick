@@ -526,7 +526,6 @@ impl QuantickApp {
             surfaces::SurfaceOwners {
                 indicators: &self.runtime.indicators,
                 alert_failure: self.audio.alert_failure.as_deref(),
-                workspace: &self.runtime.workspace,
                 style: &self.runtime.style,
                 footprint_config: &self.runtime.footprint_config,
                 tabs: &mut self.runtime.tabs,
@@ -536,9 +535,6 @@ impl QuantickApp {
         );
         for action in asks.indicator_actions {
             self.apply_toolbar_action(action);
-        }
-        if let Some(name) = asks.save_workspace_as {
-            self.workspace_save_adapter().save_named_workspace(&name);
         }
         if let Some(style) = asks.style {
             self.runtime.style = style;

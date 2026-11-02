@@ -20,7 +20,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.dialog.toggle",
         title: "Open the chart settings on the Candles tab — candles, canvas, grid",
-        reach: "toolbar brush button, Tools menu, a double click on a candle",
+        reach: "toolbar brush button, Settings window, a double click on a candle",
         keys: &[
             (Source::ToolbarAction, "ToggleAppearance"),
             (Source::MenuEntry, "Appearance…"),
@@ -51,7 +51,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "indicator.legend.collapse",
         title: "Fold the focused chart's indicator legend to its count",
-        reach: "the legend's own chevron, View menu, Ctrl+L",
+        reach: "the legend's own chevron, window menu, Ctrl+L",
         keys: &[(Source::Hotkey, "LEGEND_SHORTCUT")],
         mapping: PENDING_SURFACE,
     },

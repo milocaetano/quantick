@@ -397,10 +397,14 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
                     "maximize" if title.maximized => "Restore window",
                     "maximize" => "Maximize window",
                     "close" => "Close window",
+                    quantick_control_schema::window_menu::KEBAB_CONTROL => "Window menu",
+                    quantick_control_schema::window_menu::AGENT_PILL_CONTROL => {
+                        "Local agent access"
+                    }
                     _ => unreachable!("the title strip publishes registered controls"),
                 },
                 Some(*rect),
-                (!matches!(*id, "drag" | "close"))
+                matches!(*id, "minimize" | "maximize")
                     .then_some(quantick_control_schema::native_window::WINDOW_STATE_CAPABILITY_ID),
             )
         })

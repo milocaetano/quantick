@@ -1,22 +1,22 @@
-//! The menu bar and the tab strip (§10), and the shortcuts they mirror.
+//! The tab strip and the `⋮` window menu (§10), and the shortcuts they mirror.
 //!
-//! Shallow menus for discoverability, never the only path to anything: every
+//! A shallow menu for discoverability, never the only path to anything: every
 //! entry that has a shortcut shows it, and the constants below are the one
 //! place a key is bound. They live here rather than beside the struct
-//! because the menu bar is their only production reader — the paper
+//! because the window menu is their only production reader — the paper
 //! shortcuts are re-exported to `super` for the tests that name them.
 
-use super::{GatewayPort, LayersPort, LayoutPort};
+use super::{GatewayPort, LayoutPort};
 use eframe::egui;
-
-use crate::surfaces::ChartSettingsTab::Candles;
-use crate::theme;
+use quantick_control_schema::window_menu::KEBAB_CONTROL;
 
 use super::QuantickApp;
 pub(super) use commands::MenuCommand;
+pub(in crate::app) use menus::{KEBAB_GLYPH, WindowMenuState};
 
 mod commands;
 mod menus;
+mod settings_window;
 
 /// Opens the Market Replay browser (§10).
 const REPLAY_SHORTCUT: egui::KeyboardShortcut =
@@ -131,8 +131,13 @@ pub(super) const PAPER_FLATTEN_SHORTCUT: egui::KeyboardShortcut =
 /// Cancel every working order without trading.
 pub(super) const PAPER_CANCEL_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::X);
-/// Height of the menu bar, in pixels (§5 zone 1).
-const MENU_BAR_HEIGHT: f32 = 28.0;
+/// Opens the `⋮` window menu. Not `Alt`, which is the sell modifier in CMD
+/// trading and the layout switch on `Alt+1…9`.
+const WINDOW_MENU_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F10);
+/// Opens the Settings window.
+const SETTINGS_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Comma);
 
 impl QuantickApp {
     /// The tape key, on a focused flow pane: tape only, and from there back
@@ -153,12 +158,12 @@ impl QuantickApp {
         }
     }
 
-    /// The window's menu bar (§10): shallow menus for discoverability and
-    /// shortcuts, never the only path to anything.
+    /// The title strip and its `⋮` menu (§10): a shallow menu for discoverability
+    /// and shortcuts, never the only path to anything.
     ///
     /// Two doors, one set of commands: the shortcuts are carried out before
-    /// the bar is drawn, so it shows what they did, and whatever the menus
-    /// and the tab strip record is carried out once the bar is drawn.
+    /// the strip is drawn, so it shows what they did, and whatever the menu
+    /// and the tab strip record is carried out once it is drawn.
     pub(super) fn draw_menu_bar(&mut self, ctx: &egui::Context) {
         let mut commands = Vec::new();
         let context_column =
@@ -166,69 +171,67 @@ impl QuantickApp {
         let chart_shown = !self.chrome.title_bar.surface.is_home();
         commands::read_shortcuts(ctx, context_column, chart_shown, &mut commands);
         for command in commands.drain(..) {
-            self.apply_menu_command(command);
+            self.apply_menu_command_on(ctx, command);
         }
 
-        let action = super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar);
-        super::native_windows::apply_tab_action(self, action);
-        egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "menu_bar")))
-            .exact_height(MENU_BAR_HEIGHT)
-            .frame(
-                egui::Frame::none()
-                    .fill(theme::CHROME)
-                    .inner_margin(egui::Margin::symmetric(6.0, 4.0)),
-            )
-            .show(ctx, |ui| {
-                egui::menu::bar(ui, |ui| self.draw_menus(ui, &mut commands));
-            });
-        for command in commands {
-            self.apply_menu_command(command);
-        }
-    }
-
-    /// The existing menus left to right, each handed exactly the state it shows.
-    fn draw_menus(&mut self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        menus::FileMenu {
-            tab_count: self.runtime.tabs.len(),
-            home: self.chrome.title_bar.surface.is_home(),
-            active_index: self.runtime.tabs.active_index(),
-            replaying: self.active_tab().replay.is_some(),
-        }
-        .show(ui, commands);
-        menus::ViewMenu {
-            chart_shown: !self.chrome.title_bar.surface.is_home(),
-            layouts: self.layout_state(),
-            tab: self.active_tab(),
-            dock_visible: self.dock.visible(),
-            toolrail: &self.toolrail,
-            show_perf: self.health.show_perf,
-            history: &self.runtime.history,
-            tz: self.runtime.tz,
-        }
-        .show(ui, commands);
-        let workspace_menu = menus::WorkspaceMenu {
-            bundle: self.workspace_bundle_adapter(),
-        }
-        .show(ui, commands);
-        self.chrome.workspace_menu_rect = Some(workspace_menu);
-        let access_label = self
-            .control
-            .control_access
-            .as_ref()
-            .map_or("Local agent access…", |access| access.menu_label());
-        menus::show_tools_menu(
-            ui,
-            access_label,
-            |ui| super::deal_recording_wiring::draw_toggle(self, ui),
-            commands,
-        );
-        menus::show_help_menu(ui, commands);
-        let agent_access_on = self
+        self.chrome.title_bar.menu_open = self.chrome.window_menu.open;
+        self.chrome.title_bar.agent_on = self
             .control
             .control_access
             .as_ref()
             .is_some_and(crate::control::ControlAccess::is_enabled);
-        menus::show_agent_access_indicator(ui, agent_access_on, commands);
+        let action = super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar);
+        super::native_windows::apply_tab_action(self, action);
+        if std::mem::take(&mut self.chrome.title_bar.kebab_clicked) {
+            self.chrome.window_menu.toggle(ctx.viewport_id());
+        }
+        if std::mem::take(&mut self.chrome.title_bar.agent_clicked) {
+            commands.push(MenuCommand::OpenAgentAccess);
+        }
+        self.draw_window_menu(ctx, &mut commands);
+        settings_window::show(self, ctx, &mut commands);
+        for command in commands {
+            self.apply_menu_command_on(ctx, command);
+        }
+    }
+
+    /// The menu's panes, each handed exactly the state it shows.
+    fn draw_window_menu(&mut self, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
+        let Some(kebab) = self.chrome.title_bar.control_rect(KEBAB_CONTROL) else {
+            return;
+        };
+        let mut state = std::mem::take(&mut self.chrome.window_menu);
+        menus::WindowMenu {
+            chart_shown: !self.chrome.title_bar.surface.is_home(),
+            replaying: self.active_tab().replay.is_some(),
+            layouts: self.layout_state(),
+            tab: self.active_tab(),
+            dock_visible: self.dock.visible(),
+            dock_tab: self.dock.tab(),
+            toolrail: &self.toolrail,
+            startup_saved: self.runtime.workspace.session().saved(),
+            save_on_exit: self.runtime.workspace.session().save_on_exit(),
+            recent: self.runtime.workspace.recent_on_disk(),
+        }
+        .show(ctx, &mut state, kebab, commands);
+        self.chrome.window_menu = state;
+    }
+
+    /// The commands that need to know which window asked, then all the others.
+    fn apply_menu_command_on(&mut self, ctx: &egui::Context, command: MenuCommand) {
+        let viewport = ctx.viewport_id();
+        match command {
+            MenuCommand::ToggleWindowMenu => self.chrome.window_menu.toggle(viewport),
+            MenuCommand::OpenSettings => {
+                self.chrome.window_menu.viewport = Some(viewport);
+                self.chrome.window_menu.settings_open = true;
+            }
+            MenuCommand::OpenHelp(page) => {
+                self.chrome.window_menu.viewport = Some(viewport);
+                self.chrome.window_menu.help = Some(page);
+            }
+            command => self.apply_menu_command(command),
+        }
     }
 
     /// Carry out one command a menu entry or a menu shortcut recorded.
@@ -237,7 +240,6 @@ impl QuantickApp {
             return;
         }
         match command {
-            MenuCommand::Tab(action) => self.apply_tab_action(action),
             MenuCommand::OpenReplayBrowser => self.replay_view.open_browser(),
             MenuCommand::CloseReplay => {
                 let (tab, config) = self.active_with_config();
@@ -285,13 +287,18 @@ impl QuantickApp {
                 self.workspace_save_adapter().save_workspace(reason);
             }
             MenuCommand::ForgetWorkspace => self.workspace_save_adapter().forget_workspace(),
-            MenuCommand::NameWorkspace => self.surfaces.workspace_name.open(),
-            MenuCommand::OpenNamedWorkspace(name) => {
-                self.arrangement_adapter().open_named_workspace(&name);
+            MenuCommand::ExportDesk => {
+                let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
+                self.runtime
+                    .workspace
+                    .picker_mut()
+                    .open_export(&tab.symbol, tab.flow_pane.state.spec());
             }
-            MenuCommand::DeleteNamedWorkspace(name) => {
-                self.workspace_save_adapter().delete_named_workspace(&name);
+            MenuCommand::ImportDesk => self.runtime.workspace.picker_mut().open_import(),
+            MenuCommand::OpenRecentDesk(path) => {
+                self.workspace_bundle_adapter().import_workspace_from(&path);
             }
+            MenuCommand::RevealDesk => self.workspace_bundle_adapter().reveal_cockpit_home(),
             MenuCommand::SetSaveOnExit(save_on_exit) => {
                 self.runtime
                     .workspace
@@ -316,13 +323,17 @@ impl QuantickApp {
             MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,
             MenuCommand::SetVenueLeadIn(on) => self.runtime.history.venue_lead_in = on,
             MenuCommand::SetTimezone(tz) => self.runtime.tz = tz,
-            MenuCommand::OpenAppearance => self.layer_wiring().open_settings(Candles),
+            MenuCommand::OpenAppearance => settings_window::open_appearance(self),
             MenuCommand::OpenAgentAccess => {
                 if let Some(access) = self.control.control_access.as_mut() {
                     access.open_panel();
                 }
             }
             MenuCommand::OpenReplayFormatHelp => self.replay_view.open_format_help(),
+            // Carried out by `apply_menu_command_on`, which knows the window.
+            MenuCommand::ToggleWindowMenu
+            | MenuCommand::OpenSettings
+            | MenuCommand::OpenHelp(_) => {}
         }
     }
 }

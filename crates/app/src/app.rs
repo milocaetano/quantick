@@ -603,7 +603,7 @@ impl QuantickApp {
                 layout_rename: None,
                 layout_delete_confirm: None,
                 surface: None,
-                workspace_menu_rect: None,
+                window_menu: Default::default(),
                 history_menu_rect: None,
                 feed_chip_rect: None,
                 // The hook stands in for a click on the opening tab's chip, which
@@ -760,7 +760,10 @@ impl eframe::App for QuantickApp {
         }
         if let Some(menu) = self.chrome.harness.menu()
             && let Some(position) = match menu {
-                ScriptedMenu::Workspace => self.chrome.workspace_menu_rect,
+                ScriptedMenu::Window => self
+                    .chrome
+                    .title_bar
+                    .control_rect(quantick_control_schema::window_menu::KEBAB_CONTROL),
                 ScriptedMenu::History => self.chrome.history_menu_rect,
             }
             .map(|rect| rect.center())

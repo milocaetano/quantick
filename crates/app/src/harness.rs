@@ -237,8 +237,8 @@ impl VenueHistoryDemo {
 /// a capture of the wrong surface that passes is worse than one that fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScriptedMenu {
-    /// The Workspace menu — the only door to save, export, open and locate.
-    Workspace,
+    /// The `⋮` window menu: the door to save, export, open and locate.
+    Window,
     /// The toolbar's history caret — the one-click targets and the candle
     /// reach.
     History,
@@ -247,7 +247,7 @@ pub(crate) enum ScriptedMenu {
 impl ScriptedMenu {
     /// Every menu this hook can open, by the token that names it.
     pub(crate) const ALL: [(&'static str, Self); 2] =
-        [("workspace", Self::Workspace), ("history", Self::History)];
+        [("window", Self::Window), ("history", Self::History)];
 
     fn from_token(token: &str) -> Option<Self> {
         Self::ALL
@@ -1036,8 +1036,8 @@ mod tests {
     #[test]
     fn every_scripted_menu_is_reachable_by_its_token() {
         assert_eq!(
-            ScriptedMenu::from_token("workspace"),
-            Some(ScriptedMenu::Workspace)
+            ScriptedMenu::from_token("window"),
+            Some(ScriptedMenu::Window)
         );
         assert_eq!(
             ScriptedMenu::from_token("HISTORY"),

@@ -32,32 +32,7 @@ impl QuantickApp {
     /// out whatever it asked (§6 — the toolbar module owns grouping and the
     /// overflow rule; this method owns the side effects).
     pub(super) fn draw_toolbar(&mut self, ctx: &egui::Context) {
-        // Pre-collect owned option lists so the toolbar's combos don't borrow
-        // `self.config` while they mutate `self.feed_id` / `self.active_tab().symbol`.
-        // Providers that aren't streaming yet are labelled "(soon)" so the
-        // menu is honest about what actually connects.
-        let feeds: Vec<(String, String)> = self
-            .config
-            .feeds
-            .iter()
-            .map(|f| {
-                let label = if f.provider.is_implemented() {
-                    f.name.clone()
-                } else {
-                    format!("{} (soon)", f.name)
-                };
-                (f.id.clone(), label)
-            })
-            .collect();
-        let symbols: Vec<String> = self
-            .config
-            .feed(&self.active_tab().feed_id)
-            .map(|f| f.symbols.clone())
-            .unwrap_or_default();
-        // During a replay the SOURCE group gives way to what is actually
-        // playing: a live venue cannot be picked without leaving the
-        // recording first, and a combo that silently did so would throw away
-        // the session mid-run.
+        // During a replay the market label gives way to what is actually playing.
         let replay = self
             .active_tab()
             .replay
@@ -87,8 +62,6 @@ impl QuantickApp {
             tz: self.runtime.tz,
         };
         let mut history_menu_rect = self.chrome.history_menu_rect;
-        // The SOURCE group writes straight into the active tab: a feed or
-        // symbol change is that tab's market switch.
         // Split off the picker's flags before the tab borrow: the model wants
         // both, and they live on the same struct.
         let mut layout_picker_open = self.chrome.layout_picker_open;
@@ -115,11 +88,8 @@ impl QuantickApp {
             layout_preset: Some(tab.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
             layout_picker_request_open: layout_picker_autostart,
-            feeds,
-            feed_id: &mut tab.feed_id,
             feed_display_name,
-            symbols,
-            symbol: &mut tab.symbol,
+            symbol: tab.symbol.clone(),
             replay,
             deal_recording,
             deal_recording_menu,

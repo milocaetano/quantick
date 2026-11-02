@@ -593,10 +593,9 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     app.apply_menu_command(MenuCommand::ToggleLegend);
     app.apply_menu_command(MenuCommand::ToggleContextCharts);
     app.apply_menu_command(MenuCommand::PaperMarket(quantick_engine::Side::Buy));
-    app.apply_menu_command(MenuCommand::Tab(TabAction::Close(0)));
     frame(&mut app, &ctx);
     assert!(on_home(&app));
-    assert_eq!(app.runtime.tabs.len(), 2, "Close Tab is a no-op");
+    assert_eq!(app.runtime.tabs.len(), 2);
     let tab = app.active_tab();
     assert_eq!(tab.layout, layout);
     assert_eq!(tab.focused_pane().legend_collapsed, legend);
@@ -607,12 +606,9 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     let dock = app.dock.visible();
     app.apply_menu_command(MenuCommand::ToggleDock);
     assert_ne!(app.dock.visible(), dock, "window commands");
-    app.apply_menu_command(MenuCommand::Tab(TabAction::New));
-    assert!(app.surfaces.source_picker.is_open(), "New Tab");
-    app.surfaces.source_picker.close();
     app.apply_menu_command(MenuCommand::OpenReplayBrowser);
     assert!(on_home(&app));
-    app.apply_menu_command(MenuCommand::Tab(TabAction::Activate(0)));
+    app.apply_tab_action(TabAction::Activate(0));
     assert!(!on_home(&app), "tab commands");
 
     // The same commands do act on a market.
@@ -640,7 +636,7 @@ fn one_market_keeps_the_label_in_a_narrow_strip_and_a_hidden_chip_costs_it() {
     assert!(painted_text_center(&output, "Home").is_none());
     assert_eq!(
         home_rect(&app).width(),
-        46.0,
+        36.0,
         "the logo-only width is fixed"
     );
     assert!(app.chrome.title_bar.strip.overflow.is_some());
@@ -664,8 +660,8 @@ fn the_overflow_menu_and_the_labelled_home_never_show_together_or_both_go() {
 }
 
 #[test]
-fn the_logo_uses_the_raster_its_scale_lands_on() {
-    for (zoom, raster) in [(1.0, 16), (2.0, 32), (1.5, 48)] {
+fn the_logo_is_the_one_icon_only_scaled_at_every_zoom() {
+    for zoom in [1.0, 1.5, 2.0] {
         let (mut app, _, _, _) = test_app();
         let ctx = egui::Context::default();
         ctx.set_zoom_factor(zoom);
@@ -684,6 +680,6 @@ fn the_logo_uses_the_raster_its_scale_lands_on() {
         let manager = ctx.tex_manager();
         let manager = manager.read();
         let size = manager.meta(texture).expect("the logo is loaded").size;
-        assert_eq!(size, [raster, raster], "at {zoom}x");
+        assert_eq!(size, [256, 256], "assets/icon.png at {zoom}x");
     }
 }

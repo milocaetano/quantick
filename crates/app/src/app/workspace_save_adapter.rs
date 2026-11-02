@@ -157,6 +157,7 @@ impl WorkspaceSaveAdapter<'_> {
     /// capturing the live window: saving a bookmark must not redefine what the
     /// app opens on, and `capture_workspace` describes the screen *now*, which
     /// is exactly what the startup arrangement must not become.
+    #[cfg(test)]
     fn write_bookmarks(&mut self) -> bool {
         let written =
             self.edit_workspace_file("UI_STATE_BOOKMARKS_WRITTEN", DocumentEdit::Bookmarks);
@@ -318,6 +319,7 @@ impl WorkspaceSaveAdapter<'_> {
     /// An existing name is replaced rather than duplicated — that is what
     /// "save as" means everywhere else, and it spares the menu a list of five
     /// entries called "scalp".
+    #[cfg(test)]
     pub(super) fn save_named_workspace(&mut self, name: &str) {
         let Some(name) = ui_state::clean_workspace_name(name) else {
             self.note_workspace("A workspace needs a name".to_owned());
@@ -353,6 +355,7 @@ impl WorkspaceSaveAdapter<'_> {
     }
     /// Forget the bookmark called `name`. The window on screen is untouched —
     /// deleting a bookmark throws away a way back, not the place you are.
+    #[cfg(test)]
     pub(super) fn delete_named_workspace(&mut self, name: &str) {
         if !self.session.delete_bookmark(name) {
             return;

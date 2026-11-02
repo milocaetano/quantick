@@ -5,41 +5,53 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
-use quantick_workspace::arrangement::strip::{StripSurface, market_slots, visible_tabs};
+use quantick_workspace::arrangement::strip::{
+    StripSurface, TabFeedDot, chip_parts, market_slots, visible_tabs,
+};
 
 use crate::config::AppConfig;
 use crate::symbols_file::AddedSymbols;
 use crate::theme;
 
-const STRIP_CONTROLS_WIDTH_PX: f32 = 80.0;
-const CHIP_PREFERRED_WIDTH_PX: f32 = 200.0;
-const CHIP_MAX_WIDTH_PX: f32 = 240.0;
+const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
+const CHIP_PREFERRED_WIDTH_PX: f32 = 180.0;
+const CHIP_MAX_WIDTH_PX: f32 = 220.0;
 const CHIP_MIN_WIDTH_PX: f32 = 44.0;
-const CHIP_CLOSE_RESERVE_PX: f32 = 36.0;
-pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 32.0;
-pub(crate) const CHIP_HEIGHT: f32 = 42.0;
+/// A window so narrow the strip is in its compact form: the × and a sliver.
+const CHIP_COMPACT_MIN_WIDTH_PX: f32 = 38.0;
+pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
+/// What is kept right of the close target, so it never touches the next tab.
+const CHIP_RIGHT_PADDING_PX: f32 = 2.0;
+pub(crate) const CHIP_HEIGHT: f32 = 30.0;
+const CHIP_ROUNDING_PX: f32 = 6.0;
 
-const HOME_LOGO_PX: f32 = 16.0;
+const SYMBOL_TEXT_PX: f32 = 13.0;
+const SUFFIX_TEXT_PX: f32 = 12.0;
+const CLOSE_GLYPH_PX: f32 = 14.0;
+const ADD_GLYPH_PX: f32 = 17.0;
+const ADD_WIDTH_PX: f32 = 30.0;
+const CHIP_PADDING_LEFT_PX: f32 = 10.0;
+const CHIP_DOT_RADIUS_PX: f32 = 3.0;
+const CHIP_DOT_GAP_PX: f32 = 7.0;
+/// Fixed in front of the close target, so a narrow tab loses its suffix before
+/// a click meant for the name can land on the ×.
+const CLOSE_GAP_PX: f32 = 8.0;
+/// How far a second strike of the symbol sits from the first. The bundled face
+/// has one weight, and this is what reads as 600 at 13 pt.
+const SEMIBOLD_STRIKE_PX: f32 = 0.35;
+
+/// The logo, filling a 30 pt tab inside its 36 pt slot.
+const HOME_LOGO_PX: f32 = 28.0;
 const HOME_TEXT_PX: f32 = 12.0;
 /// 0.01em at [`HOME_TEXT_PX`].
 const HOME_LETTER_SPACING_PX: f32 = 0.12;
-const HOME_PADDING_LEFT_PX: f32 = 12.0;
+/// Half of what the slot leaves around the logo.
+const HOME_PADDING_LEFT_PX: f32 = 4.0;
 const HOME_LOGO_GAP_PX: f32 = 7.0;
-const HOME_PADDING_RIGHT_PX: f32 = 14.0;
-/// The logo alone, centred with 15 px either side.
-pub(crate) const HOME_MIN_WIDTH_PX: f32 = 46.0;
-/// Height of the line across the top of the tab on screen.
-const ACTIVE_LINE_PX: f32 = 2.0;
-const ACTIVE_LINE_INSET_PX: f32 = 8.0;
+const HOME_PADDING_RIGHT_PX: f32 = 10.0;
+/// The logo alone, centred in its slot.
+pub(crate) const HOME_MIN_WIDTH_PX: f32 = 36.0;
 
-/// Radius of the amber dot marking a background tab whose feed is in trouble.
-const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
-/// How far below a chip's top edge the attention dot sits, so it clears the
-/// selection outline instead of riding it.
-const ATTENTION_DOT_INSET_PX: f32 = 1.0;
-/// How far the replay dot sits from a chip's left edge, inside its padding so
-/// it never touches the centred label.
-const STATUS_DOT_INSET_PX: f32 = 4.0;
 /// Width of the add-symbol field: wide enough for the longest contract code a
 /// venue uses, narrow enough that the dialog stays a dialog.
 const SYMBOL_FIELD_WIDTH_PX: f32 = 120.0;
@@ -51,10 +63,8 @@ pub struct TabChip<'a> {
     pub label: &'a str,
     /// Whether this tab is playing a recording rather than streaming.
     pub replaying: bool,
-    /// Whether the feed wants attention — drawn as the amber dot §11 asks
-    /// for, and only while the tab is in the background: the active tab's
-    /// state is already spelled out on the status bar.
-    pub needs_attention: bool,
+    /// The dot's state. Amber stays reserved for an edited tab.
+    pub dot: TabFeedDot,
 }
 
 /// What the strip asked the window to do.
@@ -103,15 +113,14 @@ pub(crate) fn draw(
     drawn.overflow = None;
     let compact = ui.available_width() < 240.0;
     ui.spacing_mut().item_spacing.x = if compact { 2.0 } else { 4.0 };
-    ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 8.0);
+    ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 4.0);
     ui.spacing_mut().interact_size.y = CHIP_HEIGHT;
     let controls_width = if compact {
         56.0
     } else {
         STRIP_CONTROLS_WIDTH_PX
     };
-    let close_width = if compact { 24.0 } else { CLOSE_HIT_WIDTH_PX };
-    let close_reserve = if compact { 28.0 } else { CHIP_CLOSE_RESERVE_PX };
+    let close_reserve = CLOSE_HIT_WIDTH_PX + CHIP_RIGHT_PADDING_PX;
     let label = home_label(ui);
     let labelled = (HOME_PADDING_LEFT_PX
         + HOME_LOGO_PX
@@ -126,8 +135,14 @@ pub(crate) fn draw(
     let mut action = draw_home_tab(ui, surface.is_home(), shown, drawn).then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
     let active_chip = surface.active_chip(active);
-    let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
-        .clamp(CHIP_MIN_WIDTH_PX, CHIP_MAX_WIDTH_PX);
+    let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32).clamp(
+        if compact {
+            CHIP_COMPACT_MIN_WIDTH_PX
+        } else {
+            CHIP_MIN_WIDTH_PX
+        },
+        CHIP_MAX_WIDTH_PX,
+    );
     for (index, chip) in chips
         .iter()
         .enumerate()
@@ -136,25 +151,24 @@ pub(crate) fn draw(
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = active_chip == Some(index);
             let surface = ui.painter().add(egui::Shape::Noop);
-            let mut text = egui::RichText::new(chip.label)
-                .size(17.0)
-                .family(egui::FontFamily::Monospace);
-            if chip.replaying {
-                text = text.color(theme::REPLAY);
-            }
-            let response = ui
-                .add_sized(
-                    [(chip_width - close_reserve).max(0.0), CHIP_HEIGHT],
-                    egui::Button::new(text)
-                        .frame(false)
-                        .truncate()
-                        .sense(egui::Sense::click_and_drag()),
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let (body, response) = ui.allocate_exact_size(
+                egui::vec2((chip_width - close_reserve).max(0.0), CHIP_HEIGHT),
+                egui::Sense::click_and_drag(),
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    selected,
+                    chip.label,
                 )
-                .on_hover_text(if chip.replaying {
-                    format!("{} (replay)", chip.label)
-                } else {
-                    chip.label.to_owned()
-                });
+            });
+            let response = response.on_hover_text(if chip.replaying {
+                format!("{} (replay)", chip.label)
+            } else {
+                chip.label.to_owned()
+            });
             if response.clicked() && !selected {
                 action = Some(TabAction::Activate(index));
             }
@@ -165,28 +179,12 @@ pub(crate) fn draw(
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
             }
-            if chip.replaying {
-                let center = egui::pos2(
-                    response.rect.left() + STATUS_DOT_INSET_PX,
-                    response.rect.center().y,
-                );
-                ui.painter()
-                    .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::REPLAY);
-            }
-            // The dot rides the chip's own rect so it moves with the layout.
-            if chip.needs_attention && !selected {
-                let center = egui::pos2(
-                    response.rect.right() - ATTENTION_DOT_RADIUS_PX,
-                    response.rect.top() + ATTENTION_DOT_RADIUS_PX + ATTENTION_DOT_INSET_PX,
-                );
-                ui.painter()
-                    .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::AMBER);
-            }
+            paint_chip_face(ui, chip, body, selected || response.hovered());
             // Reserve a stable close target so hover never shifts adjacent controls.
             {
                 let close_target = egui::Rect::from_min_size(
                     ui.next_widget_position(),
-                    egui::vec2(close_width, CHIP_HEIGHT),
+                    egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
                 );
                 let show_close =
                     selected || response.hovered() || ui.rect_contains_pointer(close_target);
@@ -194,9 +192,9 @@ pub(crate) fn draw(
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
                             show_close,
-                            egui::Button::new(egui::RichText::new("\u{00d7}").size(22.0))
+                            egui::Button::new(egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX))
                                 .frame(false)
-                                .min_size(egui::vec2(close_width, CHIP_HEIGHT)),
+                                .min_size(egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT)),
                         )
                     })
                     .inner;
@@ -219,15 +217,11 @@ pub(crate) fn draw(
                     selected,
                     response.hovered() || close.hovered(),
                     response.has_focus() || close.has_focus(),
-                    Some(if chip.replaying {
-                        theme::REPLAY
-                    } else {
-                        theme::AMBER
-                    }),
                 );
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
+                ui.add_space(CHIP_RIGHT_PADDING_PX);
             }
         });
     }
@@ -262,8 +256,8 @@ pub(crate) fn draw(
     let add = ui
         .push_id("market_new", |ui| {
             ui.add_sized(
-                [if compact { 24.0 } else { 36.0 }, CHIP_HEIGHT],
-                egui::Button::new(egui::RichText::new("+").size(24.0)).frame(false),
+                [if compact { 24.0 } else { ADD_WIDTH_PX }, CHIP_HEIGHT],
+                egui::Button::new(egui::RichText::new("+").size(ADD_GLYPH_PX)).frame(false),
             )
             .on_hover_text("Open another market (Ctrl+T)")
         })
@@ -274,6 +268,58 @@ pub(crate) fn draw(
         action = Some(TabAction::New);
     }
     action
+}
+
+/// The dot, the symbol in its heavier strike and the suffix in muted ink.
+fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, lit: bool) {
+    let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
+    let center_y = body.center().y;
+    let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
+    painter.circle_filled(
+        egui::pos2(dot_x, center_y),
+        CHIP_DOT_RADIUS_PX,
+        match chip.dot {
+            TabFeedDot::Live => theme::BUY,
+            TabFeedDot::Stopped => theme::TEXT_MUTED,
+            TabFeedDot::Replay => theme::REPLAY,
+        },
+    );
+    let (symbol, suffix) = chip_parts(chip.label);
+    let ink = if chip.replaying {
+        theme::REPLAY
+    } else if lit {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
+    };
+    let text_x = dot_x + CHIP_DOT_RADIUS_PX + CHIP_DOT_GAP_PX;
+    let galley = ui.fonts(|fonts| {
+        fonts.layout_no_wrap(
+            symbol.to_owned(),
+            egui::FontId::proportional(SYMBOL_TEXT_PX),
+            ink,
+        )
+    });
+    let symbol_width = galley.size().x;
+    let at = egui::pos2(text_x, center_y - galley.size().y / 2.0);
+    painter.galley(at, galley.clone(), ink);
+    painter.galley(at + egui::vec2(SEMIBOLD_STRIKE_PX, 0.0), galley, ink);
+    let suffix_x = text_x + symbol_width + CHIP_DOT_GAP_PX;
+    let room = body.right() - CLOSE_GAP_PX - suffix_x;
+    if suffix.is_empty() || room <= 0.0 {
+        return;
+    }
+    let mut job = egui::text::LayoutJob::single_section(
+        suffix.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::proportional(SUFFIX_TEXT_PX),
+            theme::TEXT_MUTED,
+        ),
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    let galley = ui.fonts(|fonts| fonts.layout_job(job));
+    let at = egui::pos2(suffix_x, center_y - galley.size().y / 2.0);
+    painter.galley(at, galley, theme::TEXT_MUTED);
 }
 
 /// The Home text's colour. Hover reaches this and nothing else on the tab.
@@ -321,15 +367,7 @@ fn draw_home_tab(
     let response = response.on_hover_text("Home · Ctrl+1");
     let bounds = rect.intersect(ui.clip_rect());
     drawn.home = bounds.is_positive().then_some(bounds);
-    paint_tab_surface(
-        ui,
-        surface,
-        rect,
-        active,
-        false,
-        response.has_focus(),
-        Some(theme::BRAND_GREEN),
-    );
+    paint_tab_surface(ui, surface, rect, active, false, response.has_focus());
     let logo_x = if label.is_some() {
         rect.left() + HOME_PADDING_LEFT_PX + HOME_LOGO_PX / 2.0
     } else {
@@ -362,12 +400,12 @@ fn paint_tab_surface(
     selected: bool,
     hovered: bool,
     focused: bool,
-    accent: Option<egui::Color32>,
 ) {
-    let mut rect = bounds.expand2(egui::vec2(2.0, 2.0));
+    let mut rect = bounds;
     rect.max.y = ui.max_rect().bottom();
+    // The active tab wears the toolbar's fill, so the two read as one sheet.
     let fill = if selected {
-        theme::CANVAS
+        theme::CHROME
     } else {
         theme::BARE_HOVER
     };
@@ -377,34 +415,14 @@ fn paint_tab_surface(
             egui::Shape::rect_filled(
                 rect,
                 egui::Rounding {
-                    nw: 12.0,
-                    ne: 12.0,
+                    nw: CHIP_ROUNDING_PX,
+                    ne: CHIP_ROUNDING_PX,
                     sw: 0.0,
                     se: 0.0,
                 },
                 fill,
             ),
         );
-        // Small outward feet join the tab to the row below without a box outline.
-        for (edge, direction) in [(rect.left(), -1.0), (rect.right(), 1.0)] {
-            let radius = 6.0;
-            let mut mesh = egui::Mesh::default();
-            mesh.colored_vertex(egui::pos2(edge, rect.bottom()), fill);
-            for step in 0..=8 {
-                let angle = std::f32::consts::FRAC_PI_2 * step as f32 / 8.0;
-                mesh.colored_vertex(
-                    egui::pos2(
-                        edge + direction * radius * (1.0 - angle.cos()),
-                        rect.bottom() - radius * (1.0 - angle.sin()),
-                    ),
-                    fill,
-                );
-                if step > 0 {
-                    mesh.add_triangle(0, step, step + 1);
-                }
-            }
-            ui.painter().add(egui::Shape::mesh(mesh));
-        }
     } else {
         ui.painter().set(
             slot,
@@ -417,21 +435,10 @@ fn paint_tab_surface(
             ),
         );
     }
-    if let Some(accent) = accent.filter(|_| selected) {
-        // Inside the rounded corners, so the line never overhangs them.
-        let line = egui::Rect::from_min_max(
-            rect.left_top() + egui::vec2(ACTIVE_LINE_INSET_PX, 0.0),
-            egui::pos2(
-                rect.right() - ACTIVE_LINE_INSET_PX,
-                rect.top() + ACTIVE_LINE_PX,
-            ),
-        );
-        ui.painter().rect_filled(line, 0.0, accent);
-    }
     if focused {
         ui.painter().rect_stroke(
             rect.shrink(1.0),
-            8.0,
+            CHIP_ROUNDING_PX,
             egui::Stroke::new(1.0_f32, theme::ACCENT),
         );
     }

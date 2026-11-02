@@ -18,7 +18,6 @@ use crate::pane::PaneSide;
 use crate::style::ChartStyle;
 use crate::surfaces::{StrategyPopupSurface, SurfaceEnv, SurfaceResponse, Surfaces};
 use crate::symbols_file::AddedSymbols;
-use crate::workspace_store::WorkspaceStore;
 
 use super::super::TabSlot;
 
@@ -47,7 +46,6 @@ pub(super) fn open_requested_strategy_popups(
 pub(super) struct SurfaceOwners<'a> {
     pub indicators: &'a IndicatorState,
     pub alert_failure: Option<&'a str>,
-    pub workspace: &'a WorkspaceStore,
     pub style: &'a ChartStyle,
     pub footprint_config: &'a FootprintConfig,
     pub tabs: &'a mut ArrangementHost,
@@ -66,7 +64,6 @@ pub(super) fn draw_surfaces(
     let SurfaceOwners {
         indicators,
         alert_failure,
-        workspace,
         style,
         footprint_config,
         tabs,
@@ -130,7 +127,6 @@ pub(super) fn draw_surfaces(
             picker_pane_id: focused_pane.id,
             picker_indicators: &picker_indicators,
             picker_scripts: indicators.script_library.entries(),
-            bookmarks: workspace.session().bookmarks(),
             now,
             indicator_preview_area: indicator_preview_area(
                 tabs,

@@ -24,20 +24,28 @@ pub fn home_label_fits(markets: usize, room: f32, labelled_width: f32, chip_widt
     markets <= market_slots(room, labelled_width, chip_width)
 }
 
-/// Which bundled logo raster, by its pixel size, to draw `points` wide. A size
-/// that lands on a raster is drawn pixel for pixel; a fractional scale samples
-/// the next raster that does not have to be stretched up.
+/// What a market tab's dot says: the feed's state, never the selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabFeedDot {
+    Live,
+    Stopped,
+    Replay,
+}
+
+/// The dot of a tab playing a recording, or else of its feed.
 #[must_use]
-pub fn logo_raster_px(points: f32, pixels_per_point: f32) -> u32 {
-    let physical = points * pixels_per_point;
-    let exact = [16, 32, 48, 96]
-        .into_iter()
-        .find(|size| (physical - *size as f32).abs() < 0.5);
-    match exact {
-        Some(size) => size,
-        None if physical <= 48.0 => 48,
-        None => 96,
+pub const fn tab_feed_dot(replaying: bool, live: bool) -> TabFeedDot {
+    match (replaying, live) {
+        (true, _) => TabFeedDot::Replay,
+        (false, true) => TabFeedDot::Live,
+        (false, false) => TabFeedDot::Stopped,
     }
+}
+
+/// A chip label's market and its muted suffix: `SYMBOL · venue`.
+#[must_use]
+pub fn chip_parts(label: &str) -> (&str, &str) {
+    label.split_once(" · ").unwrap_or((label, ""))
 }
 
 /// How opaque the Home logo is while another surface is on screen.
@@ -284,19 +292,20 @@ mod tests {
     }
 
     #[test]
-    fn the_logo_raster_matches_the_scale_or_is_never_stretched_up() {
-        for (points, scale, raster) in [
-            (16.0, 1.0, 16),
-            (16.0, 2.0, 32),
-            (16.0, 1.25, 48),
-            (16.0, 1.5, 48),
-            (16.0, 3.0, 48),
-            (48.0, 1.0, 48),
-            (48.0, 2.0, 96),
-            (48.0, 1.5, 96),
-        ] {
-            assert_eq!(logo_raster_px(points, scale), raster, "{points} at {scale}");
-        }
+    fn a_tab_dot_says_the_feed_and_replay_wins() {
+        assert_eq!(tab_feed_dot(false, true), TabFeedDot::Live);
+        assert_eq!(tab_feed_dot(false, false), TabFeedDot::Stopped);
+        assert_eq!(tab_feed_dot(true, true), TabFeedDot::Replay);
+        assert_eq!(tab_feed_dot(true, false), TabFeedDot::Replay);
+    }
+
+    #[test]
+    fn a_chip_label_splits_into_market_and_suffix() {
+        assert_eq!(
+            chip_parts("WINV26 · MetaTrader 5 — B3"),
+            ("WINV26", "MetaTrader 5 — B3")
+        );
+        assert_eq!(chip_parts("WINV26"), ("WINV26", ""));
     }
 
     #[test]

@@ -50,9 +50,7 @@ pub const ACCENT: Color32 = Color32::from_rgb(0x8A, 0xB4, 0xF8);
 
 /// `honest/amber` — not-live provenance only: replay, backfill, inferred data.
 pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
-/// The logo's green: the line on the active Home tab, and only that.
-pub const BRAND_GREEN: Color32 = Color32::from_rgb(0x2F, 0xC7, 0x9A);
-/// A market tab playing a recording: its label, status dot and top line.
+/// A market tab playing a recording: its label and status dot.
 pub const REPLAY: Color32 = Color32::from_rgb(0xC5, 0x8C, 0xFF);
 
 /// `pane/mark` — the name on a pane's header line: gold `#E0B84A` at 85%, softer
