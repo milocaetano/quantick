@@ -247,7 +247,19 @@ for target in feat/test feature/test; do
     allow "$target refuses the default main base" gate Bash 'gh pr create --title x' deny "--base $target"
     allow "$target refuses another base" gate Bash 'gh pr create --base main' deny "--base $target"
     allow "$target refuses a longer name" gate Bash "gh pr create --base $target-2" deny "--base $target"
+    allow "$target refuses a compound create on the default base" \
+        gate Bash 'gh pr create --title x --draft && gh pr ready 42' deny "--base $target"
+    allow "$target refuses the flag named in a title" \
+        gate Bash "gh pr create --title \\\"Note --base $target here\\\"" deny "--base $target"
+    allow "$target refuses a second base" \
+        gate Bash "gh pr create --base $target --base main" deny "--base $target"
     allow "$target marks ready on the marker alone" gate Bash 'gh pr ready 42' allow
+    unrelated=$(git -C "$fixture/repo" -c user.name=t -c user.email=t@example.test commit-tree "HEAD^{tree}" -m unrelated)
+    git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$unrelated"
+    git -C "$fixture/repo" rev-parse HEAD > "$git_dir/code-review-ok"
+    allow "$target refuses the sha fallback" gate Bash "gh pr create --base $target" deny 'no fallback approval'
+    git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$base"
+    sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
     allow "$target merge stays the user's" \
         gate Bash "gh pr merge 42 --merge --match-head-commit $head" deny "Merge to $target"
     git -C "$fixture/repo" update-ref "refs/remotes/origin/$target" "$head"

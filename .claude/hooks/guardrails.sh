@@ -816,15 +816,25 @@ pr_gate() {
             sh "$(dirname "$0")/campaign_context.sh" implement-target "$dir" >/dev/null 2>&1; }; then
         implement_target=${implement_base#origin/}
         # `gh pr create` defaults to `main`, which would carry the target's
-        # whole stack into a PR nobody meant to open.
-        if [ "$gate_action" = create ] && [ "$implement_target" != "$MAIN_BRANCH" ]; then
-            case " $(gh_statement "$command" "gh pr create" | tr -d "\"'\\\\") " in
-                *" --base $implement_target "*|*" --base=$implement_target "*|*" -B $implement_target "*) ;;
-                *) deny "\"This branch targets $implement_target: run \`gh pr create --base $implement_target\`.\"" ;;
-            esac
+        # whole stack into a PR nobody meant to open. Read from the unquoted
+        # words, one value exactly: `gh` takes the last of several, and a title
+        # may name the flag. Whichever verb ranks highest on the line.
+        if [ "$implement_target" != "$MAIN_BRANCH" ] && runs_command "$command" "gh pr create"; then
+            implement_named=$(unquoted_arguments "$(gh_statement "$command" "gh pr create")" |
+                tr -s ' \t\r\n\\' '\n' |
+                awk 'named { print; named = 0; next }
+                    /^(--base|-B)$/ { named = 1; next }
+                    /^--base=/ { sub(/^--base=/, ""); print; next }
+                    /^-B./ { sub(/^-B/, ""); print }')
+            [ "$implement_named" = "$implement_target" ] ||
+                deny "\"This branch targets $implement_target: run \`gh pr create --base $implement_target\`, once and unquoted, with the text in \`--body-file\`.\""
         fi
         implement_key=$(review_key "$dir")
-        [ -n "$implement_key" ] || implement_key=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
+        if [ -z "$implement_key" ]; then
+            [ "$implement_target" = "$MAIN_BRANCH" ] ||
+                deny '"Review identity against the target cannot be computed; no fallback approval is available."'
+            implement_key=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
+        fi
         require_marker "$dir" "$implement_key" "$IMPLEMENT_MARKER" \
             "an implement branch opens its PR only after code-review" \
             "Run the code-review skill over \`git diff $implement_base...HEAD\` and fix its valid findings"
