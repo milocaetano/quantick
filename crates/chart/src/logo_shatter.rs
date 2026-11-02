@@ -1,11 +1,13 @@
 //! The logo the connection overlay breaks apart and rebuilds while a chart has
 //! no bars: the trader's mock, ported. A grid of grey cells sampled from the
 //! logo's alpha cracks open from a seeded point near its centre, drifts and
-//! falls inside the overlay, fades, and rebuilds bottom-up, on a 13 s loop.
+//! falls inside the overlay, dims, and rebuilds bottom-up while the last
+//! pieces are still landing, so the canvas is never blank: something is
+//! always moving while the software works.
 //!
-//! Pure: the caller passes the seconds since the overlay came up and a seed,
-//! so the same inputs give the same frame. Nothing here reads a clock or a
-//! random source; the scatter comes from a seeded `SplitMix64`.
+//! Pure: the caller passes the time and its own frame counter, so the same
+//! inputs give the same frame. Nothing here reads a clock or a random source;
+//! the scatter comes from a seeded `SplitMix64`.
 
 /// The logo's side, as a share of the overlay's shorter side.
 const LOGO_SHARE: f32 = 0.42;
@@ -24,17 +26,34 @@ const GLOBAL_ALPHA: f32 = 0.7;
 const GREY_LOW: f32 = 150.0;
 const GREY_SPAN: f32 = 60.0;
 const SHADE_MIN: f32 = 0.7;
-/// Hold, shatter, empty and rebuild, in seconds.
-const PHASE_S: [f64; 4] = [3.0, 4.2, 1.2, 4.6];
-/// One whole loop, in seconds.
-pub const CYCLE_S: f64 = PHASE_S[0] + PHASE_S[1] + PHASE_S[2] + PHASE_S[3];
+/// The whole logo stands this long before it cracks.
+const HOLD_S: f32 = 2.0;
 /// The crack's start, within this share of the overlay around the logo's centre.
 const CRACK_SPREAD: f32 = 0.1;
-/// The distance over which the crack reaches a cell, as a share of the
-/// overlay's diagonal, and the delay that distance costs.
-const CRACK_REACH: f32 = 0.25;
-const CRACK_DELAY_S: f32 = 1.6;
+/// The crack reaches the farthest cell this long after it opens, the nearer
+/// ones in proportion, so the flights out are spread and their landings too.
+const CRACK_DELAY_S: f32 = 1.0;
 const CRACK_JITTER_S: f32 = 0.3;
+/// One cell's flight out, in seconds.
+const SHATTER_EASE_S: f32 = 2.0;
+/// The last flight out lands this long after the crack.
+const SHATTER_S: f32 = CRACK_DELAY_S + CRACK_JITTER_S + SHATTER_EASE_S;
+/// The rebuild starts this long before the last flight out lands.
+const REBUILD_OVERLAP_S: f32 = 1.0;
+const REBUILD_AT_S: f32 = SHATTER_S - REBUILD_OVERLAP_S;
+/// The rebuild climbs from the bottom row: this much delay over the rows, plus
+/// a jitter, then one cell's flight home. A cell still flying out when its row
+/// is called starts home as it lands.
+const REBUILD_SPREAD_S: f32 = 1.6;
+const REBUILD_JITTER_S: f32 = 0.4;
+const REBUILD_EASE_S: f32 = 1.8;
+/// The rebuild's length: its last call plus one flight home.
+const REBUILD_S: f32 = REBUILD_SPREAD_S + REBUILD_JITTER_S + REBUILD_EASE_S;
+// Every flight out lands before the rebuild's last call, so the loop's end
+// finds every cell home rather than snapping it there.
+const _: () = assert!(REBUILD_OVERLAP_S <= REBUILD_SPREAD_S + REBUILD_JITTER_S);
+/// One whole loop, in seconds: hold, crack to the rebuild, rebuild.
+pub const CYCLE_S: f64 = (HOLD_S + REBUILD_AT_S + REBUILD_S) as f64;
 /// How far a cell flies, as shares of the overlay's shorter side.
 const FLIGHT_MIN: f32 = 0.25;
 const FLIGHT_MAX: f32 = 0.6;
@@ -42,48 +61,48 @@ const FLIGHT_MAX: f32 = 0.6;
 const DRIFT_X: f32 = 0.08;
 const DRIFT_UP: f32 = 0.05;
 const DRIFT_DOWN: f32 = 0.12;
-/// One cell's flight out, in seconds.
-const SHATTER_EASE_S: f32 = 2.4;
 /// The slow fall under the flight, as a share of the overlay's height.
 const FALL_SHARE: f32 = 0.08;
 /// A cell turns up to this far, either way, in radians.
 const SPIN_RAD: f32 = 1.5;
 /// A flown cell's scale.
 const SHRUNK: f32 = 0.7;
-/// The rebuild climbs from the bottom row: this much delay over the rows, plus
-/// a jitter, then one cell's flight home.
-const REBUILD_SPREAD_S: f32 = 2.2;
-const REBUILD_JITTER_S: f32 = 0.5;
-const REBUILD_EASE_S: f32 = 2.2;
+/// A landed cell's share of its alpha: it lies dim where it fell until its
+/// row is called home, so the canvas between the two flights is never blank.
+const LANDED_ALPHA: f32 = 0.25;
 /// Targets keep this many cells from every edge.
 const MARGIN_CELLS: f32 = 2.0;
 /// A cell this faint is not drawn.
 const INVISIBLE: f32 = 0.01;
 /// Mixes the cycle into the seed so every loop scatters differently.
 const CYCLE_MIX: u64 = 0xD1B5_4A32_D192_ED03;
+/// The grid is cut again only when the overlay's size crosses a step this
+/// big, so dragging a window does not re-cut and re-seed it every frame.
+const RECUT_STEP_PX: f32 = 8.0;
 
-/// Where a moment of the loop stands.
+/// Where a moment of the loop stands. Cells overlap the last two: the rebuild
+/// calls the bottom rows home while the far cells are still landing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Hold,
     Shatter,
-    Empty,
     Rebuild,
 }
 
-/// The loop `t_s` falls in, its phase, and the seconds into that phase.
+/// The loop `t_s` falls in, its phase, and the seconds into the loop.
 #[must_use]
 pub fn phase_at(t_s: f64) -> (u64, Phase, f32) {
-    const PHASES: [Phase; 4] = [Phase::Hold, Phase::Shatter, Phase::Empty, Phase::Rebuild];
     let t = t_s.max(0.0);
     let cycle = (t / CYCLE_S).floor();
-    let mut local = t - cycle * CYCLE_S;
-    let mut index = 0;
-    while index < 3 && local >= PHASE_S[index] {
-        local -= PHASE_S[index];
-        index += 1;
-    }
-    (cycle as u64, PHASES[index], local as f32)
+    let local = (t - cycle * CYCLE_S) as f32;
+    let phase = if local < HOLD_S {
+        Phase::Hold
+    } else if local < HOLD_S + REBUILD_AT_S {
+        Phase::Shatter
+    } else {
+        Phase::Rebuild
+    };
+    (cycle as u64, phase, local)
 }
 
 /// A seed from a symbol: FNV-1a, so the same symbol always breaks the same way.
@@ -224,51 +243,42 @@ impl Shatter {
         self.cell
     }
 
-    /// The whole logo at rest: what reduced motion draws, and the hold.
-    pub fn home(&self, out: &mut Vec<CellPose>) {
-        out.clear();
-        out.extend(
-            self.cells
-                .iter()
-                .map(|cell| self.pose(cell, cell.home, cell.coverage, 1.0, 0.0)),
-        );
-    }
-
-    /// Every visible cell `t_s` seconds after the overlay came up.
+    /// Every visible cell `t_s` seconds after the overlay came up. At `0.0`
+    /// this is the whole logo at rest, which is also what reduced motion draws.
     pub fn poses(&mut self, t_s: f64, out: &mut Vec<CellPose>) {
         let (cycle, phase, local) = phase_at(t_s);
         self.seed_cycle(cycle);
         out.clear();
-        if phase == Phase::Empty {
-            return;
-        }
+        let since_crack = local - HOLD_S;
         let fall = self.height * FALL_SHARE;
         for cell in &self.cells {
             let [home_x, home_y] = cell.home;
             let [target_x, target_y] = cell.target;
-            let (at, alpha, scale, rotation) = match phase {
-                Phase::Hold | Phase::Empty => (cell.home, cell.coverage, 1.0, 0.0),
-                Phase::Shatter => {
-                    let p = progress(local - cell.delay, SHATTER_EASE_S);
-                    let eased = 1.0 - (1.0 - p).powi(3);
-                    let x = home_x + (target_x - home_x) * eased;
-                    let y = home_y + (target_y - home_y) * eased + p * p * fall;
-                    let scale = 1.0 - p * (1.0 - SHRUNK);
-                    ([x, y], cell.coverage * (1.0 - p * p), scale, cell.spin * p)
-                }
-                Phase::Rebuild => {
-                    let p = progress(local - cell.rebuild_delay, REBUILD_EASE_S);
-                    let eased = if p < 0.5 {
-                        2.0 * p * p
-                    } else {
-                        1.0 - (-2.0 * p + 2.0).powi(2) / 2.0
-                    };
-                    let fallen = target_y + fall;
-                    let x = target_x + (home_x - target_x) * eased;
-                    let y = fallen + (home_y - fallen) * eased;
-                    let scale = SHRUNK + (1.0 - SHRUNK) * p;
-                    ([x, y], cell.coverage * p * p, scale, cell.spin * (1.0 - p))
-                }
+            let landed = cell.delay + SHATTER_EASE_S;
+            let (at, alpha, scale, rotation) = if phase == Phase::Hold {
+                (cell.home, cell.coverage, 1.0, 0.0)
+            } else if since_crack < landed {
+                let p = progress(since_crack - cell.delay, SHATTER_EASE_S);
+                let eased = 1.0 - (1.0 - p).powi(3);
+                let x = home_x + (target_x - home_x) * eased;
+                let y = home_y + (target_y - home_y) * eased + p * p * fall;
+                let scale = 1.0 - p * (1.0 - SHRUNK);
+                let alpha = 1.0 - p * p * (1.0 - LANDED_ALPHA);
+                ([x, y], cell.coverage * alpha, scale, cell.spin * p)
+            } else {
+                let called = landed.max(REBUILD_AT_S + cell.rebuild_delay);
+                let p = progress(since_crack - called, REBUILD_EASE_S);
+                let eased = if p < 0.5 {
+                    2.0 * p * p
+                } else {
+                    1.0 - (-2.0 * p + 2.0).powi(2) / 2.0
+                };
+                let fallen = target_y + fall;
+                let x = target_x + (home_x - target_x) * eased;
+                let y = fallen + (home_y - fallen) * eased;
+                let scale = SHRUNK + (1.0 - SHRUNK) * p;
+                let alpha = LANDED_ALPHA + (1.0 - LANDED_ALPHA) * p;
+                ([x, y], cell.coverage * alpha, scale, cell.spin * (1.0 - p))
             };
             if alpha > INVISIBLE {
                 out.push(self.pose(cell, at, alpha, scale, rotation));
@@ -299,7 +309,9 @@ impl Shatter {
         let crack_x = width / 2.0 + rng.range(-width * CRACK_SPREAD, width * CRACK_SPREAD);
         let crack_y =
             height * LOGO_CENTRE_Y + rng.range(-height * CRACK_SPREAD, height * CRACK_SPREAD);
-        let reach = width.hypot(height) * CRACK_REACH;
+        let farthest = self.cells.iter().fold(1.0_f32, |far, cell| {
+            far.max((cell.home[0] - crack_x).hypot(cell.home[1] - crack_y))
+        });
         let margin = self.cell * MARGIN_CELLS;
         let fall = height * FALL_SHARE;
         let right = width - margin - self.cell;
@@ -310,7 +322,7 @@ impl Shatter {
                 d if d > 0.0 => d,
                 _ => 1.0,
             };
-            cell.delay = distance / reach * CRACK_DELAY_S + rng.range(0.0, CRACK_JITTER_S);
+            cell.delay = distance / farthest * CRACK_DELAY_S + rng.range(0.0, CRACK_JITTER_S);
             let flight = rng.range(short * FLIGHT_MIN, short * FLIGHT_MAX);
             let x = cell.home[0] + dx / distance * flight;
             let x = x + rng.range(-width * DRIFT_X, width * DRIFT_X);
@@ -323,54 +335,70 @@ impl Shatter {
     }
 }
 
-/// A gap this long between two frames means the overlay went away and came
-/// back, so the logo starts whole again.
-const RESTART_MS: i64 = 1_000;
-
 /// The logo across one overlay from frame to frame: cut again when the
-/// overlay's size or seed changes, started whole again when it comes back.
+/// overlay's size crosses a step or its seed changes, started whole again
+/// when the caller's frame counter shows it was not drawn last frame.
 #[derive(Debug, Clone, Default)]
 pub struct LogoRun {
     shatter: Option<(Shatter, (u32, u32, u64))>,
     started_ms: i64,
-    last_ms: Option<i64>,
+    last_pass: Option<u64>,
+    /// The loop whose hold is already in `poses`: a hold never changes.
+    held: Option<u64>,
     poses: Vec<CellPose>,
 }
 
 impl LogoRun {
     /// This frame's cells over a `size` overlay at `now_ms`, the logo given as
-    /// its alpha image and side; `still` holds the whole logo, for reduced
-    /// motion.
+    /// its alpha image and side, `pass` the caller's frame counter. `still`
+    /// holds the whole logo, for reduced motion. Answers the cells and the
+    /// seconds until they next change: the rest of a hold, `0.0` while they
+    /// move, `None` when they never will.
     pub fn frame(
         &mut self,
         size: [f32; 2],
         seed: u64,
         logo: (&[u8], usize),
         now_ms: i64,
+        pass: u64,
         still: bool,
-    ) -> &[CellPose] {
-        if self
-            .last_ms
-            .is_none_or(|last| now_ms.saturating_sub(last) > RESTART_MS)
-        {
-            self.started_ms = now_ms;
-        }
-        self.last_ms = Some(now_ms);
-        let key = (size[0] as u32, size[1] as u32, seed);
+    ) -> (&[CellPose], Option<f64>) {
+        let key = (
+            (size[0] / RECUT_STEP_PX) as u32,
+            (size[1] / RECUT_STEP_PX) as u32,
+            seed,
+        );
         if self.shatter.as_ref().is_none_or(|(_, at)| *at != key) {
             let shatter = Shatter::new(size[0], size[1], logo.0, logo.1, seed);
-            self.shatter = Some((shatter, key));
+            (self.shatter, self.held) = (Some((shatter, key)), None);
         }
+        if self
+            .last_pass
+            .is_none_or(|last| pass != last && pass != last.wrapping_add(1))
+        {
+            (self.started_ms, self.held) = (now_ms, None);
+        }
+        self.last_pass = Some(pass);
         let Some((shatter, _)) = &mut self.shatter else {
-            return &[];
+            return (&[], None);
         };
-        if still {
-            shatter.home(&mut self.poses);
+        let seconds = if still {
+            0.0
         } else {
-            let seconds = now_ms.saturating_sub(self.started_ms) as f64 / 1_000.0;
+            now_ms.saturating_sub(self.started_ms) as f64 / 1_000.0
+        };
+        let (cycle, phase, local) = phase_at(seconds);
+        let hold = phase == Phase::Hold;
+        if !(hold && self.held == Some(cycle)) {
             shatter.poses(seconds, &mut self.poses);
         }
-        &self.poses
+        self.held = hold.then_some(cycle);
+        let next = match (still, hold) {
+            (true, _) => None,
+            (false, true) => Some(f64::from(HOLD_S - local)),
+            (false, false) => Some(0.0),
+        };
+        (&self.poses, next)
     }
 }
 
@@ -424,6 +452,12 @@ mod tests {
         Shatter::new(width, height, &disc(64), 64, symbol_seed("DOGEUSDT"))
     }
 
+    fn at_rest(shatter: &mut Shatter) -> Vec<CellPose> {
+        let mut poses = Vec::new();
+        shatter.poses(0.0, &mut poses);
+        poses
+    }
+
     #[test]
     fn the_cell_count_is_stable_for_a_fixed_grid() {
         let mut one = grid(900.0, 500.0);
@@ -441,39 +475,71 @@ mod tests {
         assert_eq!(grid(40.0, 30.0).cell_px(), MIN_CELL_PX);
     }
 
+    /// Each beat is as long as its own delays and flights: 2.0 s hold, the
+    /// crack's 3.3 s less a 1.0 s overlap, then a 3.8 s rebuild.
     #[test]
     fn phase_boundaries_follow_the_loop() {
-        assert_eq!(CYCLE_S, 13.0);
+        assert!((CYCLE_S - 8.1).abs() < 1e-5, "{CYCLE_S}");
         let at = |t: f64| {
             let (cycle, phase, _) = phase_at(t);
             (cycle, phase)
         };
         assert_eq!(at(0.0), (0, Phase::Hold));
-        assert_eq!(at(2.99), (0, Phase::Hold));
-        assert_eq!(at(3.01), (0, Phase::Shatter));
-        assert_eq!(at(7.19), (0, Phase::Shatter));
-        assert_eq!(at(7.21), (0, Phase::Empty));
-        assert_eq!(at(8.39), (0, Phase::Empty));
-        assert_eq!(at(8.41), (0, Phase::Rebuild));
-        assert_eq!(at(12.99), (0, Phase::Rebuild));
-        assert_eq!(at(13.01), (1, Phase::Hold));
+        assert_eq!(at(1.99), (0, Phase::Hold));
+        assert_eq!(at(2.01), (0, Phase::Shatter));
+        assert_eq!(at(4.29), (0, Phase::Shatter));
+        assert_eq!(at(4.31), (0, Phase::Rebuild));
+        assert_eq!(at(8.09), (0, Phase::Rebuild));
+        assert_eq!(at(8.11), (1, Phase::Hold));
         assert_eq!(at(-5.0), (0, Phase::Hold), "before the start is the start");
-        let mut shatter = grid(900.0, 500.0);
-        let mut poses = Vec::new();
-        shatter.poses(7.5, &mut poses);
-        assert!(poses.is_empty(), "the empty beat draws nothing");
-        shatter.poses(8.41, &mut poses);
-        assert!(poses.is_empty(), "the rebuild opens on nothing");
-        shatter.poses(12.99, &mut poses);
-        assert!(!poses.is_empty());
     }
 
-    /// Reduced motion draws the hold: every cell home, square and unturned.
+    /// The least share of the resting logo's ink a frame may show.
+    const MIN_INK: f32 = 0.2;
+
+    /// No blank beat: from the crack to the loop's end a good part of the
+    /// logo's ink is always on the canvas, flying out or flying home.
+    #[test]
+    fn the_canvas_is_never_blank() {
+        for (width, height) in [(900.0, 500.0), (270.0, 600.0), (1_600.0, 260.0)] {
+            let mut shatter = grid(width, height);
+            let ink = |poses: &[CellPose]| poses.iter().map(|pose| pose.alpha).sum::<f32>();
+            let whole = ink(&at_rest(&mut shatter));
+            let mut poses = Vec::new();
+            for step in 0..(2.0 * CYCLE_S / 0.02) as usize {
+                let t = step as f64 * 0.02;
+                shatter.poses(t, &mut poses);
+                let share = ink(&poses) / whole;
+                assert!(share > MIN_INK, "{width}x{height} at {t}: {share}");
+            }
+        }
+    }
+
+    /// The loop's end finds every cell home, so the next hold does not snap
+    /// anything: no flight is cut off by a boundary.
+    #[test]
+    fn the_loop_ends_with_every_cell_home() {
+        let mut shatter = grid(900.0, 500.0);
+        let rest = at_rest(&mut shatter);
+        for cycle in 0..3 {
+            let mut end = Vec::new();
+            shatter.poses((f64::from(cycle) + 1.0) * CYCLE_S - 1e-4, &mut end);
+            assert_eq!(end.len(), rest.len(), "loop {cycle}");
+            for (end, rest) in end.iter().zip(&rest) {
+                assert!((end.center[0] - rest.center[0]).abs() < 0.5);
+                assert!((end.center[1] - rest.center[1]).abs() < 0.5);
+                assert!((end.alpha - rest.alpha).abs() < 0.01);
+                assert!(end.rotation.abs() < 0.01);
+            }
+        }
+    }
+
+    /// At rest, which reduced motion draws: every cell home, square, unturned.
     #[test]
     fn reduced_motion_is_the_home_grid() {
         let mut shatter = grid(900.0, 500.0);
-        let (mut home, mut held) = (Vec::new(), Vec::new());
-        shatter.home(&mut home);
+        let home = at_rest(&mut shatter);
+        let mut held = Vec::new();
         shatter.poses(1.0, &mut held);
         assert_eq!(home, held);
         assert_eq!(home.len(), shatter.len());
@@ -493,10 +559,8 @@ mod tests {
         for (width, height) in [(900.0, 500.0), (270.0, 600.0), (1_600.0, 260.0)] {
             let mut shatter = grid(width, height);
             let mut poses = Vec::new();
-            let mut seen = 0;
             for step in 0..(2.0 * CYCLE_S / 0.05) as usize {
                 shatter.poses(step as f64 * 0.05, &mut poses);
-                seen += poses.len();
                 for pose in &poses {
                     for [x, y] in pose.corners() {
                         assert!(
@@ -507,7 +571,6 @@ mod tests {
                     }
                 }
             }
-            assert!(seen > 0);
         }
     }
 
@@ -522,17 +585,17 @@ mod tests {
             poses
         };
         let doge = symbol_seed("DOGEUSDT");
-        assert_eq!(frame(doge, 5.0), frame(doge, 5.0));
-        assert_ne!(frame(doge, 5.0), frame(symbol_seed("BTCUSDT"), 5.0));
-        assert_ne!(frame(doge, 5.0), frame(doge, 5.0 + CYCLE_S));
+        assert_eq!(frame(doge, 3.5), frame(doge, 3.5));
+        assert_ne!(frame(doge, 3.5), frame(symbol_seed("BTCUSDT"), 3.5));
+        assert_ne!(frame(doge, 3.5), frame(doge, 3.5 + CYCLE_S));
     }
 
     #[test]
     fn mid_shatter_cells_fly_turn_shrink_and_fade() {
         let mut shatter = grid(900.0, 500.0);
-        let (mut home, mut flying) = (Vec::new(), Vec::new());
-        shatter.home(&mut home);
-        shatter.poses(3.0 + 3.0, &mut flying);
+        let home = at_rest(&mut shatter);
+        let mut flying = Vec::new();
+        shatter.poses(f64::from(HOLD_S) + 1.5, &mut flying);
         assert!(!flying.is_empty() && flying.len() <= home.len());
         assert!(flying.iter().any(|pose| pose.rotation != 0.0));
         assert!(
@@ -544,26 +607,32 @@ mod tests {
         assert!(faded < home.iter().map(|pose| pose.alpha).sum::<f32>());
     }
 
-    /// The run keeps its clock across frames, restarts whole after the overlay
-    /// was gone, holds still under reduced motion, and re-cuts on a resize.
+    /// The run keeps its clock while drawn on consecutive frames, restarts
+    /// whole when a frame went by without it, asks for a frame only when the
+    /// picture changes, and re-cuts on a resize past a step.
     #[test]
-    fn a_run_restarts_whole_and_recuts_on_resize() {
+    fn a_run_restarts_whole_and_repaints_only_on_change() {
         let logo = disc(64);
         let mut run = LogoRun::default();
         let size = [900.0, 500.0];
-        let whole = run.frame(size, 7, (&logo, 64), 10_000, false).len();
-        let mut drawn = whole;
-        for now in (10_500..=17_500).step_by(500) {
-            drawn = run.frame(size, 7, (&logo, 64), now, false).len();
-        }
-        assert_eq!(drawn, 0, "7.5 s in is the empty beat");
-        let mut held = run.clone();
-        assert_eq!(held.frame(size, 7, (&logo, 64), 17_600, true).len(), whole);
-        // Away for two seconds: it comes back whole, at the hold.
-        assert_eq!(run.frame(size, 7, (&logo, 64), 30_000, false).len(), whole);
-        assert_eq!(run.frame(size, 7, (&logo, 64), 30_016, false).len(), whole);
-        let narrow = run.frame([270.0, 600.0], 7, (&logo, 64), 30_032, false);
-        assert!(narrow.len() < whole, "a smaller logo is fewer cells");
+        let (cells, next) = run.frame(size, 7, (&logo, 64), 10_000, 1, false);
+        let whole = cells.len();
+        assert_eq!(next, Some(2.0), "the hold's whole length");
+        let (_, next) = run.frame(size, 7, (&logo, 64), 11_500, 2, false);
+        assert_eq!(next, Some(0.5), "the hold's rest");
+        let (_, next) = run.frame(size, 7, (&logo, 64), 13_000, 3, false);
+        assert_eq!(next, Some(0.0), "moving: every frame");
+        let mut still = run.clone();
+        let (cells, next) = still.frame(size, 7, (&logo, 64), 13_016, 4, true);
+        assert_eq!((cells.len(), next), (whole, None));
+        // A frame without the overlay: it comes back whole, at the hold.
+        let (cells, next) = run.frame(size, 7, (&logo, 64), 13_032, 9, false);
+        assert_eq!((cells.len(), next), (whole, Some(2.0)));
+        // A drag inside one step keeps the grid; past it, it is cut again.
+        let (_, next) = run.frame([903.0, 501.0], 7, (&logo, 64), 13_048, 10, false);
+        assert!(next.is_some_and(|left| left < 2.0), "same run, same clock");
+        let narrow = run.frame([270.0, 600.0], 7, (&logo, 64), 13_064, 11, false);
+        assert!(narrow.0.len() < whole, "a smaller logo is fewer cells");
     }
 
     #[test]

@@ -124,12 +124,11 @@ pub fn reconnect_press_due(now_ms: i64) -> bool {
     due && !PRESSED.swap(true, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The plate-less logo's alpha and side, decoded once.
-fn logo_alpha() -> Option<&'static (Vec<u8>, usize)> {
-    static ALPHA: OnceLock<Option<(Vec<u8>, usize)>> = OnceLock::new();
+/// The plate-less logo's alpha and side, decoded once; empty if it fails.
+fn logo_alpha() -> &'static (Vec<u8>, usize) {
+    static ALPHA: OnceLock<(Vec<u8>, usize)> = OnceLock::new();
     ALPHA
-        .get_or_init(|| decode_alpha(include_bytes!("../assets/logo-mark.png")))
-        .as_ref()
+        .get_or_init(|| decode_alpha(include_bytes!("../assets/logo-mark.png")).unwrap_or_default())
 }
 
 /// The alpha channel of a square RGBA PNG, and its side.
@@ -152,20 +151,15 @@ fn decode_alpha(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
     Some((alpha, side))
 }
 
-/// The logo across `rect` as one mesh of turned squares, two triangles each,
-/// asking for frames only while it moves.
-fn logo_mesh(ctx: &egui::Context, rect: egui::Rect, symbol: &str, now: i64) -> egui::Mesh {
-    let (Some((alpha, side)), still) = (logo_alpha(), reduced_motion()) else {
-        return egui::Mesh::default();
-    };
-    if !still {
-        ctx.request_repaint_after(LOGO_REPAINT);
-    }
-    ctx.data_mut(|data| {
-        let run = data.get_temp_mut_or_default::<LogoRun>(egui::Id::new("connection_logo"));
-        let size = [rect.width(), rect.height()];
+/// The tab's logo run as one mesh, asking for a frame only when it next changes.
+fn logo_mesh(ui: &egui::Ui, rect: egui::Rect, symbol: &str, now: i64, tab: u64) -> egui::Mesh {
+    let ((alpha, side), ctx, still) = (logo_alpha(), ui.ctx(), reduced_motion());
+    let (pass, size) = (ctx.cumulative_pass_nr(), rect.size().into());
+    let (mesh, next) = ctx.data_mut(|data| {
+        let run = data.get_temp_mut_or_default::<LogoRun>(egui::Id::new(("connection_logo", tab)));
+        let (poses, next) = run.frame(size, symbol_seed(symbol), (alpha, *side), now, pass, still);
         let mut mesh = egui::Mesh::default();
-        for pose in run.frame(size, symbol_seed(symbol), (alpha, *side), now, still) {
+        for pose in poses {
             let colour = egui::Color32::from_gray(pose.grey).gamma_multiply(pose.alpha);
             let base = mesh.vertices.len() as u32;
             for [x, y] in pose.corners() {
@@ -174,8 +168,12 @@ fn logo_mesh(ctx: &egui::Context, rect: egui::Rect, symbol: &str, now: i64) -> e
             mesh.add_triangle(base, base + 1, base + 2);
             mesh.add_triangle(base, base + 2, base + 3);
         }
-        mesh
-    })
+        (mesh, next)
+    });
+    if let Some(next) = next {
+        ctx.request_repaint_after(LOGO_REPAINT.max(std::time::Duration::from_secs_f64(next)));
+    }
+    mesh
 }
 
 /// The overlay's group, measured.
@@ -225,7 +223,10 @@ fn lay_out_overlay(
     if let Some(control) = &control {
         height += CONTROL_GAP_PX + control.size().y;
     }
-    let top = rect.top() + rect.height() * TEXT_AT;
+    let top = rect.top()
+        + (rect.height() * TEXT_AT)
+            .min(rect.height() - height)
+            .max(0.0);
     let control = control.map(|galley| {
         let at = egui::pos2(
             rect.center().x - galley.size().x / 2.0,
@@ -263,23 +264,18 @@ pub fn draw_overlay(
     rect: egui::Rect,
     symbol: &str,
     words: &OverlayWords,
-    now_ms: i64,
+    (now_ms, tab): (i64, u64),
 ) -> (Option<egui::Rect>, bool) {
     let layer = egui::LayerId::new(LOADING_ORDER, egui::Id::new("connection_overlay"));
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
     let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words);
     let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits);
-    painter.add(logo_mesh(ui.ctx(), rect, symbol, now_ms));
-    let center_x = rect.center().x;
+    painter.add(logo_mesh(ui, rect, symbol, now_ms, tab));
     let mut y = group.top;
-    let centred = |width: f32| center_x - width / 2.0;
-    let title_size = group.title.size();
-    painter.galley(
-        egui::pos2(centred(title_size.x), y),
-        group.title,
-        GREY_LIGHT,
-    );
-    y += title_size.y + TITLE_GAP_PX;
+    let centred = |width: f32| rect.center().x - width / 2.0;
+    let size = group.title.size();
+    painter.galley(egui::pos2(centred(size.x), y), group.title, GREY_LIGHT);
+    y += size.y + TITLE_GAP_PX;
     let meta_size = group.meta.size();
     painter.galley(egui::pos2(centred(meta_size.x), y), group.meta, GREY_MID);
     let Some((control, hit)) = group.control else {
@@ -466,7 +462,7 @@ mod tests {
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.painter().rect_filled(screen, 0.0, CHART);
-                    let _ = draw_overlay(ui, screen, "X", &words(false), 0);
+                    let _ = draw_overlay(ui, screen, "X", &words(false), (0, 1));
                     let slot = Slot {
                         job: false,
                         text: "the slot",
@@ -514,13 +510,13 @@ mod tests {
                     let roomy =
                         egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 400.0));
                     assert!(reconnect_fits(ctx, roomy, "X", &words(true)));
-                    let (control, _) = draw_overlay(ui, roomy, "X", &words(true), 0);
+                    let (control, _) = draw_overlay(ui, roomy, "X", &words(true), (0, 1));
                     assert!(roomy.contains_rect(control.expect("it fits")));
 
                     let short =
-                        egui::Rect::from_min_size(egui::pos2(0.0, 500.0), egui::vec2(800.0, 110.0));
+                        egui::Rect::from_min_size(egui::pos2(0.0, 500.0), egui::vec2(800.0, 40.0));
                     assert!(!reconnect_fits(ctx, short, "X", &words(true)));
-                    let (control, pressed) = draw_overlay(ui, short, "X", &words(true), 0);
+                    let (control, pressed) = draw_overlay(ui, short, "X", &words(true), (0, 1));
                     assert!(control.is_none() && !pressed);
                 });
             },
@@ -530,7 +526,7 @@ mod tests {
     /// The asset has no plate: the logo is cells, not a filled square.
     #[test]
     fn the_logo_samples_a_plate_less_asset() {
-        let (alpha, side) = logo_alpha().expect("the asset decoded");
+        let (alpha, side) = logo_alpha();
         let shatter = quantick_chart::logo_shatter::Shatter::new(800.0, 600.0, alpha, *side, 1);
         let grid = (600.0 * 0.42 / shatter.cell_px()).ceil() as usize;
         assert!(!shatter.is_empty());
@@ -558,7 +554,7 @@ mod tests {
                     },
                     |ctx| {
                         egui::CentralPanel::default().show(ctx, |ui| {
-                            answer = draw_overlay(ui, ui.max_rect(), "X", &words(true), 0);
+                            answer = draw_overlay(ui, ui.max_rect(), "X", &words(true), (0, 1));
                         });
                     },
                 );
@@ -595,7 +591,8 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        control = draw_overlay(ui, ui.max_rect(), "DOGEUSDT", &words(true), 0).0;
+                        control =
+                            draw_overlay(ui, ui.max_rect(), "DOGEUSDT", &words(true), (0, 1)).0;
                     });
                 },
             );
@@ -609,7 +606,8 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let (none, pressed) = draw_overlay(ui, ui.max_rect(), "X", &words(false), 0);
+                    let (none, pressed) =
+                        draw_overlay(ui, ui.max_rect(), "X", &words(false), (0, 1));
                     assert!(none.is_none() && !pressed, "no control, no region");
                 });
             },

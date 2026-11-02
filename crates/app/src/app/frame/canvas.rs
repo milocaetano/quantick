@@ -100,7 +100,8 @@ pub(super) fn overlays(
         && let Some(words) = tab.connection.overlay(feed_name, now)
         && let Some(rect) = tab.empty_panes_rect()
     {
-        let (_, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, now);
+        let clock = (now, answers.popup_tab);
+        let (_, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, clock);
         if pressed {
             answers.notice_action = feed_notice::NoticeAction::Reconnect;
         }
