@@ -85,12 +85,15 @@ impl ControlAccess {
         }
     }
 
-    /// What the Settings row must say: why access cannot start, or what starting
-    /// it is doing, since the panel that also shows this may be closed.
-    pub fn problem(&self) -> Option<&str> {
-        self.initialization_error
-            .as_deref()
-            .or(self.notice.as_deref())
+    /// Why access cannot start, which the Settings row shows as a problem.
+    pub fn start_error(&self) -> Option<&str> {
+        self.initialization_error.as_deref()
+    }
+
+    /// What the last transition reported, which the Settings row shows plainly,
+    /// since the panel that also shows it may be closed.
+    pub fn status_note(&self) -> Option<&str> {
+        self.notice.as_deref()
     }
 
     /// The same two acts as the panel's own buttons; the scopes stay the ones

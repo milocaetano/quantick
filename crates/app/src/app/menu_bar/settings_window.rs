@@ -23,6 +23,7 @@ const SETTINGS_SIZE_PX: [f32; 2] = [640.0, 340.0];
 const SECTION_LIST_WIDTH_PX: f32 = 120.0;
 const ROW_TEXT_WIDTH_PX: f32 = 380.0;
 const ROW_GAP_PX: f32 = 8.0;
+const ROW_HINT_PX: f32 = 12.0;
 const SWITCH_SIZE_PX: egui::Vec2 = egui::vec2(34.0, 18.0);
 const SWITCH_INSET_PX: f32 = 2.0;
 
@@ -102,8 +103,8 @@ fn draw_row(
             ui.label(row.label());
             ui.label(
                 egui::RichText::new(row.description())
-                    .small()
-                    .color(theme::TEXT_FAINT),
+                    .size(ROW_HINT_PX)
+                    .color(theme::TEXT_MUTED),
             );
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -111,13 +112,13 @@ fn draw_row(
         });
     });
     if row == SettingRow::AgentSwitch
-        && let Some(problem) = app
-            .control
-            .control_access
-            .as_ref()
-            .and_then(ControlAccess::problem)
+        && let Some(access) = app.control.control_access.as_ref()
     {
-        ui.colored_label(theme::WARN, problem);
+        if let Some(error) = access.start_error() {
+            ui.colored_label(theme::WARN, error);
+        } else if let Some(note) = access.status_note() {
+            ui.colored_label(theme::TEXT_MUTED, note);
+        }
     }
 }
 
