@@ -2,9 +2,9 @@
 //! empty panes, the header's chip and slot, and the small spinner embedded in
 //! windows. All of it grey; none of it above a menu.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use eframe::egui;
+use eframe::egui::{self, text::Fonts};
 use egui_phosphor::regular as icons;
 use quantick_chart::connection_state::{ATTEMPT_DOT_MS, Dot, DotLook, OverlayWords};
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
@@ -176,6 +176,17 @@ fn logo_mesh(ui: &egui::Ui, rect: egui::Rect, symbol: &str, now: i64, tab: u64) 
     mesh
 }
 
+/// `text` as wide as its walking dots at their widest, `...`, the missing dots in
+/// clear ink: placed by that width, a walk never moves the words it follows.
+fn steady(fonts: &Fonts, text: &str, font: egui::FontId, wrap: f32) -> Arc<egui::Galley> {
+    let dots = text.len() - text.trim_end_matches('.').len();
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font.clone(), GREY_MID, wrap);
+    let clear = egui::TextFormat::simple(font, egui::Color32::TRANSPARENT);
+    let pad = ".".repeat((3 - dots.min(3)) * usize::from(dots > 0));
+    job.append(&pad, 0.0, clear);
+    fonts.layout_job(job)
+}
+
 /// The overlay's group, measured.
 struct OverlayGroup {
     title: std::sync::Arc<egui::Galley>,
@@ -201,15 +212,11 @@ fn lay_out_overlay(
     );
     title.append(symbol, 4.0, egui::TextFormat::simple(font, GREY_MID));
     title.wrap.max_width = rect.width();
+    let mono = egui::FontId::monospace(META_PT);
     let (title, meta, control) = ctx.fonts(|fonts| {
         (
             fonts.layout_job(title),
-            fonts.layout(
-                words.meta.clone(),
-                egui::FontId::monospace(META_PT),
-                GREY_MID,
-                rect.width(),
-            ),
+            steady(fonts, &words.meta, mono, rect.width()),
             with_control.then(|| {
                 fonts.layout_no_wrap(
                     RECONNECT_LABEL.to_owned(),
@@ -283,13 +290,9 @@ pub fn draw_overlay(
     };
     let at = hit.shrink2(egui::vec2(6.0, 3.0)).min;
     let response = ui.interact(hit, ui.id().with("overlay_reconnect"), egui::Sense::click());
-    let colour = if response.hovered() {
-        GREY_LIGHT
-    } else {
-        GREY_MID
-    };
-    painter.galley(at, control, colour);
-    if response.hovered() {
+    let lit = response.hovered();
+    painter.galley(at, control, if lit { GREY_LIGHT } else { GREY_MID });
+    if lit {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     (Some(hit), response.clicked())
@@ -407,10 +410,7 @@ fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>) -> SlotGalleys {
         let glyph = slot.job.then(|| {
             fonts.layout_no_wrap(icons::ARROW_CLOCKWISE.to_owned(), font.clone(), GREY_MID)
         });
-        (
-            glyph,
-            fonts.layout_no_wrap(slot.text.to_owned(), font, GREY_MID),
-        )
+        (glyph, steady(fonts, slot.text, font, f32::INFINITY))
     })
 }
 
@@ -612,5 +612,30 @@ mod tests {
                 });
             },
         );
+    }
+
+    /// The walking dots never move the words: each step lays out as wide as
+    /// `...`, in the overlay's monospace and the slot's proportional font, and
+    /// words without dots get no padding.
+    #[test]
+    fn walking_dots_keep_the_words_still() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            for font in [
+                egui::FontId::monospace(META_PT),
+                egui::FontId::proportional(SLOT_PT),
+            ] {
+                let width = |text: &str| {
+                    ctx.fonts(|fonts| steady(fonts, text, font.clone(), f32::INFINITY).size().x)
+                };
+                let widest = width("Replay · attempting...");
+                assert_eq!(width("Replay · attempting."), widest);
+                assert_eq!(width("Replay · attempting.."), widest);
+                let bare = ctx.fonts(|fonts| {
+                    fonts.layout_no_wrap("loading history".to_owned(), font.clone(), GREY_MID)
+                });
+                assert_eq!(width("loading history"), bare.size().x);
+            }
+        });
     }
 }
