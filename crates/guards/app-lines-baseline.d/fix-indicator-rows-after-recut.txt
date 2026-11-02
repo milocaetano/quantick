@@ -1,0 +1,4 @@
+# The rows-to-bars check lives in crates/chart; crates/app keeps the worker's
+# idle read, the log line and the rebuild only the pane can send. Signed: bug fix.
+crates/app +27
+!budget +27
