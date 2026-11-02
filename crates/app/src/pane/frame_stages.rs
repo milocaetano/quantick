@@ -488,6 +488,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         // accumulation switch at the top of the frame, shared with the
         // range-profile drawings.
         let layer = crate::footprint_render::LayerFrame {
+            palette: crate::theme::get(frame.painter.ctx()),
             painter: &self.clip,
             chart_rect: frame.history_rect,
             scale: &frame.scale,

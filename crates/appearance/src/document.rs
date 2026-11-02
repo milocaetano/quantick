@@ -1,6 +1,6 @@
 //! The versioned authoring contract and all-or-nothing resolution.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +22,7 @@ pub struct PremultipliedValue {
 }
 
 impl ColorValue {
-    fn resolve(&self, field: &str) -> Result<PremultipliedRgba, ThemeError> {
+    pub(crate) fn resolve(&self, field: &str) -> Result<PremultipliedRgba, ThemeError> {
         match self {
             Self::Premultiplied(value) => {
                 Ok(PremultipliedRgba::from_premultiplied(value.premultiplied))
@@ -58,6 +58,8 @@ pub struct ThemeDocument {
     pub colors: BTreeMap<String, ColorValue>,
     #[serde(default)]
     pub typography: BTreeMap<String, FontOverride>,
+    #[serde(default)]
+    pub footprint_heat: crate::heat::HeatOverride,
 }
 
 fn dark_mode() -> bool {
@@ -70,6 +72,15 @@ impl ThemeDocument {
     }
 
     pub fn resolve(&self) -> Result<ResolvedTheme, ThemeError> {
+        self.resolve_with(Some(ResolvedTheme::bundled_dark()))
+    }
+
+    /// A complete document supplies every value without consulting fallback.
+    pub fn resolve_complete(&self) -> Result<ResolvedTheme, ThemeError> {
+        self.resolve_with(None)
+    }
+
+    fn resolve_with(&self, fallback: Option<&ResolvedTheme>) -> Result<ResolvedTheme, ThemeError> {
         if self.version != 1 {
             return Err(ThemeError::new(
                 "version",
@@ -85,7 +96,16 @@ impl ThemeDocument {
                 "must contain 1 to 80 characters and no control characters",
             ));
         }
-        let mut colors = Token::ALL.map(Token::dark);
+        let mut colors = [PremultipliedRgba::from_premultiplied([0; 4]); Token::ALL.len()];
+        for token in Token::ALL {
+            let field = format!("colors.{}", token.key());
+            colors[token as usize] = match self.colors.get(token.key()) {
+                Some(value) => value.resolve(&field)?,
+                None => fallback
+                    .map(|theme| theme.color(token))
+                    .ok_or_else(|| ThemeError::new(field, "required in a complete theme"))?,
+            };
+        }
         for (key, value) in &self.colors {
             let field = format!("colors.{key}");
             let token = Token::from_key(key)
@@ -96,7 +116,13 @@ impl ThemeDocument {
             name: self.name.clone(),
             dark: self.dark,
             colors,
-            typography: Typography::resolve(&self.typography)?,
+            typography: Typography::resolve(
+                &self.typography,
+                fallback.map(|theme| &theme.typography),
+            )?,
+            footprint_heat: self
+                .footprint_heat
+                .resolve(fallback.map(|theme| &theme.footprint_heat))?,
         })
     }
 }
@@ -107,9 +133,21 @@ pub struct ResolvedTheme {
     pub dark: bool,
     colors: [PremultipliedRgba; Token::ALL.len()],
     pub typography: Typography,
+    pub footprint_heat: crate::heat::HeatRamp,
 }
 
 impl ResolvedTheme {
+    /// Immutable process-wide fallback, parsed once through the same validated
+    /// complete-document resolver used by external themes. Never application state.
+    pub fn bundled_dark() -> &'static Self {
+        static DARK: OnceLock<ResolvedTheme> = OnceLock::new();
+        DARK.get_or_init(|| {
+            ThemeDocument::parse(crate::DARK)
+                .and_then(|document| document.resolve_complete())
+                .expect("bundled Dark theme must be complete and valid")
+        })
+    }
+
     pub fn parse(source: &str) -> Result<Self, ThemeError> {
         ThemeDocument::parse(source)?.resolve()
     }
@@ -122,11 +160,6 @@ impl ResolvedTheme {
 
 impl Default for ResolvedTheme {
     fn default() -> Self {
-        Self {
-            name: "Dark".into(),
-            dark: true,
-            colors: Token::ALL.map(Token::dark),
-            typography: Typography::default(),
-        }
+        Self::bundled_dark().clone()
     }
 }

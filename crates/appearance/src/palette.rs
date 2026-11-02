@@ -194,47 +194,4 @@ impl Token {
     pub fn from_key(key: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|token| token.key() == key)
     }
-    pub const fn dark(self) -> PremultipliedRgba {
-        match self {
-            Self::Canvas => CANVAS,
-            Self::Chrome => CHROME,
-            Self::Inset => INSET,
-            Self::Control => CONTROL,
-            Self::Border => BORDER,
-            Self::TextPrimary => TEXT_PRIMARY,
-            Self::TextMuted => TEXT_MUTED,
-            Self::TextFaint => TEXT_FAINT,
-            Self::Buy => BUY,
-            Self::Sell => SELL,
-            Self::Poc => POC,
-            Self::Accent => ACCENT,
-            Self::Amber => AMBER,
-            Self::PaneMark => PANE_MARK,
-            Self::PaneAction => PANE_ACTION,
-            Self::Off => OFF,
-            Self::CapsuleFill => CAPSULE_FILL,
-            Self::CapsuleBorder => CAPSULE_BORDER,
-            Self::CapsuleShadow => CAPSULE_SHADOW,
-            Self::BareHover => BARE_HOVER,
-            Self::SeamLine => SEAM_LINE,
-            Self::DayRule => DAY_RULE,
-            Self::SeamLabel => SEAM_LABEL,
-            Self::Warn => WARN,
-            Self::Rec => REC,
-            Self::GapLine => GAP_LINE,
-            Self::GapLabel => GAP_LABEL,
-            Self::TagBg => TAG_BG,
-            Self::TextSupport => TEXT_SUPPORT,
-            Self::ChipInk => CHIP_INK,
-            Self::Casing => CASING,
-            Self::DrawViolet => DRAW_VIOLET,
-            Self::DrawCyan => DRAW_CYAN,
-            Self::FloatShadow => FLOAT_SHADOW,
-            Self::CandleBullOutline => CANDLE_BULL_OUTLINE,
-            Self::CandleBearOutline => CANDLE_BEAR_OUTLINE,
-            Self::CandleWick => CANDLE_WICK,
-            Self::BuyInk => BUY_INK,
-            Self::SellInk => SELL_INK,
-        }
-    }
 }

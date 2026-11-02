@@ -26,6 +26,7 @@ pub mod bundle;
 pub mod candle_presets;
 pub mod config;
 pub mod footprint_config;
+pub mod footprint_presentation;
 pub mod footprint_presets;
 pub mod home;
 pub mod indicator_presets;

@@ -293,6 +293,25 @@ pub fn display_multiple(base_row_px: f32, min_row_px: f32) -> Option<i64> {
         .find(|k| base_row_px * (*k as f32) >= min_row_px)
 }
 
+/// How much of the candle body's fill survives at `candle_width`, `1.0`
+/// (untouched) through `0.0` (outline only).
+///
+/// The reference charts draw the candle as an outline box with the footprint
+/// living inside it. Rather than a hard switch, the body fades as the zoom
+/// crosses from "candles are the chart" (Marks) into "the inside is the
+/// chart" (Profile → Detailed): fully opaque up to the Profile floor, gone
+/// by `fade_end`, the configured Detailed entry (`body_fade_end_px`). Only
+/// applied while the layer is on — off, the candles are untouched at any zoom.
+pub fn candle_body_fade(candle_width: f32, fade_end: f32) -> f32 {
+    let span = (fade_end - PROFILE_MIN_WIDTH).max(1.0);
+    (1.0 - (candle_width - PROFILE_MIN_WIDTH) / span).clamp(0.0, 1.0)
+}
+
+/// The width required by quantity columns and their surrounding furniture.
+pub fn detailed_width(columns: f32, furniture: f32) -> f32 {
+    (columns * (QUANTITY_PX + QUANTITY_PADDING_PX / 2.0) + furniture) / TYPICAL_BODY_FRAC
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

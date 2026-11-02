@@ -93,6 +93,7 @@ impl QuantickApp {
     /// what was painted — the only honest way to assert that a chart is on
     /// screen rather than a blank rectangle.
     pub(super) fn draw_frame(&mut self, ctx: &egui::Context, now: Instant) {
+        crate::theme::sync(ctx, &self.runtime.appearance);
         self.draw_frame_with_tail(
             ctx,
             now,

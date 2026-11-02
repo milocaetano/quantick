@@ -67,21 +67,6 @@ impl FontRole {
             Self::Drawing => "drawing",
         }
     }
-
-    pub const fn dark(self) -> FontSpec {
-        use FontFamily::{Monospace, Proportional};
-        let (family, size) = match self {
-            Self::Heading => (Proportional, 18.0),
-            Self::Body | Self::Button => (Proportional, 12.5),
-            Self::Drawing => (Proportional, 12.0),
-            Self::Monospace => (Monospace, 12.0),
-            Self::Small => (Proportional, 9.0),
-            Self::ChartAxis => (Monospace, 11.0),
-            Self::ChartLabel => (Proportional, 11.0),
-            Self::Footprint => (Monospace, 10.0),
-        };
-        FontSpec { family, size }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,7 +74,7 @@ pub struct Typography([FontSpec; FontRole::ALL.len()]);
 
 impl Default for Typography {
     fn default() -> Self {
-        Self(FontRole::ALL.map(FontRole::dark))
+        crate::ResolvedTheme::bundled_dark().typography.clone()
     }
 }
 
@@ -98,8 +83,32 @@ impl Typography {
         self.0[role as usize]
     }
 
-    pub(crate) fn resolve(values: &BTreeMap<String, FontOverride>) -> Result<Self, ThemeError> {
-        let mut result = Self::default();
+    pub(crate) fn resolve(
+        values: &BTreeMap<String, FontOverride>,
+        fallback: Option<&Self>,
+    ) -> Result<Self, ThemeError> {
+        let mut fonts = Vec::with_capacity(FontRole::ALL.len());
+        for role in FontRole::ALL {
+            let value = values.get(role.key()).copied().unwrap_or_default();
+            let inherited = fallback.map(|fonts| fonts.get(role));
+            let required = |property| {
+                ThemeError::new(
+                    format!("typography.{}.{property}", role.key()),
+                    "required in a complete theme",
+                )
+            };
+            fonts.push(FontSpec {
+                family: value
+                    .family
+                    .or(inherited.map(|font| font.family))
+                    .ok_or_else(|| required("family"))?,
+                size: value
+                    .size
+                    .or(inherited.map(|font| font.size))
+                    .ok_or_else(|| required("size"))?,
+            });
+        }
+        let mut result = Self(fonts.try_into().expect("one font per role"));
         for (key, value) in values {
             let field = format!("typography.{key}");
             let role = FontRole::ALL

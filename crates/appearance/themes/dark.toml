@@ -72,3 +72,8 @@ size = 10.0
 [typography.drawing]
 family = "proportional"
 size = 12.0
+
+[footprint_heat]
+buy = ["#0A2D2B", "#0D3B38", "#11554E", "#0D6A5F", "#009880", "#29D9AE"]
+sell = ["#510E16", "#6A111A", "#951520", "#BD1217", "#FE3800", "#FDAF89"]
+ink = ["#96A0AF", "#96A0AF", "#D2DAE2", "#D2DAE2", "#0E121A", "#0E121A"]

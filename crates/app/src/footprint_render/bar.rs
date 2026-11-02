@@ -794,13 +794,7 @@ fn paint_bevel(
 /// The painter and the floor read the *same* function. They used to compute it
 /// apart, which is how the floor came to declare a width legible that the
 /// painter then drew three overlapping numbers into.
-pub(super) fn cluster_column_px_from(body_width: f32, columns: f32) -> f32 {
-    let inner = body_width
-        - crate::footprint_config::CANDLE_LANE_PX
-        - 2.0 * CLUSTER_BOX_PAD_PX
-        - (columns - 1.0) * CLUSTER_GUTTER_PX;
-    (inner / columns).max(1.0)
-}
+use quantick_stores::footprint_presentation::cluster_column_px_from;
 
 /// How many number columns the cluster draws: three with the total, two
 /// without. The knob exists because the third column costs ~33 px of candle
@@ -935,7 +929,11 @@ fn draw_cluster_row(
     ] {
         let rect = column_rect();
         let step = heat_step(qty, heat);
-        painter.rect_filled(rect, egui::Rounding::ZERO, heat_fill(side, step));
+        painter.rect_filled(
+            rect,
+            egui::Rounding::ZERO,
+            heat_fill(&frame.palette, side, step),
+        );
         if bevel {
             paint_bevel(painter, rect, geometry.row_height, step, pixels_per_point);
         }
@@ -962,7 +960,7 @@ fn draw_cluster_row(
                 egui::Align2::CENTER_CENTER,
                 fmt_qty(qty),
                 font.clone(),
-                heat_ink(step),
+                heat_ink(&frame.palette, step),
             );
         }
     }

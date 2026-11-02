@@ -42,3 +42,8 @@ candle_bear_outline = "#B63242"
 candle_wick = "#52627B"
 buy_ink = "#075F52"
 sell_ink = "#9A2433"
+
+[footprint_heat]
+buy = ["#E8F5F2", "#D0EBE5", "#AFE0D5", "#75C8B5", "#227C6B", "#116454"]
+sell = ["#FCEEEA", "#F9DCD3", "#F3BDB0", "#EB9783", "#B74730", "#8B2F20"]
+ink = ["#374151", "#374151", "#273142", "#202A38", "#FFFFFF", "#FFFFFF"]

@@ -10,7 +10,7 @@ theme. Installation, distribution and a theme picker are outside this foundation
 
 `version = 1` and a nonempty `name` of at most 80 characters are required. A name
 cannot contain control characters. `dark` selects the base widget appearance and
-defaults to `true`. Missing colors and typography properties inherit Dark's
+defaults to `true`. Missing colors, heat ramps and typography properties inherit Dark's
 version-1 values independently, even when `dark = false`. A light author should
 start from the complete Light color fixture rather than merely changing `dark`.
 
@@ -49,6 +49,38 @@ logical pixels, from 6 through 72 inclusive. Each property can be omitted.
 Supported roles are `heading`, `body`, `button`, `monospace`, `small`,
 `chart_axis`, `chart_label`, `footprint`, and `drawing`. Family selection uses
 bundled fonts; it does not load a path or remove icon fonts and fallback glyphs.
+
+## Footprint heat
+
+`[footprint_heat]` defines `buy`, `sell`, and `ink`, each an array of exactly six
+colors, from quietest to busiest. Missing arrays inherit Dark independently.
+The renderer looks up the resolved arrays; it does not derive heat colors or
+contrast per cell. Dark preserves the historical six steps and their three ink
+weights. Light supplies contrasting heat and ink arrays. Authors should check
+all six ink/fill pairs for readable contrast.
+
+The bundled Dark document is complete: every color, font property and heat array
+is required by its complete-document validation. It is parsed once into an
+immutable fallback through the same resolver used by authored documents.
+
+At startup the host reads `QUANTICK_THEME=<toml>` when set, otherwise
+`appearance.toml` from the normal cockpit directory. The explicit path also
+isolates appearance state during harness runs and is excluded from cockpit rescue.
+The override selects the appearance store path; this checkpoint only reads it,
+without automatic writes or file polling. The appearance store is excluded from
+workspace bundles. An eventual explicit persistent apply must document whether
+it writes this selected path before calling the headless save operation. Use a
+scratch copy of a theme for harness runs that exercise persistence, rather than
+pointing at an authored or tracked source file.
+The application owns its active state, and each egui context caches converted
+colors and typography by revision. Repeated frames reuse that cache. Typography
+changes update text roles without replacing font definitions, so Phosphor icons
+and the bundled fallback chains remain installed.
+
+The [migration inventory](appearance-inventory.md) records completed boundaries
+and remaining candidate values. Runtime migration is in progress: the context adapter currently supplies base
+egui widgets and footprint heat. Remaining explicit chrome, chart, drawing and
+text consumers still require migration before this feature is complete.
 
 ## Authoring example
 

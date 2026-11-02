@@ -20,7 +20,7 @@ use crate::canvas_layout::PaneIdAllocator;
 
 mod arrangement_adapter;
 mod workspace_runtime;
-use quantick_workspace::lifetime::{WorkspaceId, WorkspaceLifetime};
+use quantick_workspace::lifetime::WorkspaceId;
 const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
 pub(crate) mod arrangement_host;
 use arrangement_host::ArrangementHost;
@@ -71,7 +71,6 @@ use menu_bar::{
     PAPER_SELL_SHORTCUT,
 };
 
-use crate::chart_layers;
 use crate::config::AppConfig;
 use crate::dock::Dock;
 #[cfg(test)]
@@ -84,16 +83,16 @@ use crate::indicators::state_file;
 use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
-use crate::style::ChartStyle;
 use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::Tab;
+#[cfg(test)]
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 use crate::ui_state;
 use crate::window_scale;
-use crate::workspace_store::{LayoutStore, StorePaths, WorkspaceStore};
+use crate::workspace_store::LayoutStore;
 use quantick_feed::FeedHandle;
-use quantick_feed::history_reach;
+
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_orderflow::LaneWindow;
 use quantick_stores::bubble_asset_store::open_asset_bubbles;
@@ -545,45 +544,19 @@ impl QuantickApp {
         let footprint_settings_path = crate::footprint_config::settings_path();
         let indicator_presets_path = preset_file::default_path();
         let added_symbols = symbols_file::load(&symbols_path);
-        let mut runtime = workspace_runtime::WorkspaceRuntime {
-            lifetime: WorkspaceLifetime::new(WORKSPACE_ID),
-            tabs: ArrangementHost::new(
-                WORKSPACE_ID,
-                quantick_workspace::arrangement::TabId(FIRST_TAB_ID),
-                tab,
+        let mut runtime = workspace_runtime::WorkspaceRuntime::new(
+            tab,
+            symbols_path,
+            footprint_settings_path,
+            indicator_presets_path,
+            LayoutStore::new(
+                loaded_layouts.0,
+                crate::layouts::default_path(),
+                loaded_layouts.1,
             ),
-            indicators: indicator_manager::IndicatorState::new(
-                WORKSPACE_ID,
-                FIRST_TAB_ID,
-                &indicator_presets_path,
-            ),
-            footprint_config: crate::footprint_config::load(&footprint_settings_path),
-            style: ChartStyle::default(),
-            style_revision: 0,
-            history: tabs::HistorySettings {
-                progressive_history: true,
-                history_reach: history_reach::HistoryReach::default(),
-                history_reach_span_minutes: reach_span_minutes,
-                venue_lead_in: false,
-            },
-            tz: TzOffset::default(),
-            workspace: WorkspaceStore::new(
-                StorePaths {
-                    symbols: symbols_path,
-                    chart_layers: chart_layers::default_path(),
-                    footprint_settings: footprint_settings_path,
-                    indicator_presets: indicator_presets_path,
-                    ui_state: ui_state::default_path(),
-                    bubble_assets: crate::bubble_presets::assets_path(),
-                },
-                LayoutStore::new(
-                    loaded_layouts.0,
-                    crate::layouts::default_path(),
-                    loaded_layouts.1,
-                ),
-                trades_dir,
-            ),
-        };
+            trades_dir,
+            reach_span_minutes,
+        );
         let presentation = workspace_runtime::WindowPresentation::new(&mut runtime);
         let mut app = Self {
             runtime,

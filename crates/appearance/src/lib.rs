@@ -7,6 +7,7 @@ pub mod color;
 pub mod contrast;
 mod document;
 mod error;
+pub mod heat;
 pub mod palette;
 mod state;
 mod typography;

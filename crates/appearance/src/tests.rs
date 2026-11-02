@@ -8,7 +8,12 @@ fn bundled_dark_is_complete_and_matches_historical_bytes() {
     let resolved = document.resolve().unwrap();
     assert_eq!(resolved, ResolvedTheme::default());
     for token in Token::ALL {
-        assert_eq!(resolved.color(token), token.dark(), "{}", token.key());
+        assert_eq!(
+            resolved.color(token),
+            ResolvedTheme::bundled_dark().color(token),
+            "{}",
+            token.key()
+        );
     }
     assert_eq!(resolved.color(Token::Canvas).to_array(), [19, 23, 34, 255]);
     assert_eq!(
@@ -58,7 +63,9 @@ fn missing_fields_fall_back_to_dark_independently() {
     );
     assert_eq!(
         theme.typography.get(FontRole::Small),
-        FontRole::Small.dark()
+        ResolvedTheme::bundled_dark()
+            .typography
+            .get(FontRole::Small)
     );
     assert!(theme.dark);
 }
@@ -247,5 +254,102 @@ fn configured_side_inks_preserve_dark_and_read_clearly_on_light() {
     let casing = contrast::over(light.color(Token::Casing), light.color(Token::Canvas));
     for token in [Token::BuyInk, Token::SellInk] {
         assert!(contrast::contrast_ratio(light.color(token), casing) >= 4.5);
+    }
+}
+
+#[test]
+fn complete_documents_never_consult_the_fallback() {
+    let mut document = ThemeDocument::parse(DARK).unwrap();
+    assert_eq!(
+        document.resolve_complete().unwrap(),
+        ResolvedTheme::default()
+    );
+    document.colors.remove("canvas");
+    let error = document.resolve_complete().unwrap_err().to_string();
+    assert!(error.contains("colors.canvas"), "{error}");
+    assert_eq!(
+        document.resolve().unwrap().color(Token::Canvas),
+        ResolvedTheme::default().color(Token::Canvas)
+    );
+    let mut document = ThemeDocument::parse(DARK).unwrap();
+    document.typography.get_mut("body").unwrap().family = None;
+    assert!(
+        document
+            .resolve_complete()
+            .unwrap_err()
+            .to_string()
+            .contains("typography.body.family")
+    );
+    let mut document = ThemeDocument::parse(DARK).unwrap();
+    document.footprint_heat.ink = None;
+    assert!(
+        document
+            .resolve_complete()
+            .unwrap_err()
+            .to_string()
+            .contains("footprint_heat.ink")
+    );
+}
+
+#[test]
+fn malformed_heat_ramps_preserve_the_active_theme() {
+    let mut state = Appearance::default();
+    state.apply(LIGHT).unwrap();
+    let before = state.clone();
+    for source in [
+        "version = 1\nname = 'Bad heat'\n[footprint_heat]\nbuy = ['#000000']",
+        "version = 1\nname = 'Bad heat'\n[footprint_heat]\nink = ['#000000', '#000000', '#000000', 'oops', '#000000', '#000000']",
+    ] {
+        assert!(state.apply(source).is_err());
+        assert_eq!(state.resolved(), before.resolved());
+        assert_eq!(state.revision(), before.revision());
+    }
+}
+
+#[test]
+fn bundled_dark_preserves_every_historical_token() {
+    let theme = ResolvedTheme::default();
+    for (token, expected) in [
+        (Token::Canvas, palette::CANVAS),
+        (Token::Chrome, palette::CHROME),
+        (Token::Inset, palette::INSET),
+        (Token::Control, palette::CONTROL),
+        (Token::Border, palette::BORDER),
+        (Token::TextPrimary, palette::TEXT_PRIMARY),
+        (Token::TextMuted, palette::TEXT_MUTED),
+        (Token::TextFaint, palette::TEXT_FAINT),
+        (Token::Buy, palette::BUY),
+        (Token::Sell, palette::SELL),
+        (Token::Poc, palette::POC),
+        (Token::Accent, palette::ACCENT),
+        (Token::Amber, palette::AMBER),
+        (Token::PaneMark, palette::PANE_MARK),
+        (Token::PaneAction, palette::PANE_ACTION),
+        (Token::Off, palette::OFF),
+        (Token::CapsuleFill, palette::CAPSULE_FILL),
+        (Token::CapsuleBorder, palette::CAPSULE_BORDER),
+        (Token::CapsuleShadow, palette::CAPSULE_SHADOW),
+        (Token::BareHover, palette::BARE_HOVER),
+        (Token::SeamLine, palette::SEAM_LINE),
+        (Token::DayRule, palette::DAY_RULE),
+        (Token::SeamLabel, palette::SEAM_LABEL),
+        (Token::Warn, palette::WARN),
+        (Token::Rec, palette::REC),
+        (Token::GapLine, palette::GAP_LINE),
+        (Token::GapLabel, palette::GAP_LABEL),
+        (Token::TagBg, palette::TAG_BG),
+        (Token::TextSupport, palette::TEXT_SUPPORT),
+        (Token::ChipInk, palette::CHIP_INK),
+        (Token::Casing, palette::CASING),
+        (Token::DrawViolet, palette::DRAW_VIOLET),
+        (Token::DrawCyan, palette::DRAW_CYAN),
+        (Token::FloatShadow, palette::FLOAT_SHADOW),
+        (Token::CandleBullOutline, palette::CANDLE_BULL_OUTLINE),
+        (Token::CandleBearOutline, palette::CANDLE_BEAR_OUTLINE),
+        (Token::CandleWick, palette::CANDLE_WICK),
+        (Token::BuyInk, palette::BUY_INK),
+        (Token::SellInk, palette::SELL_INK),
+    ] {
+        assert_eq!(theme.color(token), expected, "{}", token.key());
     }
 }

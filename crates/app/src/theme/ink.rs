@@ -55,8 +55,3 @@ pub fn ink_on(fill: Color32) -> Color32 {
 pub fn relative_luminance(color: Color32) -> f32 {
     contrast::relative_luminance(headless(color))
 }
-
-#[cfg(test)]
-pub fn contrast_ratio(a: Color32, b: Color32) -> f32 {
-    contrast::contrast_ratio(headless(a), headless(b))
-}
