@@ -702,6 +702,7 @@ impl QuantickApp {
     /// to, which is also what every non-Windows target gets.
     pub fn attach_surface(&mut self, handle: &impl raw_window_handle::HasWindowHandle) {
         self.chrome.surface = window_scale::SurfaceProbe::new(handle);
+        self.presentation.native.pump.attach(handle);
     }
 }
 
@@ -714,6 +715,7 @@ impl eframe::App for QuantickApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.presentation.native.pump.set_active(false);
         if !self.runtime.lifetime.begin_shutdown() {
             return;
         }

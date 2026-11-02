@@ -8,9 +8,11 @@ use quantick_workspace::arrangement::{
 use std::{collections::BTreeMap, time::Instant};
 mod control;
 mod exposed;
+mod pump;
 
 #[derive(Default)]
 pub(super) struct NativeWindows {
+    pub(super) pump: pump::HiddenRootPump,
     current: WindowId,
     titles: BTreeMap<WindowId, TitleBarState>,
     strips: BTreeMap<WindowId, Strip>,
@@ -143,6 +145,12 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     present(app, focused);
     super::frame::settle(app, ctx, now);
     let live = app.runtime.tabs.windows();
+    // Final-child close queues a root Close event for the next update.
+    // Keep scheduling until eframe consumes it and calls on_exit.
+    app.presentation
+        .native
+        .pump
+        .set_active(live.window(WindowId::ROOT).is_none());
     app.presentation
         .native
         .titles
