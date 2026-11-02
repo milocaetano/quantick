@@ -757,7 +757,7 @@ impl Tab {
             // order wins, which is stable frame to frame: a pick that
             // depended on iteration luck would move an object between charts
             // between frames.
-            for owner in (0..count).filter(|owner| *owner != viewer) {
+            for owner in self.mirror_owners(viewer) {
                 let Some(source) = self.pane_at(owner) else {
                     continue;
                 };
@@ -777,6 +777,23 @@ impl Tab {
             }
         }
         picks
+    }
+
+    /// The panes whose shared marks `viewer` shows. Two context charts on one
+    /// bar rule hold one set: a pane holding the viewer's own set adds nothing,
+    /// and of two holding another set only the first does, or a shared mark
+    /// would paint twice and its fill read darker than it is.
+    pub(crate) fn mirror_owners(&self, viewer: PaneIndex) -> impl Iterator<Item = PaneIndex> + '_ {
+        let key = move |pane: PaneIndex| {
+            self.pane_at(pane)
+                .and_then(|pane| pane.layout.drawings_key.as_ref())
+        };
+        (0..self.pane_count()).filter(move |&owner| {
+            let same_set = |other: PaneIndex| key(owner).is_some() && key(other) == key(owner);
+            owner != viewer
+                && !same_set(viewer)
+                && !(0..owner).any(|earlier| earlier != viewer && same_set(earlier))
+        })
     }
 
     /// Land what each pane did to the other's marks on the store that holds
@@ -846,7 +863,7 @@ impl Tab {
             let Some(pane) = self.pane_at(viewer) else {
                 continue;
             };
-            for owner in (0..count).filter(|owner| *owner != viewer) {
+            for owner in self.mirror_owners(viewer) {
                 if let Some(source) = self.pane_at(owner) {
                     pane.hit_test()
                         .paint_shared_from(painter, source.shared_source());

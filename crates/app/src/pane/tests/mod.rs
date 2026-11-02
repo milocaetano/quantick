@@ -2388,7 +2388,7 @@ fn the_off_band_caret_stays_whole_inside_its_band() {
             .into_iter()
             .find(|tool| tool.id() == "horizontal-line")
             .expect("registered"),
-        &DrawingBand::Indicator(drawings::PaneKey {
+        &DrawingBand::Indicator(quantick_drawings::PaneKey {
             kind: std::sync::Arc::from("native.cvd"),
             ordinal: 0,
         }),

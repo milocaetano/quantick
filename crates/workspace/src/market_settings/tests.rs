@@ -98,7 +98,10 @@ fn every_drawing_keeps_its_source_and_none_is_dropped() {
     let origins: Vec<_> = slot
         .iter()
         .map(|item| {
-            let origin = item.origin.as_ref().expect("every migrated entry is labelled");
+            let origin = item
+                .origin
+                .as_ref()
+                .expect("every migrated entry is labelled");
             (
                 origin.layout.as_str(),
                 origin.symbol.as_str(),
@@ -142,10 +145,16 @@ fn a_venue_is_part_of_the_market() {
     let settings = absorbed();
     assert_eq!(settings.drawings(&key("replay", PaneRole::Flow)).len(), 1);
     assert_eq!(
-        settings.drawings(&key("metatrader-b3", PaneRole::Flow)).len(),
+        settings
+            .drawings(&key("metatrader-b3", PaneRole::Flow))
+            .len(),
         3
     );
-    assert!(settings.drawings(&key("elsewhere", PaneRole::Flow)).is_empty());
+    assert!(
+        settings
+            .drawings(&key("elsewhere", PaneRole::Flow))
+            .is_empty()
+    );
 }
 
 #[test]
@@ -193,7 +202,11 @@ fn replacing_a_set_keeps_unknown_tools_and_an_empty_set_leaves_no_entry() {
     assert_eq!(settings.drawings(&key).len(), 2);
     assert!(settings.drawings(&key).contains(&future));
     settings.replace(&key, Vec::new(), known);
-    assert_eq!(settings.drawings(&key), [future], "what the pane never held");
+    assert_eq!(
+        settings.drawings(&key),
+        [future],
+        "what the pane never held"
+    );
     settings.replace(&key, Vec::new(), |_| true);
     assert!(settings.drawings(&key).is_empty());
     assert_eq!(to_text(&settings).unwrap(), "version = 1\n");
@@ -202,8 +215,16 @@ fn replacing_a_set_keeps_unknown_tools_and_an_empty_set_leaves_no_entry() {
 #[test]
 fn sets_are_kept_in_key_order_whatever_order_they_were_drawn_in() {
     let mut settings = MarketSettings::default();
-    settings.replace(&key("b", context("time:5m")), vec![level(Some(1), 1.0)], known);
-    settings.replace(&key("a", context("time:1m")), vec![level(Some(1), 2.0)], known);
+    settings.replace(
+        &key("b", context("time:5m")),
+        vec![level(Some(1), 1.0)],
+        known,
+    );
+    settings.replace(
+        &key("a", context("time:1m")),
+        vec![level(Some(1), 2.0)],
+        known,
+    );
     settings.replace(&key("b", PaneRole::Flow), vec![level(Some(1), 3.0)], known);
     let keys: Vec<_> = settings.keys().collect();
     assert_eq!(
@@ -224,7 +245,11 @@ fn a_role_this_build_does_not_know_survives_a_rewrite() {
         settings.keys().next().unwrap().role,
         PaneRole::Other("split:left".to_owned())
     );
-    assert!(to_text(&settings).unwrap().contains("role = \"split:left\""));
+    assert!(
+        to_text(&settings)
+            .unwrap()
+            .contains("role = \"split:left\"")
+    );
 }
 
 #[test]

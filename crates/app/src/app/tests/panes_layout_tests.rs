@@ -1943,6 +1943,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         symbols: vec!["WINQ26".to_string()],
         bubble_preset: None,
         symbol_bubble_presets: Default::default(),
+        asset_families: Vec::new(),
         symbol_asset_modes: Default::default(),
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
         default_bars: Some("tick:7".to_string()),
@@ -2745,17 +2746,21 @@ fn layouts_come_back_after_a_restart() {
     assert_eq!(book.layouts().len(), 2);
     assert_eq!(book.active().name, "open");
     assert_eq!(book.layouts()[0].indicators.len(), 1);
-    let key = crate::layouts::DrawingKey {
-        feed: "binance".to_owned(),
-        symbol: "TESTUSDT".to_owned(),
-        pane: 1,
-    };
-    assert_eq!(book.layouts()[0].drawings(&key).map(<[_]>::len), Some(1));
+    assert!(!book.has_legacy_drawings(), "the layouts hold no drawing");
+    assert_eq!(
+        app.runtime
+            .workspace
+            .layouts()
+            .market()
+            .settings()
+            .drawing_count(),
+        1
+    );
 
     // A second app on the same home — the same file — opens on the book.
     let (mut again, _commands2) = split_app(&ctx, 200);
     again.runtime.workspace.set_layouts_path(path.to_path_buf());
-    again.layout_adapter().reload_layouts(&[]);
+    again.layout_adapter().reload_layouts(&["market_settings"]);
     assert_eq!(again.layout_state().layouts().active().name, "open");
     again
         .layout_adapter()

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 mod asset_modes;
+mod market_asset;
 pub use asset_modes::AssetMode;
 
 use crate::symbols_file::AddedSymbols;
@@ -93,6 +94,10 @@ pub struct FeedConfig {
     /// stays the presets file's business, reported when it is applied.
     #[serde(default)]
     pub symbol_bubble_presets: BTreeMap<String, String>,
+    /// Families of dated contracts that are one market for its drawings, on top
+    /// of the keys above: `"WDO*"`. A family here moves no saved bubble look.
+    #[serde(default)]
+    pub asset_families: Vec<String>,
     /// Per-asset modes, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets):
     /// what an asset gets only because the config switches it on
     /// ([`AssetMode`]). Keys must match a symbol this feed offers.

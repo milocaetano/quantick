@@ -1,0 +1,275 @@
+version = 1
+
+[[drawings]]
+venue = "binance"
+asset = "BTCUSDT"
+role = "context-slot:1"
+
+[[drawings.items]]
+id = 4
+tool = "horizontal-line"
+color = [
+    255,
+    200,
+    0,
+    255,
+]
+width_px = 1.5
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+
+[[drawings.items.points]]
+time_ms = 1000
+price = 67000.5
+bar = 3.0
+
+[drawings.items.band]
+axis = "price"
+
+[drawings.items.origin]
+layout = "Fluxo"
+feed = "binance"
+symbol = "BTCUSDT"
+pane = 1
+id = 4
+
+[[drawings]]
+venue = "metatrader-b3"
+asset = "WIN*"
+role = "flow"
+
+[[drawings.items]]
+id = 1
+tool = "rectangle"
+color = [
+    10,
+    20,
+    30,
+    255,
+]
+width_px = 1.0
+fill_alpha = 40
+locked = false
+hidden = false
+shared = false
+
+[[drawings.items.points]]
+time_ms = 2000
+price = 150000.0
+bar = 1.0
+
+[[drawings.items.points]]
+time_ms = 3000
+price = 150500.0
+bar = 2.0
+
+[drawings.items.band]
+axis = "price"
+
+[drawings.items.origin]
+layout = "Fluxo"
+feed = "metatrader-b3"
+symbol = "WIN$N"
+pane = 0
+id = 1
+
+[[drawings.items]]
+id = 2
+tool = "fixed-range-profile"
+color = [
+    40,
+    50,
+    60,
+    255,
+]
+width_px = 1.0
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+
+[[drawings.items.points]]
+time_ms = 4000
+price = 149000.0
+bar = 4.0
+
+[[drawings.items.points]]
+time_ms = 5000
+price = 149500.0
+bar = 5.0
+
+[drawings.items.band]
+axis = "price"
+
+[drawings.items.origin]
+layout = "Fluxo"
+feed = "metatrader-b3"
+symbol = "WINV26"
+pane = 0
+id = 1
+
+[[drawings.items]]
+id = 3
+tool = "rectangle"
+color = [
+    10,
+    20,
+    30,
+    255,
+]
+width_px = 1.0
+fill_alpha = 40
+locked = false
+hidden = false
+shared = false
+
+[[drawings.items.points]]
+time_ms = 2000
+price = 150000.0
+bar = 1.0
+
+[[drawings.items.points]]
+time_ms = 3000
+price = 150500.0
+bar = 2.0
+
+[drawings.items.band]
+axis = "price"
+
+[drawings.items.origin]
+layout = "Force Bar Only"
+feed = "metatrader-b3"
+symbol = "WINV26"
+pane = 0
+id = 1
+
+[[drawings]]
+venue = "metatrader-b3"
+asset = "WIN*"
+role = "context-slot:2"
+
+[[drawings.items]]
+id = 7
+tool = "horizontal-line"
+color = [
+    70,
+    80,
+    90,
+    255,
+]
+width_px = 2.0
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+
+[[drawings.items.points]]
+time_ms = 6000
+price = 148000.0
+bar = 6.0
+
+[drawings.items.band]
+axis = "price"
+
+[drawings.items.origin]
+layout = "Fluxo"
+feed = "metatrader-b3"
+symbol = "WINV26"
+pane = 2
+id = 7
+
+[[drawings.items]]
+id = 8
+tool = "anchored-vwap"
+color = [
+    100,
+    110,
+    120,
+    255,
+]
+width_px = 1.0
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+
+[[drawings.items.points]]
+time_ms = 8000
+price = 152000.0
+bar = 8.0
+
+[drawings.items.band]
+axis = "price"
+
+[drawings.items.origin]
+layout = "Force Bar Only"
+feed = "metatrader-b3"
+symbol = "WINZ26"
+pane = 2
+id = 7
+
+[[drawings.items]]
+tool = "a-tool-from-the-future"
+color = [
+    130,
+    140,
+    150,
+    255,
+]
+width_px = 1.0
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+
+[[drawings.items.points]]
+time_ms = 9000
+price = 153000.0
+bar = 9.0
+
+[drawings.items.band]
+axis = "price"
+
+[drawings.items.origin]
+layout = "Force Bar Only"
+feed = "metatrader-b3"
+symbol = "WINZ26"
+pane = 2
+
+[[drawings]]
+venue = "replay"
+asset = "WIN*"
+role = "flow"
+
+[[drawings.items]]
+id = 2
+tool = "text"
+color = [
+    1,
+    2,
+    3,
+    255,
+]
+width_px = 1.0
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+text = "open"
+
+[[drawings.items.points]]
+time_ms = 7000
+price = 151000.0
+bar = 7.0
+
+[drawings.items.band]
+axis = "price"
+
+[drawings.items.origin]
+layout = "Fluxo"
+feed = "replay"
+symbol = "WINZ26"
+pane = 0
+id = 2

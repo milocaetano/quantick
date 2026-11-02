@@ -974,6 +974,7 @@ mod tests {
                 symbols: vec!["BTCUSDT".to_owned(), "ETHUSDT".to_owned()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                asset_families: Vec::new(),
                 symbol_asset_modes: Default::default(),
                 default_layout: None,
                 default_bars: None,

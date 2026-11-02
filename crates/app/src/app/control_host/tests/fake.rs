@@ -91,6 +91,7 @@ impl FakeWindow {
                     symbols: vec![FAKE_SYMBOL.to_owned()],
                     bubble_preset: None,
                     symbol_bubble_presets: Default::default(),
+                    asset_families: Vec::new(),
                     symbol_asset_modes: Default::default(),
                     default_layout: None,
                     default_bars: None,

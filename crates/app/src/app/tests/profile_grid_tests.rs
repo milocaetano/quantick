@@ -43,6 +43,8 @@ fn profile_fixture_unadopted(ctx: &egui::Context, collapsed: bool) -> QuantickAp
         ] {
             pane.set_layer_visible(layer, false, &mut Default::default());
         }
+    // A chart keys its drawings by its bars once the frame has seen them.
+    run_frame(&mut app, ctx);
     }
     // Twelve cycles on a five-point grid; enough price changes to settle
     // Renko's inferred step. Row volumes per cycle: 2, 6, 13, 12, 7.

@@ -1,4 +1,5 @@
 //! Layout document validation and guarded disk persistence.
+use quantick_workspace::layout_commit::LayoutSave;
 use quantick_workspace::layout_document::{LayoutBook, parse};
 use std::path::Path;
 
@@ -106,11 +107,27 @@ pub fn save(path: &Path, book: &LayoutBook) {
     }
 }
 
+/// Carry out what the commit policy decided, which owns the debounce and the
+/// blocked condition and has consumed the pending change before this runs.
+pub fn act_on(path: &Path, book: &LayoutBook, decision: LayoutSave) {
+    match decision {
+        LayoutSave::Wait => {}
+        LayoutSave::Write => save(path, book),
+        LayoutSave::Blocked => tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "LAYOUTS_SAVE_BLOCKED",
+            path = %path.display(),
+            action = "file_left_untouched",
+            "the layouts file could not be read at launch and was not set aside; this session's layouts are not written over it"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::indicator_state::{SavedIndicator, SavedInput, SavedKind};
-    use quantick_workspace::layout_document::{DrawingKey, SavedBand, SavedDrawing, SavedPoint};
 
     fn ema() -> SavedIndicator {
         SavedIndicator {
@@ -119,38 +136,6 @@ mod tests {
             mouse_vertical_line: false,
             inputs: vec![SavedInput::Int(20), SavedInput::Source("close".to_owned())],
             plot_styles: Vec::new(),
-        }
-    }
-
-    fn key(pane: usize) -> DrawingKey {
-        DrawingKey {
-            feed: "binance".to_owned(),
-            symbol: "BTCUSDT".to_owned(),
-            pane,
-        }
-    }
-
-    fn level(price: f64) -> SavedDrawing {
-        SavedDrawing {
-            tool: "horizontal-line".to_owned(),
-            name: Some("max".to_owned()),
-            author: None,
-            points: vec![SavedPoint {
-                time_ms: Some(1_000),
-                price,
-                bar: 3.0,
-            }],
-            band: SavedBand::Price,
-            color: [255, 200, 0, 255],
-            width_px: 1.5,
-            fill_alpha: 0,
-            locked: false,
-            hidden: false,
-            magnet: false,
-            shared: false,
-            payload: None,
-            text: None,
-            id: None,
         }
     }
 
@@ -163,8 +148,6 @@ mod tests {
         let mut book = LayoutBook::starter(vec![ema()]);
         let second = book.create(Some("levels")).unwrap();
         book.switch(second).unwrap();
-        book.active_mut()
-            .replace_drawings(&key(1), vec![level(100.0)], |_| true);
         save(&path, &book);
         assert_eq!(load(&path), Loaded::Book(book.clone()));
         assert!(validate(&std::fs::read_to_string(&path).unwrap()).is_ok());
