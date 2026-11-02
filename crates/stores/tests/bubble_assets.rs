@@ -549,6 +549,42 @@ fn a_spent_preset_fold_leaves_the_file_and_stays_gone_across_a_reload() {
     std::fs::remove_dir_all(&dir).expect("the scratch folder goes");
 }
 
+/// Every view holds its own copy of the file. Spending the fold from a stale copy
+/// keeps what another view saved since, and a fold another view already spent does
+/// not close a second tape.
+#[test]
+fn a_stale_view_spending_the_fold_keeps_the_file_and_closes_only_once() {
+    let dir = scratch_folder("old-preset-fold-stale");
+    let path = dir.join("bubbles.toml");
+    std::fs::write(&path, OLD_PRESET).expect("an old file");
+
+    let mut first_config = HeatmapConfig::default();
+    let loaded = bubble_presets::load_from(Some(path.clone()));
+    let mut first = BubbleLook::open(loaded, &mut first_config);
+    let mut second_config = HeatmapConfig::default();
+    let loaded = bubble_presets::load_from(Some(path.clone()));
+    let mut second = BubbleLook::open(loaded, &mut second_config);
+    let worn = declared_look(first.presets(), "old");
+
+    // Another view saves a look after both of these read the file.
+    let saved_since = format!("{OLD_PRESET}\n[[presets]]\nname = \"saved since\"\n");
+    std::fs::write(&path, saved_since).expect("the other view's save");
+
+    first.wear(&worn, false, &mut first_config);
+    assert!(first.take_old_tape_fold(&first_config), "the one close");
+    let reread = bubble_presets::load_from(Some(path.clone())).0;
+    assert!(reread.get("saved since").is_some(), "the other save stays");
+    let text = std::fs::read_to_string(&path).expect("rewritten");
+    assert!(!text.contains("fold ="), "{text}");
+
+    second.wear(&worn, false, &mut second_config);
+    assert!(
+        !second.take_old_tape_fold(&second_config),
+        "already spent in the file"
+    );
+    std::fs::remove_dir_all(&dir).expect("the scratch folder goes");
+}
+
 /// The active preset's old fold is that look's: a tab wearing an asset's own look
 /// neither closes nor files it, and it waits for the look that holds it. A look worn
 /// over a tape still waiting ends that wait too.

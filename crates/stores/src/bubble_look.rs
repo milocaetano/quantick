@@ -504,18 +504,30 @@ impl BubbleLook {
     }
 
     /// Spend the old closed tape of the preset under `name`: whether it had one.
-    /// The file it was read from is rewritten at once, as any save writes it, or
-    /// every later read would hold the fold again and close a tape reopened since.
+    /// The file it was read from is rewritten at once, or every later read would
+    /// hold the fold again and close a tape reopened since. Each view keeps its
+    /// own copy, so the write starts from the file as it stands now: another
+    /// view's save survives, and a fold another view spent is not spent twice.
     fn spend_old_tape_fold(&mut self, name: &str) -> bool {
         if !self.presets.spend_old_tape_fold(name) {
             return false;
         }
-        if let PresetSource::EnvPath(path) | PresetSource::WorkingDir(path) = &self.source {
-            let path = path.clone();
-            self.persist(format!("'{name}' old fold spent"), |file| {
-                save_to(path, file)
-            });
+        let (PresetSource::EnvPath(path) | PresetSource::WorkingDir(path)) = &self.source else {
+            return true;
+        };
+        let path = path.clone();
+        let (mut on_disk, read_from, _) = crate::bubble_presets::load_from(Some(path.clone()));
+        if matches!(read_from, PresetSource::Embedded) {
+            // Gone or unreadable: there is nothing to rewrite, and never embedded
+            // presets over a file the trader can still repair.
+            return true;
         }
+        if !on_disk.spend_old_tape_fold(name) {
+            return false;
+        }
+        self.persist(format!("'{name}' old fold spent"), |_| {
+            save_to(path, &on_disk)
+        });
         true
     }
 
