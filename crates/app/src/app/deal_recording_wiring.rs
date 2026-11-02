@@ -54,24 +54,10 @@ pub(super) fn ensure(app: &mut QuantickApp) {
     }
 }
 
-fn default_for(app: &QuantickApp) -> bool {
+pub(super) fn default_for(app: &QuantickApp) -> bool {
     app.chrome
         .record_deals
         .unwrap_or_else(|| app.config.records_deals(&app.active_tab().feed_id))
-}
-
-/// Draw the saved recording default in the Settings window.
-pub(super) fn draw_toggle(app: &mut QuantickApp, ui: &mut eframe::egui::Ui) {
-    let mut enabled = default_for(app);
-    if ui
-        .checkbox(&mut enabled, "Record deals by default")
-        .on_hover_text(
-            "start writing the venue's deal counter when a MetaTrader B3 symbol connects",
-        )
-        .changed()
-    {
-        set_default(app, enabled);
-    }
 }
 
 /// Save the default and apply it to undecided recorders.

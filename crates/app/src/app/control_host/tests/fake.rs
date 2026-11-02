@@ -171,6 +171,7 @@ impl TabsMutPort for FakeWindow {
 
 impl quantick_control_handlers::native_window::NativeWindowHost for FakeWindow {}
 impl quantick_control_handlers::home_tab::HomeTabHost for FakeWindow {}
+impl quantick_control_handlers::desk::DeskHost for FakeWindow {}
 
 impl ChromePort for FakeWindow {
     fn chrome_reads(&self) -> ChromeReads<'_> {

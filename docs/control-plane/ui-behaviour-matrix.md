@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 87 |
-| Excluded: `authority` | 6 |
-| Excluded: `ui_only_by_decision` | 8 |
-| Excluded: `pending_capability` | 46 |
+| Reachable by capability | 93 |
+| Excluded: `authority` | 4 |
+| Excluded: `ui_only_by_decision` | 7 |
+| Excluded: `pending_capability` | 43 |
 | **Total** | **147** |
 
-86 of the 147 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 61 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+87 of the 147 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 60 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -144,7 +144,7 @@ The three exclusion classes are closed:
 | `feed.reconnect` | Respawn the transport and keep the timeline | the feed notice popup; the connection overlay's Reconnect; the status bar's Reconnect while the chart holds bars | `feed.reconnect` | — |
 | `feed.reload` | Throw the timeline away and rebuild the chart | the feed notice popup | `feed.reload` | — |
 | `feed.connection_state` | Read what the chart says about its feed, book, trades and current job | the flow header's chip and slot, the connection overlay, the status word | — | `ui_only_by_decision` — nothing to perform: the state is readable as `connection` on the `feed.status` scope, and the recovery it offers is `feed.reconnect` and `feed.reload` |
-| `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as trades bars | the REC control beside the symbol and its popover; the Settings window's `Record deals by default` checkbox | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
+| `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as trades bars | the REC control beside the symbol and its popover; the Settings window's `Record deals by default` row | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
 | `toolrail.dock.set` | Park the drawing rail on the left, top or bottom edge | window menu, Panels, and dragging the rail grip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `toolrail.visible.toggle` | Show or hide the drawing rail | window menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `toolrail.magnet.toggle` | Snap drawing anchors to the candle's open, high, low or close | tool rail magnet button; the rail's More menu on its narrowest stage | `annotate.magnet.set` | — |
@@ -187,18 +187,18 @@ The three exclusion classes are closed:
 | `drawing.magnet.toggle` | Snap one drawing to the candle's open, high, low or close, whatever the rail says | the object context bar's magnet button, beside Lock | `annotate.drawing_magnet.set` | — |
 | `drawing.hide` | Hide or show one drawing without deleting it | the object context bar, Alt+H, the canvas right-click menu (drawing section and objects submenu), the object manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists. Tracked in issue 401 |
 | `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an object the trader drew, so an operator removes its own marks one by one. Tracked in issue 401 |
-| `workspace.export` | Write the whole cockpit to a file | window menu, Desk, Export desk to file… | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
-| `workspace.import` | Open a cockpit from a file | window menu, Desk, Import desk from file… | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
+| `desk.export` | Write the whole cockpit to a file | window menu, Desk, Export desk to file… | `desk.export` | — |
+| `desk.import` | Open a cockpit from a file | window menu, Desk, Import desk from file… | `desk.import` | — |
 | `workspace.recent.open` | Reopen a cockpit file opened before | window menu, Desk, Open recent | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses reading an arbitrary file and exporting data to an arbitrary path. The trader's own file dialog is the ceiling's other side, not a gap in it |
 | `workspace.reveal` | Open the folder the cockpit is kept in | window menu, Desk, Show where it is saved | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting a terminal or any other process, and this entry hands the path to the system file manager |
-| `workspace.save` | Remember this arrangement as what quantick opens on | window menu, Save desk, Ctrl+Shift+S | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
-| `workspace.save_on_exit` | Keep the arrangement automatically when the window closes | window menu, Desk | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
-| `workspace.startup.reset` | Forget the saved workspace and open on the configured default | window menu, Desk, Reset startup desk | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
+| `desk.save` | Remember this arrangement as what quantick opens on | window menu, Save desk, Ctrl+Shift+S | `desk.save` | — |
+| `desk.reopen_on_launch.set` | Keep the arrangement automatically when the window closes | window menu, Desk | `desk.reopen_on_launch.set` | — |
+| `desk.forget` | Forget the saved workspace and open on the configured default | window menu, Desk, Reset startup desk | `desk.forget` | — |
 | `window.menu.open` | Open the window menu | the kebab button on the title strip, F10 | — | `ui_only_by_decision` — the menu holds rows, and every row names its own behaviour; an operator calls those directly, and a transient popup is not state worth driving |
-| `window.settings.open` | Open the Settings window | window menu, Ctrl+Comma | — | `ui_only_by_decision` — a window of switches for the trader; each switch is its own behaviour |
+| `settings.open` | Open the Settings window on a section | window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the section a call is refused | `settings.open` | — |
 | `window.help.open` | Read a help page: keyboard shortcuts, workspaces, the version | window menu, Help | — | `ui_only_by_decision` — reference text for a human; the shortcuts and the workspace rules are the contract an operator already reads |
 | `window.command_palette.open` | Open the command palette | window menu, disabled until the market palette ships | — | `ui_only_by_decision` — not built: the row is greyed out and says so, and nothing runs behind it |
-| `control.access.open` | Open the local agent access panel | the agent pill on the title strip, and Settings | — | `authority` — the panel is where the trader grants and revokes an operator's access. A capability that opened it would let a connection widen its own authority, which `docs/control-plane/observer-threat-model.md` exists to prevent |
+| `control.access.open` | Open the local agent access panel | Settings, Agent access, Manage clients… | — | `authority` — the panel is where the trader grants and revokes an operator's access. A capability that opened it would let a connection widen its own authority, which `docs/control-plane/observer-threat-model.md` exists to prevent |
 | `view.perf_readings.toggle` | Show fps, frame time and trade count on the status bar | Settings window | — | `pending_capability` — `health.diagnostics.read` reports the same numbers to an operator directly, so the switch governs the trader's own status bar and nothing else. A capability would be for parity of the screen, not of the reading. Tracked in issue 401 |
 | `view.timezone.set` | Change the timezone the time axis is labelled in | Settings window, Timezone | — | `pending_capability` — no capability sets the display timezone; every control-plane reading is already absolute, so this is the trader's own axis. Tracked in issue 401 |
 
@@ -221,9 +221,9 @@ matrix fails the build.
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
 | `hotkey` | 21 |
-| `menu_entry` | 35 |
+| `menu_entry` | 38 |
 | `scripted_menu` | 0 |
-| `authored` | 61 |
+| `authored` | 60 |
 
 ## Appendix: rows no registry stands behind
 
@@ -295,7 +295,6 @@ declares nothing here is a guard failure.
 | `drawing.magnet.toggle` | the context bar's magnet button is a widget, not a registry entry |
 | `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
 | `drawing.clear_all` | a menu entry and a manager button that ask the same question |
-| `control.access.open` | agent pill on the title strip |
 
 ## Appendix: registry entries that are not behaviours
 

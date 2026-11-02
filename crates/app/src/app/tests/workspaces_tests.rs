@@ -799,40 +799,6 @@ fn saving_the_workspace_acknowledges_itself() {
     let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
 
-/// Naming an arrangement keeps it without touching what the app opens on.
-/// The two are separate settings, and a trader saving a way back must not
-/// discover they also redefined their opening screen.
-#[test]
-fn naming_an_arrangement_does_not_change_what_opens() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(50);
-    app.runtime
-        .workspace
-        .set_ui_state_path(scratch_ui_state("named-startup"));
-    app.active_tab_mut().set_layout(CanvasLayout::Single);
-    run_frame(&mut app, &ctx);
-    app.workspace_save_adapter().save_workspace("test");
-    let startup_before = ui_state::load(app.runtime.workspace.ui_state_path()).tabs;
-
-    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    app.workspace_save_adapter().save_named_workspace("scalp");
-
-    let file = ui_state::load(app.runtime.workspace.ui_state_path());
-    assert_eq!(
-        file.tabs, startup_before,
-        "the startup arrangement is untouched by a bookmark"
-    );
-    let saved = file.named("scalp").expect("the bookmark is in the file");
-    assert_eq!(
-        saved.tabs.first().map(|tab| tab.layout),
-        Some(crate::config::DeclaredLayout::TimeAndFlow),
-        "and the bookmark holds the arrangement that was on screen"
-    );
-    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
-}
-
 /// Saving the startup screen must not throw the bookmarks away: every
 /// write rewrites the whole file.
 #[test]
@@ -841,7 +807,8 @@ fn saving_the_startup_screen_keeps_the_bookmarks() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("bookmarks-survive"));
-    app.workspace_save_adapter().save_named_workspace("scalp");
+    let bookmark = seeded_bookmark(&app, "scalp");
+    app.runtime.workspace.session_mut().keep_bookmark(bookmark);
 
     app.workspace_save_adapter().save_workspace("test");
 
@@ -850,112 +817,6 @@ fn saving_the_startup_screen_keeps_the_bookmarks() {
             .named("scalp")
             .is_some(),
         "a bookmark cannot be collateral damage of saving the startup screen"
-    );
-    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
-}
-
-/// The same name twice replaces, so the menu never grows five entries
-/// called "scalp".
-#[test]
-fn saving_over_a_name_replaces_that_bookmark() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(50);
-    app.runtime
-        .workspace
-        .set_ui_state_path(scratch_ui_state("replace"));
-    app.active_tab_mut().set_layout(CanvasLayout::Single);
-    run_frame(&mut app, &ctx);
-    app.workspace_save_adapter().save_named_workspace("scalp");
-
-    app.active_tab_mut().set_layout(CanvasLayout::Time);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    app.workspace_save_adapter()
-        .save_named_workspace("  scalp  ");
-
-    let file = ui_state::load(app.runtime.workspace.ui_state_path());
-    assert_eq!(file.saved.len(), 1, "one name, one bookmark");
-    assert_eq!(
-        file.named("scalp")
-            .and_then(|e| e.tabs.first())
-            .map(|t| t.layout),
-        Some(crate::config::DeclaredLayout::Time),
-        "and it holds the newer arrangement"
-    );
-    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
-}
-
-/// Opening a bookmark replaces the whole tab strip — which is only
-/// possible by growing before shrinking, since the last tab cannot close.
-#[test]
-fn opening_a_bookmark_replaces_what_is_on_screen() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(50);
-    app.runtime
-        .workspace
-        .set_ui_state_path(scratch_ui_state("open"));
-    app.active_tab_mut().set_layout(CanvasLayout::Time);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    app.runtime.tz = TzOffset::new(0);
-    // The properties popup is part of an arrangement like the dock and the
-    // rail are, so a bookmark carries where it was parked.
-    app.drawings
-        .chrome
-        .place_inspector_by_hand(egui::pos2(510.0, 240.0));
-    app.workspace_save_adapter().save_named_workspace("context");
-
-    // Drift away from it, then come back.
-    app.active_tab_mut().set_layout(CanvasLayout::Single);
-    app.runtime.tz = TzOffset::new(-180);
-    app.drawings
-        .chrome
-        .place_inspector_by_hand(egui::pos2(120.0, 640.0));
-    run_frame(&mut app, &ctx);
-
-    app.arrangement_adapter().open_named_workspace("context");
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-
-    assert_eq!(
-        app.runtime.tabs.len(),
-        1,
-        "the strip is replaced, not appended to"
-    );
-    assert_eq!(app.active_tab().layout, CanvasLayout::Time);
-    assert_eq!(app.runtime.tz.minutes(), 0, "the chrome comes back with it");
-    assert_eq!(
-        app.drawings.chrome.inspector_pos(),
-        Some(egui::pos2(510.0, 240.0)),
-        "including where the popup was parked when the bookmark was named"
-    );
-    let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
-}
-
-/// Deleting a bookmark throws away a way back, not the place you are.
-#[test]
-fn deleting_a_bookmark_leaves_the_window_alone() {
-    let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(50);
-    app.runtime
-        .workspace
-        .set_ui_state_path(scratch_ui_state("delete"));
-    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    app.workspace_save_adapter().save_named_workspace("scalp");
-
-    app.workspace_save_adapter().delete_named_workspace("scalp");
-
-    assert!(
-        ui_state::load(app.runtime.workspace.ui_state_path())
-            .named("scalp")
-            .is_none()
-    );
-    assert_eq!(
-        app.active_tab().layout,
-        CanvasLayout::TimeAndFlow,
-        "the charts on screen are not what was deleted"
     );
     let _ = std::fs::remove_file(app.runtime.workspace.ui_state_path());
 }
@@ -973,8 +834,8 @@ fn resetting_the_startup_layout_keeps_the_bookmarks() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.workspace_save_adapter()
-        .save_named_workspace("before the mess");
+    let bookmark = seeded_bookmark(&app, "before the mess");
+    app.runtime.workspace.session_mut().keep_bookmark(bookmark);
     app.workspace_save_adapter().save_workspace("test");
 
     app.workspace_save_adapter().forget_workspace();
@@ -1004,30 +865,6 @@ fn resetting_with_no_bookmarks_removes_the_file() {
     app.workspace_save_adapter().forget_workspace();
 
     assert!(!app.runtime.workspace.ui_state_path().exists());
-}
-
-/// A name that is only whitespace is not a name.
-#[test]
-fn a_blank_name_saves_nothing_and_says_so() {
-    let (mut app, _commands) = app_with_history(50);
-    app.runtime
-        .workspace
-        .set_ui_state_path(scratch_ui_state("blank"));
-
-    app.workspace_save_adapter().save_named_workspace("   ");
-
-    assert!(app.runtime.workspace.session().bookmarks().is_empty());
-    assert!(
-        !app.runtime.workspace.ui_state_path().exists(),
-        "a refused save must not write the file either"
-    );
-    assert!(
-        app.surfaces
-            .toast
-            .message()
-            .is_some_and(|message| message.contains("needs a name")),
-        "and the trader is told why nothing happened"
-    );
 }
 
 /// The automatic tier: a trader who never opens the Workspace menu still
@@ -1214,4 +1051,16 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
         .map(|layout| layout.name.as_str())
         .collect();
     assert_eq!(names, vec!["opening", "levels revisited"]);
+}
+
+/// A bookmark the session holds, as one read from an older build's file would be.
+fn seeded_bookmark(app: &QuantickApp, name: &str) -> ui_state::NamedArrangement {
+    let saved = app.workspace_state().capture_workspace();
+    ui_state::NamedArrangement {
+        name: name.to_owned(),
+        window: None,
+        active_tab: saved.active_tab,
+        tabs: saved.tabs,
+        chrome: None,
+    }
 }

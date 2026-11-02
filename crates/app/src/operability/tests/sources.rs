@@ -281,10 +281,10 @@ fn declaration(window: &str) -> &str {
 /// A computed label cannot be scanned, so it cannot be claimed by key. It is
 /// counted instead: a new one changes this number and fails the guard, which
 /// sends the author to this module to say which behaviour it belongs to. They
-/// are the legend, context-chart and agent-access switches; the layout, preset
-/// and recent-file lists; the table's row and submenu labels; and the two
-/// `Chart N up` / `Chart N down` entries.
-pub(crate) const COMPUTED_MENU_LABELS: usize = 10;
+/// are the legend and context-chart switches; the layout, preset and recent-file
+/// lists; the table's row and submenu labels; the two buttons Settings names from
+/// its own table; and the two `Chart N up` / `Chart N down` entries.
+pub(crate) const COMPUTED_MENU_LABELS: usize = 11;
 
 /// The actual owners that render the menu bar and its workspace file actions.
 const MENU_SOURCES: &[&str] = &[
@@ -338,6 +338,10 @@ fn menu_labels() -> (Vec<String>, usize) {
             .find('"')
             .expect("a string literal in the menu bar is closed");
         labels.push(literal[..end].to_owned());
+    }
+    // Settings paints its rows from this table, so its labels are read here.
+    for section in quantick_control_schema::settings_sections::SettingsSection::ALL {
+        labels.extend(section.rows().iter().map(|row| row.label().to_owned()));
     }
     assert!(
         !labels.is_empty(),

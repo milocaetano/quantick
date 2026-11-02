@@ -1,6 +1,7 @@
 //! The `⋮` window menu and the strip beside it, operated the way a trader does.
 use super::*;
 
+use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::KEBAB_CONTROL;
 
 fn kebab(app: &QuantickApp) -> egui::Rect {
@@ -123,16 +124,89 @@ fn settings_opens_with_the_switches_that_left_the_menus() {
     click_entry(&mut app, &ctx, &output, "Settings…");
     run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
-    for row in [
-        "Appearance…",
-        "Timezone",
-        "Perf readings",
-        "Progressive venue history",
-        "Venue candles on charts cut by trades",
-        "Record deals by default",
-    ] {
-        assert!(painted_text_center(&output, row).is_some(), "{row}");
+    assert_eq!(
+        app.chrome.window_menu.settings_shown(),
+        Some(SettingsSection::Display),
+        "Ctrl+, and the menu row open on Display"
+    );
+    let mut output = output;
+    for section in SettingsSection::ALL {
+        click_entry(&mut app, &ctx, &output, section.title());
+        run_frame(&mut app, &ctx);
+        output = run_frame(&mut app, &ctx);
+        assert_eq!(app.chrome.window_menu.settings_section, section);
+        for row in section.rows() {
+            let label = row.label();
+            assert!(painted_text_center(&output, label).is_some(), "{label}");
+        }
     }
+}
+
+#[test]
+fn a_switch_row_flips_the_setting_it_names() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    let before = app.health.show_perf;
+    app.chrome
+        .window_menu
+        .open_settings(ctx.viewport_id(), SettingsSection::Display);
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    let row = painted_text_center(&output, "Perf readings").unwrap();
+    let window = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("window_settings")))
+        .expect("the window is up");
+    let switch = egui::pos2(window.right() - 22.0, row.y);
+    click_sized(&mut app, &ctx, TEST_WINDOW, switch);
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.health.show_perf, !before);
+}
+
+#[test]
+fn the_status_bar_clock_opens_settings_on_display() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    let output = run_frame(&mut app, &ctx);
+    app.chrome.window_menu.settings_section = SettingsSection::Data;
+    let clock = format!(
+        "{} {}",
+        app.runtime.tz.label(),
+        egui_phosphor::regular::CLOCK
+    );
+    let clock = painted_text_center(&output, &clock).expect("the clock is on the status bar");
+    click_sized(&mut app, &ctx, TEST_WINDOW, clock);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.chrome.window_menu.settings_shown(),
+        Some(SettingsSection::Display)
+    );
+}
+
+#[test]
+fn the_kebab_reads_pressed_while_held_and_while_its_menu_is_open() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    assert!(!app.chrome.title_bar.kebab_pressed);
+    let at = kebab(&app).center();
+    let held = vec![egui::Event::PointerMoved(at), pointer_button(at, true)];
+    run_sized_frame(&mut app, &ctx, TEST_WINDOW, held);
+    assert!(
+        app.chrome.title_bar.kebab_pressed,
+        "held, before any release"
+    );
+    run_sized_frame(&mut app, &ctx, TEST_WINDOW, vec![pointer_button(at, false)]);
+    let output = run_frame(&mut app, &ctx);
+    assert!(app.chrome.title_bar.kebab_pressed);
+    let rect = kebab(&app);
+    let filled = output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Rect(shape)
+            if shape.rect == rect && shape.fill == crate::theme::CONTROL)
+    });
+    assert!(filled, "the pressed fill is on the button");
+    let scene = observer_scene(&app);
+    assert_eq!(scene_control(&scene, "tab_strip.kebab")["selected"], true);
 }
 
 #[test]
@@ -157,7 +231,7 @@ fn the_agent_pill_shows_only_while_access_is_on() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     let output = run_frame(&mut app, &ctx);
-    assert!(painted_text_center(&output, "agent").is_none());
+    assert!(painted_text_center(&output, "Agent on").is_none());
     assert!(app.chrome.title_bar.control_rect("agent").is_none());
 }
 

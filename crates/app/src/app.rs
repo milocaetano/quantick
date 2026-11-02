@@ -36,6 +36,7 @@ pub(crate) use control_host::{
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
+mod desk_wiring;
 pub(crate) mod drawing_controller;
 
 mod frame;

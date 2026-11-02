@@ -55,6 +55,8 @@ mod home_tab_control;
 mod market_window_control;
 #[path = "native_window_control_tests.rs"]
 mod native_window_control;
+#[path = "settings_desk_control_tests.rs"]
+mod settings_desk_control;
 
 const CLIENT_NAME: &str = "quantick integration test";
 
@@ -757,6 +759,22 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("home.show", 1, json!({}), Readback::Moves),
+        (
+            "settings.open",
+            1,
+            json!({ "section": "data" }),
+            Readback::Moves,
+        ),
+        ("desk.save", 1, json!({}), Readback::Moves),
+        ("desk.export", 1, json!({}), Readback::Stays),
+        ("desk.import", 1, json!({}), Readback::Stays),
+        ("desk.forget", 1, json!({}), Readback::Moves),
+        (
+            "desk.reopen_on_launch.set",
+            1,
+            json!({ "reopen": false }),
+            Readback::Moves,
+        ),
         ("home.leave", 1, json!({}), Readback::Moves),
         ("layout.tab.create", 1, json!({}), Readback::Moves),
         (
@@ -860,7 +878,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let directory = gateway_test_directory("retry-every-optional");
     grant_annotate_for_test(
         &mut app,
-        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete",
+        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete,cockpit.desk",
     );
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let cockpit = options(
@@ -871,6 +889,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "cockpit.layout",
             "cockpit.recover",
             "cockpit.journal.delete",
+            "cockpit.desk",
         ],
     );
     let reachable: BTreeSet<&str> = retry_matrix::READBACKS
@@ -888,6 +907,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         "the plan covers every reachable optional row, and nothing else"
     );
     let mut first_layout = Value::Null;
+    // A dialog already up, so the desk's dialog rows answer without raising a
+    // real one on whoever runs the tests.
+    let mut held_dialogs = Vec::new();
 
     for (index, (capability, version, payload, expected)) in plan.into_iter().enumerate() {
         // A connection per row: each call's records, rate and reservations
@@ -1036,6 +1058,15 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "drawing_id": pane.drawings.items()[index].id.0.to_string(),
                     "enabled": true,
                 })
+            }
+            "desk.export" | "desk.import" => {
+                let (sender, receiver) = std::sync::mpsc::channel();
+                held_dialogs.push(sender);
+                app.runtime
+                    .workspace
+                    .picker_mut()
+                    .set_pending_for_test(crate::workspace_picker::WorkspacePick::Export, receiver);
+                payload
             }
             _ => payload,
         };

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether the trader's file dialog came up; `false` means one already is.",
+  "properties": {
+    "opened": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "opened"
+  ],
+  "title": "DeskPickResult",
+  "type": "object"
+}

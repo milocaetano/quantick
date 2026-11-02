@@ -81,6 +81,10 @@ pub const TIMELINE_REBUILT_RISK_FLAG: &str = "timeline_rebuilt";
 /// Neither `cockpit` — "never removes" — nor `cockpit.recover` — whose words
 /// are a rebuilt chart — is consent the trader gave to losing a session.
 pub const COCKPIT_JOURNAL_DELETE_PERMISSION_ID: &str = "cockpit.journal.delete";
+/// Permission for the calls that replace or remove the saved desk. Separate from
+/// `cockpit.layout` and sensitive: rearranging charts on screen must not silently
+/// also let a connection overwrite what the trader comes back to.
+pub const COCKPIT_DESK_PERMISSION_ID: &str = "cockpit.desk";
 /// The effect for deleting a journal session.
 pub const JOURNAL_DELETE_EFFECT_ID: &str = "cockpit.journal.delete";
 /// What a capability under [`JOURNAL_DELETE_EFFECT_ID`] declares it may
@@ -145,8 +149,42 @@ pub const SCRIPT_PERMISSION_ID: &str = "annotate.script";
 /// The canvas: which charts are on screen, where and how wide.
 pub const LAYOUT_MODULE_ID: &str = "layout";
 
+/// Names that once meant something and now split, with what replaced each, and
+/// which of those are named ahead of being built.
+/// A caller holding an old name is told where to go rather than that nothing
+/// by that name ever existed.
+pub const RETIRED_CAPABILITIES: &[(&str, &[&str], &[&str])] = &[(
+    "workspace.save",
+    &["desk.save", "workspace.save_to"],
+    &["workspace.save_to"],
+)];
+
+/// The refusal for a retired name, naming its successors in the message and in
+/// `details.successors`; `None` for any other name.
+#[must_use]
+pub fn retired_capability(id: &str) -> Option<quantick_control::error::ControlError> {
+    use quantick_control::{error::ControlError, error::codes, id::ErrorCode};
+    let (_, successors, planned) = RETIRED_CAPABILITIES
+        .iter()
+        .find(|(name, _, _)| *name == id)?;
+    let mut refusal = ControlError::new(
+        ErrorCode::new(codes::CAPABILITY_RETIRED).expect("static error code is valid"),
+        format!(
+            "{id} is retired; its successors are {}, of which {} is not built yet",
+            successors.join(", "),
+            planned.join(", ")
+        ),
+        false,
+    );
+    refusal.context.details =
+        Some(serde_json::json!({ "successors": successors, "planned": planned }));
+    Some(refusal)
+}
+
 /// The Home tab: what the central canvas shows instead of a market.
 pub const HOME_MODULE_ID: &str = "home";
+pub const SETTINGS_MODULE_ID: &str = "settings";
+pub const DESK_MODULE_ID: &str = "desk";
 
 /// Evidence bundles: one hashed, redacted capture of a running session.
 pub const EVIDENCE_MODULE_ID: &str = "evidence";
@@ -374,6 +412,17 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
             profile_ceilings: BTreeSet::from([cockpit.clone()]),
         },
         PermissionDescriptor {
+            id: permission(COCKPIT_DESK_PERMISSION_ID),
+            label: "Change your saved desk".to_owned(),
+            description: "Overwrite or forget the desk quantick opens on, and bring up the file \
+                          dialogs that export or replace it. A desk overwritten or forgotten this \
+                          way does not come back."
+                .to_owned(),
+            sensitive: true,
+            default_grant: DefaultGrant::Prompt,
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+        },
+        PermissionDescriptor {
             id: permission(ANNOTATE_ATTENTION_PERMISSION_ID),
             label: "Create marks".to_owned(),
             description: "Append marks carrying the resolved cursor target to the event journal.".to_owned(),
@@ -570,6 +619,17 @@ pub fn modules() -> Vec<ModuleDescriptor> {
             id: module(HOME_MODULE_ID),
             title: "Home".to_owned(),
             description: "The Home tab, shown over the canvas while every market keeps running."
+                .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(SETTINGS_MODULE_ID),
+            title: "Settings".to_owned(),
+            description: "The Settings window and which section it shows.".to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(DESK_MODULE_ID),
+            title: "Desk".to_owned(),
+            description: "The open tabs, panels and window kept as what quantick opens on."
                 .to_owned(),
         },
         ModuleDescriptor {

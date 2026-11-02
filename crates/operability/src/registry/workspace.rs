@@ -14,28 +14,21 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
              dialog is the ceiling's other side, not a gap in it",
 };
 
-/// Something the trader keeps between sessions, with no capability for it.
-const PENDING_WORKSPACE: Mapping = Mapping::Excluded {
-    class: ExclusionClass::PendingCapability,
-    reason: "no capability reaches the saved cockpit; `layout.*` moves panes within a session \
-             and stops there. Tracked in issue 401",
-};
-
 /// Every row this family owns.
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
-        id: "workspace.export",
+        id: "desk.export",
         title: "Write the whole cockpit to a file",
         reach: "window menu, Desk, Export desk to file…",
         keys: &[(Source::MenuEntry, "Export desk to file…")],
-        mapping: AUTHORITY_ARBITRARY_PATH,
+        mapping: Mapping::Capabilities(&["desk.export"]),
     },
     UiBehaviour {
-        id: "workspace.import",
+        id: "desk.import",
         title: "Open a cockpit from a file",
         reach: "window menu, Desk, Import desk from file…",
         keys: &[(Source::MenuEntry, "Import desk from file…")],
-        mapping: AUTHORITY_ARBITRARY_PATH,
+        mapping: Mapping::Capabilities(&["desk.import"]),
     },
     UiBehaviour {
         id: "workspace.recent.open",
@@ -57,27 +50,27 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         ),
     },
     UiBehaviour {
-        id: "workspace.save",
+        id: "desk.save",
         title: "Remember this arrangement as what quantick opens on",
         reach: "window menu, Save desk, Ctrl+Shift+S",
         keys: &[
             (Source::Hotkey, "SAVE_WORKSPACE_SHORTCUT"),
             (Source::MenuEntry, "Save desk"),
         ],
-        mapping: PENDING_WORKSPACE,
+        mapping: Mapping::Capabilities(&["desk.save"]),
     },
     UiBehaviour {
-        id: "workspace.save_on_exit",
+        id: "desk.reopen_on_launch.set",
         title: "Keep the arrangement automatically when the window closes",
         reach: "window menu, Desk",
         keys: &[(Source::MenuEntry, "Reopen last tabs on launch")],
-        mapping: PENDING_WORKSPACE,
+        mapping: Mapping::Capabilities(&["desk.reopen_on_launch.set"]),
     },
     UiBehaviour {
-        id: "workspace.startup.reset",
+        id: "desk.forget",
         title: "Forget the saved workspace and open on the configured default",
         reach: "window menu, Desk, Reset startup desk",
         keys: &[(Source::MenuEntry, "Reset startup desk")],
-        mapping: PENDING_WORKSPACE,
+        mapping: Mapping::Capabilities(&["desk.forget"]),
     },
 ];

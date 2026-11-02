@@ -14,6 +14,7 @@ pub mod codes {
     pub const BACKPRESSURE: &str = "control.backpressure";
     pub const CAPABILITY_UNKNOWN: &str = "control.capability_unknown";
     pub const CAPABILITY_UNAVAILABLE: &str = "control.capability_unavailable";
+    pub const CAPABILITY_RETIRED: &str = "control.capability_retired";
     pub const CURSOR_INVALID: &str = "control.cursor_invalid";
     pub const IDEMPOTENCY_CONFLICT: &str = "control.idempotency_conflict";
     pub const INSTANCE_AMBIGUOUS: &str = "control.instance_ambiguous";
@@ -34,6 +35,7 @@ pub mod codes {
         BACKPRESSURE,
         CAPABILITY_UNKNOWN,
         CAPABILITY_UNAVAILABLE,
+        CAPABILITY_RETIRED,
         CURSOR_INVALID,
         IDEMPOTENCY_CONFLICT,
         INSTANCE_AMBIGUOUS,

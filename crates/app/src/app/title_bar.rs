@@ -3,7 +3,7 @@ use crate::theme;
 use eframe::egui;
 
 use quantick_control_schema::native_window::WindowState;
-use quantick_control_schema::window_menu::{AGENT_PILL_CONTROL, KEBAB_CONTROL};
+use quantick_control_schema::window_menu::{AGENT_PILL_CONTROL, AGENT_PILL_LABEL, KEBAB_CONTROL};
 mod resize;
 
 #[derive(Default)]
@@ -18,6 +18,8 @@ pub(crate) struct TitleBarState {
     pub(crate) agent_on: bool,
     pub(crate) menu_open: bool,
     pub(crate) kebab_clicked: bool,
+    /// Held down, or its menu is open: the scene and the paint read this one.
+    pub(crate) kebab_pressed: bool,
     pub(crate) agent_clicked: bool,
 }
 
@@ -56,7 +58,10 @@ const DRAG_GAP: f32 = 1.0;
 /// The `⋮` button: wide enough to find, as tall as a tab.
 pub(super) const KEBAB_WIDTH: f32 = 36.0;
 const KEBAB_GLYPH_PX: f32 = 18.0;
-const AGENT_PILL_WIDTH: f32 = 66.0;
+const AGENT_PILL_WIDTH: f32 = 72.0;
+/// The outline's gap to the pill's hit area, so it reads as a pill on the strip.
+const AGENT_OUTLINE_PX: f32 = 1.0;
+const AGENT_OUTLINE_INSET: egui::Vec2 = egui::vec2(3.0, 5.0);
 const AGENT_TEXT_PX: f32 = 11.0;
 
 pub(crate) fn draw(
@@ -223,8 +228,9 @@ fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
                 super::menu_bar::shortcut_text(ui.ctx(), &super::menu_bar::WINDOW_MENU_SHORTCUT);
             ui.label(format!("Window menu ({keys})"));
         });
-    if title.menu_open {
-        let fill = egui::Shape::rect_filled(button.rect, 0.0, theme::CHROME);
+    title.kebab_pressed = title.menu_open || button.is_pointer_button_down_on();
+    if title.kebab_pressed {
+        let fill = egui::Shape::rect_filled(button.rect, 0.0, theme::CONTROL);
         ui.painter().set(surface, fill);
     }
     let bounds = button.rect.intersect(ui.clip_rect());
@@ -236,16 +242,20 @@ fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
 
 /// The pill naming local agent access, shown only while it is on.
 fn agent_pill(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
-    let mut face = egui::text::LayoutJob::default();
-    let format = |color| egui::TextFormat::simple(egui::FontId::monospace(AGENT_TEXT_PX), color);
-    face.append("\u{25cf} ", 0.0, format(theme::BUY));
-    face.append("agent", 0.0, format(theme::TEXT_MUTED));
+    let face = egui::RichText::new(AGENT_PILL_LABEL)
+        .size(AGENT_TEXT_PX)
+        .color(theme::AMBER);
     let pill = ui
         .add_sized(
             [AGENT_PILL_WIDTH, crate::tabstrip::CHIP_HEIGHT],
             egui::Button::new(face).frame(false),
         )
         .on_hover_text("Local agent access is on. Click to manage it.");
+    ui.painter().rect_stroke(
+        pill.rect.shrink2(AGENT_OUTLINE_INSET),
+        pill.rect.height(),
+        egui::Stroke::new(AGENT_OUTLINE_PX, theme::AMBER),
+    );
     let bounds = pill.rect.intersect(ui.clip_rect());
     if bounds.is_positive() {
         title.controls.push((AGENT_PILL_CONTROL, bounds));

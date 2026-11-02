@@ -184,6 +184,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     }
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
+    push_settings(&mut controls, app);
     // With the other fixed-size regions, ahead of the strip. At most three
     // entries, and worth keeping if a workspace ever reaches the ceiling: the
     // word is the one control on screen with no capability behind it.
@@ -432,7 +433,9 @@ fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
             },
             selected: (id == "maximize" && title.maximized)
                 || (id == "minimize" && title.minimized)
-                || (id == "home" && title.surface.is_home()),
+                || (id == "home" && title.surface.is_home())
+                || (id == quantick_control_schema::window_menu::KEBAB_CONTROL
+                    && title.kebab_pressed),
             availability: available(),
             bounds: rect_bounds(rect).into_snapshot(),
             bounds_availability: available(),
@@ -574,6 +577,33 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
             bounds: None,
             bounds_availability: bounds_not_recorded(),
             capability_id: None,
+        });
+    }
+}
+
+/// The Settings window's sections, while it is up; the one on screen is selected.
+/// `settings.open` operates all but Agent access, which only the trader opens.
+fn push_settings<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+    use quantick_control_schema::settings_sections::SettingsSection;
+    let Some(shown) = app.chrome_reads().settings_section() else {
+        return;
+    };
+    for section in SettingsSection::ALL {
+        controls.push(SceneControlSnapshot {
+            control_id: section.control_id().to_owned(),
+            label: section.title().to_owned(),
+            role: SceneRoleDto::Tab,
+            owner: SceneOwnerSnapshot {
+                // The published kinds are closed; Settings opens from the strip.
+                kind: SceneOwnerKindDto::TabStrip,
+                id: "settings".to_owned(),
+            },
+            selected: shown == section,
+            availability: available(),
+            bounds: None,
+            bounds_availability: bounds_not_recorded(),
+            capability_id: (section != SettingsSection::AgentAccess)
+                .then(|| quantick_control_schema::desk::SETTINGS_OPEN_CAPABILITY_ID.to_owned()),
         });
     }
 }

@@ -135,6 +135,34 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
             "observer-session-replay-v1.schema.json",
             schema::<crate::session::ReplaySnapshot>(),
         ),
+        (
+            "settings-open-input-v1.schema.json",
+            schema::<crate::desk::SettingsOpenInput>(),
+        ),
+        (
+            "settings-open-result-v1.schema.json",
+            schema::<crate::desk::SettingsOpenResult>(),
+        ),
+        (
+            "desk-input-v1.schema.json",
+            schema::<crate::desk::DeskInput>(),
+        ),
+        (
+            "desk-write-result-v1.schema.json",
+            schema::<crate::desk::DeskWriteResult>(),
+        ),
+        (
+            "desk-pick-result-v1.schema.json",
+            schema::<crate::desk::DeskPickResult>(),
+        ),
+        (
+            "desk-reopen-input-v1.schema.json",
+            schema::<crate::desk::DeskReopenInput>(),
+        ),
+        (
+            "desk-reopen-result-v1.schema.json",
+            schema::<crate::desk::DeskReopenResult>(),
+        ),
     ];
     documents.extend(crate::contract_roll::documents());
     documents.extend(crate::market_windows::documents());

@@ -261,12 +261,12 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
         title: "Record the venue's deal counter, stop, load a recorded day, or show the pane as \
                 trades bars",
         reach: "the REC control beside the symbol and its popover; the Settings window's \
-                `Record deals by default` checkbox",
-        // One registry key: the matrix counts a row carrying an `Authored` key
-        // as one no registry stands behind. The Settings window checkbox is drawn by
-        // `app/deal_recording_wiring.rs`, not an entry in the menu registry;
-        // the call's `record_by_default` is the same choice.
-        keys: &[(Source::ToolbarAction, "DealRecording")],
+                `Record deals by default` row",
+        // The call's `record_by_default` is the same choice as the Settings row.
+        keys: &[
+            (Source::ToolbarAction, "DealRecording"),
+            (Source::MenuEntry, "Record deals by default"),
+        ],
         // `ShowAsTrades` is the popover's shortcut to the `trades` rule, the
         // same recut `layout.pane.set_bar_spec` drives; `OpenFolder` reveals
         // the recording directory in the OS file browser, a hand-only
@@ -289,17 +289,15 @@ pub(super) const CHROME: &[UiBehaviour] = &[
         ),
     },
     UiBehaviour {
-        id: "window.settings.open",
-        title: "Open the Settings window",
-        reach: "window menu, Ctrl+Comma",
+        id: "settings.open",
+        title: "Open the Settings window on a section",
+        reach: "window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the \
+                section a call is refused",
         keys: &[
             (Source::Hotkey, "SETTINGS_SHORTCUT"),
             (Source::MenuEntry, "Settings…"),
         ],
-        mapping: excluded!(
-            UiOnlyByDecision,
-            "a window of switches for the trader; each switch is its own behaviour"
-        ),
+        mapping: Mapping::Capabilities(&["settings.open"]),
     },
     UiBehaviour {
         id: "window.help.open",
@@ -329,8 +327,11 @@ pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "control.access.open",
         title: "Open the local agent access panel",
-        reach: "the agent pill on the title strip, and Settings",
-        keys: &[(Source::Authored, "agent pill on the title strip")],
+        reach: "Settings, Agent access, Manage clients…",
+        keys: &[
+            (Source::MenuEntry, "Manage clients…"),
+            (Source::MenuEntry, "Local agent access"),
+        ],
         mapping: excluded!(
             Authority,
             "the panel is where the trader grants and revokes an operator's access. A \

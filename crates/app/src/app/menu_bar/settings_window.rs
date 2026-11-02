@@ -1,15 +1,16 @@
-//! The windows the `⋮` menu opens: Settings, flat until its sections ship, and
+//! The windows the `⋮` menu opens: Settings, in the sections its table names, and
 //! the Help pages.
 
 use eframe::egui;
-use quantick_control_schema::window_menu::{
-    ABOUT_WORKSPACES, HelpPage, PROGRESSIVE_HISTORY_HOVER, VENUE_LEAD_IN_HOVER,
-};
+use quantick_control_schema::settings_sections::{SettingRow, SettingsSection};
+use quantick_control_schema::window_menu::{ABOUT_WORKSPACES, HelpPage};
 
+use crate::control::ControlAccess;
 use crate::surfaces::ChartSettingsTab::Candles;
+use crate::theme;
 use crate::timezone::TzOffset;
 
-use super::super::{LayersPort, QuantickApp};
+use super::super::{LayersPort, QuantickApp, deal_recording_wiring};
 use super::commands::MenuCommand;
 use super::{
     CLOSE_TAB_SHORTCUT, DOCK_SHORTCUT, HOME_SHORTCUT, LEGEND_SHORTCUT, NEW_TAB_SHORTCUT,
@@ -18,9 +19,25 @@ use super::{
 };
 
 const WINDOW_WIDTH_PX: f32 = 420.0;
+const SETTINGS_SIZE_PX: [f32; 2] = [640.0, 340.0];
+const SECTION_LIST_WIDTH_PX: f32 = 120.0;
+const ROW_TEXT_WIDTH_PX: f32 = 380.0;
+const ROW_GAP_PX: f32 = 8.0;
+const ROW_HINT_PX: f32 = 12.0;
+const DISABLED_DIM: f32 = 0.4;
+const SWITCH_SIZE_PX: egui::Vec2 = egui::vec2(34.0, 18.0);
+const SWITCH_INSET_PX: f32 = 2.0;
 
 /// Draw whichever of the two windows is up.
 pub(super) fn show(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
+    // The window they opened on may have closed since; the root takes them over,
+    // or a call would report a section nobody can see.
+    let owner = app.chrome.window_menu.windows_viewport;
+    let owner_live =
+        owner.is_some_and(|id| ctx.input(|input| input.raw.viewports.contains_key(&id)));
+    if !owner_live && owner.is_some() && ctx.viewport_id() == egui::ViewportId::ROOT {
+        app.chrome.window_menu.windows_viewport = Some(egui::ViewportId::ROOT);
+    }
     if app.chrome.window_menu.windows_viewport != Some(ctx.viewport_id()) {
         return;
     }
@@ -38,65 +55,183 @@ fn show_settings(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
-        .default_width(WINDOW_WIDTH_PX)
-        .show(ctx, |ui| settings_body(app, ui, commands));
+        .fixed_size(SETTINGS_SIZE_PX)
+        .show(ctx, |ui| {
+            ui.horizontal_top(|ui| {
+                section_list(app, ui);
+                ui.separator();
+                ui.vertical(|ui| section_body(app, ui, commands));
+            });
+        });
     app.chrome.window_menu.settings_open = open;
 }
 
-fn settings_body(app: &mut QuantickApp, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-    if ui.button("Appearance…").clicked() {
-        commands.push(MenuCommand::OpenAppearance);
-    }
-    ui.menu_button("Timezone", |ui| {
-        egui::ScrollArea::vertical()
-            .max_height(280.0)
-            .show(ui, |ui| {
-                for tz in TzOffset::ALL {
-                    if ui
-                        .selectable_label(app.runtime.tz == tz, tz.label())
-                        .clicked()
-                    {
-                        commands.push(MenuCommand::SetTimezone(tz));
-                        ui.close_menu();
-                    }
-                }
-            });
+/// The list on the left: the one on screen is filled, as in the prototype.
+fn section_list(app: &mut QuantickApp, ui: &mut egui::Ui) {
+    ui.vertical(|ui| {
+        ui.set_width(SECTION_LIST_WIDTH_PX);
+        for section in SettingsSection::ALL {
+            let shown = app.chrome.window_menu.settings_section == section;
+            if ui.selectable_label(shown, section.title()).clicked() {
+                app.chrome.window_menu.settings_section = section;
+            }
+        }
     });
-    ui.separator();
-    let mut show_perf = app.health.show_perf;
-    if ui
-        .checkbox(&mut show_perf, "Perf readings")
-        .on_hover_text("fps, frame time and trade count on the status bar")
-        .changed()
+}
+
+fn section_body(app: &mut QuantickApp, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
+    let section = app.chrome.window_menu.settings_section;
+    ui.strong(section.title());
+    ui.add_space(ROW_GAP_PX);
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for row in section.rows() {
+            draw_row(app, ui, *row, commands);
+            ui.separator();
+        }
+    });
+}
+
+/// A row's name and line on the left, what it does on the right.
+fn draw_row(
+    app: &mut QuantickApp,
+    ui: &mut egui::Ui,
+    row: SettingRow,
+    commands: &mut Vec<MenuCommand>,
+) {
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(ROW_TEXT_WIDTH_PX);
+            ui.label(row.label());
+            ui.label(
+                egui::RichText::new(row.description())
+                    .size(ROW_HINT_PX)
+                    .color(theme::TEXT_MUTED),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            row_control(app, ui, row, commands);
+        });
+    });
+    if row == SettingRow::AgentSwitch
+        && let Some(access) = app.control.control_access.as_ref()
     {
-        commands.push(MenuCommand::SetShowPerf(show_perf));
+        if let Some(error) = access.start_error() {
+            ui.colored_label(theme::WARN, error);
+        } else if let Some(note) = access.status_note() {
+            ui.colored_label(theme::TEXT_MUTED, note);
+        }
     }
-    let mut progressive = app.runtime.history.progressive_history;
-    if ui
-        .checkbox(&mut progressive, "Progressive venue history")
-        .on_hover_text(PROGRESSIVE_HISTORY_HOVER)
-        .changed()
-    {
-        commands.push(MenuCommand::SetProgressiveHistory(progressive));
+}
+
+fn row_control(
+    app: &mut QuantickApp,
+    ui: &mut egui::Ui,
+    row: SettingRow,
+    commands: &mut Vec<MenuCommand>,
+) {
+    match row {
+        SettingRow::Appearance => {
+            if ui.button(row.label()).clicked() {
+                commands.push(MenuCommand::OpenAppearance);
+            }
+        }
+        SettingRow::Timezone => {
+            let mut tz = app.runtime.tz;
+            egui::ComboBox::from_id_salt("settings_timezone")
+                .selected_text(tz.label())
+                .show_ui(ui, |ui| {
+                    for offset in TzOffset::ALL {
+                        ui.selectable_value(&mut tz, offset, offset.label());
+                    }
+                });
+            if tz != app.runtime.tz {
+                commands.push(MenuCommand::SetTimezone(tz));
+            }
+        }
+        SettingRow::PerfReadings => {
+            let mut on = app.health.show_perf;
+            if switch(ui, &mut on, true, row).changed() {
+                commands.push(MenuCommand::SetShowPerf(on));
+            }
+        }
+        SettingRow::ProgressiveHistory => {
+            let mut on = app.runtime.history.progressive_history;
+            if switch(ui, &mut on, true, row).changed() {
+                commands.push(MenuCommand::SetProgressiveHistory(on));
+            }
+        }
+        SettingRow::VenueLeadIn => {
+            let mut on = app.runtime.history.venue_lead_in;
+            if switch(ui, &mut on, true, row).changed() {
+                commands.push(MenuCommand::SetVenueLeadIn(on));
+            }
+        }
+        SettingRow::RecordDeals => {
+            let mut on = deal_recording_wiring::default_for(app);
+            if switch(ui, &mut on, true, row).changed() {
+                deal_recording_wiring::set_default(app, on);
+            }
+        }
+        SettingRow::AgentSwitch => {
+            let access = app.control.control_access.as_ref();
+            let (mut on, can_flip) = access.map_or((false, false), ControlAccess::switch_state);
+            let hover = access.map_or("Local agent access…", ControlAccess::menu_label);
+            if switch(ui, &mut on, can_flip, row)
+                .on_hover_text(hover)
+                .changed()
+                && let Some(access) = app.control.control_access.as_mut()
+            {
+                access.set_switch(ui.ctx(), on);
+            }
+        }
+        SettingRow::ManageClients => {
+            if ui.button(row.label()).clicked() {
+                commands.push(MenuCommand::OpenAgentAccess);
+            }
+        }
     }
-    let mut lead_in = app.runtime.history.venue_lead_in;
-    if ui
-        .checkbox(&mut lead_in, "Venue candles on charts cut by trades")
-        .on_hover_text(VENUE_LEAD_IN_HOVER)
-        .changed()
-    {
-        commands.push(MenuCommand::SetVenueLeadIn(lead_in));
+}
+
+/// The prototype's switch, painted because egui has none.
+fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool, row: SettingRow) -> egui::Response {
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, mut response) = ui.allocate_exact_size(SWITCH_SIZE_PX, sense);
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
     }
-    super::super::deal_recording_wiring::draw_toggle(app, ui);
-    ui.separator();
-    let access_label = app
-        .control
-        .control_access
-        .as_ref()
-        .map_or("Local agent access…", |access| access.menu_label());
-    if ui.button(access_label).clicked() {
-        commands.push(MenuCommand::OpenAgentAccess);
-    }
+    let value = *on;
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, value, row.label())
+    });
+    let track = if value { theme::ACCENT } else { theme::BORDER };
+    let knob = if value {
+        theme::INSET
+    } else {
+        theme::TEXT_FAINT
+    };
+    let (track, knob) = if enabled {
+        (track, knob)
+    } else {
+        (
+            track.gamma_multiply(DISABLED_DIM),
+            knob.gamma_multiply(DISABLED_DIM),
+        )
+    };
+    let radius = rect.height() / 2.0;
+    let centre = if value {
+        rect.right_center() - egui::vec2(radius, 0.0)
+    } else {
+        rect.left_center() + egui::vec2(radius, 0.0)
+    };
+    ui.painter().rect_filled(rect, radius, track);
+    ui.painter()
+        .circle_filled(centre, radius - SWITCH_INSET_PX, knob);
+    response
 }
 
 fn show_help(app: &mut QuantickApp, ctx: &egui::Context) {

@@ -57,7 +57,7 @@ fn paint(
         .native_pixels_per_point = Some(1.5);
     let mut canvas = egui::Rect::NOTHING;
     let output = ctx.run(input, |ctx| {
-        draw(ctx, model, &mut TzOffset::default(), &StatusLead::default());
+        draw(ctx, model, TzOffset::default(), &StatusLead::default());
         canvas = egui::CentralPanel::default()
             .show(ctx, |_| {})
             .response

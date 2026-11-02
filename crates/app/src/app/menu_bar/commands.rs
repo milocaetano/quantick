@@ -6,6 +6,7 @@
 //! is carried out. Commands are applied in the order they were recorded.
 
 use eframe::egui;
+use quantick_control_schema::settings_sections::SettingsSection;
 
 use crate::canvas_layout::LayoutPreset;
 use crate::dock::DockTab;
@@ -65,7 +66,7 @@ pub(in crate::app) enum MenuCommand {
     OpenReplayFormatHelp,
     /// `F10`: open or close the `⋮` window menu.
     ToggleWindowMenu,
-    OpenSettings,
+    OpenSettings(SettingsSection),
     OpenHelp(quantick_control_schema::window_menu::HelpPage),
 }
 
@@ -116,7 +117,7 @@ pub(super) fn read_shortcuts(
         commands.push(MenuCommand::ToggleWindowMenu);
     }
     if pressed(&SETTINGS_SHORTCUT) {
-        commands.push(MenuCommand::OpenSettings);
+        commands.push(MenuCommand::OpenSettings(SettingsSection::Display));
     }
     if pressed(&REPLAY_SHORTCUT) {
         commands.push(MenuCommand::OpenReplayBrowser);

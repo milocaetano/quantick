@@ -77,7 +77,7 @@ impl WorkspaceSaveAdapter<'_> {
     /// same" is not an answer. A failed write says *that* instead — being told
     /// "saved" and finding out at the next launch is the one outcome worth
     /// engineering against.
-    pub(super) fn save_workspace(&mut self, reason: &'static str) {
+    pub(super) fn save_workspace(&mut self, reason: &'static str) -> bool {
         let workspace = self.read().capture_workspace();
         let saved = ui_state::save(self.path, &workspace);
         self.session.note_write(WritePurpose::Full, saved);
@@ -105,6 +105,7 @@ impl WorkspaceSaveAdapter<'_> {
         } else {
             "Workspace could not be saved — see the log".to_owned()
         });
+        saved
     }
     /// Update *only* where the properties popup goes, in the workspace file as
     /// it already stands. Says whether anything was written.
@@ -151,17 +152,13 @@ impl WorkspaceSaveAdapter<'_> {
         );
         saved
     }
-    /// Write the bookmarks without disturbing the startup arrangement.
-    ///
-    /// Reads the file back and swaps only the named entries, rather than
-    /// capturing the live window: saving a bookmark must not redefine what the
-    /// app opens on, and `capture_workspace` describes the screen *now*, which
-    /// is exactly what the startup arrangement must not become.
-    #[cfg(test)]
-    fn write_bookmarks(&mut self) -> bool {
+    /// Write the file's standing choices, `save_on_exit` among them, leaving the
+    /// saved arrangement exactly as it was.
+    pub(super) fn write_standing_choices(&mut self) -> bool {
         let written =
-            self.edit_workspace_file("UI_STATE_BOOKMARKS_WRITTEN", DocumentEdit::Bookmarks);
-        self.session.note_write(WritePurpose::Bookmarks, written);
+            self.edit_workspace_file("UI_STATE_STANDING_WRITTEN", DocumentEdit::Bookmarks);
+        // A choice is not a desk, so the session still reads as nothing saved.
+        self.session.note_write(WritePurpose::Favorites, written);
         written
     }
     /// Change one standing choice in the workspace file, leaving everything
@@ -209,7 +206,7 @@ impl WorkspaceSaveAdapter<'_> {
     /// Write down the replay folder the trader just pointed the browser at,
     /// without disturbing anything else the workspace file holds.
     ///
-    /// The same read-swap-write as [`Self::write_bookmarks`], and for the same
+    /// The same read-swap-write as [`Self::write_favorites`], and for the same
     /// reason: this is a standing choice, not a description of the screen, so
     /// it must not wait for a clean exit and must not drag the current
     /// arrangement into the file with it.
@@ -309,79 +306,11 @@ impl WorkspaceSaveAdapter<'_> {
             "the rail's pinned tools are now what this workspace opens on"
         );
     }
-    /// Keep the window as it stands under `name`.
-    ///
-    /// A bookmark, not a startup setting: what the app opens on is untouched.
-    /// The reason to name an arrangement is usually to have somewhere to come
-    /// back *to*, and a "save this so I can return to it" that also redefined
-    /// the opening screen would be the opposite of a safety net.
-    ///
-    /// An existing name is replaced rather than duplicated — that is what
-    /// "save as" means everywhere else, and it spares the menu a list of five
-    /// entries called "scalp".
-    #[cfg(test)]
-    pub(super) fn save_named_workspace(&mut self, name: &str) {
-        let Some(name) = ui_state::clean_workspace_name(name) else {
-            self.note_workspace("A workspace needs a name".to_owned());
-            return;
-        };
-        let (tabs, chrome) = self.arrangement.capture_arrangement();
-        let entry = ui_state::NamedArrangement {
-            name: name.clone(),
-            window: self.session.window_size(),
-            active_tab: self.arrangement.tabs.captured_active_index(),
-            tabs,
-            chrome: Some(chrome),
-        };
-        let replaced = self.session.keep_bookmark(entry);
-        let written = self.write_bookmarks();
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_NAMED_SAVED",
-            name = %name,
-            replaced,
-            saved = self.session.bookmarks().len(),
-            written,
-            action = if written { "bookmark_written" } else { "bookmark_not_written" },
-            "named workspace saved"
-        );
-        self.note_workspace(if written {
-            let verb = if replaced { "replaced" } else { "saved" };
-            format!("Workspace \"{name}\" {verb} — reopen it from Workspace → Open")
-        } else {
-            format!("\"{name}\" could not be saved — see the log")
-        });
-    }
-    /// Forget the bookmark called `name`. The window on screen is untouched —
-    /// deleting a bookmark throws away a way back, not the place you are.
-    #[cfg(test)]
-    pub(super) fn delete_named_workspace(&mut self, name: &str) {
-        if !self.session.delete_bookmark(name) {
-            return;
-        }
-        let written = self.write_bookmarks();
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_NAMED_DELETED",
-            name = %name,
-            remaining = self.session.bookmarks().len(),
-            written,
-            action = if written { "bookmark_forgotten" } else { "file_not_written" },
-            "named workspace deleted"
-        );
-        self.note_workspace(if written {
-            format!("Workspace \"{name}\" deleted")
-        } else {
-            format!("\"{name}\" could not be deleted — see the log")
-        });
-    }
     /// Forget the saved workspace: the next launch opens on the configured
     /// defaults. The window on screen is deliberately left alone — a trader
     /// resetting their *startup* layout mid-session has not asked to have the
     /// charts they are reading rearranged under them.
-    pub(super) fn forget_workspace(&mut self) {
+    pub(super) fn forget_workspace(&mut self) -> bool {
         // Reset clears the *startup* arrangement. The bookmarks survive it,
         // because coming back after a reset is the whole reason to name one:
         // deleting the safety net as part of the act it exists to undo would
@@ -461,6 +390,7 @@ impl WorkspaceSaveAdapter<'_> {
         } else {
             "Workspace could not be reset — see the log".to_owned()
         });
+        forgotten
     }
     /// Keep the window size the workspace would record, flush a popup the
     /// trader just re-parked, and take the exit save when the window is
@@ -487,7 +417,9 @@ impl WorkspaceSaveAdapter<'_> {
         });
         match self.session.frame(FrameFacts { size, closing }) {
             FrameSave::Wait => {}
-            FrameSave::Full => self.save_workspace("exit"),
+            FrameSave::Full => {
+                self.save_workspace("exit");
+            }
             FrameSave::Inspector => {
                 self.write_inspector_position();
             }

@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 42 |
+| deduplicated per connection | 48 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **75** |
+| **Total** | **81** |
 
 ## Capabilities
 
@@ -140,6 +140,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `chart.settings.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `chart.settings.changed` | `payload.chart_settings` | an event after the pre-call cursor carries the window and presets the call left | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `chart.tape_view.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport.tape` | The target pane's tape reports the requested end (or live) and window. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back` |
 | `chart.time_axis.reset` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport` | The target pane reports its opening pixels_per_bar, or its tape window back on the asset's setting; after the live overview, follows_live and the overview pixels_per_bar. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back`, `the_live_overview_call_matches_the_open_canvas_double_click` |
+| `desk.export` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `desk.picker_opened` | `payload.capability` | an event after the pre-call cursor names desk.export | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `desk.forget` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `desk.forgotten` | `payload.written` | an event after the pre-call cursor says written | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `desk.import` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `desk.picker_opened` | `payload.capability` | an event after the pre-call cursor names desk.import | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `desk.reopen_on_launch.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `desk.reopen_on_launch.changed` | `payload.reopen` | an event after the pre-call cursor carries the requested choice | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `desk.save` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `desk.saved` | `payload.written` | an event after the pre-call cursor says written | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `feed.contract.roll` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].active_symbol` | the tab reports the configured next contract; feed_generation advances by one when the call rolled and not when the tab had already rolled | `a_roll_keeps_the_drawings_and_a_repeat_rolls_nothing`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `feed.deal_recording.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].deal_recording.state` | the tab's recorder reads the state asked for: `recording` or `stale` after `enabled: true`, `off` after `enabled: false`, and `record_by_default` the standing choice asked for; a tab whose feed carries no counter and has no recorded day lists no `deal_recording` at all, and the call changed nothing there | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `feed.history.cancel` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].history_load.state` | the tab's run reads `idle`: nothing pages and nothing is queued | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `a_history_load_runs_reads_back_and_cancels_through_the_control_plane` |
@@ -190,6 +195,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `session.journal.delete` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.journal.changed` | `payload.journal_session` | an event after the pre-call cursor names the deleted session and where its file moved | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `session.journal.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.journal.changed` | `payload.journal_session` | an event after the pre-call cursor names the session and the name or tags, or the ledger view, the call asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `session.pnl_display.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.pnl_display.changed` | `payload.pnl_display.primary` | an event after the pre-call cursor carries the requested mode as `primary` | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `settings.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | the asked section's settings.section control is listed and selected | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `trade.instrument.set_money` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `events.read` `trade.ticket.changed` | `payload.asked` | an event after the pre-call cursor carries the caller's input as `asked` | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.bracket` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].stop_loss` | the named order carries the stop and target asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.cancel` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].order_id` | the named order is no longer working | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
@@ -198,4 +204,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-75 mutable capabilities registered, 75 with a readback.
+81 mutable capabilities registered, 81 with a readback.
