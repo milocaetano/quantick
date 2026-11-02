@@ -333,11 +333,6 @@ fn market_windows_capture_all_native_strips_in_visible_order_with_matching_selec
     assert_eq!(roundtrip.active_tab, 2);
     let restored = roundtrip.restore(&app.config);
     assert_eq!(restored.tabs, saved.tabs);
-    app.workspace_save_adapter()
-        .save_named_workspace("all-windows");
-    let bookmark = &app.runtime.workspace.session().bookmarks()[0];
-    assert_eq!(bookmark.tabs, saved.tabs);
-    assert_eq!(bookmark.active_tab, 2);
 }
 
 #[test]

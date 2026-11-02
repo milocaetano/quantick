@@ -373,77 +373,11 @@ impl ArrangementAdapter<'_> {
         self.drawing_chrome
             .restore_inspector_position(chrome.inspector_position);
     }
-    /// Put the window back the way the bookmark called `name` recorded it.
-    ///
-    /// The saved markets are opened as new tabs and the tabs that were on
-    /// screen are closed afterwards, rather than the reverse: `close_tab`
-    /// refuses to close the last tab — a window with no market has nothing to
-    /// draw — so growing before shrinking is what lets the whole strip be
-    /// replaced. Closing goes through the same path a `Ctrl+W` takes, so a
-    /// simulated position ends in the labeled, journaled flatten the
-    /// paper-trading contract promises instead of vanishing with its tab.
-    ///
-    /// The startup workspace is left alone. Opening a bookmark is a thing you
-    /// do to *this session*; making it the opening screen is `Save workspace`,
-    /// one entry above.
-    #[cfg(test)]
-    pub(super) fn open_named_workspace(&mut self, name: &str) {
-        let Some(entry) = self
-            .workspace
-            .session()
-            .bookmarks()
-            .iter()
-            .find(|held| held.name == name)
-            .cloned()
-        else {
-            self.note_workspace(format!("No workspace called \"{name}\""));
-            return;
-        };
-        if entry.tabs.is_empty() {
-            // `restore` drops empty bookmarks at load, so this is only
-            // reachable from a file edited under a running app.
-            self.note_workspace(format!("\"{name}\" has no market left to open"));
-            return;
-        }
-        let replaced = self.tabs.len();
-        self.run_restore(
-            quantick_workspace::arrangement::RestoreMode::Named,
-            &entry.tabs,
-            entry.active_tab,
-            entry.chrome.as_ref(),
-            None,
-        );
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_NAMED_OPENED",
-            name = %name,
-            tabs = self.tabs.len(),
-            closed = replaced,
-            active = self.tabs.active_index(),
-            action = "replace_tab_strip",
-            "named workspace opened"
-        );
-        self.note_workspace(format!(
-            "Opened \"{name}\" — {} {}",
-            self.tabs.len(),
-            if self.tabs.len() == 1 {
-                "chart tab"
-            } else {
-                "chart tabs"
-            }
-        ));
-    }
-
     fn active_tab(&self) -> &Tab {
         &self.tabs[self.tabs.active_index()]
     }
     pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
         self.tabs.runtime_mut(self.tabs.active_index())
-    }
-    #[cfg(test)]
-    pub(super) fn note_workspace(&mut self, message: String) {
-        self.toast.note(message, std::time::Instant::now());
     }
     pub(super) fn refresh_recent_workspaces(&mut self) {
         let existing = crate::workspace_bundle::existing_recent(self.workspace.session().recent());
