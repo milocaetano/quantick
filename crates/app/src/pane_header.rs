@@ -1,6 +1,6 @@
 //! Paints the header line every pane carries (the rule, the mark, the bars and
-//! the indicators button on the left; the Trail and Tape switches and the strip
-//! on a flow pane's right), the capsule floating over each chart side and the
+//! the indicators button on the left; the Trail and Tape switches, the strip and
+//! the gear on a flow pane's right), the capsule floating over each chart side and the
 //! label beside it. What they say and what a press asks for are
 //! `quantick_chart`'s call; this file holds the shapes and the pointer.
 
@@ -14,8 +14,8 @@ use quantick_chart::pane_header::{
     INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle, PaneHeader, SAMPLE_RESET_SCALE,
     SEGMENT_FRAME_HEIGHT_PX, SEGMENT_FRAME_PAD_PX, SEGMENT_GAP_PX, SEGMENT_GLYPH_PX,
     SEGMENT_HEIGHT_PX, SEGMENT_PAD_WORDS_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX, SegmentInk,
-    SideSegment, dragged_scale, flow_fit, sample_diameter_px, sample_value_text, segment_px,
-    side_word, side_words_px,
+    SideSegment, dragged_scale, flow_fit, sample_diameter_px, sample_value_text, section_layer,
+    segment_px, side_word, side_words_px,
 };
 use quantick_chart::side_label::{
     LabelFit, LabelInk, SIDE_LABEL_GAP_PX, SIDE_LABEL_INSET_LEFT_PX, SIDE_LABEL_PADDING_PX,
@@ -23,6 +23,7 @@ use quantick_chart::side_label::{
 };
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
 use quantick_orderflow::LaneSide;
+use quantick_workspace::orderflow_panel::{PanelControl, PanelSection};
 use smallvec::SmallVec;
 
 use crate::chart_layers::shortcuts;
@@ -80,7 +81,7 @@ const VALUE_GAP_PX: f32 = 4.0;
 
 /// What the header painted this frame, in reading order: the scene reads it,
 /// so it lists a control only while a hand can reach it.
-pub type PaintedControls = SmallVec<[(HeaderControl, egui::Rect); LayerToggle::ALL.len() + 4]>;
+pub type PaintedControls = SmallVec<[(HeaderControl, egui::Rect); LayerToggle::ALL.len() + 7]>;
 
 /// The rule closing the strip against the chart below it.
 pub fn paint_rule(ui: &egui::Ui, strip: egui::Rect) {
@@ -167,6 +168,8 @@ pub struct FlowRow {
     pub slot: Option<(String, bool)>,
     /// The bars are being rebuilt: the bars control says so, and nothing else.
     pub rebuilding: bool,
+    /// The tab's order-flow panel is open: the gear wears the pressed look.
+    pub settings_open: bool,
 }
 
 /// The flow pane's header line; answers what a press on it asked for, and
@@ -266,18 +269,75 @@ pub fn draw_marked(
         let height = inner.y_range();
         let words = fit.side_words.then_some(word_widths);
         side_control(&right, room, salt, &state, words, painted, &mut intent);
+        let gear =
+            egui::Rect::from_x_y_ranges(inner.right() - GLYPH_SLOT_PX..=inner.right(), height);
         if let Some(glyph) = row.strip {
-            let glyph_left = inner.right() - GLYPH_SLOT_PX;
+            let glyph_left = gear.left() - GROUP_GAP_PX - GLYPH_SLOT_PX;
             let hairline = glyph_left - HAIRLINE_GAP_PX;
             let around = inner.center().y - 8.0..=inner.center().y + 8.0;
             right
                 .painter()
                 .vline(hairline, around, egui::Stroke::new(1.0_f32, theme::BORDER));
-            let rect = egui::Rect::from_x_y_ranges(glyph_left..=inner.right(), height);
+            let rect = egui::Rect::from_x_y_ranges(glyph_left..=glyph_left + GLYPH_SLOT_PX, height);
             layer_glyph(&right, rect, salt, glyph, painted, &mut intent);
         }
+        settings_gear(&right, gear, salt, row.settings_open, painted, &mut intent);
     }
     (intent, indicators)
+}
+
+/// The gear, bare like the indicators button, pressed while the panel is open.
+/// Left click opens or closes; right click is the two-item menu.
+fn settings_gear(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    salt: u64,
+    open: bool,
+    painted: &mut PaintedControls,
+    intent: &mut Option<HeaderIntent>,
+) {
+    let id = ui.id().with(("pane_settings_gear", salt));
+    let response = ui.interact(rect, id, egui::Sense::click());
+    if response.clicked() {
+        *intent = Some(HeaderIntent::ToggleSettings);
+    }
+    let patch = egui::Rect::from_center_size(
+        rect.center(),
+        egui::Vec2::splat(GLYPH_SLOT_PX.min(rect.height())),
+    );
+    let rounding = egui::Rounding::same(HOVER_ROUNDING);
+    if open {
+        ui.painter().rect_filled(patch, rounding, theme::CONTROL);
+    } else if response.hovered() {
+        ui.painter().rect_filled(patch, rounding, theme::BARE_HOVER);
+    }
+    let colour = if open || response.hovered() {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::PANE_ACTION
+    };
+    let font = egui::FontId::proportional(SEGMENT_GLYPH_PX);
+    let at = egui::Align2::CENTER_CENTER;
+    ui.painter()
+        .text(rect.center(), at, icons::GEAR, font, colour);
+    record(
+        ui,
+        HeaderControl::Settings(PanelControl::Gear),
+        rect,
+        painted,
+    );
+    let key = Some(shortcuts::ORDERFLOW_SETTINGS_SHORTCUT);
+    let response = response.on_hover_ui(|ui| {
+        ui.label(with_key(ui.ctx(), "Order flow settings", key));
+    });
+    response.context_menu(|ui| {
+        for section in PanelSection::ALL {
+            if ui.button(section.title()).clicked() {
+                *intent = Some(HeaderIntent::OpenLayerSettings(section_layer(section)));
+                ui.close_menu();
+            }
+        }
+    });
 }
 
 /// A child ui over `rect` whose paint stays inside `clip`, so what it draws is
@@ -701,7 +761,12 @@ fn side_segment(
     });
 }
 
-fn record(ui: &egui::Ui, control: HeaderControl, rect: egui::Rect, painted: &mut PaintedControls) {
+pub(crate) fn record(
+    ui: &egui::Ui,
+    control: HeaderControl,
+    rect: egui::Rect,
+    painted: &mut PaintedControls,
+) {
     // A control the strip clipped, even in part, is not listed: a hand or a
     // script aiming at the middle of its rect could miss it.
     if ui.is_visible() && ui.clip_rect().contains_rect(rect) {

@@ -1,3 +1,7 @@
 # Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
 crates/app -495
 !budget -495
+# The order-flow panel paints inside the flow pane and reads the app-only Tab and
+# OrderflowView; the dock state went below app and the bodies moved, leaving this.
+crates/app +86
+!budget +86

@@ -256,7 +256,8 @@ and hide-all are reversible protection/view actions; neither shares the
 selected object's delete control.
 
 **Dock (right, 280–360 px).** One tabbed panel replaces today's stack of
-left `SidePanel`s: tabs **L2**, **Bubbles**, **Indicators**, **Session**.
+left `SidePanel`s: tabs **Session**, **Trading**, **Trades**, and **Indicators**
+when it lands. The L2 and Bubbles settings left it for the order-flow panel below.
 Tab strip (36 px) stays visible when collapsed. Rules:
 
 - A layer's *toggle* lives in the toolbar; its *settings* live in its tab.
@@ -267,6 +268,25 @@ Tab strip (36 px) stays visible when collapsed. Rules:
   home changes.
 - Floating windows remain for transient tasks only: session browser (from
   the Session tab / Ctrl+R), appearance dialog, script error details.
+
+**Order-flow panel (280–360 px).** One per tab, attached to the flow pane, right
+of its price axis and below its header line: the chart gives up the width, nothing
+floats over it. Same body style as the dock (CHROME, 10/8 px margin, resizable),
+under one title line, "ORDER FLOW · <symbol>" and ×. The L2 and Bubbles bodies sit
+under two collapsible headers, both open by default, with one outer scroll. A
+header's right end carries its state in mono ("book live", the preset name). Rules:
+
+- The gear, bare like `ƒx`, 8 px after Strip and last on the line, opens and closes
+  it and wears the pressed look while it is open. Its right click, and a right click
+  on an L2 or Bubbles capsule glyph, opens it on that section, expanded and scrolled
+  into view. `Ctrl+Shift+O` is the left click; `orderflow.settings.open`, `.close`
+  and `.section.set` are the same state by name.
+- Which sections are folded is remembered per asset, for the whole window; whether
+  it is open and how wide, per tab.
+- A pane with no flow side has no gear. Short of room for a chart beside it, an open
+  panel waits off screen until the pane is wide enough again.
+- A workspace saved with the old L2 or Bubbles dock tab open opens here, on that
+  section.
 
 Why right, when today's panels are left: the rail claims the left edge
 (tools want to be near the pointer's resting side), settings are read-mostly,

@@ -83,6 +83,8 @@ pub struct LiveLane {
 
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
+    /// The panel that edits this view's settings, attached to its flow pane.
+    pub(crate) settings_panel: quantick_workspace::orderflow_panel::OrderFlowPanel,
     flow_execution: flow_execution::FlowExecutionView,
     flow_paint: std::cell::RefCell<quantick_chart::flow_execution::FlowPaintState>,
     symbol: String,
@@ -142,6 +144,7 @@ impl OrderflowView {
             worker: BookWorker::spawn(&symbol),
             symbol,
             config,
+            settings_panel: Default::default(),
             published: BookPublished::initial(),
             last_seen_base: base_grouping,
             last_tape_price_grid: None,

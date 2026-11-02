@@ -46,6 +46,8 @@ pub struct CanvasChrome<'a> {
     pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
     pub layers: &'a mut quantick_layers::LayerActions,
+    /// Which order-flow panel sections are open, per asset.
+    pub panel_folds: &'a mut crate::ui_state::AssetFolds,
 }
 
 /// Which pane order entry belongs to this frame.
@@ -322,7 +324,7 @@ impl Tab {
             let areas = split_pane_header(pane_areas.body);
             self.draw_flow_header(ui, areas.header, bar_inputs, chrome);
             PaneAreas {
-                body: areas.chart,
+                body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
                 layout_strip: pane_areas.layout_strip,
             }
         });
@@ -449,6 +451,10 @@ impl Tab {
             chip,
             slot,
             rebuilding,
+            settings_open: pane
+                .orderflow
+                .as_ref()
+                .is_some_and(|tape| tape.settings_panel.is_open()),
         };
         let (intent, indicators) = crate::pane_header::draw_marked(
             ui,

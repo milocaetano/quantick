@@ -7,6 +7,8 @@
 //! shortcuts are re-exported to `super` for the tests that name them.
 
 use super::{GatewayPort, LayersPort, LayoutPort};
+use crate::chart_layers::shortcuts;
+use crate::orderflow_panel as panel;
 use eframe::egui;
 
 use crate::surfaces::ChartSettingsTab::Candles;
@@ -131,7 +133,10 @@ impl QuantickApp {
     /// there back beside the other. Consumed whatever the focus, before `Ctrl+T`
     /// and `Ctrl+R` are read: those would match them too.
     pub(super) fn read_view_keys(&mut self, ctx: &egui::Context) {
-        let Some(key) = crate::chart_layers::shortcuts::take_view_key(ctx) else {
+        if shortcuts::take_view_press(ctx, shortcuts::ORDERFLOW_SETTINGS_SHORTCUT) {
+            panel::toggle(self.active_tab_mut());
+        }
+        let Some(key) = shortcuts::take_view_key(ctx) else {
             return;
         };
         let tab = self.active_tab_mut();
@@ -303,6 +308,7 @@ impl QuantickApp {
             MenuCommand::SetToolboxDock(dock) => self.toolrail.set_dock(dock),
             MenuCommand::ToggleToolbox => self.toolrail.toggle_visible(),
             MenuCommand::OpenDockTab(tab) => self.dock.open_tab(tab),
+            MenuCommand::OpenOrderFlowPanel(s) => panel::open_on(self.active_tab_mut(), s),
             MenuCommand::SetShowPerf(show) => self.health.show_perf = show,
             MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,
             MenuCommand::SetVenueLeadIn(on) => self.runtime.history.venue_lead_in = on,

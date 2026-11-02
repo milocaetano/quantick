@@ -1225,6 +1225,7 @@ fn the_header_controls_are_listed_the_way_the_trader_reads_them() {
             "side.trail",
             "side.tape",
             "layer.live_strip",
+            "settings",
             "layer.bubbles",
             "layer.heatmap",
             "layer.footprint",

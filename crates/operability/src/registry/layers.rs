@@ -13,11 +13,9 @@ const LAYER_SWITCH: Mapping = capability!("layers.visibility.set");
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "dock.tab.open",
-        title: "Open a panel — L2, bubbles, session, trading or trades",
-        reach: "View menu, the dock's own strip, a capsule glyph's right-click",
+        title: "Open a panel — session, trading or trades",
+        reach: "View menu, the dock's own strip",
         keys: &[
-            (Source::DockTab, "l2"),
-            (Source::DockTab, "bubbles"),
             (Source::DockTab, "session"),
             (Source::DockTab, "trading"),
             (Source::DockTab, "trades"),
@@ -135,6 +133,33 @@ pub(super) const ROWS: &[UiBehaviour] = &[
             "the per-asset checkbox in the Bubbles settings is not a pane header control",
         )],
         mapping: capability!("orderflow.tape.market_fold.set"),
+    },
+    UiBehaviour {
+        id: "orderflow.settings.open",
+        title: "Open the order-flow panel, on the L2 or the Bubbles section if one is named",
+        reach: "the flow pane's gear and its right-click menu; View menu; a capsule glyph's right-click; Ctrl+Shift+O",
+        keys: &[(Source::Hotkey, "ORDERFLOW_SETTINGS_SHORTCUT")],
+        mapping: capability!("orderflow.settings.open"),
+    },
+    UiBehaviour {
+        id: "orderflow.settings.close",
+        title: "Close the order-flow panel",
+        reach: "the panel's ×; the gear's left click; Ctrl+Shift+O",
+        keys: &[(
+            Source::Authored,
+            "the panel's close button is drawn by the panel, not a pane header entry",
+        )],
+        mapping: capability!("orderflow.settings.close"),
+    },
+    UiBehaviour {
+        id: "orderflow.settings.section.set",
+        title: "Fold or open a section of the order-flow panel, for the asset on screen",
+        reach: "a click on the section's header in the panel",
+        keys: &[(
+            Source::Authored,
+            "the panel's collapsible headers are drawn by the panel, not a pane header entry",
+        )],
+        mapping: capability!("orderflow.settings.section.set"),
     },
     UiBehaviour {
         id: "orderflow.tape.view.set",

@@ -13,6 +13,7 @@ use crate::tab::Tab;
 use crate::tabstrip::TabAction;
 use crate::timezone::TzOffset;
 use crate::toolrail::{ToolRail, ToolboxDock};
+use crate::ui_state::PanelSection;
 
 use super::super::layout_wiring::LayoutRead;
 use super::super::tabs::HistorySettings;
@@ -276,15 +277,21 @@ impl ViewMenu<'_> {
             commands.push(MenuCommand::ToggleToolbox);
             ui.close_menu();
         }
-        for (tab, label) in [
-            (DockTab::L2, "L2 settings"),
-            (DockTab::Bubbles, "Bubble settings"),
-            (DockTab::Session, "Session"),
-            (DockTab::Trading, "Paper trading"),
-            (DockTab::Trades, "Trades"),
+        for (command, label) in [
+            (
+                MenuCommand::OpenOrderFlowPanel(PanelSection::L2),
+                "L2 settings",
+            ),
+            (
+                MenuCommand::OpenOrderFlowPanel(PanelSection::Bubbles),
+                "Bubble settings",
+            ),
+            (MenuCommand::OpenDockTab(DockTab::Session), "Session"),
+            (MenuCommand::OpenDockTab(DockTab::Trading), "Paper trading"),
+            (MenuCommand::OpenDockTab(DockTab::Trades), "Trades"),
         ] {
             if ui.button(label).clicked() {
-                commands.push(MenuCommand::OpenDockTab(tab));
+                commands.push(command);
                 ui.close_menu();
             }
         }

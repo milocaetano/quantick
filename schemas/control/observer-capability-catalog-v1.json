@@ -14514,6 +14514,320 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Closes the panel attached to the tab's flow pane, and the chart takes back its width. Presentation only.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.settings.close",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "SettingsCloseInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The panel after a call, whichever one it was.",
+        "properties": {
+          "asset": {
+            "description": "The asset whose sections these are.",
+            "type": "string"
+          },
+          "bubbles_open": {
+            "type": "boolean"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "l2_open": {
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "asset",
+          "open",
+          "l2_open",
+          "bubbles_open",
+          "changed"
+        ],
+        "title": "SettingsResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the scene's settings control report the state.",
+      "title": "Close the order-flow settings panel",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Opens the panel attached to the tab's flow pane, holding the L2 and Bubbles settings. With a section (l2 or bubbles) it also expands that section and scrolls to it. Refused on a tab not showing its flow pane. Presentation only: looking is not enabling, so no layer switches.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.settings.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "SettingsSection": {
+            "description": "A section of the panel, as a call names it.",
+            "enum": [
+              "l2",
+              "bubbles"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "section": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SettingsSection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Expand this section and scroll it into view."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "SettingsOpenInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The panel after a call, whichever one it was.",
+        "properties": {
+          "asset": {
+            "description": "The asset whose sections these are.",
+            "type": "string"
+          },
+          "bubbles_open": {
+            "type": "boolean"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "l2_open": {
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "asset",
+          "open",
+          "l2_open",
+          "bubbles_open",
+          "changed"
+        ],
+        "title": "SettingsResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the scene's settings controls report the state.",
+      "title": "Open the order-flow settings panel",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Folds or opens the L2 or the Bubbles section for the asset the tab shows; every tab on that asset reads the same. Whether or not the panel is open. Presentation only.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.settings.section.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "SettingsSection": {
+            "description": "A section of the panel, as a call names it.",
+            "enum": [
+              "l2",
+              "bubbles"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "open": {
+            "type": "boolean"
+          },
+          "section": {
+            "$ref": "#/$defs/SettingsSection"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "section",
+          "open"
+        ],
+        "title": "SettingsSectionInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The panel after a call, whichever one it was.",
+        "properties": {
+          "asset": {
+            "description": "The asset whose sections these are.",
+            "type": "string"
+          },
+          "bubbles_open": {
+            "type": "boolean"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "l2_open": {
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "asset",
+          "open",
+          "l2_open",
+          "bubbles_open",
+          "changed"
+        ],
+        "title": "SettingsResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stable tab ID selects the asset; repeating a value has no further effect, and the result and, while the panel is open, the scene's section control report it.",
+      "title": "Fold or open a section of the order-flow settings panel",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Folds one side of a pane that shows the tape beside its candles to a thin rail, as dragging the divider to that edge does: candles leaves the tape the whole pane, tape leaves the candles it. Open unfolds at the width share the tape had before the fold, which folding never changes. Presentation only: executions, grouping and the tape's own switches (tape on, tape only) are untouched, and tape only wins over a fold while it is on. One of the asset's bubble settings (orderflow.bubbles names it), saved for it while its save switch is on.",
       "destructive": false,
       "dry_run_supported": false,

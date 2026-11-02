@@ -63,6 +63,7 @@ use quantick_control::{
 
 use eframe::egui;
 use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment};
+use quantick_control_schema::orderflow_settings as settings;
 
 use crate::{
     dock::DockTab,
@@ -357,6 +358,7 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
 ) {
     let capabilities = tab.capabilities(app.tab_reads().config());
     let style = app.chrome_reads().style();
+    let folds = app.tab_reads().tabs().panel_folds();
     for (pane, _) in tab.panes() {
         for &(control, rect) in &pane.frame.header_controls {
             let (label, role, selected, blocked, capability) = match control {
@@ -391,6 +393,9 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                     None,
                     quantick_control_schema::bubble_scale::BUBBLE_SCALE_CAPABILITY_ID,
                 ),
+                HeaderControl::Settings(control) => {
+                    settings::scene_row(control, &tab.tape().settings_panel, folds, &tab.symbol)
+                }
             };
             let bounds = rect_bounds(rect);
             controls.push(SceneControlSnapshot {

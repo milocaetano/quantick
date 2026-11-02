@@ -10,6 +10,7 @@ use quantick_engine::bar_registry::BarConfiguration;
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{DEFAULT_BUBBLE_DISPLAY_SCALE, LaneSide, LaneView};
 use quantick_orderflow::{MAX_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_DISPLAY_SCALE};
+use quantick_workspace::orderflow_panel::{OrderFlowPanel, PanelControl, PanelSection};
 
 /// The icon of the button on a header line that opens the indicators of that
 /// pane.
@@ -143,6 +144,8 @@ pub enum HeaderControl {
     Side(LaneSide),
     Layer(LayerToggle),
     Sample(BubbleSample),
+    /// The gear at the line's right end, or a control of the panel it opens.
+    Settings(PanelControl),
 }
 
 impl HeaderControl {
@@ -156,6 +159,7 @@ impl HeaderControl {
             Self::Layer(toggle) => format!("layer.{}", toggle.layer().id()),
             Self::Sample(BubbleSample::Candle) => "sample.candle".to_owned(),
             Self::Sample(BubbleSample::Tape) => "sample.tape".to_owned(),
+            Self::Settings(control) => control.id_in_header(),
         }
     }
 }
@@ -168,6 +172,8 @@ pub enum HeaderIntent {
     OpenLayerSettings(LayerToggle),
     SetView(LaneView),
     SetSample(BubbleSample, f32),
+    /// The gear's left click: the panel opens or closes.
+    ToggleSettings,
 }
 
 /// One layer glyph this frame: drawn or not, and what blocks it if anything. A
@@ -472,13 +478,54 @@ pub struct HeaderFit {
 }
 
 /// Width of the header's right end at its barest: the two segments in their
-/// frame without their words, the hairline and the strip glyph.
+/// frame without their words, the hairline, the strip glyph and the gear.
 pub const FLOW_CONTROLS_PX: f32 = 2.0 * SEGMENT_BARE_PX
     + SEGMENT_GAP_PX
     + 2.0 * SEGMENT_FRAME_PAD_PX
     + 2.0 * HAIRLINE_GAP_PX
     + 1.0
+    + GLYPH_SLOT_PX
+    + GROUP_GAP_PX
     + GLYPH_SLOT_PX;
+
+/// The layer glyph a section of the panel configures, for the gear's menu: the
+/// right click that opens that section from a capsule's glyph.
+#[must_use]
+pub const fn section_layer(section: PanelSection) -> LayerToggle {
+    match section {
+        PanelSection::L2 => LayerToggle::Heatmap,
+        PanelSection::Bubbles => LayerToggle::Bubbles,
+    }
+}
+
+/// What the flow pane's gear and capsules asked its panel for: looking is not
+/// enabling, so no layer moves.
+pub fn settings_actions(panel: &mut OrderFlowPanel, actions: &quantick_layers::LayerActions) {
+    if actions.toggle_settings {
+        panel.toggle();
+    }
+    if let Some(layer) = actions.open_layer_tab {
+        panel.open_on(Some(layer_section(layer)));
+    }
+}
+
+/// A status label's first words, for a section's header: `book live`, with no
+/// generation or reason.
+#[must_use]
+pub fn book_headline(status: &quantick_orderflow::engine::CaptureStatus) -> String {
+    let label = status.label();
+    label.split(" · ").next().unwrap_or_default().to_owned()
+}
+
+/// The panel section that configures a layer. The strip reads the same book the
+/// depth map draws, so one section configures both.
+#[must_use]
+pub fn layer_section(layer: ChartLayer) -> PanelSection {
+    match layer {
+        ChartLayer::Bubbles | ChartLayer::TapeBubbles => PanelSection::Bubbles,
+        _ => PanelSection::L2,
+    }
+}
 /// The gap the mark leaves before the bars.
 const MARK_GAP_PX: f32 = GROUP_GAP_PX;
 
@@ -1112,7 +1159,10 @@ mod tests {
         assert_eq!(segment_px(None), 29.0);
         assert_eq!(segment_px(Some(30.0)), 72.0);
         assert_eq!(side_words_px([30.0, 40.0]), 43.0 + 53.0);
-        assert_eq!(FLOW_CONTROLS_PX, 58.0 + 2.0 + 6.0 + 17.0 + 20.0);
+        assert_eq!(
+            FLOW_CONTROLS_PX,
+            58.0 + 2.0 + 6.0 + 17.0 + 20.0 + 8.0 + 20.0
+        );
     }
 
     fn glyph(toggle: LayerToggle, on: bool, blocked: Option<LayerBlock>) -> LayerGlyph {

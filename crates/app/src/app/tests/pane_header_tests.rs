@@ -3,11 +3,16 @@
 
 use super::candle_aggression::context_fixture;
 use super::*;
-use crate::dock::DockTab;
 use crate::state::BarSpec;
+use crate::ui_state::PanelSection;
 use quantick_chart::pane_header::{BubbleSample, HeaderControl, LayerToggle};
+use quantick_control_schema::orderflow_settings::{
+    CLOSE_CAPABILITY_ID, OPEN_CAPABILITY_ID, SECTION_CAPABILITY_ID,
+};
 use quantick_engine::bar_selection::{BarInputAvailability, SelectionCommand};
 use quantick_orderflow::{LaneFold, LaneSide, LaneView};
+use quantick_workspace::orderflow_panel::{PANEL_MAX_WIDTH_PX, PANEL_MIN_WIDTH_PX, PanelControl};
+use serde_json::json;
 
 /// Where the bars control of the pane at `side` landed last frame.
 fn control_of(app: &QuantickApp, ctx: &egui::Context, side: PaneSide) -> egui::Rect {
@@ -497,19 +502,30 @@ fn a_right_click_opens_a_layers_settings_and_switches_nothing() {
         pressed,
         modifiers: egui::Modifiers::default(),
     };
-    for (toggle, tab) in [
-        (LayerToggle::Bubbles, DockTab::Bubbles),
-        (LayerToggle::Heatmap, DockTab::L2),
-        (LayerToggle::LiveStrip, DockTab::L2),
+    for (toggle, section) in [
+        (LayerToggle::Bubbles, PanelSection::Bubbles),
+        (LayerToggle::Heatmap, PanelSection::L2),
+        (LayerToggle::LiveStrip, PanelSection::L2),
     ] {
+        let symbol = app.active_tab().symbol.clone();
+        app.runtime
+            .tabs
+            .with_panel_folds(0)
+            .expect("the tab")
+            .1
+            .set(&symbol, section, false);
         let before = on(&app, toggle.layer());
         let at = flow_control(&app, HeaderControl::Layer(toggle)).center();
         run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
         run_frame_with_events(&mut app, &ctx, vec![secondary(at, true)]);
         run_frame_with_events(&mut app, &ctx, vec![secondary(at, false)]);
         run_frame(&mut app, &ctx);
-        assert!(app.dock.visible(), "{toggle:?}");
-        assert_eq!(app.dock.tab(), Some(tab), "{toggle:?}");
+        assert!(
+            app.active_tab().tape().settings_panel.is_open(),
+            "{toggle:?}"
+        );
+        let folds = app.runtime.tabs.panel_folds();
+        assert!(folds.section_open(&symbol, section), "{toggle:?} expands");
         assert_eq!(on(&app, toggle.layer()), before, "looking is not enabling");
     }
 }
@@ -1503,6 +1519,7 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
                         chip: None,
                         slot: None,
                         rebuilding: false,
+                        settings_open: false,
                     };
                     (_, clicked) = crate::pane_header::draw_marked(
                         ui,
@@ -1587,4 +1604,280 @@ fn a_click_outside_the_library_hands_the_app_back() {
         app.surfaces.indicator_picker.state.target.is_some(),
         "the header answers again once the library is gone"
     );
+}
+
+const GEAR: HeaderControl = HeaderControl::Settings(PanelControl::Gear);
+const PANEL_CLOSE: HeaderControl = HeaderControl::Settings(PanelControl::Close);
+
+fn section_control(section: PanelSection) -> HeaderControl {
+    HeaderControl::Settings(PanelControl::Section(section))
+}
+
+fn panel_open(app: &QuantickApp) -> bool {
+    app.active_tab().tape().settings_panel.is_open()
+}
+
+fn scene_selected(app: &QuantickApp, control: HeaderControl) -> Option<bool> {
+    let id = format!(
+        "pane.{}.header.{}",
+        app.active_tab().flow_pane.id,
+        control.id_in_header()
+    );
+    crate::control::scene_snapshot(app)
+        .controls
+        .iter()
+        .find(|entry| entry.control_id == id)
+        .map(|entry| entry.selected)
+}
+
+fn settings_call(
+    app: &mut QuantickApp,
+    capability: &str,
+    fields: serde_json::Value,
+) -> Result<serde_json::Value, quantick_control::error::ControlError> {
+    let mut input = json!({ "tab_id": app.runtime.tabs.active_id().to_string() });
+    input
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    app.control_action(capability, 1, crate::control::ActionOrigin::Human, input)
+}
+
+/// The gear opens the panel beside the price axis and the chart pays for it, with
+/// the header line untouched; a second click and the × give the width back.
+#[test]
+fn the_gear_opens_a_panel_the_chart_shrinks_for_and_closes_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let wide = app.active_tab().flow_pane.frame.area.expect("flow chart");
+    let gear = flow_control(&app, GEAR);
+    assert_eq!(scene_selected(&app, GEAR), Some(false));
+
+    click_chart(&mut app, &ctx, gear.center());
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(panel_open(&app));
+    let narrow = app.active_tab().flow_pane.frame.area.expect("flow chart");
+    let width = wide.width() - narrow.width();
+    assert!(
+        (PANEL_MIN_WIDTH_PX..=PANEL_MAX_WIDTH_PX).contains(&width),
+        "the chart gave up the panel's width, not {width}"
+    );
+    assert_eq!(narrow.left(), wide.left());
+    assert_eq!(
+        narrow.y_range(),
+        wide.y_range(),
+        "the panel sits below the header"
+    );
+    assert_eq!(flow_control(&app, GEAR), gear, "the gear stays on its line");
+    assert_eq!(scene_selected(&app, GEAR), Some(true));
+    let texts = painted_text(&run_frame(&mut app, &ctx));
+    assert!(
+        texts.iter().any(|text| text.starts_with("ORDER FLOW · ")),
+        "{texts:?}"
+    );
+
+    click_chart(&mut app, &ctx, gear.center());
+    run_frame(&mut app, &ctx);
+    assert!(!panel_open(&app));
+    assert_eq!(app.active_tab().flow_pane.frame.area, Some(wide));
+    assert_eq!(
+        scene_selected(&app, section_control(PanelSection::L2)),
+        None
+    );
+
+    click_chart(&mut app, &ctx, gear.center());
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let close = flow_control(&app, PANEL_CLOSE);
+    click_chart(&mut app, &ctx, close.center());
+    run_frame(&mut app, &ctx);
+    assert!(!panel_open(&app), "the × closes it");
+}
+
+/// Ctrl+Shift+O is the gear's left click.
+#[test]
+fn the_panel_key_opens_and_closes_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let keys = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+    press_key(&mut app, &ctx, egui::Key::O, keys);
+    assert!(panel_open(&app));
+    press_key(&mut app, &ctx, egui::Key::O, keys);
+    assert!(!panel_open(&app));
+}
+
+/// A right click on the gear offers the two sections; its entries ask what a
+/// capsule's glyph asks.
+#[test]
+fn the_gears_right_click_offers_the_two_sections() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let at = flow_control(&app, GEAR).center();
+    let secondary = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::default(),
+    };
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+    run_frame_with_events(&mut app, &ctx, vec![secondary(true)]);
+    run_frame_with_events(&mut app, &ctx, vec![secondary(false)]);
+    let texts = painted_text(&run_frame(&mut app, &ctx));
+    for section in PanelSection::ALL {
+        assert!(
+            texts.iter().any(|text| text == section.title()),
+            "{texts:?}"
+        );
+    }
+    assert!(!panel_open(&app), "the menu opens nothing by itself");
+}
+
+/// The panel's whole state by name, read back in the scene; a click on a header
+/// folds the same state.
+#[test]
+fn the_panel_is_operated_by_name_and_read_back_in_the_scene() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let l2 = section_control(PanelSection::L2);
+    let bubbles = section_control(PanelSection::Bubbles);
+    let on_l2 = json!({ "section": "l2" });
+
+    let open = settings_call(&mut app, OPEN_CAPABILITY_ID, on_l2.clone()).unwrap();
+    assert_eq!(open["open"], true);
+    assert_eq!(open["changed"], true);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert_eq!(scene_selected(&app, GEAR), Some(true));
+    assert_eq!(scene_selected(&app, l2), Some(true));
+    let repeat = settings_call(&mut app, OPEN_CAPABILITY_ID, on_l2).unwrap();
+    assert_eq!(repeat["changed"], false);
+
+    let fold = json!({ "section": "l2", "open": false });
+    let folded = settings_call(&mut app, SECTION_CAPABILITY_ID, fold).unwrap();
+    assert_eq!(folded["l2_open"], false);
+    run_frame(&mut app, &ctx);
+    assert_eq!(scene_selected(&app, l2), Some(false));
+
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        scene_selected(&app, bubbles),
+        Some(true),
+        "with L2 folded the next header rises into view"
+    );
+    let header = flow_control(&app, l2);
+    click_chart(&mut app, &ctx, header.left_center() + egui::vec2(20.0, 0.0));
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        scene_selected(&app, l2),
+        Some(true),
+        "the click folds the same state"
+    );
+
+    let bad = settings_call(
+        &mut app,
+        OPEN_CAPABILITY_ID,
+        json!({ "section": "session" }),
+    );
+    assert!(bad.is_err(), "only l2 or bubbles");
+
+    let shut = settings_call(&mut app, CLOSE_CAPABILITY_ID, json!({})).unwrap();
+    assert_eq!(shut["open"], false);
+    run_frame(&mut app, &ctx);
+    assert_eq!(scene_selected(&app, GEAR), Some(false));
+}
+
+/// A fold is the asset's, on every tab showing it, and nothing the next asset
+/// reads; whether the panel is open is the tab's.
+#[test]
+fn a_fold_follows_the_asset_and_open_follows_the_tab() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let symbol = app.active_tab().symbol.clone();
+    settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
+    let fold = json!({ "section": "bubbles", "open": false });
+    settings_call(&mut app, SECTION_CAPABILITY_ID, fold).unwrap();
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), symbol.clone(), None);
+    assert!(!panel_open(&app), "a new tab has its own panel");
+    let same = settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
+    assert_eq!(same["bubbles_open"], false, "the same asset reads the same");
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+    let other = settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
+    assert_eq!(other["bubbles_open"], true, "another asset is untouched");
+}
+
+/// A tab not showing its flow pane has no gear, and a call says so.
+#[test]
+fn a_tab_without_its_flow_pane_has_no_gear_and_refuses_the_call() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    app.active_tab_mut().set_flow_collapsed(true);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert_eq!(scene_selected(&app, GEAR), None);
+    assert!(settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).is_err());
+    let keys = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+    press_key(&mut app, &ctx, egui::Key::O, keys);
+    assert!(!panel_open(&app), "nor does the key open what cannot show");
+}
+
+/// An old workspace that left the L2 dock tab open opens the panel on L2, on the
+/// tab it was active on, and leaves the dock collapsed; saving says so the new way.
+#[test]
+fn an_old_l2_or_bubbles_dock_tab_restores_to_the_panel() {
+    for (old, section) in [
+        (ui_state::SavedDockTab::L2, PanelSection::L2),
+        (ui_state::SavedDockTab::Bubbles, PanelSection::Bubbles),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _ends) = flow_fixture(&ctx);
+        let (mut tabs, mut chrome) = app.arrangement_state().capture_arrangement();
+        chrome.dock_tab = Some(old);
+        let symbol = tabs[0].symbol.clone();
+        chrome.orderflow_folds.set(&symbol, section, false);
+        tabs[0].orderflow_panel = Default::default();
+        app.arrangement_adapter()
+            .restore_workspace(ui_state::Workspace::new(true, None, 0, tabs, Some(chrome)));
+        assert!(panel_open(&app), "{old:?}");
+        assert_eq!(app.dock.tab(), None, "{old:?} is no dock tab any more");
+        // The scroll to the section is animated; a header out of view is not listed.
+        for _ in 0..60 {
+            run_frame(&mut app, &ctx);
+        }
+        assert_eq!(
+            scene_selected(&app, section_control(section)),
+            Some(true),
+            "{old:?} opens expanded on its section"
+        );
+        let (saved, chrome) = app.arrangement_state().capture_arrangement();
+        assert_eq!(chrome.dock_tab, None);
+        assert!(saved[0].orderflow_panel.is_open(), "written the new way");
+    }
+}
+
+/// Open and folded survive a save and a restore.
+#[test]
+fn the_panel_survives_a_save_and_a_restore() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    settings_call(&mut app, OPEN_CAPABILITY_ID, json!({})).unwrap();
+    let fold = |open| json!({ "section": "l2", "open": open });
+    settings_call(&mut app, SECTION_CAPABILITY_ID, fold(false)).unwrap();
+    let (tabs, chrome) = app.arrangement_state().capture_arrangement();
+    let symbol = tabs[0].symbol.clone();
+    assert!(
+        !chrome
+            .orderflow_folds
+            .section_open(&symbol, PanelSection::L2)
+    );
+
+    settings_call(&mut app, CLOSE_CAPABILITY_ID, json!({})).unwrap();
+    settings_call(&mut app, SECTION_CAPABILITY_ID, fold(true)).unwrap();
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(true, None, 0, tabs, Some(chrome)));
+    assert!(panel_open(&app));
+    let folds = app.runtime.tabs.panel_folds();
+    assert!(!folds.section_open(&symbol, PanelSection::L2));
 }

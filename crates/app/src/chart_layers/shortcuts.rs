@@ -18,6 +18,13 @@ pub(crate) const TRAIL_VIEW_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardSho
     egui::Key::R,
 );
 
+/// Opens and closes the order-flow panel of a tab showing its flow pane. Read
+/// before any `Ctrl+O` could match it too.
+pub(crate) const ORDERFLOW_SETTINGS_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
+    egui::Key::O,
+);
+
 /// Consumes both view keys; answers the move a fresh press of one asks for.
 pub(crate) fn take_view_key(ctx: &egui::Context) -> Option<fn(LaneView) -> LaneView> {
     let tape = take_view_press(ctx, TAPE_VIEW_SHORTCUT);
@@ -37,10 +44,10 @@ pub(crate) fn side_shortcut(side: quantick_orderflow::LaneSide) -> egui::Keyboar
     }
 }
 
-/// Consumes a view key however it is held; answers whether it asks for a
+/// Consumes a panel key however it is held; answers whether it asks for a
 /// change: only a fresh press outside a text field, as a held key's repeats
 /// would strobe the views.
-fn take_view_press(ctx: &egui::Context, shortcut: egui::KeyboardShortcut) -> bool {
+pub(crate) fn take_view_press(ctx: &egui::Context, shortcut: egui::KeyboardShortcut) -> bool {
     let fresh = ctx.input_mut(|input| {
         let fresh = input.events.iter().any(|event| {
             matches!(event, egui::Event::Key {

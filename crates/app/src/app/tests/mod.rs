@@ -1126,6 +1126,7 @@ fn chrome_with_popup_at(position: Option<[f32; 2]>) -> ui_state::SavedChrome {
         venue_lead_in: false,
         record_deals: None,
         inspector_position: position,
+        orderflow_folds: Default::default(),
     }
 }
 

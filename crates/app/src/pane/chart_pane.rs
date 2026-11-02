@@ -1215,6 +1215,7 @@ impl ChartPane {
             HeaderIntent::OpenLayerSettings(toggle) => {
                 actions.open_layer_tab = Some(toggle.layer());
             }
+            HeaderIntent::ToggleSettings => actions.toggle_settings = true,
             HeaderIntent::SetView(view) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_lane_view(view);
