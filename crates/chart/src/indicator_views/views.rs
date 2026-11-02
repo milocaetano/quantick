@@ -21,6 +21,9 @@ pub struct IndicatorViews {
     /// constructor, so the add path parks the kind here and the view takes it
     /// on birth.
     pending_kinds: std::collections::BTreeMap<SlotId, Arc<str>>,
+    /// A rebuild already answered the rows being out of step, so a script that
+    /// cannot reach `bars` is not rebuilt once a frame for ever.
+    row_drift_answered: bool,
 }
 
 impl IndicatorViews {
@@ -232,6 +235,29 @@ impl IndicatorViews {
             return Some(paint);
         }
         rows.rev().find_map(|row| self.bar_paint(row))
+    }
+
+    /// The rows of the first healthy view that disagrees with the chart's `bars`,
+    /// unless a rebuild has already answered this disagreement.
+    ///
+    /// A paint or a plot value is looked up by bar number, so rows cut under
+    /// another rule land on candles they were never measured on. Only meaningful
+    /// against a settled worker: mid-flight the views are honestly behind.
+    pub fn row_drift(&mut self, bars: usize) -> Option<usize> {
+        let drift = self
+            .views
+            .iter()
+            .find(|view| view.error.is_none() && view.rows != bars)
+            .map(|view| view.rows);
+        if drift.is_none() {
+            self.row_drift_answered = false;
+        }
+        drift.filter(|_| !self.row_drift_answered)
+    }
+
+    /// A rebuild is on its way for the disagreement [`Self::row_drift`] reported.
+    pub fn answer_row_drift(&mut self) {
+        self.row_drift_answered = true;
     }
 
     /// Drop a slot UI-side (the worker gets the Remove command separately).

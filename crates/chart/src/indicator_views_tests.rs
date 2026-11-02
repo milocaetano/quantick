@@ -360,3 +360,34 @@ fn a_pane_never_asks_for_less_than_the_readable_floor() {
     assert!((PaneSizing::Manual(5.0).desired(1000.0) - MIN_PANE_HEIGHT_PX).abs() < 0.01);
     assert!((PaneSizing::Collapsed.desired(1000.0) - COLLAPSED_PANE_HEIGHT_PX).abs() < 0.01);
 }
+
+#[test]
+fn a_row_drift_is_reported_until_answered_and_again_after_it_settles() {
+    let mut views = IndicatorViews::new();
+    let slot = views.allocate_slot("test");
+    views.apply(rebuilt(slot, descriptor(false, 1), vec![vec![1.0, 2.0]]));
+
+    assert_eq!(views.row_drift(2), None, "in step");
+    assert_eq!(views.row_drift(5), Some(2), "cut under another rule");
+    views.answer_row_drift();
+    assert_eq!(views.row_drift(5), None, "one rebuild per disagreement");
+    assert_eq!(views.row_drift(2), None, "settled");
+    assert_eq!(
+        views.row_drift(5),
+        Some(2),
+        "a new disagreement speaks again"
+    );
+
+    views.apply(IndicatorEvent::Error {
+        slot,
+        error: quantick_indicators::EvalError {
+            bar_index: 0,
+            message: "boom".to_owned(),
+        },
+    });
+    assert_eq!(
+        views.row_drift(5),
+        None,
+        "a failed script stops short honestly"
+    );
+}

@@ -1301,9 +1301,10 @@ impl Tab {
 /// What carrying out one session act did to the tab.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SessionRun {
-    /// Whether a pane's prefix changed. An installed prefix rebuilds the
-    /// indicators, so a caller can skip sending a second rebuild.
-    pub changed: bool,
+    /// One bit per pane address whose prefix changed. An installed prefix
+    /// rebuilds that pane's indicators, and only that pane's: a caller may skip
+    /// a second rebuild of a pane it finds here, never of the pane beside it.
+    pub rebuilt_panes: u32,
     /// Whether a request reached the feed.
     pub sent: bool,
     /// Why the act changed nothing, when it did not.
@@ -1374,7 +1375,11 @@ impl Tab {
                     lead,
                     covers_seam,
                     seam,
-                } => run.changed |= self.install_prefix(pane, bars, lead, covers_seam, seam),
+                } => {
+                    if self.install_prefix(pane, bars, lead, covers_seam, seam) {
+                        run.rebuilt_panes |= 1 << pane;
+                    }
+                }
                 Effect::HoldPages(held) => {
                     self.panes_mut().for_each(|pane| pane.hold_history(held))
                 }
@@ -1473,10 +1478,9 @@ impl Tab {
         }
     }
 
-    /// Rebuild every pane's prefix from the candles held; reports whether
-    /// one changed.
-    pub(crate) fn refold_history_prefix(&mut self) -> bool {
-        self.run_session(None, Act::Refold).changed
+    /// Rebuild every pane's prefix from the candles held; reports which changed.
+    pub(crate) fn refold_history_prefix(&mut self) -> SessionRun {
+        self.run_session(None, Act::Refold)
     }
 
     /// The main click: load back to this tab's last target (yesterday until

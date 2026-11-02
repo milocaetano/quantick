@@ -63,6 +63,7 @@ mod live_trade_tests;
 mod menu_bar_tests;
 mod objects_menu_tests;
 mod orderflow_tests;
+mod indicator_recut_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
 mod profile_grid_tests;
