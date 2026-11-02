@@ -26,6 +26,7 @@ impl HiddenRootPump {
                     raw_window_handle::RawWindowHandle::Win32(handle) => handle.hwnd.get(),
                     _ => 0,
                 });
+            super::dpi::attach_root(self.hwnd);
         }
     }
 

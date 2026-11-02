@@ -7,6 +7,8 @@ use quantick_workspace::arrangement::{
 };
 use std::{collections::BTreeMap, time::Instant};
 mod control;
+#[cfg(windows)]
+mod dpi;
 mod exposed;
 mod pump;
 
@@ -176,6 +178,8 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
 }
 
 pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId, now: Instant) {
+    #[cfg(windows)]
+    dpi::attach_child(window);
     if ctx.input(|input| input.viewport().close_requested()) {
         match app
             .runtime
