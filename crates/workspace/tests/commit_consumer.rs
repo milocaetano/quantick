@@ -52,7 +52,13 @@ fn a_second_host_preserves_standing_edits_and_operation_specific_admission() {
     session.note_write(WritePurpose::ReplayPreference, true);
     session.note_write(WritePurpose::Full, false);
     assert!(session.saved());
+    assert!(
+        session.reset_keeps(false, false),
+        "a reopen choice off is a standing choice the file must keep"
+    );
+    session.set_save_on_exit(true);
     assert!(!session.reset_keeps(false, false));
+    session.set_save_on_exit(false);
     session.finish_reset(false, true);
     assert!(!session.saved());
 }
