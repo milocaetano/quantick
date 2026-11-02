@@ -1,0 +1,13 @@
+version = 1
+active = 2
+next_id = 3
+
+[[layouts]]
+id = 1
+name = "Fluxo"
+indicators = []
+
+[[layouts]]
+id = 2
+name = "Force Bar Only"
+indicators = []
