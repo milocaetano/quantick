@@ -177,10 +177,9 @@ fn row_control(
             if switch(ui, &mut on, can_flip, row)
                 .on_hover_text(hover)
                 .changed()
+                && let Some(access) = app.control.control_access.as_mut()
             {
-                if let Some(access) = app.control.control_access.as_mut() {
-                    access.set_switch(ui.ctx(), on);
-                }
+                access.set_switch(ui.ctx(), on);
             }
         }
         SettingRow::ManageClients => {
