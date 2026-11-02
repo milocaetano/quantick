@@ -497,22 +497,6 @@ fn a_glyph_the_data_blocks_is_not_painted_and_returns_with_the_data() {
     }
 }
 
-/// The book's status label stands below the capsule at the chart's right end.
-#[test]
-fn the_status_label_stands_below_the_tape_capsule() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    run_frame(&mut app, &ctx);
-    let flow = &app.active_tab().flow_pane;
-    let chart = flow.frame.chart_rect.expect("flow chart");
-    let floor = flow.frame.capsules[1].expect("the tape capsule").bottom();
-    let tape_bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
-    assert!(floor >= tape_bubbles.bottom(), "the capsule's own bottom");
-    assert_eq!(flow.status_rect(chart).top(), floor);
-    let time = &app.active_tab().pane(PaneSide::Time(0)).frame;
-    assert!(time.capsules[0].is_some(), "a time pane has one too");
-}
-
 /// A press on a capsule is the capsule's. An armed drawing tool places no anchor
 /// under it, a right drag starts no ruler, and neither moves focus.
 #[test]
@@ -1328,6 +1312,9 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
                     let row = crate::pane_header::FlowRow {
                         strip: None,
                         state: None,
+                        chip: None,
+                        slot: None,
+                        rebuilding: false,
                     };
                     (_, clicked) = crate::pane_header::draw_marked(
                         ui,

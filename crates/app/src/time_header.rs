@@ -88,13 +88,15 @@ impl HeaderLayout {
 /// `bars` paints the pane's bars control at the head of the row; `presets` says
 /// whether the timeframe controls follow it. The indicators button follows those,
 /// and its room is what a narrow strip takes from the presets, never from it.
-/// Nothing stands at the right end: a time pane's layer lives in its capsule.
+/// `reserve_px` keeps the right end free the same way, for the job slot of a
+/// layout with no flow pane; a time pane's layer lives in its capsule.
 pub fn draw(
     ui: &mut egui::Ui,
     strip: egui::Rect,
     interval_ms: &mut i64,
     salt: u64,
     presets: bool,
+    reserve_px: f32,
     bars: impl FnOnce(&mut egui::Ui),
 ) -> HeaderLayout {
     let mut changed = false;
@@ -111,7 +113,7 @@ pub fn draw(
             .max_rect(inner)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    let limit = (inner.right() - indicators_px).max(strip.left());
+    let limit = (inner.right() - indicators_px - reserve_px).max(strip.left());
     content.set_clip_rect(strip.with_max_x(limit).intersect(ui.clip_rect()));
     bars(&mut content);
     let interval_rect = if presets {
@@ -142,7 +144,7 @@ pub fn draw(
         // A month is a calendar unit, not a duration: dragging its nominal
         // millisecond size would walk into values no chart accepts, and its
         // chip already names it, so nothing stands beside it.
-        let fits = content.available_width() >= indicators_px + MIN_INTERVAL_FIELD_PX;
+        let fits = content.available_width() >= indicators_px + reserve_px + MIN_INTERVAL_FIELD_PX;
         let interval = (fits
             && quantick_engine::time_bucket::calendar_months(*interval_ms).is_none())
         .then(|| {
@@ -241,7 +243,7 @@ mod tests {
         let _ = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 strip = egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(160.0, HEIGHT_PX));
-                let header = draw(ui, strip, &mut interval_ms, 0, true, |_| {});
+                let header = draw(ui, strip, &mut interval_ms, 0, true, 0.0, |_| {});
                 assert_eq!(
                     header.interval(),
                     egui::Rect::NOTHING,
@@ -312,7 +314,7 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let strip =
                         egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(600.0, HEIGHT_PX));
-                    changed = Some(draw(ui, strip, &mut interval_ms, 0, true, |_| {}).changed);
+                    changed = Some(draw(ui, strip, &mut interval_ms, 0, true, 0.0, |_| {}).changed);
                 });
             });
         }

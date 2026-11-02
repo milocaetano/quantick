@@ -398,9 +398,8 @@ pub struct HeatmapConfig {
     pub liquidity_correlation_ms: i64,
     /// Whether the renderer should show its visual legend.
     pub show_legend: bool,
-    /// Whether the book's status badge is drawn in the canvas's top-right
-    /// corner. Chrome about the capture, not about the market: switching it
-    /// off silences the label and changes nothing about the recording.
+    /// Retired with the book's badge: nothing reads it. Kept so a stored asset
+    /// written while it was a setting still parses.
     pub show_status_badge: bool,
     /// Renderer palette.
     pub theme: HeatmapTheme,

@@ -402,15 +402,5 @@ impl ChartPane {
                     tz: chrome.tz,
                 });
         }
-        // The status badge is not a layer: it reports whether the source is
-        // healthy, and a chart with every layer off must still say that.
-        if let Some(orderflow) = self.orderflow.as_ref() {
-            self.layer_renderers
-                .status(&mut super::render_registry::StatusPass {
-                    owner: orderflow,
-                    painter,
-                    rect: self.status_rect(chart_rect),
-                });
-        }
     }
 }

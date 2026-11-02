@@ -145,6 +145,7 @@ fn tape_only_reserves_no_forming_candle_volume_profile_strip() {
 
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
     let capabilities = crate::config::FeedCapabilities {
+        transport: true,
         traded_volume: true,
         ..crate::config::FeedCapabilities::none()
     };

@@ -550,7 +550,6 @@ fn with_flow_pane<R>(
         style,
         tz: *tz,
         feed_gaps: &[],
-        symbol: &tab.symbol,
         paper: &mut tab.paper,
         paper_takes_input: true,
         paper_hud_here: true,
@@ -1656,6 +1655,7 @@ fn app_backfilled_with(
             book_events: book_rx,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(FeedCapabilities {
+                transport: true,
                 book_capture: false,
                 history_paging: true,
                 history_boundary: None,

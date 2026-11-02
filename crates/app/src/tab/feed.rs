@@ -775,40 +775,33 @@ impl Tab {
                 FeedNotice::Working { .. } | FeedNotice::Attention { .. } => notice,
                 FeedNotice::Clear => FeedNotice::Clear,
             };
-            // Stamped only on a *change*. A supervisor repeating the same line
-            // every few seconds would otherwise keep resetting the very budget
-            // it is supposed to run out of, and the chart would sit on
-            // "connecting" for as long as the retry loop lived — which is the
-            // failure this clock exists to end.
-            if next != self.notice {
-                self.notice = next;
-                self.notice_since_ms = now_ms;
-            }
+            self.notice = next;
         }
     }
 
-    /// Where a feed's trouble is actually visible: the painted pane with the
-    /// least on it, and how many bar slots that pane holds.
-    ///
-    /// One tab is one feed, so its notice is tab-scoped information — but its
-    /// *consequence* never is. A MetaTrader tab whose time panes are full of
-    /// the terminal's candle history and whose flow pane has not seen one tick
-    /// is starved in exactly one place, and the card explaining it was being
-    /// centred across all three. The trader read a sentence attached to
-    /// nothing, floating over two charts with nothing wrong with them.
-    ///
-    /// Fewest slots wins; the larger pane breaks a tie, so an all-empty canvas
-    /// puts the card on the biggest chart — which is where it landed before
-    /// this existed, and why a single-pane tab looks unchanged.
+    /// The one rect the connection overlay covers: every pane with no bars, and
+    /// only those, so a time pane standing on venue candles stays visible. When
+    /// the empty panes are not neighbours their union would cross a chart that
+    /// has bars, and the largest of them is what the overlay takes instead.
     #[must_use]
-    pub fn starved_pane(&self) -> Option<(egui::Rect, usize)> {
-        self.panes()
-            .filter_map(|(pane, _)| pane.frame.area.map(|area| (area, pane.slots())))
-            .min_by(|(left_area, left_slots), (right_area, right_slots)| {
-                left_slots
-                    .cmp(right_slots)
-                    .then_with(|| right_area.area().total_cmp(&left_area.area()))
+    pub fn empty_panes_rect(&self) -> Option<egui::Rect> {
+        let mut union: Option<egui::Rect> = None;
+        let mut largest: Option<egui::Rect> = None;
+        for (pane, _) in self.panes() {
+            let Some(rect) = pane.frame.area.filter(|_| pane.slots() == 0) else {
+                continue;
+            };
+            union = Some(union.map_or(rect, |so_far| so_far.union(rect)));
+            if largest.is_none_or(|so_far| rect.area() > so_far.area()) {
+                largest = Some(rect);
+            }
+        }
+        let crosses_a_chart = union.is_some_and(|whole| {
+            self.panes().any(|(pane, _)| {
+                pane.slots() > 0 && pane.frame.area.is_some_and(|rect| rect.intersects(whole))
             })
+        });
+        if crosses_a_chart { largest } else { union }
     }
 
     /// Move the transport to `state`, stamping when it got there.
@@ -844,7 +837,7 @@ impl Tab {
                 attached_ms: self.feed_attached_ms,
                 provider,
                 provider_name: self.feed_display_name(config),
-                replaying: self.replay.is_some(),
+                replaying: self.replay.is_some() || !self.capabilities(config).transport,
             },
             now_ms,
         )
