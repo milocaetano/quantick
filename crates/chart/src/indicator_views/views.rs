@@ -21,9 +21,9 @@ pub struct IndicatorViews {
     /// constructor, so the add path parks the kind here and the view takes it
     /// on birth.
     pending_kinds: std::collections::BTreeMap<SlotId, Arc<str>>,
-    /// A rebuild already answered the rows being out of step, so a script that
-    /// cannot reach `bars` is not rebuilt once a frame for ever.
-    row_drift_answered: bool,
+    /// Slots whose rows a rebuild already answered, so a script that cannot reach
+    /// `bars` is not rebuilt once a frame for ever, nor hides a later drift beside it.
+    row_drift_answered: std::collections::BTreeSet<SlotId>,
 }
 
 impl IndicatorViews {
@@ -244,22 +244,42 @@ impl IndicatorViews {
     /// another rule land on candles they were never measured on. Only meaningful
     /// against a settled worker: mid-flight the views are honestly behind.
     pub fn row_drift(&mut self, bars: usize) -> Option<usize> {
-        let drift = self
-            .views
+        let in_step: Vec<SlotId> = self
+            .row_drift_answered
             .iter()
-            .find(|view| view.error.is_none() && view.rows != bars)
-            .map(|view| view.rows);
-        if drift.is_none() {
-            self.row_drift_answered = false;
+            .copied()
+            .filter(|slot| {
+                self.views
+                    .iter()
+                    .find(|view| view.slot == *slot)
+                    .is_none_or(|view| view.rows == bars)
+            })
+            .collect();
+        for slot in in_step {
+            self.row_drift_answered.remove(&slot);
         }
-        drift.filter(|_| !self.row_drift_answered)
+        self.unanswered_drift(bars).map(|view| view.rows)
+    }
+
+    fn unanswered_drift(&self, bars: usize) -> Option<&IndicatorView> {
+        self.views.iter().find(|view| {
+            view.error.is_none()
+                && view.rows != bars
+                && !self.row_drift_answered.contains(&view.slot)
+        })
     }
 
     /// The rows of a settled worker that still disagree, in which case the caller
     /// owes one rebuild; said once per disagreement.
     pub fn answer_row_drift(&mut self, bars: usize) -> Option<usize> {
         let rows = self.row_drift(bars)?;
-        self.row_drift_answered = true;
+        let drifted: Vec<SlotId> = self
+            .views
+            .iter()
+            .filter(|view| view.error.is_none() && view.rows != bars)
+            .map(|view| view.slot)
+            .collect();
+        self.row_drift_answered.extend(drifted);
         Some(rows)
     }
 

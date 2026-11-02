@@ -396,3 +396,16 @@ fn a_row_drift_is_reported_until_answered_and_again_after_it_settles() {
         "a failed script stops short honestly"
     );
 }
+
+#[test]
+fn a_script_stuck_short_does_not_hide_a_later_drift_beside_it() {
+    let mut views = IndicatorViews::new();
+    let stuck = views.allocate_slot("stuck");
+    views.apply(rebuilt(stuck, descriptor(false, 1), vec![vec![1.0]]));
+    assert_eq!(views.answer_row_drift(3), Some(1));
+    assert_eq!(views.row_drift(3), None, "the stuck script is answered");
+
+    let other = views.allocate_slot("other");
+    views.apply(rebuilt(other, descriptor(false, 1), vec![vec![1.0, 2.0]]));
+    assert_eq!(views.row_drift(3), Some(2), "its neighbour still speaks");
+}

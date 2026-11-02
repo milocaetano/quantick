@@ -92,3 +92,57 @@ plot(close)"
     finish_indicator_commands(flow);
     assert_eq!(flow.indicators.all()[0].rows, bars, "healed");
 }
+
+/// The same rule addressed at a context pane: the bit is the pane's own, so the
+/// flow pane's moving prefix does not stand in for the time pane's rebuild.
+#[test]
+fn a_context_pane_spec_change_rebuilds_it_when_only_the_flow_prefix_moves() {
+    let ctx = egui::Context::default();
+    let (mut app, events, _commands, _book) = test_app();
+    let tab_id = app.runtime.tabs.active_id();
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    events
+        .try_send(FeedEvent::Backfilled((1..=400).map(trade).collect()))
+        .unwrap();
+    app.active_tab_mut()
+        .drain_feed_with_clock(tab_id, || 100_000);
+    app.active_tab_mut().deliver_ohlcv_slice(
+        tab_id,
+        quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        venue_history(120),
+        quantick_feed::OhlcvSlice::Last { complete: true },
+    );
+    app.active_tab_mut()
+        .flow_pane
+        .install_history_prefix(venue_history(10));
+
+    // The chart's selector moves off time, so the pane leaves its prefix too; the
+    // rows are read against what it holds once the worker has answered.
+    let time = &mut app.active_tab_mut().time_panes[0];
+    time.add_indicator(crate::indicator_worker::IndicatorSource::Script {
+        name: "Rows".to_owned(),
+        text: "indicator(\"Rows\")
+plot(close)"
+            .to_owned(),
+    });
+    finish_indicator_commands(time);
+    time.spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Tick.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+
+    let time = &mut app.active_tab_mut().time_panes[0];
+    finish_indicator_commands(time);
+    assert_eq!(
+        time.indicators.all()[0].rows,
+        time.series_read().closed_bars().len(),
+        "one indicator row per bar of the rule on screen"
+    );
+}
