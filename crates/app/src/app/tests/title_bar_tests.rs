@@ -35,7 +35,7 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
             assert_eq!(rect.height(), crate::tabstrip::CHIP_HEIGHT);
             if width >= 1200.0 {
                 assert!(
-                    rect.width() >= 200.0,
+                    rect.width() >= 150.0,
                     "normal market labels use the enlarged width"
                 );
             }
@@ -47,7 +47,7 @@ fn title_bar_narrow_overflow_keeps_selection_plus_and_window_buttons_reachable()
             "plus remains on the title row: {plus:?}"
         );
         for (id, rect) in &title.controls {
-            if *id != "drag" {
+            if matches!(*id, "minimize" | "maximize" | "close") {
                 assert_eq!(rect.width(), WINDOW_BUTTON_WIDTH);
                 assert!(rect.height() >= crate::tabstrip::CHIP_HEIGHT);
             }

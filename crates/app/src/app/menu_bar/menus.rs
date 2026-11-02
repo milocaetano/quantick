@@ -1,299 +1,475 @@
-//! The menu bar's menus (§10), one view per top-level menu.
+//! Paints the `⋮` window menu from its headless table.
 //!
-//! Each view borrows exactly the state it shows and records what the trader
-//! chose as a [`MenuCommand`]; none of them changes the window. The window
-//! carries the commands out after the bar is drawn, so a menu never acts on
-//! state a later menu in the same bar is still reading.
+//! The groups, labels and tooltips live in
+//! [`quantick_control_schema::window_menu`]; this view adds the live state and
+//! the pixels, and records what the trader chose as a [`MenuCommand`]. egui's
+//! own submenus open to the right, which from the window's right edge lands off
+//! screen, so these panes are anchored by their top right corner.
 
 use eframe::egui;
+use egui_phosphor::regular as icons;
+use quantick_control_schema::window_menu::{
+    self, HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId, row_of, submenu,
+};
 
 use crate::dock::DockTab;
 use crate::layout_strip::StripAction;
 use crate::tab::Tab;
-use crate::tabstrip::TabAction;
-use crate::timezone::TzOffset;
 use crate::toolrail::{ToolRail, ToolboxDock};
 
 use super::super::layout_wiring::LayoutRead;
-use super::super::tabs::HistorySettings;
-use super::super::workspace_bundle_adapter::WorkspaceBundleAdapter;
 use super::commands::MenuCommand;
 use super::{
-    CLOSE_TAB_SHORTCUT, COLLAPSE_CONTEXT_SHORTCUT, DOCK_SHORTCUT, LEGEND_SHORTCUT,
-    NEW_TAB_SHORTCUT, REPLAY_SHORTCUT, SAVE_WORKSPACE_SHORTCUT, layout_preset_shortcut,
-    layout_tab_shortcut,
+    COLLAPSE_CONTEXT_SHORTCUT, DOCK_SHORTCUT, LEGEND_SHORTCUT, REPLAY_SHORTCUT,
+    SAVE_WORKSPACE_SHORTCUT, SETTINGS_SHORTCUT, layout_preset_shortcut, layout_tab_shortcut,
 };
 
-/// File: tabs, replay and the window itself.
-pub(super) struct FileMenu {
-    pub(super) tab_count: usize,
-    /// Home is on screen, so no market is the one "Close Tab" would mean.
-    pub(super) home: bool,
-    pub(super) active_index: usize,
-    /// Whether the active tab is playing a recording back.
-    pub(super) replaying: bool,
+/// The `⋮` button's glyph.
+pub(in crate::app) const KEBAB_GLYPH: &str = icons::DOTS_THREE_VERTICAL;
+
+const PANE_MIN_WIDTH_PX: f32 = 240.0;
+/// The gap between a pane and the pane that opened from it.
+const SUBMENU_GAP_PX: f32 = 2.0;
+/// How far a submenu rides above its row, so its first line sits level with it.
+const SUBMENU_LIFT_PX: f32 = 6.0;
+/// Submenu levels the table allows below the root.
+const MAX_SUBMENU_LEVELS: usize = 2;
+
+/// Whether the menu is up, and which submenus are open along the way.
+#[derive(Default)]
+pub(in crate::app) struct WindowMenuState {
+    pub(in crate::app) open: bool,
+    pub(in crate::app) viewport: Option<egui::ViewportId>,
+    /// The window Settings and Help opened on, apart from the menu's own.
+    pub(in crate::app) windows_viewport: Option<egui::ViewportId>,
+    pub(in crate::app) settings_open: bool,
+    pub(in crate::app) help: Option<HelpPage>,
+    path: [Option<SubmenuId>; MAX_SUBMENU_LEVELS],
+    /// The pane whose first row takes the keyboard next.
+    focus_pane: Option<usize>,
+    panes: Vec<egui::Rect>,
 }
 
-impl FileMenu {
-    pub(super) fn show(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        ui.menu_button("File", |ui| {
-            if ui
-                .add(
-                    egui::Button::new("New Tab…")
-                        .shortcut_text(ui.ctx().format_shortcut(&NEW_TAB_SHORTCUT)),
-                )
-                .clicked()
-            {
-                commands.push(MenuCommand::Tab(TabAction::New));
-                ui.close_menu();
-            }
-            if ui
-                .add_enabled(
-                    self.tab_count > 1 && !self.home,
-                    egui::Button::new("Close Tab")
-                        .shortcut_text(ui.ctx().format_shortcut(&CLOSE_TAB_SHORTCUT)),
-                )
-                .on_disabled_hover_text(if self.home {
-                    "Home stays open — pick a market to close it"
-                } else {
-                    "The last tab stays open — a window with no market has nothing to show"
-                })
-                .clicked()
-            {
-                commands.push(MenuCommand::Tab(TabAction::Close(self.active_index)));
-                ui.close_menu();
-            }
-            ui.separator();
-            if ui
-                .add(
-                    egui::Button::new("Market Replay…")
-                        .shortcut_text(ui.ctx().format_shortcut(&REPLAY_SHORTCUT)),
-                )
-                .clicked()
-            {
-                commands.push(MenuCommand::OpenReplayBrowser);
-                ui.close_menu();
-            }
-            if self.replaying && ui.button("Close Replay").clicked() {
-                commands.push(MenuCommand::CloseReplay);
-                ui.close_menu();
-            }
-            ui.separator();
-            if ui.button("Exit").clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        });
+impl WindowMenuState {
+    /// Open or close the menu on this window. Opened from the keyboard, its first
+    /// row is ready for the keys; opened by the mouse, no row wears a focus ring.
+    pub(in crate::app) fn toggle(&mut self, viewport: egui::ViewportId, by_keyboard: bool) {
+        // Open on another window, this press still opens it here.
+        let open = !self.is_open_on(viewport);
+        self.close();
+        self.open = open;
+        self.viewport = Some(viewport);
+        self.focus_pane = (open && by_keyboard).then_some(0);
+    }
+
+    pub(in crate::app) fn is_open_on(&self, viewport: egui::ViewportId) -> bool {
+        self.open && self.viewport == Some(viewport)
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+        self.path = [None; MAX_SUBMENU_LEVELS];
+        self.focus_pane = None;
+        self.panes.clear();
     }
 }
 
-/// View: what the canvas shows and which chrome is around it.
-///
-/// What the canvas shows is a view concern, so the switch lives here rather
-/// than under File, and each entry names the charts it shows — "Timeframe",
-/// not layout jargon (audit §3).
-pub(super) struct ViewMenu<'a> {
-    /// False while Home covers the canvas: the chart entries grey out.
+/// The live state one frame of the menu shows.
+pub(super) struct WindowMenu<'a> {
+    /// False while Home covers the canvas: the chart rows grey out.
     pub(super) chart_shown: bool,
+    pub(super) replaying: bool,
     pub(super) layouts: LayoutRead<'a>,
     pub(super) tab: &'a Tab,
     pub(super) dock_visible: bool,
+    pub(super) dock_tab: Option<DockTab>,
     pub(super) toolrail: &'a ToolRail,
-    pub(super) show_perf: bool,
-    pub(super) history: &'a HistorySettings,
-    pub(super) tz: TzOffset,
+    pub(super) startup_saved: bool,
+    pub(super) save_on_exit: bool,
+    pub(super) recent: &'a [std::path::PathBuf],
+    /// Whether the next computed row takes the keyboard.
+    pub(super) focus_live_row: std::cell::Cell<bool>,
 }
 
-impl ViewMenu<'_> {
-    pub(super) fn show(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        ui.menu_button("View", |ui| {
-            ui.add_enabled_ui(self.chart_shown, |ui| {
-                self.layouts_menu(ui, commands);
-                self.preset_menu(ui, commands);
-                self.context_entries(ui, commands);
-            });
-            ui.separator();
-            self.chrome_entries(ui, commands);
-            ui.separator();
-            self.settings_entries(ui, commands);
-            ui.separator();
-            self.timezone_menu(ui, commands);
+impl WindowMenu<'_> {
+    /// Draw the open panes, anchored under the `⋮` button at `kebab`.
+    pub(super) fn show(
+        &self,
+        ctx: &egui::Context,
+        state: &mut WindowMenuState,
+        kebab: egui::Rect,
+        commands: &mut Vec<MenuCommand>,
+    ) {
+        if !state.is_open_on(ctx.viewport_id()) {
+            return;
+        }
+        let recorded = commands.len();
+        state.panes.clear();
+        self.pane(ctx, state, 0, ROOT, kebab.right_bottom(), commands);
+        // A switch stays up so the trader sees it flip; anything else is done.
+        let acted = commands[recorded..]
+            .iter()
+            .any(|command| !matches!(command, MenuCommand::SetSaveOnExit(_)));
+        let dismissed = ctx.input_mut(|input| {
+            let escape = input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+            let outside = input.pointer.any_pressed()
+                && input.pointer.interact_pos().is_some_and(|at| {
+                    !kebab.contains(at) && !state.panes.iter().any(|pane| pane.contains(at))
+                });
+            escape || outside
         });
+        if acted || dismissed {
+            state.close();
+        }
+    }
+
+    fn pane(
+        &self,
+        ctx: &egui::Context,
+        state: &mut WindowMenuState,
+        level: usize,
+        items: &[Item],
+        top_right: egui::Pos2,
+        commands: &mut Vec<MenuCommand>,
+    ) {
+        let mut child = None;
+        let mut over_submenu = false;
+        let area = egui::Area::new(egui::Id::new(("window_menu_pane", level)))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(top_right)
+            .constrain(true)
+            .show(ctx, |ui| {
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(PANE_MIN_WIDTH_PX);
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+                        // Rows read as lines of a list until the pointer is on one.
+                        let idle = &mut ui.visuals_mut().widgets.inactive;
+                        idle.weak_bg_fill = egui::Color32::TRANSPARENT;
+                        idle.bg_stroke = egui::Stroke::NONE;
+                        for item in items {
+                            match *item {
+                                Item::Separator => {
+                                    ui.separator();
+                                }
+                                Item::Caption(text) => {
+                                    ui.weak(text);
+                                }
+                                Item::Row(id) => self.row(ui, state, level, id, commands),
+                                Item::Live(rows) => {
+                                    self.live_rows(ui, state, level, rows, commands)
+                                }
+                                Item::Submenu(id) => {
+                                    let Some(row) = self.submenu_row(ui, state, level, id) else {
+                                        continue;
+                                    };
+                                    over_submenu |= row.hovered();
+                                    if state.path[level] == Some(id) {
+                                        child = Some((
+                                            id,
+                                            row.rect.left_top()
+                                                + egui::vec2(-SUBMENU_GAP_PX, -SUBMENU_LIFT_PX),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+            });
+        state.panes.push(area.response.rect);
+        // Moving onto a plain row puts away the submenu a sibling opened.
+        let moved = ctx.input(|input| input.pointer.delta() != egui::Vec2::ZERO);
+        if moved && !over_submenu && area.response.contains_pointer() && level < state.path.len() {
+            state.path[level] = None;
+            child = None;
+        }
+        if let Some((id, at)) = child {
+            self.pane(ctx, state, level + 1, submenu(id).1, at, commands);
+        }
+    }
+
+    /// A submenu's own row, or nothing when it has nothing to hold.
+    fn submenu_row(
+        &self,
+        ui: &mut egui::Ui,
+        state: &mut WindowMenuState,
+        level: usize,
+        id: SubmenuId,
+    ) -> Option<egui::Response> {
+        if id == SubmenuId::MoveChart && self.tab.pane_count().saturating_sub(1) < 2 {
+            return None;
+        }
+        let empty = id == SubmenuId::OpenRecent && self.recent.is_empty();
+        let chart_row = matches!(
+            id,
+            SubmenuId::Layouts | SubmenuId::Layout | SubmenuId::MoveChart
+        );
+        let response = ui
+            .add_enabled(
+                !empty && (self.chart_shown || !chart_row),
+                egui::Button::new(submenu(id).0)
+                    .selected(state.path[level] == Some(id))
+                    .shortcut_text(icons::CARET_LEFT),
+            )
+            .on_disabled_hover_text(if empty {
+                "No workspace files opened yet"
+            } else {
+                "Home is on screen: pick a market first"
+            });
+        take_focus(state, level, &response);
+        if response.hovered() || response.clicked() {
+            if state.path[level] != Some(id) && level + 1 < state.path.len() {
+                state.path[level + 1] = None;
+            }
+            state.path[level] = Some(id);
+            if response.clicked() && !response.clicked_by(egui::PointerButton::Primary) {
+                state.focus_pane = Some(level + 1);
+            }
+        }
+        Some(response)
+    }
+
+    fn row(
+        &self,
+        ui: &mut egui::Ui,
+        state: &mut WindowMenuState,
+        level: usize,
+        id: RowId,
+        commands: &mut Vec<MenuCommand>,
+    ) {
+        if id == RowId::CloseReplay && !self.replaying {
+            return;
+        }
+        let row = row_of(id);
+        if id == RowId::ReopenLastTabs {
+            let mut save_on_exit = self.save_on_exit;
+            let response = ui
+                .add(egui::Checkbox::new(&mut save_on_exit, row.label))
+                .on_hover_text(row.hover.unwrap_or_default());
+            take_focus(state, level, &response);
+            if response.changed() {
+                // The setting lives in the file it governs, so switching it
+                // has to reach the disk now, not at the exit it may switch off.
+                commands.push(MenuCommand::SetSaveOnExit(save_on_exit));
+            }
+            return;
+        }
+        let label = match row.label_when_on {
+            Some(on) if id == RowId::TogglePanels && self.dock_visible => on,
+            _ => row.label,
+        };
+        let mut button = egui::Button::new(label).selected(self.selected(id));
+        if let Some(shortcut) = shortcut_of(id) {
+            button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
+        }
+        let mut response = ui.add_enabled(self.enabled(id), button);
+        if let Some(hover) = row.hover {
+            response = response.on_hover_text(hover);
+        }
+        if let Some(hover) = row.disabled_hover {
+            response = response.on_disabled_hover_text(hover);
+        }
+        take_focus(state, level, &response);
+        if response.clicked() {
+            self.push_row_commands(id, commands);
+        }
+    }
+
+    const fn enabled(&self, id: RowId) -> bool {
+        match id {
+            RowId::CommandPalette => false,
+            RowId::ResetStartupDesk => self.startup_saved,
+            _ => true,
+        }
+    }
+
+    fn selected(&self, id: RowId) -> bool {
+        if let Some(tab) = dock_tab_of(id) {
+            return self.dock_visible && self.dock_tab == Some(tab);
+        }
+        if let Some(dock) = toolbox_dock_of(id) {
+            return self.toolrail.visible() && self.toolrail.dock() == dock;
+        }
+        id == RowId::ToolbarHidden && !self.toolrail.visible()
+    }
+
+    fn push_row_commands(&self, id: RowId, commands: &mut Vec<MenuCommand>) {
+        if let Some(tab) = dock_tab_of(id) {
+            commands.push(MenuCommand::OpenDockTab(tab));
+            return;
+        }
+        if let Some(dock) = toolbox_dock_of(id) {
+            commands.push(MenuCommand::SetToolboxDock(dock));
+            if !self.toolrail.visible() {
+                commands.push(MenuCommand::ToggleToolbox);
+            }
+            return;
+        }
+        commands.push(match id {
+            RowId::SaveDesk => MenuCommand::SaveWorkspace("menu"),
+            RowId::TogglePanels => MenuCommand::ToggleDock,
+            RowId::MarketReplay => MenuCommand::OpenReplayBrowser,
+            RowId::CloseReplay => MenuCommand::CloseReplay,
+            RowId::Settings => MenuCommand::OpenSettings,
+            RowId::ToolbarHidden if self.toolrail.visible() => MenuCommand::ToggleToolbox,
+            RowId::ExportDesk => MenuCommand::ExportDesk,
+            RowId::ImportDesk => MenuCommand::ImportDesk,
+            RowId::RevealDesk => MenuCommand::RevealDesk,
+            RowId::ResetStartupDesk => MenuCommand::ForgetWorkspace,
+            RowId::KeyboardShortcuts => MenuCommand::OpenHelp(HelpPage::KeyboardShortcuts),
+            RowId::ReplayFileFormat => MenuCommand::OpenReplayFormatHelp,
+            RowId::AboutWorkspaces => MenuCommand::OpenHelp(HelpPage::AboutWorkspaces),
+            RowId::AboutQuantick => MenuCommand::OpenHelp(HelpPage::AboutQuantick),
+            // Hidden while already hidden asks for nothing; the disabled palette
+            // and the switch drawn apart above never reach here.
+            _ => return,
+        });
+    }
+
+    fn live_rows(
+        &self,
+        ui: &mut egui::Ui,
+        state: &mut WindowMenuState,
+        level: usize,
+        rows: LiveRows,
+        commands: &mut Vec<MenuCommand>,
+    ) {
+        let wants_focus = state.focus_pane == Some(level);
+        self.focus_live_row.set(wants_focus);
+        match rows {
+            LiveRows::LayoutBook => self.layout_book(ui, commands),
+            LiveRows::LayoutPresets => self.layout_presets(ui, commands),
+            LiveRows::ContextCharts => {
+                ui.add_enabled_ui(self.chart_shown, |ui| self.context_charts(ui, commands));
+            }
+            LiveRows::Legend => self.legend_entry(ui, commands),
+            LiveRows::ChartMoves => self.chart_moves(ui, commands),
+            LiveRows::RecentFiles => self.recent_files(ui, commands),
+        }
+        if wants_focus && !self.focus_live_row.get() {
+            state.focus_pane = None;
+        }
+    }
+
+    /// A computed row, which takes the keyboard when its pane is being entered.
+    fn live_row(
+        &self,
+        ui: &mut egui::Ui,
+        enabled: bool,
+        button: egui::Button<'_>,
+    ) -> egui::Response {
+        let response = ui.add_enabled(enabled, button);
+        if enabled && self.focus_live_row.get() {
+            response.request_focus();
+            self.focus_live_row.set(false);
+        }
+        response
     }
 
     /// The strip's tabs, from the book: switch the focused pane by name,
     /// and the three edits the strip's own menu holds.
-    fn layouts_menu(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        ui.menu_button("Layouts", |ui| {
-            let active = self.layouts.focused_pane_layout();
-            let layouts = self.layouts.layouts().layouts();
-            for (index, layout) in layouts.iter().enumerate() {
-                let mut button = egui::Button::new(layout.name.as_str());
-                if let Some(shortcut) = layout_tab_shortcut(index) {
-                    button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
-                }
-                if ui.add(button.selected(layout.id == active)).clicked() {
-                    commands.push(MenuCommand::Strip(StripAction::Switch(layout.id)));
-                    ui.close_menu();
-                }
+    fn layout_book(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
+        let active = self.layouts.focused_pane_layout();
+        let layouts = self.layouts.layouts().layouts();
+        for (index, layout) in layouts.iter().enumerate() {
+            let mut button = egui::Button::new(layout.name.as_str());
+            if let Some(shortcut) = layout_tab_shortcut(index) {
+                button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
             }
-            ui.separator();
-            let can_add = layouts.len() < crate::layouts::MAX_LAYOUTS;
-            if ui
-                .add_enabled(can_add, egui::Button::new("New layout"))
+            if self
+                .live_row(ui, true, button.selected(layout.id == active))
                 .clicked()
             {
-                commands.push(MenuCommand::Strip(StripAction::Create));
-                ui.close_menu();
+                commands.push(MenuCommand::Strip(StripAction::Switch(layout.id)));
             }
-            if ui.button("Rename layout…").clicked() {
-                commands.push(MenuCommand::Strip(StripAction::BeginRename(active)));
-                ui.close_menu();
-            }
-            if ui
-                .add_enabled(layouts.len() > 1, egui::Button::new("Delete layout"))
-                .clicked()
-            {
-                commands.push(MenuCommand::Strip(StripAction::Delete(active)));
-                ui.close_menu();
-            }
-        });
+        }
+        ui.separator();
+        let can_add = layouts.len() < crate::layouts::MAX_LAYOUTS;
+        if self
+            .live_row(ui, can_add, egui::Button::new("New layout"))
+            .clicked()
+        {
+            commands.push(MenuCommand::Strip(StripAction::Create));
+        }
+        if self
+            .live_row(ui, true, egui::Button::new("Rename layout…"))
+            .clicked()
+        {
+            commands.push(MenuCommand::Strip(StripAction::BeginRename(active)));
+        }
+        if self
+            .live_row(ui, layouts.len() > 1, egui::Button::new("Delete layout"))
+            .clicked()
+        {
+            commands.push(MenuCommand::Strip(StripAction::Delete(active)));
+        }
     }
 
     /// Read from the registry, like the picker: a menu holding its own list
     /// of layouts is the second opinion that goes stale the day one is added.
-    fn preset_menu(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        ui.menu_button("Layout", |ui| {
-            let current = self.tab.layout.preset();
-            for (index, preset) in crate::canvas_layout::LAYOUT_PRESETS.iter().enumerate() {
-                // The menu is where a shortcut is learned, so it carries the
-                // binding beside the name.
-                let label = match layout_preset_shortcut(index) {
-                    Some(shortcut) => {
-                        format!("{}\t{}", preset.label, ui.ctx().format_shortcut(&shortcut))
-                    }
-                    None => preset.label.to_owned(),
-                };
-                if ui
-                    .selectable_label(current.id == preset.id, label)
-                    .clicked()
-                {
-                    commands.push(MenuCommand::ApplyLayoutPreset(preset));
-                    ui.close_menu();
-                }
+    fn layout_presets(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
+        let current = self.tab.layout.preset();
+        for (index, preset) in crate::canvas_layout::LAYOUT_PRESETS.iter().enumerate() {
+            // The menu is where a shortcut is learned, so it carries the
+            // binding beside the name.
+            let mut button = egui::Button::new(preset.label).selected(current.id == preset.id);
+            if let Some(shortcut) = layout_preset_shortcut(index) {
+                button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
             }
-        });
-    }
-
-    /// Collapse and reorder the context charts without a drag.
-    fn context_entries(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        // Collapsing was drag-only, which a trader working by keyboard could
-        // not do at all — while the assistant had `layout.pane.collapse`.
-        // Same call, three doors.
-        if self.tab.layout.shows_time() && self.tab.layout.shows_flow() {
-            let label = if self.tab.context_collapsed {
-                "Show context charts"
-            } else {
-                "Hide context charts"
-            };
-            if ui
-                .add(
-                    egui::Button::new(label)
-                        .shortcut_text(ui.ctx().format_shortcut(&COLLAPSE_CONTEXT_SHORTCUT)),
-                )
-                .clicked()
-            {
-                commands.push(MenuCommand::ToggleContextCharts);
-                ui.close_menu();
+            if self.live_row(ui, true, button).clicked() {
+                commands.push(MenuCommand::ApplyLayoutPreset(preset));
             }
         }
-        // Reposition without a drag. WCAG 2.2's dragging rule wants a
-        // single-pointer alternative to every drag, and TradingView — the
-        // reference the trader named — moves charts by a menu command rather
-        // than by dragging at all. Both go through `Tab::move_context_pane`.
+    }
+
+    /// Collapsing was drag-only, which a trader working by keyboard could not
+    /// do at all, while the assistant had `layout.pane.collapse`.
+    fn context_charts(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
+        if !(self.tab.layout.shows_time() && self.tab.layout.shows_flow()) {
+            return;
+        }
+        let label = if self.tab.context_collapsed {
+            "Show context charts"
+        } else {
+            "Hide context charts"
+        };
+        let button = egui::Button::new(label)
+            .shortcut_text(super::shortcut_text(ui.ctx(), &COLLAPSE_CONTEXT_SHORTCUT));
+        if self.live_row(ui, ui.is_enabled(), button).clicked() {
+            commands.push(MenuCommand::ToggleContextCharts);
+        }
+    }
+
+    /// Reposition without a drag. WCAG 2.2's dragging rule wants a
+    /// single-pointer alternative to every drag, and both doors go through
+    /// `Tab::move_context_pane`.
+    fn chart_moves(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
         let context_panes = self.tab.pane_count().saturating_sub(1);
-        if context_panes > 1 {
-            ui.menu_button("Move chart", |ui| {
-                for slot in 1..=context_panes {
-                    let up = ui
-                        .add_enabled(slot > 1, egui::Button::new(format!("Chart {slot} up")))
-                        .on_disabled_hover_text("already the top chart");
-                    if up.clicked() {
-                        commands.push(MenuCommand::MoveContextChart {
-                            from: slot,
-                            to: slot - 1,
-                        });
-                        ui.close_menu();
-                    }
-                    let down = ui
-                        .add_enabled(
-                            slot < context_panes,
-                            egui::Button::new(format!("Chart {slot} down")),
-                        )
-                        .on_disabled_hover_text("already the bottom chart");
-                    if down.clicked() {
-                        commands.push(MenuCommand::MoveContextChart {
-                            from: slot,
-                            to: slot + 1,
-                        });
-                        ui.close_menu();
-                    }
-                }
-            });
-        }
-    }
-
-    /// The panels, the legend, the drawing toolbar and the dock's tabs.
-    fn chrome_entries(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        let panels_label = if self.dock_visible {
-            "Hide panels"
-        } else {
-            "Show panels"
-        };
-        if ui
-            .add(
-                egui::Button::new(panels_label)
-                    .shortcut_text(ui.ctx().format_shortcut(&DOCK_SHORTCUT)),
-            )
-            .clicked()
-        {
-            commands.push(MenuCommand::ToggleDock);
-            ui.close_menu();
-        }
-        self.legend_entry(ui, commands);
-        ui.menu_button("Drawing toolbar", |ui| {
-            for (dock, label) in [
-                (ToolboxDock::Left, "Left"),
-                (ToolboxDock::Top, "Top"),
-                (ToolboxDock::Bottom, "Bottom"),
-            ] {
-                if ui
-                    .selectable_label(self.toolrail.dock() == dock, label)
-                    .clicked()
-                {
-                    commands.push(MenuCommand::SetToolboxDock(dock));
-                    ui.close_menu();
-                }
+        for slot in 1..=context_panes {
+            let up = self
+                .live_row(ui, slot > 1, egui::Button::new(format!("Chart {slot} up")))
+                .on_disabled_hover_text("already the top chart");
+            if up.clicked() {
+                commands.push(MenuCommand::MoveContextChart {
+                    from: slot,
+                    to: slot - 1,
+                });
             }
-        });
-        let toolbox_label = if self.toolrail.visible() {
-            "Hide drawing toolbar"
-        } else {
-            "Show drawing toolbar"
-        };
-        if ui.button(toolbox_label).clicked() {
-            commands.push(MenuCommand::ToggleToolbox);
-            ui.close_menu();
-        }
-        for (tab, label) in [
-            (DockTab::L2, "L2 settings"),
-            (DockTab::Bubbles, "Bubble settings"),
-            (DockTab::Session, "Session"),
-            (DockTab::Trading, "Paper trading"),
-            (DockTab::Trades, "Trades"),
-        ] {
-            if ui.button(label).clicked() {
-                commands.push(MenuCommand::OpenDockTab(tab));
-                ui.close_menu();
+            let down = self
+                .live_row(
+                    ui,
+                    slot < context_panes,
+                    egui::Button::new(format!("Chart {slot} down")),
+                )
+                .on_disabled_hover_text("already the bottom chart");
+            if down.clicked() {
+                commands.push(MenuCommand::MoveContextChart {
+                    from: slot,
+                    to: slot + 1,
+                });
             }
         }
     }
@@ -301,282 +477,91 @@ impl ViewMenu<'_> {
     /// The legend belongs to a pane, so this entry names the focused one's
     /// state — the same pane the chevron on screen would fold.
     fn legend_entry(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        let collapsed = self.tab.focused_pane().legend_collapsed;
-        // Split open: say *which* chart, the way the layout entries above
-        // name the charts they show. The action follows the focus like every
-        // other chrome control, and a trader reading "Collapse indicator
-        // legend" over two charts has no way to know which corner is about
-        // to change.
-        let split = self.tab.shows_context_charts();
-        let pane_name = self.tab.focused_side().title();
-        let legend_label = match (collapsed, split) {
-            (true, false) => "Show indicator legend".to_owned(),
-            (false, false) => "Collapse indicator legend".to_owned(),
-            (true, true) => format!("Show indicator legend ({pane_name})"),
-            (false, true) => format!("Collapse indicator legend ({pane_name})"),
-        };
+        let split = self
+            .tab
+            .shows_context_charts()
+            .then(|| self.tab.focused_side().title());
+        let legend_label =
+            window_menu::legend_label(self.tab.focused_pane().legend_collapsed, split.as_deref());
         // A pane with no indicators has no legend to fold, and an entry that
-        // is enabled and does nothing reads as a broken feature rather than
-        // as an empty chart.
+        // is enabled and does nothing reads as a broken feature.
         let has_legend = !self
             .tab
             .pane(self.tab.focused_side())
             .indicators
             .all()
             .is_empty();
-        if ui
-            .add_enabled(
+        let keys = super::shortcut_text(ui.ctx(), &LEGEND_SHORTCUT);
+        if self
+            .live_row(
+                ui,
                 has_legend && self.chart_shown,
-                egui::Button::new(legend_label)
-                    .shortcut_text(ui.ctx().format_shortcut(&LEGEND_SHORTCUT)),
+                egui::Button::new(legend_label).shortcut_text(keys),
             )
-            .on_hover_text(
-                "Folds the healthy rows to a count on the focused chart. Errored and stale \
-                 indicators stay on it.",
-            )
+            .on_hover_text(LEGEND_HOVER)
             .on_disabled_hover_text("This chart has no indicators, so there is no legend to fold")
             .clicked()
         {
             commands.push(MenuCommand::ToggleLegend);
-            ui.close_menu();
         }
     }
 
-    /// The three switches that change what the window measures or fetches.
-    fn settings_entries(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        let mut show_perf = self.show_perf;
-        if ui
-            .checkbox(&mut show_perf, "Perf readings")
-            .on_hover_text("fps, frame time and trade count on the status bar")
-            .changed()
-        {
-            commands.push(MenuCommand::SetShowPerf(show_perf));
-        }
-        let mut progressive = self.history.progressive_history;
-        if ui
-            .checkbox(&mut progressive, "Progressive venue history")
-            .on_hover_text(
-                "Build the venue's candle history from now backwards, a week at \
-                 a time, so the chart fills in while the rest arrives. Off asks \
-                 for the whole span in one request: fewer calls, nothing on \
-                 screen until all of it lands.",
-            )
-            .changed()
-        {
-            commands.push(MenuCommand::SetProgressiveHistory(progressive));
-        }
-        let mut lead_in = self.history.venue_lead_in;
-        if ui
-            .checkbox(&mut lead_in, "Venue candles on charts cut by trades")
-            .on_hover_text(
-                "A tick, volume, dollar or imbalance chart cannot fold venue \
-                 candles into its own bars, so it opens holding only the prints \
-                 this session saw. Switch this on to put the venue's 1-minute \
-                 candles in front of them anyway — counted apart from built bars \
-                 on the status bar — so yesterday is on screen to compare \
-                 against. They stay candles: a minute never becomes a tick bar, \
-                 and an indicator running across the seam is averaging both \
-                 kinds.",
-            )
-            .changed()
-        {
-            commands.push(MenuCommand::SetVenueLeadIn(lead_in));
-        }
-    }
-
-    fn timezone_menu(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        ui.menu_button("Timezone", |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(280.0)
-                .show(ui, |ui| {
-                    for tz in TzOffset::ALL {
-                        if ui.selectable_label(self.tz == tz, tz.label()).clicked() {
-                            commands.push(MenuCommand::SetTimezone(tz));
-                            ui.close_menu();
-                        }
-                    }
-                });
-        });
-    }
-}
-
-/// Workspace: what quantick opens on, the named bookmarks and the files.
-///
-/// The workspace is its own menu, not a File entry: "what does quantick open
-/// on" is a question a trader asks about their cockpit, not about a
-/// document, and burying it under File is how a platform ends up with
-/// traders who rebuild their screen every morning without knowing they
-/// never had to (audit §6).
-///
-/// The file actions are the bundle adapter's own rendering, which carries
-/// out its effects itself; this view hands it the menu's `Ui`.
-pub(super) struct WorkspaceMenu<'a> {
-    pub(super) bundle: WorkspaceBundleAdapter<'a>,
-}
-
-impl WorkspaceMenu<'_> {
-    /// Returns the menu button's own rect, published for the capture hook —
-    /// read, never acted on, so the menu behaves identically whether or not a
-    /// scripted run is watching.
-    pub(super) fn show(mut self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) -> egui::Rect {
-        ui.menu_button("Workspace", |ui| {
-            self.startup_entries(ui, commands);
-            ui.separator();
-            self.bookmark_entries(ui, commands);
-            ui.separator();
-            self.bundle.show_file_actions(ui);
-            ui.separator();
-            let mut save_on_exit = self.bundle.arrangement.workspace.session().save_on_exit();
-            if ui
-                .checkbox(&mut save_on_exit, "Save on exit")
-                .on_hover_text(
-                    "Keep the arrangement automatically when the window closes. Off, \
-                     only Save workspace changes what quantick opens on.",
+    /// Read off the field, not the filesystem: this body runs every frame the
+    /// menu is open.
+    fn recent_files(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
+        for path in self.recent {
+            if self
+                .live_row(
+                    ui,
+                    true,
+                    egui::Button::new(crate::workspace_bundle::recent_label(path)),
                 )
-                .changed()
+                // A trader mid-tape has to read this before the click.
+                .on_hover_text(format!(
+                    "Replaces the cockpit on screen\n{}",
+                    path.display()
+                ))
+                .clicked()
             {
-                // The setting lives in the file it governs, so switching it
-                // has to reach the disk now — not at the next exit, which is
-                // exactly the exit it may have just switched off.
-                commands.push(MenuCommand::SetSaveOnExit(save_on_exit));
+                commands.push(MenuCommand::OpenRecentDesk(path.clone()));
             }
-        })
-        .response
-        .rect
-    }
-
-    /// Save, and forget, what the next launch opens on.
-    fn startup_entries(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        if ui
-            .add(
-                egui::Button::new("Save workspace")
-                    .shortcut_text(ui.ctx().format_shortcut(&SAVE_WORKSPACE_SHORTCUT)),
-            )
-            .on_hover_text(
-                "Remember this arrangement — the tabs, the charts on each, the \
-                 panels, the timezone and the window — as what quantick opens on",
-            )
-            .clicked()
-        {
-            commands.push(MenuCommand::SaveWorkspace("menu"));
-            ui.close_menu();
         }
-        // Enabled only when there is something on disk to go back to: an
-        // entry that would forget nothing is a question the trader should not
-        // have to answer by clicking it.
-        if ui
-            .add_enabled(
-                self.bundle.arrangement.workspace.session().saved(),
-                egui::Button::new("Reset startup layout"),
-            )
-            .on_hover_text(
-                "Forget the saved workspace; the next launch opens on the \
-                 configured default. The charts on screen are left alone.",
-            )
-            .on_disabled_hover_text(
-                "Nothing saved yet — quantick already opens on the configured \
-                 default",
-            )
-            .clicked()
-        {
-            commands.push(MenuCommand::ForgetWorkspace);
-            ui.close_menu();
-        }
-    }
-
-    /// Bookmarks. Named apart from the startup entries on purpose: those
-    /// govern what the app *opens on*, these are places to come back to. The
-    /// wording carries the distinction so the menu does not need a paragraph.
-    fn bookmark_entries(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        if ui
-            .button("Save as…")
-            // Says what a bookmark keeps *and what it does not*: it is the
-            // tabs and the panels, not the indicators or the colours. Two
-            // entries in one menu that both "save a workspace" but restore
-            // different amounts is exactly how a trader comes to believe the
-            // app forgets things — use Export to file for the whole cockpit.
-            .on_hover_text(
-                "Keep these tabs and panels under a name you can reopen later. \
-                 It does not change what quantick opens on, and it does not \
-                 keep indicators or colours — use Export to file for those.",
-            )
-            .clicked()
-        {
-            commands.push(MenuCommand::NameWorkspace);
-            ui.close_menu();
-        }
-        let bookmarks = self.bundle.arrangement.workspace.session().bookmarks();
-        ui.add_enabled_ui(!bookmarks.is_empty(), |ui| {
-            ui.menu_button("Open", |ui| {
-                for entry in bookmarks {
-                    let tabs = entry.tabs.len();
-                    if ui
-                        .button(&entry.name)
-                        .on_hover_text(format!(
-                            "{tabs} chart {} — replaces what is on screen",
-                            if tabs == 1 { "tab" } else { "tabs" }
-                        ))
-                        .clicked()
-                    {
-                        commands.push(MenuCommand::OpenNamedWorkspace(entry.name.clone()));
-                        ui.close_menu();
-                    }
-                }
-            })
-            .response
-            .on_disabled_hover_text("Nothing saved under a name yet");
-            ui.menu_button("Delete", |ui| {
-                for entry in bookmarks {
-                    if ui.button(&entry.name).clicked() {
-                        commands.push(MenuCommand::DeleteNamedWorkspace(entry.name.clone()));
-                        ui.close_menu();
-                    }
-                }
-            });
-        });
     }
 }
 
-/// Tools: appearance, deal recording and agent access.
-///
-/// `record_deals` draws the deal-recording toggle, which owns its own
-/// setting and applies it itself.
-pub(super) fn show_tools_menu(
-    ui: &mut egui::Ui,
-    access_label: &str,
-    record_deals: impl FnOnce(&mut egui::Ui),
-    commands: &mut Vec<MenuCommand>,
-) {
-    ui.menu_button("Tools", |ui| {
-        if ui.button("Appearance…").clicked() {
-            commands.push(MenuCommand::OpenAppearance);
-            ui.close_menu();
-        }
-        record_deals(ui);
-        if ui.button(access_label).clicked() {
-            commands.push(MenuCommand::OpenAgentAccess);
-            ui.close_menu();
-        }
-    });
+fn take_focus(state: &mut WindowMenuState, level: usize, response: &egui::Response) {
+    if state.focus_pane == Some(level) && response.enabled() {
+        response.request_focus();
+        state.focus_pane = None;
+    }
 }
 
-/// Help: the one reference a trader needs away from the chart.
-pub(super) fn show_help_menu(ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-    ui.menu_button("Help", |ui| {
-        if ui.button("Replay file format…").clicked() {
-            commands.push(MenuCommand::OpenReplayFormatHelp);
-            ui.close_menu();
-        }
-    });
+fn shortcut_of(id: RowId) -> Option<egui::KeyboardShortcut> {
+    match id {
+        RowId::SaveDesk => Some(SAVE_WORKSPACE_SHORTCUT),
+        RowId::TogglePanels => Some(DOCK_SHORTCUT),
+        RowId::MarketReplay => Some(REPLAY_SHORTCUT),
+        RowId::Settings => Some(SETTINGS_SHORTCUT),
+        _ => None,
+    }
 }
 
-/// The bar's own "agent access is on" indicator, shown only while it is.
-pub(super) fn show_agent_access_indicator(
-    ui: &mut egui::Ui,
-    enabled: bool,
-    commands: &mut Vec<MenuCommand>,
-) {
-    if enabled && ui.button("Agent access: on").clicked() {
-        commands.push(MenuCommand::OpenAgentAccess);
+const fn dock_tab_of(id: RowId) -> Option<DockTab> {
+    match id {
+        RowId::DockL2 => Some(DockTab::L2),
+        RowId::DockBubbles => Some(DockTab::Bubbles),
+        RowId::DockSession => Some(DockTab::Session),
+        RowId::DockPaperTrading => Some(DockTab::Trading),
+        RowId::DockTrades => Some(DockTab::Trades),
+        _ => None,
+    }
+}
+
+const fn toolbox_dock_of(id: RowId) -> Option<ToolboxDock> {
+    match id {
+        RowId::ToolbarLeft => Some(ToolboxDock::Left),
+        RowId::ToolbarTop => Some(ToolboxDock::Top),
+        RowId::ToolbarBottom => Some(ToolboxDock::Bottom),
+        _ => None,
     }
 }

@@ -1,4 +1,4 @@
-//! What the menu bar and its shortcuts ask the window to do.
+//! What the window menu and its shortcuts ask the window to do.
 //!
 //! The menus and the keyboard are two doors onto one set of commands: each
 //! view records a [`MenuCommand`] instead of reaching into the window, and
@@ -10,22 +10,19 @@ use eframe::egui;
 use crate::canvas_layout::LayoutPreset;
 use crate::dock::DockTab;
 use crate::layout_strip::StripAction;
-use crate::tabstrip::TabAction;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolboxDock;
 
 use super::{
     COLLAPSE_CONTEXT_SHORTCUT, DOCK_SHORTCUT, LAYOUT_PRESET_KEYS, LEGEND_SHORTCUT,
     PAPER_BUY_SHORTCUT, PAPER_CANCEL_SHORTCUT, PAPER_FLATTEN_SHORTCUT, PAPER_REVERSE_SHORTCUT,
-    PAPER_SELL_SHORTCUT, REPLAY_SHORTCUT, SAVE_WORKSPACE_SHORTCUT, layout_preset_shortcut,
-    layout_tab_shortcut,
+    PAPER_SELL_SHORTCUT, REPLAY_SHORTCUT, SAVE_WORKSPACE_SHORTCUT, SETTINGS_SHORTCUT,
+    WINDOW_MENU_SHORTCUT, layout_preset_shortcut, layout_tab_shortcut,
 };
 
 /// One thing a menu entry or a menu shortcut asked for.
 #[derive(Debug)]
 pub(in crate::app) enum MenuCommand {
-    /// What the tab strip, or the File menu's tab entries, asked for.
-    Tab(TabAction),
     OpenReplayBrowser,
     CloseReplay,
     ToggleDock,
@@ -47,10 +44,10 @@ pub(in crate::app) enum MenuCommand {
     /// Save the workspace; the reason is what the save event records.
     SaveWorkspace(&'static str),
     ForgetWorkspace,
-    /// Open the dialog that names a workspace bookmark.
-    NameWorkspace,
-    OpenNamedWorkspace(String),
-    DeleteNamedWorkspace(String),
+    ExportDesk,
+    ImportDesk,
+    OpenRecentDesk(std::path::PathBuf),
+    RevealDesk,
     SetSaveOnExit(bool),
     PaperMarket(quantick_engine::Side),
     PaperReverse,
@@ -66,18 +63,20 @@ pub(in crate::app) enum MenuCommand {
     OpenAppearance,
     OpenAgentAccess,
     OpenReplayFormatHelp,
+    /// `F10`: open or close the `⋮` window menu.
+    ToggleWindowMenu,
+    OpenSettings,
+    OpenHelp(quantick_control_schema::window_menu::HelpPage),
 }
 
 impl MenuCommand {
     /// Whether this changes or trades the chart on screen, so means nothing
     /// while Home hides it. Tabs, replay browsing and the window's own chrome
-    /// are not the chart's. "Close Tab" is the active market's, which Home is
-    /// covering; closing a chip on the strip is a separate, visible act.
+    /// are not the chart's.
     pub(in crate::app) const fn needs_chart(&self) -> bool {
         matches!(
             self,
-            Self::Tab(TabAction::Close(_))
-                | Self::CloseReplay
+            Self::CloseReplay
                 | Self::ToggleLayer(_)
                 | Self::ToggleContextCharts
                 | Self::ApplyLayoutPreset(_)
@@ -113,6 +112,12 @@ pub(super) fn read_shortcuts(
 ) {
     let pressed =
         |shortcut: &egui::KeyboardShortcut| ctx.input_mut(|input| input.consume_shortcut(shortcut));
+    if pressed(&WINDOW_MENU_SHORTCUT) {
+        commands.push(MenuCommand::ToggleWindowMenu);
+    }
+    if pressed(&SETTINGS_SHORTCUT) {
+        commands.push(MenuCommand::OpenSettings);
+    }
     if pressed(&REPLAY_SHORTCUT) {
         commands.push(MenuCommand::OpenReplayBrowser);
     }

@@ -431,8 +431,9 @@ budget is unchanged.
   bounded channels every frame (a stalled channel would back the feed thread
   up); only the active tab renders.
 - **Provenance follows the active tab**: status bar, side-honesty note, the
-  offline corner and the transport strip all read from it. A background tab
-  with a dead feed shows an amber dot on its chip — honesty at a glance.
+  offline corner and the transport strip all read from it. A tab's dot says its
+  feed: green delivering, grey stopped, on every tab. Amber stays reserved for
+  an edited tab (`window-menu-and-workspace-tabs.md`).
 - Replay is **per-tab**: a recording opens inside the tab that requested it,
   replacing that tab's SOURCE group with the amber session label (existing
   behaviour, now scoped). Other tabs keep streaming live.

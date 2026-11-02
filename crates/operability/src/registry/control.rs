@@ -62,8 +62,8 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "app.exit",
         title: "Close the application",
-        reach: "File menu, and the window's own close button",
-        keys: &[(Source::MenuEntry, "Exit")],
+        reach: "the window's own close button",
+        keys: &[(Source::Authored, "native window close button")],
         mapping: excluded!(
             Authority,
             "`docs/control-plane/observer-threat-model.md` section 6 refuses starting or \
@@ -119,11 +119,10 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.market.close",
         title: "Close the active market tab",
-        reach: "tab strip chip, File menu, Ctrl+W",
+        reach: "tab strip chip, Ctrl+W",
         keys: &[
             (Source::TabAction, "Close"),
             (Source::Hotkey, "CLOSE_TAB_SHORTCUT"),
-            (Source::MenuEntry, "Close Tab"),
         ],
         mapping: excluded!(
             PendingCapability,
@@ -135,11 +134,10 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.market.open",
         title: "Open a new market tab",
-        reach: "tab strip +, File menu, Ctrl+T",
+        reach: "tab strip +, Ctrl+T",
         keys: &[
             (Source::TabAction, "New"),
             (Source::Hotkey, "NEW_TAB_SHORTCUT"),
-            (Source::MenuEntry, "New Tab…"),
         ],
         mapping: excluded!(
             PendingCapability,
@@ -165,7 +163,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.create",
         title: "Add a layout tab",
-        reach: "layout strip +, View → Layouts",
+        reach: "layout strip +, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "Create"),
             (Source::MenuEntry, "New layout"),
@@ -175,7 +173,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.delete",
         title: "Delete a layout tab",
-        reach: "layout strip context menu, View → Layouts",
+        reach: "layout strip context menu, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "Delete"),
             (Source::MenuEntry, "Delete layout"),
@@ -185,13 +183,13 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
             "`crate::control::layout` states it: `layout.tab.delete` is deliberately not \
              registered, because deleting a layout destroys its indicator set and every \
              drawing under it and no effect policy in the control contract allows a \
-             destructive capability yet. The trader deletes from the strip or the View menu"
+             destructive capability yet. The trader deletes from the strip or the window menu"
         ),
     },
     UiBehaviour {
         id: "layout.tab.rename",
         title: "Rename a layout tab",
-        reach: "layout strip double-click, View → Layouts",
+        reach: "layout strip double-click, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "BeginRename"),
             (Source::StripAction, "CommitRename"),
@@ -214,7 +212,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.switch",
         title: "Show another layout on the focused chart",
-        reach: "layout strip, View → Layouts, Alt+1 … Alt+9",
+        reach: "layout strip, window menu, Workspace, Layouts, Alt+1 … Alt+9",
         keys: &[(Source::StripAction, "Switch")],
         mapping: capability!("layout.tab.switch"),
     },
@@ -255,10 +253,10 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
         id: "feed.deal_recording.set",
         title: "Record the venue's deal counter, stop, load a recorded day, or show the pane as \
                 trades bars",
-        reach: "the REC control beside the symbol and its popover; the Tools menu's \
+        reach: "the REC control beside the symbol and its popover; the Settings window's \
                 `Record deals by default` checkbox",
         // One registry key: the matrix counts a row carrying an `Authored` key
-        // as one no registry stands behind. The Tools menu checkbox is drawn by
+        // as one no registry stands behind. The Settings window checkbox is drawn by
         // `app/deal_recording_wiring.rs`, not an entry in the menu registry;
         // the call's `record_by_default` is the same choice.
         keys: &[(Source::ToolbarAction, "DealRecording")],
@@ -273,10 +271,59 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
 /// The rest of the chrome.
 pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "window.menu.open",
+        title: "Open the window menu",
+        reach: "the kebab button on the title strip, F10",
+        keys: &[(Source::Hotkey, "WINDOW_MENU_SHORTCUT")],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "the menu holds rows, and every row names its own behaviour; an operator calls \
+             those directly, and a transient popup is not state worth driving"
+        ),
+    },
+    UiBehaviour {
+        id: "window.settings.open",
+        title: "Open the Settings window",
+        reach: "window menu, Ctrl+Comma",
+        keys: &[
+            (Source::Hotkey, "SETTINGS_SHORTCUT"),
+            (Source::MenuEntry, "Settings…"),
+        ],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "a window of switches for the trader; each switch is its own behaviour"
+        ),
+    },
+    UiBehaviour {
+        id: "window.help.open",
+        title: "Read a help page: keyboard shortcuts, workspaces, the version",
+        reach: "window menu, Help",
+        keys: &[
+            (Source::MenuEntry, "Keyboard shortcuts…"),
+            (Source::MenuEntry, "About workspaces…"),
+            (Source::MenuEntry, "About quantick"),
+        ],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "reference text for a human; the shortcuts and the workspace rules are the \
+             contract an operator already reads"
+        ),
+    },
+    UiBehaviour {
+        id: "window.command_palette.open",
+        title: "Open the command palette",
+        reach: "window menu, disabled until the market palette ships",
+        keys: &[(Source::MenuEntry, "Command palette…")],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "not built: the row is greyed out and says so, and nothing runs behind it"
+        ),
+    },
+    UiBehaviour {
         id: "control.access.open",
         title: "Open the local agent access panel",
-        reach: "Tools menu, and the menu row access chip",
-        keys: &[(Source::MenuEntry, "Agent access: on")],
+        reach: "the agent pill on the title strip, and Settings",
+        keys: &[(Source::Authored, "agent pill on the title strip")],
         mapping: excluded!(
             Authority,
             "the panel is where the trader grants and revokes an operator's access. A \
@@ -287,7 +334,7 @@ pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "view.perf_readings.toggle",
         title: "Show fps, frame time and trade count on the status bar",
-        reach: "View menu",
+        reach: "Settings window",
         keys: &[(Source::MenuEntry, "Perf readings")],
         mapping: excluded!(
             PendingCapability,
@@ -299,7 +346,7 @@ pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "view.timezone.set",
         title: "Change the timezone the time axis is labelled in",
-        reach: "View menu, Timezone",
+        reach: "Settings window, Timezone",
         keys: &[(Source::MenuEntry, "Timezone")],
         mapping: excluded!(
             PendingCapability,

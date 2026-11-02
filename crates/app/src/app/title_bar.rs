@@ -3,6 +3,7 @@ use crate::theme;
 use eframe::egui;
 
 use quantick_control_schema::native_window::WindowState;
+use quantick_control_schema::window_menu::{AGENT_PILL_CONTROL, KEBAB_CONTROL};
 mod resize;
 
 #[derive(Default)]
@@ -13,6 +14,21 @@ pub(crate) struct TitleBarState {
     pub(crate) strip: crate::tabstrip::StripDrawn,
     pub(crate) controls: Vec<(&'static str, egui::Rect)>,
     pub(crate) requests: quantick_control_schema::native_window::WindowRequests,
+    /// Local agent access is on, so the strip shows its pill.
+    pub(crate) agent_on: bool,
+    pub(crate) menu_open: bool,
+    pub(crate) kebab_clicked: bool,
+    pub(crate) agent_clicked: bool,
+}
+
+impl TitleBarState {
+    /// Where a control was painted this frame, by its scene name.
+    pub(crate) fn control_rect(&self, id: &str) -> Option<egui::Rect> {
+        self.controls
+            .iter()
+            .find(|(control, _)| *control == id)
+            .map(|(_, rect)| *rect)
+    }
 }
 
 fn send_state(ctx: &egui::Context, state: WindowState) {
@@ -29,9 +45,19 @@ fn send_state(ctx: &egui::Context, state: WindowState) {
     }
 }
 
-pub(super) const HEIGHT: f32 = 52.0;
-pub(super) const WINDOW_BUTTON_WIDTH: f32 = 48.0;
+pub(super) const HEIGHT: f32 = 36.0;
+pub(super) const WINDOW_BUTTON_WIDTH: f32 = 46.0;
 const DRAG_WIDTH: f32 = 32.0;
+/// The window buttons' strokes, at the size the Windows Terminal draws its own.
+const WINDOW_GLYPH_PX: f32 = 10.0;
+/// Keeps the drag region's edge off the `+`, so a press on one never reads as
+/// the other.
+const DRAG_GAP: f32 = 1.0;
+/// The `⋮` button: wide enough to find, as tall as a tab.
+pub(super) const KEBAB_WIDTH: f32 = 36.0;
+const KEBAB_GLYPH_PX: f32 = 18.0;
+const AGENT_PILL_WIDTH: f32 = 66.0;
+const AGENT_TEXT_PX: f32 = 11.0;
 
 pub(crate) fn draw(
     ctx: &egui::Context,
@@ -50,7 +76,11 @@ pub(crate) fn draw(
                 id: tabs.id_at(*index),
                 label: tab.chip_label(),
                 replaying: tab.replay.is_some(),
-                needs_attention: tab.needs_attention(),
+                dot: quantick_workspace::arrangement::strip::tab_feed_dot(
+                    tab.replay.is_some(),
+                    tab.feed_connection == quantick_feed::FeedConnectionState::Connected
+                        && !tab.needs_attention(),
+                ),
             }
         })
         .collect();
@@ -70,24 +100,35 @@ pub(crate) fn draw(
                 .fill(theme::INSET)
                 .inner_margin(egui::Margin {
                     left: 4.0,
-                    right: 4.0,
-                    top: 4.0,
+                    right: 0.0,
+                    top: 0.0,
                     bottom: 0.0,
                 }),
         )
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
+            // Tabs and the menu sit on the row's floor; the window's own buttons
+            // fill it from the top edge, as the Windows Terminal's do.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let pill_width = if title.agent_on {
+                    AGENT_PILL_WIDTH
+                } else {
+                    0.0
+                };
                 let reserve_drag = if ui.available_width() >= 600.0 {
                     DRAG_WIDTH
                 } else {
                     0.0
                 };
-                let tab_width =
-                    (ui.available_width() - 3.0 * WINDOW_BUTTON_WIDTH - reserve_drag - 8.0)
-                        .max(0.0);
+                let tab_width = (ui.available_width()
+                    - 3.0 * WINDOW_BUTTON_WIDTH
+                    - KEBAB_WIDTH
+                    - pill_width
+                    - DRAG_GAP
+                    - reserve_drag)
+                    .max(0.0);
                 ui.allocate_ui_with_layout(
-                    egui::vec2(tab_width, HEIGHT - 4.0),
+                    egui::vec2(tab_width, crate::tabstrip::CHIP_HEIGHT),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
@@ -96,11 +137,12 @@ pub(crate) fn draw(
                             crate::tabstrip::draw(ui, &chips, active, surface, &mut title.strip);
                     },
                 );
-                let drag_width = (ui.available_width()
-                    - 3.0 * (WINDOW_BUTTON_WIDTH + ui.spacing().item_spacing.x))
-                    .max(0.0);
+                ui.add_space(DRAG_GAP);
+                let drag_width =
+                    (ui.available_width() - 3.0 * WINDOW_BUTTON_WIDTH - KEBAB_WIDTH - pill_width)
+                        .max(0.0);
                 let (_, drag) = ui.allocate_exact_size(
-                    egui::vec2(drag_width, HEIGHT - 4.0),
+                    egui::vec2(drag_width, HEIGHT),
                     egui::Sense::click_and_drag(),
                 );
                 let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
@@ -112,6 +154,12 @@ pub(crate) fn draw(
                     ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                 } else if drag.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if title.agent_on && agent_pill(ui, title) {
+                    title.agent_clicked = true;
+                }
+                if kebab(ui, title) {
+                    title.kebab_clicked = true;
                 }
                 for (id, hint, state) in [
                     ("minimize", "Minimize window", Some(WindowState::Minimized)),
@@ -161,10 +209,54 @@ pub(crate) fn draw(
     })
 }
 
+/// The `⋮` button. Returns whether it was pressed.
+fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
+    let glyph = egui::RichText::new(super::menu_bar::KEBAB_GLYPH).size(KEBAB_GLYPH_PX);
+    let surface = ui.painter().add(egui::Shape::Noop);
+    let button = ui
+        .add_sized(
+            [KEBAB_WIDTH, crate::tabstrip::CHIP_HEIGHT],
+            egui::Button::new(glyph).frame(false),
+        )
+        .on_hover_ui(|ui| {
+            let keys =
+                super::menu_bar::shortcut_text(ui.ctx(), &super::menu_bar::WINDOW_MENU_SHORTCUT);
+            ui.label(format!("Window menu ({keys})"));
+        });
+    if title.menu_open {
+        let fill = egui::Shape::rect_filled(button.rect, 0.0, theme::CHROME);
+        ui.painter().set(surface, fill);
+    }
+    let bounds = button.rect.intersect(ui.clip_rect());
+    if bounds.is_positive() {
+        title.controls.push((KEBAB_CONTROL, bounds));
+    }
+    button.clicked()
+}
+
+/// The pill naming local agent access, shown only while it is on.
+fn agent_pill(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
+    let mut face = egui::text::LayoutJob::default();
+    let format = |color| egui::TextFormat::simple(egui::FontId::monospace(AGENT_TEXT_PX), color);
+    face.append("\u{25cf} ", 0.0, format(theme::BUY));
+    face.append("agent", 0.0, format(theme::TEXT_MUTED));
+    let pill = ui
+        .add_sized(
+            [AGENT_PILL_WIDTH, crate::tabstrip::CHIP_HEIGHT],
+            egui::Button::new(face).frame(false),
+        )
+        .on_hover_text("Local agent access is on. Click to manage it.");
+    let bounds = pill.rect.intersect(ui.clip_rect());
+    if bounds.is_positive() {
+        title.controls.push((AGENT_PILL_CONTROL, bounds));
+    }
+    pill.clicked()
+}
+
 /// Vector strokes keep native controls crisp and equally legible at every DPI.
 fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> egui::Response {
     let response = ui.add_sized(
-        [WINDOW_BUTTON_WIDTH, HEIGHT - 4.0],
+        [WINDOW_BUTTON_WIDTH, HEIGHT],
         egui::Button::new("").frame(false),
     );
     response
@@ -172,7 +264,7 @@ fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> eg
     if response.hovered() || response.has_focus() {
         ui.painter().rect_filled(
             response.rect,
-            4.0,
+            0.0,
             if id == "close" {
                 theme::WARN
             } else {
@@ -182,11 +274,14 @@ fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> eg
     }
     let ink = if id == "close" && (response.hovered() || response.has_focus()) {
         theme::ink_on(theme::WARN)
-    } else {
+    } else if response.hovered() || response.has_focus() {
         theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
     };
-    let stroke = egui::Stroke::new(1.5_f32, ink);
-    let icon = egui::Rect::from_center_size(response.rect.center(), egui::vec2(14.0, 14.0));
+    let stroke = egui::Stroke::new(1.0_f32, ink);
+    let icon =
+        egui::Rect::from_center_size(response.rect.center(), egui::Vec2::splat(WINDOW_GLYPH_PX));
     match id {
         "minimize" => {
             ui.painter()

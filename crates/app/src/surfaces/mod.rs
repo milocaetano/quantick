@@ -51,7 +51,6 @@ pub(crate) mod indicator_preview;
 pub(crate) mod source_picker;
 pub(crate) mod strategy_popup;
 pub(crate) mod toast;
-pub(crate) mod workspace_name;
 
 use std::time::Instant;
 
@@ -65,7 +64,6 @@ pub(crate) use indicator_preview::IndicatorPreviewSurface;
 pub(crate) use source_picker::SourcePickerSurface;
 pub(crate) use strategy_popup::StrategyPopupSurface;
 pub(crate) use toast::ToastSurface;
-pub(crate) use workspace_name::WorkspaceNameSurface;
 
 /// What the surfaces need from the application, kept to what they actually
 /// read so a surface cannot quietly acquire the whole app.
@@ -73,10 +71,6 @@ pub(crate) struct SurfaceEnv<'a> {
     pub picker_pane_id: u64,
     pub picker_indicators: &'a [crate::toolbar::IndicatorMenuEntry],
     pub picker_scripts: &'a [quantick_stores::script_library::ScriptEntry],
-    /// The saved arrangements, so the Save-as box can warn before a name
-    /// replaces one. Borrowed, never copied: a surface reads what the host
-    /// holds rather than keeping a copy that can go stale.
-    pub bookmarks: &'a [crate::ui_state::NamedArrangement],
     /// The frame's clock reading, passed in rather than sampled, so a surface
     /// that expires on a deadline stays as testable as the engine is.
     pub now: Instant,
@@ -143,7 +137,7 @@ impl SurfaceEnv<'static> {
     /// An environment where nothing is happening, for the surface tests.
     ///
     /// Every test that needs one field set writes
-    /// `SurfaceEnv { bookmarks: &saved, ..SurfaceEnv::quiet(now) }`, so a
+    /// `SurfaceEnv { now, ..SurfaceEnv::quiet(now) }`, so a
     /// field added here costs one line in this file rather than an edit in
     /// every surface's test module — which is the difference between an env
     /// that can grow and one nobody wants to touch.
@@ -175,7 +169,6 @@ impl SurfaceEnv<'static> {
             picker_pane_id: 0,
             picker_indicators: &[],
             picker_scripts: &[],
-            bookmarks: &[],
             now,
             indicator_preview_area: None,
             focused_chart_area: None,
@@ -208,9 +201,6 @@ pub(crate) struct SurfaceResponse {
     /// The toast's Undo button was pressed — the host owns the drawing stack,
     /// and the sweep of any strategy left orphaned by the undo.
     pub undo_drawing: bool,
-    /// The Save-as box settled on a name. The host owns the write, so the
-    /// surface hands over the name rather than touching the file.
-    pub save_workspace_as: Option<String>,
     /// The appearance window edited the chart style. The host owns the style
     /// every renderer reads, and the revision counter they watch, so it takes
     /// the edited copy rather than lending the original out.
@@ -316,7 +306,6 @@ impl SurfaceResponse {
     fn merge(&mut self, other: Self) {
         self.indicator_actions.extend(other.indicator_actions);
         self.undo_drawing |= other.undo_drawing;
-        self.save_workspace_as = self.save_workspace_as.take().or(other.save_workspace_as);
         self.style = self.style.take().or(other.style);
         self.log_style_change = self.log_style_change.take().or(other.log_style_change);
         self.footprint = self.footprint.take().or(other.footprint);
@@ -387,8 +376,6 @@ pub(crate) struct Surfaces {
     pub strategy_popup: StrategyPopupSurface,
     /// The window's acknowledgement channel, with Undo where the act has one.
     pub toast: ToastSurface,
-    /// The Save-as box, opened from the Workspace menu.
-    pub workspace_name: WorkspaceNameSurface,
 }
 
 impl Surfaces {
@@ -442,7 +429,6 @@ impl Surfaces {
             self.source_picker.apply_env_hook(env);
             self.strategy_popup.apply_env_hook(env);
             self.toast.apply_env_hook(env);
-            self.workspace_name.apply_env_hook(env);
         }
         let mut response = SurfaceResponse::default();
         response.merge(self.indicator_picker.draw(ctx, env));
@@ -453,7 +439,6 @@ impl Surfaces {
         response.merge(self.source_picker.draw(ctx, env));
         response.merge(self.strategy_popup.draw(ctx, env));
         response.merge(self.toast.draw(ctx, env));
-        response.merge(self.workspace_name.draw(ctx, env));
         // Deliberately not `self.drawing_chrome` — see the field's own note.
         response
     }
@@ -569,7 +554,6 @@ mod tests {
     #[test]
     fn every_valued_request_keeps_the_first_asker() {
         let mut first = SurfaceResponse {
-            save_workspace_as: Some("first".to_owned()),
             style: Some(crate::style::ChartStyle::default()),
             log_style_change: Some(StyleLogRequest {
                 applied_preset: None,
@@ -586,7 +570,6 @@ mod tests {
         contested.canvas.grid_enabled = !contested.canvas.grid_enabled;
         first.merge(SurfaceResponse {
             indicator_actions: Vec::new(),
-            save_workspace_as: Some("second".to_owned()),
             style: Some(contested),
             log_style_change: Some(StyleLogRequest {
                 applied_preset: Some(crate::style::CandlePreset::Classic),
@@ -604,7 +587,6 @@ mod tests {
             )),
             undo_drawing: false,
         });
-        assert_eq!(first.save_workspace_as.as_deref(), Some("first"));
         assert_eq!(first.footprint, Some(FootprintChange::ResetToDefault));
         assert_eq!(
             first.market,
@@ -659,34 +641,6 @@ mod tests {
         fake.apply_env_hook(&env());
         assert_eq!(fake.drawn, 0);
         assert!(!fake.asks_undo);
-    }
-
-    /// A request that carries a value is first-wins, which is the half of
-    /// `merge` the boolean cannot show. Pinned because the answer has to be
-    /// documented before a second producer exists, not after.
-    #[test]
-    fn merge_keeps_the_first_named_workspace() {
-        let mut merged = SurfaceResponse {
-            save_workspace_as: Some("first".to_string()),
-            ..SurfaceResponse::default()
-        };
-        merged.merge(SurfaceResponse {
-            save_workspace_as: Some("second".to_string()),
-            ..SurfaceResponse::default()
-        });
-        assert_eq!(merged.save_workspace_as.as_deref(), Some("first"));
-    }
-
-    /// And an earlier surface that asked for nothing does not block a later
-    /// one that did.
-    #[test]
-    fn merge_accepts_a_name_from_a_later_surface() {
-        let mut merged = SurfaceResponse::default();
-        merged.merge(SurfaceResponse {
-            save_workspace_as: Some("only".to_string()),
-            ..SurfaceResponse::default()
-        });
-        assert_eq!(merged.save_workspace_as.as_deref(), Some("only"));
     }
 
     /// A response is built once per registered surface and once for the

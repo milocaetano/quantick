@@ -386,6 +386,7 @@ impl ArrangementAdapter<'_> {
     /// The startup workspace is left alone. Opening a bookmark is a thing you
     /// do to *this session*; making it the opening screen is `Save workspace`,
     /// one entry above.
+    #[cfg(test)]
     pub(super) fn open_named_workspace(&mut self, name: &str) {
         let Some(entry) = self
             .workspace
@@ -440,6 +441,7 @@ impl ArrangementAdapter<'_> {
     pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
         self.tabs.runtime_mut(self.tabs.active_index())
     }
+    #[cfg(test)]
     pub(super) fn note_workspace(&mut self, message: String) {
         self.toast.note(message, std::time::Instant::now());
     }

@@ -10,7 +10,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "replay.browser.open",
         title: "Open the market replay browser",
-        reach: "File menu, Ctrl+R",
+        reach: "window menu, Ctrl+R",
         keys: &[
             (Source::Hotkey, "REPLAY_SHORTCUT"),
             (Source::MenuEntry, "Market Replay…"),
@@ -20,7 +20,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "replay.close",
         title: "Leave replay and go back to the live tape",
-        reach: "File menu, while a tab is replaying",
+        reach: "window menu, while a tab is replaying",
         keys: &[(Source::MenuEntry, "Close Replay")],
         mapping: excluded!(
             PendingCapability,
@@ -31,7 +31,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "replay.format_help.open",
         title: "Read what a replay file has to look like",
-        reach: "Help menu",
+        reach: "window menu, Help",
         keys: &[(Source::MenuEntry, "Replay file format…")],
         mapping: PENDING_SURFACE,
     },

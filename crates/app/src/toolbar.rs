@@ -1,7 +1,8 @@
 //! The context toolbar: *what am I looking at* on the left, *what is drawn
 //! on it* on the right (`docs/ux/ui-design-model.md` §6).
 //!
-//! Left: SOURCE (feed + symbol, or the amber session label while replaying),
+//! Left: THIS TAB (the tab's market as a label that opens its own lists, or the
+//! amber session label while replaying),
 //! HISTORY (a `+ older ▾` split button whose menu holds the page size). Right:
 //! LOOK (appearance dialog), PANELS (dock show/hide). Between HISTORY and the right groups sits TRADE — the
 //! simulated BUY/SELL market buttons (`docs/ux/paper-trading.md`). The
@@ -81,13 +82,13 @@ pub struct ToolbarModel<'a> {
     pub feeds: Vec<(String, String)>,
     /// The selected feed id.
     pub feed_id: &'a mut String,
-    /// Display name of the selected feed.
+    /// Display name of the tab's feed.
     pub feed_display_name: String,
     /// Symbols offered by the selected feed.
     pub symbols: Vec<String>,
-    /// The selected symbol.
+    /// The tab's symbol.
     pub symbol: &'a mut String,
-    /// Present while a recording is the source; replaces the SOURCE combos.
+    /// Present while a recording is the source; replaces the market label.
     pub replay: Option<ReplaySource>,
     /// The deal recorder shown beside the symbol, when supported.
     pub deal_recording: Option<crate::deal_recording::RecordingView>,
@@ -264,7 +265,8 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
     actions
 }
 
-/// SOURCE: feed + symbol combos, or the amber session label during replay.
+/// THIS TAB: the market as a label whose words open the feed and symbol lists,
+/// or the amber session label during replay.
 fn draw_source(
     ui: &mut egui::Ui,
     model: &mut ToolbarModel,
@@ -292,22 +294,37 @@ fn draw_source(
             .map(String::from)
             .unwrap_or_default()
     };
-    ui.label(egui::RichText::new("feed").color(theme::TEXT_MUTED));
-    egui::ComboBox::from_id_salt("feed_sel")
-        .selected_text(feed_text)
-        .show_ui(ui, |ui| {
-            for (id, name) in &model.feeds {
-                ui.selectable_value(model.feed_id, id.clone(), name);
-            }
-        });
-    ui.label(egui::RichText::new("symbol").color(theme::TEXT_MUTED));
-    egui::ComboBox::from_id_salt("symbol_sel")
-        .selected_text(model.symbol.clone())
-        .show_ui(ui, |ui| {
+    ui.label(egui::RichText::new("this tab").color(theme::TEXT_MUTED));
+    ui.scope(|ui| {
+        // Words until the pointer is on them: the row reads as a label.
+        let idle = &mut ui.visuals_mut().widgets.inactive;
+        idle.weak_bg_fill = egui::Color32::TRANSPARENT;
+        idle.bg_stroke = egui::Stroke::NONE;
+        let symbol = egui::RichText::new(model.symbol.as_str()).color(theme::TEXT_PRIMARY);
+        ui.menu_button(symbol, |ui| {
             for symbol in &model.symbols {
-                ui.selectable_value(model.symbol, symbol.clone(), symbol);
+                let row = ui.selectable_value(model.symbol, symbol.clone(), symbol);
+                if row.clicked() {
+                    ui.close_menu();
+                }
             }
-        });
+        })
+        .response
+        .on_hover_text("Switch this tab's symbol");
+        let feed = egui::RichText::new(format!("· {feed_text}")).color(theme::TEXT_MUTED);
+        ui.menu_button(feed, |ui| {
+            for (id, name) in &model.feeds {
+                if ui
+                    .selectable_value(model.feed_id, id.clone(), name)
+                    .clicked()
+                {
+                    ui.close_menu();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Switch this tab's feed");
+    });
     if let Some(view) = &model.deal_recording
         && let Some(action) = crate::deal_recording_ui::draw_button(
             ui,
@@ -740,8 +757,6 @@ mod tests {
     #[test]
     fn the_toolbar_lays_out_against_a_real_context() {
         let ctx = egui::Context::default();
-        let mut feed_id = "binance".to_owned();
-        let mut symbol = "BTCUSDT".to_owned();
         let mut history_menu_rect = None;
         for replaying in [false, true] {
             for _ in 0..2 {
@@ -751,11 +766,11 @@ mod tests {
                         layout_preset: None,
                         layout_picker_open: &mut layout_picker_open,
                         layout_picker_request_open: false,
-                        feeds: vec![("binance".to_owned(), "Binance".to_owned())],
-                        feed_id: &mut feed_id,
                         feed_display_name: "Binance".to_owned(),
+                        feeds: Vec::new(),
+                        feed_id: &mut String::new(),
                         symbols: vec!["BTCUSDT".to_owned()],
-                        symbol: &mut symbol,
+                        symbol: &mut "BTCUSDT".to_owned(),
                         replay: replaying.then(|| ReplaySource {
                             label: "BTCUSDT · 2026-03-16".to_owned(),
                             hover: "Replaying a recorded session".to_owned(),
@@ -800,8 +815,6 @@ mod tests {
     #[test]
     fn a_quote_driven_feed_lays_the_toolbar_out_with_its_volume_widgets_disabled() {
         let ctx = egui::Context::default();
-        let mut feed_id = "metatrader".to_owned();
-        let mut symbol = "US500".to_owned();
         let mut history_menu_rect = None;
         for _ in 0..2 {
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -810,11 +823,11 @@ mod tests {
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
-                    feeds: vec![("metatrader".to_owned(), "MetaTrader 5".to_owned())],
-                    feed_id: &mut feed_id,
                     feed_display_name: "MetaTrader 5".to_owned(),
+                    feeds: Vec::new(),
+                    feed_id: &mut String::new(),
                     symbols: vec!["US500".to_owned()],
-                    symbol: &mut symbol,
+                    symbol: &mut "US500".to_owned(),
                     replay: None,
                     deal_recording: None,
                     deal_recording_menu: false,
@@ -898,8 +911,6 @@ mod tests {
     fn toolbar_shapes(paper: PaperTradeModel, width: f32) -> Vec<egui::epaint::ClippedShape> {
         let ctx = egui::Context::default();
         theme::apply(&ctx);
-        let mut feed_id = "binance".to_owned();
-        let mut symbol = "BTCUSDT".to_owned();
         let mut history_menu_rect = None;
         let input = || egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -916,11 +927,11 @@ mod tests {
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
-                    feeds: vec![("binance".to_owned(), "Binance".to_owned())],
-                    feed_id: &mut feed_id,
                     feed_display_name: "Binance".to_owned(),
+                    feeds: Vec::new(),
+                    feed_id: &mut String::new(),
                     symbols: vec!["BTCUSDT".to_owned()],
-                    symbol: &mut symbol,
+                    symbol: &mut "BTCUSDT".to_owned(),
                     replay: None,
                     deal_recording: None,
                     deal_recording_menu: false,

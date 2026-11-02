@@ -237,8 +237,8 @@ impl VenueHistoryDemo {
 /// a capture of the wrong surface that passes is worse than one that fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScriptedMenu {
-    /// The Workspace menu — the only door to save, export, open and locate.
-    Workspace,
+    /// The `⋮` window menu: the door to save, export, open and locate.
+    Window,
     /// The toolbar's history caret — the one-click targets and the candle
     /// reach.
     History,
@@ -247,7 +247,7 @@ pub(crate) enum ScriptedMenu {
 impl ScriptedMenu {
     /// Every menu this hook can open, by the token that names it.
     pub(crate) const ALL: [(&'static str, Self); 2] =
-        [("workspace", Self::Workspace), ("history", Self::History)];
+        [("window", Self::Window), ("history", Self::History)];
 
     fn from_token(token: &str) -> Option<Self> {
         Self::ALL
@@ -372,6 +372,8 @@ pub(crate) struct Harness {
     context_menu_layers_release: Option<egui::Pos2>,
     /// `QUANTICK_MENU`: which menu bar button to press open.
     menu: Option<ScriptedMenu>,
+    /// Where the scripted menu's button last was, and for how many frames.
+    menu_button_held: (egui::Pos2, u32),
     /// That press's matching release, on the frame after it.
     menu_release: Option<egui::Pos2>,
     /// `QUANTICK_VENUE_HISTORY_DEMO`: a venue candle prefix delivered to the
@@ -473,6 +475,7 @@ impl Harness {
             context_menu_layers: read("QUANTICK_CONTEXT_MENU")
                 .is_some_and(|value| context_menu_expands_chart_layers(&value)),
             context_menu_layers_release: None,
+            menu_button_held: (egui::Pos2::ZERO, 0),
             menu: read("QUANTICK_MENU").and_then(|value| ScriptedMenu::from_token(value.trim())),
             menu_release: None,
             venue_history_demo: read("QUANTICK_VENUE_HISTORY_DEMO")
@@ -652,6 +655,16 @@ impl Harness {
     /// Which menu bar button still owes a scripted press.
     pub(crate) fn menu(&self) -> Option<ScriptedMenu> {
         self.menu
+    }
+
+    /// Whether the button held still long enough to press: the `⋮` rides the right
+    /// edge, and the window takes its scripted size a few frames in.
+    pub(crate) fn menu_button_settled(&mut self, position: egui::Pos2) -> bool {
+        const SETTLED_FRAMES: u32 = 10;
+        let (held, frames) = self.menu_button_held;
+        let frames = if held == position { frames + 1 } else { 0 };
+        self.menu_button_held = (position, frames);
+        frames >= SETTLED_FRAMES
     }
 
     /// The press went out: disarm the button and hold its release.
@@ -1036,8 +1049,8 @@ mod tests {
     #[test]
     fn every_scripted_menu_is_reachable_by_its_token() {
         assert_eq!(
-            ScriptedMenu::from_token("workspace"),
-            Some(ScriptedMenu::Workspace)
+            ScriptedMenu::from_token("window"),
+            Some(ScriptedMenu::Window)
         );
         assert_eq!(
             ScriptedMenu::from_token("HISTORY"),

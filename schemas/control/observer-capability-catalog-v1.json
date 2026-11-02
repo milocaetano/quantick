@@ -8907,7 +8907,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the standing choice the Tools menu's checkbox sets, saved with the workspace, and every answer reports it.",
+      "description": "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the standing choice the Settings window's checkbox sets, saved with the workspace, and every answer reports it.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -13916,7 +13916,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
+      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the window menu read.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -14037,7 +14037,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the window menu read. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",

@@ -1,6 +1,7 @@
 # Window menu, Chrome-style tabs and a workspace per tab
 
-Status: design approved by the trader on 2026-10-31, not built yet. This page
+Status: design approved by the trader on 2026-10-31. Phase 1 is being built:
+the strip, the `⋮` menu and the "this tab" row, without per-tab workspaces. This page
 is the brief to implement from; the prototype beside it shows the behaviour.
 It extends [`market-shelf-onboarding.md`](market-shelf-onboarding.md) (Home
 tab, `+` palette, My markets), which stays the brief for the Home page itself.
@@ -131,8 +132,9 @@ Under the strip, the row that today holds feed and symbol dropdowns becomes:
 THIS TAB  WINZ26 · MetaTrader 5 — B3 │ WORKSPACE  [Scalp • ▾]  Save  Revert │ REC · History ▾ │ BUY 1  SELL 1   [dock icons]
 ```
 
-- The tab is its market, so feed and symbol are a label, not dropdowns.
-  Changing market opens a tab; a contract roll is "Roll to WINF27".
+- Feed and symbol read as a label, not dropdowns, and the words stay clickable:
+  the trader asked on 2026-11-02 to keep switching a tab's market in place.
+  A contract roll is "Roll to WINF27".
 - `Scalp ▾` switches this tab only. The toast reads "WINZ26 now on Tape ·
   drawings kept · Undo". Switching never asks for confirmation.
 - Save and Revert enable only while the tab holds unsaved changes.

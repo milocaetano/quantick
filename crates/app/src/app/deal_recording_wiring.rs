@@ -60,7 +60,7 @@ fn default_for(app: &QuantickApp) -> bool {
         .unwrap_or_else(|| app.config.records_deals(&app.active_tab().feed_id))
 }
 
-/// Draw the saved recording default through the Tools menu.
+/// Draw the saved recording default in the Settings window.
 pub(super) fn draw_toggle(app: &mut QuantickApp, ui: &mut eframe::egui::Ui) {
     let mut enabled = default_for(app);
     if ui
