@@ -784,7 +784,7 @@ impl LayoutAdapter<'_> {
 
     /// A tab whose market moved out from under a pane: the drawings go to
     /// the market they were drawn on and the new market's come out.
-    fn follow_market_changes(&mut self) {
+    pub(super) fn follow_market_changes(&mut self) {
         let moved: Vec<(u64, PaneSide)> = self
             .tabs
             .iter_with_ids()

@@ -97,6 +97,7 @@ impl WorkspaceRuntime {
 /// Native rendering identity stays outside the process-owned workspace payload.
 pub(super) struct WindowPresentation {
     pub(super) binding: WorkspaceView,
+    pub(super) native: super::native_windows::NativeWindows,
 }
 impl WindowPresentation {
     pub(super) fn new(owner: &mut WorkspaceRuntime) -> Self {
@@ -104,7 +105,10 @@ impl WindowPresentation {
             .lifetime
             .bind_view(ViewId(0))
             .expect("initial workspace view");
-        let mut presentation = Self { binding };
+        let mut presentation = Self {
+            binding,
+            native: Default::default(),
+        };
         presentation
             .rebind(owner, egui::ViewportId::ROOT)
             .expect("initial native binding");

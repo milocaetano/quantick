@@ -169,11 +169,8 @@ impl QuantickApp {
             self.apply_menu_command(command);
         }
 
-        if let Some(action) =
-            super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar)
-        {
-            self.apply_tab_action(action);
-        }
+        let action = super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar);
+        super::native_windows::apply_tab_action(self, action);
         egui::TopBottomPanel::top("menu_bar")
             .exact_height(MENU_BAR_HEIGHT)
             .frame(

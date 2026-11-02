@@ -39,14 +39,19 @@ pub(crate) fn draw(
     title: &mut TitleBarState,
 ) -> Option<crate::tabstrip::TabAction> {
     resize::draw(ctx);
-    let active = tabs.active_index();
-    let chips: Vec<_> = tabs
-        .iter_with_ids()
-        .map(|(id, tab)| crate::tabstrip::TabChip {
-            id,
-            label: tab.chip_label(),
-            replaying: tab.replay.is_some(),
-            needs_attention: tab.needs_attention(),
+    let active = tabs.presented_index();
+    title.strip.allow_close_last = tabs.plan_close(tabs.active_index()).is_ok();
+    let indices: Vec<_> = tabs.window_indices(tabs.windows().presented()).collect();
+    let chips: Vec<_> = indices
+        .iter()
+        .map(|index| {
+            let tab = &tabs[*index];
+            crate::tabstrip::TabChip {
+                id: tabs.id_at(*index),
+                label: tab.chip_label(),
+                replaying: tab.replay.is_some(),
+                needs_attention: tab.needs_attention(),
+            }
         })
         .collect();
     if let Some(state) = title.requests.take() {
@@ -140,7 +145,20 @@ pub(crate) fn draw(
                 }
             });
         });
-    action
+    // The strip lays out local positions; the rest of the app addresses the
+    // stable physical runtime store, including its existing control scenes.
+    for (index, _) in &mut title.strip.tabs {
+        *index = indices[*index];
+    }
+    action.map(|action| match action {
+        crate::tabstrip::TabAction::Activate(index) => {
+            crate::tabstrip::TabAction::Activate(indices[index])
+        }
+        crate::tabstrip::TabAction::Close(index) => {
+            crate::tabstrip::TabAction::Close(indices[index])
+        }
+        action => action,
+    })
 }
 
 /// Vector strokes keep native controls crisp and equally legible at every DPI.

@@ -53,6 +53,145 @@ struct FrameScratch {
     canvas: canvas::CanvasAnswers,
 }
 
+/// Process work is scheduled by the root even when its native shell is hidden.
+/// This traversal executes each source, gateway and worker stage once, never
+/// once per market window. The ordinary single-frame test door remains intact.
+pub(super) fn process(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    let mut scratch = FrameScratch::default();
+    let mut tail = Some(FrameTailPlan::stages());
+    for stage in FramePlan::stages() {
+        #[cfg(any(feature = "control-harness", test))]
+        if stage == FrameStage::EvidenceHook {
+            app.run_frame_stage(
+                stage,
+                ctx,
+                now,
+                &mut scratch,
+                &mut quantick_feed::spawn_live,
+                &mut tail,
+            );
+            continue;
+        }
+        if stage.needs_presentation() {
+            continue;
+        }
+        match stage {
+            FrameStage::IndicatorSurfaces => app.service_indicator_requests(),
+            FrameStage::FeedAndLayoutSwitches => {
+                for (tab_id, tab) in app.runtime.tabs.iter_with_ids_mut() {
+                    tab.apply_pending_layout(
+                        tab_id,
+                        &app.config,
+                        &app.runtime.style,
+                        &mut app.pane_ids,
+                    );
+                }
+                app.layout_adapter().maintain_layouts();
+            }
+            FrameStage::StrategyCleanup | FrameStage::Tail => {}
+            _ => app.run_frame_stage(
+                stage,
+                ctx,
+                now,
+                &mut scratch,
+                &mut quantick_feed::spawn_live,
+                &mut tail,
+            ),
+        }
+    }
+}
+
+/// Only input, paint and the active view's consequences run for each viewport.
+pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    let window = app.runtime.tabs.windows().presented();
+    let mut scratch = FrameScratch::default();
+    let mut tail = Some([
+        FrameTailStage::DrawPaperReport,
+        FrameTailStage::PublishFeedPopup,
+    ]);
+    for stage in FramePlan::stages() {
+        if app.runtime.tabs.windows().window(window).is_none() {
+            break;
+        }
+        match stage {
+            #[cfg(any(feature = "control-harness", test))]
+            FrameStage::EvidenceHook => {}
+            FrameStage::IndicatorSurfaces => {
+                if !super::home_wiring::hides(app, stage) {
+                    app.draw_indicator_surfaces(ctx);
+                }
+            }
+            FrameStage::FeedAndLayoutSwitches => {
+                let (tab, config) = app.active_with_config();
+                let changed = tab.replay.is_none()
+                    && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
+                tab.maybe_switch_feed(config);
+                app.active_tab_mut().apply_spec_changes();
+                if changed {
+                    app.layout_adapter().follow_market_changes();
+                }
+            }
+            FrameStage::StrategyCleanup => app.active_tab_mut().apply_strategy_cleanup(),
+            FrameStage::Tail => {
+                app.run_frame_tail(
+                    ctx,
+                    now,
+                    &scratch.canvas,
+                    &mut quantick_feed::spawn_live,
+                    [FrameTailStage::ApplyNoticeAction],
+                );
+                super::frame_tail::settle_active_paper_panel(
+                    &mut app.runtime.tabs,
+                    &mut app.surfaces.toast,
+                    now,
+                );
+                app.run_frame_stage(
+                    stage,
+                    ctx,
+                    now,
+                    &mut scratch,
+                    &mut quantick_feed::spawn_live,
+                    &mut tail,
+                );
+            }
+            stage if stage.needs_presentation() => app.run_frame_stage(
+                stage,
+                ctx,
+                now,
+                &mut scratch,
+                &mut quantick_feed::spawn_live,
+                &mut tail,
+            ),
+            _ => {}
+        }
+    }
+}
+
+pub(super) fn settle(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    let selected: Vec<_> = app
+        .runtime
+        .tabs
+        .windows()
+        .windows()
+        .iter()
+        .map(|window| window.selected().0)
+        .collect();
+    for (id, tab) in app.runtime.tabs.iter_with_ids_mut() {
+        if !selected.contains(&id) {
+            tab.apply_strategy_cleanup();
+        }
+    }
+    if let Some(note) = app.audio.play_pending(&mut app.runtime.tabs) {
+        app.alerts().show_toast(note);
+    }
+    super::frame_tail::settle_background_paper_panels(
+        &mut app.runtime.tabs,
+        &mut app.surfaces.toast,
+        now,
+    );
+    ctx.request_repaint_after(Duration::from_millis(16));
+}
+
 #[cfg(test)]
 impl QuantickApp {
     /// A frame whose tail runs `stages` in the given order: the mutant-order
@@ -90,14 +229,10 @@ impl QuantickApp {
     /// what was painted — the only honest way to assert that a chart is on
     /// screen rather than a blank rectangle.
     pub(super) fn draw_frame(&mut self, ctx: &egui::Context, now: Instant) {
-        self.draw_frame_with_tail(
-            ctx,
-            now,
-            &mut quantick_feed::spawn_live,
-            FrameTailPlan::stages(),
-        );
+        super::native_windows::draw(self, ctx, now);
     }
 
+    #[cfg(test)]
     fn draw_frame_with_tail(
         &mut self,
         ctx: &egui::Context,
@@ -112,6 +247,7 @@ impl QuantickApp {
     /// plan; tests replay a swapped order through these same adapters, via
     /// the `#[cfg(test)]` door, to show the harm the declared dependencies
     /// prevent.
+    #[cfg(test)]
     fn draw_frame_with_stages<T: IntoIterator<Item = FrameTailStage>>(
         &mut self,
         ctx: &egui::Context,

@@ -455,7 +455,7 @@ impl ArrangementRead<'_> {
     pub(super) fn capture_arrangement(&self) -> (Vec<ui_state::SavedTab>, ui_state::SavedChrome) {
         let tabs = self
             .tabs
-            .iter()
+            .iter_presented()
             .map(|tab| ui_state::SavedTab {
                 feed: tab.feed_id.clone(),
                 symbol: tab.symbol.clone(),

@@ -84,10 +84,45 @@ pub(super) fn settle_paper_panels(
     toast: &mut ToastSurface,
     now: Instant,
 ) {
+    settle_paper_panels_where(tabs, toast, now, |_| true);
+}
+
+pub(super) fn settle_active_paper_panel(
+    tabs: &mut super::arrangement_host::ArrangementHost,
+    toast: &mut ToastSurface,
+    now: Instant,
+) {
+    let active = tabs.active_id();
+    settle_paper_panels_where(tabs, toast, now, |id| id == active);
+}
+
+pub(super) fn settle_background_paper_panels(
+    tabs: &mut super::arrangement_host::ArrangementHost,
+    toast: &mut ToastSurface,
+    now: Instant,
+) {
+    let selected: Vec<_> = tabs
+        .windows()
+        .windows()
+        .iter()
+        .map(|window| window.selected().0)
+        .collect();
+    settle_paper_panels_where(tabs, toast, now, |id| !selected.contains(&id));
+}
+
+fn settle_paper_panels_where(
+    tabs: &mut super::arrangement_host::ArrangementHost,
+    toast: &mut ToastSurface,
+    now: Instant,
+    include: impl Fn(u64) -> bool,
+) {
     let active_tab = tabs.active_index();
     let mut watched = None;
     let mut background = None;
-    for (index, tab) in tabs.iter_mut().enumerate() {
+    for (index, (id, tab)) in tabs.iter_with_ids_mut().enumerate() {
+        if !include(id) {
+            continue;
+        }
         tab.paper.settle();
         let Some(message) = tab.paper.take_toast() else {
             continue;

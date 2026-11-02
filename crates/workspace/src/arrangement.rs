@@ -10,6 +10,7 @@ use crate::lifetime::WorkspaceId;
 mod host;
 mod restore;
 pub mod strip;
+pub mod tab_drag;
 pub mod windows;
 pub use host::{Arrangement, ClosedTab, TabRuntime};
 pub use restore::{RestoreEffect, RestoreMode, RestoreStep};

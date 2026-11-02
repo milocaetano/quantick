@@ -75,8 +75,14 @@ pub enum TabAction {
 /// why rather than vanishing.
 #[derive(Default)]
 pub(crate) struct StripDrawn {
+    pub(crate) bounds: Option<egui::Rect>,
+    pub(crate) drag_started: Option<u64>,
+    pub(crate) reveal: Option<usize>,
+    pub(crate) close: Vec<egui::Rect>,
+    pub(crate) allow_close_last: bool,
     pub(crate) home: Option<egui::Rect>,
     pub(crate) tabs: Vec<(usize, egui::Rect)>,
+    pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
 }
@@ -88,7 +94,11 @@ pub(crate) fn draw(
     surface: &StripSurface,
     drawn: &mut StripDrawn,
 ) -> Option<TabAction> {
+    drawn.bounds = Some(ui.max_rect().intersect(ui.clip_rect()));
+    drawn.drag_started = None;
+    drawn.close.clear();
     drawn.tabs.clear();
+    drawn.tab_ids.clear();
     drawn.add = None;
     drawn.overflow = None;
     let compact = ui.available_width() < 240.0;
@@ -111,10 +121,10 @@ pub(crate) fn draw(
         .max(HOME_MIN_WIDTH_PX);
     let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
     let slots = market_slots(room, labelled, CHIP_PREFERRED_WIDTH_PX);
-    let visible = visible_tabs(chips.len(), active, slots);
+    let visible = visible_tabs(chips.len(), drawn.reveal.unwrap_or(active), slots);
     let shown = (visible.len() == chips.len()).then_some((label, labelled));
     let mut action = draw_home_tab(ui, surface.is_home(), shown, drawn).then_some(TabAction::Home);
-    let closable = chips.len() > 1;
+    let closable = chips.len() > 1 || drawn.allow_close_last;
     let active_chip = surface.active_chip(active);
     let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
         .clamp(CHIP_MIN_WIDTH_PX, CHIP_MAX_WIDTH_PX);
@@ -135,7 +145,10 @@ pub(crate) fn draw(
             let response = ui
                 .add_sized(
                     [(chip_width - close_reserve).max(0.0), CHIP_HEIGHT],
-                    egui::Button::new(text).frame(false).truncate(),
+                    egui::Button::new(text)
+                        .frame(false)
+                        .truncate()
+                        .sense(egui::Sense::click_and_drag()),
                 )
                 .on_hover_text(if chip.replaying {
                     format!("{} (replay)", chip.label)
@@ -145,9 +158,13 @@ pub(crate) fn draw(
             if response.clicked() && !selected {
                 action = Some(TabAction::Activate(index));
             }
+            if response.drag_started() {
+                drawn.drag_started = Some(chip.id);
+            }
             let bounds = response.rect.intersect(ui.clip_rect());
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
+                drawn.tab_ids.push((chip.id, bounds));
             }
             if chip.replaying {
                 let center = egui::pos2(
@@ -191,6 +208,7 @@ pub(crate) fn draw(
                         "The last tab stays open — a window with no market has nothing to show",
                     )
                 };
+                drawn.close.push(close.rect);
                 paint_tab_surface(
                     ui,
                     surface,

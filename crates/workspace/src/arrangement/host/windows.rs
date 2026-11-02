@@ -6,6 +6,30 @@ use crate::arrangement::{
 };
 
 impl<R> Arrangement<R> {
+    /// Flatten native strips without losing any background runtime. Documents
+    /// keep all markets even though their legacy format restores one strip.
+    pub fn iter_presented(&self) -> impl Iterator<Item = &R> {
+        self.windows
+            .windows()
+            .iter()
+            .flat_map(|window| self.window_indices(window.id))
+            .map(|index| &self.runtimes[index].runtime)
+    }
+
+    pub fn captured_active_index(&self) -> usize {
+        let selected = self
+            .windows
+            .window(self.windows.focused())
+            .expect("focused window")
+            .selected();
+        self.windows
+            .windows()
+            .iter()
+            .flat_map(|window| window.tabs())
+            .position(|id| *id == selected)
+            .expect("saved selected tab")
+    }
+
     pub const fn windows(&self) -> &TabWindows {
         &self.windows
     }

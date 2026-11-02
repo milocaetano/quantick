@@ -33,7 +33,7 @@ impl WorkspaceRead<'_> {
         ui_state::Workspace::new(
             self.session.save_on_exit(),
             self.session.window_size(),
-            self.arrangement.tabs.active_index(),
+            self.arrangement.tabs.captured_active_index(),
             tabs,
             Some(chrome),
         )
@@ -327,7 +327,7 @@ impl WorkspaceSaveAdapter<'_> {
         let entry = ui_state::NamedArrangement {
             name: name.clone(),
             window: self.session.window_size(),
-            active_tab: self.arrangement.tabs.active_index(),
+            active_tab: self.arrangement.tabs.captured_active_index(),
             tabs,
             chrome: Some(chrome),
         };
