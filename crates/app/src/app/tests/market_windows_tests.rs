@@ -417,3 +417,82 @@ fn market_windows_physical_placement_uses_child_scale_after_a_higher_dpi_source(
         "one-time placement cannot pin a trader's independently moved window"
     );
 }
+
+#[test]
+fn market_window_control_placement_reports_acceptance_separately_from_native_observation() {
+    use quantick_control::wire::WireU64;
+    use quantick_control_handlers::native_window::NativeWindowHost;
+    use quantick_control_schema::{
+        market_windows::{PhysicalPlacement, PlacementInput},
+        native_window::{WindowInput, WindowState},
+    };
+    let ctx = egui::Context::default();
+    let (mut app, _, _, _) = test_app();
+    let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    let child = app
+        .runtime
+        .tabs
+        .transfer_tab(
+            TabId(app.runtime.tabs.id_at(1)),
+            TransferTarget::NewWindow,
+            0,
+        )
+        .unwrap()
+        .destination;
+    let requested = PhysicalPlacement {
+        x_px: -1700,
+        y_px: 180,
+        width_px: 900,
+        height_px: 600,
+    };
+    let accepted = app
+        .place_native_window(PlacementInput {
+            window_id: Some(WireU64::new(child.0)),
+            placement: requested,
+        })
+        .unwrap();
+    assert_eq!(accepted.requested, requested);
+    assert!(
+        app.market_windows().windows[1].observed.is_none(),
+        "request acceptance must not fabricate OS observation"
+    );
+    app.request_targeted_native_window(WindowInput {
+        window_id: Some(WireU64::new(child.0)),
+        state: WindowState::Maximized,
+    })
+    .unwrap();
+    let now = frame_instant(&ctx);
+    let output = ctx.run(
+        viewport_input(child, 1.5, egui::pos2(-1200.0, 104.0), vec![]),
+        |ctx| super::super::native_windows::paint(&mut app, ctx, child, now),
+    );
+    let commands = &output.viewport_output[&super::super::native_windows::viewport(child)].commands;
+    assert!(
+        commands.contains(&egui::ViewportCommand::OuterPosition(egui::pos2(
+            requested.x_px as f32 / 1.5,
+            requested.y_px as f32 / 1.5
+        )))
+    );
+    assert!(commands.contains(&egui::ViewportCommand::InnerSize(egui::vec2(600.0, 400.0))));
+    assert!(commands.contains(&egui::ViewportCommand::Maximized(true)));
+    let observed = app.market_windows().windows[1]
+        .observed
+        .as_ref()
+        .unwrap()
+        .inner
+        .unwrap();
+    assert_eq!(
+        observed.x_px, -1800,
+        "observed desktop position comes from viewport input, not the requested -1700"
+    );
+    assert_eq!(
+        app.runtime
+            .tabs
+            .windows()
+            .window(WindowId::ROOT)
+            .unwrap()
+            .tabs()
+            .len(),
+        1
+    );
+}

@@ -27,6 +27,11 @@ pub fn no_span_reported() -> WireU64 {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSnapshot {
+    /// Native presentation order, independent of the retained runtime storage indices below.
+    #[serde(default)]
+    pub windows: Vec<crate::market_windows::MarketWindowSnapshot>,
+    #[serde(default)]
+    pub focused_window_id: Option<WireU64>,
     pub active_tab_index: WireU64,
     pub active_tab_id: WireU64,
     pub timezone_offset_minutes: i32,
@@ -93,6 +98,12 @@ pub struct WorkspaceSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceTab {
+    #[serde(default)]
+    pub window_id: Option<WireU64>,
+    #[serde(default)]
+    pub window_index: Option<WireU64>,
+    #[serde(default)]
+    pub selected_in_window: bool,
     pub index: WireU64,
     pub tab_id: WireU64,
     pub label: String,

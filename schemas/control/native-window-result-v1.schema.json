@@ -7,6 +7,10 @@
         "minimized"
       ],
       "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -14,6 +18,16 @@
     "requested": {
       "$ref": "#/$defs/WindowState",
       "description": "Accepted for the next native frame; this is not an OS acknowledgement."
+    },
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

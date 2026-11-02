@@ -6,6 +6,8 @@ use quantick_workspace::arrangement::{
     windows::{TransferTarget, WindowId},
 };
 use std::{collections::BTreeMap, time::Instant};
+mod control;
+mod exposed;
 
 #[derive(Default)]
 pub(super) struct NativeWindows {
@@ -13,11 +15,15 @@ pub(super) struct NativeWindows {
     titles: BTreeMap<WindowId, TitleBarState>,
     strips: BTreeMap<WindowId, Strip>,
     positions: BTreeMap<WindowId, Point>,
+    placements: BTreeMap<WindowId, quantick_control_schema::market_windows::PhysicalPlacement>,
+    observed: BTreeMap<WindowId, quantick_control_schema::market_windows::NativeObservation>,
     pub(super) gesture: Gesture,
     pointer: Option<Point>,
     released: bool,
     escape: bool,
     final_exit: bool,
+    #[cfg(test)]
+    pub(super) exposed_for_test: Option<WindowId>,
 }
 
 impl NativeWindows {
@@ -98,7 +104,7 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
             continue;
         }
         let mut builder = egui::ViewportBuilder::default()
-            .with_title("Quantick")
+            .with_title(exposed::title(window))
             .with_decorations(false)
             .with_inner_size([1100.0, 760.0])
             .with_min_inner_size([340.0, 240.0]);
@@ -117,6 +123,21 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
             }
         });
     }
+    if app
+        .presentation
+        .native
+        .gesture
+        .active()
+        .is_some_and(|token| {
+            !app.runtime
+                .tabs
+                .windows()
+                .begin_drag(token.tab())
+                .is_ok_and(|current| current == token)
+        })
+    {
+        app.presentation.native.gesture.cancel();
+    }
     finish_drag(app, ctx);
     let focused = app.runtime.tabs.windows().focused();
     present(app, focused);
@@ -133,6 +154,14 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     app.presentation
         .native
         .positions
+        .retain(|id, _| live.window(*id).is_some());
+    app.presentation
+        .native
+        .observed
+        .retain(|id, _| live.window(*id).is_some());
+    app.presentation
+        .native
+        .placements
         .retain(|id, _| live.window(*id).is_some());
     ctx.request_repaint_after(std::time::Duration::from_millis(16));
 }
@@ -160,6 +189,25 @@ pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId
         }
     }
     present(app, window);
+    if !app.presentation.native.observed.contains_key(&window) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(exposed::title(window)));
+    }
+    #[cfg(test)]
+    {
+        app.presentation.native.exposed_for_test = Some(window);
+    }
+    control::observe(&mut app.presentation.native, ctx, window);
+    if let Some(placement) = app.presentation.native.placements.remove(&window) {
+        let scale = ctx.pixels_per_point();
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+            placement.x_px as f32 / scale,
+            placement.y_px as f32 / scale,
+        )));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+            placement.width_px as f32 / scale,
+            placement.height_px as f32 / scale,
+        )));
+    }
     if let Some(position) = app.presentation.native.positions.remove(&window) {
         let scale = ctx.pixels_per_point();
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
@@ -283,7 +331,7 @@ fn observe_strip(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId) {
         });
     }
     if let (Some(drag), Some(point)) = (native.gesture.active(), native.pointer) {
-        let strips: Vec<_> = native.strips.values().cloned().collect();
+        let strips = eligible_strips(native, point).unwrap_or_default();
         let drop = tab_drag::destination(drag, point, &strips);
         if drop.target == TransferTarget::Window(window)
             && let Some(x) = drop.marker_x
@@ -311,9 +359,8 @@ fn finish_drag(app: &mut QuantickApp, ctx: &egui::Context) {
     }
     if !native.released {
         if let Some(point) = native.pointer {
-            native
-                .gesture
-                .hover(point, &native.strips.values().cloned().collect::<Vec<_>>());
+            let strips = eligible_strips(native, point).unwrap_or_default();
+            native.gesture.hover(point, &strips);
         }
         return;
     }
@@ -321,7 +368,10 @@ fn finish_drag(app: &mut QuantickApp, ctx: &egui::Context) {
         native.gesture.cancel();
         return;
     };
-    let strips: Vec<_> = native.strips.values().cloned().collect();
+    let Some(strips) = eligible_strips(native, point) else {
+        native.gesture.cancel();
+        return;
+    };
     let Some((drag, drop)) = native.gesture.release(point, &strips, false) else {
         return;
     };
@@ -346,5 +396,93 @@ fn finish_drag(app: &mut QuantickApp, ctx: &egui::Context) {
         }
         ctx.send_viewport_cmd_to(viewport(result.destination), egui::ViewportCommand::Focus);
         ctx.request_repaint();
+    }
+}
+
+fn eligible_strips(native: &NativeWindows, point: Point) -> Option<Vec<Strip>> {
+    #[cfg(all(windows, not(test)))]
+    let exposure = tab_drag::Exposure::Native(exposed::at(point));
+    #[cfg(test)]
+    let exposure = tab_drag::Exposure::Native(native.exposed_for_test);
+    #[cfg(all(not(windows), not(test)))]
+    let exposure = tab_drag::Exposure::Unavailable;
+    tab_drag::eligible_strips(
+        native.gesture.active(),
+        point,
+        &native.strips.values().cloned().collect::<Vec<_>>(),
+        exposure,
+    )
+}
+
+#[cfg(test)]
+mod exposed_tests {
+    use super::*;
+    #[test]
+    fn only_the_exposed_same_process_window_can_receive_a_drop_even_when_strips_overlap() {
+        use quantick_workspace::arrangement::{TabId, windows::TabWindows};
+        use quantick_workspace::lifetime::WorkspaceId;
+        let model = TabWindows::new(WorkspaceId(1), TabId(1));
+        let child = WindowId(17);
+        let bounds = tab_drag::Rect {
+            min: Point { x: 0.0, y: 0.0 },
+            max: Point { x: 200.0, y: 52.0 },
+        };
+        let mut native = NativeWindows::default();
+        for (window, tab) in [(WindowId::ROOT, TabId(1)), (child, TabId(2))] {
+            native.strips.insert(
+                window,
+                Strip {
+                    window,
+                    bounds,
+                    chrome: bounds,
+                    chips: vec![(tab, 0, bounds)],
+                    exclusions: vec![],
+                    order: vec![tab],
+                },
+            );
+        }
+        native.exposed_for_test = Some(child);
+        let point = Point { x: 100.0, y: 10.0 };
+        let candidates = eligible_strips(&native, point).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].window, child,
+            "window order and pointer capture cannot choose an occluded sibling"
+        );
+        let drop = tab_drag::destination(model.begin_drag(TabId(1)).unwrap(), point, &candidates);
+        assert_eq!(drop.target, TransferTarget::Window(child));
+        let all: Vec<_> = native.strips.values().cloned().collect();
+        assert!(
+            tab_drag::eligible_strips(
+                model.begin_drag(TabId(1)).ok(),
+                point,
+                &all,
+                tab_drag::Exposure::Unavailable
+            )
+            .is_none(),
+            "an unsupported native target cannot silently detach or choose an overlapping sibling"
+        );
+        let only_source = &all[..1];
+        let fallback = tab_drag::eligible_strips(
+            model.begin_drag(TabId(1)).ok(),
+            point,
+            only_source,
+            tab_drag::Exposure::Unavailable,
+        )
+        .unwrap();
+        assert_eq!(
+            fallback.len(),
+            1,
+            "same-window reorder remains available without an OS z-order API"
+        );
+        assert_eq!(
+            tab_drag::destination(model.begin_drag(TabId(1)).unwrap(), point, &fallback).target,
+            TransferTarget::Window(WindowId::ROOT)
+        );
+        native.exposed_for_test = None;
+        assert!(
+            eligible_strips(&native, point).unwrap().is_empty(),
+            "foreign windows and desktop are never attach targets"
+        );
     }
 }

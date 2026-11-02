@@ -49,24 +49,65 @@ pub struct Drop {
     pub eligible: bool,
 }
 
+/// The native adapter either identified the exposed same-process window,
+/// identified desktop/foreign content, or cannot resolve native z-order.
+pub enum Exposure {
+    Native(Option<WindowId>),
+    Unavailable,
+}
+
+pub fn eligible_strips(
+    drag: Option<TabDrag>,
+    point: Point,
+    strips: &[Strip],
+    exposure: Exposure,
+) -> Option<Vec<Strip>> {
+    let target = match exposure {
+        Exposure::Native(window) => window,
+        Exposure::Unavailable => {
+            let source = drag?.source();
+            if strips
+                .iter()
+                .any(|strip| strip.window != source && strip.chrome.contains(point))
+            {
+                return None;
+            }
+            Some(source)
+        }
+    };
+    Some(
+        strips
+            .iter()
+            .filter(|strip| Some(strip.window) == target)
+            .cloned()
+            .collect(),
+    )
+}
+
 /// Opaque ownership token stays unchanged until release. Escape consumes it.
 #[derive(Default)]
 pub struct Gesture {
     drag: Option<TabDrag>,
+    cancelled: bool,
     reveal: Option<(WindowId, usize)>,
     hover_ticks: u32,
 }
 impl Gesture {
     pub fn begin(&mut self, drag: TabDrag) {
         self.drag = Some(drag);
+        self.cancelled = false;
     }
     pub fn active(&self) -> Option<TabDrag> {
         self.drag
     }
     pub fn cancel(&mut self) {
+        self.cancelled |= self.drag.is_some();
         self.drag = None;
         self.reveal = None;
         self.hover_ticks = 0;
+    }
+    pub fn cancelled(&self) -> bool {
+        self.cancelled
     }
     pub fn reveal(&self, window: WindowId) -> Option<usize> {
         self.reveal
@@ -111,6 +152,7 @@ impl Gesture {
         escape: bool,
     ) -> Option<(TabDrag, Drop)> {
         let drag = self.drag.take()?;
+        self.cancelled = escape;
         self.reveal = None;
         (!escape).then(|| (drag, destination(drag, point, strips)))
     }

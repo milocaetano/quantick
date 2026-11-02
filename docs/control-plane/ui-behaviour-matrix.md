@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 81 |
+| Reachable by capability | 86 |
 | Excluded: `authority` | 6 |
-| Excluded: `ui_only_by_decision` | 4 |
-| Excluded: `pending_capability` | 50 |
-| **Total** | **141** |
+| Excluded: `ui_only_by_decision` | 3 |
+| Excluded: `pending_capability` | 49 |
+| **Total** | **144** |
 
-85 of the 141 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 56 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+85 of the 144 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 59 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -57,10 +57,13 @@ The three exclusion classes are closed:
 | `layout.window.state.set` | Set native window presentation | title-strip minimize and maximize controls; double-click free title-strip space | `layout.window.state.set` | — |
 | `home.show` | Show the Home tab | first tab of the market title strip, Ctrl+1, Ctrl+Shift+H | `home.show` | — |
 | `home.leave` | Leave the Home tab | the active market's chip, Ctrl+Tab and Ctrl+Shift+Tab while Home shows | `home.leave` | — |
-| `window.move` | Move or resize the native window | free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface | — | `ui_only_by_decision` — docs/ux/native-market-titlebar.md keeps desktop movement under OS authority; scene bounds identify the native gesture target but do not execute it |
-| `window.snap` | Snap the native window | Windows+Left/Right and the operating system's native window snapping | — | `ui_only_by_decision` — docs/ux/native-market-titlebar.md keeps window snapping as an OS gesture rather than granting arbitrary desktop positioning through the app API |
-| `app.exit` | Close the application | File menu, and the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the window would end every other capability's session |
-| `tab.market.activate` | Switch to another market tab | market title strip and its overflow menu; Ctrl+Tab and Ctrl+Shift+Tab | — | `pending_capability` — `layout.tab.switch` switches a layout tab, not a market tab; nothing reaches the strip that carries the open markets. Tracked in issue 401 |
+| `window.move` | Move or resize the native window | free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface | `layout.window.placement.set` | — |
+| `window.snap` | Snap the native window | Windows+Left/Right and the operating system's native window snapping | — | `ui_only_by_decision` — Windows snapping remains an OS gesture; layout.window.placement.set requests an explicit bounded rectangle and does not invoke shell snapping |
+| `app.exit` | Close the application | File menu, and the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the final window would end every other capability's session; layout.window.close instead preserves tabs in a sibling and refuses final-window exit |
+| `tab.market.activate` | Switch to another market tab | market title strip and its overflow menu; Ctrl+Tab and Ctrl+Shift+Tab | `layout.market_tab.select` | — |
+| `tab.market.transfer` | Reorder, detach or attach a market tab | drag a market chip within its strip, outside it, or onto another exposed window strip | `layout.market_tab.reorder`, `layout.market_tab.detach`, `layout.market_tab.attach` | — |
+| `tab.market.drag.cancel` | Cancel a staged market-tab drag | Escape while dragging a market chip | `layout.market_tab.drag.begin`, `layout.market_tab.drag.cancel` | — |
+| `window.close_preserving_tabs` | Close one native window and retain every market in a sibling | native window close while sibling windows exist | `layout.window.close` | — |
 | `tab.market.close` | Close the active market tab | tab strip chip, File menu, Ctrl+W | — | `pending_capability` — closing a tab discards its drawings and its paper position, and the control contract admits no destructive effect yet — the same ceiling `layout.tab.delete` sits under. Tracked in issue 401 |
 | `tab.market.open` | Open a new market tab | tab strip +, File menu, Ctrl+T | — | `pending_capability` — no capability opens a second market tab. `feed.source.set` switches the feed and symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401 |
 | `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's SOURCE feed and symbol combos | `feed.source.set` | — |
@@ -217,7 +220,7 @@ matrix fails the build.
 | `hotkey` | 19 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 56 |
+| `authored` | 59 |
 
 ## Appendix: rows no registry stands behind
 
@@ -233,6 +236,9 @@ declares nothing here is a guard failure.
 | `home.leave` | market chip click and tab cycling while Home shows |
 | `window.move` | native title-strip drag and window-edge resize gestures |
 | `window.snap` | native Windows snapping |
+| `tab.market.transfer` | native market-tab drag and insertion marker |
+| `tab.market.drag.cancel` | native market-tab staged gesture and Escape |
+| `window.close_preserving_tabs` | native close-to-survivor lifecycle |
 | `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |
 | `chart.bars.set_spec` | the bar-kind and size controls are pane header widgets, not entries in an action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |

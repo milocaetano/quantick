@@ -88,6 +88,18 @@ pub(crate) trait TabsPort {
     fn tab_reads(&self) -> TabReads<'_>;
 }
 
+impl quantick_control_handlers::TabDirectory for TabReads<'_> {
+    fn active_tab_index(&self) -> usize {
+        self.tabs.active_index()
+    }
+    fn tab_position(&self, id: u64) -> Option<usize> {
+        self.tabs().position(id)
+    }
+    fn tab_id_at(&self, index: usize) -> u64 {
+        self.tabs().id_at(index)
+    }
+}
+
 /// Tabs and panes, changed: the tab or pane an action targets.
 pub(crate) trait TabsMutPort {
     fn tabs_mut(&mut self) -> TabsMut<'_>;
@@ -691,15 +703,6 @@ impl TabsMutPort for QuantickApp {
             .expect("bound workspace");
         let reach = &mut self.runtime.history.history_reach;
         TabsMut::new(&mut self.runtime.tabs, &self.config, reach)
-    }
-}
-
-impl quantick_control_handlers::native_window::NativeWindowHost for QuantickApp {
-    fn request_native_window(
-        &mut self,
-        state: quantick_control_schema::native_window::WindowState,
-    ) -> Result<(), quantick_control::error::ControlError> {
-        self.chrome.title_bar.requests.request(state)
     }
 }
 

@@ -56,6 +56,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
 ) -> WorkspaceSnapshot {
     let active_index = app.tab_reads().active_tab_index();
     let tabs = app.tab_reads().tabs();
+    let windows = app.market_windows();
     let timezone = app.chrome_reads().timezone();
     let (save_on_exit, performance_readings_visible, progressive_venue_history) =
         app.health_reads().workspace_flags();
@@ -64,6 +65,8 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
         .get(active_index)
         .is_some_and(|tab| tab.session.history_reach_running());
     WorkspaceSnapshot {
+        windows: windows.windows.clone(),
+        focused_window_id: windows.focused_window_id,
         active_tab_index: wire_usize(active_index),
         active_tab_id: tabs.get(active_index).map_or_else(
             || WireU64::new(0),
@@ -113,7 +116,11 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                         }
                     })
                     .collect();
+                let location = windows.tab_location(WireU64::new(tabs.id_at(index)));
                 WorkspaceTab {
+                    window_id: location.0,
+                    window_index: location.1,
+                    selected_in_window: location.2,
                     index: wire_usize(index),
                     tab_id: WireU64::new(tabs.id_at(index)),
                     label: tab.chip_label().to_owned(),

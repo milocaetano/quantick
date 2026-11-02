@@ -195,6 +195,11 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<VisibilityResult>("layers-visibility-set-result-v1.schema.json"),
     ];
     documents.extend(
+        quantick_control_schema::market_windows::documents()
+            .into_iter()
+            .map(|(file_name, schema)| SchemaDocument { file_name, schema }),
+    );
+    documents.extend(
         quantick_control_schema::bubble_preset::documents()
             .into_iter()
             .map(|(file_name, schema)| SchemaDocument { file_name, schema }),

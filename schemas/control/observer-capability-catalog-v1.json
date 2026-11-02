@@ -11356,6 +11356,914 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Transfers the same tab to the named live window at an insertion index after excluding that tab. Empty source windows retire without closing their runtime.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.attach",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "position": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "window_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "window_id",
+          "position"
+        ],
+        "title": "AttachInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Attach a market tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Transfers the same tab into a new native window. The last tab can detach, retiring its empty source window while sibling windows survive.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.detach",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "TabInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Detach a market tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Stages the same ownership token a native drag uses, without changing ownership or order. Refused while another gesture is pending. Complete through a transfer operation or cancel explicitly.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.drag.begin",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "TabInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Stage a market-tab drag",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Cancels the pending native or agent tab gesture, preserving every window's ownership and tab order. Inspection reports pending and cancelled state.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.drag.cancel",
+      "idempotency": "required",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "CancelInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Cancel the staged market-tab drag",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Moves the same tab within its window. Position is the insertion index after excluding that tab; ownership, feeds and workers are preserved.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.reorder",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "position": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "position"
+        ],
+        "title": "ReorderInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Reorder a market tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Selects a tab owned by the named window without changing another window's selection or native keyboard focus.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.market_tab.select",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "window_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "window_id"
+        ],
+        "title": "SelectInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Select a market tab in one window",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Puts the context charts away, leaving the rail that brings them back. The width they had is kept, so expanding returns the layout the trader chose.",
       "destructive": false,
       "dry_run_supported": false,
@@ -13584,7 +14492,323 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Requests normal, maximized or minimized presentation state for the single native window. Application exit is excluded from agent authority.",
+      "description": "Retires a live native market window and appends its tabs to a surviving window without recreating sessions. The final market window is refused: process exit is outside agent authority.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 2048
+      },
+      "id": "layout.window.close",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omitted means the focused live market window, never a hidden root shell."
+          }
+        },
+        "title": "WindowTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "changed",
+          "drag"
+        ],
+        "title": "TabOperationResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required idempotency key replays the original structured result without repeating the operation. Invalid or stale targets change nothing. Inspect workspace.windows for the current presentation; native effects are asynchronous.",
+      "title": "Close a market window and preserve its tabs",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Requests outer origin and inner size in physical desktop pixels for the named window, or the focused window when omitted. Coordinates may be negative. The OS can clamp the requested rectangle; workspace.windows reports the actual native viewport separately. No market, feed or worker is recreated.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 1024
+      },
+      "id": "layout.window.placement.set",
+      "idempotency": "required",
+      "input_schema": {
+        "$defs": {
+          "PhysicalPlacement": {
+            "additionalProperties": false,
+            "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+            "properties": {
+              "height_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "x_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              },
+              "y_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "x_px",
+              "y_px",
+              "width_px",
+              "height_px"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "placement": {
+            "$ref": "#/$defs/PhysicalPlacement"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "placement"
+        ],
+        "title": "PlacementInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "PhysicalPlacement": {
+            "additionalProperties": false,
+            "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+            "properties": {
+              "height_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "x_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              },
+              "y_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "x_px",
+              "y_px",
+              "width_px",
+              "height_px"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "requested": {
+            "$ref": "#/$defs/PhysicalPlacement",
+            "description": "Accepted for a native frame. The OS may clamp size or placement; inspect workspace.windows."
+          },
+          "window_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "window_id",
+          "requested"
+        ],
+        "title": "PlacementResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A required key replays the accepted placement without issuing it again.",
+      "title": "Place a native market window",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Requests normal, maximized or minimized presentation state for window_id, or the focused live market window when omitted. The result is acceptance, not an OS acknowledgement; workspace.windows reports observed state. Application exit is excluded from agent authority.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -13604,6 +14828,10 @@
               "minimized"
             ],
             "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -13611,6 +14839,16 @@
         "properties": {
           "state": {
             "$ref": "#/$defs/WindowState"
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -13629,6 +14867,10 @@
               "minimized"
             ],
             "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -13636,6 +14878,16 @@
           "requested": {
             "$ref": "#/$defs/WindowState",
             "description": "Accepted for the next native frame; this is not an OS acknowledgement."
+          },
+          "window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -23606,12 +24858,147 @@
             ],
             "type": "object"
           },
+          "MarketWindowSnapshot": {
+            "properties": {
+              "observed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/NativeObservation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "None until this native viewport has supplied an observation."
+              },
+              "omitted_tabs": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "ordered_tab_ids": {
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "maxItems": 1024,
+                "type": "array"
+              },
+              "selected_tab_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "window_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "window_id",
+              "ordered_tab_ids",
+              "selected_tab_id",
+              "omitted_tabs"
+            ],
+            "type": "object"
+          },
+          "NativeObservation": {
+            "properties": {
+              "focused": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "inner": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PhysicalPlacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maximized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "minimized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "outer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PhysicalPlacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pixels_per_point": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "description": "Geometry is derived from the OS-fed native viewport, never from an accepted request.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "type": "object"
+          },
           "PaneSideDto": {
             "enum": [
               "flow",
               "time"
             ],
             "type": "string"
+          },
+          "PhysicalPlacement": {
+            "additionalProperties": false,
+            "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+            "properties": {
+              "height_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "x_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              },
+              "y_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "x_px",
+              "y_px",
+              "width_px",
+              "height_px"
+            ],
+            "type": "object"
           },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
@@ -23691,6 +25078,10 @@
                 },
                 "type": "array"
               },
+              "selected_in_window": {
+                "default": false,
+                "type": "boolean"
+              },
               "split_fraction": {
                 "$ref": "#/$defs/CanonicalDecimal"
               },
@@ -23699,6 +25090,28 @@
               },
               "tab_id": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "window_index": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -23723,6 +25136,17 @@
           },
           "active_tab_index": {
             "$ref": "#/$defs/WireU64"
+          },
+          "focused_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "history_reach": {
             "default": "",
@@ -23783,6 +25207,14 @@
             "default": false,
             "description": "Whether a chart cut by trades carries the venue's candles in front of\nits bars. Read with each pane's `venue_prefix_present`: this is what\nthe trader asked for, that is what the pane actually holds.",
             "type": "boolean"
+          },
+          "windows": {
+            "default": [],
+            "description": "Native presentation order, independent of the retained runtime storage indices below.",
+            "items": {
+              "$ref": "#/$defs/MarketWindowSnapshot"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -23800,6 +25232,248 @@
       },
       "schema_version": 1,
       "title": "Workspace summary"
+    },
+    {
+      "description": "Bounded windows, stable IDs, ordered tabs, independent selections, staged gesture state and observed native geometry. Join tab IDs with workspace.summary, chart.summary, health.summary and session.replay for runtime and processing continuity. Observations are independent of accepted requests.",
+      "id": "workspace.windows",
+      "module_id": "workspace",
+      "required_permissions": [
+        "observe",
+        "observe.workspace"
+      ],
+      "schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "DragSnapshot": {
+            "properties": {
+              "cancelled": {
+                "description": "True after cancellation until another drag begins or completes.",
+                "type": "boolean"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "source_window_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pending",
+              "cancelled"
+            ],
+            "type": "object"
+          },
+          "MarketWindowSnapshot": {
+            "properties": {
+              "observed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/NativeObservation"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "None until this native viewport has supplied an observation."
+              },
+              "omitted_tabs": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "ordered_tab_ids": {
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "maxItems": 1024,
+                "type": "array"
+              },
+              "selected_tab_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "window_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "window_id",
+              "ordered_tab_ids",
+              "selected_tab_id",
+              "omitted_tabs"
+            ],
+            "type": "object"
+          },
+          "NativeObservation": {
+            "properties": {
+              "focused": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "inner": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PhysicalPlacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maximized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "minimized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "outer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PhysicalPlacement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pixels_per_point": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "description": "Geometry is derived from the OS-fed native viewport, never from an accepted request.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "type": "object"
+          },
+          "PhysicalPlacement": {
+            "additionalProperties": false,
+            "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+            "properties": {
+              "height_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "width_px": {
+                "format": "uint32",
+                "maximum": 32768,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "x_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              },
+              "y_px": {
+                "format": "int32",
+                "maximum": 1000000,
+                "minimum": -1000000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "x_px",
+              "y_px",
+              "width_px",
+              "height_px"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "drag": {
+            "$ref": "#/$defs/DragSnapshot"
+          },
+          "focused_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "native_drop_targeting": {
+            "description": "Windows uses an exposed same-process native target. Other platforms preserve\nsame-window reorder/detach and cancel ambiguous cross-window pointer drops.",
+            "type": "string"
+          },
+          "omitted_windows": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "presented_window_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/$defs/MarketWindowSnapshot"
+            },
+            "maxItems": 256,
+            "type": "array"
+          }
+        },
+        "required": [
+          "native_drop_targeting",
+          "windows",
+          "omitted_windows",
+          "drag"
+        ],
+        "title": "WindowsSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Market windows"
     }
   ]
 }

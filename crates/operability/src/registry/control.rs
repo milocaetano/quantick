@@ -47,10 +47,7 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
             Source::Authored,
             "native title-strip drag and window-edge resize gestures",
         )],
-        mapping: excluded!(
-            UiOnlyByDecision,
-            "docs/ux/native-market-titlebar.md keeps desktop movement under OS authority; scene bounds identify the native gesture target but do not execute it"
-        ),
+        mapping: capability!("layout.window.placement.set"),
     },
     UiBehaviour {
         id: "window.snap",
@@ -59,7 +56,7 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
         keys: &[(Source::Authored, "native Windows snapping")],
         mapping: excluded!(
             UiOnlyByDecision,
-            "docs/ux/native-market-titlebar.md keeps window snapping as an OS gesture rather than granting arbitrary desktop positioning through the app API"
+            "Windows snapping remains an OS gesture; layout.window.placement.set requests an explicit bounded rectangle and does not invoke shell snapping"
         ),
     },
     UiBehaviour {
@@ -71,7 +68,7 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
             Authority,
             "`docs/control-plane/observer-threat-model.md` section 6 refuses starting or \
              stopping Quantick, a terminal, a broker or any other process. A capability that \
-             closes the window would end every other capability's session"
+             closes the final window would end every other capability's session; layout.window.close instead preserves tabs in a sibling and refuses final-window exit"
         ),
     },
     UiBehaviour {
@@ -83,11 +80,41 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
             (Source::Hotkey, "NEXT_TAB_SHORTCUT"),
             (Source::Hotkey, "PREVIOUS_TAB_SHORTCUT"),
         ],
-        mapping: excluded!(
-            PendingCapability,
-            "`layout.tab.switch` switches a layout tab, not a market tab; nothing reaches the \
-             strip that carries the open markets. Tracked in issue 401"
+        mapping: capability!("layout.market_tab.select"),
+    },
+    UiBehaviour {
+        id: "tab.market.transfer",
+        title: "Reorder, detach or attach a market tab",
+        reach: "drag a market chip within its strip, outside it, or onto another exposed window strip",
+        keys: &[(
+            Source::Authored,
+            "native market-tab drag and insertion marker",
+        )],
+        mapping: capability!(
+            "layout.market_tab.reorder",
+            "layout.market_tab.detach",
+            "layout.market_tab.attach"
         ),
+    },
+    UiBehaviour {
+        id: "tab.market.drag.cancel",
+        title: "Cancel a staged market-tab drag",
+        reach: "Escape while dragging a market chip",
+        keys: &[(
+            Source::Authored,
+            "native market-tab staged gesture and Escape",
+        )],
+        mapping: capability!(
+            "layout.market_tab.drag.begin",
+            "layout.market_tab.drag.cancel"
+        ),
+    },
+    UiBehaviour {
+        id: "window.close_preserving_tabs",
+        title: "Close one native window and retain every market in a sibling",
+        reach: "native window close while sibling windows exist",
+        keys: &[(Source::Authored, "native close-to-survivor lifecycle")],
+        mapping: capability!("layout.window.close"),
     },
     UiBehaviour {
         id: "tab.market.close",

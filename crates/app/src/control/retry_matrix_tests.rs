@@ -12,7 +12,7 @@ use super::*;
 
 /// Where the transport tests that prove the rows live, relative to
 /// `crates/app`. A row's proving test must be a function in one of these.
-const PROOF_SOURCES: [&str; 11] = [
+const PROOF_SOURCES: [&str; 12] = [
     "src/app/tests/feed_source_control_tests.rs",
     "src/app/tests/tick_bubbles_control_tests.rs",
     "src/app/tests/bubble_preset_control_tests.rs",
@@ -23,6 +23,7 @@ const PROOF_SOURCES: [&str; 11] = [
     "src/app/tests/history_control_tests.rs",
     "src/app/tests/price_axis_control_tests.rs",
     "src/app/tests/native_window_control_tests.rs",
+    "src/app/tests/market_window_control_tests.rs",
     "src/app/tests/tape_navigation_tests.rs",
 ];
 

@@ -19,12 +19,16 @@ pub enum WindowState {
 #[serde(deny_unknown_fields)]
 pub struct WindowInput {
     pub state: WindowState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<quantick_control::wire::WireU64>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WindowResult {
     /// Accepted for the next native frame; this is not an OS acknowledgement.
     pub requested: WindowState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<quantick_control::wire::WireU64>,
 }
 
 pub fn descriptor() -> CapabilityDescriptor {
@@ -32,7 +36,7 @@ pub fn descriptor() -> CapabilityDescriptor {
         WINDOW_STATE_CAPABILITY_ID,
         crate::layout::LAYOUT_MODULE_ID,
         "Set native window state",
-        "Requests normal, maximized or minimized presentation state for the single native window. Application exit is excluded from agent authority.",
+        "Requests normal, maximized or minimized presentation state for window_id, or the focused live market window when omitted. The result is acceptance, not an OS acknowledgement; workspace.windows reports observed state. Application exit is excluded from agent authority.",
         "Explicit states never toggle. A required idempotency key replays the accepted request without minimizing twice.",
     );
     descriptor.idempotency = IdempotencyPolicy::Required;

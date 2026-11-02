@@ -1,0 +1,67 @@
+{
+  "$defs": {
+    "PhysicalPlacement": {
+      "additionalProperties": false,
+      "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+      "properties": {
+        "height_px": {
+          "format": "uint32",
+          "maximum": 32768,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "width_px": {
+          "format": "uint32",
+          "maximum": 32768,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "x_px": {
+          "format": "int32",
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "type": "integer"
+        },
+        "y_px": {
+          "format": "int32",
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x_px",
+        "y_px",
+        "width_px",
+        "height_px"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "placement": {
+      "$ref": "#/$defs/PhysicalPlacement"
+    },
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "placement"
+  ],
+  "title": "PlacementInput",
+  "type": "object"
+}

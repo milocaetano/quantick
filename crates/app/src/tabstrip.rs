@@ -164,7 +164,6 @@ pub(crate) fn draw(
             let bounds = response.rect.intersect(ui.clip_rect());
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
-                drawn.tab_ids.push((chip.id, bounds));
             }
             if chip.replaying {
                 let center = egui::pos2(
@@ -209,6 +208,10 @@ pub(crate) fn draw(
                     )
                 };
                 drawn.close.push(close.rect);
+                let chip_bounds = response.rect.union(close.rect).intersect(ui.clip_rect());
+                if chip_bounds.is_positive() {
+                    drawn.tab_ids.push((chip.id, chip_bounds));
+                }
                 paint_tab_surface(
                     ui,
                     surface,

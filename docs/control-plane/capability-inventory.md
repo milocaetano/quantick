@@ -69,6 +69,12 @@ capability that cannot change application state.
 | `layout.flow.expand` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.attach` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.detach` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.drag.begin` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.drag.cancel` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.reorder` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.market_tab.select` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.collapse` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.collapse` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.expand` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -87,6 +93,8 @@ capability that cannot change application state.
 | `layout.tab.create` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.rename` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.switch` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.window.close` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.window.placement.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.window.state.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `notify.popup` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `notify.sound` | 1 | `notify` | no | `annotate`, `annotate.sound` |
@@ -112,4 +120,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-87 capabilities registered.
+95 capabilities registered.

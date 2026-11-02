@@ -51,6 +51,8 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 /// an interrupted call placed is attributed to.
 #[path = "home_tab_control_tests.rs"]
 mod home_tab_control;
+#[path = "market_window_control_tests.rs"]
+mod market_window_control;
 #[path = "native_window_control_tests.rs"]
 mod native_window_control;
 

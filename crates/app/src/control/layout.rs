@@ -349,13 +349,7 @@ pub(super) fn tab_index<P: TabsPort + ?Sized>(
     app: &P,
     target: TabTarget,
 ) -> Result<usize, ControlError> {
-    let Some(id) = target.tab_id else {
-        return Ok(app.tab_reads().active_tab_index());
-    };
-    app.tab_reads()
-        .tabs()
-        .position(id.get())
-        .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
+    quantick_control_handlers::tab_index(&app.tab_reads(), target.tab_id)
 }
 
 fn result<P: TabsPort + ?Sized>(

@@ -28,6 +28,7 @@ pub mod journal_sessions;
 pub mod layers;
 pub mod layout;
 pub mod layout_v2;
+pub mod market_windows;
 pub mod native_window;
 pub mod notify;
 pub mod opening_scale;

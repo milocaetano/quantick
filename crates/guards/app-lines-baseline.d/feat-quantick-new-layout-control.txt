@@ -1,0 +1,5 @@
+# Native OS exposed-window resolution, physical viewport observations/commands,
+# and narrow app-owned Tab/chrome adapters for headless window operations.
+# State/ordering/close policy is workspace-owned; schema/handlers are headless.
+crates/app +360
+!budget +360
