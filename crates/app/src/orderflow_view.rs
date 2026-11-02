@@ -6,11 +6,13 @@
 //! already-built frame so a dense book never blocks the UI.
 
 use eframe::egui;
+use quantick_chart::{connection_state::Link, state::ChartState};
 use quantick_engine::{Bar, Trade};
 use quantick_orderbook::DepthEvent;
 pub(crate) use quantick_orderflow::FlowCellHit;
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::pane_tape::PaneTape;
+use quantick_orderflow::projection::GapPrimitive;
 use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
 use quantick_stores::bubble_asset_store::AssetBinding;
 use quantick_stores::bubble_asset_store::SaveSwitch;
@@ -82,6 +84,8 @@ pub struct LiveLane {
 
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
+    /// The panel that edits this view's settings, attached to its flow pane.
+    pub(crate) settings_panel: quantick_workspace::orderflow_panel::OrderFlowPanel,
     flow_execution: flow_execution::FlowExecutionView,
     flow_paint: std::cell::RefCell<quantick_chart::flow_execution::FlowPaintState>,
     symbol: String,
@@ -141,6 +145,7 @@ impl OrderflowView {
             worker: BookWorker::spawn(&symbol),
             symbol,
             config,
+            settings_panel: Default::default(),
             published: BookPublished::initial(),
             last_seen_base: base_grouping,
             last_tape_price_grid: None,
@@ -172,11 +177,21 @@ impl OrderflowView {
     /// contract as [`Self::cached_health`]. The ladder is `None` while capture is off or the book
     /// has no snapshot yet: an honest absence, never an empty book.
     #[must_use]
-    pub(crate) fn cached_book(&self) -> (&CaptureStatus, Option<&BookLadder>, Decimal) {
+    pub(crate) fn cached_book(
+        &self,
+    ) -> (
+        &CaptureStatus,
+        Option<&BookLadder>,
+        Decimal,
+        &[GapPrimitive],
+    ) {
         (
             &self.published.status,
             self.published.ladder.as_deref(),
             self.published.base_price_grouping,
+            self.pane_tape
+                .drawn(self.published.frame.as_ref())
+                .map_or(&[], |frame| frame.projection.gaps.as_slice()),
         )
     }
 
@@ -185,7 +200,9 @@ impl OrderflowView {
     /// with no lane has no edge to report.
     #[must_use]
     pub(crate) fn cached_live_end_ms(&self) -> Option<i64> {
-        self.lane_now_ms().or(self.published.live_end_ms)
+        let cap = self.pane_tape.window_cap_ms().unwrap_or(i64::MAX);
+        self.lane_now_ms()
+            .or(self.published.live_end_ms.map(|end| end.min(cap)))
     }
 
     /// Snapshot only published tape state; capturing never wakes the worker.
@@ -473,6 +490,37 @@ impl OrderflowView {
             self.commit_lane_switch(before);
         }
         changed
+    }
+
+    /// One step of the market-closed fold: only a hold that moves is news.
+    pub(crate) fn observe_market(
+        &mut self,
+        feed: quantick_chart::connection_state::ConnectionState,
+    ) {
+        let next = quantick_chart::market_fold::next_for(&self.config.live_lane, feed);
+        let before = (next != self.config.live_lane.market_hold).then(|| self.config.clone());
+        self.config.live_lane.market_hold = next;
+        before.map(|before| self.apply_config(before));
+    }
+
+    /// Stop the tape's window short of the clock while nothing is coming.
+    pub(crate) fn hold_tape_window(&mut self, spoken: Option<Link>, state: &ChartState) {
+        let hold = quantick_chart::market_fold::tape_hold(spoken, state, || {
+            self.live_lane_window_ms(state.bars())
+        });
+        self.pane_tape.set_hold(hold);
+    }
+
+    /// Where a hold has stopped this pane's heat while its book goes on arriving.
+    pub(crate) fn book_held_at_ms(&self) -> Option<i64> {
+        use quantick_chart::{connection_state::Book, market_fold::book_held_at};
+        let drawn = self.config.depth_visible_anywhere();
+        let book = Book::when_drawn(drawn, &self.published.status);
+        book_held_at(
+            self.pane_tape.window_cap_ms(),
+            self.published.live_end_ms,
+            book,
+        )
     }
 
     fn commit_lane_switch(&mut self, before: HeatmapConfig) {
@@ -778,6 +826,12 @@ impl OrderflowView {
         self.symbol = symbol.into();
         self.pane_tape.reset_clock();
         self.config.enabled = false;
+        // A hold and a hand's stand-down are about the market being left. Here and not
+        // in a preset's `apply_to`, which keeps them: a look chosen mid-spell is no
+        // new market. Through the door, as the worker lays its frames out by it.
+        let before = self.config.clone();
+        self.config.live_lane.market_hold = Default::default();
+        self.apply_config(before);
         self.pending_capture_grouping_previous = None;
         // The send-once cache is keyed on what was sent, so a new market printing on the same grid
         // would be suppressed, and a grid the engine refused after a manual bucket would never be
@@ -969,12 +1023,8 @@ impl OrderflowView {
     /// The book as the connection state reads it: off when nobody asked to see it.
     #[must_use]
     pub fn connection_book(&self) -> quantick_chart::connection_state::Book {
-        use quantick_chart::connection_state::Book;
-        if self.config.depth_visible() {
-            Book::of(&self.published.status)
-        } else {
-            Book::Off
-        }
+        let drawn = self.config.depth_visible();
+        quantick_chart::connection_state::Book::when_drawn(drawn, &self.published.status)
     }
 
     /// A setting changed: the asset on screen files it at the next frame.
@@ -1581,6 +1631,8 @@ mod tests {
                 stable_size: false,
                 tape_only: false,
                 fold: LaneFold::Open,
+                fold_market_closed: true,
+                market_hold: Default::default(),
             },
         });
         view.look = BubbleLook::open(
@@ -2217,6 +2269,39 @@ mod tests {
             2,
             "the new market's tape opened starved"
         );
+    }
+
+    /// A hold short of a book that went on says so while that book is drawn and
+    /// synced, and the lane's edge reads the cap it really stops at.
+    #[test]
+    fn a_hold_short_of_a_book_that_went_on_is_said() {
+        let mut view = OrderflowView::new("WINV26");
+        let cap_ms = 10_000;
+        view.config.enabled = true;
+        view.config.show_depth = true;
+        view.published.status = CaptureStatus::Live {
+            generation: 1,
+            last_update_id: 1,
+        };
+        view.published.live_end_ms = Some(cap_ms + 5_000);
+        assert_eq!(view.book_held_at_ms(), None, "no hold");
+        assert_eq!(view.cached_live_end_ms(), Some(cap_ms + 5_000));
+        view.pane_tape
+            .set_hold(Some(quantick_orderflow::tape_clock::TapeHold {
+                last_print_ms: cap_ms,
+                window_ms: 0,
+            }));
+        assert_eq!(view.book_held_at_ms(), Some(cap_ms));
+        assert_eq!(
+            view.cached_live_end_ms(),
+            Some(cap_ms),
+            "the edge stops there"
+        );
+        (view.config.show_depth, view.config.live_lane.show_depth) = (false, false);
+        assert_eq!(view.book_held_at_ms(), None, "no heat, nothing held");
+        view.config.show_depth = true;
+        view.published.live_end_ms = Some(cap_ms);
+        assert_eq!(view.book_held_at_ms(), None, "a book that stopped with it");
     }
 
     #[test]

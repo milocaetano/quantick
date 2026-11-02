@@ -7,8 +7,8 @@ use quantick_chart::pane_header::{
     BubbleSample, Capsule, CapsuleSide, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle,
     flow_sides,
 };
-use quantick_control_handlers::bubble_scale::BubbleScalePane;
-use quantick_control_schema::bubble_scale::BubbleScaleTarget;
+use quantick_chart::side_label::SideLabel;
+use quantick_control_handlers::bubble_scale::{BubbleScalePane, sample_target as target};
 use quantick_layers::{ChartLayer, LayerActions};
 
 use crate::bands;
@@ -170,12 +170,8 @@ impl ChartPane {
     /// an order-flow view.
     pub(crate) fn bubble_scale_facts(&self) -> Option<BubbleScalePane> {
         let config = self.orderflow.as_ref()?.cached_config();
-        Some(BubbleScalePane {
-            tick_chart: self.state.tick_membership().is_some(),
-            candle_bubbles: config.show_aggressions,
-            tape_only: config.tape_only(),
-            tape_bubbles: config.lane_aggressions_drawn(),
-        })
+        let tick_chart = self.state.tick_membership().is_some();
+        Some(BubbleScalePane::of(config, tick_chart))
     }
 
     /// Every mode-entry path starts at its own fit, including source presets:
@@ -1050,11 +1046,17 @@ impl ChartPane {
     }
 }
 
-fn target(sample: BubbleSample) -> BubbleScaleTarget {
-    match sample {
-        BubbleSample::Candle => BubbleScaleTarget::Candle,
-        BubbleSample::Tape => BubbleScaleTarget::Tape,
-    }
+/// What a pane's capsules and side labels read from the window.
+pub(crate) struct SideChrome<'a> {
+    pub style: &'a ChartStyle,
+    pub capabilities: FeedCapabilities,
+    /// This pane has focus.
+    pub focused: bool,
+    pub tz: quantick_civil::TzOffset,
+    /// The word the feed speaks this frame, if any yet.
+    pub link: Option<quantick_chart::connection_state::Link>,
+    /// What the empty part of a tape with nothing coming says.
+    pub seam_words: Option<String>,
 }
 
 impl ChartPane {
@@ -1084,15 +1086,16 @@ impl ChartPane {
         glyph.blocked.is_none().then_some(glyph)
     }
 
-    /// Paint this pane's capsules, one per chart side on screen, over the chart
-    /// just drawn; answers what a press on one asked for.
+    /// Paint this pane's capsules and side labels, one of each per chart side on
+    /// screen, over the chart just drawn; answers what a press on a capsule asked
+    /// for.
     pub(crate) fn draw_capsules(
         &mut self,
         ui: &mut egui::Ui,
         side: PaneSide,
-        style: &ChartStyle,
-        capabilities: FeedCapabilities,
+        chrome: &SideChrome<'_>,
     ) -> Option<HeaderIntent> {
+        let (style, capabilities) = (chrome.style, chrome.capabilities);
         self.frame.capsules = [None; 2];
         // Nothing on the chart, nothing to switch: the overlay owns it.
         if self.slots() == 0 {
@@ -1115,22 +1118,41 @@ impl ChartPane {
             .enumerate()
             .filter_map(|(slot, side)| side.map(|side| (slot, side)))
         {
-            let scale = state.and_then(|state| match side {
-                CapsuleSide::Candles => state.candle_sample,
-                CapsuleSide::Tape => state.tape_sample,
-                CapsuleSide::Time => None,
-            });
+            let scale = state.and_then(|state| state.sample_of(side));
             let glyph = |toggle| self.header_glyph(toggle, style, capabilities);
             let capsule = Capsule::of(side, glyph, scale);
-            let corner = capsule.place(left, right, top, chart.bottom());
-            let Some(corner) = corner.filter(|_| !capsule.is_empty()) else {
+            let corner = capsule
+                .place(left, right, top, chart.bottom())
+                .filter(|_| !capsule.is_empty());
+            let side_rect = egui::Rect::from_x_y_ranges(left..=right, top..=chart.bottom());
+            if side == CapsuleSide::Tape
+                && let Some(x) = state.and_then(|state| self.seam_x(&state, chrome, side_rect))
+            {
+                let held = self
+                    .orderflow
+                    .as_ref()
+                    .and_then(|tape| tape.book_held_at_ms());
+                let line = chrome.seam_words.as_deref();
+                let words = quantick_chart::market_fold::seam_words(line, held, chrome.tz);
+                crate::pane_header::draw_tape_seam(ui, side_rect, x, words.lines());
+            }
+            if let Some(label) = SideLabel::of(side, &self.state, chrome.tz, chrome.link) {
+                let capsule_left = corner.map_or(right, |corner| corner.0);
+                crate::pane_header::draw_side_label(ui, &label, side_rect, capsule_left);
+            }
+            let Some(corner) = corner else {
                 continue;
+            };
+            let spot = crate::pane_header::CapsuleSpot {
+                corner,
+                side,
+                side_rect,
+                pane_focused: chrome.focused,
             };
             let rect = crate::pane_header::draw_capsule(
                 ui,
                 &capsule,
-                corner,
-                side,
+                &spot,
                 self.id,
                 &mut self.frame.header_controls,
                 &mut intent,
@@ -1138,6 +1160,31 @@ impl ChartPane {
             self.frame.capsules[slot] = Some(rect);
         }
         intent
+    }
+
+    /// Where the tape's seam stands, on a live tape with nothing coming.
+    fn seam_x(
+        &self,
+        state: &FlowHeaderState,
+        chrome: &SideChrome<'_>,
+        side: egui::Rect,
+    ) -> Option<f32> {
+        use quantick_chart::market_fold::{last_print_ms, seam_shown, tape_seam_x};
+        let shown = seam_shown(state.shown_view, chrome.link);
+        let owner = self.orderflow.as_ref().filter(|_| shown)?;
+        let now = owner
+            .cached_live_end_ms()
+            .filter(|_| owner.tape_end().is_live())?;
+        let times = (
+            now,
+            last_print_ms(&self.state)?,
+            owner.live_lane_window_ms(self.state.bars()),
+        );
+        tape_seam_x(
+            owner.cached_config(),
+            [side.left(), side.width(), side.height()],
+            times,
+        )
     }
 
     /// The view and sizes a flow pane's chrome shows; `None` without an
@@ -1153,13 +1200,11 @@ impl ChartPane {
                 .may_scale(target)
                 .then(|| owner.bubble_display_scale(target.into()))
         };
-        let lane = &owner.cached_config().live_lane;
-        Some(FlowHeaderState {
-            view: lane.view(),
-            shown_view: lane.shown_view(),
-            candle_sample: scale(BubbleSample::Candle),
-            tape_sample: scale(BubbleSample::Tape),
-        })
+        Some(FlowHeaderState::of(
+            &owner.cached_config().live_lane,
+            scale(BubbleSample::Candle),
+            scale(BubbleSample::Tape),
+        ))
     }
 
     /// Carry out a press on this pane's header, through the door each control
@@ -1175,6 +1220,7 @@ impl ChartPane {
             HeaderIntent::OpenLayerSettings(toggle) => {
                 actions.open_layer_tab = Some(toggle.layer());
             }
+            HeaderIntent::ToggleSettings => actions.toggle_settings = true,
             HeaderIntent::SetView(view) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_lane_view(view);

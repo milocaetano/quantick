@@ -78,6 +78,7 @@ fn request(trades: &[Trade]) -> ProjectionRequest {
         on_newest_bar: true,
         lane_reference_ms: Some(6_000),
         lane_now_ms: Some(now),
+        lane_end_cap_ms: None,
         price_range: (90.0, 115.0),
         dot_zoom: Some(DotZoom {
             native_tape: true,

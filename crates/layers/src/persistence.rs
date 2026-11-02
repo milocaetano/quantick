@@ -55,8 +55,10 @@ pub struct LayerActions {
     pub indicators_changed: bool,
     pub footprint_changed: bool,
     pub open_footprint_settings: bool,
-    /// A pane header's glyph asked for the dock tab that configures its layer.
+    /// A pane header's glyph asked for the panel section that configures its layer.
     pub open_layer_tab: Option<crate::ChartLayer>,
+    /// The flow pane's gear took a left click.
+    pub toggle_settings: bool,
     /// A double click on the candles asked for the chart settings window.
     pub open_chart_settings: bool,
 }

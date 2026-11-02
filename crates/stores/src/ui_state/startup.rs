@@ -44,6 +44,7 @@ pub fn reconcile_startup(
                 context_layouts: Vec::new(),
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
+                orderflow_panel: Default::default(),
             }
         },
         |index| workspace.tabs.remove(index),

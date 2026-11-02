@@ -3,7 +3,7 @@
 //!
 //! ```sh
 //! env -u QUANTICK_BUBBLES cargo test --release -p quantick-app \
-//!     live_envelope_tests::measure -- --ignored --nocapture --test-threads=1
+//!     live_envelope_tests::tests::measure -- --ignored --nocapture --test-threads=1
 //! ```
 //!
 //! and commit its output as `docs/quality/live-envelope/measure.txt`. It

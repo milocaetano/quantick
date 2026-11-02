@@ -28,7 +28,7 @@ use quantick_control_host::journal;
 mod bubble_preset;
 mod bubble_save;
 mod layers;
-mod layout;
+pub(crate) mod layout;
 mod notify;
 mod ports;
 mod tape_ports;

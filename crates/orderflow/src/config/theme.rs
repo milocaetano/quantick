@@ -64,7 +64,6 @@ pub struct OrderflowRenderStyle {
     pub native_tape: bool,
     /// Exclude known first recorded native bursts only from the tape's auto scale.
     pub ignore_opening_burst_in_scale: bool,
-    pub show_gap_labels: bool,
     pub show_legend: bool,
     /// Whether the L2 depth layer is active over the candles. The legend only
     /// advertises keys for layers that can actually draw something.
@@ -128,7 +127,6 @@ impl Default for OrderflowRenderStyle {
             dot_sizing: None,
             native_tape: false,
             ignore_opening_burst_in_scale: false,
-            show_gap_labels: true,
             show_legend: true,
             depth_layer: true,
             aggression_layer: true,
@@ -251,8 +249,6 @@ pub struct Palette<C> {
     pub bubble_text: C,
     pub gap_fill: C,
     pub gap_boundary: C,
-    /// Boundary between the forming bar's candle and its live lane.
-    pub lane_divider: C,
     /// The line market time has walked to inside the lane.
     pub lane_now: C,
     pub muted_text: C,
@@ -272,7 +268,6 @@ impl<C> Palette<C> {
                 bubble_text: rgba([255, 255, 255, 255]),
                 gap_fill: rgba([21, 24, 32, 20]),
                 gap_boundary: rgba([157, 167, 188, 115]),
-                lane_divider: rgba([120, 132, 156, 90]),
                 lane_now: rgba([226, 234, 250, 150]),
                 muted_text: rgba([186, 194, 209, 255]),
                 legend_text: rgba([225, 230, 239, 255]),
@@ -287,7 +282,6 @@ impl<C> Palette<C> {
                 bubble_text: rgba([255, 255, 255, 255]),
                 gap_fill: rgba([35, 35, 40, 28]),
                 gap_boundary: rgba([218, 222, 235, 255]),
-                lane_divider: rgba([160, 160, 160, 255]),
                 lane_now: rgba([255, 255, 255, 255]),
                 muted_text: rgba([255, 255, 255, 255]),
                 legend_text: rgba([255, 255, 255, 255]),
@@ -302,7 +296,6 @@ impl<C> Palette<C> {
                 bubble_text: rgba([255, 255, 255, 255]),
                 gap_fill: rgba([25, 25, 30, 22]),
                 gap_boundary: rgba([176, 180, 190, 255]),
-                lane_divider: rgba([140, 143, 152, 95]),
                 lane_now: rgba([232, 232, 226, 155]),
                 muted_text: rgba([214, 215, 210, 255]),
                 legend_text: rgba([232, 232, 226, 255]),

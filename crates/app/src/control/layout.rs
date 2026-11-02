@@ -345,7 +345,7 @@ fn tab_rename<P: LayoutPort + ?Sized>(
 /// A tab id that no longer exists is refused rather than resolved to the
 /// active one: a caller that named a tab meant that tab, and quietly acting on
 /// a different market is the worst answer available.
-pub(super) fn tab_index<P: TabsPort + ?Sized>(
+pub(crate) fn tab_index<P: TabsPort + ?Sized>(
     app: &P,
     target: TabTarget,
 ) -> Result<usize, ControlError> {

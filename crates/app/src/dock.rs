@@ -1,18 +1,17 @@
 //! The right dock: one tabbed panel for everything a trader keeps open while
 //! trading (`docs/ux/ui-design-model.md` §7).
 //!
-//! Tabs — L2, Bubbles, Session, Trading (Indicators docks here when it
-//! lands) — replace the stack of left `SidePanel`s: the chart pays the dock width
-//! once, not per panel. The 36 px tab strip stays visible when the dock is
-//! collapsed; clicking the active tab collapses, clicking any other switches.
-//! A layer's *toggle* lives in the toolbar; opening a tab never toggles the
-//! layer — looking is not enabling.
+//! Tabs — Session, Trading, Trades (Indicators docks here when it lands) — replace
+//! the stack of left `SidePanel`s: the chart pays the dock width once, not per
+//! panel. The 36 px tab strip stays visible when the dock is collapsed; clicking
+//! the active tab collapses, clicking any other switches. The L2 and Bubbles
+//! settings live in the flow pane's own panel, [`crate::orderflow_panel`].
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
+pub use quantick_workspace::dock::{DOCK_MAX_WIDTH, DOCK_MIN_WIDTH, Dock, DockTab};
 
-use crate::orderflow_view::OrderflowView;
 use crate::paper_chrome::{fmt_decimal, position_word};
 use crate::paper_trading::{LedgerAction, PaperTrading, TradingTabAction};
 use crate::replay_view::{ReplayAction, ReplayView};
@@ -23,105 +22,22 @@ use quantick_feed::ReplayLink;
 
 /// Width of the always-visible tab strip, in pixels.
 pub const TAB_STRIP_WIDTH: f32 = 36.0;
-/// Narrowest dock body the model allows.
-pub const DOCK_MIN_WIDTH: f32 = 280.0;
-/// Widest dock body the model allows.
-pub const DOCK_MAX_WIDTH: f32 = 360.0;
 /// Radius of the open-position badge on the Trading strip icon, in pixels.
 const BADGE_RADIUS_PX: f32 = 3.5;
 
-/// One dock tab.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DockTab {
-    /// L2 liquidity-map settings (migrated from the left panel).
-    L2,
-    /// Aggression-bubble settings (migrated from the left panel).
-    Bubbles,
-    /// The replay session: what is playing, and the browser entry.
-    Session,
-    /// Paper trading: simulated position, order entry, pending orders.
-    Trading,
-    /// The trade ledger: closed simulated trades, this session and saved.
-    Trades,
-}
-
-impl DockTab {
-    /// Every tab, in strip order.
-    pub const ALL: [Self; 5] = [
-        Self::L2,
-        Self::Bubbles,
-        Self::Session,
-        Self::Trading,
-        Self::Trades,
-    ];
-
-    /// The stable wire name, for the places that name a tab rather than draw
-    /// it. Never the title: that is prose a reader sees, and rewording it must
-    /// not move an operator's ground.
-    #[must_use]
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::L2 => "l2",
-            Self::Bubbles => "bubbles",
-            Self::Session => "session",
-            Self::Trading => "trading",
-            Self::Trades => "trades",
-        }
-    }
-
-    /// The Phosphor glyph on the strip.
-    ///
-    /// A tab wears the same glyph as the toolbar toggle for the same thing —
-    /// the depth map is the book's stacked bid/ask rows in both places. Two
-    /// glyphs for one layer read as two features.
-    #[must_use]
-    pub fn icon(self) -> &'static str {
-        match self {
-            Self::L2 => icons::ROWS,
-            Self::Bubbles => icons::CIRCLES_THREE,
-            Self::Session => icons::FILM_STRIP,
-            Self::Trading => icons::TREND_UP,
-            Self::Trades => icons::RECEIPT,
-        }
-    }
-
-    /// Header title inside the body.
-    #[must_use]
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::L2 => "L2 · LIQUIDITY MAP",
-            Self::Bubbles => "AGGRESSION BUBBLES",
-            Self::Session => "SESSION",
-            Self::Trading => "PAPER TRADING · SIM",
-            Self::Trades => "TRADES · SIM",
-        }
-    }
-
-    /// Strip tooltip.
-    #[must_use]
-    pub fn hover_text(self) -> &'static str {
-        match self {
-            Self::L2 => "L2 settings — the heatmap toggle stays in the toolbar",
-            Self::Bubbles => "Bubble settings — the layer toggle stays in the toolbar",
-            Self::Session => "Market replay session",
-            Self::Trading => "Paper trading — simulated orders, position and history",
-            Self::Trades => "Closed simulated trades — this session and the saved history",
-        }
-    }
-
-    /// This tab's slot in the per-tab width memory.
-    fn index(self) -> usize {
-        self as usize
+/// The Phosphor glyph on the strip.
+#[must_use]
+pub fn tab_icon(tab: DockTab) -> &'static str {
+    match tab {
+        DockTab::Session => icons::FILM_STRIP,
+        DockTab::Trading => icons::TREND_UP,
+        DockTab::Trades => icons::RECEIPT,
     }
 }
 
 /// What the dock's tabs need from the app, split by field so the dock can be
 /// borrowed mutably alongside them.
 pub struct DockEnv<'a> {
-    /// The order-flow facade whose settings the L2/Bubbles tabs edit.
-    pub orderflow: &'a mut OrderflowView,
-    /// Its pane draws tick bars, which the tick sphere picker's rule reads.
-    pub tick_chart: bool,
     /// The replay browser the Session tab opens.
     pub replay_view: &'a mut ReplayView,
     /// The playing session, if any.
@@ -135,8 +51,6 @@ pub struct DockEnv<'a> {
 /// What drawing the dock asked the app to do.
 #[derive(Default)]
 pub struct DockResponse {
-    /// The L2 tab changed the base capture resolution; capture must restart.
-    pub restart_book_capture: bool,
     /// The Session tab asked to close the replay.
     pub replay_action: Option<ReplayAction>,
     /// The Trades tab asked to center the chart on a round trip
@@ -159,246 +73,164 @@ pub struct DockResponse {
     pub risk_settings_changed: bool,
 }
 
-/// The dock's chrome state. Hidden, collapsed to the strip, or open on one
-/// tab; body width is remembered per tab.
-#[derive(Debug)]
-pub struct Dock {
-    visible: bool,
-    active: Option<DockTab>,
-    widths: [f32; DockTab::ALL.len()],
+/// Whether the pointer is on the dock — its strip or its open body, where
+/// they were last laid out. Read before the dock draws: Del there is the
+/// dock's (the Trades ledger deletes a session with it), not the chart's.
+#[must_use]
+pub fn holds_pointer(dock: &Dock, ctx: &egui::Context) -> bool {
+    let Some(pointer) = ctx.pointer_latest_pos().filter(|_| dock.visible()) else {
+        return false;
+    };
+    let body = dock
+        .tab()
+        .map(|tab| egui::Id::new(("dock_body", tab.index())));
+    [Some(egui::Id::new("dock_strip")), body]
+        .into_iter()
+        .flatten()
+        .filter_map(|id| egui::containers::panel::PanelState::load(ctx, id))
+        .any(|panel| panel.rect.contains(pointer))
 }
 
-impl Default for Dock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Dock {
-    /// A visible dock, collapsed to its tab strip.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            visible: true,
-            active: None,
-            // Opening widths per tab, ordered as [`DockTab::ALL`]: the L2 tab
-            // carries the densest controls, the Session tab the fewest.
-            widths: [340.0, 320.0, 300.0, 320.0, 320.0],
-        }
+/// Draw the strip and, when a tab is open, its body panel.
+pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResponse {
+    // A chart-leg click flips this ticket's switch: saved and fanned out like a pick.
+    let mut response = DockResponse {
+        risk_settings_changed: env.paper.take_pnl_flip(),
+        ..DockResponse::default()
+    };
+    if !dock.visible() {
+        return response;
     }
 
-    /// Whether any part of the dock (strip included) is on screen.
-    #[must_use]
-    pub fn visible(&self) -> bool {
-        self.visible
-    }
+    egui::SidePanel::right("dock_strip")
+        .exact_width(TAB_STRIP_WIDTH)
+        .resizable(false)
+        .frame(
+            egui::Frame::none()
+                .fill(theme::CHROME)
+                .inner_margin(egui::Margin::symmetric(3.0, 8.0)),
+        )
+        .show(ctx, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let position = env.paper.position_summary();
+            for tab in DockTab::ALL {
+                // Only the Trading-with-position hover is dynamic; the
+                // static texts stay borrowed rather than re-allocated
+                // sixty times a second.
+                let position_hover = match (tab, &position) {
+                    (DockTab::Trading, Some(summary)) => Some(format!(
+                        "{} — {} {} open",
+                        tab.hover_text(),
+                        position_word(summary.side),
+                        fmt_decimal(summary.quantity),
+                    )),
+                    _ => None,
+                };
+                let button = IconButton::new(tab_icon(tab), RAIL_ICON)
+                    .active(dock.tab() == Some(tab))
+                    .hover_text(
+                        position_hover
+                            .as_deref()
+                            .unwrap_or_else(|| tab.hover_text()),
+                    )
+                    .show(ui);
+                // An open position must be findable from the chrome even
+                // with the tab closed: the badge wears the side's own
+                // color (amber stays reserved for provenance).
+                if tab == DockTab::Trading
+                    && let Some(summary) = &position
+                {
+                    let color = match summary.side {
+                        Side::Buy => theme::BUY,
+                        Side::Sell => theme::SELL,
+                    };
+                    let center = egui::pos2(
+                        button.rect.right() - BADGE_RADIUS_PX - 1.0,
+                        button.rect.top() + BADGE_RADIUS_PX + 1.0,
+                    );
+                    ui.painter().circle_filled(center, BADGE_RADIUS_PX, color);
+                }
+                if button.clicked() {
+                    dock.select(tab);
+                }
+            }
+        });
 
-    /// Show/hide the whole dock — the toolbar PANELS button and `Ctrl+Shift+B`.
-    pub fn toggle_visible(&mut self) {
-        self.visible = !self.visible;
-    }
-
-    /// The open tab, or `None` while the dock is collapsed to its strip.
-    /// A collapsed dock is a state in its own right, not an absence.
-    #[must_use]
-    pub fn tab(&self) -> Option<DockTab> {
-        self.active
-    }
-
-    /// Restore the dock exactly as a workspace recorded it: shown or hidden,
-    /// with `tab` open or collapsed to the strip.
-    ///
-    /// Deliberately not [`Self::open_tab`] — that one *reveals* the dock, so
-    /// it could never restore "hidden, with Trading last open", which is a
-    /// cockpit a trader can arrange and would expect back.
-    pub fn restore(&mut self, visible: bool, tab: Option<DockTab>) {
-        self.visible = visible;
-        self.active = tab;
-    }
-
-    /// Open `tab`, revealing the dock if it was hidden. Never touches the
-    /// layer the tab configures.
-    pub fn open_tab(&mut self, tab: DockTab) {
-        self.visible = true;
-        self.active = Some(tab);
-    }
-
-    /// A strip click: the active tab collapses the body, any other opens it.
-    pub fn select(&mut self, tab: DockTab) {
-        self.active = if self.active == Some(tab) {
-            None
-        } else {
-            Some(tab)
-        };
-    }
-
-    /// Whether the pointer is on the dock — its strip or its open body, where
-    /// they were last laid out. Read before the dock draws: Del there is the
-    /// dock's (the Trades ledger deletes a session with it), not the chart's.
-    #[must_use]
-    pub fn holds_pointer(&self, ctx: &egui::Context) -> bool {
-        let Some(pointer) = ctx.pointer_latest_pos().filter(|_| self.visible) else {
-            return false;
-        };
-        let body = self
-            .active
-            .map(|tab| egui::Id::new(("dock_body", tab.index())));
-        [Some(egui::Id::new("dock_strip")), body]
-            .into_iter()
-            .flatten()
-            .filter_map(|id| egui::containers::panel::PanelState::load(ctx, id))
-            .any(|panel| panel.rect.contains(pointer))
-    }
-
-    /// Remember `width` for the active tab, clamped to the model's range.
-    fn remember_width(&mut self, tab: DockTab, width: f32) {
-        self.widths[tab.index()] = width.clamp(DOCK_MIN_WIDTH, DOCK_MAX_WIDTH);
-    }
-
-    /// Draw the strip and, when a tab is open, its body panel.
-    pub fn draw(&mut self, ctx: &egui::Context, env: &mut DockEnv) -> DockResponse {
-        // A chart-leg click flips this ticket's switch: saved and fanned out like a pick.
-        let mut response = DockResponse {
-            risk_settings_changed: env.paper.take_pnl_flip(),
-            ..DockResponse::default()
-        };
-        if !self.visible {
-            return response;
-        }
-
-        egui::SidePanel::right("dock_strip")
-            .exact_width(TAB_STRIP_WIDTH)
-            .resizable(false)
+    if let Some(tab) = dock.tab() {
+        let mut open_ticket = false;
+        let mut collapse = false;
+        let panel = egui::SidePanel::right(egui::Id::new(("dock_body", tab.index())))
+            .resizable(true)
+            .default_width(dock.width(tab))
+            .width_range(DOCK_MIN_WIDTH..=DOCK_MAX_WIDTH)
             .frame(
                 egui::Frame::none()
                     .fill(theme::CHROME)
-                    .inner_margin(egui::Margin::symmetric(3.0, 8.0)),
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
             )
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                let position = env.paper.position_summary();
-                for tab in DockTab::ALL {
-                    // Only the Trading-with-position hover is dynamic; the
-                    // static texts stay borrowed rather than re-allocated
-                    // sixty times a second.
-                    let position_hover = match (tab, &position) {
-                        (DockTab::Trading, Some(summary)) => Some(format!(
-                            "{} — {} {} open",
-                            tab.hover_text(),
-                            position_word(summary.side),
-                            fmt_decimal(summary.quantity),
-                        )),
-                        _ => None,
-                    };
-                    let button = IconButton::new(tab.icon(), RAIL_ICON)
-                        .active(self.active == Some(tab))
-                        .hover_text(
-                            position_hover
-                                .as_deref()
-                                .unwrap_or_else(|| tab.hover_text()),
-                        )
-                        .show(ui);
-                    // An open position must be findable from the chrome even
-                    // with the tab closed: the badge wears the side's own
-                    // color (amber stays reserved for provenance).
-                    if tab == DockTab::Trading
-                        && let Some(summary) = &position
+                let mut export = false;
+                draw_tab_header(ui, tab, &mut collapse, |ui| {
+                    if tab == DockTab::Trades
+                        && ui
+                            .small_button(icons::DOWNLOAD_SIMPLE)
+                            .on_hover_text("export these trades to a CSV file")
+                            .clicked()
                     {
-                        let color = match summary.side {
-                            Side::Buy => theme::BUY,
-                            Side::Sell => theme::SELL,
-                        };
-                        let center = egui::pos2(
-                            button.rect.right() - BADGE_RADIUS_PX - 1.0,
-                            button.rect.top() + BADGE_RADIUS_PX + 1.0,
-                        );
-                        ui.painter().circle_filled(center, BADGE_RADIUS_PX, color);
-                    }
-                    if button.clicked() {
-                        self.select(tab);
-                    }
-                }
-            });
-
-        if let Some(tab) = self.active {
-            let mut open_ticket = false;
-            let panel = egui::SidePanel::right(egui::Id::new(("dock_body", tab.index())))
-                .resizable(true)
-                .default_width(self.widths[tab.index()])
-                .width_range(DOCK_MIN_WIDTH..=DOCK_MAX_WIDTH)
-                .frame(
-                    egui::Frame::none()
-                        .fill(theme::CHROME)
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
-                )
-                .show(ctx, |ui| {
-                    let mut export = false;
-                    draw_tab_header(ui, tab, &mut self.active, |ui| {
-                        if tab == DockTab::Trades
-                            && ui
-                                .small_button(icons::DOWNLOAD_SIMPLE)
-                                .on_hover_text("export these trades to a CSV file")
-                                .clicked()
-                        {
-                            export = true;
-                        }
-                    });
-                    if export {
-                        env.paper.account_mut().start_export();
-                    }
-                    match tab {
-                        DockTab::L2 => {
-                            response.restart_book_capture |= env.orderflow.draw_l2_tab(ui);
-                        }
-                        DockTab::Bubbles => {
-                            response.restart_book_capture |=
-                                env.orderflow.draw_bubbles_tab(ui, env.tick_chart);
-                        }
-                        DockTab::Session => {
-                            response.replay_action = draw_session_tab(ui, env);
-                        }
-                        DockTab::Trading => {
-                            // The L2 tab scrolls; this body must too (audit
-                            // paper m3): a stack of pending orders used to
-                            // clip the session summary and the report button
-                            // with no way to reach them.
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, true])
-                                .show(ui, |ui| match env.paper.draw_trading_tab(ui) {
-                                    Some(TradingTabAction::PickTradesDir) => {
-                                        response.pick_trades_dir = true;
-                                    }
-                                    Some(TradingTabAction::CmdTradingChanged) => {
-                                        response.cmd_trading_changed = true;
-                                    }
-                                    Some(TradingTabAction::OrderStrategiesChanged) => {
-                                        response.order_strategies_changed = true;
-                                    }
-                                    Some(TradingTabAction::RiskSettingsChanged) => {
-                                        response.risk_settings_changed = true;
-                                    }
-                                    None => {}
-                                });
-                        }
-                        // The ledger manages its own scroll (a virtualised
-                        // list with a pinned totals strip).
-                        DockTab::Trades => match env.paper.draw_trades_tab(ui, env.tz) {
-                            Some(LedgerAction::Navigate(opened, closed)) => {
-                                response.navigate_to_trade = Some((opened, closed));
-                            }
-                            Some(LedgerAction::OpenTicket) => open_ticket = true,
-                            Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
-                            None => {}
-                        },
+                        export = true;
                     }
                 });
-            self.remember_width(tab, panel.response.rect.width());
-            if open_ticket {
-                self.active = Some(DockTab::Trading);
-            }
+                if export {
+                    env.paper.account_mut().start_export();
+                }
+                match tab {
+                    DockTab::Session => {
+                        response.replay_action = draw_session_tab(ui, env);
+                    }
+                    DockTab::Trading => {
+                        // This body scrolls (audit paper m3): a stack of
+                        // pending orders used to
+                        // clip the session summary and the report button
+                        // with no way to reach them.
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| match env.paper.draw_trading_tab(ui) {
+                                Some(TradingTabAction::PickTradesDir) => {
+                                    response.pick_trades_dir = true;
+                                }
+                                Some(TradingTabAction::CmdTradingChanged) => {
+                                    response.cmd_trading_changed = true;
+                                }
+                                Some(TradingTabAction::OrderStrategiesChanged) => {
+                                    response.order_strategies_changed = true;
+                                }
+                                Some(TradingTabAction::RiskSettingsChanged) => {
+                                    response.risk_settings_changed = true;
+                                }
+                                None => {}
+                            });
+                    }
+                    // The ledger manages its own scroll (a virtualised
+                    // list with a pinned totals strip).
+                    DockTab::Trades => match env.paper.draw_trades_tab(ui, env.tz) {
+                        Some(LedgerAction::Navigate(opened, closed)) => {
+                            response.navigate_to_trade = Some((opened, closed));
+                        }
+                        Some(LedgerAction::OpenTicket) => open_ticket = true,
+                        Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
+                        None => {}
+                    },
+                }
+            });
+        dock.remember_width(tab, panel.response.rect.width());
+        if collapse {
+            dock.collapse();
         }
-        response
+        if open_ticket {
+            dock.open_tab(DockTab::Trading);
+        }
     }
+    response
 }
 
 /// Title row shared by every tab, with the collapse affordance and one
@@ -406,7 +238,7 @@ impl Dock {
 fn draw_tab_header(
     ui: &mut egui::Ui,
     tab: DockTab,
-    active: &mut Option<DockTab>,
+    collapse: &mut bool,
     actions: impl FnOnce(&mut egui::Ui),
 ) {
     ui.horizontal(|ui| {
@@ -423,7 +255,7 @@ fn draw_tab_header(
                 .on_hover_text("collapse the dock to its tab strip")
                 .clicked()
             {
-                *active = None;
+                *collapse = true;
             }
             actions(ui);
         });
@@ -479,57 +311,6 @@ fn draw_session_tab(ui: &mut egui::Ui, env: &mut DockEnv) -> Option<ReplayAction
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_new_dock_shows_the_strip_with_no_tab_open() {
-        let dock = Dock::new();
-        assert!(dock.visible());
-        assert_eq!(dock.active, None);
-    }
-
-    #[test]
-    fn selecting_toggles_between_open_and_collapsed() {
-        let mut dock = Dock::new();
-        dock.select(DockTab::L2);
-        assert_eq!(dock.active, Some(DockTab::L2));
-        // A second click on the open tab collapses; nothing else opens.
-        dock.select(DockTab::L2);
-        assert_eq!(dock.active, None);
-        // Switching tabs is one click, not collapse-then-open.
-        dock.select(DockTab::L2);
-        dock.select(DockTab::Bubbles);
-        assert_eq!(dock.active, Some(DockTab::Bubbles));
-    }
-
-    #[test]
-    fn open_tab_reveals_a_hidden_dock() {
-        let mut dock = Dock::new();
-        dock.toggle_visible();
-        assert!(!dock.visible());
-        dock.open_tab(DockTab::Session);
-        assert!(dock.visible());
-        assert_eq!(dock.active, Some(DockTab::Session));
-    }
-
-    #[test]
-    fn widths_are_remembered_per_tab_within_the_model_range() {
-        let mut dock = Dock::new();
-        dock.remember_width(DockTab::L2, 500.0);
-        assert_eq!(dock.widths[DockTab::L2.index()], DOCK_MAX_WIDTH);
-        dock.remember_width(DockTab::Bubbles, 10.0);
-        assert_eq!(dock.widths[DockTab::Bubbles.index()], DOCK_MIN_WIDTH);
-        dock.remember_width(DockTab::Session, 300.0);
-        assert_eq!(dock.widths[DockTab::Session.index()], 300.0);
-    }
-
-    #[test]
-    fn every_tab_has_strip_metadata() {
-        for tab in DockTab::ALL {
-            assert!(!tab.icon().is_empty());
-            assert!(!tab.title().is_empty());
-            assert!(!tab.hover_text().is_empty());
-        }
-    }
-
     /// Lay the whole dock out for real, off-screen, on every tab — a broken
     /// nested layout, a duplicated panel id or a body that panics fails here
     /// instead of on the chart. Two frames per tab so the second one re-uses
@@ -538,27 +319,21 @@ mod tests {
     fn the_dock_draws_every_tab_against_a_real_context() {
         let ctx = egui::Context::default();
         let mut dock = Dock::new();
-        let mut orderflow = OrderflowView::new("TESTUSDT");
         let mut replay_view = ReplayView::new(None, None);
         let mut paper = PaperTrading::new();
         for tab in DockTab::ALL {
             dock.open_tab(tab);
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                    let response = dock.draw(
+                    let response = draw(
+                        &mut dock,
                         ctx,
                         &mut DockEnv {
-                            orderflow: &mut orderflow,
-                            tick_chart: true,
                             replay_view: &mut replay_view,
                             replay: None,
                             paper: &mut paper,
                             tz: TzOffset::default(),
                         },
-                    );
-                    assert!(
-                        !response.restart_book_capture,
-                        "drawing settings must never restart capture by itself"
                     );
                     assert!(response.replay_action.is_none());
                 });
@@ -567,18 +342,17 @@ mod tests {
         // Hidden dock: drawing is a no-op that asks nothing of the app.
         dock.toggle_visible();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            let response = dock.draw(
+            let response = draw(
+                &mut dock,
                 ctx,
                 &mut DockEnv {
-                    orderflow: &mut orderflow,
-                    tick_chart: true,
                     replay_view: &mut replay_view,
                     replay: None,
                     paper: &mut paper,
                     tz: TzOffset::default(),
                 },
             );
-            assert!(!response.restart_book_capture);
+            assert!(response.replay_action.is_none());
         });
     }
 
@@ -595,11 +369,10 @@ mod tests {
             for _ in 0..2 {
                 count = 0;
                 let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    let _ = dock.draw(
+                    let _ = draw(
+                        dock,
                         ctx,
                         &mut DockEnv {
-                            orderflow: &mut OrderflowView::new("TESTUSDT"),
-                            tick_chart: true,
                             replay_view: &mut ReplayView::new(None, None),
                             replay: None,
                             paper,

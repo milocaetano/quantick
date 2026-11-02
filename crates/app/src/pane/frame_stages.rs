@@ -11,6 +11,7 @@
 //! take a dozen of them.
 
 use crate::pane::constants::{FLOW_CAPTION_GAP_PX, FLOW_CAPTION_TOP_PX, FLOW_PENDING_REPAINT};
+use quantick_chart::side_label::SIDE_LABEL_BOTTOM_PX;
 use std::sync::Arc;
 
 use eframe::egui;
@@ -316,14 +317,11 @@ impl<'a> FlowFrame<'a> {
         }
         if let Some(owner) = owner.filter(|owner| owner.flow_execution_replaces_history()) {
             let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
-            let local_bounds = bounds.filter(|rect| {
-                tick_regions.is_none()
-                    || (rect.left() < history.right() && rect.right() > history.left())
-            });
-            let top = local_bounds
+            let top = bounds
                 .map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
                     rect.bottom() + FLOW_CAPTION_GAP_PX
-                });
+                })
+                .max(history.top() + SIDE_LABEL_BOTTOM_PX + FLOW_CAPTION_GAP_PX);
             if let Some(caption) = crate::orderflow_render::flow_caption(
                 self.painter,
                 history,
@@ -333,12 +331,6 @@ impl<'a> FlowFrame<'a> {
                     .map(|(frame, _)| frame.as_ref())
                     .or_else(|| owner.flow_execution_frame()),
                 owner.flow_execution_progress(),
-                owner.legend_visible(),
-                tick_regions.map(|regions| quantick_chart::flow_execution::SphereChrome {
-                    regions,
-                    theme: owner.cached_config().theme,
-                    unit: owner.asset().and_then(|asset| asset.quantity_unit()),
-                }),
             ) {
                 bounds = Some(bounds.map_or(caption, |rect| rect.union(caption)));
             }

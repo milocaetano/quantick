@@ -328,6 +328,7 @@ fn both_panes_reopen_with_the_legend_the_trader_folded() {
                 time_bars: Some("time:1m".to_owned()),
                 flow_legend_collapsed: true,
                 time_legend_collapsed: true,
+                orderflow_panel: Default::default(),
             }],
             None,
         ));

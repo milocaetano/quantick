@@ -114,7 +114,7 @@ fn native_tape_settings_hide_inactive_controls_and_explain_the_active_scale() {
         assert!(!has(&text, inactive), "inactive tape control: {inactive}");
     }
     for meaningful in [
-        "Tape only (hide candles)",
+        "Tape only (hide trail)",
         "auto: on",
         "Ignore opening burst in scale",
         "window",

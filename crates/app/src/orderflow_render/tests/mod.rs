@@ -1841,9 +1841,29 @@ fn a_held_book_clamped_to_the_lane_opening_is_drawn_from_the_divider() {
         let output = draw(layout);
         let shapes = format!("{:?}", output.shapes);
         assert!(
-            shapes.contains("L2 unavailable before capture"),
-            "the leading gap is labelled"
+            !shapes.contains("L2 unavailable before capture"),
+            "the leading gap carries no words at rest"
         );
+        // Its reason comes out with the pointer on the mark, and only there: a
+        // pointer in the stretch is reading the chart.
+        let hovered = |x: f32| {
+            let ctx = egui::Context::default();
+            let pointer = egui::Event::PointerMoved(egui::pos2(x, rect.center().y));
+            let input = egui::RawInput {
+                events: vec![pointer],
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                let painter = ctx.layer_painter(egui::LayerId::background());
+                draw_heatmap_background(&painter, &RenderContext::new(&projection, layout, &style));
+            })
+        };
+        let at_mark = (0..=rect.width() as i32).filter(|x| {
+            let shapes = format!("{:?}", hovered(rect.left() + *x as f32).shapes);
+            shapes.contains("L2 unavailable before capture")
+        });
+        let count = at_mark.count();
+        assert!(count > 0 && count <= 7, "{count} px bring out the reason");
         assert_eq!(gap_rects(&output), 1, "the pending stretch is filled");
     }
     let live = ProjectedLayout::new(rect, &panned, 60, 0, 5, 300.0);

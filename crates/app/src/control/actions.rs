@@ -56,6 +56,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::bubble_save::register(&mut registry)?;
     quantick_control_handlers::bubble_scale::register(&mut registry)?;
     quantick_control_handlers::tape_fold::register(&mut registry)?;
+    quantick_control_handlers::orderflow_settings::register(&mut registry)?;
     quantick_control_handlers::tape_view_set::register(&mut registry)?;
     quantick_control_handlers::recovery::register(&mut registry)?;
     quantick_control_handlers::feed_source::register(&mut registry)?;

@@ -60,6 +60,7 @@ mod live_envelope_tests;
 mod loading;
 mod metrics;
 mod operability;
+mod orderflow_panel;
 mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;

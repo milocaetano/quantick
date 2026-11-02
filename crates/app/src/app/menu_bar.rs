@@ -7,6 +7,8 @@
 //! shortcuts are re-exported to `super` for the tests that name them.
 
 use super::{GatewayPort, LayersPort, LayoutPort};
+use crate::chart_layers::shortcuts;
+use crate::orderflow_panel as panel;
 use eframe::egui;
 
 use crate::surfaces::ChartSettingsTab::Candles;
@@ -127,19 +129,22 @@ pub(super) const PAPER_CANCEL_SHORTCUT: egui::KeyboardShortcut =
 const MENU_BAR_HEIGHT: f32 = 28.0;
 
 impl QuantickApp {
-    /// The tape key, on a focused flow pane: tape only, and from there back
-    /// beside the candles. Consumed whatever the focus, before `Ctrl+T` is read:
-    /// that one would match it too and open a tab.
-    pub(super) fn read_tape_view_key(&mut self, ctx: &egui::Context) {
-        if !crate::chart_layers::shortcuts::take_tape_view_press(ctx) {
-            return;
+    /// The two view keys, on a focused flow pane: one side alone, and from
+    /// there back beside the other. Consumed whatever the focus, before `Ctrl+T`
+    /// and `Ctrl+R` are read: those would match them too.
+    pub(super) fn read_view_keys(&mut self, ctx: &egui::Context) {
+        if shortcuts::take_view_press(ctx, shortcuts::ORDERFLOW_SETTINGS_SHORTCUT) {
+            panel::toggle(self.active_tab_mut());
         }
+        let Some(key) = shortcuts::take_view_key(ctx) else {
+            return;
+        };
         let tab = self.active_tab_mut();
         if tab.focused_side() == crate::pane::PaneSide::Flow
             && let Some(tape) = tab.flow_pane.orderflow.as_mut()
+            && let Some(view) = tape.cached_config().live_lane.keyed_view(key)
         {
-            let view = tape.cached_config().live_lane.view();
-            tape.set_lane_view(view.tape_key());
+            tape.set_lane_view(view);
         }
     }
 
@@ -303,6 +308,7 @@ impl QuantickApp {
             MenuCommand::SetToolboxDock(dock) => self.toolrail.set_dock(dock),
             MenuCommand::ToggleToolbox => self.toolrail.toggle_visible(),
             MenuCommand::OpenDockTab(tab) => self.dock.open_tab(tab),
+            MenuCommand::OpenOrderFlowPanel(s) => panel::open_on(self.active_tab_mut(), s),
             MenuCommand::SetShowPerf(show) => self.health.show_perf = show,
             MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,
             MenuCommand::SetVenueLeadIn(on) => self.runtime.history.venue_lead_in = on,

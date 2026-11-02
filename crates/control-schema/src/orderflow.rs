@@ -100,6 +100,8 @@ pub struct EngineRevisionKey {
     lane_enabled: bool,
     status: &'static str,
     grouping: rust_decimal::Decimal,
+    gaps: Vec<BookGapSnapshot>,
+    book_held_at_ms: Option<i64>,
     config: IdenticalConfig,
 }
 
@@ -132,7 +134,24 @@ impl EngineRevisionKey {
             lane_enabled: config.lane_enabled(),
             status: status.code(),
             grouping,
+            gaps: Vec::new(),
+            book_held_at_ms: None,
             config: IdenticalConfig(config.clone()),
+        }
+    }
+
+    /// The same key over what the heatmap scope reports of the book besides its
+    /// setup: why it is missing, and where a hold stopped it.
+    #[must_use]
+    pub fn with_book(
+        self,
+        gaps: &[quantick_orderflow::projection::GapPrimitive],
+        book_held_at_ms: Option<i64>,
+    ) -> Self {
+        Self {
+            gaps: book_gap_rows(gaps),
+            book_held_at_ms,
+            ..self
         }
     }
 }
@@ -416,9 +435,18 @@ pub struct BubblesStateSnapshot {
     /// tape's own switch win over it.
     #[serde(default)]
     pub tape_fold: crate::tape_fold::TapeFold,
+    /// The tape folds by itself while the market is closed: the asset's setting,
+    /// set by `orderflow.tape.market_fold.set`. It never writes `tape_fold`.
+    #[serde(default = "market_fold_default")]
+    pub fold_market_closed: bool,
+    /// The market holds the tape folded right now. Runtime only; the first print,
+    /// the setting, an explicit fold or a view change releases it.
+    #[serde(default)]
+    pub tape_fold_held_by_market: bool,
     /// Which view the tape's two switches ask for: `beside`, `candles` (alone)
-    /// or `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or
-    /// `orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it.
+    /// or `tape` (alone). Set by the pane header's Trail and Tape switches,
+    /// Ctrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`; a fold
+    /// (`tape_fold`) is apart from it.
     #[serde(default)]
     pub tape_view: crate::tape_view_set::TapeView,
     /// Exclude the first recorded 100 ms burst from automatic tape-only
@@ -519,6 +547,10 @@ impl BubbleAssetSnapshot {
     }
 }
 
+fn market_fold_default() -> bool {
+    true
+}
+
 impl BubblesStateSnapshot {
     pub fn from_config(
         config: &HeatmapConfig,
@@ -557,12 +589,53 @@ impl BubblesStateSnapshot {
             tape_viewport_scale: config.bubbles.viewport_scale.map(Into::into),
             tape_only: config.live_lane.tape_only,
             tape_fold: config.live_lane.fold.into(),
+            fold_market_closed: config.live_lane.fold_market_closed,
+            tape_fold_held_by_market: config.live_lane.market_held(),
             tape_view: config.live_lane.view().into(),
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
             volume_dots: dot_scale.map(Into::into),
             asset,
         }
+    }
+}
+
+#[cfg(test)]
+mod book_gap_tests {
+    use super::book_gap_rows;
+    use quantick_orderflow::projection::GapPrimitive;
+
+    fn gap(reason: &str) -> GapPrimitive {
+        GapPrimitive {
+            from_generation: None,
+            to_generation: None,
+            x0: 0.0,
+            x1: 0.1,
+            reason: reason.to_owned(),
+        }
+    }
+
+    /// The reasons the marks no longer write: sorted, counted and in the words
+    /// the hover uses, so a script reads what a hand reads.
+    #[test]
+    fn a_frames_gaps_read_back_as_one_row_per_reason() {
+        let rows = book_gap_rows(&[
+            gap("sequence_gap"),
+            gap("capture_disabled"),
+            gap("sequence_gap"),
+        ]);
+        let read: Vec<_> = rows
+            .iter()
+            .map(|row| (row.reason.as_str(), row.label.as_str(), row.stretches))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("capture_disabled", "L2 capture disabled", 1),
+                ("sequence_gap", "L2 sequence gap \u{b7} resynchronizing", 2),
+            ]
+        );
+        assert!(book_gap_rows(&[]).is_empty());
     }
 }
 
@@ -664,8 +737,49 @@ pub struct PaneHeatmapSnapshot {
     pub heatmap: Option<HeatmapStateSnapshot>,
 }
 
+/// Why the book is missing over some stretches of the chart: one row per reason,
+/// sorted by it. The marks on the chart carry no words, so these and their hover
+/// are what says so.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BookGapSnapshot {
+    /// The stable reason history recorded, such as `sequence_gap`.
+    pub reason: String,
+    /// The same reason in the words the mark's hover shows.
+    pub label: String,
+    /// How many stretches of the last published frame carry it.
+    pub stretches: u32,
+}
+
+/// Each reason among a frame's gaps, once, with how many stretches carry it.
+#[must_use]
+pub fn book_gap_rows(
+    gaps: &[quantick_orderflow::projection::GapPrimitive],
+) -> Vec<BookGapSnapshot> {
+    let mut rows = std::collections::BTreeMap::<&str, u32>::new();
+    for gap in gaps {
+        *rows.entry(gap.reason.as_str()).or_default() += 1;
+    }
+    rows.into_iter()
+        .map(|(reason, stretches)| BookGapSnapshot {
+            reason: reason.to_owned(),
+            label: quantick_orderflow::projection::gap_label(reason).to_owned(),
+            stretches,
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct HeatmapStateSnapshot {
+    /// Why the book is missing where the last frame marks a gap, if anywhere.
+    #[serde(default)]
+    pub gaps: Vec<BookGapSnapshot>,
+    /// Where the heat stops, in venue time, while the book goes on arriving: the
+    /// tape's window is held short of the clock because no print is coming, and
+    /// the book behind this instant is not drawn. Absent otherwise. The status
+    /// can read a live book beside it; both are true.
+    #[serde(default)]
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub book_held_at_unix_ms: Option<i64>,
     /// Depth heat is drawn over the chart.
     pub visible: bool,
     /// And over the live lane, which is a separate switch.
@@ -691,6 +805,8 @@ pub struct HeatmapStateSnapshot {
 impl HeatmapStateSnapshot {
     pub fn from_config(config: &HeatmapConfig, grouping: rust_decimal::Decimal) -> Self {
         Self {
+            gaps: Vec::new(),
+            book_held_at_unix_ms: None,
             visible: config.depth_visible(),
             lane_visible: config.lane_depth_visible(),
             retention_ms: config.retention_ms,

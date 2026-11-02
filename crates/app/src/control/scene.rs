@@ -11,16 +11,17 @@
 //! ## One list, never two
 //!
 //! Nothing here declares a control of its own. Every entry resolves to the
-//! registry that already drives the interface: [`ChartLayer`] through
-//! what each pane's header painted, [`DRAWING_TOOLS`] for the
-//! tool rail, [`DockTab::ALL`] for the dock, and the application's own tabs
-//! and panes for the rest. A hand-kept list beside those would drift the day
-//! someone adds a tool and forgets this file, and an operator would be told
-//! about a button that is not there — or, worse, never told about one that is.
+//! registry that already drives the interface: [`ChartLayer`] through what each
+//! pane's header painted, [`DRAWING_TOOLS`] for the tool rail, [`DockTab::ALL`]
+//! for the dock, and the application's own tabs and panes for the rest. A
+//! hand-kept list beside those would drift the day someone adds a tool and
+//! forgets this file, and an operator would be told about a button that is not
+//! there — or, worse, never told about one that is.
 //!
 //! ## What is on screen, and only that
 //!
-//! A control that is not painted is not listed. A rail folded away to its
+//! A control that is not painted is not listed, bar an open order-flow panel's
+//! sections, named with no rectangle when scrolled out. A rail folded away to its
 //! narrow stage contributes only the buttons that stage draws; a hidden dock
 //! contributes no tabs. Availability is a separate question from presence:
 //! the L2 heatmap toggle is on screen and disabled on a source that captures
@@ -29,13 +30,12 @@
 //! ## What it does not cover yet
 //!
 //! The scene enumerates the regions listed in [`SceneOwnerKindDto`] and no
-//! others: the SOURCE, HISTORY and TRADE toolbar groups, the window
-//! menus, the rail's trailing cluster and every dialog are still unnamed. A
-//! capture says so in [`SceneSnapshot::coverage`], which is never `available`
-//! for that reason, rather than reporting a short list as the whole screen
-//! — a client that read this as complete would conclude those controls do
-//! not exist, and inferred or incomplete data is labelled here as everywhere
-//! else.
+//! others: the SOURCE, HISTORY and TRADE toolbar groups, the window menus, the
+//! rail's trailing cluster and every dialog are still unnamed. A capture says so
+//! in [`SceneSnapshot::coverage`], which is never `available` for that reason,
+//! rather than reporting a short list as the whole screen — a client that read
+//! this as complete would conclude those controls do not exist, and inferred or
+//! incomplete data is labelled here as everywhere else.
 //!
 //! ## Cost
 //!
@@ -62,7 +62,8 @@ use quantick_control::{
 };
 
 use eframe::egui;
-use quantick_chart::pane_header::{HeaderControl, view_name};
+use quantick_chart::pane_header::{HeaderControl, SideRefusal, SideSegment};
+use quantick_control_schema::orderflow_settings as settings;
 
 use crate::{
     dock::DockTab,
@@ -357,23 +358,32 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
 ) {
     let capabilities = tab.capabilities(app.tab_reads().config());
     let style = app.chrome_reads().style();
+    let folds = app.tab_reads().tabs().panel_folds();
     for (pane, _) in tab.panes() {
         for &(control, rect) in &pane.frame.header_controls {
             let (label, role, selected, blocked, capability) = match control {
-                HeaderControl::View => (
-                    pane.orderflow.as_ref().map_or("", |tape| {
-                        view_name(tape.cached_config().live_lane.shown_view())
-                    }),
-                    SceneRoleDto::Action,
-                    false,
-                    None,
-                    quantick_control_schema::tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
-                ),
+                HeaderControl::Side(side) => {
+                    let segment = pane
+                        .flow_header_state()
+                        .map(|state| SideSegment::of(side, &state));
+                    (
+                        segment.map_or("", SideSegment::word),
+                        SceneRoleDto::Toggle,
+                        segment.is_some_and(|segment| {
+                            segment.ink == quantick_chart::pane_header::SegmentInk::Lit
+                        }),
+                        segment
+                            .and_then(|segment| segment.refusal)
+                            .map(SideRefusal::code),
+                        quantick_control_schema::tape_view_set::TAPE_VIEW_SET_CAPABILITY_ID,
+                    )
+                }
                 HeaderControl::Layer(toggle) => (
                     toggle.name(),
                     SceneRoleDto::Toggle,
                     pane.layer_switched_on(toggle.layer(), style),
-                    pane.layer_blocked(toggle.layer(), capabilities),
+                    pane.layer_blocked(toggle.layer(), capabilities)
+                        .map(|block| block.code),
                     quantick_control_schema::layers::SET_VISIBILITY_CAPABILITY_ID,
                 ),
                 HeaderControl::Sample(sample) => (
@@ -383,6 +393,9 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                     None,
                     quantick_control_schema::bubble_scale::BUBBLE_SCALE_CAPABILITY_ID,
                 ),
+                HeaderControl::Settings(control) => {
+                    settings::scene_row(control, &tab.tape().settings_panel, folds, &tab.symbol)
+                }
             };
             let bounds = rect_bounds(rect);
             controls.push(SceneControlSnapshot {
@@ -396,10 +409,10 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                 selected,
                 // The very gate the glyph reads, in its coded rendering: one
                 // condition, two audiences, no chance of drift.
-                availability: blocked.map_or_else(available, |block| unavailable(block.code)),
+                availability: blocked.map_or_else(available, unavailable),
                 bounds_availability: match &bounds {
                     Bounds::Rect(_) => available(),
-                    _ => unavailable("the_controls_rectangle_is_not_reportable"),
+                    _ => unavailable("the_control_is_off_screen_or_its_rectangle_unreportable"),
                 },
                 bounds: bounds.into_snapshot(),
                 capability_id: Some(capability.to_owned()),

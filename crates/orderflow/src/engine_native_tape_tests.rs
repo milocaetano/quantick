@@ -58,6 +58,7 @@ fn request(closed: Vec<Bar>, partial: Option<Bar>, now_ms: i64) -> ProjectionReq
         on_newest_bar,
         lane_reference_ms: Some(6_000),
         lane_now_ms: Some(now_ms),
+        lane_end_cap_ms: None,
         price_range: (85.0, 115.0),
         dot_zoom: Some(DotZoom {
             native_tape: true,

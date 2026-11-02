@@ -45,7 +45,7 @@ fn native_split_settings_keep_the_width_and_the_native_controls() {
     }
     for meaningful in [
         NATIVE_TAPE,
-        "Tape only (hide candles)",
+        "Tape only (hide trail)",
         "Ignore opening burst in scale",
         "width",
         "window",

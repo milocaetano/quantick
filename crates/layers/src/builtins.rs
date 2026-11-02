@@ -198,7 +198,7 @@ impl ChartLayer {
     });
     pub const TapeOnly: Self = Self(&LayerDescriptor {
         id: "tape_only",
-        label: "tape only (hide candles)",
+        label: "tape only (hide trail)",
         hint: "the tape takes the whole canvas, Bookmap style: no candles and no candle marks, \
                time runs across the full width on the tape's own window, and the price axis \
                follows the tape's prints. Scrolling zooms the tape's window. \

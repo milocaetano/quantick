@@ -76,21 +76,11 @@ pub(super) fn draw_dock(
     replay_view: &mut ReplayView,
     tz: TzOffset,
 ) -> DockResponse {
-    let Tab {
-        flow_pane,
-        replay,
-        paper,
-        ..
-    } = tabs.runtime_mut(tabs.active_index());
-    let orderflow = flow_pane
-        .orderflow
-        .as_mut()
-        .expect("the flow pane is built with a tape and never drops it");
-    let mut response = dock.draw(
+    let Tab { replay, paper, .. } = tabs.runtime_mut(tabs.active_index());
+    let mut response = crate::dock::draw(
+        dock,
         ctx,
         &mut DockEnv {
-            orderflow,
-            tick_chart: flow_pane.state.tick_membership().is_some(),
             replay_view,
             replay: replay.as_ref(),
             paper,

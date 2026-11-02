@@ -130,8 +130,8 @@ fn tape_only_aims_across_the_whole_plot() {
     assert_eq!(the_order(&app), (quantick_engine::Side::Buy, price));
 }
 
-/// The header's view button is chrome, not a price: with the buy key down or a
-/// ticket armed, a press on it walks the views, raises no aim and rests nothing.
+/// The header's side switch is chrome, not a price: with the buy key down or a
+/// ticket armed, a press on it moves the view, raises no aim and rests nothing.
 #[test]
 fn the_view_button_keeps_its_press_with_shift_down_and_under_an_armed_ticket() {
     use quantick_chart::pane_header::HeaderControl;
@@ -140,8 +140,11 @@ fn the_view_button_keeps_its_press_with_shift_down_and_under_an_armed_ticket() {
         let controls = &app.active_tab().flow_pane.frame.header_controls;
         controls
             .iter()
-            .find_map(|(control, rect)| (*control == HeaderControl::View).then_some(rect.center()))
-            .expect("the header painted its view button")
+            .find_map(|(control, rect)| {
+                (*control == HeaderControl::Side(quantick_orderflow::LaneSide::Tape))
+                    .then_some(rect.center())
+            })
+            .expect("the header painted its side switch")
     };
     let view = |app: &QuantickApp| app.active_tab().tape().cached_config().live_lane.view();
 

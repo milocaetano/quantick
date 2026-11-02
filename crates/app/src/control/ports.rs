@@ -256,6 +256,7 @@ impl OrderflowEngine for OrderflowView {
         &quantick_orderflow::engine::CaptureStatus,
         Option<&quantick_orderflow::engine::BookLadder>,
         rust_decimal::Decimal,
+        &[quantick_orderflow::projection::GapPrimitive],
     ) {
         self.cached_book()
     }
@@ -264,6 +265,9 @@ impl OrderflowEngine for OrderflowView {
     }
     fn live_end_ms(&self) -> Option<i64> {
         self.cached_live_end_ms()
+    }
+    fn book_held_at_ms(&self) -> Option<i64> {
+        OrderflowView::book_held_at_ms(self)
     }
     fn bubbles(&self) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
         self.bubbles_snapshot()
@@ -323,6 +327,17 @@ impl OrderflowPort for dyn ControlPort {
                 .map(|(side, pane)| OrderflowPaneEntry { side: *side, pane })
                 .collect();
             visit(tab_id, &entries);
+        }
+    }
+
+    fn visit_orderflow_panels(
+        &self,
+        visit: &mut quantick_control_handlers::orderflow::PanelVisit<'_>,
+    ) {
+        let tabs = self.tab_reads().tabs();
+        for (tab_id, tab) in tabs.iter_with_ids() {
+            let panel = &tab.tape().settings_panel;
+            visit(tab_id, &tab.symbol, panel, tabs.panel_folds());
         }
     }
 }

@@ -169,6 +169,8 @@ impl BubblePreset {
                 // Nor where the pane's lane sits: a fold is the pane's, and
                 // its asset files it beside the look (`AssetBubbles::fold`).
                 fold: LiveLaneStyle::default().fold,
+                fold_market_closed: LiveLaneStyle::default().fold_market_closed,
+                market_hold: LiveLaneStyle::default().market_hold,
                 ..config.live_lane.clone()
             },
         }
@@ -202,12 +204,16 @@ impl BubblePreset {
             config.live_lane.show_depth,
             config.live_lane.show_aggressions,
             config.live_lane.fold,
+            config.live_lane.fold_market_closed,
+            config.live_lane.market_hold,
         );
         config.live_lane = self.live_lane.clone();
         config.live_lane.enabled = visibility.0;
         config.live_lane.show_depth = visibility.1;
         config.live_lane.show_aggressions = visibility.2;
         config.live_lane.fold = visibility.3;
+        config.live_lane.fold_market_closed = visibility.4;
+        config.live_lane.market_hold = visibility.5;
     }
 }
 

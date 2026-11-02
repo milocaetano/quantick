@@ -124,6 +124,7 @@ fn play_hosted(prints: &[Trade], first: &HeatmapConfig, schedule: &Schedule<'_>)
             on_newest_bar: true,
             lane_reference_ms: Some(6_000),
             lane_now_ms: Some(now_ms),
+            lane_end_cap_ms: None,
             price_range: (80.0, 130.0),
             dot_zoom: Some(DotZoom {
                 native_tape: true,
@@ -352,6 +353,7 @@ fn the_overlay_folded_where_prints_land_is_the_overlay_folded_whole() {
             on_newest_bar: true,
             lane_reference_ms: Some(6_000),
             lane_now_ms: Some(now_ms),
+            lane_end_cap_ms: None,
             price_range: (80.0, 130.0),
             dot_zoom: Some(DotZoom {
                 native_tape: true,

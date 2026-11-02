@@ -300,8 +300,9 @@ impl ArrangementAdapter<'_> {
     /// bookmark cannot rearrange the rail the trader curated.
     pub(super) fn restore_chrome(&mut self, chrome: &ui_state::SavedChrome) {
         *self.tz = TzOffset::new(chrome.timezone_minutes);
-        self.dock
-            .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
+        let dock_tab = chrome.dock_tab.and_then(crate::dock::DockTab::from_saved);
+        self.dock.restore(chrome.dock_visible, dock_tab);
+        self.tabs.set_panel_folds(chrome.orderflow_folds.clone());
         self.toolrail.set_dock(chrome.rail_dock.into());
         self.toolrail.set_visible(chrome.rail_visible);
         *self.show_perf = chrome.perf_readings;
@@ -448,6 +449,7 @@ impl ArrangementRead<'_> {
                 // is what it will restore into when one is opened: a pane
                 // that never existed cannot have been folded.
                 time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
+                orderflow_panel: tab.tape().settings_panel.clone(),
             })
             .collect();
         let chrome = ui_state::SavedChrome {
@@ -475,6 +477,7 @@ impl ArrangementRead<'_> {
                 .then(|| self.history.history_reach.token()),
             venue_lead_in: self.history.venue_lead_in,
             inspector_position: self.drawing_chrome.remembered_inspector_position(),
+            orderflow_folds: self.tabs.panel_folds().clone(),
         };
         (tabs, chrome)
     }

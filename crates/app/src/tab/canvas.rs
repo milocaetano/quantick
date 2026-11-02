@@ -46,6 +46,8 @@ pub struct CanvasChrome<'a> {
     pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
     pub layers: &'a mut quantick_layers::LayerActions,
+    /// Which order-flow panel sections are open, per asset.
+    pub panel_folds: &'a mut crate::ui_state::AssetFolds,
 }
 
 /// Which pane order entry belongs to this frame.
@@ -322,7 +324,7 @@ impl Tab {
             let areas = split_pane_header(pane_areas.body);
             self.draw_flow_header(ui, areas.header, bar_inputs, chrome);
             PaneAreas {
-                body: areas.chart,
+                body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
                 layout_strip: pane_areas.layout_strip,
             }
         });
@@ -378,6 +380,12 @@ impl Tab {
             fraction: None,
         };
         self.connection.observe(&facts, &self.loading);
+        let feed = self.connection.state();
+        self.tape_mut().observe_market(feed);
+        let spoken = self.connection.spoken_link(now_ms);
+        let (view, state) = (self.flow_pane.orderflow.as_mut(), &self.flow_pane.state);
+        view.expect("the flow pane keeps a tape")
+            .hold_tape_window(spoken, state);
     }
 
     /// The pane whose header asked for the indicator library this frame. Taken in
@@ -396,8 +404,20 @@ impl Tab {
     /// marks, so it wins the press and nothing strokes across it.
     fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
         let mut focus = None;
+        let focused = self.focused_side();
+        let now_ms = crate::metrics::wall_clock_ms();
+        let seam_words = self.connection.seam_line(&self.symbol, now_ms);
+        let link = self.connection.spoken_link(now_ms);
         for (pane, side) in self.panes_with_sides_mut() {
-            let intent = pane.draw_capsules(ui, side, chrome.style, chrome.capabilities);
+            let sides = crate::pane::SideChrome {
+                style: chrome.style,
+                capabilities: chrome.capabilities,
+                focused: side == focused,
+                tz: chrome.tz,
+                link,
+                seam_words: seam_words.clone(),
+            };
+            let intent = pane.draw_capsules(ui, side, &sides);
             if let Some(intent) = intent {
                 // A settings window edits the focused chart, and this is the
                 // one the hand asked about.
@@ -413,7 +433,8 @@ impl Tab {
     }
 
     /// The flow pane's header line: its mark, its own bars, its indicators
-    /// button, its view and its strip, read and changed here wherever focus sits.
+    /// button, its side switches and its strip, read and changed here wherever
+    /// focus sits.
     fn draw_flow_header(
         &mut self,
         ui: &mut egui::Ui,
@@ -435,6 +456,10 @@ impl Tab {
             chip,
             slot,
             rebuilding,
+            settings_open: pane
+                .orderflow
+                .as_ref()
+                .is_some_and(|tape| tape.settings_panel.is_open()),
         };
         let (intent, indicators) = crate::pane_header::draw_marked(
             ui,

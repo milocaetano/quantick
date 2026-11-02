@@ -98,6 +98,11 @@ What today's UI gets **right**, and the model keeps:
    deliberate visual signature of the app.
 4. **Disabled ≠ hidden.** A capability the venue lacks renders at 40% opacity
    and explains itself on hover. Only a mode change (replay) may swap chrome.
+   Opacity has these meanings and no others: 40% is disabled; a floating
+   capsule rests at 65%, stands at 85% with the pointer over its side and at
+   100% over it or with its pane focused, and never rests while a glyph is off
+   or blocked. Every glyph answers at every tier, and the scene does not report
+   it.
 5. **Docked is persistent, floating is transient.** Anything a trader keeps
    open while trading docks (settings, managers). Anything opened, used and
    closed floats (browsers, pickers, error details).
@@ -251,7 +256,8 @@ and hide-all are reversible protection/view actions; neither shares the
 selected object's delete control.
 
 **Dock (right, 280–360 px).** One tabbed panel replaces today's stack of
-left `SidePanel`s: tabs **L2**, **Bubbles**, **Indicators**, **Session**.
+left `SidePanel`s: tabs **Session**, **Trading**, **Trades**, and **Indicators**
+when it lands. The L2 and Bubbles settings left it for the order-flow panel below.
 Tab strip (36 px) stays visible when collapsed. Rules:
 
 - A layer's *toggle* lives in the toolbar; its *settings* live in its tab.
@@ -262,6 +268,25 @@ Tab strip (36 px) stays visible when collapsed. Rules:
   home changes.
 - Floating windows remain for transient tasks only: session browser (from
   the Session tab / Ctrl+R), appearance dialog, script error details.
+
+**Order-flow panel (280–360 px).** One per tab, attached to the flow pane, right
+of its price axis and below its header line: the chart gives up the width, nothing
+floats over it. Same body style as the dock (CHROME, 10/8 px margin, resizable),
+under one title line, "ORDER FLOW · <symbol>" and ×. The L2 and Bubbles bodies sit
+under two collapsible headers, both open by default, with one outer scroll. A
+header's right end carries its state in mono ("book live", the preset name). Rules:
+
+- The gear, bare like `ƒx`, 8 px after Strip and last on the line, opens and closes
+  it and wears the pressed look while it is open. Its right click, and a right click
+  on an L2 or Bubbles capsule glyph, opens it on that section, expanded and scrolled
+  into view. `Ctrl+Shift+O` is the left click; `orderflow.settings.open`, `.close`
+  and `.section.set` are the same state by name.
+- Which sections are folded is remembered per asset, for the whole window; whether
+  it is open and how wide, per tab.
+- A pane with no flow side has no gear. Short of room for a chart beside it, an open
+  panel waits off screen until the pane is wide enough again.
+- A workspace saved with the old L2 or Bubbles dock tab open opens here, on that
+  section.
 
 Why right, when today's panels are left: the rail claims the left edge
 (tools want to be near the pointer's resting side), settings are read-mostly,
@@ -324,6 +349,24 @@ than not being connected.**
 - **One muted line** on a pane with no bars on it, carrying the headline and
   no more — no border, no fill, no buttons. A blank canvas has room to say
   why; the way out is still the corner.
+
+**The one red exception: market closed.** A closed market is amber everywhere
+but one place. While the market holds the tape folded beside the candles, the
+Tape switch reads `Market closed` in the warning red, an outline with a dot and
+no fill, and takes no press; Trail counts as the last side showing, and both
+view keys obey their switches. It is red because it is the only explanation of
+why a control the trader relies on is refusing, not because anything broke; the
+corner chip stays amber. Beside the candles with the setting off, or with the
+tape alone, the tape keeps its prints up to a dashed amber seam at the last
+print, with this section's one muted line in the empty part after it once that
+has room. While its link is quiet, attempting or offline the tape's window stops
+at the last print plus 45 % of itself, so the seam parks at 55 % of the side and
+the tape never empties; the first print frees it, and a live link's window is
+untouched, through a transport blip too. The heat stops at the same instant, so
+when the book goes on arriving behind it the muted line adds "book held at
+HH:MM:SS" and the `orderflow.heatmap` scope says the same. Neither
+is saved: the hold never writes the fold a workspace stores, and it ends at the
+first print, not at a change of link.
 
 Progress never reaches the corner. A first connection and a history block
 still arriving are a *wait*, and a wait already has the loading overlay on the
@@ -471,25 +514,34 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   pane owning its slots and objects (anchors are bar-index + price and do
   not translate across bar streams).
 - **Every pane has a header line, and the line says what the pane accepts.**
-  The flow pane's reads, left to right: `ORDER FLOW` · its bars · the view
-  button · bubbles · the candle sample · L2 · footprint · strip, and the tape
-  sample at the far end. A time pane's reads: its bars · its presets · its own
-  footprint. The toolbar has no layer buttons, so no button speaks for a pane
+  The flow pane's reads, left to right: `ORDER FLOW` · its bars · `ƒx`, and at
+  the right end the Trail and Tape switches, a hairline and the strip; each
+  chart side's capsule holds its own layers and sample. A time pane's reads: its
+  bars · its presets, and its capsule its own footprint. The toolbar has no layer buttons, so no button speaks for a pane
   it does not sit on. The line never goes away, whatever the view, which is
   what makes it the way back from a tape that is off.
-- **Glyphs, no words.** Borderless: lit is the accent colour, off is grey at
-  about 45%, and each glyph is a small copy of what its layer draws. The
+- **Glyphs, no words on layers.** Borderless: lit is `text/primary`, never the
+  accent, off is the off colour, and each glyph is a small copy of what its layer draws. The
   tooltip is the name and the shortcut, nothing else. Left-click switches;
   right-click opens what configures it (looking is not enabling). A layer that
   cannot move stays in place, greyer, and its tooltip says why.
 - **Three views of one pane.** `Beside`, `CandlesOnly`, `TapeOnly`, derived from
   the tape's own switch and `tape_only`: no third state to disagree with them.
-  One button walks them in that order and its glyph is the side on screen.
-  `Ctrl+Shift+T`, on a focused flow pane, goes to tape only and from there back
-  beside the candles. `orderflow.tape.view.set` names the same three. A view
-  writes no fold: a side the divider folded to its rail is still folded on the
-  way back beside the candles, the view glyph alone reads it as the side on
-  screen, and the rail stays the way back.
+  The screen calls the candles side the **Trail**. Two segments with their words
+  switch the sides: both lit is `Beside`, one lit is that side alone, and the
+  last lit stays lit, refuses the click and says why. `Ctrl+Shift+T`, on a
+  focused flow pane, goes to tape only and from there back beside the trail;
+  `Ctrl+Shift+R` is its mirror. `orderflow.tape.view.set` names the same three,
+  with its wire words `beside`, `candles` and `tape`. A view writes no fold: a
+  side the divider folded to its rail is still folded on the way back, its
+  segment stays lit, the tooltip names the side on screen, and the rail stays
+  the way back.
+- **Each side says what it is.** A plate at the capsule's height, top left:
+  `TRAIL · bars to HH:MM:SS`, `TAPE · prints to HH:MM:SS · <status>`, also in
+  single-side views. The status is the word the feed speaks: muted `live`, amber
+  `quiet`, faint and pulsing `reconnecting`, red `offline`, and none for a source
+  with no transport. A 2 px `border` rule divides the sides and stays the fold
+  handle.
 - **Candles hidden keeps their look.** In tape only, bubbles, L2 and footprint
   grey out in place and keep their state; `Ctrl+B` and `Ctrl+F` do nothing
   there. A fold is not tape only: they stay live with the candles folded to
@@ -499,12 +551,13 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   switch may not move another pane's pixels.
 - **Bubble size is a sample you drag.** A bubble at its current size, 6 to 22 px
   across 0.25x to 3x: drag up to grow at 1x per 40 px, double-click for 1x, and
-  the value shows only while dragging. The blue sample beside the bubbles glyph
-  sizes the candles', the tape-coloured one at the far end the tape's. Each is
+  the value shows only while dragging. Both samples are `text/primary`, since
+  green means buy on this pane: the one in the trail's capsule sizes the candles'
+  bubbles, the one in the tape's the tape's. Each is
   gone while its target is off, and a folded side is not off; the candle
   sample's slot stays, so no glyph shifts.
-- **A narrow line drops, then clips.** The mark goes first, then the samples;
-  what still does not fit is clipped by the strip, and nothing overlaps.
+- **A narrow line drops, then clips.** The switches' words go first, then the
+  mark; what still does not fit is clipped by the strip, and nothing overlaps.
 - **Focus**: clicking a pane focuses it; the focused pane drives the status
   bar's content section, `Insert → Indicator` targeting and the Indicators
   dock tab. A 1 px accent under the pane's top edge marks focus — no

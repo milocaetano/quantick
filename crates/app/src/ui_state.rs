@@ -61,30 +61,6 @@ impl From<SavedRailDock> for crate::toolrail::ToolboxDock {
     }
 }
 
-impl From<crate::dock::DockTab> for SavedDockTab {
-    fn from(tab: crate::dock::DockTab) -> Self {
-        match tab {
-            crate::dock::DockTab::L2 => Self::L2,
-            crate::dock::DockTab::Bubbles => Self::Bubbles,
-            crate::dock::DockTab::Session => Self::Session,
-            crate::dock::DockTab::Trading => Self::Trading,
-            crate::dock::DockTab::Trades => Self::Trades,
-        }
-    }
-}
-
-impl From<SavedDockTab> for crate::dock::DockTab {
-    fn from(tab: SavedDockTab) -> Self {
-        match tab {
-            SavedDockTab::L2 => Self::L2,
-            SavedDockTab::Bubbles => Self::Bubbles,
-            SavedDockTab::Session => Self::Session,
-            SavedDockTab::Trading => Self::Trading,
-            SavedDockTab::Trades => Self::Trades,
-        }
-    }
-}
-
 /// Application configuration and persistence effects over the shared document.
 pub(crate) trait WorkspaceExt: Sized {
     #[must_use]

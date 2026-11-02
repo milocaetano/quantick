@@ -106,7 +106,7 @@ pub fn draw(
     let mut recorded = chips.iter_mut();
     crate::pane_header::paint_rule(ui, strip);
     let inner = strip.shrink2(crate::pane_header::CONTENT_PADDING);
-    let indicators_px = crate::pane_header::indicators_width(ui);
+    let indicators_px = crate::pane_header::indicators_width(ui, true);
     let mut content = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(("time_header", salt))
@@ -166,7 +166,7 @@ pub fn draw(
     let _ = interval_rect;
     let button_left =
         (content.cursor().left() + quantick_chart::pane_header::GROUP_GAP_PX).min(limit);
-    let indicators = crate::pane_header::indicators_button(ui, button_left, strip, salt);
+    let indicators = crate::pane_header::indicators_button(ui, button_left, strip, salt, true);
     HeaderLayout {
         changed,
         indicators,

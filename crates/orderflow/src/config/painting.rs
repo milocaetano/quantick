@@ -23,19 +23,15 @@ pub const FOLD_RING_WIDTH: f32 = 1.0;
 /// pressure the bubble is there to show.
 pub const FOLD_RING_ALPHA: f32 = 0.55;
 
-/// Dash and gap, in pixels, of the line dividing the forming bar's candle from
-/// its live lane. Fine and airy: it marks where the present begins, and a solid
-/// rule there would read as a wall in the data.
-pub const LANE_DIVIDER_DASH_PX: f32 = 3.0;
-/// See [`LANE_DIVIDER_DASH_PX`].
-pub const LANE_DIVIDER_GAP_PX: f32 = 5.0;
+/// Width, in pixels, of the rule dividing the trail from the tape. It is the fold
+/// handle too, so it reads as a part of the pane's frame.
+pub const LANE_DIVIDER_WIDTH_PX: f32 = 2.0;
 
-/// Dash and gap of the live-time line. Tighter than the divider's, so the two
-/// never read as the same mark even where they nearly touch.
+/// Dash and gap of the live-time line.
 pub const LANE_NOW_DASH_PX: f32 = 6.0;
 /// See [`LANE_NOW_DASH_PX`].
 pub const LANE_NOW_GAP_PX: f32 = 3.0;
-/// Stroke width shared by both lane marks.
+/// Stroke width of the live-time line.
 pub const LANE_MARK_WIDTH_PX: f32 = 1.0;
 
 /// Pixel slack for deciding that a gap boundary coincides with the chart edge.
@@ -43,12 +39,10 @@ pub const LANE_MARK_WIDTH_PX: f32 = 1.0;
 /// exact comparison would miss by a rounding bit and draw a stray frame line.
 pub const GAP_EDGE_EPSILON: f32 = 0.5;
 
-/// Gap between the leading span's label and the divider it annotates. Small
-/// enough that the text reads as belonging to the line rather than floating.
-pub const GAP_LABEL_INSET_PX: f32 = 6.0;
-/// How far down a pane a gap's label stands: below the layer capsule and the
-/// book status label at the chart's top, so neither covers it.
-pub const GAP_LABEL_TOP_PX: f32 = 52.0;
+/// How near a leading gap's boundary the pointer brings out its reason, and how
+/// far from the pointer the reason stands. A pointer in the stretch itself is
+/// just reading the chart.
+pub const GAP_HOVER_PX: f32 = 6.0;
 
 /// How far down the canvas the stack above the key may push it, as a share
 /// of the canvas height.

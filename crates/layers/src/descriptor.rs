@@ -191,12 +191,12 @@ pub mod blocks {
     );
     pub const TAPE_OFF: LayerBlock = LayerBlock::new(
         "the_tape_is_off",
-        "the tape is off — the view button on the pane's header puts it back, \
+        "the tape is off — the Tape switch on the pane's header puts it back, \
          and this layer is waiting exactly as it was left",
     );
     pub const TAPE_ONLY_CANDLES: LayerBlock = LayerBlock::new(
         "candle_layer_hidden_in_tape_only",
-        "this candle-chart layer is hidden while the pane shows only the tape",
+        "this trail layer is hidden while the pane shows only the tape",
     );
     pub const TAPE_ONLY_DRAWS_NATIVE_TAPE: LayerBlock = LayerBlock::new(
         "tape_only_always_draws_the_native_tape",

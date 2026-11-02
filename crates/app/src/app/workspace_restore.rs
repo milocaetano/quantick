@@ -103,6 +103,8 @@ impl ArrangementAdapter<'_> {
                         },
                     );
                     tab.set_opening_layouts(saved.flow_layout, &saved.context_layouts);
+                    let showing = index == active && crate::orderflow_panel::flow_pane_shown(tab);
+                    tab.tape_mut().settings_panel = saved.restored_panel(chrome, showing);
                 }
                 RestoreEffect::CloseStale { .. } => {
                     if let Some(plan) = self.tabs.plan_restore(&step) {

@@ -827,6 +827,7 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
                 time_bars: None,
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
+                orderflow_panel: Default::default(),
             }],
             None,
         ));

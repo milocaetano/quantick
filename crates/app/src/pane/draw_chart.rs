@@ -216,10 +216,11 @@ impl ChartPane {
             self.orderflow.as_ref(),
             self.legend_inset(chrome),
             layout.tape_only.then(|| {
-                egui::Rect::from_min_max(
-                    egui::pos2(chart_rect.left(), area.top()),
-                    chart_rect.right_top(),
-                )
+                use quantick_chart::side_label::{SIDE_LABEL_INSET_LEFT_PX, TAPE_KEY_TOP_PX};
+                let left = chart_rect.left() + SIDE_LABEL_INSET_LEFT_PX;
+                let top = area.top() + TAPE_KEY_TOP_PX;
+                let height = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX;
+                egui::Rect::from_x_y_ranges(left..=chart_rect.right(), top..=top + height)
             }),
         );
         flow.strip(

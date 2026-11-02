@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::bubbles::{
     BubbleStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
-use super::lane_fold::LaneFold;
+use super::lane_fold::{LaneFold, MarketHold};
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
 
@@ -431,6 +431,12 @@ pub struct LiveLaneStyle {
     /// where it was, so unfolding returns the band the lane had; `tape_only`
     /// and the tape's own switch win over it.
     pub fold: LaneFold,
+    /// Fold the tape to its rail while the market is closed. The asset's, never
+    /// a preset's, like the fold.
+    pub fold_market_closed: bool,
+    /// Whether the market holds the tape folded now, and what that remembers.
+    /// Runtime only: nothing writes it to a file.
+    pub market_hold: MarketHold,
 }
 
 impl Default for LiveLaneStyle {
@@ -450,6 +456,8 @@ impl Default for LiveLaneStyle {
             stable_size: false,
             tape_only: false,
             fold: LaneFold::Open,
+            fold_market_closed: true,
+            market_hold: MarketHold::default(),
         }
     }
 }
@@ -502,6 +510,9 @@ struct LiveLaneStyleRepr {
     /// Written only when folded, so an open lane keeps its file.
     #[serde(skip_serializing_if = "LaneFold::is_open")]
     fold: LaneFold,
+    /// Written only when off, so a file from before the setting reads on.
+    #[serde(skip_serializing_if = "std::clone::Clone::clone")]
+    fold_market_closed: bool,
 }
 
 impl Default for LiveLaneStyleRepr {
@@ -538,6 +549,8 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             stable_size: repr.stable_size,
             tape_only: repr.tape_only,
             fold: repr.fold,
+            fold_market_closed: repr.fold_market_closed,
+            market_hold: MarketHold::default(),
         }
     }
 }
@@ -568,6 +581,7 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             stable_size: style.stable_size,
             tape_only: style.tape_only,
             fold: style.fold,
+            fold_market_closed: style.fold_market_closed,
         }
     }
 }
