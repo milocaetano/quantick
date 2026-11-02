@@ -153,6 +153,9 @@ pub(crate) fn pane_canvas_control_id(pane_id: u64) -> String {
 }
 
 pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> SceneSnapshot {
+    if let Some(scene) = app.capture_scene() {
+        return scene.clone();
+    }
     let tabs = app.tab_reads().tabs();
     let active = &tabs[app.tab_reads().active_tab_index()];
     let focused_side = active.focused_side();
@@ -216,6 +219,7 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     };
 
     SceneSnapshot {
+        window_id: Some(WireU64::new(tabs.windows().presented().0)),
         active_tab_id: WireU64::new(tabs.active_id()),
         active_surface: if home {
             ActiveSurfaceDto::Home
@@ -339,13 +343,15 @@ fn push_tab_strip(
     selected_id: Option<u64>,
     title: Option<&crate::app::title_bar::TitleBarState>,
 ) -> bool {
-    for (index, (tab_id, tab)) in tabs.iter_with_ids().enumerate() {
+    for index in tabs.window_indices(tabs.windows().presented()) {
+        let tab_id = tabs.id_at(index);
+        let tab = &tabs[index];
         let rect = title.and_then(|title| {
             title
                 .strip
-                .tabs
+                .tab_ids
                 .iter()
-                .find(|(visible, _)| *visible == index)
+                .find(|(visible, _)| *visible == tab_id)
                 .map(|(_, rect)| *rect)
         });
         if title.is_some() && rect.is_none() {

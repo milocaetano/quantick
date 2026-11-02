@@ -1,5 +1,6 @@
 # Windows root-HWND UI-thread timer and immediate-viewport scheduling adapter.
 # This must bind the actual eframe surface and dispatch Windows paint messages;
 # runtime processing still runs once in the existing root update, with no worker.
-crates/app +100
-!budget +100
+crates/app +102
+!budget +102
+# Native timer minimum binding/dispatch headroom remains OS-window-only.

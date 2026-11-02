@@ -135,3 +135,6 @@ pub const CONTROL_EVIDENCE_CHUNK_BYTES: usize = (CONTROL_MAX_STRING_BYTES / 4) *
 /// ceiling while still letting a client pull a large bundle in few round
 /// trips.
 pub const CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE: usize = 4;
+
+/// Maximum uncompressed pixels read by one native screenshot (64 MiB RGBA).
+pub const CONTROL_SCREENSHOT_MAX_PIXELS: u64 = 16_777_216;

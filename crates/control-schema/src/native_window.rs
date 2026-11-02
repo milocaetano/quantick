@@ -73,7 +73,7 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
     IdempotencyPolicy::Required,
     crate::scene::CONTROLS_SCOPE_ID,
     "controls[].selected",
-    "tab_strip.maximize or tab_strip.minimize is selected once the native viewport reports that state; both clear in normal state",
+    "Read scene.read with window_id from the accepted result. tab_strip.maximize or tab_strip.minimize is selected once that native viewport reports its state; both clear in normal state",
     &["native_window_requests_validate_authority_and_retry_without_repeating_the_effect"],
 )];
 

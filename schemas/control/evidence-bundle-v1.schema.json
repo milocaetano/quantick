@@ -433,10 +433,30 @@
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "Physical pixels per logical point: the factor the scene's own\npoint-valued bounds were multiplied by to reach the regions below."
         },
+        "source_window_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "width_px": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "window_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -610,6 +630,17 @@
             }
           },
           "type": "object"
+        },
+        "window_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pinned native window identity when the host supports window targeting."
         }
       },
       "required": [
@@ -746,6 +777,16 @@
     "snapshot": {
       "$ref": "#/$defs/SerializedSnapshotCapture",
       "description": "The coherent projection pass: every scope the caller named, at one\nrevision. Health and scene are ordinary scopes and live here."
+    },
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

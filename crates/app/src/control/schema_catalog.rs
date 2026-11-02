@@ -72,6 +72,9 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         ),
         document::<EmptyInput>("observer-empty-input-v1.schema.json"),
         document::<SnapshotReadInput>("observer-snapshot-read-input-v1.schema.json"),
+        document::<quantick_control_schema::scene::SceneReadInput>(
+            "observer-scene-read-input-v1.schema.json",
+        ),
         document::<ChartWindowInput>("observer-chart-window-input-v1.schema.json"),
         document::<DescribeResult>("observer-describe-result-v1.schema.json"),
         document::<SnapshotScopeDescriptor>("observer-snapshot-scope-descriptor-v1.schema.json"),

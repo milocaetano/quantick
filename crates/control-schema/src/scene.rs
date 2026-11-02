@@ -88,6 +88,15 @@ pub const FEED_RELOAD_CONTROL_ID: &str = "feed_status.reload";
 /// The compact action bar raised by a completed secondary-button range.
 pub const QUICK_RANGE_OWNER_ID: &str = "quick_range";
 
+/// Optional native window targeting for `scene.read`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SceneReadInput {
+    /// Omission pins the focused live window when the request reaches the UI thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
+}
+
 /// What is on screen right now, as controls an operator can name.
 ///
 /// The tree is expressed as a flat list plus [`SceneControlSnapshot::owner`]
@@ -96,6 +105,11 @@ pub const QUICK_RANGE_OWNER_ID: &str = "quick_range";
 /// into anything to find it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SceneSnapshot {
+    /// Live native market window, pinned once when this read reaches the UI thread.
+    /// Omission selects the focused live window at that admission point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
+
     /// The market tab the window holds as active. While Home is the
     /// [`Self::active_surface`] this market keeps running behind it.
     pub active_tab_id: WireU64,

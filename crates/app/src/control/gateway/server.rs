@@ -1127,6 +1127,7 @@ fn dispatch_prepared(
     let actor = matches!(prepared.dispatch, PreparedDispatch::Action(_))
         .then(|| Box::new(remote_actor.context(&prepared.envelope)));
     let ui_request = UiRequest {
+        window_id: None,
         prepared,
         actor,
         connection_id: connection_id.clone(),

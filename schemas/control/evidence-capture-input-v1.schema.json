@@ -6,6 +6,10 @@
       "minLength": 1,
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
       "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -34,6 +38,17 @@
       "default": false,
       "description": "Requires `observe.screenshot`. A capture that asks for one and cannot\nhave it says why in its coverage; it never silently answers with text\nalone.",
       "type": "boolean"
+    },
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Live native market window, pinned once when this read reaches the UI thread.\nOmission selects the focused live window at that admission point."
     }
   },
   "required": [

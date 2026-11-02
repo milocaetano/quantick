@@ -37,6 +37,166 @@ fn paint_window(
     });
 }
 
+#[derive(Default)]
+struct NativeViewportOutputReplay {
+    windows: egui::ViewportIdMap<ReplayedNativeViewport>,
+}
+
+struct ReplayedNativeViewport {
+    builder: egui::ViewportBuilder,
+    deferred: Vec<egui::ViewportCommand>,
+    visible: bool,
+    visibility: Vec<bool>,
+    placements: usize,
+}
+
+impl NativeViewportOutputReplay {
+    fn update(&mut self, id: egui::ViewportId, builder: egui::ViewportBuilder) {
+        use std::collections::hash_map::Entry;
+        match self.windows.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(ReplayedNativeViewport {
+                    visible: builder.visible.unwrap_or(true),
+                    builder,
+                    deferred: Vec::new(),
+                    visibility: Vec::new(),
+                    placements: 0,
+                });
+            }
+            Entry::Occupied(mut entry) => {
+                let window = entry.get_mut();
+                let (commands, recreate) = window.builder.patch(builder);
+                assert!(!recreate, "tab transfers retain their native windows");
+                window.deferred.extend(commands);
+            }
+        }
+    }
+
+    fn output(&mut self, output: egui::ViewportIdMap<egui::ViewportOutput>) {
+        // Match eframe 0.29's handle_viewport_output: patch every builder,
+        // then apply its deferred patch commands before explicit commands.
+        for (id, output) in output {
+            self.update(id, output.builder);
+            let window = self.windows.get_mut(&id).unwrap();
+            window.deferred.extend(output.commands);
+            for command in window.deferred.drain(..) {
+                match command {
+                    egui::ViewportCommand::Visible(visible) => {
+                        window.visible = visible;
+                        window.visibility.push(visible);
+                    }
+                    egui::ViewportCommand::OuterPosition(_) => window.placements += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn market_windows_positioned_children_recover_visibility_after_repeated_backend_output() {
+    use std::{cell::RefCell, rc::Rc};
+    let ctx = egui::Context::default();
+    pin_frame_clock(&ctx);
+    let (mut app, _, _, _) = test_app();
+    let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    let identities = |app: &QuantickApp| {
+        app.runtime
+            .tabs
+            .iter_with_ids()
+            .map(|(id, tab)| {
+                (
+                    id,
+                    std::ptr::from_ref(tab),
+                    tab.flow_pane.indicator_worker.progress().instance,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = identities(&app);
+    let first = TabId(app.runtime.tabs.id_at(0));
+    let second = TabId(app.runtime.tabs.id_at(1));
+    let replay = Rc::new(RefCell::new(NativeViewportOutputReplay::default()));
+    let renderer = Rc::clone(&replay);
+    ctx.set_embed_viewports(false);
+    egui::Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+        renderer
+            .borrow_mut()
+            .update(viewport.ids.this, viewport.builder);
+        let mut input = viewport_input(WindowId::ROOT, 1.5, egui::Pos2::ZERO, vec![]);
+        input.viewport_id = viewport.ids.this;
+        let info = input.viewports.entry(viewport.ids.this).or_default();
+        info.native_pixels_per_point = Some(1.5);
+        info.inner_rect = input.screen_rect;
+        let output = ctx.run(input, |ctx| (viewport.viewport_ui_cb)(ctx));
+        renderer.borrow_mut().output(output.viewport_output);
+    });
+    let frame = |app: &mut QuantickApp| {
+        let now = frame_instant(&ctx);
+        let output = ctx.run(
+            viewport_input(WindowId::ROOT, 1.5, egui::Pos2::ZERO, vec![]),
+            |ctx| super::super::native_windows::draw(app, ctx, now),
+        );
+        replay.borrow_mut().output(output.viewport_output);
+    };
+    let detach = |app: &mut QuantickApp, tab| {
+        let child = app
+            .runtime
+            .tabs
+            .transfer_tab(tab, TransferTarget::NewWindow, 0)
+            .unwrap()
+            .destination;
+        app.presentation.native.request_position(
+            child,
+            quantick_workspace::arrangement::tab_drag::Point { x: 420.0, y: 360.0 },
+        );
+        child
+    };
+    let assert_visible = |app: &QuantickApp| {
+        let replay = replay.borrow();
+        for window in app.runtime.tabs.windows().windows() {
+            let id = super::super::native_windows::viewport(window.id);
+            let native = &replay.windows[&id];
+            assert!(native.visible, "live child {:?} remains hidden", window.id);
+            assert_eq!(native.placements, 1, "placement must not pin later moves");
+        }
+    };
+
+    let child = detach(&mut app, second);
+    frame(&mut app);
+    let child_viewport = super::super::native_windows::viewport(child);
+    assert!(replay.borrow().windows[&child_viewport].visible);
+    frame(&mut app);
+    assert!(replay.borrow().windows[&child_viewport].visible);
+    app.runtime.tabs.close_window(WindowId::ROOT).unwrap();
+    let sibling = detach(&mut app, first);
+    for _ in 0..3 {
+        let source = app.runtime.tabs.windows().owner(second).unwrap();
+        let destination = detach(&mut app, second);
+        assert_ne!(source, destination);
+        assert!(app.runtime.tabs.windows().window(source).is_none());
+        assert!(app.runtime.tabs.windows().window(WindowId::ROOT).is_none());
+        assert!(app.runtime.tabs.windows().window(sibling).is_some());
+        frame(&mut app);
+        frame(&mut app);
+        assert_visible(&app);
+        assert_eq!(identities(&app), before);
+    }
+    assert!(
+        replay.borrow().windows.values().any(|window| {
+            window
+                .visibility
+                .windows(2)
+                .any(|pair| pair == [true, false])
+        }),
+        "an earlier sibling reapplies a later child's stale hidden builder before its next paint"
+    );
+    ctx.set_embed_viewports(true);
+    egui::Context::set_immediate_viewport_renderer(|_, _| {
+        panic!("unexpected immediate renderer after test cleanup");
+    });
+}
+
 #[test]
 fn market_windows_native_paint_never_drains_or_reconstructs_runtime_owners() {
     let ctx = egui::Context::default();

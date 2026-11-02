@@ -264,6 +264,11 @@ pub struct EmptyInput {}
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotReadInput {
+    /// Live native market window, pinned once when this read reaches the UI thread.
+    /// Omission selects the focused live window at that admission point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<quantick_control::wire::WireU64>,
+
     #[schemars(length(min = 1, max = CONTROL_MAX_SNAPSHOT_SCOPES))]
     pub scopes: Vec<SnapshotScopeId>,
 }
@@ -834,7 +839,7 @@ pub const SNAPSHOT: ReadSpec = ReadSpec {
     id: SNAPSHOT_CAPABILITY_ID,
     module: "snapshot",
     title: "Read semantic snapshot",
-    description: "Captures the requested registered scopes coherently on the application thread.",
+    description: "Captures the requested registered scopes coherently on the application thread. Optional window_id pins a live market window; omission pins the focused window at UI admission, before any frame wait.",
     permissions: &[OBSERVE_PERMISSION_ID],
     pagination: None,
 };
@@ -872,7 +877,7 @@ pub const SCENE: ReadSpec = ReadSpec {
     id: SCENE_CAPABILITY_ID,
     module: "scene",
     title: "Read semantic scene",
-    description: "Names every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
+    description: "Names controls on the requested window_id with frame-stable IDs, selection, geometry and coded availability. Omission pins the focused live window at UI admission; a closed pinned target is refused.",
     permissions: &[
         OBSERVE_PERMISSION_ID,
         "observe.attention",
@@ -907,7 +912,7 @@ pub const EVIDENCE_CAPTURE: ReadSpec = ReadSpec {
     id: EVIDENCE_CAPTURE_CAPABILITY_ID,
     module: EVIDENCE_MODULE_ID,
     title: "Capture evidence",
-    description: "Freezes the named scopes, the events around them and the effective configuration into one hashed, redacted in-memory bundle, and answers with its manifest.",
+    description: "Freezes named scopes, recent events and redacted configuration into one hashed in-memory bundle. Optional window_id pins a live target at UI admission; screenshot pixels and painted scene retain that target identity even if focus changes.",
     permissions: &[OBSERVE_PERMISSION_ID, EVIDENCE_PERMISSION_ID],
     pagination: None,
 };

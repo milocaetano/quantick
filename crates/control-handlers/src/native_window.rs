@@ -5,6 +5,31 @@ use quantick_control_schema::native_window::{WindowInput, WindowResult, WindowSt
 use serde_json::Value;
 
 pub trait NativeWindowHost {
+    /// Resolve once before a read can park; later focus changes cannot retarget it.
+    fn pin_capture_window(
+        &self,
+        requested: Option<quantick_control::wire::WireU64>,
+    ) -> Result<quantick_control::wire::WireU64, ControlError> {
+        let id = requested.unwrap_or(quantick_control::wire::WireU64::new(0));
+        if id.get() != 0 {
+            return Err(ControlError::invalid_request(
+                "market_window.missing_window",
+            ));
+        }
+        Ok(id)
+    }
+    /// Switch only the read presentation, returning the previous presentation.
+    fn present_capture_window(
+        &mut self,
+        window: quantick_control::wire::WireU64,
+    ) -> Result<quantick_control::wire::WireU64, ControlError> {
+        self.pin_capture_window(Some(window))
+    }
+    fn capture_scene(&self) -> Option<&quantick_control_schema::scene::SceneSnapshot> {
+        None
+    }
+    fn set_capture_scene(&mut self, _: Option<quantick_control_schema::scene::SceneSnapshot>) {}
+
     fn request_targeted_native_window(
         &mut self,
         input: WindowInput,

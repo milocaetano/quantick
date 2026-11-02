@@ -1360,10 +1360,14 @@ fn gateway_ui_budget_defers_work_beyond_one_frame() {
     );
     for client in [&mut first, &mut second] {
         for _ in 0..4 {
-            assert!(matches!(
-                client.read().unwrap().outcome,
-                quantick_control::wire::ResponseOutcome::Success { .. }
-            ));
+            let response = client.read().unwrap();
+            assert!(
+                matches!(
+                    response.outcome,
+                    quantick_control::wire::ResponseOutcome::Success { .. }
+                ),
+                "{response:?}"
+            );
         }
     }
 
@@ -2443,10 +2447,13 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
     drain_gateway_requests(&mut app, &ctx);
     let response = live.read().unwrap();
     assert_eq!(response.request_id, request_id);
-    assert!(matches!(
-        response.outcome,
-        quantick_control::wire::ResponseOutcome::Success { .. }
-    ));
+    assert!(
+        matches!(
+            response.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "{response:?}"
+    );
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -5012,14 +5019,14 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
     );
     let captured = access
         .invoke_local_read(
-            &app,
+            &mut app,
             "evidence.capture",
             serde_json::json!({ "scopes": ["system.info"] }),
         )
         .expect("the read is registered and granted");
     let page = access
         .invoke_local_read(
-            &app,
+            &mut app,
             "evidence.read",
             serde_json::json!({ "evidence_id": captured["evidence_id"] }),
         )
@@ -5523,7 +5530,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 103);
+    assert_eq!(documents.len(), 104);
     for file_name in [
         "session-journal-delete-input-v1.schema.json",
         "session-journal-input-v1.schema.json",

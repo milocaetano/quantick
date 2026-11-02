@@ -2733,6 +2733,8 @@ fn incompressible_screenshot(width: u32, height: u32) -> crate::control::RawScre
         rgba.extend_from_slice(&[sample[0], sample[1], sample[2], 0xff]);
     }
     crate::control::RawScreenshot {
+        window_id: None,
+        source_window_id: None,
         width_px: width,
         height_px: height,
         pixels_per_point: 1.0,
@@ -2743,6 +2745,8 @@ fn incompressible_screenshot(width: u32, height: u32) -> crate::control::RawScre
 /// A window's worth of opaque pixels, the shape the platform hands over.
 fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
     crate::control::RawScreenshot {
+        window_id: None,
+        source_window_id: None,
         width_px: width,
         height_px: height,
         pixels_per_point: 1.0,
@@ -2823,3 +2827,5 @@ mod asset_bubbles_audit_tests;
 mod asset_bubbles_tests;
 mod feed_tape_scope_tests;
 mod native_split_pane_tests;
+
+mod window_capture_tests;

@@ -36,7 +36,9 @@ impl HiddenRootPump {
             // The timer belongs to the root HWND and runs on its event thread.
             // This private ID is used only by this root's repaint pump.
             const TIMER_ID: usize = 0x514E_544B;
-            const FRAME_INTERVAL_MS: u32 = 16;
+            // Leave dispatch headroom before a 60 Hz child swap; SetTimer's
+            // interval is approximate and has a documented 10 ms minimum.
+            const FRAME_INTERVAL_MS: u32 = 10;
             // SAFETY: the handle comes from eframe's root surface. Only this
             // owner creates/removes this timer; Drop also removes it before the
             // app releases its surface. The callback retains no app reference.

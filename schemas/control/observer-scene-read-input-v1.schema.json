@@ -1,0 +1,26 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Optional native window targeting for `scene.read`.",
+  "properties": {
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Omission pins the focused live window when the request reaches the UI thread."
+    }
+  },
+  "title": "SceneReadInput",
+  "type": "object"
+}

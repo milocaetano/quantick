@@ -14,6 +14,7 @@ mod pump;
 pub(super) struct NativeWindows {
     pub(super) pump: pump::HiddenRootPump,
     current: WindowId,
+    capture_scene: Option<quantick_control_schema::scene::SceneSnapshot>,
     titles: BTreeMap<WindowId, TitleBarState>,
     strips: BTreeMap<WindowId, Strip>,
     positions: BTreeMap<WindowId, Point>,
@@ -35,7 +36,7 @@ impl NativeWindows {
     }
 }
 
-pub(super) fn viewport(id: WindowId) -> egui::ViewportId {
+pub(crate) fn viewport(id: WindowId) -> egui::ViewportId {
     if id == WindowId::ROOT {
         egui::ViewportId::ROOT
     } else {
@@ -105,14 +106,14 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
         if app.runtime.tabs.windows().window(window).is_none() {
             continue;
         }
-        let mut builder = egui::ViewportBuilder::default()
+        // eframe reapplies builders after sibling/root output, so a one-shot
+        // Visible(true) cannot undo the initial hidden builder permanently.
+        let builder = egui::ViewportBuilder::default()
             .with_title(exposed::title(window))
             .with_decorations(false)
             .with_inner_size([1100.0, 760.0])
-            .with_min_inner_size([340.0, 240.0]);
-        if app.presentation.native.positions.contains_key(&window) {
-            builder = builder.with_visible(false);
-        }
+            .with_min_inner_size([340.0, 240.0])
+            .with_visible(!app.presentation.native.positions.contains_key(&window));
         ctx.show_viewport_immediate(viewport(window), builder, |child, class| {
             if class == egui::ViewportClass::Embedded {
                 egui::Window::new("Quantick market")
@@ -233,6 +234,7 @@ pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId
             .focus_window(window)
             .expect("live focused window");
     }
+    capture_frame(app, ctx, true);
     super::frame::paint(app, ctx, now);
     if app.runtime.tabs.windows().window(window).is_none() {
         if window == WindowId::ROOT {
@@ -241,6 +243,26 @@ pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId
         return;
     }
     observe_strip(app, ctx, window);
+    capture_frame(app, ctx, false);
+}
+
+fn capture_frame(app: &mut QuantickApp, ctx: &egui::Context, before: bool) {
+    if !app
+        .control
+        .control_access
+        .as_ref()
+        .is_some_and(crate::control::ControlAccess::needs_window_frame)
+    {
+        return;
+    }
+    if let Some(mut access) = app.control.control_access.take() {
+        if before {
+            access.harvest_screenshot(app, ctx);
+        } else {
+            access.finish_window_frame(app, ctx);
+        }
+        app.control.control_access = Some(access);
+    }
 }
 
 /// egui-winit divides both desktop origin and client coordinates by the
@@ -361,6 +383,9 @@ fn observe_strip(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId) {
 
 fn finish_drag(app: &mut QuantickApp, ctx: &egui::Context) {
     let native = &mut app.presentation.native;
+    if native.gesture.active().is_none() {
+        return;
+    }
     if native.escape {
         native.gesture.cancel();
         return;

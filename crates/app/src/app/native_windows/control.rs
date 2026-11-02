@@ -71,6 +71,22 @@ pub(super) fn observe(native: &mut NativeWindows, ctx: &egui::Context, window: W
 }
 
 impl NativeWindowHost for QuantickApp {
+    fn pin_capture_window(&self, requested: Option<WireU64>) -> Result<WireU64, ControlError> {
+        target(self, requested).map(|window| WireU64::new(window.0))
+    }
+    fn present_capture_window(&mut self, window: WireU64) -> Result<WireU64, ControlError> {
+        let window = target(self, Some(window))?;
+        let previous = self.runtime.tabs.windows().presented();
+        present(self, window);
+        Ok(WireU64::new(previous.0))
+    }
+    fn capture_scene(&self) -> Option<&quantick_control_schema::scene::SceneSnapshot> {
+        self.presentation.native.capture_scene.as_ref()
+    }
+    fn set_capture_scene(&mut self, scene: Option<quantick_control_schema::scene::SceneSnapshot>) {
+        self.presentation.native.capture_scene = scene;
+    }
+
     fn request_native_window(&mut self, state: WindowState) -> Result<(), ControlError> {
         self.chrome.title_bar.requests.request(state)
     }
@@ -173,6 +189,11 @@ fn operate_market_tabs(
     use quantick_workspace::arrangement::window_commands::{
         WindowCommand as Command, WindowCommandError,
     };
+    let selected_window = if let TabOperation::Select(input) = &operation {
+        Some(WindowId(input.window_id.get()))
+    } else {
+        None
+    };
     let command = match operation {
         TabOperation::CancelDrag => Command::CancelDrag,
         TabOperation::BeginDrag(input) => Command::BeginDrag {
@@ -213,6 +234,10 @@ fn operate_market_tabs(
             }),
         })?;
     let focused = app.runtime.tabs.windows().focused();
+    if let Some(window) = selected_window {
+        present(app, window);
+        app.chrome.title_bar.surface.show_market();
+    }
     present(app, focused);
     Ok(TabOperationResult {
         changed: outcome.changed,

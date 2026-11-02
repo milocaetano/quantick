@@ -394,3 +394,30 @@ fn observer_stdio_returns_image_content_and_exposes_no_write_tools() {
         );
     }
 }
+
+#[test]
+fn capture_forwards_optional_window_and_checks_the_image_source() {
+    let mut fixture = Fixture::new(0);
+    fixture.document["window_id"] = json!("12");
+    fixture.document["screenshot"]["descriptor"]["window_id"] = json!("12");
+    fixture.document["screenshot"]["descriptor"]["source_window_id"] = json!("12");
+    let mut link = fixture.link();
+    body(&mut link, 0)["window_id"] = json!("12");
+    let result = tools::call(&mut link, CAPTURE_CHART, json!({"window_id":"12"})).unwrap();
+    assert!(!result.is_error, "{result:?}");
+    assert_eq!(link.calls[0].payload["window_id"], "12");
+    assert_eq!(result.structured_content.unwrap()["window_id"], "12");
+    fixture.document["screenshot"]["descriptor"]["source_window_id"] = json!("13");
+    let mut link = fixture.link();
+    body(&mut link, 0)["window_id"] = json!("12");
+    assert_refused(tools::call(&mut link, CAPTURE_CHART, json!({"window_id":"12"})).unwrap());
+    for input in [
+        json!({"window_id":12}),
+        json!({"window_id":"-1"}),
+        json!({"extra":true}),
+    ] {
+        let mut link = fixture.link();
+        assert!(tools::call(&mut link, CAPTURE_CHART, input).is_err());
+        assert!(link.calls.is_empty());
+    }
+}

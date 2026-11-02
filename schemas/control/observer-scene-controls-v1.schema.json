@@ -259,6 +259,17 @@
     },
     "focused_pane_side": {
       "$ref": "#/$defs/PaneSideDto"
+    },
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Live native market window, pinned once when this read reaches the UI thread.\nOmission selects the focused live window at that admission point."
     }
   },
   "required": [
