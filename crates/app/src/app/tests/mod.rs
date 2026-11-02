@@ -54,6 +54,7 @@ mod history_publication_tests;
 mod history_reach_completion_tests;
 mod history_run_edges_tests;
 mod indicator_operations_tests;
+mod indicator_recut_tests;
 mod indicators_tests;
 mod input_ui_tests;
 mod journal_payload_pin_tests;

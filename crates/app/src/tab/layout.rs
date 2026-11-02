@@ -358,7 +358,7 @@ impl Tab {
             // refold did not — two rebuilds of ~130k bars per settled drag
             // frame, with no coalescing in the worker, is the cost of
             // sending both.
-            let refolded = self.refold_history_prefix();
+            let refolded = self.refold_history_prefix().rebuilt_panes & (1 << index) != 0;
             if !refolded && let Some(pane) = self.pane_at_mut(index) {
                 pane.send_indicator_rebuild();
             }

@@ -201,6 +201,33 @@ impl ChartPane {
 
     /// Apply the indicator worker's deltas, before the draw reads columns.
     pub fn apply_indicator_events(&mut self) {
+        self.drain_indicator_events();
+        let bars = self.history_prefix.len() + self.state.bars().len();
+        if self.indicators.row_drift(bars).is_none() {
+            return;
+        }
+        // Behind is normal while the worker has work. Idle, and with what it had
+        // already published taken in, a difference means a rebuild was missed.
+        let counts = self.indicator_worker.progress().counts;
+        if counts.queued + counts.inflight + counts.parked + counts.deferred == 0 {
+            self.drain_indicator_events();
+            if let Some(rows) = self.indicators.answer_row_drift(bars) {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_ROWS_DRIFT",
+                    pane = self.id,
+                    rows,
+                    bars,
+                    action = "rebuild_indicators",
+                    "indicator rows disagree with the pane's bars"
+                );
+                self.send_indicator_rebuild();
+            }
+        }
+    }
+
+    fn drain_indicator_events(&mut self) {
         for event in self.indicator_worker.drain_events() {
             self.indicators.apply(event);
         }

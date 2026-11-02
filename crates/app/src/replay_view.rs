@@ -19,7 +19,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use quantick_replay::clock::SPEEDS;
-use quantick_replay::format::{self, UtcOffset};
+use quantick_replay::format;
 use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError, library};
 
 use crate::replay_get_data::{GetDataAction, GetDataPanel};
@@ -1027,7 +1027,6 @@ impl ReplayView {
     fn draw_transport(&mut self, ctx: &egui::Context, link: &ReplayLink) -> Option<ReplayAction> {
         let mut action = None;
         let status = &link.status;
-        let timezone = link.session.timezone();
 
         egui::TopBottomPanel::bottom("replay_transport")
             .exact_height(TRANSPORT_HEIGHT)
@@ -1079,7 +1078,7 @@ impl ReplayView {
                             .on_hover_text(format!("{}\n{}", problem.detail, problem.advice));
                     }
                     ui.label(
-                        egui::RichText::new(clock_text(status.position_ms(), timezone))
+                        egui::RichText::new(link.clock_text(self.scrub))
                             .monospace()
                             .color(REPLAY_ACCENT),
                     );
@@ -1121,6 +1120,11 @@ impl ReplayView {
                             action = Some(ReplayAction::Control(ReplayControl::SeekToFraction(
                                 fraction,
                             )));
+                        }
+                        if self.scrub.is_some() {
+                            let (layer, id) = (ui.layer_id(), ui.id().with("scrub_time"));
+                            let time = link.clock_text(self.scrub);
+                            egui::show_tooltip_at_pointer(ctx, layer, id, |ui| ui.monospace(time));
                         }
                     });
                 });
@@ -1222,13 +1226,6 @@ fn seek_track(ui: &mut egui::Ui, progress: f32, scrub: &mut Option<f32>) -> Opti
     None
 }
 
-/// `HH:MM:SS` of a replay position, read in the session's own timezone — the
-/// clock the trader watched that day, not the one on this machine.
-fn clock_text(position_ms: i64, timezone: UtcOffset) -> String {
-    let civil = format::civil_parts(position_ms, timezone);
-    format!("{:02}:{:02}:{:02}", civil.hour, civil.minute, civil.second)
-}
-
 pub(crate) use quantick_replay::deals::thousands;
 
 #[cfg(any(feature = "scenario-harness", test))]
@@ -1245,14 +1242,68 @@ mod tests {
         assert_eq!(thousands(231_190), "231 190");
     }
 
+    /// One frame of the seek track under the pointer `events`: what it asked for.
+    fn track_frame(
+        ctx: &egui::Context,
+        scrub: &mut Option<f32>,
+        events: Vec<egui::Event>,
+    ) -> Option<f32> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(200.0, 100.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut sought = None;
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                sought = seek_track(ui, 0.0, scrub);
+            });
+        });
+        sought
+    }
+
+    fn pointer(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// The report: a drag showed no time until it was let go. `scrub` is what
+    /// the clock and the floating time read, so it must follow the pointer every
+    /// frame and be gone once the hand is, and the jump must still wait for release.
     #[test]
-    fn the_clock_reads_in_the_sessions_own_timezone() {
-        // 2026-03-16 13:01:08 UTC is 10:01:08 on a B3 clock.
-        let ms = 1_773_666_068_000;
-        assert_eq!(clock_text(ms, UtcOffset::UTC), "13:01:08");
+    fn a_held_handle_publishes_its_position_and_seeks_only_on_release() {
+        let ctx = egui::Context::default();
+        let mut scrub = None;
+        // The panel's default margin puts the track at 8..192 across and 8..22
+        // down a 200 px window. The first frame lays it out to be pressed.
+        let at = |fraction: f32| egui::pos2(8.0 + 184.0 * fraction, 15.0);
+        let close = |held: Option<f32>, to: f32| held.is_some_and(|f| (f - to).abs() < 0.001);
+        assert_eq!(track_frame(&ctx, &mut scrub, vec![]), None);
+        assert_eq!(scrub, None, "a track at rest names no time");
+        let moved = egui::Event::PointerMoved(at(0.2));
+        assert_eq!(track_frame(&ctx, &mut scrub, vec![moved]), None);
+
+        let pressed = track_frame(&ctx, &mut scrub, vec![pointer(at(0.2), true)]);
+        assert_eq!(pressed, None, "pressing is not seeking");
+        assert!(close(scrub, 0.2), "held at {scrub:?}");
+
+        let moved = egui::Event::PointerMoved(at(0.8));
+        let dragged = track_frame(&ctx, &mut scrub, vec![moved]);
+        assert_eq!(dragged, None, "nor is a drag");
+        assert!(close(scrub, 0.8), "the time follows the handle: {scrub:?}");
+
+        let released = track_frame(&ctx, &mut scrub, vec![pointer(at(0.8), false)]);
+        assert!(close(released, 0.8), "letting go seeks where it showed");
         assert_eq!(
-            clock_text(ms, UtcOffset::parse("-03:00").unwrap()),
-            "10:01:08"
+            scrub, None,
+            "and leaves no stale time for the clock to read"
         );
     }
 
