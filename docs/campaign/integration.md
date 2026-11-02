@@ -39,7 +39,8 @@ repository rules to obtain access.
    integration branch. The coordinator serializes merges.
 3. Use the base and key procedure below in `issue start`, `mission`, `ship`,
    `arch-review`, `delivery-review` and `ai-review`. It supersedes their
-   main-only examples for campaign children; normal tasks still use main.
+   main-only examples for campaign children; normal tasks still use main, and
+   a plain `/implement` target follows `.claude/hooks/README.md`.
 4. Before a child merge, read the authorization source again, fetch, rebase
    the child onto the current campaign base, validate affected behavior and
    rerun any invalidated reviews. Verify exact PR base/head, required CI and
