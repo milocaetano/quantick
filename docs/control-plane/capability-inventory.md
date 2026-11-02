@@ -45,6 +45,11 @@ capability that cannot change application state.
 | `chart.time_axis.reset` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.window.read` | 1 | `chart` | yes | `observe`, `observe.chart`, `observe.market` |
 | `control.describe` | 1 | `control` | yes | `observe` |
+| `desk.export` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
+| `desk.forget` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
+| `desk.import` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
+| `desk.reopen_on_launch.set` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
+| `desk.save` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
 | `events.read` | 1 | `events` | yes | `observe`, `observe.events` |
 | `events.wait` | 1 | `events` | yes | `observe`, `observe.events` |
 | `evidence.capture` | 1 | `evidence` | yes | `observe`, `observe.evidence` |
@@ -111,6 +116,7 @@ capability that cannot change application state.
 | `session.journal.delete` | 1 | `session` | no | `cockpit`, `cockpit.journal.delete` |
 | `session.journal.set` | 1 | `session` | no | `cockpit` |
 | `session.pnl_display.set` | 1 | `session` | no | `cockpit` |
+| `settings.open` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `snapshot.read` | 1 | `snapshot` | yes | `observe` |
 | `trade.instrument.set_money` | 1 | `trade` | no | `trade` |
 | `trade.order.bracket` | 1 | `trade` | no | `trade` |
@@ -120,4 +126,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-95 capabilities registered.
+101 capabilities registered.

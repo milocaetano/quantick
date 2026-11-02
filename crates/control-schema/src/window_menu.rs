@@ -121,7 +121,7 @@ pub const ROWS: &[Row] = &[
             "Remember this arrangement — the tabs, the charts on each, the panels, the \
              timezone and the window — as what quantick opens on",
         ),
-        ..row(RowId::SaveDesk, "Save desk", "workspace.save")
+        ..row(RowId::SaveDesk, "Save desk", "desk.save")
     },
     Row {
         label_when_on: Some("Hide panels"),
@@ -137,7 +137,7 @@ pub const ROWS: &[Row] = &[
             "window.command_palette.open",
         )
     },
-    row(RowId::Settings, "Settings…", "window.settings.open"),
+    row(RowId::Settings, "Settings…", "settings.open"),
     row(RowId::DockL2, "L2", DOCK_BEHAVIOUR),
     row(RowId::DockBubbles, "Bubbles", DOCK_BEHAVIOUR),
     row(RowId::DockSession, "Session", DOCK_BEHAVIOUR),
@@ -152,22 +152,14 @@ pub const ROWS: &[Row] = &[
             "Save the whole cockpit — tabs, indicators, layers, drawing colours, footprint \
              and added symbols — as one file in your documents",
         ),
-        ..row(
-            RowId::ExportDesk,
-            "Export desk to file…",
-            "workspace.export",
-        )
+        ..row(RowId::ExportDesk, "Export desk to file…", "desk.export")
     },
     Row {
         hover: Some(
             "Open a workspace file. It replaces the cockpit on screen; a file that cannot \
              be read changes nothing.",
         ),
-        ..row(
-            RowId::ImportDesk,
-            "Import desk from file…",
-            "workspace.import",
-        )
+        ..row(RowId::ImportDesk, "Import desk from file…", "desk.import")
     },
     Row {
         hover: Some(
@@ -187,11 +179,7 @@ pub const ROWS: &[Row] = &[
         disabled_hover: Some(
             "Nothing saved yet — quantick already opens on the configured default",
         ),
-        ..row(
-            RowId::ResetStartupDesk,
-            "Reset startup desk",
-            "workspace.startup.reset",
-        )
+        ..row(RowId::ResetStartupDesk, "Reset startup desk", "desk.forget")
     },
     Row {
         hover: Some(
@@ -201,7 +189,7 @@ pub const ROWS: &[Row] = &[
         ..row(
             RowId::ReopenLastTabs,
             "Reopen last tabs on launch",
-            "workspace.save_on_exit",
+            "desk.reopen_on_launch.set",
         )
     },
     row(
@@ -374,6 +362,9 @@ pub const LEGEND_HOVER: &str = "Folds the healthy rows to a count on the focused
 pub const KEBAB_CONTROL: &str = "kebab";
 /// The local-agent access pill, in the same list.
 pub const AGENT_PILL_CONTROL: &str = "agent";
+/// What the pill reads: an exposure, not a health state, so it wears amber and
+/// no status dot.
+pub const AGENT_PILL_LABEL: &str = "Agent on";
 
 #[cfg(test)]
 mod tests {

@@ -8,6 +8,7 @@
 
 use super::{GatewayPort, LayoutPort};
 use eframe::egui;
+use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::KEBAB_CONTROL;
 
 use super::QuantickApp;
@@ -191,7 +192,7 @@ impl QuantickApp {
             self.chrome.window_menu.toggle(ctx.viewport_id(), false);
         }
         if std::mem::take(&mut self.chrome.title_bar.agent_clicked) {
-            commands.push(MenuCommand::OpenAgentAccess);
+            commands.push(MenuCommand::OpenSettings(SettingsSection::AgentAccess));
         }
         self.draw_window_menu(ctx, &mut commands);
         settings_window::show(self, ctx, &mut commands);
@@ -228,9 +229,8 @@ impl QuantickApp {
         let viewport = ctx.viewport_id();
         match command {
             MenuCommand::ToggleWindowMenu => self.chrome.window_menu.toggle(viewport, true),
-            MenuCommand::OpenSettings => {
-                self.chrome.window_menu.windows_viewport = Some(viewport);
-                self.chrome.window_menu.settings_open = true;
+            MenuCommand::OpenSettings(section) => {
+                self.chrome.window_menu.open_settings(viewport, section);
             }
             MenuCommand::OpenHelp(page) => {
                 self.chrome.window_menu.windows_viewport = Some(viewport);
@@ -292,26 +292,17 @@ impl QuantickApp {
             MenuCommand::SaveWorkspace(reason) => {
                 self.workspace_save_adapter().save_workspace(reason);
             }
-            MenuCommand::ForgetWorkspace => self.workspace_save_adapter().forget_workspace(),
-            MenuCommand::ExportDesk => {
-                let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
-                self.runtime
-                    .workspace
-                    .picker_mut()
-                    .open_export(&tab.symbol, tab.flow_pane.state.spec());
+            MenuCommand::ForgetWorkspace => {
+                self.workspace_save_adapter().forget_workspace();
             }
+            MenuCommand::ExportDesk => super::desk_wiring::open_export(self),
             MenuCommand::ImportDesk => self.runtime.workspace.picker_mut().open_import(),
             MenuCommand::OpenRecentDesk(path) => {
                 self.workspace_bundle_adapter().import_workspace_from(&path);
             }
             MenuCommand::RevealDesk => self.workspace_bundle_adapter().reveal_cockpit_home(),
             MenuCommand::SetSaveOnExit(save_on_exit) => {
-                self.runtime
-                    .workspace
-                    .session_mut()
-                    .set_save_on_exit(save_on_exit);
-                self.workspace_save_adapter()
-                    .save_workspace("save_on_exit_toggled");
+                super::desk_wiring::write_reopen(self, save_on_exit);
             }
             MenuCommand::PaperMarket(side) => self.active_tab_mut().paper.market(side),
             MenuCommand::PaperReverse => self.active_tab_mut().paper.reverse_position(),
@@ -338,7 +329,7 @@ impl QuantickApp {
             MenuCommand::OpenReplayFormatHelp => self.replay_view.open_format_help(),
             // Carried out by `apply_menu_command_on`, which knows the window.
             MenuCommand::ToggleWindowMenu
-            | MenuCommand::OpenSettings
+            | MenuCommand::OpenSettings(_)
             | MenuCommand::OpenHelp(_) => {}
         }
     }

@@ -6,7 +6,8 @@
 //! [`crate::style::CanvasStyle`]; only the chrome is pinned here.
 //!
 //! [`AMBER`] is reserved for provenance honesty — replay, the backfill
-//! divider, inferred data — and is never decoration. This is the UI
+//! divider, inferred data — and the Agent on pill, an exposure the trader must
+//! be able to see, and is never decoration. This is the UI
 //! expression of the project's data-honesty rule. [`PANE_MARK`] is its dimmed
 //! relative, a name rather than a warning.
 //!

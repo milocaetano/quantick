@@ -1,0 +1,26 @@
+{
+  "$defs": {
+    "SettingsSection": {
+      "description": "One section of the Settings window.",
+      "enum": [
+        "display",
+        "data",
+        "recording",
+        "agent_access"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The section now on screen.",
+  "properties": {
+    "section": {
+      "$ref": "#/$defs/SettingsSection"
+    }
+  },
+  "required": [
+    "section"
+  ],
+  "title": "SettingsOpenResult",
+  "type": "object"
+}

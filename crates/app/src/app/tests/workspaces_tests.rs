@@ -805,8 +805,11 @@ fn saving_the_startup_screen_keeps_the_bookmarks() {
     app.runtime
         .workspace
         .set_ui_state_path(scratch_ui_state("bookmarks-survive"));
-    let seeded = seeded_bookmark(&app, "scalp");
-    app.runtime.workspace.session_mut().keep_bookmark(seeded);
+    let bookmark = seeded_bookmark(&app, "scalp");
+    app.runtime
+        .workspace
+        .session_mut()
+        .keep_bookmark(bookmark);
 
     app.workspace_save_adapter().save_workspace("test");
 
@@ -832,8 +835,11 @@ fn resetting_the_startup_layout_keeps_the_bookmarks() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let seeded = seeded_bookmark(&app, "before the mess");
-    app.runtime.workspace.session_mut().keep_bookmark(seeded);
+    let bookmark = seeded_bookmark(&app, "before the mess");
+    app.runtime
+        .workspace
+        .session_mut()
+        .keep_bookmark(bookmark);
     app.workspace_save_adapter().save_workspace("test");
 
     app.workspace_save_adapter().forget_workspace();

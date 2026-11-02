@@ -596,7 +596,10 @@ impl QuantickApp {
         let status = self.status_model();
         let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
-        scratch.status = statusbar::draw(ctx, &status, &mut self.runtime.tz, &lead);
+        scratch.status = statusbar::draw(ctx, &status, self.runtime.tz, &lead);
+        if scratch.status.open_display_settings {
+            super::desk_wiring::open_settings_on(self, ctx);
+        }
         if scratch.status.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }

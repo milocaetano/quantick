@@ -77,7 +77,7 @@ impl WorkspaceSaveAdapter<'_> {
     /// same" is not an answer. A failed write says *that* instead — being told
     /// "saved" and finding out at the next launch is the one outcome worth
     /// engineering against.
-    pub(super) fn save_workspace(&mut self, reason: &'static str) {
+    pub(super) fn save_workspace(&mut self, reason: &'static str) -> bool {
         let workspace = self.read().capture_workspace();
         let saved = ui_state::save(self.path, &workspace);
         self.session.note_write(WritePurpose::Full, saved);
@@ -105,6 +105,7 @@ impl WorkspaceSaveAdapter<'_> {
         } else {
             "Workspace could not be saved — see the log".to_owned()
         });
+        saved
     }
     /// Update *only* where the properties popup goes, in the workspace file as
     /// it already stands. Says whether anything was written.
@@ -300,7 +301,7 @@ impl WorkspaceSaveAdapter<'_> {
     /// defaults. The window on screen is deliberately left alone — a trader
     /// resetting their *startup* layout mid-session has not asked to have the
     /// charts they are reading rearranged under them.
-    pub(super) fn forget_workspace(&mut self) {
+    pub(super) fn forget_workspace(&mut self) -> bool {
         // Reset clears the *startup* arrangement. The bookmarks survive it,
         // because coming back after a reset is the whole reason to name one:
         // deleting the safety net as part of the act it exists to undo would
@@ -380,6 +381,7 @@ impl WorkspaceSaveAdapter<'_> {
         } else {
             "Workspace could not be reset — see the log".to_owned()
         });
+        forgotten
     }
     /// Keep the window size the workspace would record, flush a popup the
     /// trader just re-parked, and take the exit save when the window is
@@ -406,7 +408,9 @@ impl WorkspaceSaveAdapter<'_> {
         });
         match self.session.frame(FrameFacts { size, closing }) {
             FrameSave::Wait => {}
-            FrameSave::Full => self.save_workspace("exit"),
+            FrameSave::Full => {
+                self.save_workspace("exit");
+            }
             FrameSave::Inspector => {
                 self.write_inspector_position();
             }

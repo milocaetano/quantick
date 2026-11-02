@@ -282,17 +282,14 @@ pub(super) const CHROME: &[UiBehaviour] = &[
         ),
     },
     UiBehaviour {
-        id: "window.settings.open",
-        title: "Open the Settings window",
-        reach: "window menu, Ctrl+Comma",
+        id: "settings.open",
+        title: "Open the Settings window on a section",
+        reach: "window menu, Ctrl+Comma, the status-bar clock, the Agent on pill",
         keys: &[
             (Source::Hotkey, "SETTINGS_SHORTCUT"),
             (Source::MenuEntry, "Settings…"),
         ],
-        mapping: excluded!(
-            UiOnlyByDecision,
-            "a window of switches for the trader; each switch is its own behaviour"
-        ),
+        mapping: Mapping::Capabilities(&["settings.open"]),
     },
     UiBehaviour {
         id: "window.help.open",
@@ -322,8 +319,8 @@ pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "control.access.open",
         title: "Open the local agent access panel",
-        reach: "the agent pill on the title strip, and Settings",
-        keys: &[(Source::Authored, "agent pill on the title strip")],
+        reach: "Settings, Agent access, Manage clients…",
+        keys: &[(Source::Authored, "Manage clients… in Settings")],
         mapping: excluded!(
             Authority,
             "the panel is where the trader grants and revokes an operator's access. A \

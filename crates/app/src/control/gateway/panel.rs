@@ -75,6 +75,26 @@ impl ControlAccess {
         }
     }
 
+    /// The Settings switch: whether it reads on, and whether a click may flip it.
+    /// A transition in flight reads as where it is going.
+    pub fn switch_state(&self) -> (bool, bool) {
+        match self.state {
+            AccessState::Disabled => (false, self.identity.is_some()),
+            AccessState::Enabling | AccessState::Enabled(_) => (true, true),
+            AccessState::Disabling(_) => (false, false),
+        }
+    }
+
+    /// The same two acts as the panel's own buttons; the scopes stay the ones
+    /// the panel shows.
+    pub fn set_switch(&mut self, ctx: &eframe::egui::Context, on: bool) {
+        match (on, &self.state) {
+            (true, AccessState::Disabled) if self.identity.is_some() => self.enable(ctx),
+            (false, AccessState::Enabling | AccessState::Enabled(_)) => self.request_disable(),
+            _ => {}
+        }
+    }
+
     pub fn draw_panel(&mut self, ctx: &eframe::egui::Context) {
         if !self.show_panel {
             return;

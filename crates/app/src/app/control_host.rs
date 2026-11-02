@@ -23,6 +23,7 @@
 //! fields cannot be.
 
 use eframe::egui;
+use quantick_control_handlers::desk::DeskAct;
 
 use crate::config::AppConfig;
 use crate::dock::Dock;
@@ -109,6 +110,7 @@ pub(crate) trait TabsMutPort {
 pub(crate) trait ChromePort:
     quantick_control_handlers::native_window::NativeWindowHost
     + quantick_control_handlers::home_tab::HomeTabHost
+    + quantick_control_handlers::desk::DeskHost
 {
     fn chrome_reads(&self) -> ChromeReads<'_>;
 }
@@ -456,6 +458,7 @@ pub(crate) struct ChromeReads<'a> {
     drawing_chrome: &'a crate::surfaces::drawing_chrome::DrawingChromeSurface,
     drawn: ChromeDrawn,
     title_bar: Option<&'a super::title_bar::TitleBarState>,
+    settings_section: Option<quantick_control_schema::settings_sections::SettingsSection>,
 }
 
 /// What the last frame published about the window chrome.
@@ -472,6 +475,13 @@ pub(crate) struct ChromeDrawn {
 impl<'a> ChromeReads<'a> {
     pub(crate) fn title_bar(self) -> Option<&'a super::title_bar::TitleBarState> {
         self.title_bar
+    }
+
+    /// The section Settings is showing, while it is up.
+    pub(crate) fn settings_section(
+        self,
+    ) -> Option<quantick_control_schema::settings_sections::SettingsSection> {
+        self.settings_section
     }
 
     /// The view over the window's own roots, as [`TabReads::new`].
@@ -493,6 +503,7 @@ impl<'a> ChromeReads<'a> {
             drawing_chrome,
             drawn,
             title_bar: None,
+            settings_section: None,
         }
     }
 
@@ -714,6 +725,12 @@ impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
     }
 }
 
+impl quantick_control_handlers::desk::DeskHost for QuantickApp {
+    fn desk(&mut self, act: DeskAct) -> Result<bool, quantick_control::error::ControlError> {
+        Ok(super::desk_wiring::apply(self, act))
+    }
+}
+
 impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
         let drawn = ChromeDrawn {
@@ -732,6 +749,7 @@ impl ChromePort for QuantickApp {
             drawn,
         );
         reads.title_bar = Some(&self.chrome.title_bar);
+        reads.settings_section = self.chrome.window_menu.settings_shown();
         reads
     }
 }

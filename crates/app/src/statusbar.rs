@@ -222,6 +222,8 @@ pub struct StatusResponse {
     /// The SIM cell was clicked: open the Trading dock tab, where the
     /// position it summarizes is managed.
     pub open_trading_tab: bool,
+    /// The clock was clicked: Settings opens on Display.
+    pub open_display_settings: bool,
     /// The word was clicked: it opens and closes the recovery popup.
     pub word_clicked: bool,
     /// The word's rect while it is a door, which is the popup's anchor.
@@ -261,12 +263,12 @@ impl<'a> StatusLead<'a> {
     }
 }
 
-/// Draw the status bar as the window's bottom panel. `tz` is the bar's
-/// resident control, and the SIM cell clicks through to the Trading tab.
+/// Draw the status bar as the window's bottom panel. The clock clicks through
+/// to Settings, and the SIM cell to the Trading tab.
 pub fn draw(
     ctx: &egui::Context,
     model: &StatusModel,
-    tz: &mut TzOffset,
+    tz: TzOffset,
     lead: &StatusLead<'_>,
 ) -> StatusResponse {
     let mut response = StatusResponse::default();
@@ -287,7 +289,7 @@ pub fn draw(
                 draw_provenance(ui, model);
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
-                draw_machinery(ui, model, tz);
+                response.open_display_settings = draw_machinery(ui, model, tz);
             });
         });
     response
@@ -503,25 +505,16 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
 }
 
 /// Machinery cells share the same wrapping flow as the provenance and content.
-fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
-    // Reserve the picker as one cell before it paints its internal button;
-    // the button's own late allocation cannot move that paint to a new row.
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.spacing().combo_width, ui.spacing().interact_size.y),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            egui::ComboBox::from_id_salt("tz_combo")
-                .selected_text(tz.label())
-                .show_ui(ui, |ui| {
-                    for offset in TzOffset::ALL {
-                        ui.selectable_value(tz, offset, offset.label());
-                    }
-                });
-        },
-    );
-    ui.label(egui::RichText::new(icons::CLOCK).color(theme::TEXT_MUTED));
+fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: TzOffset) -> bool {
+    let clock =
+        egui::RichText::new(format!("{} {}", tz.label(), icons::CLOCK)).color(theme::TEXT_MUTED);
+    let clicked = ui
+        .add(egui::Button::new(clock).frame(false))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Timezone and display settings")
+        .clicked();
     if !model.show_perf {
-        return;
+        return clicked;
     }
     ui.separator();
     let slow = model
@@ -547,6 +540,7 @@ fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
             .monospace()
             .color(theme::TEXT_MUTED),
     );
+    clicked
 }
 
 #[cfg(test)]
@@ -741,7 +735,7 @@ mod tests {
     #[test]
     fn the_status_bar_lays_out_against_a_real_context() {
         let ctx = egui::Context::default();
-        let mut tz = TzOffset::default();
+        let tz = TzOffset::default();
         for replaying in [false, true] {
             let model = StatusModel {
                 venue: "Binance".to_owned(),
@@ -783,7 +777,7 @@ mod tests {
                             ..Default::default()
                         },
                         |ctx| {
-                            let response = draw(ctx, &model, &mut tz, &StatusLead::default());
+                            let response = draw(ctx, &model, tz, &StatusLead::default());
                             assert_eq!(
                                 response,
                                 StatusResponse::default(),
@@ -844,7 +838,7 @@ mod tests {
     #[test]
     fn the_quote_driven_disclosure_is_really_painted() {
         let ctx = egui::Context::default();
-        let mut tz = TzOffset::default();
+        let tz = TzOffset::default();
         let model = StatusModel {
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
@@ -878,7 +872,7 @@ mod tests {
         let mut painted = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let _ = draw(ctx, &model, &mut tz, &StatusLead::default());
+                let _ = draw(ctx, &model, tz, &StatusLead::default());
             });
             painted.clear();
             for shape in output.shapes {

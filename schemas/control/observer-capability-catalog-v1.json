@@ -7459,6 +7459,289 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Brings up the trader's save dialog. It takes no path: nothing is written until the trader picks one there.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.export",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: the desk is what is on screen.",
+        "title": "DeskInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Whether the trader's file dialog came up; `false` means one already is.",
+        "properties": {
+          "opened": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "opened"
+        ],
+        "title": "DeskPickResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "While one dialog is up a repeat raises no second one and answers opened false.",
+      "title": "Export the desk to a file",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Forgets the saved startup desk, so the next launch opens on the configured default. The charts on screen are left alone, and desk.save puts them back.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.forget",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: the desk is what is on screen.",
+        "title": "DeskInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Whether the file changed on disk; `false` says the log has the reason.",
+        "properties": {
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "written"
+        ],
+        "title": "DeskWriteResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Forgetting twice leaves nothing saved either way.",
+      "title": "Forget the saved desk",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Brings up the trader's open dialog. It takes no path: the cockpit on screen stays until the trader picks a file there.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.import",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: the desk is what is on screen.",
+        "title": "DeskInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Whether the trader's file dialog came up; `false` means one already is.",
+        "properties": {
+          "opened": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "opened"
+        ],
+        "title": "DeskPickResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "While one dialog is up a repeat raises no second one and answers opened false.",
+      "title": "Import a desk from a file",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Says whether the arrangement is kept automatically when the window closes. Off, only desk.save changes what quantick opens on.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.reopen_on_launch.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Whether the next launch reopens the tabs open when the window closed.",
+        "properties": {
+          "reopen": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reopen"
+        ],
+        "title": "DeskReopenInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The choice in force.",
+        "properties": {
+          "changed": {
+            "description": "Whether this call moved it; `false` for a repeat.",
+            "type": "boolean"
+          },
+          "reopen": {
+            "type": "boolean"
+          },
+          "written": {
+            "description": "Whether the file changed on disk.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reopen",
+          "changed",
+          "written"
+        ],
+        "title": "DeskReopenResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the choice it wants, so a repeat leaves the same choice and writes nothing.",
+      "title": "Reopen the last tabs on launch",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Remembers the tabs, the charts on each, the panels, the timezone and the window as what quantick opens on, as Ctrl+Shift+S does.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "desk.save",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: the desk is what is on screen.",
+        "title": "DeskInput",
+        "type": "object"
+      },
+      "module": "desk",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Whether the file changed on disk; `false` says the log has the reason.",
+        "properties": {
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "written"
+        ],
+        "title": "DeskWriteResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat writes what is on screen then, which is what the caller asked to keep.",
+      "title": "Save the desk",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Reads a bounded page of the semantic event journal after a cursor or from an explicit start, and says when older events were dropped.",
       "destructive": false,
       "dry_run_supported": false,
@@ -17573,6 +17856,96 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Opens Settings on a section, as Ctrl+Comma and the status-bar clock do. Changes no setting. The Agent access section is refused: a connection cannot bring up the switch that widens its own authority.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 512
+      },
+      "id": "settings.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "SettingsSection": {
+            "description": "One section of the Settings window.",
+            "enum": [
+              "display",
+              "data",
+              "recording",
+              "agent_access"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Open the Settings window.",
+        "properties": {
+          "section": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SettingsSection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The section to show. Left out, Display. `agent_access` is refused."
+          }
+        },
+        "title": "SettingsOpenInput",
+        "type": "object"
+      },
+      "module": "settings",
+      "output_schema": {
+        "$defs": {
+          "SettingsSection": {
+            "description": "One section of the Settings window.",
+            "enum": [
+              "display",
+              "data",
+              "recording",
+              "agent_access"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The section now on screen.",
+        "properties": {
+          "section": {
+            "$ref": "#/$defs/SettingsSection"
+          }
+        },
+        "required": [
+          "section"
+        ],
+        "title": "SettingsOpenResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Opening a section twice is the same state, so a stale or repeated call can only show that section.",
+      "title": "Open the Settings window",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Captures the requested registered scopes coherently on the application thread. Optional window_id pins a live market window; omission pins the focused window at UI admission, before any frame wait.",
       "destructive": false,
       "dry_run_supported": false,
@@ -19077,6 +19450,11 @@
       "title": "Control"
     },
     {
+      "description": "The open tabs, panels and window kept as what quantick opens on.",
+      "id": "desk",
+      "title": "Desk"
+    },
+    {
       "description": "The bounded semantic event journal and its cursor.",
       "id": "events",
       "title": "Events"
@@ -19140,6 +19518,11 @@
       "description": "Recorded-session playback and the paper-trading ledger.",
       "id": "session",
       "title": "Session"
+    },
+    {
+      "description": "The Settings window and which section it shows.",
+      "id": "settings",
+      "title": "Settings"
     },
     {
       "description": "Coherent multi-module semantic captures.",
@@ -24209,6 +24592,11 @@
               {
                 "const": "dock",
                 "description": "The right-hand dock.",
+                "type": "string"
+              },
+              {
+                "const": "settings",
+                "description": "The Settings window.",
                 "type": "string"
               },
               {

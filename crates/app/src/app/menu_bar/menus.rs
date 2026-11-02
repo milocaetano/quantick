@@ -8,6 +8,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::{
     self, HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId, row_of, submenu,
 };
@@ -43,6 +44,8 @@ pub(in crate::app) struct WindowMenuState {
     /// The window Settings and Help opened on, apart from the menu's own.
     pub(in crate::app) windows_viewport: Option<egui::ViewportId>,
     pub(in crate::app) settings_open: bool,
+    /// The section Settings shows; the section list and every door write it.
+    pub(in crate::app) settings_section: SettingsSection,
     pub(in crate::app) help: Option<HelpPage>,
     path: [Option<SubmenuId>; MAX_SUBMENU_LEVELS],
     /// The pane whose first row takes the keyboard next.
@@ -51,6 +54,22 @@ pub(in crate::app) struct WindowMenuState {
 }
 
 impl WindowMenuState {
+    /// The section on screen, while Settings is up.
+    pub(in crate::app) fn settings_shown(&self) -> Option<SettingsSection> {
+        self.settings_open.then_some(self.settings_section)
+    }
+
+    /// Bring Settings up on `section`, on this window.
+    pub(in crate::app) fn open_settings(
+        &mut self,
+        viewport: egui::ViewportId,
+        section: SettingsSection,
+    ) {
+        self.windows_viewport = Some(viewport);
+        self.settings_open = true;
+        self.settings_section = section;
+    }
+
     /// Open or close the menu on this window. Opened from the keyboard, its first
     /// row is ready for the keys; opened by the mouse, no row wears a focus ring.
     pub(in crate::app) fn toggle(&mut self, viewport: egui::ViewportId, by_keyboard: bool) {
@@ -313,7 +332,7 @@ impl WindowMenu<'_> {
             RowId::TogglePanels => MenuCommand::ToggleDock,
             RowId::MarketReplay => MenuCommand::OpenReplayBrowser,
             RowId::CloseReplay => MenuCommand::CloseReplay,
-            RowId::Settings => MenuCommand::OpenSettings,
+            RowId::Settings => MenuCommand::OpenSettings(SettingsSection::Display),
             RowId::ToolbarHidden if self.toolrail.visible() => MenuCommand::ToggleToolbox,
             RowId::ExportDesk => MenuCommand::ExportDesk,
             RowId::ImportDesk => MenuCommand::ImportDesk,
