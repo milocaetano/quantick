@@ -255,9 +255,12 @@ impl IndicatorViews {
         drift.filter(|_| !self.row_drift_answered)
     }
 
-    /// A rebuild is on its way for the disagreement [`Self::row_drift`] reported.
-    pub fn answer_row_drift(&mut self) {
+    /// The rows of a settled worker that still disagree, in which case the caller
+    /// owes one rebuild; said once per disagreement.
+    pub fn answer_row_drift(&mut self, bars: usize) -> Option<usize> {
+        let rows = self.row_drift(bars)?;
         self.row_drift_answered = true;
+        Some(rows)
     }
 
     /// Drop a slot UI-side (the worker gets the Remove command separately).

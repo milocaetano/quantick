@@ -369,7 +369,12 @@ fn a_row_drift_is_reported_until_answered_and_again_after_it_settles() {
 
     assert_eq!(views.row_drift(2), None, "in step");
     assert_eq!(views.row_drift(5), Some(2), "cut under another rule");
-    views.answer_row_drift();
+    assert_eq!(
+        views.answer_row_drift(5),
+        Some(2),
+        "the caller owes a rebuild"
+    );
+    assert_eq!(views.answer_row_drift(5), None, "and owes only one");
     assert_eq!(views.row_drift(5), None, "one rebuild per disagreement");
     assert_eq!(views.row_drift(2), None, "settled");
     assert_eq!(

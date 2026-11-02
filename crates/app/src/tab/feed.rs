@@ -1376,9 +1376,8 @@ impl Tab {
                     covers_seam,
                     seam,
                 } => {
-                    if self.install_prefix(pane, bars, lead, covers_seam, seam) {
-                        run.rebuilt_panes |= 1 << pane;
-                    }
+                    let changed = self.install_prefix(pane, bars, lead, covers_seam, seam);
+                    run.rebuilt_panes |= u32::from(changed) << pane;
                 }
                 Effect::HoldPages(held) => {
                     self.panes_mut().for_each(|pane| pane.hold_history(held))
