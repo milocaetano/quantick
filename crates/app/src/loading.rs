@@ -8,7 +8,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_chart::connection_state::{Dot, DotLook, OverlayWords};
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
-use quantick_chart::logo_mark::{self, MarkCell};
+use quantick_chart::logo_shatter::{LogoRun, symbol_seed};
 
 /// The system's greys, from the trader's mock: title, meta, faint, border.
 pub const GREY_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xd7, 0xdd, 0xe8);
@@ -27,9 +27,8 @@ const LOADING_ORDER: egui::Order = egui::Order::PanelResizeLine;
 /// The inline spinner's diameter, in pixels.
 const SPINNER_SIZE: f32 = 14.0;
 
-/// The overlay's group, centred at this share of its rect.
-const GROUP_AT: f32 = 0.45;
-const MARK_GAP_PX: f32 = 16.0;
+/// The overlay's words start at this share of its height, under the logo.
+const TEXT_AT: f32 = 0.66;
 const TITLE_PT: f32 = 14.0;
 const TITLE_GAP_PX: f32 = 6.0;
 const META_PT: f32 = 11.0;
@@ -54,6 +53,8 @@ const SLOT_ICON_GAP_PX: f32 = 4.0;
 /// One chip pulse, in seconds; how often it asks for a frame while pulsing.
 const PULSE_PERIOD_S: f64 = 2.4;
 const PULSE_REPAINT: std::time::Duration = std::time::Duration::from_millis(50);
+/// How often the shattering logo asks for a frame.
+const LOGO_REPAINT: std::time::Duration = std::time::Duration::from_millis(16);
 
 /// A spinner + `label…` pair added to the current layout, for embedding in
 /// windows and toolbars. Adds two widgets rather than opening its own row, so
@@ -122,16 +123,12 @@ pub fn reconnect_press_due(now_ms: i64) -> bool {
     due && !PRESSED.swap(true, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The mark's cells, sampled once from the plate-less logo.
-fn mark_cells() -> &'static [MarkCell] {
-    static CELLS: OnceLock<Vec<MarkCell>> = OnceLock::new();
-    CELLS.get_or_init(|| {
-        let bytes: &[u8] = include_bytes!("../assets/logo-mark.png");
-        let cells = (logo_mark::MARK_PX / logo_mark::cell_px(logo_mark::MARK_PX)) as usize;
-        decode_alpha(bytes).map_or_else(Vec::new, |(alpha, side)| {
-            logo_mark::sample(&alpha, side, cells)
-        })
-    })
+/// The plate-less logo's alpha and side, decoded once.
+fn logo_alpha() -> Option<&'static (Vec<u8>, usize)> {
+    static ALPHA: OnceLock<Option<(Vec<u8>, usize)>> = OnceLock::new();
+    ALPHA
+        .get_or_init(|| decode_alpha(include_bytes!("../assets/logo-mark.png")))
+        .as_ref()
 }
 
 /// The alpha channel of a square RGBA PNG, and its side.
@@ -154,16 +151,30 @@ fn decode_alpha(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
     Some((alpha, side))
 }
 
-/// One mesh of grey squares: the mark at `min`.
-fn paint_mark(painter: &egui::Painter, min: egui::Pos2, alpha: f32) {
-    let cell = logo_mark::cell_px(logo_mark::MARK_PX);
-    let mut mesh = egui::Mesh::default();
-    for one in mark_cells() {
-        let at = min + egui::vec2(f32::from(one.column), f32::from(one.row)) * cell;
-        let square = egui::Rect::from_min_size(at, egui::Vec2::splat(cell - 1.0));
-        mesh.add_colored_rect(square, GREY_MID.gamma_multiply(alpha * one.coverage));
+/// The logo across `rect` as one mesh of turned squares, two triangles each,
+/// asking for frames only while it moves.
+fn logo_mesh(ctx: &egui::Context, rect: egui::Rect, symbol: &str, now: i64) -> egui::Mesh {
+    let (Some((alpha, side)), still) = (logo_alpha(), reduced_motion()) else {
+        return egui::Mesh::default();
+    };
+    if !still {
+        ctx.request_repaint_after(LOGO_REPAINT);
     }
-    painter.add(egui::Shape::mesh(mesh));
+    ctx.data_mut(|data| {
+        let run = data.get_temp_mut_or_default::<LogoRun>(egui::Id::new("connection_logo"));
+        let size = [rect.width(), rect.height()];
+        let mut mesh = egui::Mesh::default();
+        for pose in run.frame(size, symbol_seed(symbol), (alpha, *side), now, still) {
+            let colour = egui::Color32::from_gray(pose.grey).gamma_multiply(pose.alpha);
+            let base = mesh.vertices.len() as u32;
+            for [x, y] in pose.corners() {
+                mesh.colored_vertex(rect.min + egui::vec2(x, y), colour);
+            }
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
+        }
+        mesh
+    })
 }
 
 /// The overlay's group, measured.
@@ -209,12 +220,11 @@ fn lay_out_overlay(
             }),
         )
     });
-    let mut height = logo_mark::MARK_PX + MARK_GAP_PX + title.size().y + TITLE_GAP_PX;
-    height += meta.size().y;
+    let mut height = title.size().y + TITLE_GAP_PX + meta.size().y;
     if let Some(control) = &control {
         height += CONTROL_GAP_PX + control.size().y;
     }
-    let top = (rect.top() + rect.height() * GROUP_AT - height / 2.0).max(rect.top());
+    let top = rect.top() + rect.height() * TEXT_AT;
     let control = control.map(|galley| {
         let at = egui::pos2(
             rect.center().x - galley.size().x / 2.0,
@@ -244,8 +254,9 @@ pub fn reconnect_fits(
         .is_some_and(|(_, hit)| rect.contains_rect(hit))
 }
 
-/// The overlay's group, centred in `rect`, painted without an input region but
-/// for the one control. Answers the control's rect and whether it was pressed.
+/// The shattering logo across `rect` with the words under it, painted without
+/// an input region but for the one control. Answers the control's rect and
+/// whether it was pressed.
 pub fn draw_overlay(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -257,19 +268,9 @@ pub fn draw_overlay(
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
     let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words);
     let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits);
-    let breathing = words.breathing && !reduced_motion();
-    let alpha = logo_mark::alpha_at(breathing, now_ms);
-    if breathing {
-        ui.ctx().request_repaint_after(PULSE_REPAINT);
-    }
+    painter.add(logo_mesh(ui.ctx(), rect, symbol, now_ms));
     let center_x = rect.center().x;
     let mut y = group.top;
-    paint_mark(
-        &painter,
-        egui::pos2(center_x - logo_mark::MARK_PX / 2.0, y),
-        alpha,
-    );
-    y += logo_mark::MARK_PX + MARK_GAP_PX;
     let centred = |width: f32| center_x - width / 2.0;
     let title_size = group.title.size();
     painter.galley(
@@ -442,7 +443,6 @@ mod tests {
             verb: "No connection to",
             meta: "Replay · never connected".to_owned(),
             reconnect,
-            breathing: false,
         }
     }
 
@@ -523,21 +523,18 @@ mod tests {
         );
     }
 
-    /// The asset has no plate: its corners are clear and something is drawn.
+    /// The asset has no plate: the logo is cells, not a filled square.
     #[test]
-    fn the_mark_samples_a_plate_less_logo() {
-        let cells = mark_cells();
-        assert!(!cells.is_empty(), "the asset decoded");
-        let side = (logo_mark::MARK_PX / logo_mark::cell_px(logo_mark::MARK_PX)) as usize;
+    fn the_logo_samples_a_plate_less_asset() {
+        let (alpha, side) = logo_alpha().expect("the asset decoded");
+        let shatter = quantick_chart::logo_shatter::Shatter::new(800.0, 600.0, alpha, *side, 1);
+        let grid = (600.0 * 0.42 / shatter.cell_px()).ceil() as usize;
+        assert!(!shatter.is_empty());
         assert!(
-            cells.len() < side * side / 2,
+            shatter.len() < grid * grid / 2,
             "a plate would fill the square: {} cells of {}",
-            cells.len(),
-            side * side
-        );
-        assert!(
-            !cells.iter().any(|cell| cell.column == 0 && cell.row == 0),
-            "the corner is clear"
+            shatter.len(),
+            grid * grid
         );
     }
 

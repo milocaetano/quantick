@@ -279,8 +279,6 @@ pub struct OverlayWords {
     pub meta: String,
     /// The one input the overlay has.
     pub reconnect: bool,
-    /// The mark breathes, which is the only motion it has.
-    pub breathing: bool,
 }
 
 /// What the status bar's first cell says.
@@ -671,19 +669,16 @@ impl ConnectionTracker {
                 verb: "No trades yet on",
                 meta: format!("{feed} · connected"),
                 reconnect: false,
-                breathing: false,
             },
             Link::Quiet => OverlayWords {
                 verb: "No trades on",
                 meta: format!("{feed} connected · market may be closed"),
                 reconnect: false,
-                breathing: false,
             },
             Link::NoTransport => OverlayWords {
                 verb: "No data for",
                 meta: format!("{feed} · 0 trades"),
                 reconnect: false,
-                breathing: false,
             },
             Link::Attempting => OverlayWords {
                 verb: if self.pressed || state.last_connected_at.is_some() {
@@ -693,7 +688,6 @@ impl ConnectionTracker {
                 },
                 meta: format!("{feed} · attempting"),
                 reconnect: false,
-                breathing: true,
             },
             Link::Offline => {
                 let lead = match (&self.provider_says, state.last_connected_at) {
@@ -715,7 +709,6 @@ impl ConnectionTracker {
                     verb: "No connection to",
                     meta,
                     reconnect: self.control_fits,
-                    breathing: false,
                 }
             }
         })
@@ -1419,7 +1412,7 @@ mod tests {
         let words = run.overlay().expect("up");
         assert_eq!(words.verb, "Connecting to");
         assert_eq!(words.meta, "Binance · attempting");
-        assert!(words.breathing && !words.reconnect);
+        assert!(!words.reconnect);
 
         run.verdict = FAILED;
         run.step(10);
@@ -1429,7 +1422,7 @@ mod tests {
             words.meta,
             "Binance · never connected · retrying automatically"
         );
-        assert!(words.reconnect && !words.breathing);
+        assert!(words.reconnect);
         // The overlay's control is the one on offer: never both.
         let word = run.tracker.status_word(run.now).expect("a word");
         assert!(!word.reconnect && word.age.is_none());
@@ -1496,12 +1489,10 @@ mod tests {
         assert_eq!(run.link(), Link::Attempting);
         let words = run.overlay().expect("up");
         assert_eq!(words.verb, "No trades on", "the blip says nothing new");
-        assert!(!words.breathing);
         assert_eq!(run.word(), Some("quiet"));
         run.step(1);
         let words = run.overlay().expect("up");
         assert_eq!(words.verb, "Reconnecting to", "standing, it is spoken");
-        assert!(words.breathing);
         assert_eq!(run.word(), Some("reconnecting"));
     }
 
@@ -1701,7 +1692,7 @@ mod tests {
         run.step(1);
         let words = run.overlay().expect("up");
         assert_eq!(words.verb, "Reconnecting to", "even before any connection");
-        assert!(words.breathing && !words.reconnect);
+        assert!(!words.reconnect);
         assert_eq!(
             run.word(),
             Some("reconnecting"),
@@ -1724,7 +1715,7 @@ mod tests {
         let words = run.overlay().expect("up");
         assert_eq!(words.verb, "No data for");
         assert_eq!(words.meta, "Binance · 0 trades");
-        assert!(!words.reconnect && !words.breathing);
+        assert!(!words.reconnect);
         assert_eq!(run.word(), Some("no data"));
         assert_eq!(run.tracker.chip(), None);
         assert!(!run.tracker.has_recovery_door());
