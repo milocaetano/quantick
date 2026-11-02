@@ -199,6 +199,8 @@ impl LayoutAdapter<'_> {
     /// follow tabs that changed market, notice drawings that changed, and
     /// write the file once the last change has settled.
     pub(super) fn maintain_layouts(&mut self) {
+        // First, so a twin brought to a claimed or left set has no edit to lose.
+        self.persist_changed_drawings();
         self.seed_new_panes();
         self.follow_market_changes();
         self.persist_changed_drawings();
@@ -689,9 +691,11 @@ impl LayoutAdapter<'_> {
             return;
         };
         let market = self.store.market_mut();
-        if market.settings_mut().claim_for(&key, side.index()) {
+        let claimed = market.settings_mut().claim_for(&key, side.index());
+        if claimed {
             self.mark_market_dirty();
         }
+        let grown = claimed.then(|| key.clone());
         let source = self.tabs.by_id(tab).map(Self::market_of);
         let source = source.map(|(venue, symbol)| (venue.to_owned(), symbol.to_owned()));
         let items = quantick_drawings::live_marks(self.store.market().settings(), &key);
@@ -713,11 +717,16 @@ impl LayoutAdapter<'_> {
         pane.layout.drawings_source = source;
         pane.layout.drawings_spec = Some(*pane.state.spec());
         pane.layout.saved_revision = pane.drawings.revision();
+        if let Some(key) = grown {
+            self.refresh_twins(tab, side, &key);
+        }
     }
 
     /// A tab whose market moved out from under a pane, or a context chart cut
     /// to other bars: the drawings go to the key they were drawn on and the new
-    /// key's come out. A roll inside one asset lands on the same key.
+    /// key's come out. A roll inside one asset lands on the same key. A chart
+    /// with a strategy armed stays on the key it holds until it is disarmed: the
+    /// instance names one of these drawings, and putting it away would kill it.
     pub(super) fn follow_market_changes(&mut self) {
         let moved: Vec<(u64, PaneSide)> = self
             .tabs
@@ -726,7 +735,9 @@ impl LayoutAdapter<'_> {
                 let (feed, symbol) = Self::market_of(tab);
                 tab.panes()
                     .filter(move |(pane, side)| {
-                        let bars = (*side != PaneSide::Flow).then(|| pane.state.spec());
+                        let recuttable =
+                            *side != PaneSide::Flow && pane.strategies.anchors.is_empty();
+                        let bars = recuttable.then(|| pane.state.spec());
                         pane.layout.needs_rekey(feed, symbol, bars)
                     })
                     .map(move |(_, side)| (tab_id, side))
@@ -734,8 +745,14 @@ impl LayoutAdapter<'_> {
             .collect();
         for (tab, side) in moved {
             self.leave_pane_gestures(tab, side);
+            let left = self
+                .pane_at(tab, side)
+                .and_then(|pane| pane.layout.drawings_key.clone());
             self.put_away_drawings(tab, side);
             self.bring_out_drawings(tab, side);
+            if let Some(left) = left {
+                self.refresh_twins(tab, side, &left);
+            }
             self.mark_market_dirty();
         }
     }
@@ -766,55 +783,59 @@ impl LayoutAdapter<'_> {
             let marks = pane.drawings.items().to_vec();
             quantick_drawings::store_marks(self.store.market_mut().settings_mut(), &key, &marks);
             self.mark_market_dirty();
-            // Two panes on one market and role show one set of drawings: the
-            // other pane holding this key is brought to what was just written, rather than keeping a
-            // copy that drifts until a switch. Ids travel, so a strategy or
-            // an annotation on the twin still names its object.
-            //
-            // A twin is never *skipped* for having a selection, however
-            // tempting: a twin left behind is a twin whose own next edit
-            // writes its stale set over this key and takes the drawing just
-            // made here with it. The selection is carried across the rebuild
-            // by id instead, which is the thing the trader can see. Only a
-            // gesture in flight still holds a twin back — that addresses the
-            // store by index and a swap under it would land on another
-            // object.
-            let twins: Vec<(u64, PaneSide)> = self
-                .tabs
-                .iter_with_ids()
-                .flat_map(|(other_id, other)| {
-                    other
-                        .panes()
-                        .filter(|(pane, _)| {
-                            pane.layout.drawings_key.as_ref() == Some(&key)
-                                && !pane.drawings.in_gesture()
-                        })
-                        .map(move |(_, other_side)| (other_id, other_side))
-                })
-                .filter(|target| *target != (tab, side))
-                .collect();
-            for (twin_tab, twin_side) in twins {
-                let selected_id = self.pane_at(twin_tab, twin_side).and_then(|twin| {
-                    let index = twin.drawings.selected()?;
-                    Some(twin.drawings.items().get(index)?.id)
-                });
-                if let Some(twin) = self.pane_mut_at(twin_tab, twin_side) {
-                    twin.drawings.take_all();
-                }
-                self.bring_out_drawings(twin_tab, twin_side);
-                // By id, not by index: the set that came back may hold one
-                // more object than the one that went away, and the index the
-                // trader selected now points at a different mark.
-                if let Some(id) = selected_id
-                    && let Some(twin) = self.pane_mut_at(twin_tab, twin_side)
-                {
-                    let index = twin
-                        .drawings
-                        .items()
-                        .iter()
-                        .position(|drawing| drawing.id == id);
-                    twin.drawings.select(index);
-                }
+            self.refresh_twins(tab, side, &key);
+        }
+    }
+
+    /// Two panes on one market and role show one set of drawings: the
+    /// other pane holding this key is brought to what was just written, rather than keeping a
+    /// copy that drifts until a switch. Ids travel, so a strategy or
+    /// an annotation on the twin still names its object.
+    ///
+    /// A twin is never *skipped* for having a selection, however
+    /// tempting: a twin left behind is a twin whose own next edit
+    /// writes its stale set over this key and takes the drawing just
+    /// made here with it. The selection is carried across the rebuild
+    /// by id instead, which is the thing the trader can see. Only a
+    /// gesture in flight still holds a twin back — that addresses the
+    /// store by index and a swap under it would land on another
+    /// object.
+    fn refresh_twins(&mut self, tab: u64, side: PaneSide, key: &DrawingKey) {
+        let twins: Vec<(u64, PaneSide)> = self
+            .tabs
+            .iter_with_ids()
+            .flat_map(|(other_id, other)| {
+                other
+                    .panes()
+                    .filter(|(pane, _)| {
+                        pane.layout.drawings_key.as_ref() == Some(key)
+                            && !pane.drawings.in_gesture()
+                    })
+                    .map(move |(_, other_side)| (other_id, other_side))
+            })
+            .filter(|target| *target != (tab, side))
+            .collect();
+        for (twin_tab, twin_side) in twins {
+            let selected_id = self.pane_at(twin_tab, twin_side).and_then(|twin| {
+                let index = twin.drawings.selected()?;
+                Some(twin.drawings.items().get(index)?.id)
+            });
+            if let Some(twin) = self.pane_mut_at(twin_tab, twin_side) {
+                twin.drawings.take_all();
+            }
+            self.bring_out_drawings(twin_tab, twin_side);
+            // By id, not by index: the set that came back may hold one
+            // more object than the one that went away, and the index the
+            // trader selected now points at a different mark.
+            if let Some(id) = selected_id
+                && let Some(twin) = self.pane_mut_at(twin_tab, twin_side)
+            {
+                let index = twin
+                    .drawings
+                    .items()
+                    .iter()
+                    .position(|drawing| drawing.id == id);
+                twin.drawings.select(index);
             }
         }
     }

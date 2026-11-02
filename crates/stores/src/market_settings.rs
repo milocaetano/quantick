@@ -7,6 +7,7 @@ pub use quantick_workspace::market_settings::MARKET_SETTINGS_FILE;
 use quantick_workspace::market_settings::{AbsorbReport, MarketSettings, parse_settings, to_text};
 use quantick_workspace::market_settings_store::{AssetResolver, MarketSettingsStore};
 use quantick_workspace::write_refusal::guard_write;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Beside `layouts.toml`: the file as it was before its drawings moved out, so
@@ -73,6 +74,13 @@ fn load(path: &Path) -> Result<MarketSettings, ()> {
 /// Write the document. Temp sibling + rename, like every other store. Returns
 /// whether it reached disk.
 pub fn save(path: &Path, settings: &MarketSettings) -> bool {
+    write_document(path, settings, false)
+}
+
+/// `flushed` waits for the disk before the rename: a migration is about to take
+/// these drawings out of the only other file holding them. An ordinary save
+/// runs on the frame path and has the previous file to fall back on.
+fn write_document(path: &Path, settings: &MarketSettings, flushed: bool) -> bool {
     if guard_write(path).is_err() {
         return false;
     }
@@ -80,7 +88,11 @@ pub fn save(path: &Path, settings: &MarketSettings) -> bool {
         .map_err(|error| error.to_string())
         .and_then(|text| {
             let temp = path.with_extension("toml.tmp");
-            std::fs::write(&temp, text)
+            std::fs::File::create(&temp)
+                .and_then(|mut file| {
+                    file.write_all(text.as_bytes())?;
+                    if flushed { file.sync_all() } else { Ok(()) }
+                })
                 .and_then(|()| std::fs::rename(&temp, path))
                 .map_err(|error| {
                     let _ = std::fs::remove_file(&temp);
@@ -150,8 +162,9 @@ pub fn reload(
     book: &mut LayoutBook,
 ) -> bool {
     let path = market.path().to_owned();
-    let mut blocked = false;
+    let mut blocked = market.is_blocked();
     if brought_market_file {
+        blocked = false;
         match load(&path) {
             Ok(settings) => market.set_settings(settings),
             Err(()) => blocked = true,
@@ -205,10 +218,10 @@ pub fn migrate(
         return (AbsorbReport::default(), false);
     }
     let report = settings.absorb(book, asset);
-    let durable = !market_blocked && keep_old_layouts(layouts_path) && save(path, settings);
-    if durable {
-        layouts::save(layouts_path, book);
-    }
+    let durable = !market_blocked
+        && keep_old_layouts(layouts_path)
+        && write_document(path, settings, true)
+        && layouts::save(layouts_path, book);
     tracing::info!(
         target: "quantick::app",
         schema_version = 1_u8,
@@ -236,9 +249,17 @@ fn keep_old_layouts(layouts_path: &Path) -> bool {
     if backup.exists() || !layouts_path.exists() {
         return true;
     }
-    match std::fs::copy(layouts_path, &backup) {
-        Ok(_) => true,
+    // Through a temp sibling: this file is trusted for merely existing, so a
+    // copy cut short must never carry its name.
+    let temp = backup.with_extension("tmp");
+    let copied = std::fs::copy(layouts_path, &temp)
+        .and_then(|_| std::fs::OpenOptions::new().write(true).open(&temp))
+        .and_then(|file| file.sync_all())
+        .and_then(|()| std::fs::rename(&temp, &backup));
+    match copied {
+        Ok(()) => true,
         Err(error) => {
+            let _ = std::fs::remove_file(&temp);
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -399,6 +420,46 @@ mod tests {
             std::fs::read_to_string(backup_path(&home.layouts)).unwrap(),
             "first"
         );
+    }
+
+    /// A store that may not be written stays unwritten when an old export lands.
+    #[test]
+    fn an_import_never_writes_over_a_blocked_market_file() {
+        let home = home("market-blocked-import");
+        std::fs::write(&home.market, "the trader's only copy").unwrap();
+        let mut market =
+            MarketSettingsStore::new(MarketSettings::default(), home.market.clone(), true);
+        let mut book = parse(LEGACY).unwrap();
+        assert!(reload(&mut market, false, &home.layouts, &mut book));
+        assert_eq!(
+            std::fs::read_to_string(&home.market).unwrap(),
+            "the trader's only copy"
+        );
+        assert_eq!(std::fs::read_to_string(&home.layouts).unwrap(), LEGACY);
+        assert!(market.is_blocked(), "and it stays blocked");
+    }
+
+    /// The layouts cannot be rewritten: not durable, and this session says so.
+    #[test]
+    fn layouts_that_cannot_be_rewritten_block_the_session() {
+        let home = home("market-layouts-unwritable");
+        let nowhere = home
+            .layouts
+            .with_file_name("no-such-folder")
+            .join(layouts::LAYOUTS_FILE);
+        let mut book = parse(LEGACY).unwrap();
+        let opened = open(&home.market, &nowhere, &mut book, asset);
+        assert!(opened.layouts_blocked);
+        assert!(!opened.blocked);
+    }
+
+    #[test]
+    fn no_temp_file_is_left_beside_the_backup() {
+        let home = home("market-backup-temp");
+        let mut book = parse(LEGACY).unwrap();
+        open(&home.market, &home.layouts, &mut book, asset);
+        assert!(backup_path(&home.layouts).exists());
+        assert!(!backup_path(&home.layouts).with_extension("tmp").exists());
     }
 
     #[test]

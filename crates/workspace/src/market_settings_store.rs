@@ -87,6 +87,10 @@ impl MarketSettingsStore {
     pub fn set_blocked(&mut self, blocked: bool) {
         self.policy.set_blocked(blocked);
     }
+    #[must_use]
+    pub fn is_blocked(&self) -> bool {
+        self.policy.is_blocked()
+    }
     pub fn settle(&mut self, changed: bool, now: Instant) {
         self.policy.settle(changed, now);
     }

@@ -12,23 +12,26 @@ impl FeedConfig {
 }
 
 impl AppConfig {
-    /// The asset `symbol` belongs to on `venue`, stable across contract rolls:
-    /// the feed's declared family, else any feed's for a venue that does not
-    /// offer it (a recording), else the key its bubble settings are shared under,
-    /// else the symbol alone.
+    /// The asset `symbol` belongs to on `venue`, stable across contract rolls: a
+    /// real venue answers only for itself, by its declared family, else the key
+    /// its bubble settings are shared under, else the symbol alone. A venue with
+    /// no feed (a recording) takes the family any feed declares, so WINUSDT on
+    /// a crypto venue never joins the mini index on another.
     ///
     /// Modes are left out on purpose: a mode's look key may name its venue, and
     /// the venue is already the other half of a market's key.
     #[must_use]
     pub fn market_asset(&self, venue: &str, symbol: &str) -> String {
-        self.feed(venue)
-            .and_then(|feed| feed.asset_family(symbol))
-            .or_else(|| {
-                self.feeds
-                    .iter()
-                    .filter_map(|feed| feed.asset_family(symbol))
-                    .max_by_key(|family| family.len())
-            })
+        if let Some(feed) = self.feed(venue) {
+            return feed
+                .asset_family(symbol)
+                .cloned()
+                .unwrap_or_else(|| feed.plain_asset(symbol).key);
+        }
+        self.feeds
+            .iter()
+            .filter_map(|feed| feed.asset_family(symbol))
+            .max_by_key(|family| family.len())
             .cloned()
             .unwrap_or_else(|| self.plain_bubble_asset(venue, symbol).key)
     }
@@ -71,6 +74,14 @@ mod tests {
             "BTCUSDT.p"
         );
         assert_eq!(config.market_asset("binance", "NOTLISTED"), "NOTLISTED");
+    }
+
+    /// A pattern on one feed never captures another venue's symbol.
+    #[test]
+    fn a_real_venue_answers_only_for_itself() {
+        let config = shipped();
+        assert_eq!(config.market_asset("binance", "WINUSDT"), "WINUSDT");
+        assert_eq!(config.market_asset("binance", "WDOGE"), "WDOGE");
     }
 
     /// The family is for drawings: WDO's saved bubble look keeps its key.

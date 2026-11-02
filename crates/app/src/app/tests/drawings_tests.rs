@@ -4836,6 +4836,124 @@ fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
     assert_eq!(owners(bottom), [flow]);
 }
 
+/// Two context charts on one bar rule claim two legacy slots into one set: both
+/// end up holding all of it, so an edit on either loses nothing.
+#[test]
+fn twin_context_charts_claiming_two_slots_keep_both_through_an_edit() {
+    const OLD_LAYOUTS: &str = r#"
+version = 1
+active = 1
+next_id = 2
+
+[[layouts]]
+id = 1
+name = "Fluxo"
+
+[[layouts.drawings]]
+feed = "binance"
+symbol = "TESTUSDT"
+pane = 1
+
+[[layouts.drawings.items]]
+id = 1
+tool = "horizontal-line"
+band = { axis = "price" }
+color = [255, 200, 0, 255]
+width_px = 1.5
+fill_alpha = 0
+points = [{ time_ms = 1000, price = 100.0, bar = 3.0 }]
+
+[[layouts.drawings]]
+feed = "binance"
+symbol = "TESTUSDT"
+pane = 2
+
+[[layouts.drawings.items]]
+id = 1
+tool = "horizontal-line"
+band = { axis = "price" }
+color = [255, 200, 0, 255]
+width_px = 1.5
+fill_alpha = 0
+points = [{ time_ms = 1000, price = 200.0, bar = 3.0 }]
+"#;
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let bars = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(1))
+        .set_spec(bars);
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    let dir = crate::scratch::ScratchDir::new("twin-claim");
+    let path = dir.join(crate::layouts::LAYOUTS_FILE);
+    app.runtime.workspace.set_layouts_path(path.clone());
+    std::fs::write(&path, OLD_LAYOUTS).unwrap();
+
+    app.layout_adapter().reload_layouts(&["layouts"]);
+    run_frame(&mut app, &ctx);
+    let both = vec![100.0, 200.0];
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), both);
+    assert_eq!(drawings_on(&app, PaneSide::Time(1)), both);
+
+    place_level(&mut app, PaneSide::Time(0), 300.0);
+    run_frame(&mut app, &ctx);
+    let all = vec![100.0, 200.0, 300.0];
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), all);
+    assert_eq!(drawings_on(&app, PaneSide::Time(1)), all);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A strategy armed on a context chart's region survives that chart being cut to
+/// other bars: the drawing it names stays on the pane until it is disarmed.
+#[test]
+fn a_context_chart_with_a_strategy_armed_keeps_its_drawings_through_a_recut() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "rectangle")
+        .unwrap();
+    let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+    pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
+    pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
+    let drawing = pane.drawings.items()[0].id;
+    let mut form =
+        crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+    form.window = 3;
+    form.min_range = "0".to_owned();
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            PaneSide::Time(0),
+            drawing,
+            &form,
+            "test BF".to_owned(),
+        )
+        .unwrap();
+    run_frame(&mut app, &ctx);
+
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert!(
+        pane.drawings.index_of(drawing).is_some(),
+        "the region stayed"
+    );
+    assert!(!pane.strategies.anchors.is_empty(), "the instance is alive");
+}
+
 /// An export from before the market store still imports: its drawings land on
 /// their markets, labelled, and a context pane claims what its address held.
 #[test]

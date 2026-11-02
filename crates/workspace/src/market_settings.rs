@@ -241,15 +241,23 @@ impl MarketSettings {
     /// labelled with the layout, contract and pane it came from.
     ///
     /// `asset` answers for a venue and a symbol. Nothing is merged away: two
-    /// layouts holding the same mark are two entries. Only an entry this store
-    /// already holds from that same source is left out, so a launch that died
-    /// between its two writes, or one old export imported twice, adds nothing.
+    /// layouts holding the same mark are two entries, and so are two equal
+    /// entries of one set. Only an entry this store held before this call, from
+    /// that same source, is left out, so a launch that died between its two
+    /// writes, or one old export imported twice, adds nothing.
     pub fn absorb(
         &mut self,
         book: &mut LayoutBook,
         asset: impl Fn(&str, &str) -> String,
     ) -> AbsorbReport {
         let mut report = AbsorbReport::default();
+        let mut held_before: Vec<SavedDrawing> = self
+            .drawings
+            .iter()
+            .flat_map(|set| &set.items)
+            .filter(|item| item.origin.is_some())
+            .cloned()
+            .collect();
         for legacy in book.take_legacy_drawings() {
             let LegacyDrawings {
                 layout,
@@ -273,7 +281,8 @@ impl MarketSettings {
                     pane,
                     id: item.id,
                 });
-                if self.holds_from_source(&key.market, &item) {
+                if let Some(index) = held_before.iter().position(|held| same_entry(held, &item)) {
+                    held_before.swap_remove(index);
                     report.already_held += 1;
                 } else {
                     self.push_renumbered(&key, item);
@@ -282,16 +291,6 @@ impl MarketSettings {
             }
         }
         report
-    }
-
-    /// Whether any set of `market` holds this entry from this source. Across
-    /// roles: a slot may have been claimed since the entry was first absorbed.
-    fn holds_from_source(&self, market: &MarketKey, item: &SavedDrawing) -> bool {
-        self.drawings
-            .iter()
-            .filter(|set| set.venue == market.venue && set.asset == market.asset)
-            .flat_map(|set| &set.items)
-            .any(|held| same_entry(held, item))
     }
 
     /// Append `item`, giving it a new id only when the set already uses its own.
@@ -329,13 +328,22 @@ fn legacy_role(pane: usize) -> PaneRole {
     }
 }
 
-/// The same entry from the same source; the store may have renumbered it.
+/// The same entry from the same source. A source id settles it: a held entry
+/// may have been renumbered, moved or re-saved since. An entry from before ids
+/// travelled is told by its tool and where its anchors were placed.
 fn same_entry(held: &SavedDrawing, item: &SavedDrawing) -> bool {
-    held.origin == item.origin
-        && SavedDrawing {
-            id: item.id,
-            ..held.clone()
-        } == *item
+    let Some(origin) = &item.origin else {
+        return false;
+    };
+    held.origin.as_ref() == Some(origin)
+        && (origin.id.is_some()
+            || (held.tool == item.tool
+                && held.points.len() == item.points.len()
+                && held
+                    .points
+                    .iter()
+                    .zip(&item.points)
+                    .all(|(a, b)| a.time_ms == b.time_ms && a.price == b.price)))
 }
 
 /// Why a market settings file was refused; its `Display` is the sentence a reader sees.

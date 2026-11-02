@@ -74,10 +74,11 @@ pub fn load(path: &Path) -> Loaded {
 }
 
 /// Write the book. Temp sibling + rename, like every other store: a crash
-/// mid-write leaves the previous file, never half of the new one.
-pub fn save(path: &Path, book: &LayoutBook) {
+/// mid-write leaves the previous file, never half of the new one. Returns
+/// whether it reached disk.
+pub fn save(path: &Path, book: &LayoutBook) -> bool {
     if quantick_workspace::write_refusal::guard_write(path).is_err() {
-        return;
+        return false;
     }
     match toml::to_string_pretty(book) {
         Ok(text) => {
@@ -94,16 +95,21 @@ pub fn save(path: &Path, book: &LayoutBook) {
                     action = "layouts_not_saved",
                     "could not save the layouts"
                 );
+                return false;
             }
+            true
         }
-        Err(error) => tracing::warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "LAYOUTS_WRITE_FAILED",
-            %error,
-            action = "layouts_not_saved",
-            "could not encode the layouts"
-        ),
+        Err(error) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "LAYOUTS_WRITE_FAILED",
+                %error,
+                action = "layouts_not_saved",
+                "could not encode the layouts"
+            );
+            false
+        }
     }
 }
 
@@ -140,7 +146,9 @@ pub fn load_or_starter(path: &Path, legacy_indicators: &Path) -> (LayoutBook, bo
 pub fn act_on(path: &Path, book: &LayoutBook, decision: LayoutSave) {
     match decision {
         LayoutSave::Wait => {}
-        LayoutSave::Write => save(path, book),
+        LayoutSave::Write => {
+            save(path, book);
+        }
         LayoutSave::Blocked => tracing::warn!(
             target: "quantick::app",
             schema_version = 1_u8,

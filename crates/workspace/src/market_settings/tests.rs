@@ -140,6 +140,51 @@ fn absorbing_the_same_layouts_again_adds_nothing() {
     assert_eq!((report.moved, report.already_held), (0, 8));
 }
 
+/// A pane write re-saves every entry: bars re-anchor, colours pass through the
+/// live form. The source is what says it is the same entry.
+#[test]
+fn an_entry_edited_since_is_not_taken_again() {
+    let mut settings = absorbed();
+    let key = key("metatrader-b3", PaneRole::Flow);
+    let mut items = settings.drawings(&key).to_vec();
+    items[0].points[0].bar = 99.5;
+    items[0].points[0].price = 1.0;
+    items[0].color = [9, 9, 9, 9];
+    settings.replace(&key, items, known);
+    let edited = settings.clone();
+    let report = settings.absorb(&mut parse(LEGACY).unwrap(), asset);
+    assert_eq!(settings, edited);
+    assert_eq!((report.moved, report.already_held), (0, 8));
+}
+
+/// Two equal entries from before ids travelled are two marks, on the first
+/// migration and not again on the second.
+#[test]
+fn two_equal_entries_without_ids_are_both_kept_once() {
+    let text = LEGACY.replace(
+        "[[layouts.drawings.items]]\nid = 4\n",
+        "[[layouts.drawings.items]]\n",
+    );
+    let twice = text.replace(
+        "[[layouts.drawings]]\nfeed = \"metatrader-b3\"\nsymbol = \"WIN$N\"",
+        "[[layouts.drawings.items]]\ntool = \"horizontal-line\"\nband = { axis = \"price\" }\ncolor = [255, 200, 0, 255]\nwidth_px = 1.5\nfill_alpha = 0\npoints = [{ time_ms = 1000, price = 67000.5, bar = 3.0 }]\n\n[[layouts.drawings]]\nfeed = \"metatrader-b3\"\nsymbol = \"WIN$N\"",
+    );
+    let btc = DrawingKey {
+        market: MarketKey {
+            venue: "binance".to_owned(),
+            asset: "BTCUSDT".to_owned(),
+        },
+        role: PaneRole::ContextSlot(1),
+    };
+    let mut settings = MarketSettings::default();
+    let first = settings.absorb(&mut parse(&twice).unwrap(), asset);
+    assert_eq!(first.moved, 9);
+    assert_eq!(settings.drawings(&btc).len(), 2);
+    let second = settings.absorb(&mut parse(&twice).unwrap(), asset);
+    assert_eq!((second.moved, second.already_held), (0, 9));
+    assert_eq!(settings.drawings(&btc).len(), 2);
+}
+
 #[test]
 fn a_venue_is_part_of_the_market() {
     let settings = absorbed();

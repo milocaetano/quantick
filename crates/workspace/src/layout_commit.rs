@@ -31,6 +31,10 @@ impl LayoutCommitPolicy {
     pub fn set_blocked(&mut self, blocked: bool) {
         self.blocked = blocked;
     }
+    #[must_use]
+    pub fn is_blocked(&self) -> bool {
+        self.blocked
+    }
     /// State outright what the book owes the file, overriding anything marked
     /// while it was being put in place.
     ///
