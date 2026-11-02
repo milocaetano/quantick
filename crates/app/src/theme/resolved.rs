@@ -20,6 +20,8 @@ pub fn install_fonts(ctx: &egui::Context) {
 pub struct Palette {
     pub resolved: ResolvedTheme,
     colors: quantick_appearance::RenderPalette<egui::Color32>,
+    pub footprint_text: quantick_chart::footprint_lod::typography::FootprintText,
+    pub loading_logo: [egui::Color32; 256],
     pub heat_buy: [egui::Color32; 6],
     pub heat_sell: [egui::Color32; 6],
     pub heat_ink: [egui::Color32; 6],
@@ -35,6 +37,10 @@ impl std::ops::Deref for Palette {
 impl Palette {
     fn new(resolved: &ResolvedTheme) -> Self {
         Self {
+            footprint_text: quantick_chart::footprint_lod::typography::FootprintText::new(
+                &resolved.typography,
+            ),
+            loading_logo: quantick_chart::logo_shatter::palette(resolved).map(rendered),
             resolved: resolved.clone(),
             colors: quantick_appearance::RenderPalette::from_fn(|token| {
                 rendered(resolved.color(token))
@@ -47,16 +53,40 @@ impl Palette {
     pub fn color(&self, token: Token) -> egui::Color32 {
         *self.colors.get(token)
     }
-    pub fn font(&self, role: FontRole) -> egui::FontId {
-        let font = self.resolved.typography.get(role);
-        egui::FontId::new(
-            font.size,
-            match font.family {
-                FontFamily::Proportional => egui::FontFamily::Proportional,
-                FontFamily::Monospace => egui::FontFamily::Monospace,
-            },
-        )
+    pub fn footprint_font(&self, row_height: f32, width: f32) -> egui::FontId {
+        let mut font = self.font(FontRole::Footprint);
+        font.size = self.footprint_text.fitted_size(row_height, width);
+        font
     }
+    pub fn body_font(&self, size: f32) -> egui::FontId {
+        self.font_at(FontRole::Body, size)
+    }
+    pub fn mono_font(&self, size: f32) -> egui::FontId {
+        self.font_at(FontRole::Monospace, size)
+    }
+    pub fn axis_font(&self, size: f32) -> egui::FontId {
+        self.font_at(FontRole::ChartAxis, size)
+    }
+    pub fn label_font(&self, size: f32) -> egui::FontId {
+        self.font_at(FontRole::ChartLabel, size)
+    }
+    pub fn font(&self, role: FontRole) -> egui::FontId {
+        rendered_font(self.resolved.typography.get(role))
+    }
+    pub fn font_at(&self, role: FontRole, reference_size: f32) -> egui::FontId {
+        let font = self.resolved.typography.at_size(role, reference_size);
+        rendered_font(font)
+    }
+}
+
+fn rendered_font(font: quantick_appearance::FontSpec) -> egui::FontId {
+    egui::FontId::new(
+        font.size,
+        match font.family {
+            FontFamily::Proportional => egui::FontFamily::Proportional,
+            FontFamily::Monospace => egui::FontFamily::Monospace,
+        },
+    )
 }
 
 fn rendered(color: PremultipliedRgba) -> egui::Color32 {
@@ -111,6 +141,45 @@ pub fn sync(ctx: &egui::Context, state: &Appearance) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn configured_painter_fonts_and_axis_reservations_grow_together() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let mut state = Appearance::default();
+        sync(&ctx, &state);
+        let dark = get(&ctx);
+        let mut original_width = 0.0;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            original_width = ctx.fonts(|fonts| {
+                fonts
+                    .layout_no_wrap("12345.67".into(), dark.axis_font(11.0), dark.text_primary())
+                    .size()
+                    .x
+            });
+        });
+        state
+            .apply("version = 1\nname = 'Large'\n[typography.chart_axis]\nsize = 22")
+            .unwrap();
+        sync(&ctx, &state);
+        let large = get(&ctx);
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let width = ctx.fonts(|fonts| {
+                fonts
+                    .layout_no_wrap(
+                        "12345.67".into(),
+                        large.axis_font(11.0),
+                        large.text_primary(),
+                    )
+                    .size()
+                    .x
+            });
+            assert!(width > original_width * 1.8);
+            assert!(
+                width < quantick_appearance::AxisMetrics::new(&large.resolved.typography).gutter
+            );
+        });
+    }
+
     #[test]
     fn contexts_are_isolated_and_repeated_frames_reuse_the_adapter() {
         let dark_ctx = egui::Context::default();

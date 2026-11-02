@@ -172,7 +172,7 @@ fn section_block(
     let right = ui.max_rect().right();
     let room = right - header.rect.right() - STATE_GAP_PX;
     if room > 0.0 {
-        let font = egui::FontId::monospace(STATE_SIZE);
+        let font = palette.mono_font(STATE_SIZE);
         let mut job =
             egui::text::LayoutJob::simple_singleline(state.to_owned(), font, palette.text_faint());
         job.wrap = egui::text::TextWrapping::truncate_at_width(room);

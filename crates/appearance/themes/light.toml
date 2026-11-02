@@ -3,6 +3,17 @@ name = "Light"
 dark = false
 
 [colors]
+crosshair_ink = "#172B4D"
+footprint_total_ink = "#172B4D"
+loading_logo_low = "#617185"
+loading_logo_high = "#263448"
+loading_title = "#263448"
+loading_meta = "#526278"
+loading_faint = "#8491A3"
+loading_border = "#C2CBD8"
+footprint_profile = "#374151"
+footprint_bevel_highlight = { premultiplied = [0, 0, 0, 30] }
+footprint_bevel_shadow = { premultiplied = [0, 0, 0, 100] }
 canvas = "#F4F6FA"
 chrome = "#E9EDF4"
 inset = "#E0E6EF"

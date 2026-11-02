@@ -3,6 +3,17 @@ name = "Dark"
 dark = true
 
 [colors]
+crosshair_ink = "#FFFFFF"
+footprint_total_ink = "#FFFFFF"
+loading_logo_low = "#969696"
+loading_logo_high = "#D2D2D2"
+loading_title = "#D7DDE8"
+loading_meta = "#7C8799"
+loading_faint = "#4B5566"
+loading_border = "#1B2330"
+footprint_profile = "#D8D8D8"
+footprint_bevel_highlight = { premultiplied = [56, 56, 56, 56] }
+footprint_bevel_shadow = { premultiplied = [0, 0, 0, 120] }
 canvas = "#131722"
 chrome = "#171B26"
 inset = "#10141D"

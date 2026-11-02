@@ -108,19 +108,14 @@ impl CurveFrame<'_> {
                 [egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
                 egui::Stroke::new(
                     1.0_f32,
-                    egui::Color32::from_rgba_unmultiplied(
-                        palette.control().r(),
-                        palette.control().g(),
-                        palette.control().b(),
-                        CURVE_GRID_LINE_ALPHA,
-                    ),
+                    theme::with_opacity(palette.control(), CURVE_GRID_LINE_ALPHA),
                 ),
             );
             self.painter.text(
                 egui::pos2(plot.left() - 6.0, y),
                 egui::Align2::RIGHT_CENTER,
                 fmt_points(Decimal::from_f64_retain(f64::from(tick)).unwrap_or_default()),
-                egui::FontId::monospace(10.0),
+                palette.mono_font(10.0),
                 palette.text_faint(),
             );
         }
@@ -166,7 +161,7 @@ impl CurveFrame<'_> {
                 plot.center(),
                 egui::Align2::CENTER_CENTER,
                 "one trade — no curve yet",
-                egui::FontId::monospace(10.0),
+                palette.mono_font(10.0),
                 palette.text_faint(),
             );
         }
@@ -181,7 +176,7 @@ impl CurveFrame<'_> {
             } else {
                 palette.sell()
             };
-            egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), CURVE_FILL_ALPHA)
+            theme::with_opacity(color, CURVE_FILL_ALPHA)
         };
         if a == 0.0 && b == 0.0 {
             // Nothing to fill on the baseline itself.
@@ -246,8 +241,7 @@ impl CurveFrame<'_> {
             egui::Stroke::new(1.0_f32, palette.sell()),
         );
         let label = view.equity.drawdown_text();
-        let galley =
-            painter.layout_no_wrap(label, egui::FontId::monospace(10.0), palette.chip_ink());
+        let galley = painter.layout_no_wrap(label, palette.mono_font(10.0), palette.chip_ink());
         let center = egui::pos2(
             (self.x_at(peak) + trough_x) / 2.0,
             (peak_y + trough_y) / 2.0,
@@ -266,21 +260,21 @@ impl CurveFrame<'_> {
             egui::pos2(plot.left(), rect.bottom()),
             egui::Align2::LEFT_BOTTOM,
             "1",
-            egui::FontId::monospace(10.0),
+            palette.mono_font(10.0),
             palette.text_faint(),
         );
         painter.text(
             egui::pos2(plot.right(), rect.bottom()),
             egui::Align2::RIGHT_BOTTOM,
             self.n.to_string(),
-            egui::FontId::monospace(10.0),
+            palette.mono_font(10.0),
             palette.text_faint(),
         );
         painter.text(
             egui::pos2(plot.center().x, rect.bottom()),
             egui::Align2::CENTER_BOTTOM,
             "trades",
-            egui::FontId::monospace(10.0),
+            palette.mono_font(10.0),
             palette.text_faint(),
         );
         if stride > 1 {
@@ -290,7 +284,7 @@ impl CurveFrame<'_> {
                 format!(
                     "curve downsampled to ~{CURVE_MAX_POINTS} points; every metric uses every trade"
                 ),
-                egui::FontId::proportional(10.0),
+                palette.body_font(10.0),
                 palette.text_support(),
             );
         }
@@ -344,7 +338,7 @@ fn draw_hover_card(
     lines: &[String],
 ) {
     let palette = theme::get(painter.ctx());
-    let font = egui::FontId::monospace(10.0);
+    let font = palette.mono_font(10.0);
     let galleys: Vec<_> = lines
         .iter()
         .filter(|line| !line.is_empty())

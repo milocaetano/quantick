@@ -244,7 +244,7 @@ impl ToolRail {
                     glyph_center,
                     egui::Align2::CENTER_CENTER,
                     member.icon(),
-                    egui::FontId::proportional(FLYOUT_GLYPH_PX),
+                    palette.body_font(FLYOUT_GLYPH_PX),
                     glyph_color,
                 );
             } else {
@@ -272,7 +272,7 @@ impl ToolRail {
                     star_center,
                     egui::Align2::CENTER_CENTER,
                     icons::STAR,
-                    egui::FontId::proportional(FLYOUT_STAR_PX),
+                    palette.body_font(FLYOUT_STAR_PX),
                     star_color,
                 );
             }
@@ -280,7 +280,7 @@ impl ToolRail {
                 egui::pos2(rect.left() + FLYOUT_NAME_X_PX, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 member.name(),
-                egui::FontId::proportional(FLYOUT_NAME_TEXT_PX),
+                palette.body_font(FLYOUT_NAME_TEXT_PX),
                 palette.text_primary(),
             );
             if let Some(shortcut) = Tool::Drawing(member).shortcut_label() {
@@ -291,7 +291,7 @@ impl ToolRail {
                     ),
                     egui::Align2::RIGHT_CENTER,
                     shortcut,
-                    egui::FontId::proportional(FLYOUT_SHORTCUT_TEXT_PX),
+                    palette.body_font(FLYOUT_SHORTCUT_TEXT_PX),
                     palette.text_faint(),
                 );
             }

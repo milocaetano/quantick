@@ -98,14 +98,11 @@ fn draw_tile(
         rect.min + egui::vec2(12.0, 6.0),
         egui::Align2::LEFT_TOP,
         label,
-        egui::FontId::monospace(10.0),
+        palette.mono_font(10.0),
         palette.text_faint(),
     );
-    let value_galley = painter.layout_no_wrap(
-        value,
-        egui::FontId::monospace(HEADLINE_FONT_PX),
-        value_color,
-    );
+    let value_galley =
+        painter.layout_no_wrap(value, palette.mono_font(HEADLINE_FONT_PX), value_color);
     let value_w = value_galley.size().x;
     let baseline = rect.top() + 38.0;
     painter.galley(
@@ -118,7 +115,7 @@ fn draw_tile(
             egui::pos2(rect.left() + 12.0 + value_w + 4.0, baseline - 2.0),
             egui::Align2::LEFT_BOTTOM,
             unit,
-            egui::FontId::monospace(11.0),
+            palette.mono_font(11.0),
             palette.text_muted(),
         );
     }
@@ -126,7 +123,7 @@ fn draw_tile(
         egui::pos2(rect.left() + 12.0, rect.bottom() - 6.0),
         egui::Align2::LEFT_BOTTOM,
         subline,
-        egui::FontId::monospace(10.0),
+        palette.mono_font(10.0),
         palette.text_faint(),
     );
 }
@@ -166,7 +163,8 @@ fn trade_list_width() -> f32 {
 /// Paint one row of cells on the shared column grid, each cut to its own
 /// column rather than allowed to run into the next one.
 fn paint_list_row(painter: &egui::Painter, rect: egui::Rect, cells: &[(String, egui::Color32)]) {
-    let font = egui::FontId::monospace(10.0);
+    let palette = theme::get(painter.ctx());
+    let font = palette.mono_font(10.0);
     let mut x = rect.left();
     for ((text, color), (_, width)) in cells.iter().zip(TRADE_LIST_COLUMNS) {
         let room = width - 2.0 * TRADE_LIST_CELL_PAD_PX;

@@ -353,3 +353,64 @@ fn bundled_dark_preserves_every_historical_token() {
         assert_eq!(theme.color(token), expected, "{}", token.key());
     }
 }
+
+#[test]
+fn role_hierarchy_uses_fixed_units_and_configuration_controls_all_sizes() {
+    let dark = ResolvedTheme::default();
+    for role in FontRole::ALL {
+        for size in [8.0, 9.5, 10.0, 11.0, 12.0, 14.0, 18.0] {
+            assert_eq!(dark.typography.at_size(role, size).size, size);
+        }
+    }
+    let partial = ResolvedTheme::parse(
+        "version = 1\nname = 'Large'\n[typography.body]\nsize = 25\nfamily = 'monospace'",
+    )
+    .unwrap();
+    let complete = ResolvedTheme::parse(&DARK.replace("size = 12.5", "size = 25.0")).unwrap();
+    for theme in [&partial, &complete] {
+        assert_eq!(theme.typography.at_size(FontRole::Body, 10.0).size, 20.0);
+    }
+    assert_eq!(
+        partial.typography.at_size(FontRole::Body, 10.0).family,
+        FontFamily::Monospace
+    );
+    let base = AxisMetrics::new(&dark.typography);
+    assert_eq!(
+        base,
+        AxisMetrics {
+            gutter: 64.0,
+            strip: 24.0
+        }
+    );
+    let large = ResolvedTheme::parse(
+        "version = 1\nname = 'Large axes'\n[typography.chart_axis]\nsize = 22",
+    )
+    .unwrap();
+    assert_eq!(
+        AxisMetrics::new(&large.typography),
+        AxisMetrics {
+            gutter: 128.0,
+            strip: 48.0
+        }
+    );
+}
+
+#[test]
+fn presentation_opacity_preserves_opaque_bytes_and_composes_configured_alpha() {
+    use color::{rgba_unmultiplied, with_opacity};
+    for opacity in [0, 18, 56, 84, 140, 255] {
+        let rgb = PremultipliedRgba::from_rgb(138, 180, 248);
+        assert_eq!(
+            with_opacity(rgb, opacity),
+            rgba_unmultiplied(138, 180, 248, opacity)
+        );
+    }
+    let translucent = rgba_unmultiplied(255, 255, 255, 128);
+    let faded = with_opacity(translucent, 128);
+    assert_eq!(faded.to_array()[3], 64);
+    let expected = rgba_unmultiplied(255, 255, 255, 64).to_array();
+    for (actual, expected) in faded.to_array().into_iter().zip(expected) {
+        assert!(actual.abs_diff(expected) <= 1);
+    }
+    assert_eq!(with_opacity(color::TRANSPARENT, 128), color::TRANSPARENT);
+}

@@ -12,6 +12,39 @@ impl<T> RenderPalette<T> {
     }
 }
 impl<T: Copy> RenderPalette<T> {
+    pub fn loading_title(&self) -> T {
+        *self.get(Token::LoadingTitle)
+    }
+    pub fn loading_meta(&self) -> T {
+        *self.get(Token::LoadingMeta)
+    }
+    pub fn loading_faint(&self) -> T {
+        *self.get(Token::LoadingFaint)
+    }
+    pub fn loading_border(&self) -> T {
+        *self.get(Token::LoadingBorder)
+    }
+    pub fn footprint_profile(&self) -> T {
+        *self.get(Token::FootprintProfile)
+    }
+    pub fn footprint_bevel_highlight(&self) -> T {
+        *self.get(Token::FootprintBevelHighlight)
+    }
+    pub fn footprint_bevel_shadow(&self) -> T {
+        *self.get(Token::FootprintBevelShadow)
+    }
+    pub fn crosshair_ink(&self) -> T {
+        *self.get(Token::CrosshairInk)
+    }
+    pub fn footprint_total_ink(&self) -> T {
+        *self.get(Token::FootprintTotalInk)
+    }
+    pub fn loading_logo_low(&self) -> T {
+        *self.get(Token::LoadingLogoLow)
+    }
+    pub fn loading_logo_high(&self) -> T {
+        *self.get(Token::LoadingLogoHigh)
+    }
     pub fn canvas(&self) -> T {
         *self.get(Token::Canvas)
     }

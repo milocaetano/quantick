@@ -103,14 +103,11 @@ fn indicators_text(
     let mut text = egui::text::LayoutJob::default();
     let icon = egui::TextFormat {
         italics: true,
-        ..egui::TextFormat::simple(
-            egui::FontId::monospace(INDICATORS_SIZE),
-            palette.text_muted(),
-        )
+        ..egui::TextFormat::simple(palette.mono_font(INDICATORS_SIZE), palette.text_muted())
     };
     text.append(INDICATORS_GLYPH, 0.0, icon);
     if let Some(words) = words {
-        let font = egui::FontId::proportional(INDICATORS_SIZE);
+        let font = palette.body_font(INDICATORS_SIZE);
         let words = egui::TextFormat::simple(font, words);
         text.append(INDICATORS_LABEL, INDICATORS_ICON_GAP_PX, words);
     }
@@ -331,7 +328,7 @@ fn settings_gear(
     } else {
         palette.pane_action()
     };
-    let font = egui::FontId::proportional(SEGMENT_GLYPH_PX);
+    let font = palette.body_font(SEGMENT_GLYPH_PX);
     let at = egui::Align2::CENTER_CENTER;
     ui.painter()
         .text(rect.center(), at, icons::GEAR, font, colour);
@@ -425,7 +422,7 @@ fn side_label_text(ctx: &egui::Context, label: &SideLabel, fit: LabelFit) -> egu
             LabelInk::Warn => palette.warn(),
         };
         let format = egui::TextFormat {
-            font_id: egui::FontId::monospace(SIDE_LABEL_SIZE),
+            font_id: palette.mono_font(SIDE_LABEL_SIZE),
             color,
             ..Default::default()
         };
@@ -441,7 +438,7 @@ pub fn draw_tape_seam(ui: &egui::Ui, side: egui::Rect, x: f32, lines: [Option<&s
     let ends = [egui::pos2(x, side.top()), egui::pos2(x, side.bottom())];
     let stroke = egui::Stroke::new(1.0_f32, palette.amber());
     painter.add(egui::Shape::dashed_line(&ends, stroke, 4.0, 5.0));
-    let font = egui::FontId::proportional(SEGMENT_WORD_SIZE);
+    let font = palette.body_font(SEGMENT_WORD_SIZE);
     let ink = palette.text_muted();
     let lines = lines.map(|line| line.map(|l| painter.layout_no_wrap(l.into(), font.clone(), ink)));
     let px = [0, 1].map(|at| lines[at].as_ref().map(|line| line.size().x));
@@ -583,7 +580,7 @@ fn paint_value(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, scale: f32) {
         .layer_painter(egui::LayerId::new(egui::Order::Tooltip, id));
     let galley = painter.layout_no_wrap(
         sample_value_text(scale),
-        egui::FontId::monospace(11.0),
+        palette.mono_font(11.0),
         palette.text_primary(),
     );
     let at = egui::pos2(
@@ -649,7 +646,7 @@ fn segment_word_widths(ui: &egui::Ui, state: Option<&FlowHeaderState>) -> [f32; 
             fonts
                 .layout_no_wrap(
                     word.to_owned(),
-                    egui::FontId::proportional(SEGMENT_WORD_SIZE),
+                    palette.body_font(SEGMENT_WORD_SIZE),
                     palette.text_primary(),
                 )
                 .size()
@@ -757,7 +754,7 @@ fn side_segment(
                 glyph_center,
                 egui::Align2::CENTER_CENTER,
                 icons::CASSETTE_TAPE,
-                egui::FontId::proportional(SEGMENT_GLYPH_PX),
+                palette.body_font(SEGMENT_GLYPH_PX),
                 colour,
             );
         }
@@ -770,7 +767,7 @@ fn side_segment(
             ),
             egui::Align2::LEFT_CENTER,
             segment.word(),
-            egui::FontId::proportional(SEGMENT_WORD_SIZE),
+            palette.body_font(SEGMENT_WORD_SIZE),
             colour,
         );
     }
@@ -953,7 +950,7 @@ fn mark_text(palette: &crate::theme::Palette, mark: &str) -> egui::text::LayoutJ
         mark,
         0.0,
         egui::TextFormat {
-            font_id: egui::FontId::monospace(MARK_SIZE),
+            font_id: palette.mono_font(MARK_SIZE),
             color: palette.pane_mark(),
             extra_letter_spacing: MARK_LETTER_SPACING,
             ..Default::default()
@@ -969,16 +966,13 @@ fn bars_text(palette: &crate::theme::Palette, header: &PaneHeader) -> egui::text
     text.append(
         &header.bars_text,
         0.0,
-        egui::TextFormat::simple(
-            egui::FontId::proportional(BARS_SIZE),
-            palette.text_primary(),
-        ),
+        egui::TextFormat::simple(palette.body_font(BARS_SIZE), palette.text_primary()),
     );
     text.append(
         icons::CARET_DOWN,
         3.0,
         egui::TextFormat::simple(
-            egui::FontId::proportional(CARET_SIZE),
+            palette.body_font(CARET_SIZE),
             palette.text_faint().gamma_multiply(0.6),
         ),
     );
@@ -1027,7 +1021,7 @@ pub fn bars_control(
             ),
             egui::Spinner::new()
                 .size(REBUILD_SPINNER_PX)
-                .color(loading::GREY_MID),
+                .color(palette.loading_meta()),
         );
     } else {
         ui.painter().galley(

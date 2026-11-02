@@ -209,7 +209,7 @@ impl CandlesTab {
         if let Some(refusal) = &self.refusal {
             ui.label(
                 egui::RichText::new(refusal)
-                    .size(10.5)
+                    .font(palette.body_font(10.5))
                     .color(palette.warn()),
             );
         }

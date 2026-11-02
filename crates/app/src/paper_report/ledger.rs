@@ -353,6 +353,7 @@ impl ReportState {
     /// Scope row: which instrument's saved history the ledger lists, the
     /// re-read button and the fold-every-day switch.
     fn draw_scope_row(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) {
+        let palette = theme::get(ui.ctx());
         let mut reload = false;
         let mut picked: Option<LedgerScope> = None;
         ui.horizontal(|ui| {
@@ -361,8 +362,7 @@ impl ReportState {
                 .width(LEDGER_SCOPE_COMBO_PX)
                 .selected_text(
                     egui::RichText::new(self.ledger_scope.label(&chart))
-                        .monospace()
-                        .size(11.0),
+                        .font(palette.mono_font(11.0)),
                 )
                 .show_ui(ui, |ui| {
                     let mut option = |ui: &mut egui::Ui, scope: LedgerScope| {

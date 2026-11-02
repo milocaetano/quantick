@@ -62,7 +62,7 @@ impl ToolRail {
                     ),
                     egui::Align2::RIGHT_TOP,
                     icons::STAR,
-                    egui::FontId::proportional(FAVORITE_BADGE_PX),
+                    palette.body_font(FAVORITE_BADGE_PX),
                     palette.accent(),
                 );
             }
@@ -278,7 +278,7 @@ impl ToolRail {
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 glyph,
-                egui::FontId::proportional(BAND_ARROW_GLYPH_PX),
+                palette.body_font(BAND_ARROW_GLYPH_PX),
                 color,
             );
         }

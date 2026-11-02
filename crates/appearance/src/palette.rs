@@ -105,9 +105,20 @@ pub enum Token {
     CandleWick,
     BuyInk,
     SellInk,
+    LoadingTitle,
+    LoadingMeta,
+    LoadingFaint,
+    LoadingBorder,
+    FootprintProfile,
+    FootprintBevelHighlight,
+    FootprintBevelShadow,
+    CrosshairInk,
+    FootprintTotalInk,
+    LoadingLogoLow,
+    LoadingLogoHigh,
 }
 impl Token {
-    pub const ALL: [Self; 39] = [
+    pub const ALL: [Self; 50] = [
         Self::Canvas,
         Self::Chrome,
         Self::Inset,
@@ -147,6 +158,17 @@ impl Token {
         Self::CandleWick,
         Self::BuyInk,
         Self::SellInk,
+        Self::LoadingTitle,
+        Self::LoadingMeta,
+        Self::LoadingFaint,
+        Self::LoadingBorder,
+        Self::FootprintProfile,
+        Self::FootprintBevelHighlight,
+        Self::FootprintBevelShadow,
+        Self::CrosshairInk,
+        Self::FootprintTotalInk,
+        Self::LoadingLogoLow,
+        Self::LoadingLogoHigh,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -189,6 +211,17 @@ impl Token {
             Self::CandleWick => "candle_wick",
             Self::BuyInk => "buy_ink",
             Self::SellInk => "sell_ink",
+            Self::LoadingTitle => "loading_title",
+            Self::LoadingMeta => "loading_meta",
+            Self::LoadingFaint => "loading_faint",
+            Self::LoadingBorder => "loading_border",
+            Self::FootprintProfile => "footprint_profile",
+            Self::FootprintBevelHighlight => "footprint_bevel_highlight",
+            Self::FootprintBevelShadow => "footprint_bevel_shadow",
+            Self::CrosshairInk => "crosshair_ink",
+            Self::FootprintTotalInk => "footprint_total_ink",
+            Self::LoadingLogoLow => "loading_logo_low",
+            Self::LoadingLogoHigh => "loading_logo_high",
         }
     }
     pub fn from_key(key: &str) -> Option<Self> {

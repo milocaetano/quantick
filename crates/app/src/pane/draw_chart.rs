@@ -64,6 +64,9 @@ impl ChartPane {
         if flow_execution {
             start.candle_aggression = false;
         }
+        self.frame.axis_metrics = quantick_appearance::AxisMetrics::new(
+            &crate::theme::get(painter.ctx()).resolved.typography,
+        );
         let Some(layout) = self.lay_out(area, chrome) else {
             return;
         };

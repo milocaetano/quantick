@@ -74,7 +74,7 @@ fn grid(p: &mut GridPass<'_, '_>) {
 
     let grid = grid_color(style);
     let (lo, hi) = scale.range();
-    let font = egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX);
+    let font = palette.axis_font(chart::AXIS_LABEL_FONT_PX);
     // Measured once per frame, the way the time strip measures its own:
     // every label on this axis is one line of the same font, so one
     // layout answers for all of them.
@@ -213,7 +213,7 @@ fn crosshair(p: &mut CrosshairPass<'_>) {
         pos.y,
         pointer_compass::price_text(scale.price_at(pos.y)),
         palette.tag_bg(),
-        egui::Color32::WHITE,
+        palette.crosshair_ink(),
     );
 }
 fn pointer(p: &mut PointerPass<'_>) {
@@ -272,7 +272,7 @@ impl TimeStripPass<'_> {
             ],
             egui::Stroke::new(1.0_f32, grid_color(self.style)),
         );
-        let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
+        let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
         let y = strip.center().y;
         let visible = end.saturating_sub(start);
         if visible == 0 {
@@ -390,7 +390,7 @@ impl LaneTimeAxisPass<'_> {
         // candles' own time labels. The tape's axis may run out of room; it
         // may not spill into the pane beside it.
         let painter = &painter.with_clip_rect(strip);
-        let font = egui::FontId::monospace(super::super::LANE_AXIS_FONT_PX);
+        let font = palette.axis_font(super::super::LANE_AXIS_FONT_PX);
         // The warning is its own text, pinned to the right end of the strip,
         // and the window keeps the centre it has always had. One label growing
         // a suffix would re-centre itself every time a quiet stretch started
@@ -540,7 +540,7 @@ fn paint_tape_clock(
 ) {
     let palette = theme::get(painter.ctx());
     let format = crate::chart::TimeLabelFormat::Full;
-    let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
+    let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
     let label_width = painter
         .layout_no_wrap(
             format.sample().to_owned(),

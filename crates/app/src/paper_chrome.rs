@@ -46,7 +46,7 @@ pub(crate) use quantick_paper::format::{
 /// Uppercase section caption — the ledger's group labels and column header.
 pub(crate) fn caption(palette: &crate::theme::Palette, text: &str) -> egui::RichText {
     egui::RichText::new(text)
-        .size(10.0)
+        .font(palette.body_font(10.0))
         .color(palette.text_faint())
 }
 

@@ -217,7 +217,7 @@ impl PaperTrading {
                 chart_rect.left_bottom() + egui::vec2(8.0, -8.0),
                 egui::Align2::LEFT_BOTTOM,
                 hint,
-                egui::FontId::proportional(12.0),
+                palette.body_font(12.0),
                 palette.accent(),
             );
         }
@@ -534,9 +534,9 @@ impl PaperTrading {
             kind_word(preview.kind),
             quantity,
         );
-        let galley =
-            ctx.painter
-                .layout_no_wrap(text, egui::FontId::monospace(11.0), palette.chip_ink());
+        let galley = ctx
+            .painter
+            .layout_no_wrap(text, palette.mono_font(11.0), palette.chip_ink());
         ctx.painter.galley(
             egui::pos2(
                 label.center().x - galley.size().x / 2.0,
@@ -558,7 +558,7 @@ impl PaperTrading {
                 egui::pos2(label.center().x, label.max.y + 3.0),
                 egui::Align2::CENTER_TOP,
                 "roll the wheel for a stop and target",
-                egui::FontId::proportional(10.0),
+                palette.body_font(10.0),
                 palette.text_support(),
             );
         }

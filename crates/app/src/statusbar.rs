@@ -300,11 +300,11 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
         return;
     };
     let colour = match word.word {
-        "offline" | "no data" | "quiet" => crate::loading::GREY_FAINT,
-        _ if word.pulses => {
-            crate::loading::GREY_MID.gamma_multiply(crate::loading::pulse(ui.ctx()))
-        }
-        _ => crate::loading::GREY_MID,
+        "offline" | "no data" | "quiet" => palette.loading_faint(),
+        _ if word.pulses => palette
+            .loading_meta()
+            .gamma_multiply(crate::loading::pulse(ui.ctx())),
+        _ => palette.loading_meta(),
     };
     let text = match &word.age {
         Some(age) => format!("{} · {age}", word.word),
@@ -319,7 +319,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
         fonts.layout_no_wrap(
             text,
             egui::TextStyle::Small.resolve(ui.style()),
-            crate::loading::GREY_MID,
+            palette.loading_meta(),
         )
     });
     let size = egui::vec2(
@@ -346,7 +346,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
             rect.center().y - galley.size().y / 2.0,
         ),
         galley,
-        crate::loading::GREY_MID,
+        palette.loading_meta(),
     );
     if lead.door {
         response.word_rect = Some(rect);
@@ -368,7 +368,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
                 egui::Label::new(
                     egui::RichText::new(crate::loading::RECONNECT_LABEL)
                         .small()
-                        .color(crate::loading::GREY_MID),
+                        .color(palette.loading_meta()),
                 )
                 .sense(egui::Sense::click()),
             )

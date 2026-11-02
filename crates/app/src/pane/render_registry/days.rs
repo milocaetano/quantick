@@ -66,7 +66,7 @@ pub(in crate::pane) struct DaySeparatorPass<'a> {
 }
 fn day_separator(p: &mut DaySeparatorPass<'_>) {
     let palette = theme::get(p.painter.ctx());
-    let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
+    let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
     let (painter, chip, tz) = (p.painter, p.chip, p.tz);
     let (left, right) = (p.history.left(), p.history.right());
     let y = p.strip.center().y;

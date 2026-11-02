@@ -33,10 +33,7 @@ use crate::theme;
 use bar::{BarPaint, draw_bar, draw_poc_dot, draw_zone_mark};
 use heat::{HeatScale, heat_scale};
 use quantick_chart::footprint_legend::{LegendFacts, legend_text};
-use quantick_chart::footprint_lod::{
-    DetailLevel, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX, QUANTITY_GLYPHS, height_to_split,
-    with_poc_floor,
-};
+use quantick_chart::footprint_lod::{DetailLevel, GROUP_SNAP, height_to_split, with_poc_floor};
 use quantick_chart::footprint_projection::{
     ADAPTIVE_FLOOR_BARS, ZoneMark, adaptive_min_qty, bar_delta, coalesce_zones, fmt_delta, fmt_qty,
     poc_of, regroup, zones_of,
@@ -159,16 +156,21 @@ impl LayerPlan {
         // the zoom, and every floor below is measured against a concrete style.
         // The chain is walked richest-first and the first link the candle can pay
         // for wins, so one wheel walks three columns → two → a shape.
-        let requested = frame
-            .config
-            .style
-            .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
+        let requested = frame.config.style.resolve_auto(|style| {
+            scaled_width
+                >= detailed_min_width(style, frame.config)
+                    * frame.palette.footprint_text.width_scale()
+        });
         let scaled = lod.levels.resolve(
             scaled_width,
             base_row_px,
-            frame.config.row_floors(),
-            frame.config.compact_entry_width(),
-            detailed_min_width(requested, frame.config),
+            frame
+                .palette
+                .footprint_text
+                .row_floors(frame.config.row_floors()),
+            frame.config.compact_entry_width() * frame.palette.footprint_text.width_scale(),
+            detailed_min_width(requested, frame.config)
+                * frame.palette.footprint_text.width_scale(),
         );
         let level = with_poc_floor(scaled, frame.candle_width);
         // A style that cannot pay for itself at this zoom hands over to the one it
@@ -264,7 +266,11 @@ impl<'p, 'f> LayerPass<'p, 'f> {
     fn new(frame: &'p LayerFrame<'f>, plan: &LayerPlan, lod: &mut FootprintLod) -> Self {
         // The configured floors: band fineness for the profile, the number-row
         // height for the text levels - the trader's "more, thinner rows".
-        let min_row = frame.config.row_floors().for_level(plan.level);
+        let min_row = frame
+            .palette
+            .footprint_text
+            .row_floors(frame.config.row_floors())
+            .for_level(plan.level);
         let resolved = lod.levels.resolve_multiple(plan.base_row_px, min_row);
         let split_hint = (plan.level >= DetailLevel::Profile)
             .then(|| height_to_split(resolved, plan.base_row_px, min_row))
@@ -436,8 +442,8 @@ impl<'p, 'f> LayerPass<'p, 'f> {
             };
             let galley = frame.painter.layout_no_wrap(
                 text,
-                egui::FontId::monospace(10.0),
-                egui::Color32::WHITE,
+                frame.palette.font(quantick_appearance::FontRole::Footprint),
+                frame.palette.footprint_total_ink(),
             );
             let center = egui::pos2(
                 (frame.x_center)(slot),
@@ -452,7 +458,7 @@ impl<'p, 'f> LayerPass<'p, 'f> {
             frame.painter.galley(
                 rect.min + egui::vec2(3.0, 1.5),
                 galley,
-                egui::Color32::WHITE,
+                frame.palette.footprint_total_ink(),
             );
         }
     }
@@ -536,7 +542,7 @@ impl Legend {
             ),
             egui::Align2::LEFT_BOTTOM,
             text,
-            egui::FontId::proportional(10.5),
+            frame.palette.label_font(10.5),
             palette.text_muted(),
         );
     }
@@ -548,6 +554,7 @@ crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT_DEBUG"];
 #[cfg(test)]
 mod tests {
     use super::bar::*;
+    const PROFILE_COLOR: egui::Color32 = egui::Color32::from_gray(0xD8);
     use super::*;
 
     /// The text floors are a typography budget and must be re-derived, never

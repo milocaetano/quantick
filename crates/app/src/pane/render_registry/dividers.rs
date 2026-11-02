@@ -59,7 +59,7 @@ fn seam(p: &mut DividerPass<'_>) {
         egui::pos2(x - SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
         egui::Align2::RIGHT_TOP,
         "venue",
-        egui::FontId::proportional(SEAM_LABEL_PT),
+        palette.label_font(SEAM_LABEL_PT),
         palette.seam_label(),
     );
 }
@@ -92,7 +92,7 @@ fn backfill(p: &mut DividerPass<'_>) {
         [egui::pos2(x, pane.top()), egui::pos2(x, pane.bottom())],
         egui::Stroke::new(1.0_f32, palette.amber()),
     );
-    let font = egui::FontId::proportional(11.0);
+    let font = palette.label_font(11.0);
     painter.text(
         egui::pos2(x - 4.0, pane.bottom() - 4.0),
         egui::Align2::RIGHT_BOTTOM,
@@ -157,7 +157,7 @@ fn feed_gaps(p: &mut DividerPass<'_>) {
             ),
             egui::Align2::LEFT_BOTTOM,
             format!("{} gap", gap.duration_label()),
-            egui::FontId::proportional(SEAM_LABEL_PT),
+            palette.label_font(SEAM_LABEL_PT),
             palette.gap_label(),
         );
     }

@@ -64,7 +64,7 @@ impl PaperTrading {
         let palette = theme::get(ui.ctx());
         ui.label(
             egui::RichText::new("trade")
-                .size(11.0)
+                .font(palette.body_font(11.0))
                 .color(palette.text_muted()),
         );
         let Some(mark) = self.account.venue().mark_price() else {

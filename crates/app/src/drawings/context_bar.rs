@@ -846,7 +846,7 @@ fn draw_grip(ui: &mut egui::Ui, intent: &mut ContextBarIntent) {
             rect.center(),
             egui::Align2::CENTER_CENTER,
             icons::DOTS_SIX_VERTICAL,
-            egui::FontId::proportional(GRIP_GLYPH_PX),
+            palette.body_font(GRIP_GLYPH_PX),
             color,
         );
     }
@@ -1275,7 +1275,7 @@ fn draw_preview_row(
             egui::pos2(rect.right() - 8.0, rect.center().y),
             egui::Align2::RIGHT_CENTER,
             label,
-            egui::FontId::proportional(11.0),
+            palette.body_font(11.0),
             palette.text_faint(),
         );
     }

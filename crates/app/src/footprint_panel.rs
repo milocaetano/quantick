@@ -83,7 +83,7 @@ pub fn draw(ui: &mut egui::Ui, input: PanelInput<'_>) -> PanelOutcome {
                 "this chart follows your last setup"
             }
         ))
-        .size(10.5)
+        .font(palette.body_font(10.5))
         .color(palette.text_muted()),
     );
     changed |= PresetsSection {
@@ -120,7 +120,7 @@ fn caption(ui: &mut egui::Ui, text: &str) {
     let palette = theme::get(ui.ctx());
     ui.label(
         egui::RichText::new(text)
-            .size(11.0)
+            .font(palette.body_font(11.0))
             .color(palette.text_muted()),
     );
 }
@@ -149,7 +149,7 @@ impl PresetsSection<'_> {
             if names.is_empty() {
                 ui.label(
                     egui::RichText::new("none saved yet")
-                        .size(11.0)
+                        .font(palette.body_font(11.0))
                         .color(palette.text_faint()),
                 );
             }
@@ -197,7 +197,7 @@ impl PresetsSection<'_> {
                     // say so rather than dropping the click silently.
                     ui.label(
                         egui::RichText::new("preset list is full")
-                            .size(10.5)
+                            .font(palette.body_font(10.5))
                             .color(palette.warn()),
                     );
                 }
@@ -248,7 +248,7 @@ impl StyleSection<'_> {
                     egui::RichText::new(
                         "three numbers a row needs a wide candle: below about 126 px this draws \"both sides\" instead, and the chart legend names both",
                     )
-                    .size(10.5)
+                    .font(palette.body_font(10.5))
                     .color(palette.text_muted()),
                 );
                 changed |= ui

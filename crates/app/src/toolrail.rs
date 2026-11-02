@@ -860,7 +860,7 @@ impl ToolRail {
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 glyph,
-                egui::FontId::proportional(TOOLBOX_GRIP_GLYPH_PX),
+                palette.body_font(TOOLBOX_GRIP_GLYPH_PX),
                 color,
             );
         }
@@ -1207,7 +1207,7 @@ fn paint_drop_preview(ctx: &egui::Context, target: ToolboxDock) {
 fn paint_badge(ui: &egui::Ui, button: egui::Rect, text: &str, color: egui::Color32) {
     let palette = theme::get(ui.ctx());
     let painter = ui.painter();
-    let font = egui::FontId::monospace(BADGE_TEXT_PX);
+    let font = palette.mono_font(BADGE_TEXT_PX);
     let galley = painter.layout_no_wrap(text.to_owned(), font, color);
     let size = egui::vec2(galley.size().x + 2.0 * BADGE_PAD_X_PX, BADGE_HEIGHT_PX);
     let rect = egui::Rect::from_min_max(

@@ -19,8 +19,8 @@ use crate::theme;
 
 use super::heat::{HEAT_INK_FLIP_STEP, HeatScale, heat_fill, heat_ink, heat_step};
 use super::{
-    CENTER_GUTTER_PX, CLUSTER_BOX_PAD_PX, CLUSTER_GUTTER_PX, DetailLevel, GLYPH_EM,
-    LADDER_MIN_FONT_PX, LayerFrame, QUANTITY_GLYPHS, ZoneMark, fmt_delta, fmt_qty, poc_of,
+    CENTER_GUTTER_PX, CLUSTER_BOX_PAD_PX, CLUSTER_GUTTER_PX, DetailLevel, LayerFrame, ZoneMark,
+    fmt_delta, fmt_qty, poc_of,
 };
 
 /// Where one display row lands on screen, and what the signals say about it.
@@ -346,7 +346,9 @@ impl<'p, 'f> BarRender<'p, 'f> {
                 egui::pos2(xc + reach * volume_frac, bottom - 0.5),
             ),
             egui::Rounding::ZERO,
-            PROFILE_COLOR.gamma_multiply(if is_poc { 0.95 } else { 0.60 }),
+            palette
+                .footprint_profile()
+                .gamma_multiply(if is_poc { 0.95 } else { 0.60 }),
         );
         // Left: the fight.
         let (left_from, left_color) = match winner {
@@ -390,12 +392,8 @@ impl<'p, 'f> BarRender<'p, 'f> {
             && frame.config.show_numbers
             && let Some(text) = delta_text
         {
-            let width_budget = (frame.half - 6.0) / 3.0;
-            let font = egui::FontId::monospace(
-                (row_height - 2.0)
-                    .min(width_budget)
-                    .clamp(LADDER_MIN_FONT_PX, 13.0),
-            );
+            let width_budget = frame.half - 6.0;
+            let font = palette.footprint_font(row_height, width_budget);
             painter.text(
                 egui::pos2(xc - CENTER_GUTTER_PX, (top + bottom) / 2.0),
                 egui::Align2::RIGHT_CENTER,
@@ -446,14 +444,12 @@ impl<'p, 'f> BarRender<'p, 'f> {
     fn number_font(&self, geometry: &RowGeometry) -> egui::FontId {
         let half = self.frame.half;
         let width_budget = match self.paint.level {
-            DetailLevel::Detailed => (half - 6.0) / 3.0,
-            _ => (2.0 * half - 6.0) / 3.0,
+            DetailLevel::Detailed => half - 6.0,
+            _ => 2.0 * half - 6.0,
         };
-        egui::FontId::monospace(
-            (geometry.row_height - 2.0)
-                .min(width_budget)
-                .clamp(LADDER_MIN_FONT_PX, 13.0),
-        )
+        self.frame
+            .palette
+            .footprint_font(geometry.row_height, width_budget)
     }
 
     /// A ring around the POC row, not a wash under it.
@@ -658,8 +654,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
             (egui::Align2::CENTER_BOTTOM, band_top - EXTREME_BADGE_GAP_PX)
         };
         let text = format!("{:.1}x", ratio_value.to_f64().unwrap_or(0.0));
-        let galley =
-            painter.layout_no_wrap(text, egui::FontId::monospace(10.0), palette.text_primary());
+        let galley = painter.layout_no_wrap(text, palette.axis_font(10.0), palette.text_primary());
         let anchor = align.anchor_size(egui::pos2(self.xc, y), galley.size());
         painter.rect_filled(
             anchor.expand(2.0),
@@ -702,22 +697,6 @@ pub(super) const CLUSTER_TOTAL_SILHOUETTE_ALPHA: f32 = 0.35;
 /// high enough that the two sides separate from the plate at a glance.
 const BIDASK_BAR_ALPHA: f32 = 0.62;
 
-/// The bevel's two faces.
-///
-/// Complementary by construction, and the asymmetry is the design rather than
-/// a compromise: on a dark cell the white edge does all the work and the
-/// shadow has nowhere to go, on a light cell the reverse. Measured in L*, the
-/// highlight buys +19 on the floor step and +0.4 on the top one; the shadow
-/// buys +5 on the floor and +29 on the top. So only the face that can be seen
-/// is drawn — painting both always meant painting one for nothing.
-///
-/// Raising the alpha does not rescue the losing face: even at full opacity,
-/// white over the top step is worth +17 L* — the cell simply turns white.
-/// Which is why this is a choice of face, not a choice of number.
-const BEVEL_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgba_premultiplied(56, 56, 56, 56);
-
-const BEVEL_SHADOW: egui::Color32 = egui::Color32::from_rgba_premultiplied(0, 0, 0, 120);
-
 /// The step at and above which the shadow carries the relief instead of the
 /// highlight. Shares the ink flip's boundary because both answer the same
 /// question: is this cell light or dark.
@@ -745,6 +724,7 @@ const BEVEL_MIN_ROW_PX: f32 = 10.0;
 /// through the tessellator's feathering, and feathering is exactly what blurs
 /// a one-pixel edge into nothing.
 fn paint_bevel(
+    palette: &crate::theme::Palette,
     painter: &egui::Painter,
     rect: egui::Rect,
     row_height: f32,
@@ -776,9 +756,9 @@ fn paint_bevel(
         egui::pos2(snap(rect.right()), snap(rect.bottom())),
     );
     let (face, lit_top) = if step >= BEVEL_SHADOW_FROM_STEP {
-        (BEVEL_SHADOW, false)
+        (palette.footprint_bevel_shadow(), false)
     } else {
-        (BEVEL_HIGHLIGHT, true)
+        (palette.footprint_bevel_highlight(), true)
     };
     // Two edges meeting at a corner, not two opposite bars: relief is read at
     // the corner, and a top and a bottom with no sides read as a rule.
@@ -913,12 +893,7 @@ fn draw_cluster_row(
     // to the font instead is how three columns of numbers end up written over
     // each other — which is exactly what the first capture of this style
     // showed. Same arithmetic the ladder's own budget uses.
-    let width_budget = (column_width - 2.0) / (QUANTITY_GLYPHS * GLYPH_EM);
-    let font = egui::FontId::monospace(
-        (geometry.row_height - 2.0)
-            .min(width_budget)
-            .clamp(LADDER_MIN_FONT_PX, 13.0),
-    );
+    let font = palette.footprint_font(geometry.row_height, column_width - 2.0);
 
     let mut x = xc - reach + inset + CLUSTER_BOX_PAD_PX;
     let mut column_rect = || -> egui::Rect {
@@ -945,7 +920,14 @@ fn draw_cluster_row(
             heat_fill(&frame.palette, side, step),
         );
         if bevel {
-            paint_bevel(painter, rect, geometry.row_height, step, pixels_per_point);
+            paint_bevel(
+                palette,
+                painter,
+                rect,
+                geometry.row_height,
+                step,
+                pixels_per_point,
+            );
         }
         if imbalanced {
             // The outline flips with the ink, and for the same reason. A
@@ -1000,10 +982,19 @@ fn draw_cluster_row(
                 egui::pos2(rect.left() + rect.width() * frac, rect.bottom()),
             ),
             egui::Rounding::ZERO,
-            PROFILE_COLOR.gamma_multiply(CLUSTER_TOTAL_SILHOUETTE_ALPHA),
+            palette
+                .footprint_profile()
+                .gamma_multiply(CLUSTER_TOTAL_SILHOUETTE_ALPHA),
         );
         if bevel {
-            paint_bevel(painter, rect, geometry.row_height, 0, pixels_per_point);
+            paint_bevel(
+                palette,
+                painter,
+                rect,
+                geometry.row_height,
+                0,
+                pixels_per_point,
+            );
         }
         if frame.config.show_numbers {
             painter.text(
@@ -1094,8 +1085,7 @@ const IMBALANCE_EDGE_PX: f32 = 2.0;
 /// The split style's volume-profile silhouette: neutral light, after the
 /// reference charts' white/gray histograms — color stays reserved for the
 /// fight (the delta side) and the POC.
-pub(super) const PROFILE_COLOR: egui::Color32 = egui::Color32::from_gray(0xD8);
-
+///
 /// The least an imbalance chip spans, in pixels: enough to ring the number
 /// on a short bar without swallowing the whole half.
 const MIN_CHIP_PX: f32 = 14.0;

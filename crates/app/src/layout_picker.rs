@@ -201,7 +201,7 @@ fn draw_cell(
     // name one pane longer than today's would have done.
     let mut job = egui::text::LayoutJob::simple(
         preset.label.to_owned(),
-        egui::FontId::proportional(LABEL_SIZE_PX),
+        palette.body_font(LABEL_SIZE_PX),
         label_colour,
         rect.width() - LABEL_INSET_PX * 2.0,
     );

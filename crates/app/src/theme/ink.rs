@@ -3,7 +3,7 @@
 #[cfg(test)]
 use super::{BUY, SELL};
 use eframe::egui::Color32;
-use quantick_appearance::{PremultipliedRgba, color, contrast};
+use quantick_appearance::{PremultipliedRgba, contrast};
 
 fn headless(color: Color32) -> PremultipliedRgba {
     PremultipliedRgba::from_premultiplied(color.to_array())
@@ -65,24 +65,19 @@ impl super::Palette {
     }
 }
 
+pub fn with_opacity(color: Color32, alpha: u8) -> Color32 {
+    rendered(quantick_appearance::color::with_opacity(
+        headless(color),
+        alpha,
+    ))
+}
+
 pub fn active_tint(accent: Color32) -> Color32 {
-    rendered(color::rgba_unmultiplied(
-        accent.r(),
-        accent.g(),
-        accent.b(),
-        contrast::ACTIVE_TINT_ALPHA,
-    ))
+    with_opacity(accent, contrast::ACTIVE_TINT_ALPHA)
 }
-
 pub fn press_tint(accent: Color32) -> Color32 {
-    rendered(color::rgba_unmultiplied(
-        accent.r(),
-        accent.g(),
-        accent.b(),
-        contrast::PRESS_TINT_ALPHA,
-    ))
+    with_opacity(accent, contrast::PRESS_TINT_ALPHA)
 }
-
 #[cfg(test)]
 pub fn relative_luminance(color: Color32) -> f32 {
     contrast::relative_luminance(headless(color))

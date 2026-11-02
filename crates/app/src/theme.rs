@@ -9,7 +9,7 @@ pub mod store;
 pub use resolved::{Palette, get, install_fonts, sync};
 
 pub use chrome::apply;
-pub use ink::{active_tint, press_tint};
+pub use ink::{active_tint, press_tint, with_opacity};
 #[cfg(test)]
 pub use ink::{ink, side_color};
 // The contrast arithmetic is read back by the tests that pin every number a

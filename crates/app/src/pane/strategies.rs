@@ -299,7 +299,7 @@ pub(super) fn paint_strategy_badge(
     let position = anchor + egui::vec2(BADGE_PAD_X_PX - 1.0, -BADGE_LIFT_PX);
     // A whisper of ground behind the label so it stays readable over
     // candles; galley first, box after, text last.
-    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(BADGE_FONT_PX), color);
+    let galley = painter.layout_no_wrap(text, palette.label_font(BADGE_FONT_PX), color);
     let rect = egui::Rect::from_min_size(
         position - egui::vec2(BADGE_PAD_X_PX, galley.size().y + BADGE_PAD_Y_PX + 1.0),
         galley.size() + egui::vec2(2.0 * BADGE_PAD_X_PX, 2.0 * BADGE_PAD_Y_PX),

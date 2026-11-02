@@ -187,7 +187,7 @@ pub(crate) fn draw(
             frame.chart_rect.left_bottom() + egui::vec2(8.0, -24.0),
             egui::Align2::LEFT_BOTTOM,
             note,
-            egui::FontId::proportional(10.0),
+            palette.label_font(10.0),
             palette.text_faint(),
         );
     }
@@ -318,8 +318,8 @@ fn draw_tooltip(
     trade: &ClosedTrade,
 ) {
     let palette = theme::get(painter.ctx());
-    let font = egui::FontId::monospace(11.0);
-    let caption = egui::FontId::monospace(10.0);
+    let font = palette.axis_font(11.0);
+    let caption = palette.axis_font(10.0);
     let head = format!(
         "{} {} · {} → {} · {}",
         position_word(trade.side),

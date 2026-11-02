@@ -54,6 +54,19 @@ impl FontRole {
         Self::Drawing,
     ];
 
+    /// Fixed design units for existing painter hierarchies, not theme defaults.
+    /// Changing the bundled document must change sizes just like an external file.
+    pub const fn reference_size(self) -> f32 {
+        match self {
+            Self::Heading => 18.0,
+            Self::Body | Self::Button => 12.5,
+            Self::Monospace | Self::Drawing => 12.0,
+            Self::Small => 9.0,
+            Self::ChartAxis | Self::ChartLabel => 11.0,
+            Self::Footprint => 10.0,
+        }
+    }
+
     pub const fn key(self) -> &'static str {
         match self {
             Self::Heading => "heading",
@@ -81,6 +94,19 @@ impl Default for Typography {
 impl Typography {
     pub fn get(&self, role: FontRole) -> FontSpec {
         self.0[role as usize]
+    }
+
+    /// Preserve each painter's established hierarchy while changing its role.
+    /// Reference sizes are fixed design units; the configured role remains authoritative.
+    pub fn at_size(&self, role: FontRole, reference_size: f32) -> FontSpec {
+        FontSpec {
+            size: reference_size * self.scale(role),
+            ..self.get(role)
+        }
+    }
+
+    pub fn scale(&self, role: FontRole) -> f32 {
+        self.get(role).size / role.reference_size()
     }
 
     pub(crate) fn resolve(
@@ -132,5 +158,30 @@ impl Typography {
             }
         }
         Ok(result)
+    }
+}
+
+/// Text-dependent reservations shared by chart input and painting.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AxisMetrics {
+    pub gutter: f32,
+    pub strip: f32,
+}
+impl Default for AxisMetrics {
+    fn default() -> Self {
+        Self::new(&Typography::default())
+    }
+}
+impl AxisMetrics {
+    pub fn new(typography: &Typography) -> Self {
+        let scale = typography.scale(FontRole::ChartAxis);
+        let width = match typography.get(FontRole::ChartAxis).family {
+            FontFamily::Monospace => 1.0,
+            FontFamily::Proportional => 1.0 / 0.6,
+        };
+        Self {
+            gutter: 64.0 * scale * width,
+            strip: 24.0 * scale,
+        }
     }
 }

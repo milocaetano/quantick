@@ -283,7 +283,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
             egui::pos2(x, mid),
             egui::Align2::LEFT_CENTER,
             caret,
-            egui::FontId::proportional(10.0),
+            palette.body_font(10.0),
             palette.text_faint(),
         );
         x += 14.0;
@@ -292,7 +292,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
                 egui::pos2(x, mid),
                 egui::Align2::LEFT_CENTER,
                 glyph,
-                egui::FontId::proportional(10.0),
+                palette.body_font(10.0),
                 color,
             );
         }
@@ -300,7 +300,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
         let rights = count_and_net(head.count, &head.net.1);
         paint_fitted(
             painter,
-            egui::FontId::monospace(10.0),
+            palette.mono_font(10.0),
             [x, rect.right() - 6.0, mid],
             &[&head.label],
             &[&rights[0], &rights[1]],
@@ -471,7 +471,7 @@ pub(super) fn draw_hidden_live(ui: &mut egui::Ui, hidden: usize) {
             egui::pos2(rect.left() + SESSION_INDENT_PX, rect.center().y),
             egui::Align2::LEFT_CENTER,
             format!("current session · {hidden} hidden by filter"),
-            egui::FontId::monospace(10.0),
+            palette.mono_font(10.0),
             palette.text_faint(),
         );
     }

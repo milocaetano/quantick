@@ -17,7 +17,7 @@ pub use document::{ColorValue, PremultipliedValue, ResolvedTheme, ThemeDocument}
 pub use error::ThemeError;
 pub use palette::Token;
 pub use state::{Appearance, ApplyOutcome, Inheritance};
-pub use typography::{FontFamily, FontOverride, FontRole, FontSpec, Typography};
+pub use typography::{AxisMetrics, FontFamily, FontOverride, FontRole, FontSpec, Typography};
 
 pub const DARK: &str = include_str!("../themes/dark.toml");
 pub const LIGHT: &str = include_str!("../themes/light.toml");

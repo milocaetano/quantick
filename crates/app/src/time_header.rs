@@ -128,7 +128,7 @@ pub fn draw(
             let chip = content.add(
                 egui::Button::new(
                     egui::RichText::new(label)
-                        .font(egui::FontId::monospace(PRESET_SIZE))
+                        .font(palette.mono_font(PRESET_SIZE))
                         .color(ink),
                 )
                 .frame(false),

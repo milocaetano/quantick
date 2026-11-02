@@ -126,7 +126,7 @@ impl PaintCtx<'_> {
         );
         let galley =
             self.painter
-                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), ink);
+                .layout_no_wrap(text.to_owned(), self.palette.mono_font(11.0), ink);
         let text_pos = egui::pos2(self.axis_x + 6.0, chip_y - galley.size().y / 2.0);
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
@@ -185,7 +185,7 @@ impl PaintCtx<'_> {
         let ink = if ghost { fill } else { palette.chip_ink() };
         let galley =
             self.painter
-                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), ink);
+                .layout_no_wrap(text.to_owned(), self.palette.mono_font(11.0), ink);
         let half = TAG_HEIGHT_PX / 2.0;
         let center_y = clamp_tag_center(y, self.chart_rect.top(), self.chart_rect.bottom());
         let right = self.tag_right - TAG_GAP_PX;
@@ -220,7 +220,7 @@ impl PaintCtx<'_> {
             button.center(),
             egui::Align2::CENTER_CENTER,
             "×",
-            egui::FontId::monospace(11.0),
+            palette.mono_font(11.0),
             ink,
         );
         // A hairline of ink between the words and the ✕, so the zone reads
@@ -230,15 +230,7 @@ impl PaintCtx<'_> {
                 egui::pos2(button.left(), full.top() + 4.0),
                 egui::pos2(button.left(), full.bottom() - 4.0),
             ],
-            egui::Stroke::new(
-                1.0_f32,
-                egui::Color32::from_rgba_unmultiplied(
-                    ink.r(),
-                    ink.g(),
-                    ink.b(),
-                    CLOSE_DIVIDER_ALPHA,
-                ),
-            ),
+            egui::Stroke::new(1.0_f32, theme::with_opacity(ink, CLOSE_DIVIDER_ALPHA)),
         );
     }
 
@@ -254,7 +246,7 @@ impl PaintCtx<'_> {
         points: Option<(String, egui::Color32)>,
     ) -> egui::Rect {
         let palette = &self.palette;
-        let font = egui::FontId::monospace(11.0);
+        let font = palette.mono_font(11.0);
         let side_galley =
             self.painter
                 .layout_no_wrap(side_text.to_owned(), font.clone(), side_color);
@@ -316,7 +308,7 @@ impl PaintCtx<'_> {
             button.center(),
             egui::Align2::CENTER_CENTER,
             "×",
-            egui::FontId::monospace(11.0),
+            palette.mono_font(11.0),
             if over_button {
                 palette.text_primary()
             } else {
@@ -350,7 +342,7 @@ impl PaintCtx<'_> {
             rect.center(),
             egui::Align2::CENTER_CENTER,
             label,
-            egui::FontId::monospace(9.0),
+            palette.mono_font(9.0),
             if hovered {
                 palette.text_primary()
             } else {

@@ -22,14 +22,29 @@ Completed through the consumer checkpoint:
 - Runtime `app::theme` color constants are gone; the small remaining constants
   module is compiled only for historical Dark regression tests.
 
+Completed in the typography checkpoint:
+
+- Header/rail/loading/report/ticket and chart/indicator text painters use resolved
+  role-relative fonts, preserving historical Dark sizes and families. Plot input
+  and painting share configured axis reservations. Footprint LOD, row merging and
+  fitted text share headless `FootprintText` budgets.
+- Loading text/dots/logo and footprint profile/bevel/total ink plus crosshair ink
+  have explicit Dark/Light tokens. Logo ramp conversion is cached on changes.
+- Feed recovery report/recovery decisions and six tests moved to `feed::notice_report`.
+  Footprint fitting and logo color projection live in chart; alpha composition and
+  typography/layout policy live in appearance.
+
 Required next migration:
 
-- Direct non-token color literals remain: loading greys, paper shading/halos,
-  footprint bevel/outline/background ink, and orderflow gradients/bubble palettes.
+- Direct non-token color literals remain, especially orderflow gradients/bubble
+  palettes, caption shadows and overlays.
   Audit ordinary egui cursor, disabled, selection and hovered defaults as well.
-- Most explicit FontId/RichText size calls still use historical design metrics.
-  Match existing sizes/families before assigning semantic roles, and update
-  typography-dependent footprint LOD thresholds and axis/gutter measurements.
+- Remaining text candidates: cached FLOW quantity labels, bubble labels, orderflow
+  legends/preview/heatmap/tape annotations, indicator picker/preview and menu text.
+  Icon glyph dimensions and authored drawing/script text are intentional geometry
+  or object properties. Fixed report row/header heights still need a large-font
+  layout audit; measured elision is configured, but fixed-height rows may clip at
+  extreme supported role sizes. Full text-layout acceptance is not claimed.
 - Chart/candle/canvas, orderflow/bubble/footprint saved knobs still require per-field
   inheritance provenance. Legacy saved values are explicit; width-only edits must
   not freeze colors. New drawing defaults must inherit unless saved user defaults

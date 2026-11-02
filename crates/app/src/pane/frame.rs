@@ -22,6 +22,7 @@ use crate::bands::Bands;
 /// neither: a pane is a place, not a value, and the bands it last painted
 /// hold no cheaper copy than the draw that produced them.
 pub struct PaneFrame {
+    pub axis_metrics: quantick_appearance::AxisMetrics,
     /// The lane's divider last frame, and the handle that resizes it: `None` means
     /// no lane. The input pass runs before the draw computes it.
     pub lane_divider_x: Option<f32>,
@@ -105,6 +106,7 @@ impl Default for PaneFrame {
     /// published a height, and a zero height there is a division by zero.
     fn default() -> Self {
         Self {
+            axis_metrics: Default::default(),
             lane_divider_x: None,
             candles_right: None,
             flow_legend: None,

@@ -149,7 +149,7 @@ pub(crate) fn time_tag(
     let palette = theme::get(painter.ctx());
     let bar = readout.bar?;
     let full = crate::plot_area::fmt_pointer_time(bar.open_time_unix_ms, bar.interval_ms, tz);
-    let font = egui::FontId::monospace(chart::TIME_LABEL_FONT_PX);
+    let font = palette.axis_font(chart::TIME_LABEL_FONT_PX);
     let galley = painter.layout_no_wrap(full.clone(), font, palette.text_primary());
     // Monospace: one character of the full tag measures every shorter form.
     let char_width = galley.size().x / full.chars().count().max(1) as f32;
@@ -244,11 +244,8 @@ pub(crate) fn paint_price_tag(
     fill: egui::Color32,
     ink: egui::Color32,
 ) {
-    let galley = painter.layout_no_wrap(
-        text,
-        egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
-        ink,
-    );
+    let palette = theme::get(painter.ctx());
+    let galley = painter.layout_no_wrap(text, palette.axis_font(chart::AXIS_LABEL_FONT_PX), ink);
     let text_pos = egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y - galley.size().y / 2.0);
     let background = egui::Rect::from_min_size(text_pos - TAG_PAD, galley.size() + TAG_PAD * 2.0);
     painter.rect_filled(background, egui::Rounding::same(TAG_ROUNDING), fill);
@@ -318,7 +315,7 @@ pub(crate) fn paint_time_mark(
     // week or month chart, to the date. Shortened only when the strip is.
     let galley = painter.layout_no_wrap(
         text,
-        egui::FontId::monospace(chart::TIME_LABEL_FONT_PX),
+        palette.axis_font(chart::TIME_LABEL_FONT_PX),
         palette.text_primary(),
     );
     let size = galley.size();

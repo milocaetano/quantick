@@ -135,7 +135,7 @@ pub(crate) fn draw_month(
                         rect.center(),
                         egui::Align2::CENTER_CENTER,
                         weekday_abbr(weekday),
-                        egui::FontId::monospace(9.0),
+                        palette.mono_font(9.0),
                         palette.text_faint(),
                     );
                 }
@@ -224,7 +224,7 @@ fn draw_day_cell(
         egui::pos2(body.center().x, body.top() + DAY_NUMBER_BASELINE_PX),
         egui::Align2::CENTER_CENTER,
         format!("{day}"),
-        egui::FontId::monospace(11.0),
+        palette.mono_font(11.0),
         ink,
     );
     if let Some(stat) = stat {
@@ -232,7 +232,7 @@ fn draw_day_cell(
             egui::pos2(body.center().x, body.bottom() - DAY_COUNT_BASELINE_PX),
             egui::Align2::CENTER_CENTER,
             format!("{}", stat.trades),
-            egui::FontId::monospace(8.0),
+            palette.mono_font(8.0),
             palette.text_faint(),
         );
     }

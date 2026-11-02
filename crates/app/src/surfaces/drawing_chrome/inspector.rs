@@ -559,7 +559,7 @@ fn title_bar(
                 ),
                 egui::Align2::LEFT_CENTER,
                 icons::DOTS_SIX_VERTICAL,
-                egui::FontId::proportional(INSPECTOR_TITLE_GRIP_GLYPH_PX),
+                palette.body_font(INSPECTOR_TITLE_GRIP_GLYPH_PX),
                 palette.text_faint(),
             );
         }
@@ -572,7 +572,7 @@ fn title_bar(
             egui::pos2(bar_rect.left() + title_x, bar_rect.center().y),
             egui::Align2::LEFT_CENTER,
             title,
-            egui::FontId::proportional(INSPECTOR_TITLE_TEXT_PX),
+            palette.body_font(INSPECTOR_TITLE_TEXT_PX),
             palette.text_primary(),
         );
     }

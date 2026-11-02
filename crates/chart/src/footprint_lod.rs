@@ -9,6 +9,8 @@
 //! level is dropped. Every answer here is a pure function of pixels; the
 //! window asks, then paints.
 
+pub mod typography;
+
 pub use crate::constants::{
     AXIS_CLEARANCE_PX, COMPACT_FROM_PX, COMPACT_MIN_ROW, COMPACT_MIN_WIDTH, DETAILED_FROM_PX,
     DETAILED_MIN_ROW, DETAILED_MIN_WIDTH, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX,

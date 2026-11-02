@@ -18,7 +18,7 @@ use crate::drawings::{self, Drawings};
 use crate::indicator_worker::{IndicatorWorker, LaneTransport, SlotId};
 use crate::indicators::{IndicatorViews, PaneSizing};
 use crate::orderflow_view::OrderflowView;
-use crate::plot_area::{PlotAreas, plot_split};
+use crate::plot_area::{PlotAreas, plot_split_with_metrics};
 use crate::price_view::PriceView;
 use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::style::ChartStyle;
@@ -459,10 +459,11 @@ impl ChartPane {
     /// the renderer can never disagree about a boundary.
     pub(super) fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
         let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
-        let mut areas = plot_split(
+        let mut areas = plot_split_with_metrics(
             area,
             self.live_strip_width(capabilities),
             self.indicators.pane_sizing(&mut sizing),
+            self.frame.axis_metrics,
         );
         areas.capsules = self.frame.capsules;
         areas
@@ -548,6 +549,8 @@ impl ChartPane {
         let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
+        self.frame.axis_metrics =
+            quantick_appearance::AxisMetrics::new(&crate::theme::get(ui.ctx()).resolved.typography);
         self.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
         self.frame.chart_area = Some(areas.chart);

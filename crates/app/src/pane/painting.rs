@@ -147,7 +147,7 @@ pub fn draw_live_chip(painter: &egui::Painter, rect: egui::Rect) {
         rect.center(),
         egui::Align2::CENTER_CENTER,
         "» live",
-        egui::FontId::proportional(11.0),
+        palette.label_font(11.0),
         palette.chip_ink(),
     );
 }

@@ -44,7 +44,7 @@ pub fn paint_placement_hint(
         .map_or_else(|| format!("{placed}/{required}"), str::to_owned);
     let galley = painter.layout_no_wrap(
         text,
-        egui::FontId::proportional(HINT_TEXT_PX),
+        palette.label_font(HINT_TEXT_PX),
         palette.text_primary(),
     );
     let size = galley.size() + egui::vec2(2.0 * HINT_PAD_X_PX, 2.0 * HINT_PAD_Y_PX);

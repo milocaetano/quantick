@@ -53,7 +53,7 @@ pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
         egui::pos2(rect.left() + 2.0, rect.bottom() - 4.0),
         egui::Align2::LEFT_BOTTOM,
         format!("{label} · {count}"),
-        egui::FontId::monospace(10.0),
+        palette.mono_font(10.0),
         palette.text_faint(),
     );
 }
@@ -110,7 +110,7 @@ pub(super) fn draw_day_header(
         } else {
             icons::CARET_DOWN
         },
-        egui::FontId::proportional(10.0),
+        palette.body_font(10.0),
         palette.text_faint(),
     );
     // A narrow panel shortens the date first, then drops the points
@@ -128,7 +128,7 @@ pub(super) fn draw_day_header(
     ];
     paint_fitted(
         painter,
-        egui::FontId::monospace(10.0),
+        palette.mono_font(10.0),
         ends,
         &[&date.long(), &date.short()],
         &[&rights[0], &rights[1]],
@@ -171,7 +171,7 @@ pub(super) fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
         body.center(),
         egui::Align2::CENTER_CENTER,
         format!("{}  show older · {remaining} more saved", icons::CARET_DOWN),
-        egui::FontId::monospace(10.0),
+        palette.mono_font(10.0),
         palette.text_muted(),
     );
     response
@@ -260,7 +260,7 @@ struct RowLines {
 
 fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     let palette = theme::get(painter.ctx());
-    let font = egui::FontId::monospace(11.0);
+    let font = palette.mono_font(11.0);
     let x = rect.left() + SIDE_RAIL_WIDTH_PX + 6.0;
     let y1 = rect.top() + 9.0;
     let y2 = rect.top() + 24.0;
@@ -281,7 +281,7 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
         )
     });
     let tag = (lines.tag).map(|tag| piece(tag, font.clone(), palette.text_faint(), 4.0));
-    let glyph_font = egui::FontId::proportional(10.0);
+    let glyph_font = palette.body_font(10.0);
     let marker = (lines.marker)
         .map(|(glyph, color)| piece(glyph.to_owned(), glyph_font, color, DETAIL_GAP_PX));
     let span = |piece: &Option<(Arc<egui::Galley>, _, f32)>| {
@@ -313,7 +313,7 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     // The detail line and its stamp share one row from opposite ends.
     let ends = [x, rect.right() - DETAIL_RIGHT_PAD_PX, y2];
     let stamp = lines.stamp.as_deref().unwrap_or_default();
-    let font = egui::FontId::monospace(10.0);
+    let font = palette.mono_font(10.0);
     paint_fitted(
         painter,
         font,
@@ -453,7 +453,7 @@ pub(super) fn draw_ledger_row(
             nav_rect.center(),
             egui::Align2::CENTER_CENTER,
             icons::ARROW_UP_RIGHT,
-            egui::FontId::proportional(11.0),
+            palette.body_font(11.0),
             if nav.hovered() {
                 palette.text_primary()
             } else {

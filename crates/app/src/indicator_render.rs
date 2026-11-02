@@ -332,7 +332,7 @@ pub(crate) fn draw_pane(
             band.center(),
             egui::Align2::CENTER_CENTER,
             format!("{} — warming up", view.label()),
-            egui::FontId::proportional(PANE_LABEL_FONT_PX),
+            palette.label_font(PANE_LABEL_FONT_PX),
             palette.text_muted(),
         );
         return;
@@ -387,7 +387,7 @@ pub(crate) fn draw_pane(
         pane.left_top() + PANE_LABEL_INSET_PX,
         egui::Align2::LEFT_TOP,
         format!("{EXPANDED_CHEVRON} {}", view.label()),
-        egui::FontId::proportional(PANE_LABEL_FONT_PX),
+        palette.label_font(PANE_LABEL_FONT_PX),
         palette.text_muted(),
     );
     if let Some(last) = last_value(view) {
@@ -395,7 +395,7 @@ pub(crate) fn draw_pane(
             band.right_top() + egui::vec2(-PANE_LABEL_INSET_PX.x, PANE_LABEL_INSET_PX.y),
             egui::Align2::RIGHT_TOP,
             format_value(last),
-            egui::FontId::monospace(PANE_LABEL_FONT_PX),
+            palette.axis_font(PANE_LABEL_FONT_PX),
             palette.text_muted(),
         );
     }
@@ -410,7 +410,7 @@ pub(crate) fn draw_pane(
 /// disclosure points.
 fn draw_collapsed_pane(painter: &egui::Painter, band: Rect, view: &IndicatorView) {
     let palette = theme::get(painter.ctx());
-    let font = egui::FontId::proportional(PANE_LABEL_FONT_PX);
+    let font = palette.label_font(PANE_LABEL_FONT_PX);
     let y = band.center().y;
     painter.text(
         pos2(band.left() + PANE_LABEL_INSET_PX.x, y),
@@ -424,7 +424,7 @@ fn draw_collapsed_pane(painter: &egui::Painter, band: Rect, view: &IndicatorView
             pos2(band.right() - PANE_LABEL_INSET_PX.x, y),
             egui::Align2::RIGHT_CENTER,
             format_value(last),
-            egui::FontId::monospace(PANE_LABEL_FONT_PX),
+            palette.axis_font(PANE_LABEL_FONT_PX),
             palette.text_muted(),
         );
     }
@@ -528,7 +528,7 @@ fn draw_pane_axis(
     let palette = theme::get(painter.ctx());
     let pane = frame.rect;
     let (lo, hi) = scale.range();
-    let font = egui::FontId::monospace(crate::chart::AXIS_LABEL_FONT_PX);
+    let font = palette.axis_font(crate::chart::AXIS_LABEL_FONT_PX);
     for (tick, label) in crate::chart::axis_labels(lo, hi, pane.height()) {
         let y = scale.y(tick);
         clipped.line_segment(

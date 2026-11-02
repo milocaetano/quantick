@@ -43,12 +43,32 @@ groups are:
 | `seam_line`, `seam_label`, `day_rule`, `gap_line`, `gap_label` | Tape provenance, day changes and missing-data marks |
 | `tag_bg`, `chip_ink`, `casing` | Axis/tool tags, chip text and readable underlays |
 | `draw_violet`, `draw_cyan` | Drawing colors distinct from market direction |
+| `loading_title`, `loading_meta`, `loading_faint`, `loading_border` | Loading text, connection dots and outlines |
+| `loading_logo_low`, `loading_logo_high` | Cached endpoints for the decorative loading logo |
+| `footprint_profile`, `footprint_total_ink`, `footprint_bevel_highlight`, `footprint_bevel_shadow` | Footprint silhouettes, totals and raised cell edges |
+| `crosshair_ink` | Crosshair price tag text |
 
 Typography tables use `family = "proportional"` or `"monospace"` and `size` in
 logical pixels, from 6 through 72 inclusive. Each property can be omitted.
 Supported roles are `heading`, `body`, `button`, `monospace`, `small`,
 `chart_axis`, `chart_label`, `footprint`, and `drawing`. Family selection uses
 bundled fonts; it does not load a path or remove icon fonts and fallback glyphs.
+
+Custom painters retain their historical hierarchy as fixed reference units: heading
+18, body/button 12.5, monospace/drawing 12, small 9, chart axis/label 11, and
+footprint 10. A nominal 10-pixel body caption paints at `10 * body.size / 12.5`.
+These denominators are historical ratios, independent of the bundled document:
+editing Dark's own configured size changes its output just like an external theme.
+Configured families apply to both measurement and painting. Axis reservations grow
+with their role, and footprint row/width floors and fitted fonts share one budget.
+Variable-width footprint digits use a conservative one-em width budget. Authored
+drawing text and script object typography remain stored object properties; ambient
+roles must not resize an existing drawing.
+
+The `dark` flag also chooses egui's base cursor, disabled text, window shadows and
+other widget defaults. Quantick then applies its semantic surface, text, hover,
+selection and link colors. Presentation opacity composes with configured alpha;
+it does not reinterpret premultiplied channels as straight RGB.
 
 ## Footprint heat
 
