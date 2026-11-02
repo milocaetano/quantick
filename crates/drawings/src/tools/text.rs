@@ -5,7 +5,7 @@
 //! muted type — never nothing, because an invisible object the trader cannot
 //! find to delete is worse than a visible empty one.
 
-use crate::{Align2, FontSpec, MarkScene, pos2, Px, PxRect, vec2};
+use crate::{Align2, FontSpec, FontFamily, MarkScene, pos2, Px, PxRect, vec2};
 use quantick_chart::style::PremultipliedRgba;
 use std::any::Any;
 
@@ -21,8 +21,8 @@ pub(super) struct Text;
 /// Shown when the note has no words yet.
 pub const PLACEHOLDER: &str = "Note";
 const DEFAULT_TEXT_PX: f32 = 12.0;
-pub const MIN_TEXT_PX: f32 = 8.0;
-pub const MAX_TEXT_PX: f32 = 28.0;
+pub const MIN_TEXT_PX: f32 = 6.0;
+pub const MAX_TEXT_PX: f32 = 72.0;
 /// How far the note's baseline sits above its anchor, so the anchor marks the
 /// price and the words do not cover it.
 const TEXT_LIFT_PX: f32 = 4.0;
@@ -33,6 +33,7 @@ const TEXT_HIT_PAD_PX: f32 = 3.0;
 pub struct TextPayload {
     pub text: String,
     pub size_px: f32,
+    pub family: FontFamily,
 }
 
 impl Default for TextPayload {
@@ -40,11 +41,20 @@ impl Default for TextPayload {
         Self {
             text: String::new(),
             size_px: DEFAULT_TEXT_PX,
+            family: FontFamily::Proportional,
         }
     }
 }
 
 impl DrawingPayload for TextPayload {
+    fn apply_theme_defaults(&mut self, theme: &quantick_appearance::ResolvedTheme) {
+        let font = theme.typography.get(quantick_appearance::FontRole::Drawing);
+        self.size_px = font.size;
+        self.family = match font.family {
+            quantick_appearance::FontFamily::Proportional => FontFamily::Proportional,
+            quantick_appearance::FontFamily::Monospace => FontFamily::Monospace,
+        };
+    }
     fn clone_box(&self) -> Box<dyn DrawingPayload> {
         Box::new(self.clone())
     }
@@ -69,12 +79,22 @@ impl DrawingPayload for TextPayload {
             "size_px".to_owned(),
             toml::Value::Float(f64::from(self.size_px)),
         );
+        table.insert("family".into(), toml::Value::String(match self.family {
+            FontFamily::Proportional => "proportional", FontFamily::Monospace => "monospace",
+        }.into()));
         Some(toml::Value::Table(table))
     }
     fn import_preset(&mut self, value: &toml::Value) -> bool {
         let Some(size) = value.get("size_px").and_then(toml::Value::as_float) else {
             return false;
         };
+        let family = match value.get("family").and_then(toml::Value::as_str) {
+            None | Some("proportional") => FontFamily::Proportional,
+            Some("monospace") => FontFamily::Monospace,
+            Some(_) => return false,
+        };
+        if !size.is_finite() { return false; }
+        self.family = family;
         self.size_px = (size as f32).clamp(MIN_TEXT_PX, MAX_TEXT_PX);
         true
     }
@@ -194,7 +214,7 @@ impl MarkTool for Text {
             *anchor - vec2(0.0, TEXT_LIFT_PX),
             Align2::LEFT_BOTTOM,
             text.to_owned(),
-            FontSpec::proportional(payload.size_px),
+            FontSpec { size_px: payload.size_px, family: payload.family },
             color,
         );
     }
@@ -283,14 +303,17 @@ mod tests {
         let source = TextPayload {
             text: "do not travel".to_owned(),
             size_px: 20.0,
+            family: FontFamily::Monospace,
         };
         let exported = source.export_preset().expect("text exports a preset");
         let mut target = TextPayload {
             text: "mine".to_owned(),
             size_px: DEFAULT_TEXT_PX,
+            family: FontFamily::Proportional,
         };
         assert!(target.import_preset(&exported));
         assert_eq!(target.size_px, 20.0);
+        assert_eq!(target.family, FontFamily::Monospace);
         assert_eq!(target.text, "mine", "the preset must not paste words");
     }
 

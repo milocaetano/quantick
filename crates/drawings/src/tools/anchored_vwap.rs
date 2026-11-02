@@ -326,6 +326,7 @@ impl MarkTool for AnchoredVwapTool {
     fn price_band_only(&self) -> bool {
         true
     }
+    fn default_color_token(&self) -> quantick_appearance::Token { quantick_appearance::Token::DrawCyan }
     fn default_color(&self) -> Option<PremultipliedRgba> {
         Some(AVWAP_DEFAULT_COLOR)
     }

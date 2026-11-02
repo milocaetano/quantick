@@ -112,6 +112,24 @@ impl ThemeDocument {
                 .ok_or_else(|| ThemeError::new(&field, "unknown semantic color"))?;
             colors[token as usize] = value.resolve(&field)?;
         }
+        // These semantic fields cross existing RGB style/preset boundaries.
+        // Reject unsupported alpha before publishing any part of the theme.
+        for token in [
+            Token::Canvas,
+            Token::Control,
+            Token::Buy,
+            Token::Sell,
+            Token::CandleBullOutline,
+            Token::CandleBearOutline,
+            Token::CandleWick,
+        ] {
+            if colors[token as usize].to_array()[3] != 255 {
+                return Err(ThemeError::new(
+                    format!("colors.{}", token.key()),
+                    "must be opaque: chart styles and saved candle presets use RGB",
+                ));
+            }
+        }
         Ok(ResolvedTheme {
             name: self.name.clone(),
             dark: self.dark,

@@ -414,3 +414,28 @@ fn presentation_opacity_preserves_opaque_bytes_and_composes_configured_alpha() {
     }
     assert_eq!(with_opacity(color::TRANSPARENT, 128), color::TRANSPARENT);
 }
+
+#[test]
+fn rgb_style_fields_reject_alpha_before_publication() {
+    for token in [
+        Token::Canvas,
+        Token::Control,
+        Token::Buy,
+        Token::Sell,
+        Token::CandleBullOutline,
+        Token::CandleBearOutline,
+        Token::CandleWick,
+    ] {
+        let mut appearance = Appearance::default();
+        let before = appearance.resolved().clone();
+        let error = appearance
+            .apply(&format!(
+                "version = 1\nname = 'invalid'\n[colors]\n{} = '#12345680'",
+                token.key()
+            ))
+            .unwrap_err();
+        assert!(error.to_string().contains(token.key()));
+        assert_eq!(appearance.resolved(), &before);
+        assert_eq!(appearance.revision(), 0);
+    }
+}

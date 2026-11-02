@@ -268,6 +268,7 @@ fn assert_footprint_layering(
     let original_colours = [regional_colours(app, true), regional_colours(app, false)];
     app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
     app.runtime.style.canvas.background = [13, 17, 23];
+    app.runtime.style.ownership.background = quantick_appearance::Inheritance::Explicit;
     let pane = &mut app.active_tab_mut().flow_pane;
     pane.footprint.config = Some(crate::footprint_config::FootprintConfig {
         style: crate::footprint_config::FootprintStyle::Split,

@@ -92,7 +92,7 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
     // A look of the trader's own, saved and brought back.
     app.runtime.style.candles.gap_px = 4.5;
     app.runtime.style.canvas.grid_enabled = !original.canvas.grid_enabled;
-    let night: ChartStyle = app.runtime.style;
+    let night: ChartStyle = app.runtime.style.snapshot();
     let saved = success_result(&settings_call(
         &mut app,
         &mut client,
@@ -351,4 +351,37 @@ fn a_double_click_on_the_lane_divider_opens_no_settings() {
         !app.surfaces.chart_settings.is_open(),
         "the double click at {at:?} on the divider at {divider} opened the settings"
     );
+}
+
+#[test]
+fn the_frame_publishes_chart_and_new_drawing_defaults_together() {
+    use quantick_appearance::{Inheritance, Token};
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    run_frame(&mut app, &ctx);
+    let tool = crate::drawings::DrawingTool::by_id("text").unwrap();
+    let old = crate::drawings::new_drawing_from_defaults(&app.drawings.presets, tool);
+    let old_fill = app.runtime.style.candles.bull_fill;
+    app.runtime.style.ownership.bull_fill = Inheritance::Explicit;
+    app.runtime.style.candles.wick_width = 3.0;
+    app.runtime
+        .appearance
+        .apply(quantick_appearance::LIGHT)
+        .unwrap();
+    run_frame(&mut app, &ctx);
+    let theme = app.runtime.appearance.resolved();
+    assert_eq!(crate::theme::get(&ctx).resolved, *theme);
+    assert_eq!(
+        app.runtime.style.canvas.background_rgba(),
+        theme.color(Token::Canvas).to_array()
+    );
+    assert_eq!(app.runtime.style.candles.bull_fill, old_fill);
+    assert_eq!(app.runtime.style.candles.wick_width, 3.0);
+    let new = crate::drawings::new_drawing_from_defaults(&app.drawings.presets, tool);
+    assert_eq!(new.style.color, theme.color(Token::Accent));
+    assert_ne!(new.style.color, old.style.color);
+    assert_eq!(old.style, tool.default_style());
+    let revision = app.runtime.style_revision;
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.runtime.style_revision, revision);
 }

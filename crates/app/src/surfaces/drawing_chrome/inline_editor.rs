@@ -203,7 +203,20 @@ fn draw_inner(
                 .show(ui, |ui| {
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut buffer)
-                            .font(egui::FontId::proportional(size_px))
+                            .font(egui::FontId::new(
+                                size_px,
+                                match drawing
+                                    .payload
+                                    .as_any()
+                                    .downcast_ref::<quantick_drawings::TextPayload>()
+                                    .map(|payload| payload.family)
+                                {
+                                    Some(quantick_drawings::FontFamily::Monospace) => {
+                                        egui::FontFamily::Monospace
+                                    }
+                                    _ => egui::FontFamily::Proportional,
+                                },
+                            ))
                             .text_color(color)
                             .hint_text(INLINE_TEXT_HINT)
                             .desired_rows(1)

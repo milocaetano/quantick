@@ -662,6 +662,7 @@ fn squeezing_shows_more_bars_and_never_merges_any() {
         outline_opacity: 1.0,
         ..Default::default()
     };
+    app.runtime.style = app.runtime.style.snapshot();
     let ctx = egui::Context::default();
     for depth_visible in [false, true] {
         app.active_tab_mut()
@@ -781,7 +782,7 @@ fn candle_appearance_change_is_render_only() {
     let capture_epoch = app.active_tab().book_capture_epoch;
     let bar_spec = *app.active_tab().flow_pane.state.spec();
 
-    app.runtime.style.candles = CandlePreset::OutlineOnly.style();
+    app.runtime.style.apply_preset(CandlePreset::OutlineOnly);
     app.runtime.style_revision = app.runtime.style_revision.saturating_add(1);
     crate::app::health::emit_style_changed(
         &app.runtime.style,

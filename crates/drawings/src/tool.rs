@@ -168,6 +168,9 @@ pub trait MarkTool: Sync {
     /// that arrives blue is one the trader repaints every single time. The
     /// trader's own saved default still wins over this, because that one was
     /// chosen rather than assumed.
+    fn default_color_token(&self) -> quantick_appearance::Token {
+        quantick_appearance::Token::Accent
+    }
     fn default_color(&self) -> Option<PremultipliedRgba> {
         None
     }
@@ -860,6 +863,13 @@ impl crate::ToolCatalog for DrawingTool {
     }
     fn default_style(self) -> DrawingStyle {
         Self::default_style(self)
+    }
+    fn themed_style(self, theme: Option<&quantick_appearance::ResolvedTheme>) -> DrawingStyle {
+        let mut style = self.default_style();
+        if let Some(theme) = theme {
+            style.color = theme.color(self.0.default_color_token());
+        }
+        style
     }
     fn band_for(self, band: &DrawingBand) -> DrawingBand {
         Self::band_for(self, band)

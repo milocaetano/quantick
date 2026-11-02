@@ -45,10 +45,9 @@ Required next migration:
   or object properties. Fixed report row/header heights still need a large-font
   layout audit; measured elision is configured, but fixed-height rows may clip at
   extreme supported role sizes. Full text-layout acceptance is not claimed.
-- Chart/candle/canvas, orderflow/bubble/footprint saved knobs still require per-field
-  inheritance provenance. Legacy saved values are explicit; width-only edits must
-  not freeze colors. New drawing defaults must inherit unless saved user defaults
-  apply. Authored drawings, scripts, indicators and presets retain their colors.
+- Orderflow/bubble/footprint saved knobs still require per-field inheritance
+  provenance. Chart/candle/canvas and new drawing defaults are implemented below;
+  authored drawings, scripts, indicators and presets retain their colors.
 - Expose discoverable inspect/apply operations, atomically persist before live
   publication, and invalidate any cached painted text/meshes on palette revision.
 - Independent Dark/Light visual and performance acceptance remains outstanding.
@@ -161,3 +160,34 @@ Scan candidates at this checkpoint:
 | `crates/app/src/widgets.rs:270` | 2 |
 
 Total: 346 matches in 99 files.
+
+
+## Provenance checkpoint
+
+Chart candle fill/outline/wick, background and grid now resolve inherited fields
+through `chart::style::ChartColorOwnership` with a theme/input change gate. UI color
+edits mark only the changed field; geometry edits do not freeze colors. Built-in
+presets capture candles, saved presets capture the whole look, and persisted legacy
+concrete fields are explicit. Session chart edits still require a named preset for
+durability, matching the existing workflow.
+
+`drawings::PresetHost` supplies the retained theme for all default creation paths.
+Explicit saved style/configuration wins. New text captures size/family; legacy text
+keeps proportional font. Translucent saved drawing styles retain premultiplied bytes.
+Existing drawn-object and script-authored values remain snapshots.
+
+Still required: orderflow/bubble/footprint ownership and source-presence audit,
+orderflow colors and typography cache invalidation, enlarged-font layout fixes,
+discoverable atomic inspect/apply, and independent Dark/Light visual/performance
+validation. This checkpoint is not full appearance acceptance.
+
+Drawing decoration still needs a separate ambient/authored classification:
+`drawings::tools::text::shown` has the empty-note `TEXT_MUTED` placeholder;
+`drawings::tool` uses `SELECTION_HALO_COLOR`, `ACCENT` and `SELECTED_ANCHOR_FILL`
+for selection; `tools::anchored_vwap` uses `CANVAS` for its anchor core;
+`tools::measure_core` uses `BUY`/`SELL` and monospace `READOUT_TEXT_PX`;
+`tools::fib` uses monospace `FIB_LABEL_SIZE_PX`; `tools::fixed_range_profile` and
+its `paint` module use `CASING` and related text/profile decoration. Their shared
+`drawings::palette` aliases remain historical constants. Preserve authored object
+colors, level payloads, and existing text while resolving ambient decoration; do
+not infer ownership from equal colors or blindly scale existing mark geometry.

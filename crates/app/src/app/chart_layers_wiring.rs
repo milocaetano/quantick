@@ -81,7 +81,7 @@ impl LayerWiring<'_> {
             ChartSettingsInput::SaveCandlePreset { name } => {
                 let before = settings.candles.saved(&name);
                 settings.candles.save(&name, style_before)?;
-                list_changed = before != Some(style_before);
+                list_changed = before != Some(style_before.snapshot());
             }
             ChartSettingsInput::DeleteCandlePreset { name } => {
                 if crate::style::CandlePreset::from_name(&name).is_some() {

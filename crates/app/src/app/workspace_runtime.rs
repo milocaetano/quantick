@@ -11,6 +11,7 @@ use quantick_workspace::lifetime::{
 };
 
 pub(super) struct WorkspaceRuntime {
+    pub(super) chart_theme: quantick_chart::style::ChartThemeSync,
     pub(super) appearance: quantick_appearance::Appearance,
     pub(super) lifetime: WorkspaceLifetime,
     pub(super) tabs: super::ArrangementHost,
@@ -34,6 +35,7 @@ impl WorkspaceRuntime {
         reach_span_minutes: u32,
     ) -> Self {
         Self {
+            chart_theme: Default::default(),
             appearance: crate::theme::store::load(),
             lifetime: WorkspaceLifetime::new(super::WORKSPACE_ID),
             tabs: super::ArrangementHost::new(

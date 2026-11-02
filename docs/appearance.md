@@ -27,6 +27,11 @@ to preserve historical translucent colors exactly; it must not be used for
 ordinary straight-alpha values. Its channels are bytes, not floating-point
 fractions, and gamma-aware RGB channels can exceed the alpha byte.
 
+`canvas`, `control`, `buy`, `sell`, `candle_bull_outline`, `candle_bear_outline`
+and `candle_wick` must be opaque. These roles feed legacy RGB chart style and
+preset fields. A nonopaque value is rejected with the semantic field name before
+publication; alpha is never silently discarded.
+
 The complete stable color-key list is the `[colors]` table in Dark. Semantic
 groups are:
 
@@ -98,9 +103,8 @@ changes update text roles without replacing font definitions, so Phosphor icons
 and the bundled fallback chains remain installed.
 
 The [migration inventory](appearance-inventory.md) records completed boundaries
-and remaining candidate values. Runtime migration is in progress: the context adapter currently supplies base
-egui widgets and footprint heat. Remaining explicit chrome, chart, drawing and
-text consumers still require migration before this feature is complete.
+and remaining candidate values. Runtime migration is in progress: orderflow colors/cached typography, enlarged-font layout,
+and live inspect/apply still require integration before this feature is complete.
 
 ## Authoring example
 
@@ -141,6 +145,24 @@ default is still explicit tomorrow. Legacy styles with no provenance marker are
 explicit. Saved presets, existing drawings and authored script colors are not
 reclassified by comparing their RGB bytes to a theme. Changing the default only
 affects values whose owner records theme inheritance.
+
+Fresh chart candle colors, background and grid inherit independently. Editing
+width, opacity or visibility leaves color ownership unchanged; editing a color
+makes that field explicit. Choosing a built-in candle preset captures its candle
+colors but preserves canvas ownership. Restoring defaults resumes inheritance.
+Chart edits retain the existing session-only lifetime unless saved as a named
+preset. Saving a named preset captures the whole visible look, including canvas,
+without changing ownership of the live chart. Applying that saved preset restores
+its explicit snapshot. The stored chart document accepts per-field `ownership`
+markers (`theme` or `explicit`); missing legacy markers mean explicit.
+
+New drawings use semantic `accent`, buy/sell marks use `buy`/`sell`, and anchored
+VWAP uses `draw_cyan`. The text tool captures the `drawing` font role when created.
+Saved tool style, configuration and named default presets take precedence in that
+order; existing objects never follow subsequent theme changes. Text payloads store
+family and size; a legacy payload without family retains proportional text.
+Drawing defaults store opaque colors as legacy RGB hex and translucent colors as
+`color_premultiplied` bytes, preserving configured alpha without a lossy conversion.
 
 `quantick_stores::appearance` stores the source document at a host-supplied path.
 Its save operation validates first, writes a temporary sibling and renames it,
