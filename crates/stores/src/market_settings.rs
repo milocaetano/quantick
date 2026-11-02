@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 /// Beside `layouts.toml`: the file as it was before its drawings moved out, so
 /// an older build or a change of mind still has them. Written once, never over.
 const LAYOUTS_BACKUP_EXTENSION: &str = "toml.pre-market-settings";
+const LAYOUTS_BACKUP_TEMP_EXTENSION: &str = "toml.pre-market-settings.tmp";
 
 /// The gate a bundle section goes through.
 ///
@@ -251,7 +252,7 @@ fn keep_old_layouts(layouts_path: &Path) -> bool {
     }
     // Through a temp sibling: this file is trusted for merely existing, so a
     // copy cut short must never carry its name.
-    let temp = backup.with_extension("tmp");
+    let temp = layouts_path.with_extension(LAYOUTS_BACKUP_TEMP_EXTENSION);
     let copied = std::fs::copy(layouts_path, &temp)
         .and_then(|_| std::fs::OpenOptions::new().write(true).open(&temp))
         .and_then(|file| file.sync_all())
@@ -459,7 +460,12 @@ mod tests {
         let mut book = parse(LEGACY).unwrap();
         open(&home.market, &home.layouts, &mut book, asset);
         assert!(backup_path(&home.layouts).exists());
-        assert!(!backup_path(&home.layouts).with_extension("tmp").exists());
+        assert!(
+            !home
+                .layouts
+                .with_extension(LAYOUTS_BACKUP_TEMP_EXTENSION)
+                .exists()
+        );
     }
 
     #[test]

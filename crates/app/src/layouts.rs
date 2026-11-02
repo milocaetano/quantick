@@ -155,6 +155,7 @@ mod tests {
             symbol: "WINV26".to_owned(),
             pane: 2,
             id: Some(7),
+            fingerprint: 0,
         });
         let drawing = saved.to_drawing(DrawingId(1)).unwrap();
         assert_eq!(

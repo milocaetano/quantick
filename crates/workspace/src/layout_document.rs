@@ -185,6 +185,10 @@ pub struct SavedOrigin {
     /// The id it had there; the market store may have had to renumber it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<u64>,
+    /// Its tool and anchors as they were there, hashed: ids are local counters,
+    /// so another export can reuse one for a different mark.
+    #[serde(default)]
+    pub fingerprint: u32,
 }
 
 impl SavedOrigin {

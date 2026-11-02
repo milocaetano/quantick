@@ -4954,6 +4954,103 @@ fn a_context_chart_with_a_strategy_armed_keeps_its_drawings_through_a_recut() {
     assert!(!pane.strategies.anchors.is_empty(), "the instance is alive");
 }
 
+fn armed_rectangle(app: &mut QuantickApp, side: PaneSide) -> drawings::DrawingId {
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "rectangle")
+        .unwrap();
+    let pane = app.active_tab_mut().pane_mut(side);
+    pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
+    pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
+    let drawing = pane.drawings.items().last().unwrap().id;
+    let mut form =
+        crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+    form.window = 3;
+    form.min_range = "0".to_owned();
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            side,
+            drawing,
+            &form,
+            "BF".to_owned(),
+        )
+        .unwrap();
+    drawing
+}
+
+/// A chart held on its key by a live strategy is refreshed under that key when
+/// its twin edits it, never moved to the key of the bars it now shows.
+#[test]
+fn a_twin_edit_does_not_move_a_chart_held_by_a_strategy() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let bars = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(1))
+        .set_spec(bars);
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    let drawing = armed_rectangle(&mut app, PaneSide::Time(0));
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+
+    place_level(&mut app, PaneSide::Time(1), 300.0);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert!(
+        pane.drawings.index_of(drawing).is_some(),
+        "the region stayed"
+    );
+    assert_eq!(
+        pane.strategies.anchors.watching(),
+        1,
+        "the instance is alive"
+    );
+    assert_eq!(
+        pane.drawings.items().len(),
+        2,
+        "and the twin's level came over"
+    );
+}
+
+/// Once the strategy has stopped, the chart follows its bars again.
+#[test]
+fn a_chart_whose_strategy_stopped_follows_its_bars() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let drawing = armed_rectangle(&mut app, PaneSide::Time(0));
+    run_frame(&mut app, &ctx);
+    let _ = app
+        .active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .strategies
+        .anchors
+        .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert!(
+        pane.drawings.index_of(drawing).is_none(),
+        "put away under its bars"
+    );
+}
+
 /// An export from before the market store still imports: its drawings land on
 /// their markets, labelled, and a context pane claims what its address held.
 #[test]

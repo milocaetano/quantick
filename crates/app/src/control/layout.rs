@@ -168,7 +168,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         tab_descriptor(
             TAB_SWITCH_CAPABILITY_ID,
             "Switch layout tab",
-            "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and the market's drawings under it come out. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
+            "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and its drawings stay, being the market's. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
             generated_schema::<SwitchLayoutTabInput>(),
         ),
         tab_switch,

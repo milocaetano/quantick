@@ -185,6 +185,16 @@ fn two_equal_entries_without_ids_are_both_kept_once() {
     assert_eq!(settings.drawings(&btc).len(), 2);
 }
 
+/// Ids are local counters: another export can reuse one for a different mark.
+#[test]
+fn a_different_mark_under_a_reused_id_is_kept() {
+    let mut settings = absorbed();
+    let other = LEGACY.replace("price = 67000.5", "price = 70000.5");
+    let report = settings.absorb(&mut parse(&other).unwrap(), asset);
+    assert_eq!((report.moved, report.already_held), (1, 7));
+    assert_eq!(settings.drawing_count(), 9);
+}
+
 #[test]
 fn a_venue_is_part_of_the_market() {
     let settings = absorbed();

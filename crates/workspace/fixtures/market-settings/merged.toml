@@ -34,6 +34,7 @@ feed = "binance"
 symbol = "BTCUSDT"
 pane = 1
 id = 4
+fingerprint = 970607734
 
 [[drawings]]
 venue = "metatrader-b3"
@@ -74,6 +75,7 @@ feed = "metatrader-b3"
 symbol = "WIN$N"
 pane = 0
 id = 1
+fingerprint = 3886462910
 
 [[drawings.items]]
 id = 2
@@ -109,6 +111,7 @@ feed = "metatrader-b3"
 symbol = "WINV26"
 pane = 0
 id = 1
+fingerprint = 2255294308
 
 [[drawings.items]]
 id = 3
@@ -144,6 +147,7 @@ feed = "metatrader-b3"
 symbol = "WINV26"
 pane = 0
 id = 1
+fingerprint = 3886462910
 
 [[drawings]]
 venue = "metatrader-b3"
@@ -179,6 +183,7 @@ feed = "metatrader-b3"
 symbol = "WINV26"
 pane = 2
 id = 7
+fingerprint = 350919113
 
 [[drawings.items]]
 id = 8
@@ -209,6 +214,7 @@ feed = "metatrader-b3"
 symbol = "WINZ26"
 pane = 2
 id = 7
+fingerprint = 3991149232
 
 [[drawings.items]]
 tool = "a-tool-from-the-future"
@@ -237,6 +243,7 @@ layout = "Force Bar Only"
 feed = "metatrader-b3"
 symbol = "WINZ26"
 pane = 2
+fingerprint = 1687948569
 
 [[drawings]]
 venue = "replay"
@@ -273,3 +280,4 @@ feed = "replay"
 symbol = "WINZ26"
 pane = 0
 id = 2
+fingerprint = 2712303804

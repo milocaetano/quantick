@@ -280,8 +280,13 @@ impl MarketSettings {
                     symbol: symbol.clone(),
                     pane,
                     id: item.id,
+                    fingerprint: fingerprint(&item),
                 });
-                if let Some(index) = held_before.iter().position(|held| same_entry(held, &item)) {
+                // The source alone: a held entry may have moved or been re-saved since.
+                if let Some(index) = held_before
+                    .iter()
+                    .position(|held| held.origin == item.origin)
+                {
                     held_before.swap_remove(index);
                     report.already_held += 1;
                 } else {
@@ -328,22 +333,23 @@ fn legacy_role(pane: usize) -> PaneRole {
     }
 }
 
-/// The same entry from the same source. A source id settles it: a held entry
-/// may have been renumbered, moved or re-saved since. An entry from before ids
-/// travelled is told by its tool and where its anchors were placed.
-fn same_entry(held: &SavedDrawing, item: &SavedDrawing) -> bool {
-    let Some(origin) = &item.origin else {
-        return false;
+/// An entry's tool and anchors as a migration found them. FNV-1a: stable across
+/// builds and platforms, unlike the standard hasher, because it goes in the file.
+fn fingerprint(item: &SavedDrawing) -> u32 {
+    const OFFSET: u32 = 0x811c_9dc5;
+    const PRIME: u32 = 0x0100_0193;
+    let mut hash = OFFSET;
+    let mut feed = |bytes: &[u8]| {
+        for byte in bytes {
+            hash = (hash ^ u32::from(*byte)).wrapping_mul(PRIME);
+        }
     };
-    held.origin.as_ref() == Some(origin)
-        && (origin.id.is_some()
-            || (held.tool == item.tool
-                && held.points.len() == item.points.len()
-                && held
-                    .points
-                    .iter()
-                    .zip(&item.points)
-                    .all(|(a, b)| a.time_ms == b.time_ms && a.price == b.price)))
+    feed(item.tool.as_bytes());
+    for point in &item.points {
+        feed(&point.time_ms.unwrap_or(i64::MIN).to_le_bytes());
+        feed(&point.price.to_bits().to_le_bytes());
+    }
+    hash
 }
 
 /// Why a market settings file was refused; its `Display` is the sentence a reader sees.

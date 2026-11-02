@@ -95,7 +95,9 @@ pub(crate) fn object_row(
             // The merge said what it merged: this mark came from another
             // layout or contract of the market.
             ui.label(egui::RichText::new(origin).small())
-                .on_hover_text("Merged into this market from where it used to be kept");
+                .on_hover_text(format!(
+                    "Merged into this market: {origin}, where it used to be kept"
+                ));
         }
         if row.off_series {
             // The mark outlived the bars it was drawn on and the chart fades
