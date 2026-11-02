@@ -157,7 +157,8 @@ impl WorkspaceSaveAdapter<'_> {
     pub(super) fn write_standing_choices(&mut self) -> bool {
         let written =
             self.edit_workspace_file("UI_STATE_STANDING_WRITTEN", DocumentEdit::Bookmarks);
-        self.session.note_write(WritePurpose::Bookmarks, written);
+        // A choice is not a desk, so the session still reads as nothing saved.
+        self.session.note_write(WritePurpose::Favorites, written);
         written
     }
     /// Change one standing choice in the workspace file, leaving everything

@@ -876,7 +876,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let directory = gateway_test_directory("retry-every-optional");
     grant_annotate_for_test(
         &mut app,
-        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete",
+        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete,cockpit.desk",
     );
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let cockpit = options(
@@ -887,6 +887,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "cockpit.layout",
             "cockpit.recover",
             "cockpit.journal.delete",
+            "cockpit.desk",
         ],
     );
     let reachable: BTreeSet<&str> = retry_matrix::READBACKS

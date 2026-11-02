@@ -24,6 +24,7 @@ const SECTION_LIST_WIDTH_PX: f32 = 120.0;
 const ROW_TEXT_WIDTH_PX: f32 = 380.0;
 const ROW_GAP_PX: f32 = 8.0;
 const ROW_HINT_PX: f32 = 12.0;
+const DISABLED_DIM: f32 = 0.4;
 const SWITCH_SIZE_PX: egui::Vec2 = egui::vec2(34.0, 18.0);
 const SWITCH_INSET_PX: f32 = 2.0;
 
@@ -212,6 +213,14 @@ fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool, row: SettingRow) -> e
         theme::INSET
     } else {
         theme::TEXT_FAINT
+    };
+    let (track, knob) = if enabled {
+        (track, knob)
+    } else {
+        (
+            track.gamma_multiply(DISABLED_DIM),
+            knob.gamma_multiply(DISABLED_DIM),
+        )
     };
     let radius = rect.height() / 2.0;
     let centre = if value {

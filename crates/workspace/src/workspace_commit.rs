@@ -151,6 +151,7 @@ impl WorkspaceCommitSession {
     }
     pub fn reset_keeps(&self, has_favorites: bool, has_stored_replay_pick: bool) -> bool {
         !self.bookmarks.is_empty()
+            || !self.save_on_exit
             || has_favorites
             || !self.recent.is_empty()
             || has_stored_replay_pick

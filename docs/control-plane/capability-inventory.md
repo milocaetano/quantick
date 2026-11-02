@@ -45,11 +45,11 @@ capability that cannot change application state.
 | `chart.time_axis.reset` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.window.read` | 1 | `chart` | yes | `observe`, `observe.chart`, `observe.market` |
 | `control.describe` | 1 | `control` | yes | `observe` |
-| `desk.export` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
-| `desk.forget` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
-| `desk.import` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
+| `desk.export` | 1 | `desk` | no | `cockpit`, `cockpit.desk` |
+| `desk.forget` | 1 | `desk` | no | `cockpit`, `cockpit.desk` |
+| `desk.import` | 1 | `desk` | no | `cockpit`, `cockpit.desk` |
 | `desk.reopen_on_launch.set` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
-| `desk.save` | 1 | `desk` | no | `cockpit`, `cockpit.layout` |
+| `desk.save` | 1 | `desk` | no | `cockpit`, `cockpit.desk` |
 | `events.read` | 1 | `events` | yes | `observe`, `observe.events` |
 | `events.wait` | 1 | `events` | yes | `observe`, `observe.events` |
 | `evidence.capture` | 1 | `evidence` | yes | `observe`, `observe.evidence` |

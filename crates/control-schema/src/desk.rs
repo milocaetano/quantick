@@ -5,8 +5,11 @@
 //! no path: the trader's own file dialog is what names it, so the observer
 //! threat model's refusal of an arbitrary path still holds.
 
+use quantick_control::id::PermissionId;
 use quantick_control::registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy};
-use quantick_control_host::authority::{DESK_MODULE_ID, SETTINGS_MODULE_ID};
+use quantick_control_host::authority::{
+    COCKPIT_DESK_PERMISSION_ID, COCKPIT_PERMISSION_ID, DESK_MODULE_ID, SETTINGS_MODULE_ID,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +97,16 @@ fn durable(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
     bounded(descriptor)
 }
 
+/// Behind the desk's own consent: this call replaces or removes what the trader
+/// comes back to, or raises the dialog that does.
+fn desk_grant(mut descriptor: CapabilityDescriptor) -> CapabilityDescriptor {
+    descriptor.required_permissions = [COCKPIT_PERMISSION_ID, COCKPIT_DESK_PERMISSION_ID]
+        .into_iter()
+        .map(|id| PermissionId::new(id).expect("static permission ID is valid"))
+        .collect();
+    descriptor
+}
+
 pub fn settings_open_descriptor() -> CapabilityDescriptor {
     bounded(
         transient_descriptor::<SettingsOpenInput, SettingsOpenResult>(
@@ -107,46 +120,43 @@ pub fn settings_open_descriptor() -> CapabilityDescriptor {
 }
 
 pub fn desk_save_descriptor() -> CapabilityDescriptor {
-    durable(transient_descriptor::<DeskInput, DeskWriteResult>(
+    desk_grant(durable(transient_descriptor::<DeskInput, DeskWriteResult>(
         DESK_SAVE_CAPABILITY_ID,
         DESK_MODULE_ID,
         "Save the desk",
         "Remembers the tabs, the charts on each, the panels, the timezone and the window as what quantick opens on, as Ctrl+Shift+S does.",
         "A repeat writes what is on screen then, which is what the caller asked to keep.",
-    ))
+    )))
 }
 
 pub fn desk_export_descriptor() -> CapabilityDescriptor {
-    bounded(transient_descriptor::<DeskInput, DeskPickResult>(
+    desk_grant(bounded(transient_descriptor::<DeskInput, DeskPickResult>(
         DESK_EXPORT_CAPABILITY_ID,
         DESK_MODULE_ID,
         "Export the desk to a file",
         "Brings up the trader's save dialog. It takes no path: nothing is written until the trader picks one there.",
         "While one dialog is up a repeat raises no second one and answers opened false.",
-    ))
+    )))
 }
 
 pub fn desk_import_descriptor() -> CapabilityDescriptor {
-    bounded(transient_descriptor::<DeskInput, DeskPickResult>(
+    desk_grant(bounded(transient_descriptor::<DeskInput, DeskPickResult>(
         DESK_IMPORT_CAPABILITY_ID,
         DESK_MODULE_ID,
         "Import a desk from a file",
         "Brings up the trader's open dialog. It takes no path: the cockpit on screen stays until the trader picks a file there.",
         "While one dialog is up a repeat raises no second one and answers opened false.",
-    ))
+    )))
 }
 
-/// The plain cockpit tier, like `desk.save`: the file it clears describes what
-/// is still on screen, so a save puts it back, and desk.save overwrites the same
-/// file with no more ceremony.
 pub fn desk_forget_descriptor() -> CapabilityDescriptor {
-    durable(transient_descriptor::<DeskInput, DeskWriteResult>(
+    desk_grant(durable(transient_descriptor::<DeskInput, DeskWriteResult>(
         DESK_FORGET_CAPABILITY_ID,
         DESK_MODULE_ID,
         "Forget the saved desk",
-        "Forgets the saved startup desk, so the next launch opens on the configured default. The charts on screen are left alone, and desk.save puts them back.",
-        "Forgetting twice leaves nothing saved either way.",
-    ))
+        "Forgets the saved startup desk; it does not come back. The charts on screen are left alone. The next launch opens on the configured default only while reopen on launch is off: with it on, closing the window saves the screen again.",
+        "Forgetting twice leaves nothing saved either way, and the second answers written false.",
+    )))
 }
 
 pub fn desk_reopen_descriptor() -> CapabilityDescriptor {

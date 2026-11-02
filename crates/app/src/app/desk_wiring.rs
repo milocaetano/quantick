@@ -17,10 +17,11 @@ pub(super) fn apply(app: &mut QuantickApp, act: DeskAct) -> bool {
             true
         }
         DeskAct::Save => app.workspace_save_adapter().save_workspace("control"),
-        // With nothing saved the row is disabled; the call says nothing changed.
+        // A file holding only standing choices has no desk to forget: the call
+        // says nothing changed rather than claiming a write.
         DeskAct::Forget => {
-            app.runtime.workspace.session().saved()
-                && app.workspace_save_adapter().forget_workspace()
+            let saved = crate::ui_state::load(app.runtime.workspace.ui_state_path());
+            !saved.tabs.is_empty() && app.workspace_save_adapter().forget_workspace()
         }
         DeskAct::PickExport => {
             let free = !app.runtime.workspace.picker_mut().is_open();

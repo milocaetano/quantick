@@ -9,6 +9,7 @@ use quantick_control_schema::desk::{
 use quantick_control_schema::settings_sections::SettingsSection;
 
 const COCKPIT_SCOPES: &[&str] = &["cockpit", "cockpit.layout"];
+const DESK_SCOPES: &[&str] = &["cockpit", "cockpit.layout", "cockpit.desk"];
 
 fn failure(response: &quantick_control::wire::ResponseEnvelope) -> &ControlError {
     match &response.outcome {
@@ -27,7 +28,7 @@ fn granted(name: &str) -> (QuantickApp, egui::Context, std::path::PathBuf) {
         .set_ui_state_path(scratch_ui_state(name));
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory(name);
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout,cockpit.desk");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     (app, ctx, directory)
 }
@@ -105,6 +106,10 @@ fn workspace_save_is_refused_by_a_code_naming_both_successors() {
             error.context.details.as_ref().unwrap()["successors"],
             json!(["desk.save", "workspace.save_to"])
         );
+        assert_eq!(
+            error.context.details.as_ref().unwrap()["planned"],
+            json!(["workspace.save_to"])
+        );
         assert!(error.message.contains("desk.save"));
         assert!(error.message.contains("workspace.save_to"));
     }
@@ -120,7 +125,18 @@ fn desk_save_writes_the_file_and_forget_removes_it() {
     assert_eq!(failure(&denied).code.as_str(), codes::PERMISSION_DENIED);
     assert!(!app.runtime.workspace.session().saved());
 
-    let mut client = connect(&directory, &options("cockpit", COCKPIT_SCOPES));
+    let mut layout = connect(&directory, &options("cockpit", COCKPIT_SCOPES));
+    for capability in ["desk.save", "desk.forget", "desk.export", "desk.import"] {
+        let (denied, _) = unkeyed_call(&mut app, &mut layout, capability, json!({}));
+        assert_eq!(
+            failure(&denied).code.as_str(),
+            codes::PERMISSION_DENIED,
+            "{capability} takes the desk's own grant"
+        );
+    }
+    assert!(!app.runtime.workspace.picker_mut().is_open());
+
+    let mut client = connect(&directory, &options("cockpit", DESK_SCOPES));
     let (saved, _) = unkeyed_call(&mut app, &mut client, "desk.save", json!({}));
     assert_eq!(success_result(&saved)["written"], true);
     assert!(app.runtime.workspace.session().saved());
@@ -128,6 +144,12 @@ fn desk_save_writes_the_file_and_forget_removes_it() {
     let (forgotten, _) = unkeyed_call(&mut app, &mut client, "desk.forget", json!({}));
     assert_eq!(success_result(&forgotten)["written"], true);
     assert!(!app.runtime.workspace.session().saved());
+    let (again, _) = unkeyed_call(&mut app, &mut client, "desk.forget", json!({}));
+    assert_eq!(
+        success_result(&again)["written"],
+        false,
+        "nothing left to forget"
+    );
 
     let kinds = journal_kinds(&app);
     assert!(kinds.iter().any(|kind| kind == DESK_SAVED_EVENT_KIND));
@@ -172,13 +194,22 @@ fn the_reopen_choice_leaves_the_saved_desk_alone() {
         file.tabs.is_empty(),
         "writing the choice did not make what is on screen the startup desk"
     );
+    assert!(
+        !app.runtime.workspace.session().saved(),
+        "a choice is not a desk"
+    );
+    let mut desk = connect(&directory, &options("cockpit", DESK_SCOPES));
+    let (forget, _) = unkeyed_call(&mut app, &mut desk, "desk.forget", json!({}));
+    assert_eq!(success_result(&forget)["written"], false);
+    let file = crate::ui_state::load(app.runtime.workspace.ui_state_path());
+    assert_eq!(file.save_on_exit, !before, "the choice survives");
     disable_test_gateway(&mut app, &ctx);
 }
 
 #[test]
 fn forgetting_with_nothing_saved_says_nothing_changed() {
     let (mut app, ctx, directory) = granted("desk-forget-nothing");
-    let mut client = connect(&directory, &options("cockpit", COCKPIT_SCOPES));
+    let mut client = connect(&directory, &options("cockpit", DESK_SCOPES));
     let (answer, _) = unkeyed_call(&mut app, &mut client, "desk.forget", json!({}));
     assert_eq!(success_result(&answer)["written"], false);
     let forgotten = journal_kinds(&app)
@@ -192,7 +223,7 @@ fn forgetting_with_nothing_saved_says_nothing_changed() {
 #[test]
 fn export_and_import_refuse_a_path_before_any_dialog() {
     let (mut app, ctx, directory) = granted("desk-no-path");
-    let mut client = connect(&directory, &options("cockpit", COCKPIT_SCOPES));
+    let mut client = connect(&directory, &options("cockpit", DESK_SCOPES));
     for capability in ["desk.export", "desk.import"] {
         let input = json!({ "path": "C:/elsewhere.toml" });
         let (refused, _) = unkeyed_call(&mut app, &mut client, capability, input);
