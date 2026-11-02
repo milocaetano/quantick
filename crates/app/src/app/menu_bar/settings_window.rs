@@ -19,13 +19,9 @@ use super::{
 
 const WINDOW_WIDTH_PX: f32 = 420.0;
 
-fn on_this_window(app: &QuantickApp, ctx: &egui::Context) -> bool {
-    app.chrome.window_menu.windows_viewport == Some(ctx.viewport_id())
-}
-
 /// Draw whichever of the two windows is up.
 pub(super) fn show(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
-    if !on_this_window(app, ctx) {
+    if app.chrome.window_menu.windows_viewport != Some(ctx.viewport_id()) {
         return;
     }
     show_settings(app, ctx, commands);
@@ -108,12 +104,7 @@ fn show_help(app: &mut QuantickApp, ctx: &egui::Context) {
         return;
     };
     let mut open = true;
-    let title = match page {
-        HelpPage::KeyboardShortcuts => "Keyboard shortcuts",
-        HelpPage::AboutWorkspaces => "About workspaces",
-        HelpPage::AboutQuantick => "About quantick",
-    };
-    egui::Window::new(title)
+    egui::Window::new(page.title())
         .id(egui::Id::new("window_help"))
         .open(&mut open)
         .collapsible(false)

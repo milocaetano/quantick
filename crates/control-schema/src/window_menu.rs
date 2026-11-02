@@ -313,6 +313,29 @@ pub enum HelpPage {
     AboutQuantick,
 }
 
+impl HelpPage {
+    /// The window's title.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::KeyboardShortcuts => "Keyboard shortcuts",
+            Self::AboutWorkspaces => "About workspaces",
+            Self::AboutQuantick => "About quantick",
+        }
+    }
+}
+
+/// The legend row's label: while two charts are open it says which one, because
+/// the trader cannot otherwise know which corner is about to change.
+#[must_use]
+pub fn legend_label(collapsed: bool, split: Option<&str>) -> String {
+    let verb = if collapsed { "Show" } else { "Collapse" };
+    match split {
+        Some(pane) => format!("{verb} indicator legend ({pane})"),
+        None => format!("{verb} indicator legend"),
+    }
+}
+
 /// What `About workspaces…` says. Written for what ships: choosing a workspace
 /// per tab is named as not built, because an About page that describes a control
 /// the trader cannot find is a false statement.
@@ -411,6 +434,15 @@ mod tests {
                 "Settings…",
                 "Help",
             ]
+        );
+    }
+
+    #[test]
+    fn the_legend_row_names_the_chart_only_while_two_are_open() {
+        assert_eq!(legend_label(true, None), "Show indicator legend");
+        assert_eq!(
+            legend_label(false, Some("Flow")),
+            "Collapse indicator legend (Flow)"
         );
     }
 

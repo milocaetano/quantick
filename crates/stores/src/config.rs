@@ -493,6 +493,23 @@ impl AppConfig {
         feed.symbols.len() != before
     }
 
+    /// `(id, label)` for every configured feed, for a picker. A provider that is
+    /// not streaming yet says "(soon)", so the list is honest about what connects.
+    #[must_use]
+    pub fn feed_choices(&self) -> Vec<(String, String)> {
+        self.feeds
+            .iter()
+            .map(|feed| {
+                let label = if feed.provider.is_implemented() {
+                    feed.name.clone()
+                } else {
+                    format!("{} (soon)", feed.name)
+                };
+                (feed.id.clone(), label)
+            })
+            .collect()
+    }
+
     /// The display name of feed `id`, or its id when the config has no such
     /// feed — a borrow, because the chrome reads it every frame.
     #[must_use]

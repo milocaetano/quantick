@@ -213,13 +213,29 @@ fn the_strip_is_36_tall_with_30_tall_tabs_and_46_by_36_window_buttons() {
 }
 
 #[test]
-fn the_toolbar_labels_the_market_instead_of_offering_dropdowns() {
+fn the_toolbar_label_switches_the_symbol_inside_the_same_tab() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
+    let tab = app.runtime.tabs.active_id();
     let output = run_frame(&mut app, &ctx);
     assert!(painted_text_center(&output, "this tab").is_some());
-    assert!(painted_text_center(&output, "symbol").is_none());
-    assert!(painted_text_center(&output, "feed").is_none());
+    assert!(
+        painted_text_center(&output, "symbol").is_none(),
+        "no dropdown caption"
+    );
+    let this_tab = painted_text_center(&output, "this tab").unwrap();
+    click_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        egui::pos2(this_tab.x + 70.0, this_tab.y),
+    );
+    let output = run_frame(&mut app, &ctx);
+    click_entry(&mut app, &ctx, &output, "ETHUSDT");
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().symbol, "ETHUSDT");
+    assert_eq!(app.runtime.tabs.active_id(), tab, "the same tab");
+    assert_eq!(app.runtime.tabs.len(), 1, "no second tab");
 }
 
 #[test]

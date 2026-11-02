@@ -17,7 +17,6 @@ pub(crate) struct TitleBarState {
     /// Local agent access is on, so the strip shows its pill.
     pub(crate) agent_on: bool,
     pub(crate) menu_open: bool,
-    pub(crate) menu_hint: String,
     pub(crate) kebab_clicked: bool,
     pub(crate) agent_clicked: bool,
 }
@@ -58,7 +57,6 @@ const DRAG_GAP: f32 = 1.0;
 pub(super) const KEBAB_WIDTH: f32 = 36.0;
 const KEBAB_GLYPH_PX: f32 = 18.0;
 const AGENT_PILL_WIDTH: f32 = 66.0;
-const AGENT_DOT_RADIUS: f32 = 3.0;
 const AGENT_TEXT_PX: f32 = 11.0;
 
 pub(crate) fn draw(
@@ -220,7 +218,11 @@ fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
             [KEBAB_WIDTH, crate::tabstrip::CHIP_HEIGHT],
             egui::Button::new(glyph).frame(false),
         )
-        .on_hover_text(title.menu_hint.as_str());
+        .on_hover_ui(|ui| {
+            let keys =
+                super::menu_bar::shortcut_text(ui.ctx(), &super::menu_bar::WINDOW_MENU_SHORTCUT);
+            ui.label(format!("Window menu ({keys})"));
+        });
     if title.menu_open {
         let fill = egui::Shape::rect_filled(button.rect, 0.0, theme::CHROME);
         ui.painter().set(surface, fill);
@@ -232,46 +234,23 @@ fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
     button.clicked()
 }
 
-/// The pill naming local agent access, shown only while it is on: it says the
-/// window is exposed, so it stays muted and takes no alarm colour.
+/// The pill naming local agent access, shown only while it is on.
 fn agent_pill(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(AGENT_PILL_WIDTH, crate::tabstrip::CHIP_HEIGHT),
-        egui::Sense::click(),
-    );
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            ui.is_enabled(),
-            "Agent access: on",
+    let mut face = egui::text::LayoutJob::default();
+    let format = |color| egui::TextFormat::simple(egui::FontId::monospace(AGENT_TEXT_PX), color);
+    face.append("\u{25cf} ", 0.0, format(theme::BUY));
+    face.append("agent", 0.0, format(theme::TEXT_MUTED));
+    let pill = ui
+        .add_sized(
+            [AGENT_PILL_WIDTH, crate::tabstrip::CHIP_HEIGHT],
+            egui::Button::new(face).frame(false),
         )
-    });
-    let response = response.on_hover_text("Local agent access is on. Click to manage it.");
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 6.0, theme::BARE_HOVER);
-    }
-    let ink = if response.hovered() {
-        theme::TEXT_PRIMARY
-    } else {
-        theme::TEXT_MUTED
-    };
-    ui.painter().circle_filled(
-        egui::pos2(rect.left() + 12.0, rect.center().y),
-        AGENT_DOT_RADIUS,
-        theme::BUY,
-    );
-    ui.painter().text(
-        egui::pos2(rect.left() + 21.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        "agent",
-        egui::FontId::monospace(AGENT_TEXT_PX),
-        ink,
-    );
-    let bounds = rect.intersect(ui.clip_rect());
+        .on_hover_text("Local agent access is on. Click to manage it.");
+    let bounds = pill.rect.intersect(ui.clip_rect());
     if bounds.is_positive() {
         title.controls.push((AGENT_PILL_CONTROL, bounds));
     }
-    response.clicked()
+    pill.clicked()
 }
 
 /// Vector strokes keep native controls crisp and equally legible at every DPI.

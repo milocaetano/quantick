@@ -133,14 +133,14 @@ pub(super) const PAPER_CANCEL_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::X);
 /// Opens the `⋮` window menu. Not `Alt`, which is the sell modifier in CMD
 /// trading and the layout switch on `Alt+1…9`.
-const WINDOW_MENU_SHORTCUT: egui::KeyboardShortcut =
+pub(super) const WINDOW_MENU_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F10);
 /// Opens the Settings window.
 const SETTINGS_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Comma);
 
 /// A shortcut as the chrome prints it, with the one key egui spells out.
-fn shortcut_text(ctx: &egui::Context, shortcut: &egui::KeyboardShortcut) -> String {
+pub(super) fn shortcut_text(ctx: &egui::Context, shortcut: &egui::KeyboardShortcut) -> String {
     ctx.format_shortcut(shortcut).replace("Comma", ",")
 }
 
@@ -180,10 +180,6 @@ impl QuantickApp {
         }
 
         self.chrome.title_bar.menu_open = self.chrome.window_menu.is_open_on(ctx.viewport_id());
-        if self.chrome.title_bar.menu_hint.is_empty() {
-            let keys = shortcut_text(ctx, &WINDOW_MENU_SHORTCUT);
-            self.chrome.title_bar.menu_hint = format!("Window menu ({keys})");
-        }
         self.chrome.title_bar.agent_on = self
             .control
             .control_access

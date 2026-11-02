@@ -1,8 +1,8 @@
 //! The context toolbar: *what am I looking at* on the left, *what is drawn
 //! on it* on the right (`docs/ux/ui-design-model.md` §6).
 //!
-//! Left: THIS TAB (the tab's market as a label, or the amber session label
-//! while replaying: another market is another tab),
+//! Left: THIS TAB (the tab's market as a label that opens its own lists, or the
+//! amber session label while replaying),
 //! HISTORY (a `+ older ▾` split button whose menu holds the page size). Right:
 //! LOOK (appearance dialog), PANELS (dock show/hide). Between HISTORY and the right groups sits TRADE — the
 //! simulated BUY/SELL market buttons (`docs/ux/paper-trading.md`). The
@@ -78,10 +78,16 @@ pub struct ToolbarModel<'a> {
     pub layout_picker_open: &'a mut bool,
     /// Open the layout popover this frame (the `QUANTICK_LAYOUT_PICKER` hook).
     pub layout_picker_request_open: bool,
+    /// `(id, display label)` for every configured feed.
+    pub feeds: Vec<(String, String)>,
+    /// The selected feed id.
+    pub feed_id: &'a mut String,
     /// Display name of the tab's feed.
     pub feed_display_name: String,
+    /// Symbols offered by the selected feed.
+    pub symbols: Vec<String>,
     /// The tab's symbol.
-    pub symbol: String,
+    pub symbol: &'a mut String,
     /// Present while a recording is the source; replaces the market label.
     pub replay: Option<ReplaySource>,
     /// The deal recorder shown beside the symbol, when supported.
@@ -259,7 +265,8 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
     actions
 }
 
-/// THIS TAB: the market as a label, or the amber session label during replay.
+/// THIS TAB: the market as a label whose words open the feed and symbol lists,
+/// or the amber session label during replay.
 fn draw_source(
     ui: &mut egui::Ui,
     model: &mut ToolbarModel,
@@ -288,8 +295,36 @@ fn draw_source(
             .unwrap_or_default()
     };
     ui.label(egui::RichText::new("this tab").color(theme::TEXT_MUTED));
-    ui.label(egui::RichText::new(&model.symbol).color(theme::TEXT_PRIMARY));
-    ui.label(egui::RichText::new(format!("· {feed_text}")).color(theme::TEXT_MUTED));
+    ui.scope(|ui| {
+        // Words until the pointer is on them: the row reads as a label.
+        let idle = &mut ui.visuals_mut().widgets.inactive;
+        idle.weak_bg_fill = egui::Color32::TRANSPARENT;
+        idle.bg_stroke = egui::Stroke::NONE;
+        let symbol = egui::RichText::new(model.symbol.as_str()).color(theme::TEXT_PRIMARY);
+        ui.menu_button(symbol, |ui| {
+            for symbol in &model.symbols {
+                let row = ui.selectable_value(model.symbol, symbol.clone(), symbol);
+                if row.clicked() {
+                    ui.close_menu();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Switch this tab's symbol");
+        let feed = egui::RichText::new(format!("· {feed_text}")).color(theme::TEXT_MUTED);
+        ui.menu_button(feed, |ui| {
+            for (id, name) in &model.feeds {
+                if ui
+                    .selectable_value(model.feed_id, id.clone(), name)
+                    .clicked()
+                {
+                    ui.close_menu();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Switch this tab's feed");
+    });
     if let Some(view) = &model.deal_recording
         && let Some(action) = crate::deal_recording_ui::draw_button(
             ui,
@@ -732,7 +767,10 @@ mod tests {
                         layout_picker_open: &mut layout_picker_open,
                         layout_picker_request_open: false,
                         feed_display_name: "Binance".to_owned(),
-                        symbol: "BTCUSDT".to_owned(),
+                        feeds: Vec::new(),
+                        feed_id: &mut String::new(),
+                        symbols: vec!["BTCUSDT".to_owned()],
+                        symbol: &mut "BTCUSDT".to_owned(),
                         replay: replaying.then(|| ReplaySource {
                             label: "BTCUSDT · 2026-03-16".to_owned(),
                             hover: "Replaying a recorded session".to_owned(),
@@ -786,7 +824,10 @@ mod tests {
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
                     feed_display_name: "MetaTrader 5".to_owned(),
-                    symbol: "US500".to_owned(),
+                    feeds: Vec::new(),
+                    feed_id: &mut String::new(),
+                    symbols: vec!["US500".to_owned()],
+                    symbol: &mut "US500".to_owned(),
                     replay: None,
                     deal_recording: None,
                     deal_recording_menu: false,
@@ -887,7 +928,10 @@ mod tests {
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
                     feed_display_name: "Binance".to_owned(),
-                    symbol: "BTCUSDT".to_owned(),
+                    feeds: Vec::new(),
+                    feed_id: &mut String::new(),
+                    symbols: vec!["BTCUSDT".to_owned()],
+                    symbol: &mut "BTCUSDT".to_owned(),
                     replay: None,
                     deal_recording: None,
                     deal_recording_menu: false,

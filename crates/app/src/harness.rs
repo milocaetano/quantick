@@ -657,9 +657,8 @@ impl Harness {
         self.menu
     }
 
-    /// Whether the button has held still long enough to press. The window takes
-    /// its scripted size a few frames in, and the `⋮` rides the right edge, so an
-    /// early press lands on whatever sits there at the opening size.
+    /// Whether the button held still long enough to press: the `⋮` rides the right
+    /// edge, and the window takes its scripted size a few frames in.
     pub(crate) fn menu_button_settled(&mut self, position: egui::Pos2) -> bool {
         const SETTLED_FRAMES: u32 = 10;
         let (held, frames) = self.menu_button_held;

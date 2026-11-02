@@ -32,7 +32,11 @@ impl QuantickApp {
     /// out whatever it asked (§6 — the toolbar module owns grouping and the
     /// overflow rule; this method owns the side effects).
     pub(super) fn draw_toolbar(&mut self, ctx: &egui::Context) {
-        // During a replay the market label gives way to what is actually playing.
+        let feeds = self.config.feed_choices();
+        let symbols = self
+            .config
+            .feed(&self.active_tab().feed_id)
+            .map_or_else(Vec::new, |feed| feed.symbols.clone());
         let replay = self
             .active_tab()
             .replay
@@ -88,8 +92,11 @@ impl QuantickApp {
             layout_preset: Some(tab.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
             layout_picker_request_open: layout_picker_autostart,
+            feeds,
+            feed_id: &mut tab.feed_id,
             feed_display_name,
-            symbol: tab.symbol.clone(),
+            symbols,
+            symbol: &mut tab.symbol,
             replay,
             deal_recording,
             deal_recording_menu,

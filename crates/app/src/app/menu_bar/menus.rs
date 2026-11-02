@@ -9,7 +9,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_control_schema::window_menu::{
-    HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId, row_of, submenu,
+    self, HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId, row_of, submenu,
 };
 
 use crate::dock::DockTab;
@@ -477,17 +477,12 @@ impl WindowMenu<'_> {
     /// The legend belongs to a pane, so this entry names the focused one's
     /// state — the same pane the chevron on screen would fold.
     fn legend_entry(&self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
-        let collapsed = self.tab.focused_pane().legend_collapsed;
-        // Split open: say *which* chart. A trader reading "Collapse indicator
-        // legend" over two charts cannot know which corner is about to change.
-        let split = self.tab.shows_context_charts();
-        let pane_name = self.tab.focused_side().title();
-        let legend_label = match (collapsed, split) {
-            (true, false) => "Show indicator legend".to_owned(),
-            (false, false) => "Collapse indicator legend".to_owned(),
-            (true, true) => format!("Show indicator legend ({pane_name})"),
-            (false, true) => format!("Collapse indicator legend ({pane_name})"),
-        };
+        let split = self
+            .tab
+            .shows_context_charts()
+            .then(|| self.tab.focused_side().title());
+        let legend_label =
+            window_menu::legend_label(self.tab.focused_pane().legend_collapsed, split.as_deref());
         // A pane with no indicators has no legend to fold, and an entry that
         // is enabled and does nothing reads as a broken feature.
         let has_legend = !self

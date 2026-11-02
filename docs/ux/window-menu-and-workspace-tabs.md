@@ -132,8 +132,9 @@ Under the strip, the row that today holds feed and symbol dropdowns becomes:
 THIS TAB  WINZ26 · MetaTrader 5 — B3 │ WORKSPACE  [Scalp • ▾]  Save  Revert │ REC · History ▾ │ BUY 1  SELL 1   [dock icons]
 ```
 
-- The tab is its market, so feed and symbol are a label, not dropdowns.
-  Changing market opens a tab; a contract roll is "Roll to WINF27".
+- Feed and symbol read as a label, not dropdowns, and the words stay clickable:
+  the trader asked on 2026-11-02 to keep switching a tab's market in place.
+  A contract roll is "Roll to WINF27".
 - `Scalp ▾` switches this tab only. The toast reads "WINZ26 now on Tape ·
   drawings kept · Undo". Switching never asks for confirmation.
 - Save and Revert enable only while the tab holds unsaved changes.
