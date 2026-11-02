@@ -1,493 +1,617 @@
-//! One reusable "something is loading" affordance for the whole app.
-//!
-//! Every operation that can take noticeable time — pulling history, rebuilding
-//! bars after a spec change, synchronizing the order book, parsing a replay
-//! session — registers itself in the app's [`LoadingTracker`] under its
-//! [`LoadingTask`]. One overlay ([`overlay`]) then draws every active wait as
-//! a spinner + label row at the top of the chart, so "the app is working"
-//! always looks the same, and making a new slow path visible is one
-//! `begin`/`end` (or [`LoadingTracker::set_active`]) away. [`inline`] is the
-//! same spinner + label pair for embedding inside windows and toolbars.
+//! Paints what [`quantick_chart::connection_state`] decides: the overlay over
+//! empty panes, the header's chip and slot, and the small spinner embedded in
+//! windows. All of it grey; none of it above a menu.
+
+use std::sync::OnceLock;
 
 use eframe::egui;
+use egui_phosphor::regular as icons;
+use quantick_chart::connection_state::{Dot, DotLook, OverlayWords};
+pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
+use quantick_chart::logo_mark::{self, MarkCell};
 
-use crate::theme::{AMBER, TEXT_MUTED, TEXT_PRIMARY};
+/// The system's greys, from the trader's mock: title, meta, faint, border.
+pub const GREY_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xd7, 0xdd, 0xe8);
+pub const GREY_MID: egui::Color32 = egui::Color32::from_rgb(0x7c, 0x87, 0x99);
+pub const GREY_FAINT: egui::Color32 = egui::Color32::from_rgb(0x4b, 0x55, 0x66);
+const GREY_BORDER: egui::Color32 = egui::Color32::from_rgb(0x1b, 0x23, 0x30);
 
-/// Spinner diameter, in pixels — shared by the overlay and the inline row so
-/// loading looks the same everywhere it appears.
+/// The stacking of the connection surfaces, named once: `menu > tooltip >
+/// loading-slot, overlay > chart`. Sharing a layer with the chart would leave
+/// their order to egui's hash map, so they stand one order above it, below
+/// windows and menus. The slot lives in the header strip and the overlay below
+/// it, so they never meet. egui ranks its tooltips above its popups, so a chip's
+/// tooltip stands down while a menu is open ([`dot_hover`]).
+const LOADING_ORDER: egui::Order = egui::Order::PanelResizeLine;
+
+/// The inline spinner's diameter, in pixels.
 const SPINNER_SIZE: f32 = 14.0;
-/// Gap between the spinner and its label, in pixels.
-const GAP: f32 = 6.0;
-/// Horizontal padding inside the overlay backdrop, in pixels.
-const PAD: f32 = 8.0;
-/// Height of one overlay row, in pixels.
-const ROW_HEIGHT: f32 = 20.0;
-/// Font size of an overlay row label, in points.
-const LABEL_FONT_SIZE: f32 = 12.0;
-/// Distance from the top of the chart area to the backdrop, in pixels.
-const TOP_OFFSET_PX: f32 = 8.0;
-/// Backdrop opacity (0–255): dark enough to read over candles, light enough
-/// to keep the chart visible behind it.
-const BACKDROP_ALPHA: u8 = 150;
-/// Backdrop corner radius, in pixels.
-const CORNER_RADIUS_PX: f32 = 4.0;
 
-/// Which surface a wait belongs on.
-///
-/// A tab is one feed and several panes, and the waits are not all about the
-/// same one. Drawing every wait across the whole canvas put "loading venue
-/// history" over two panes already full of it, and — with the feed's own
-/// notice doing the same thing — left a trader reading an explanation that
-/// belonged to a pane on the other side of the window.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum LoadingScope {
-    /// The order-flow pane, which owns the tape and its book.
-    Flow,
-    /// Every time pane, which is where the venue's own candles land.
-    TimePanes,
-    /// The whole canvas: a wait about the tab's data rather than one pane's.
-    Whole,
-}
+/// The overlay's group, centred at this share of its rect.
+const GROUP_AT: f32 = 0.45;
+const MARK_GAP_PX: f32 = 16.0;
+const TITLE_PT: f32 = 14.0;
+const TITLE_GAP_PX: f32 = 6.0;
+const META_PT: f32 = 11.0;
+const CONTROL_GAP_PX: f32 = 12.0;
+const CONTROL_PT: f32 = 12.0;
+/// The label a press on the overlay answers to: same word as the popup's.
+pub const RECONNECT_LABEL: &str = "Reconnect";
 
-/// Something slow the interface may be waiting on. One variant per kind of
-/// wait; the label is what the user reads next to the spinner.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum LoadingTask {
-    /// The initial backfill, an on-demand "load older" request, or the refill
-    /// after a source reset.
-    History,
-    /// Bars are being rebuilt from the retained trades after a bar-type or
-    /// parameter change.
-    BarRebuild,
-    /// Order-book capture is connecting, buffering, fetching its snapshot or
-    /// resyncing after a gap.
-    BookSync,
-    /// A recorded session is being parsed on a worker thread.
-    ReplaySession,
-    /// Venue candle history is on its way for a time pane.
-    VenueHistory,
-    /// Older prints are being cut into a coherent replacement series.
-    HistoryRebuild,
-}
+/// The chip: 10 pt monospace in a 1 px pill.
+const CHIP_PT: f32 = 10.0;
+const CHIP_HEIGHT_PX: f32 = 18.0;
+const CHIP_PAD_PX: f32 = 7.0;
+const DOT_PX: f32 = 6.0;
+const DOT_WORD_GAP_PX: f32 = 4.0;
+const DOT_GAP_PX: f32 = 8.0;
+const DOT_ONLY_GAP_PX: f32 = 6.0;
 
-impl LoadingTask {
-    /// Every task, in the order the overlay stacks their rows.
-    pub const ALL: [Self; 6] = [
-        Self::History,
-        Self::BarRebuild,
-        Self::BookSync,
-        Self::ReplaySession,
-        Self::VenueHistory,
-        Self::HistoryRebuild,
-    ];
+/// The slot: a static glyph and 11 pt words.
+const SLOT_PT: f32 = 11.0;
+const SLOT_ICON_GAP_PX: f32 = 4.0;
 
-    /// What the row says, without the trailing ellipsis.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::History => "loading history",
-            Self::BarRebuild => "rebuilding bars",
-            Self::BookSync => "syncing order book",
-            Self::ReplaySession => "loading replay session",
-            Self::VenueHistory => "loading venue history",
-            Self::HistoryRebuild => "building history",
-        }
-    }
-
-    /// Where this wait is drawn.
-    ///
-    /// Conservative on purpose: only the two waits that genuinely belong to
-    /// one surface claim one. Trade history feeds *every* pane through
-    /// `ChartPane::ingest_backfill`, and a bar rebuild re-cuts every pane's
-    /// series, so pinning either to a single pane would be a placement that
-    /// lies about which chart is waiting.
-    ///
-    /// A scope is where a wait *prefers* to be drawn, never where it may only
-    /// be drawn. Both surfaces below can be absent — the flow pane is not
-    /// painted in the Time layout, and a flow-only layout has no time pane at
-    /// all — and a wait with nowhere to go falls back to the whole canvas
-    /// rather than disappearing. A multi-second fetch with no spinner reads as
-    /// a frozen application, which is worse than a spinner in the wrong place.
-    #[must_use]
-    pub fn scope(self) -> LoadingScope {
-        match self {
-            // The book, the heatmap and the live lane are all the flow pane's.
-            Self::BookSync => LoadingScope::Flow,
-            // Venue candles exist for the time panes and nothing else asks for
-            // them.
-            Self::VenueHistory => LoadingScope::TimePanes,
-            Self::History | Self::BarRebuild | Self::ReplaySession | Self::HistoryRebuild => {
-                LoadingScope::Whole
-            }
-        }
-    }
-
-    /// This task's position in [`Self::ALL`] — the tracker's array index.
-    /// Declaration order *is* the index, so adding a variant cannot drift.
-    fn index(self) -> usize {
-        self as usize
-    }
-}
-
-/// How many operations of each kind are currently in flight.
-///
-/// Counted rather than boolean because several requests of one kind can
-/// overlap (the feed command channel queues history loads) and the first
-/// reply must not hide the indicator while others are still out. Waits owned
-/// by someone else's state machine are mirrored level-style through
-/// [`Self::set_active`] instead.
-#[derive(Default)]
-pub struct LoadingTracker {
-    counts: [usize; LoadingTask::ALL.len()],
-}
-
-impl LoadingTracker {
-    /// A tracker with nothing in flight.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// One more operation of this kind is in flight.
-    pub fn begin(&mut self, task: LoadingTask) {
-        let count = &mut self.counts[task.index()];
-        *count = count.saturating_add(1);
-    }
-
-    /// One operation of this kind was answered. Saturates at zero so a stray
-    /// reply can never underflow into "loading forever".
-    pub fn end(&mut self, task: LoadingTask) {
-        let count = &mut self.counts[task.index()];
-        *count = count.saturating_sub(1);
-    }
-
-    /// Forget every operation of this kind and leave exactly one in flight —
-    /// what a respawned or reset source needs, whose earlier requests will
-    /// never be answered.
-    pub fn restart(&mut self, task: LoadingTask) {
-        self.counts[task.index()] = 1;
-    }
-
-    /// Level-triggered form for waits mirrored from state owned elsewhere:
-    /// active or not, with no count to balance.
-    pub fn set_active(&mut self, task: LoadingTask, active: bool) {
-        self.counts[task.index()] = usize::from(active);
-    }
-
-    /// How many operations of this kind are in flight.
-    #[must_use]
-    pub fn count(&self, task: LoadingTask) -> usize {
-        self.counts[task.index()]
-    }
-
-    /// Whether at least one operation of this kind is in flight.
-    #[must_use]
-    pub fn is_active(&self, task: LoadingTask) -> bool {
-        self.count(task) > 0
-    }
-
-    /// Whether anything at all is in flight.
-    #[must_use]
-    pub fn any_active(&self) -> bool {
-        self.counts.iter().any(|&count| count > 0)
-    }
-
-    /// The active tasks, in the order the overlay stacks them.
-    pub fn active(&self) -> impl Iterator<Item = LoadingTask> + '_ {
-        LoadingTask::ALL
-            .into_iter()
-            .filter(|task| self.is_active(*task))
-    }
-}
+/// One chip pulse, in seconds; how often it asks for a frame while pulsing.
+const PULSE_PERIOD_S: f64 = 2.4;
+const PULSE_REPAINT: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// A spinner + `label…` pair added to the current layout, for embedding in
 /// windows and toolbars. Adds two widgets rather than opening its own row, so
 /// the caller's layout (including right-to-left rows) keeps deciding where
 /// they land.
 pub fn inline(ui: &mut egui::Ui, label: &str) {
-    ui.add(egui::Spinner::new().size(SPINNER_SIZE).color(AMBER));
-    ui.label(egui::RichText::new(format!("{label}…")).color(TEXT_PRIMARY));
+    ui.add(egui::Spinner::new().size(SPINNER_SIZE).color(GREY_MID));
+    ui.label(egui::RichText::new(format!("{label}…")).color(GREY_LIGHT));
 }
 
-/// The loading overlay for one surface: every active task in `scope` as a
-/// spinner + label row on a shared backdrop, centred at the top of `area` so
-/// it never covers the symbol header on the left or the book status badge on
-/// the right.
-///
-/// Paints above floating chrome without registering input. Each scope uses
-/// its surface's rect and draws nothing when idle. A finished request's note
-/// occupies the history row until the caller's `HISTORY_NOTE_LINGER` expires.
-pub fn overlay_scoped(
-    ui: &mut egui::Ui,
-    area: egui::Rect,
-    tracker: &LoadingTracker,
-    scope: LoadingScope,
-    note: Option<&str>,
-) {
-    // The note belongs to the surface that showed the spinner it is the answer
-    // to, so it is scoped by the task it is about rather than pinned to a
-    // scope by name: move `History` to another surface and its verdict follows
-    // it, instead of the two drifting to opposite ends of the canvas.
-    let note = note.filter(|_| scope == LoadingTask::History.scope());
-    // Cheap first: most frames have nothing in flight at all, and this is now
-    // called once per surface rather than once per frame.
-    if note.is_none()
-        && (!tracker.any_active() || !tracker.active().any(|task| task.scope() == scope))
-    {
-        return;
-    }
-    // Status paints immediately without registering any input region above
-    // the chart. Even a hover-only foreground widget is unnecessary here.
-    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("loading_overlay"));
-    let painter = ui.ctx().layer_painter(layer).with_clip_rect(area);
-    draw_rows(&painter, area, tracker, scope, note);
+/// Whether the machine asked for no decorative motion: the Windows client-area
+/// animation setting, or the harness hook. Read once.
+#[must_use]
+pub fn reduced_motion() -> bool {
+    static READ: OnceLock<bool> = OnceLock::new();
+    *READ.get_or_init(|| hooked_reduced_motion() || system_reduced_motion())
 }
 
-/// The overlay's rows, in whatever layer the caller put them in.
-///
-/// A row is a spinner and a label while its task is in flight, and the note is
-/// the same row without the spinner: nothing is turning any more, and a
-/// stopped spinner beside a finished sentence would say the opposite. It keeps
-/// the spinner's column so the two never jump sideways past each other, and it
-/// is drawn in [`TEXT_MUTED`] because it is a remark rather than a heading.
-fn draw_rows(
-    painter: &egui::Painter,
-    area: egui::Rect,
-    tracker: &LoadingTracker,
-    scope: LoadingScope,
-    note: Option<&str>,
-) {
-    let font = egui::FontId::proportional(LABEL_FONT_SIZE);
-    let mut galleys: Vec<_> = tracker
-        .active()
-        .filter(|task| task.scope() == scope)
-        .filter(|task| {
-            *task != LoadingTask::HistoryRebuild || !tracker.is_active(LoadingTask::History)
-        })
-        .map(|task| {
-            // Network and recut are phases of one wait, with one stable row.
-            let task = if task == LoadingTask::HistoryRebuild {
-                LoadingTask::History
-            } else {
-                task
-            };
-            painter.layout_no_wrap(format!("{}…", task.label()), font.clone(), TEXT_PRIMARY)
-        })
-        .collect();
-    // Last, under whatever is still running: a verdict on the press belongs
-    // below the work it is a verdict on, not above it.
-    let spinners = galleys.len();
-    if let Some(note) = note {
-        galleys.push(painter.layout_no_wrap(note.to_owned(), font.clone(), TEXT_MUTED));
-    }
+#[cfg(any(feature = "scenario-harness", test))]
+fn hooked_reduced_motion() -> bool {
+    crate::hooks::captured::var("QUANTICK_REDUCED_MOTION").as_deref() == Some("1")
+}
 
-    let widest = galleys
+#[cfg(not(any(feature = "scenario-harness", test)))]
+fn hooked_reduced_motion() -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn system_reduced_motion() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+    };
+    let mut enabled = 1_i32;
+    // SAFETY: the out pointer is a live BOOL for the length of the call, which
+    // is what this action documents, and nothing is written to the profile.
+    let read = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            std::ptr::from_mut(&mut enabled).cast(),
+            0,
+        )
+    };
+    read != 0 && enabled == 0
+}
+
+#[cfg(not(windows))]
+fn system_reduced_motion() -> bool {
+    false
+}
+
+#[cfg(any(feature = "scenario-harness", test))]
+crate::hooks::declare_hooks!["QUANTICK_REDUCED_MOTION", "QUANTICK_FEED_PRESS_AT"];
+
+/// Whether `QUANTICK_FEED_PRESS_AT=<seconds>` is due: the press on Reconnect a
+/// capture has no pointer for, once per run.
+#[cfg(feature = "scenario-harness")]
+pub fn reconnect_press_due(now_ms: i64) -> bool {
+    static START: OnceLock<i64> = OnceLock::new();
+    static PRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let start = *START.get_or_init(|| now_ms);
+    let due = crate::hooks::captured::var("QUANTICK_FEED_PRESS_AT")
+        .and_then(|seconds| seconds.parse::<i64>().ok())
+        .is_some_and(|seconds| now_ms.saturating_sub(start) >= seconds * 1_000);
+    due && !PRESSED.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The mark's cells, sampled once from the plate-less logo.
+fn mark_cells() -> &'static [MarkCell] {
+    static CELLS: OnceLock<Vec<MarkCell>> = OnceLock::new();
+    CELLS.get_or_init(|| {
+        let bytes: &[u8] = include_bytes!("../assets/logo-mark.png");
+        let cells = (logo_mark::MARK_PX / logo_mark::cell_px(logo_mark::MARK_PX)) as usize;
+        decode_alpha(bytes).map_or_else(Vec::new, |(alpha, side)| {
+            logo_mark::sample(&alpha, side, cells)
+        })
+    })
+}
+
+/// The alpha channel of a square RGBA PNG, and its side.
+fn decode_alpha(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .ok()?;
+    let mut buffer = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buffer).ok()?;
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    let side = info.width as usize;
+    let alpha = buffer[..info.buffer_size()]
+        .as_chunks::<4>()
+        .0
         .iter()
-        .map(|galley| galley.size().x)
-        .fold(0.0_f32, f32::max);
-    let box_w = PAD + SPINNER_SIZE + GAP + widest + PAD;
-    let box_h = galleys.len() as f32 * ROW_HEIGHT + PAD;
-    let backdrop = egui::Rect::from_min_size(
-        egui::pos2(area.center().x - box_w / 2.0, area.top() + TOP_OFFSET_PX),
-        egui::vec2(box_w, box_h),
-    );
-    painter.rect_filled(
-        backdrop,
-        egui::Rounding::same(CORNER_RADIUS_PX),
-        egui::Color32::from_black_alpha(BACKDROP_ALPHA),
-    );
+        .map(|pixel| pixel[3])
+        .collect();
+    Some((alpha, side))
+}
 
-    let mut y = backdrop.top() + PAD / 2.0;
-    for (row, galley) in galleys.into_iter().enumerate() {
-        let spinner = egui::Rect::from_min_size(
-            egui::pos2(backdrop.left() + PAD, y + (ROW_HEIGHT - SPINNER_SIZE) / 2.0),
-            egui::vec2(SPINNER_SIZE, SPINNER_SIZE),
+/// One mesh of grey squares: the mark at `min`.
+fn paint_mark(painter: &egui::Painter, min: egui::Pos2, alpha: f32) {
+    let cell = logo_mark::cell_px(logo_mark::MARK_PX);
+    let mut mesh = egui::Mesh::default();
+    for one in mark_cells() {
+        let at = min + egui::vec2(f32::from(one.column), f32::from(one.row)) * cell;
+        let square = egui::Rect::from_min_size(at, egui::Vec2::splat(cell - 1.0));
+        mesh.add_colored_rect(square, GREY_MID.gamma_multiply(alpha * one.coverage));
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// The overlay's group, measured.
+struct OverlayGroup {
+    title: std::sync::Arc<egui::Galley>,
+    meta: std::sync::Arc<egui::Galley>,
+    /// The control and the rect it answers in.
+    control: Option<(std::sync::Arc<egui::Galley>, egui::Rect)>,
+    top: f32,
+}
+
+fn lay_out_overlay(
+    ctx: &egui::Context,
+    rect: egui::Rect,
+    symbol: &str,
+    words: &OverlayWords,
+    with_control: bool,
+) -> OverlayGroup {
+    let mut title = egui::text::LayoutJob::default();
+    let font = egui::FontId::proportional(TITLE_PT);
+    title.append(
+        words.verb,
+        0.0,
+        egui::TextFormat::simple(font.clone(), GREY_LIGHT),
+    );
+    title.append(symbol, 4.0, egui::TextFormat::simple(font, GREY_MID));
+    title.wrap.max_width = rect.width();
+    let (title, meta, control) = ctx.fonts(|fonts| {
+        (
+            fonts.layout_job(title),
+            fonts.layout(
+                words.meta.clone(),
+                egui::FontId::monospace(META_PT),
+                GREY_MID,
+                rect.width(),
+            ),
+            with_control.then(|| {
+                fonts.layout_no_wrap(
+                    RECONNECT_LABEL.to_owned(),
+                    egui::FontId::proportional(CONTROL_PT),
+                    GREY_MID,
+                )
+            }),
+        )
+    });
+    let mut height = logo_mark::MARK_PX + MARK_GAP_PX + title.size().y + TITLE_GAP_PX;
+    height += meta.size().y;
+    if let Some(control) = &control {
+        height += CONTROL_GAP_PX + control.size().y;
+    }
+    let top = (rect.top() + rect.height() * GROUP_AT - height / 2.0).max(rect.top());
+    let control = control.map(|galley| {
+        let at = egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            top + height - galley.size().y,
         );
-        if row < spinners {
-            paint_spinner(painter, spinner);
-        }
-        let text_pos = egui::pos2(
-            spinner.right() + GAP,
-            y + (ROW_HEIGHT - galley.size().y) / 2.0,
-        );
-        painter.galley(text_pos, galley, TEXT_PRIMARY);
-        y += ROW_HEIGHT;
+        let hit = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(6.0, 3.0));
+        (galley, hit)
+    });
+    OverlayGroup {
+        title,
+        meta,
+        control,
+        top,
     }
 }
 
-fn paint_spinner(painter: &egui::Painter, rect: egui::Rect) {
-    painter.ctx().request_repaint();
-    let angle = painter.ctx().input(|input| input.time) as f32 * std::f32::consts::TAU;
-    let radius = rect.height() * 0.5 - 2.0;
-    let points = (0..20)
-        .map(|step| {
-            let angle = angle + step as f32 * std::f32::consts::PI / 20.0;
-            rect.center() + radius * egui::vec2(angle.cos(), angle.sin())
-        })
-        .collect();
-    painter.add(egui::Shape::line(points, egui::Stroke::new(3.0_f32, AMBER)));
+/// Whether the overlay's control stands wholly inside `rect`. When it does not,
+/// the overlay draws none and the status bar offers Reconnect instead.
+pub fn reconnect_fits(
+    ctx: &egui::Context,
+    rect: egui::Rect,
+    symbol: &str,
+    words: &OverlayWords,
+) -> bool {
+    lay_out_overlay(ctx, rect, symbol, words, true)
+        .control
+        .is_some_and(|(_, hit)| rect.contains_rect(hit))
+}
+
+/// The overlay's group, centred in `rect`, painted without an input region but
+/// for the one control. Answers the control's rect and whether it was pressed.
+pub fn draw_overlay(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    symbol: &str,
+    words: &OverlayWords,
+    now_ms: i64,
+) -> (Option<egui::Rect>, bool) {
+    let layer = egui::LayerId::new(LOADING_ORDER, egui::Id::new("connection_overlay"));
+    let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
+    let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words);
+    let group = lay_out_overlay(ui.ctx(), rect, symbol, words, fits);
+    let breathing = words.breathing && !reduced_motion();
+    let alpha = logo_mark::alpha_at(breathing, now_ms);
+    if breathing {
+        ui.ctx().request_repaint_after(PULSE_REPAINT);
+    }
+    let center_x = rect.center().x;
+    let mut y = group.top;
+    paint_mark(
+        &painter,
+        egui::pos2(center_x - logo_mark::MARK_PX / 2.0, y),
+        alpha,
+    );
+    y += logo_mark::MARK_PX + MARK_GAP_PX;
+    let centred = |width: f32| center_x - width / 2.0;
+    let title_size = group.title.size();
+    painter.galley(
+        egui::pos2(centred(title_size.x), y),
+        group.title,
+        GREY_LIGHT,
+    );
+    y += title_size.y + TITLE_GAP_PX;
+    let meta_size = group.meta.size();
+    painter.galley(egui::pos2(centred(meta_size.x), y), group.meta, GREY_MID);
+    let Some((control, hit)) = group.control else {
+        return (None, false);
+    };
+    let at = hit.shrink2(egui::vec2(6.0, 3.0)).min;
+    let response = ui.interact(hit, ui.id().with("overlay_reconnect"), egui::Sense::click());
+    let colour = if response.hovered() {
+        GREY_LIGHT
+    } else {
+        GREY_MID
+    };
+    painter.galley(at, control, colour);
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    (Some(hit), response.clicked())
+}
+
+/// The width of the chip with its words, and with its dots alone.
+pub fn chip_widths(ui: &egui::Ui, dots: &[Dot; 3]) -> (f32, f32) {
+    let words: f32 = dots
+        .iter()
+        .map(|dot| DOT_PX + DOT_WORD_GAP_PX + word_galley(ui, dot.name).size().x)
+        .sum();
+    let pad = 2.0 * CHIP_PAD_PX;
+    (
+        pad + words + 2.0 * DOT_GAP_PX,
+        pad + 3.0 * DOT_PX + 2.0 * DOT_ONLY_GAP_PX,
+    )
+}
+
+fn word_galley(ui: &egui::Ui, word: &str) -> std::sync::Arc<egui::Galley> {
+    ui.fonts(|fonts| {
+        fonts.layout_no_wrap(word.to_owned(), egui::FontId::monospace(CHIP_PT), GREY_MID)
+    })
+}
+
+/// The chip, with its right edge at `right`. Each dot answers its own hover.
+pub fn draw_chip(ui: &egui::Ui, right: f32, strip: egui::Rect, dots: &[Dot; 3], words: bool) {
+    let (with_words, alone) = chip_widths(ui, dots);
+    let width = if words { with_words } else { alone };
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(right - width, strip.center().y - CHIP_HEIGHT_PX / 2.0),
+        egui::vec2(width, CHIP_HEIGHT_PX),
+    );
+    let painter = ui.painter();
+    painter.rect_stroke(
+        rect,
+        egui::Rounding::same(CHIP_HEIGHT_PX / 2.0),
+        egui::Stroke::new(1.0_f32, GREY_BORDER),
+    );
+    let mut x = rect.left() + CHIP_PAD_PX;
+    for (index, dot) in dots.iter().enumerate() {
+        let center = egui::pos2(x + DOT_PX / 2.0, rect.center().y);
+        painter.circle_filled(center, DOT_PX / 2.0, dot_colour(ui, dot.look));
+        let start = x;
+        x += DOT_PX;
+        if words {
+            let galley = word_galley(ui, dot.name);
+            let size = galley.size();
+            let at = egui::pos2(x + DOT_WORD_GAP_PX, rect.center().y - size.y / 2.0);
+            painter.galley(at, galley, GREY_MID);
+            x += DOT_WORD_GAP_PX + size.x;
+        }
+        let area =
+            egui::Rect::from_x_y_ranges(start..=x, rect.y_range()).expand2(egui::vec2(2.0, 0.0));
+        dot_hover(ui, area, index, dot);
+        x += if words { DOT_GAP_PX } else { DOT_ONLY_GAP_PX };
+    }
+}
+
+/// The dot's hover, standing down under an open menu: egui ranks tooltips above
+/// popups, and a word about the feed must not cover the menu the hand is on.
+fn dot_hover(ui: &egui::Ui, area: egui::Rect, index: usize, dot: &Dot) {
+    let response = ui.interact(
+        area,
+        ui.id().with(("chip_dot", index)),
+        egui::Sense::hover(),
+    );
+    if !ui.memory(egui::Memory::any_popup_open) {
+        let _ = response.on_hover_ui(|ui| {
+            ui.label(dot.hover);
+        });
+    }
+}
+
+/// The dot's ink. Waiting is faint, ok is solid, and only an attempt moves.
+fn dot_colour(ui: &egui::Ui, look: DotLook) -> egui::Color32 {
+    match look {
+        DotLook::Faint => GREY_FAINT,
+        DotLook::Solid => GREY_LIGHT,
+        DotLook::Pulsing => GREY_MID.gamma_multiply(pulse(ui.ctx())),
+    }
+}
+
+/// How lit a pulsing thing is this frame, asking for the next frame only while
+/// it moves.
+#[must_use]
+pub fn pulse(ctx: &egui::Context) -> f32 {
+    if reduced_motion() {
+        return 1.0;
+    }
+    ctx.request_repaint_after(PULSE_REPAINT);
+    let phase = (ctx.input(|input| input.time) / PULSE_PERIOD_S).fract() as f32;
+    0.25 + 0.75 * ((phase * std::f32::consts::TAU).cos() + 1.0) / 2.0
+}
+
+/// The slot's content: words, with the static glyph while a job runs.
+pub struct Slot<'a> {
+    pub job: bool,
+    pub text: &'a str,
+}
+
+/// How wide a slot is.
+pub fn slot_width(ui: &egui::Ui, slot: &Slot<'_>) -> f32 {
+    let (glyph, words) = slot_galleys(ui, slot);
+    words.size().x + glyph.map_or(0.0, |glyph| glyph.size().x + SLOT_ICON_GAP_PX)
+}
+
+type SlotGalleys = (
+    Option<std::sync::Arc<egui::Galley>>,
+    std::sync::Arc<egui::Galley>,
+);
+
+fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>) -> SlotGalleys {
+    ui.fonts(|fonts| {
+        let font = egui::FontId::proportional(SLOT_PT);
+        let glyph = slot.job.then(|| {
+            fonts.layout_no_wrap(icons::ARROW_CLOCKWISE.to_owned(), font.clone(), GREY_MID)
+        });
+        (
+            glyph,
+            fonts.layout_no_wrap(slot.text.to_owned(), font, GREY_MID),
+        )
+    })
+}
+
+/// The slot, with its right edge at `right`, on its own layer so a menu wins.
+pub fn draw_slot(ui: &egui::Ui, right: f32, strip: egui::Rect, slot: &Slot<'_>) {
+    let layer = egui::LayerId::new(LOADING_ORDER, ui.id().with("loading_slot"));
+    let painter = ui.ctx().layer_painter(layer).with_clip_rect(strip);
+    let (glyph, words) = slot_galleys(ui, slot);
+    let width = slot_width(ui, slot);
+    let mut x = right - width;
+    let y = strip.center().y;
+    if let Some(glyph) = glyph {
+        let size = glyph.size();
+        painter.galley(egui::pos2(x, y - size.y / 2.0), glyph, GREY_MID);
+        x += size.x + SLOT_ICON_GAP_PX;
+    }
+    let size = words.size();
+    painter.galley(egui::pos2(x, y - size.y / 2.0), words, GREY_MID);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn network_and_publication_keep_one_identical_history_row() {
-        let ctx = egui::Context::default();
-        for (network, rebuild) in [(true, false), (true, true), (false, true), (true, false)] {
-            let mut tracker = LoadingTracker::new();
-            tracker.set_active(LoadingTask::History, network);
-            tracker.set_active(LoadingTask::HistoryRebuild, rebuild);
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    overlay_scoped(ui, ui.max_rect(), &tracker, LoadingScope::Whole, None);
-                });
-            });
-            let rows: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| {
-                    if let egui::Shape::Text(text) = &shape.shape {
-                        Some(text.galley.text())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            assert_eq!(rows, ["loading history…"]);
+    fn words(reconnect: bool) -> OverlayWords {
+        OverlayWords {
+            verb: "No connection to",
+            meta: "Replay · never connected".to_owned(),
+            reconnect,
+            breathing: false,
         }
     }
 
+    /// The named stack, read off what egui actually paints: the chart first,
+    /// then the overlay and the slot, then a menu on top of them all.
     #[test]
-    fn loading_layers_leave_chart_pointer_input_available() {
+    fn the_chart_loading_and_a_menu_paint_in_the_named_order() {
+        const CHART: egui::Color32 = egui::Color32::from_rgb(1, 2, 3);
+        const MENU: egui::Color32 = egui::Color32::from_rgb(4, 5, 6);
         let ctx = egui::Context::default();
-        let mut tracker = LoadingTracker::new();
-        tracker.begin(LoadingTask::History);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
-        let mut frame = |events, building| {
-            tracker.set_active(LoadingTask::HistoryRebuild, building);
-            let mut dragged = false;
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.painter().rect_filled(screen, 0.0, CHART);
+                    let _ = draw_overlay(ui, screen, "X", &words(false), 0);
+                    let slot = Slot {
+                        job: false,
+                        text: "the slot",
+                    };
+                    draw_slot(ui, screen.right(), screen, &slot);
+                });
+                let menu = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("menu"));
+                ctx.layer_painter(menu).rect_filled(screen, 0.0, MENU);
+            },
+        );
+        let at = |wanted: &dyn Fn(&egui::Shape) -> bool| {
+            output
+                .shapes
+                .iter()
+                .position(|clipped| wanted(&clipped.shape))
+                .expect("painted")
+        };
+        let filled = |fill| move |shape: &egui::Shape| matches!(shape, egui::Shape::Rect(rect) if rect.fill == fill);
+        let chart = at(&filled(CHART));
+        let menu = at(&filled(MENU));
+        let overlay = at(&|shape| matches!(shape, egui::Shape::Mesh(_)));
+        let slot = at(
+            &|shape| matches!(shape, egui::Shape::Text(text) if text.galley.job.text == "the slot"),
+        );
+        assert!(
+            chart < overlay && overlay < menu,
+            "{chart} {overlay} {menu}"
+        );
+        assert!(chart < slot && slot < menu, "{chart} {slot} {menu}");
+    }
+
+    /// A control that would leave the rect is not drawn, nor answers a press,
+    /// and the group recentres without it.
+    #[test]
+    fn a_control_with_no_room_is_not_offered() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let roomy =
+                        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 400.0));
+                    assert!(reconnect_fits(ctx, roomy, "X", &words(true)));
+                    let (control, _) = draw_overlay(ui, roomy, "X", &words(true), 0);
+                    assert!(roomy.contains_rect(control.expect("it fits")));
+
+                    let short =
+                        egui::Rect::from_min_size(egui::pos2(0.0, 500.0), egui::vec2(800.0, 110.0));
+                    assert!(!reconnect_fits(ctx, short, "X", &words(true)));
+                    let (control, pressed) = draw_overlay(ui, short, "X", &words(true), 0);
+                    assert!(control.is_none() && !pressed);
+                });
+            },
+        );
+    }
+
+    /// The asset has no plate: its corners are clear and something is drawn.
+    #[test]
+    fn the_mark_samples_a_plate_less_logo() {
+        let cells = mark_cells();
+        assert!(!cells.is_empty(), "the asset decoded");
+        let side = (logo_mark::MARK_PX / logo_mark::cell_px(logo_mark::MARK_PX)) as usize;
+        assert!(
+            cells.len() < side * side / 2,
+            "a plate would fill the square: {} cells of {}",
+            cells.len(),
+            side * side
+        );
+        assert!(
+            !cells.iter().any(|cell| cell.column == 0 && cell.row == 0),
+            "the corner is clear"
+        );
+    }
+
+    /// A press on the control is an answer; the same press beside it is not.
+    #[test]
+    fn the_overlay_control_answers_a_real_press() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let press_at = |at: Option<egui::Pos2>| {
+            let ctx = egui::Context::default();
+            let frame = |events: Vec<egui::Event>| {
+                let mut answer = (None, false);
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            answer = draw_overlay(ui, ui.max_rect(), "X", &words(true), 0);
+                        });
+                    },
+                );
+                answer
+            };
+            let control = frame(Vec::new()).0.expect("laid out");
+            let at = at.unwrap_or(control.center());
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let _ = frame(vec![egui::Event::PointerMoved(at)]);
+            let _ = frame(vec![button(true)]);
+            frame(vec![button(false)]).1
+        };
+        assert!(press_at(None));
+        assert!(!press_at(Some(egui::pos2(20.0, 20.0))));
+    }
+
+    /// The overlay paints a drag through: only its one control takes a press,
+    /// and without the control nothing does.
+    #[test]
+    fn the_overlay_takes_no_input_but_its_one_control() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let mut control = None;
+        for _ in 0..3 {
             let _ = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(screen),
-                    events,
                     ..Default::default()
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let area = ui.max_rect();
-                        dragged = ui
-                            .interact(area, egui::Id::new("chart"), egui::Sense::drag())
-                            .dragged();
-                        overlay_scoped(ui, area, &tracker, LoadingScope::Whole, None);
+                        control = draw_overlay(ui, ui.max_rect(), "DOGEUSDT", &words(true), 0).0;
                     });
                 },
             );
-            dragged
-        };
-        for building in [false, true, false, true] {
-            frame(Vec::new(), building);
-            frame(Vec::new(), building);
-            for start in [
-                egui::pos2(100.0, 25.0),
-                egui::pos2(800.0, 200.0),
-                egui::pos2(150.0, 600.0),
-            ] {
-                let button = |pos, pressed| egui::Event::PointerButton {
-                    pos,
-                    pressed,
-                    button: egui::PointerButton::Primary,
-                    modifiers: egui::Modifiers::NONE,
-                };
-                frame(
-                    vec![egui::Event::PointerMoved(start), button(start, true)],
-                    building,
-                );
-                let end = start + egui::vec2(30.0, 0.0);
-                assert!(
-                    frame(vec![egui::Event::PointerMoved(end)], building),
-                    "chart drag at {start:?} while building={building}"
-                );
-                frame(vec![button(end, false)], building);
-            }
         }
-    }
-
-    #[test]
-    fn counts_overlapping_operations_and_drains_to_zero() {
-        let mut tracker = LoadingTracker::new();
-        assert!(!tracker.any_active());
-
-        tracker.begin(LoadingTask::History);
-        tracker.begin(LoadingTask::History);
-        assert_eq!(tracker.count(LoadingTask::History), 2);
-        assert!(tracker.is_active(LoadingTask::History));
-
-        tracker.end(LoadingTask::History);
-        assert!(
-            tracker.is_active(LoadingTask::History),
-            "one reply, one load"
+        let control = control.expect("the control was laid out");
+        assert!(control.width() < 200.0, "a word, not a band: {control:?}");
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (none, pressed) = draw_overlay(ui, ui.max_rect(), "X", &words(false), 0);
+                    assert!(none.is_none() && !pressed, "no control, no region");
+                });
+            },
         );
-        tracker.end(LoadingTask::History);
-        assert!(!tracker.any_active());
-    }
-
-    #[test]
-    fn ending_more_than_began_saturates_at_zero() {
-        let mut tracker = LoadingTracker::new();
-        tracker.end(LoadingTask::History);
-        assert_eq!(tracker.count(LoadingTask::History), 0);
-    }
-
-    #[test]
-    fn restart_leaves_exactly_one_in_flight() {
-        let mut tracker = LoadingTracker::new();
-        tracker.begin(LoadingTask::History);
-        tracker.begin(LoadingTask::History);
-        tracker.begin(LoadingTask::History);
-        tracker.restart(LoadingTask::History);
-        assert_eq!(tracker.count(LoadingTask::History), 1);
-    }
-
-    #[test]
-    fn set_active_is_level_triggered() {
-        let mut tracker = LoadingTracker::new();
-        tracker.set_active(LoadingTask::BookSync, true);
-        tracker.set_active(LoadingTask::BookSync, true);
-        assert_eq!(tracker.count(LoadingTask::BookSync), 1, "no accumulation");
-        tracker.set_active(LoadingTask::BookSync, false);
-        assert!(!tracker.is_active(LoadingTask::BookSync));
-    }
-
-    #[test]
-    fn tasks_are_independent() {
-        let mut tracker = LoadingTracker::new();
-        tracker.begin(LoadingTask::History);
-        tracker.set_active(LoadingTask::ReplaySession, true);
-        tracker.end(LoadingTask::History);
-        assert!(!tracker.is_active(LoadingTask::History));
-        assert!(tracker.is_active(LoadingTask::ReplaySession));
-    }
-
-    #[test]
-    fn active_tasks_come_out_in_overlay_order() {
-        let mut tracker = LoadingTracker::new();
-        tracker.set_active(LoadingTask::ReplaySession, true);
-        tracker.begin(LoadingTask::History);
-        let active: Vec<_> = tracker.active().collect();
-        assert_eq!(
-            active,
-            vec![LoadingTask::History, LoadingTask::ReplaySession],
-            "declaration order, not activation order"
-        );
-    }
-
-    #[test]
-    fn every_task_indexes_its_own_slot_and_has_a_label() {
-        for (position, task) in LoadingTask::ALL.into_iter().enumerate() {
-            assert_eq!(task.index(), position, "ALL and index() must agree");
-            assert!(!task.label().is_empty());
-        }
     }
 }

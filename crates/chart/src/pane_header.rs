@@ -250,6 +250,12 @@ pub struct FlowHeaderState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeaderFit {
     pub mark: bool,
+    /// The job slot, left of the chip.
+    pub slot: bool,
+    /// The chip at all: three dots.
+    pub chip: bool,
+    /// The chip's words beside its dots.
+    pub chip_words: bool,
 }
 
 /// Width of the header's right end: the view button and the strip glyph.
@@ -257,13 +263,47 @@ pub const FLOW_CONTROLS_PX: f32 = VIEW_SLOT_PX + GROUP_GAP_PX + GLYPH_SLOT_PX;
 /// The gap the mark leaves before the bars.
 const MARK_GAP_PX: f32 = GROUP_GAP_PX;
 
-/// The narrow rule of a flow pane's header: only the mark goes. What still does
+/// The widths a flow pane's header line has to fit. An absent item is zero.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct HeaderWidths {
+    pub strip: f32,
+    pub mark: f32,
+    pub bars: f32,
+    pub indicators: f32,
+    /// The right end, its own gap included; zero without a tape.
+    pub controls: f32,
+    pub slot: f32,
+    pub chip_with_words: f32,
+    pub chip_dots: f32,
+}
+
+/// The narrow rule of a flow pane's header, in the order things go: the slot,
+/// then the mark, then the chip's words, then the chip's dots. What still does
 /// not fit is the bars text, clipped short of the indicators button.
 #[must_use]
-pub fn flow_fit(strip_px: f32, mark_px: f32, bars_px: f32, indicators_px: f32) -> HeaderFit {
-    let line = mark_px + MARK_GAP_PX + bars_px + GROUP_GAP_PX + indicators_px;
+pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
+    let core = widths.bars + GROUP_GAP_PX + widths.indicators + widths.controls;
+    let item = |width: f32| {
+        if width > 0.0 {
+            width + GROUP_GAP_PX
+        } else {
+            0.0
+        }
+    };
+    let mark = item(widths.mark).max(widths.mark + MARK_GAP_PX) * f32::from(widths.mark > 0.0);
+    let fits = |extra: f32| core + extra <= widths.strip;
+    let (full_chip, dots) = (item(widths.chip_with_words), item(widths.chip_dots));
+    let slot = fits(mark + full_chip + item(widths.slot));
+    let keep_mark = fits(mark + full_chip);
+    let chip_words = fits(full_chip);
+    let chip = chip_words || fits(dots);
     HeaderFit {
-        mark: line + GROUP_GAP_PX + FLOW_CONTROLS_PX <= strip_px,
+        // The mark goes before the chip's words, but with no chip to make room
+        // for it answers only to its own width.
+        mark: keep_mark,
+        slot: slot && widths.slot > 0.0,
+        chip: chip && widths.chip_dots > 0.0,
+        chip_words: chip_words && widths.chip_with_words > 0.0,
     }
 }
 
@@ -606,14 +646,56 @@ mod tests {
         assert_eq!(sample_value_text(1.5), "1.50x");
     }
 
+    fn widths(strip: f32) -> HeaderWidths {
+        HeaderWidths {
+            strip,
+            mark: 70.0,
+            bars: 80.0,
+            indicators: 90.0,
+            controls: FLOW_CONTROLS_PX + GROUP_GAP_PX,
+            slot: 120.0,
+            chip_with_words: 150.0,
+            chip_dots: 48.0,
+        }
+    }
+
     /// Only the mark goes; the right end and the indicators button never do.
     #[test]
-    fn a_narrow_strip_drops_only_the_mark() {
-        let (mark, bars, indicators) = (70.0, 80.0, 90.0);
-        let everything =
-            mark + MARK_GAP_PX + bars + GROUP_GAP_PX + indicators + GROUP_GAP_PX + FLOW_CONTROLS_PX;
-        assert!(flow_fit(everything, mark, bars, indicators).mark);
-        assert!(!flow_fit(everything - 1.0, mark, bars, indicators).mark);
+    fn a_narrow_strip_with_no_chip_drops_only_the_mark() {
+        let line = |strip| HeaderWidths {
+            slot: 0.0,
+            chip_with_words: 0.0,
+            chip_dots: 0.0,
+            ..widths(strip)
+        };
+        let w = line(0.0);
+        let everything = w.mark + MARK_GAP_PX + w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let fit = flow_fit(&line(everything));
+        assert!(fit.mark);
+        assert!(!fit.chip && !fit.slot && !fit.chip_words);
+        assert!(!flow_fit(&line(everything - 1.0)).mark);
+    }
+
+    /// The trader's narrow pane, step by step: the slot, the mark, the words,
+    /// the dots, in that order, and never an overlap.
+    #[test]
+    fn a_narrowing_strip_gives_things_up_in_order() {
+        let w = widths(0.0);
+        let core = w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let gap = GROUP_GAP_PX;
+        let mark = w.mark + gap;
+        let words = w.chip_with_words + gap;
+        let dots = w.chip_dots + gap;
+        let slot = w.slot + gap;
+        let keeps = |strip: f32| {
+            let fit = flow_fit(&widths(strip));
+            (fit.slot, fit.mark, fit.chip_words, fit.chip)
+        };
+        assert_eq!(keeps(core + mark + words + slot), (true, true, true, true));
+        assert_eq!(keeps(core + mark + words), (false, true, true, true));
+        assert_eq!(keeps(core + words), (false, false, true, true));
+        assert_eq!(keeps(core + dots), (false, false, false, true));
+        assert_eq!(keeps(core + dots - 1.0), (false, false, false, false));
     }
 
     fn glyph(toggle: LayerToggle, on: bool, blocked: Option<LayerBlock>) -> LayerGlyph {

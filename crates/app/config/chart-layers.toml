@@ -42,10 +42,8 @@ tape_heatmap = true
 tape_bubbles = true
 
 # The chart's own chrome. On, so the canvas explains itself: the key that names
-# the colours, the badge that says whether the book is live, the boundaries
-# around depth the venue never sent.
+# the colours and the boundaries around depth the venue never sent.
 flow_legend = true
-book_status = true
 depth_gaps = true
 grid = true
 last_price = true

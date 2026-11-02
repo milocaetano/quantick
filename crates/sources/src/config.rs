@@ -104,6 +104,7 @@ impl ProviderKind {
     pub fn capabilities(self) -> FeedCapabilities {
         match self {
             ProviderKind::Binance | ProviderKind::BinanceFutures => FeedCapabilities {
+                transport: true,
                 book_capture: true,
                 history_paging: true,
                 history_boundary: None,
@@ -123,6 +124,7 @@ impl ProviderKind {
             // What stays forbidden is the inverse — inventing trades out of
             // them to fill the tape.
             ProviderKind::Hyperliquid => FeedCapabilities {
+                transport: true,
                 book_capture: true,
                 history_paging: false,
                 history_boundary: None,
@@ -146,6 +148,7 @@ impl ProviderKind {
             // and — seeing no rising edge afterwards — never ask again. The flag
             // rises once, when the block actually arrives.
             ProviderKind::MetaTrader => FeedCapabilities {
+                transport: true,
                 book_capture: true,
                 history_paging: false,
                 history_boundary: None,
@@ -260,6 +263,9 @@ pub struct FeedCapabilities {
     /// MetaTrader, Hyperliquid — or where the split is not known, so a bar
     /// summarising candles says its buy, sell and delta were not measured.
     pub ohlcv_aggressor_split: bool,
+    /// There is a transport behind it to be up or down, and to reconnect. False
+    /// on a recording: its silence is data, and "no connection" a false word.
+    pub transport: bool,
 }
 
 /// Where a feed's pageable trade history ends, labelled rather than left
@@ -356,6 +362,7 @@ impl FeedCapabilities {
     #[must_use]
     pub fn none() -> Self {
         Self {
+            transport: false,
             book_capture: false,
             history_paging: false,
             history_boundary: None,

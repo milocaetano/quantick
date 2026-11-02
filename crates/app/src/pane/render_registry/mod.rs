@@ -22,7 +22,7 @@ mod paper;
 use crate::footprint_render::{FootprintLod, LayerFrame};
 pub(super) use candles::CandlePass;
 pub(super) use drawings::DrawingPass;
-pub(super) use flow::{FlowPass, LegendPass, StatusPass, StripPass};
+pub(super) use flow::{FlowPass, LegendPass, StripPass};
 pub(super) use indicators::{IndicatorPanePass, OverlayPass};
 pub(super) use paper::{PaperPass, TradesPass};
 
@@ -49,7 +49,6 @@ pub(super) enum Contribution {
     Aggressions(for<'a> fn(&mut FlowPass<'a>)),
     Legend(for<'a> fn(&mut LegendPass<'a>)),
     Strip(for<'a> fn(&mut StripPass<'a>)),
-    Status(for<'a> fn(&mut StatusPass<'a>)),
     Seam(for<'a> fn(&mut DividerPass<'a>)),
     Backfill(for<'a> fn(&mut DividerPass<'a>)),
     FeedGaps(for<'a> fn(&mut DividerPass<'a>)),
@@ -122,7 +121,6 @@ pass!(indicator_pane, IndicatorPane, IndicatorPanePass<'_, '_>);
 pass!(aggressions, Aggressions, FlowPass<'_>);
 pass!(legend, Legend, LegendPass<'_>);
 pass!(strip, Strip, StripPass<'_>);
-pass!(status, Status, StatusPass<'_>);
 pass!(seam, Seam, DividerPass<'_>);
 pass!(backfill, Backfill, DividerPass<'_>);
 pass!(feed_gaps, FeedGaps, DividerPass<'_>);
@@ -208,7 +206,7 @@ pub(super) mod probe {
         let mut pane = installed();
         let style = ChartStyle::default();
         let catalog = pane.layers.registry();
-        assert_eq!(catalog.layers().len(), 27);
+        assert_eq!(catalog.layers().len(), 26);
         let discovered = catalog.resolve("test_probe").unwrap();
         assert_eq!(discovered.label(), "Probe");
         assert!(!pane.layer_visible(discovered, &style));

@@ -15,6 +15,7 @@
 //! `app` are held with: the engine's counting allocator, re-exported here and
 //! installed by each test binary.
 
+pub mod connection_state;
 mod constants;
 pub mod day_turn;
 pub mod flow_execution;
@@ -28,6 +29,8 @@ pub mod indicator_registry;
 pub mod indicator_style;
 pub mod indicator_views;
 pub mod live_strip;
+pub mod loading;
+pub mod logo_mark;
 pub mod pane_header;
 pub mod price_axis_fit;
 pub mod price_view;

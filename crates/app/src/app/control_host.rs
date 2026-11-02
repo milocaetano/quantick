@@ -485,31 +485,27 @@ impl<'a> ChromeReads<'a> {
         self.tool_rail
     }
 
-    /// The colour the chart's corner is wearing, or `None` while the chart
-    /// is being fed.
-    ///
-    /// The status line's provenance dot takes this rather than deciding for
-    /// itself. It used to read the connection alone, which is a socket's
-    /// opinion: a terminal that froze with the socket open had the
-    /// bottom-left of the window saying `live` while the bottom-right said
-    /// `offline`, about the same feed, at the same moment. Two surfaces
-    /// disagreeing about the one question the trader is asking is worse than
-    /// either answer alone, so there is one report and both read it.
-    pub(crate) fn feed_offline_accent(
-        self,
-        stall: Option<&quantick_feed::stall::Stall>,
-    ) -> Option<egui::Color32> {
-        crate::feed_notice::report(&self.tabs[self.tabs.active_index()].notice, stall)
-            .filter(crate::feed_notice::Report::is_offline)
-            .map(|report| report.accent())
-    }
-
     /// Where the feed's offline chip was painted, or `None` when it was not.
     ///
     /// The projection reads what was drawn rather than re-deciding it, so the
     /// scene and the screen cannot disagree across the edge of a stall budget.
     pub(crate) fn feed_chip_rect(self) -> Option<egui::Rect> {
         self.drawn.feed_chip_rect
+    }
+
+    /// The word the status bar is painting about the active tab's feed.
+    pub(crate) fn feed_word(self) -> Option<&'static str> {
+        let tab = &self.tabs[self.tabs.active_index()];
+        tab.connection
+            .status_word(crate::metrics::wall_clock_ms())
+            .map(|word| word.word)
+    }
+
+    /// Whether a one-click Reconnect stands outside the popup: the overlay's or
+    /// the status bar's, whichever is up.
+    pub(crate) fn feed_reconnect_offered(self) -> bool {
+        let tab = &self.tabs[self.tabs.active_index()];
+        tab.connection.state().link == quantick_chart::connection_state::Link::Offline
     }
 
     /// Whether the recovery popup that chip opens is showing, on the chart

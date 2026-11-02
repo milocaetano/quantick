@@ -789,34 +789,36 @@ fn the_notice_lands_on_the_pane_that_is_waiting() {
     let tab = app.active_tab();
     let flow = tab.flow_pane.frame.area.expect("the flow pane painted");
     let time = tab.time_panes[0].frame.area.expect("the time pane painted");
-    let (chosen, slots) = tab.starved_pane().expect("a painted pane");
-    assert_eq!(slots, 0, "the starved pane is the one with nothing on it");
-    assert_eq!(chosen, flow, "the note belongs to the pane that is waiting");
-    assert_ne!(
-        chosen, time,
-        "a pane full of candles is not waiting for anything"
+    assert_eq!(
+        tab.empty_panes_rect(),
+        Some(flow),
+        "the overlay covers the pane that is waiting, and a pane full of candles is not"
     );
+    assert!(!flow.intersects(time));
+}
 
-    // The corner belongs to the window, and the line belongs to the empty
-    // pane. Neither may land on the pane that is painting fine.
-    let notice = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
-    let report = feed_notice::report(&notice, None).expect("a named reason speaks");
-    assert!(report.is_offline());
-    let canvas = flow.union(time);
-    let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let chip = feed_notice::chip_rect(ui.painter(), canvas);
-            assert!(
-                !chip.intersects(time),
-                "chip {chip:?} covered the working time pane {time:?}"
-            );
-            let popup = feed_notice::popup_rect(ui.painter(), canvas, chip, &report);
-            assert!(
-                canvas.contains_rect(popup),
-                "popup {popup:?} left the canvas {canvas:?}"
-            );
-        });
-    });
+/// A wait is named in exactly one header: the flow pane's, or the first time
+/// pane's when the layout has no flow pane.
+#[test]
+fn the_job_slot_speaks_once_in_every_layout() {
+    let ctx = egui::Context::default();
+    let (mut app, _feed, _commands, _notices) = test_app();
+    let sentence = "history reached its end";
+    app.active_tab_mut().raise_history_note(sentence);
+    for layout in [
+        CanvasLayout::TimeTimeAndFlow,
+        CanvasLayout::TimeAndFlow,
+        CanvasLayout::Time,
+    ] {
+        app.active_tab_mut().set_layout(layout);
+        run_frame(&mut app, &ctx);
+        let output = run_frame(&mut app, &ctx);
+        let spoken = painted_text(&output)
+            .iter()
+            .filter(|text| text.as_str() == sentence)
+            .count();
+        assert_eq!(spoken, 1, "{layout:?}");
+    }
 }
 
 /// One dead terminal stalls every MetaTrader tab at once, and the popup
@@ -1887,6 +1889,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
             book_events: book_rx,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(FeedCapabilities {
+                transport: true,
                 book_capture: false,
                 history_paging: true,
                 history_boundary: None,
@@ -3169,6 +3172,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
             book_events: book_rx,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(FeedCapabilities {
+                transport: true,
                 book_capture: false,
                 history_paging: true,
                 history_boundary: None,

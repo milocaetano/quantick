@@ -290,6 +290,10 @@ impl Tab {
             if frame.split {
                 self.focus_from_pointer(ui, &bands.panes[..context_shown], frame.flow_band);
             }
+            // The slot's home with no flow pane: the first header standing.
+            let mut job_slot = (!frame.show_flow)
+                .then(|| self.connection.slot(self.session.history_note()))
+                .flatten();
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
                 if self.context_stack.heights[slot].is_collapsed() {
                     ui.painter()
@@ -307,7 +311,7 @@ impl Tab {
                 }
                 let pane_areas = split_pane_layout_strip(*band);
                 let areas = split_pane_header(pane_areas.body);
-                self.draw_time_header(ui, slot, areas.header, bar_inputs);
+                self.draw_time_header(ui, slot, areas.header, bar_inputs, job_slot.take());
                 rects
                     .context_charts
                     .push(Some((areas.chart, pane_areas.layout_strip)));
@@ -323,6 +327,57 @@ impl Tab {
             }
         });
         rects
+    }
+
+    /// Tell this tab's connection state what the frame found.
+    pub(crate) fn observe_connection(
+        &mut self,
+        config: &crate::config::AppConfig,
+        now_ms: i64,
+        stall: Option<&quantick_feed::stall::Stall>,
+    ) {
+        use quantick_chart::connection_state::{ConnectionFacts, Transport, Verdict};
+        use quantick_feed::{FeedConnectionState, FeedNotice};
+        let report = crate::feed_notice::report(&self.notice, stall)
+            .filter(crate::feed_notice::Report::is_offline);
+        let verdict = match (&self.notice, report) {
+            (_, None) => Verdict::None,
+            (FeedNotice::Attention { headline, .. }, Some(_)) => Verdict::Failed {
+                provider_says: Some(headline),
+            },
+            (_, Some(report)) if report.needs_user => Verdict::Failed {
+                provider_says: None,
+            },
+            (_, Some(_)) => Verdict::Quiet,
+        };
+        let mut empty_pane = false;
+        let mut any_bars = false;
+        for (pane, _) in self.panes() {
+            let slots = pane.slots();
+            any_bars |= slots > 0;
+            empty_pane |= slots == 0 && pane.frame.area.is_some();
+        }
+        let capabilities = self.capabilities(config);
+        let facts = ConnectionFacts {
+            now_ms,
+            symbol: &self.symbol,
+            attached_ms: self.feed_attached_ms,
+            timeline_generation: self.session.timeline_generation(),
+            has_transport: capabilities.transport,
+            transport: match self.feed_connection {
+                FeedConnectionState::Connecting => Transport::Connecting,
+                FeedConnectionState::Reconnecting => Transport::Reconnecting,
+                FeedConnectionState::Connected => Transport::Connected,
+            },
+            verdict,
+            live_trades: self.live_trades,
+            empty_pane,
+            any_bars,
+            flow_bars: self.flow_pane.slots() > 0,
+            book: self.tape().connection_book(),
+            fraction: None,
+        };
+        self.connection.observe(&facts, &self.loading);
     }
 
     /// The pane whose header asked for the indicator library this frame. Taken in
@@ -366,12 +421,20 @@ impl Tab {
         bar_inputs: BarInputAvailability,
         chrome: &mut CanvasChrome<'_>,
     ) {
+        let chip = self.connection.chip();
+        let slot = self.connection.slot(self.session.history_note());
+        let rebuilding = self
+            .loading
+            .is_active(crate::loading::LoadingTask::BarRebuild);
         let pane = &mut self.flow_pane;
         let identity = PaneIdentity::OrderFlow;
         let header = PaneHeader::of(identity, pane.spec.spec());
         let row = crate::pane_header::FlowRow {
             strip: pane.strip_glyph(chrome.style, chrome.capabilities),
             state: pane.flow_header_state(),
+            chip,
+            slot,
+            rebuilding,
         };
         let (intent, indicators) = crate::pane_header::draw_marked(
             ui,
@@ -404,7 +467,17 @@ impl Tab {
         slot: usize,
         strip: egui::Rect,
         bar_inputs: BarInputAvailability,
+        job_slot: Option<(String, bool)>,
     ) {
+        let rebuilding = self
+            .loading
+            .is_active(crate::loading::LoadingTask::BarRebuild);
+        let job_slot = job_slot
+            .as_ref()
+            .map(|(text, job)| crate::loading::Slot { job: *job, text });
+        let reserve_px = job_slot.as_ref().map_or(0.0, |slot| {
+            crate::loading::slot_width(ui, slot) + quantick_chart::pane_header::GROUP_GAP_PX
+        });
         let pane = &mut self.time_panes[slot];
         let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
         let mut interval_ms = pane
@@ -414,10 +487,21 @@ impl Tab {
             .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
         let spec = &mut pane.spec;
         pane.frame.header_controls.clear();
-        let header_layout =
-            crate::time_header::draw(ui, strip, &mut interval_ms, pane.id, header.presets, |ui| {
-                crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs)
-            });
+        let header_layout = crate::time_header::draw(
+            ui,
+            strip,
+            &mut interval_ms,
+            pane.id,
+            header.presets,
+            reserve_px,
+            |ui| {
+                crate::pane_header::bars_control(ui, &header, pane.id, spec, bar_inputs, rebuilding)
+            },
+        );
+        if let Some(job_slot) = &job_slot {
+            let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right();
+            crate::loading::draw_slot(ui, right, strip, job_slot);
+        }
         #[cfg(test)]
         if slot == 0 {
             self.time_header_chips = header_layout.chips();
@@ -457,17 +541,14 @@ impl Tab {
         let Self {
             flow_pane,
             time_panes,
-            symbol,
             paper,
             feed_gaps,
             paper_drag_pane,
             ..
         } = self;
-        // Cleared before the loop, set by whichever panes it actually walks.
-        // A collapsed context column draws nothing and would otherwise keep
-        // the rect it had when it was last open, which `starved_pane` would
-        // then offer as somewhere to paint the offline note — off the visible
-        // canvas, on a chart that is not there.
+        // Cleared before the loop, set by whichever panes it actually walks: a
+        // collapsed context column would otherwise keep the rect it last had,
+        // and the overlay would paint off the visible canvas.
         flow_pane.frame.area = None;
         flow_pane.frame.layout_strip = None;
         if rects.flow_areas.is_none() {
@@ -518,7 +599,6 @@ impl Tab {
             begin_text_edit: chrome.begin_text_edit,
             style: chrome.style,
             tz: chrome.tz,
-            symbol,
             paper,
             paper_takes_input: false,
             paper_hud_here: false,

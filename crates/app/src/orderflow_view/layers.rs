@@ -7,7 +7,7 @@ use quantick_orderflow::HeatmapConfig;
 /// How one switch reads its owner and writes through it: `(read, write)`.
 struct Switch(fn(&V) -> bool, fn(&mut V, bool));
 /// Indexed by [`OrderflowSwitch`], in its declaration order.
-const SWITCHES: [Switch; 12] = [
+const SWITCHES: [Switch; 11] = [
     Switch(V::lane_enabled, V::set_lane_enabled),
     Switch(V::lane_depth_switched_on, V::set_lane_depth_visible),
     Switch(V::lane_bubbles_enabled, V::set_lane_bubbles_enabled),
@@ -15,7 +15,6 @@ const SWITCHES: [Switch; 12] = [
     Switch(V::bubbles_enabled, V::set_bubbles_enabled),
     Switch(V::lane_marks_visible, V::set_lane_marks_visible),
     Switch(V::legend_visible, V::set_legend_visible),
-    Switch(V::status_badge_visible, V::set_status_badge_visible),
     Switch(V::gaps_visible, V::set_gaps_visible),
     // A preset switch: one config field, through the one door every change uses.
     Switch(

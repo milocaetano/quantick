@@ -10,13 +10,10 @@
 use eframe::egui;
 
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView, fmt_count, fmt_hms};
-use crate::feed_notice;
 #[cfg(test)]
 use crate::state::BarKind;
-use crate::tab::Tab;
 use crate::theme;
 use quantick_engine::bar_registry::BarDefinition;
-use quantick_feed::stall::Stall;
 
 /// The popover's width, in points.
 const POPOVER_WIDTH_PX: f32 = 360.0;
@@ -24,12 +21,6 @@ const POPOVER_WIDTH_PX: f32 = 360.0;
 /// stale state counts seconds, and the controls to its right — the bar kind,
 /// BUY and SELL — must not move under a hand that has learned where they are.
 pub const REC_BUTTON_MIN_WIDTH_PX: f32 = 196.0;
-// The corner chip's geometry is the offline chip's, one set of numbers:
-// the two sit side by side in the same corner and must read as one pill.
-use crate::feed_notice::{
-    CHIP_DOT_DIAMETER_PX as CHIP_DOT_PX, CHIP_DOT_GAP_PX as CHIP_GAP_PX, CHIP_HEIGHT_PX,
-    CHIP_LABEL_PT, CHIP_MARGIN_PX, CHIP_PAD_PX,
-};
 
 /// The popover's persistent id, so a hook can open it the way a click does.
 fn popup_id(ui: &egui::Ui) -> egui::Id {
@@ -302,7 +293,7 @@ pub fn draw_days(
     }
 }
 
-/// What the chart-corner chip says for one pane.
+/// What the status bar's recording note says for one pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DealChip {
     pub text: String,
@@ -427,107 +418,6 @@ pub fn chip_for(
         hover,
         tone: view.state,
     })
-}
-
-/// The chart corner for one tab: the chip, when the tab has something to
-/// say, placed left of the offline chip's corner so the two never overlap.
-pub fn draw_corner(ui: &mut egui::Ui, area: egui::Rect, tab: &Tab, stall: Option<&Stall>) {
-    let Some(chip) = tab.deal_chip() else {
-        return;
-    };
-    let offline = feed_notice::report(&tab.notice, stall).is_some_and(|report| report.is_offline());
-    let right = if offline {
-        feed_notice::chip_rect(ui.painter(), area).left()
-    } else {
-        area.right()
-    };
-    draw_chip(ui, area, right, &chip);
-}
-
-/// Draw the chip in the chart's bottom-right corner, left of `right_edge`,
-/// and return its rectangle for the scene.
-pub fn draw_chip(
-    ui: &mut egui::Ui,
-    area: egui::Rect,
-    right_edge: f32,
-    chip: &DealChip,
-) -> egui::Rect {
-    let painter = ui.painter();
-    let label = painter.layout_no_wrap(
-        chip.text.clone(),
-        egui::FontId::proportional(CHIP_LABEL_PT),
-        theme::TEXT_PRIMARY,
-    );
-    let width =
-        (2.0 * CHIP_PAD_PX + CHIP_DOT_PX + CHIP_GAP_PX + label.size().x.ceil()).min(area.width());
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(
-            right_edge - CHIP_MARGIN_PX - width,
-            area.bottom() - CHIP_MARGIN_PX - CHIP_HEIGHT_PX,
-        ),
-        egui::vec2(width, CHIP_HEIGHT_PX),
-    )
-    // Never past the chart, like the offline chip: a narrow pane clips the
-    // pill rather than letting it overrun the axis.
-    .intersect(area);
-    let response = ui
-        .interact(
-            rect,
-            ui.id().with("deal_recording_chip"),
-            egui::Sense::hover(),
-        )
-        .on_hover_text(&chip.hover);
-    let painter = ui.painter();
-    let fill = if response.hovered() {
-        theme::CONTROL
-    } else {
-        theme::CHROME
-    };
-    painter.rect(
-        rect,
-        egui::Rounding::same(CHIP_HEIGHT_PX / 2.0),
-        fill,
-        egui::Stroke::new(1.0_f32, theme::BORDER),
-    );
-    let dot_center = egui::pos2(
-        rect.left() + CHIP_PAD_PX + CHIP_DOT_PX / 2.0,
-        rect.center().y,
-    );
-    let (dot, ink) = match chip.tone {
-        RecState::Recording => (theme::REC, theme::TEXT_PRIMARY),
-        RecState::Stale => (theme::AMBER, theme::TEXT_PRIMARY),
-        RecState::Recorded => (theme::TEXT_FAINT, theme::TEXT_PRIMARY),
-        RecState::Off | RecState::Unsupported => (egui::Color32::TRANSPARENT, theme::TEXT_MUTED),
-    };
-    if chip.tone == RecState::Off || chip.tone == RecState::Unsupported {
-        painter.circle_stroke(
-            dot_center,
-            CHIP_DOT_PX / 2.0,
-            egui::Stroke::new(1.0_f32, theme::TEXT_FAINT),
-        );
-    } else if chip.tone == RecState::Recorded {
-        painter.rect_filled(
-            egui::Rect::from_center_size(dot_center, egui::vec2(CHIP_DOT_PX, CHIP_DOT_PX)),
-            egui::Rounding::same(1.0),
-            dot,
-        );
-    } else {
-        painter.circle_filled(dot_center, CHIP_DOT_PX / 2.0, dot);
-    }
-    let label = painter.layout_no_wrap(
-        chip.text.clone(),
-        egui::FontId::proportional(CHIP_LABEL_PT),
-        ink,
-    );
-    painter.galley(
-        egui::pos2(
-            rect.left() + CHIP_PAD_PX + CHIP_DOT_PX + CHIP_GAP_PX,
-            rect.center().y - label.size().y / 2.0,
-        ),
-        label,
-        ink,
-    );
-    rect
 }
 
 #[cfg(test)]

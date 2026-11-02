@@ -118,6 +118,39 @@ pub struct FeedTabSnapshot {
     /// a feed without one. The same view the REC control draws.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deal_recording: Option<super::deal_recording::DealRecordingSnapshot>,
+    /// What every surface on screen says about this feed, from the one state
+    /// they all read. Optional, so additive to v1; the application always
+    /// reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<ConnectionSnapshot>,
+}
+
+/// The tab's `ConnectionState`. Carries words of its own, never the venue's:
+/// like [`FeedNoticeSnapshot`] it publishes no provider text.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ConnectionSnapshot {
+    /// `live`, `attempting`, `offline`, `quiet` or `no_transport`. `offline`
+    /// latches until data arrives, `feed.reconnect` is called or the transport
+    /// has stayed up for ten seconds.
+    pub link: String,
+    /// `connecting`, `live` or `idle`.
+    pub feed: String,
+    /// `connecting`, `synced`, `idle`, `off` or `lost`.
+    pub book: String,
+    /// `connecting`, `live` or `idle`.
+    pub trades: String,
+    /// When the transport was last seen connected.
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub last_connected_unix_ms: Option<i64>,
+    /// The job the header's slot is naming, in the words it uses.
+    pub current_job: Option<String>,
+    /// The word the status bar shows, absent while a new session settles.
+    pub status_word: Option<String>,
+    /// The overlay stands over the panes with no bars.
+    pub overlay_up: bool,
+    /// A `feed.reconnect` press is on offer on screen: the overlay's or the
+    /// status bar's.
+    pub reconnect_offered: bool,
 }
 
 /// A feed the chart has decided is stalled.

@@ -1,5 +1,66 @@
 {
   "$defs": {
+    "ConnectionSnapshot": {
+      "description": "The tab's `ConnectionState`. Carries words of its own, never the venue's:\nlike [`FeedNoticeSnapshot`] it publishes no provider text.",
+      "properties": {
+        "book": {
+          "description": "`connecting`, `synced`, `idle`, `off` or `lost`.",
+          "type": "string"
+        },
+        "current_job": {
+          "description": "The job the header's slot is naming, in the words it uses.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "feed": {
+          "description": "`connecting`, `live` or `idle`.",
+          "type": "string"
+        },
+        "last_connected_unix_ms": {
+          "description": "When the transport was last seen connected.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "link": {
+          "description": "`live`, `attempting`, `offline`, `quiet` or `no_transport`. `offline`\nlatches until data arrives, `feed.reconnect` is called or the transport\nhas stayed up for ten seconds.",
+          "type": "string"
+        },
+        "overlay_up": {
+          "description": "The overlay stands over the panes with no bars.",
+          "type": "boolean"
+        },
+        "reconnect_offered": {
+          "description": "A `feed.reconnect` press is on offer on screen: the overlay's or the\nstatus bar's.",
+          "type": "boolean"
+        },
+        "status_word": {
+          "description": "The word the status bar shows, absent while a new session settles.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trades": {
+          "description": "`connecting`, `live` or `idle`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "link",
+        "feed",
+        "book",
+        "trades",
+        "overlay_up",
+        "reconnect_offered"
+      ],
+      "type": "object"
+    },
     "DealRecordingSnapshot": {
       "description": "The recorder as the chrome reads it, on the wire.",
       "properties": {
@@ -290,6 +351,17 @@
         },
         "capabilities": {
           "$ref": "#/$defs/FeedCapabilitiesSnapshot"
+        },
+        "connection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConnectionSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What every surface on screen says about this feed, from the one state\nthey all read. Optional, so additive to v1; the application always\nreports it."
         },
         "connection_state": {
           "type": "string"

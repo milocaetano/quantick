@@ -30,8 +30,6 @@ pub struct PaneChrome<'a> {
     pub begin_text_edit: &'a mut bool,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
-    /// The symbol to name while the series is still empty.
-    pub symbol: &'a str,
     /// The tab's paper-trading simulator. Both panes *draw* its lines — the
     /// same instrument at the same prices — while only one *handles* them.
     pub paper: &'a mut PaperTrading,

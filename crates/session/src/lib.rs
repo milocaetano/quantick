@@ -520,6 +520,8 @@ pub struct TabSession {
     venue: VenueCandles,
     paging: TradePaging,
     events: VecDeque<SessionEvent>,
+    /// Moves whenever the timeline is thrown away; a resuming attach keeps it.
+    timeline_generation: u64,
 }
 
 impl Default for TabSession {
@@ -583,6 +585,7 @@ impl TabSession {
             venue: VenueCandles::default(),
             paging: TradePaging::default(),
             events: VecDeque::new(),
+            timeline_generation: 0,
         }
     }
 
@@ -651,6 +654,9 @@ impl TabSession {
                 self.venue.pane_added(step, tab_id);
             }
             Act::Attach { keep_timeline } => {
+                if !keep_timeline {
+                    self.timeline_reset();
+                }
                 self.venue.attach(step, keep_timeline);
                 // The run belonged to the old session's tape; its reply is on
                 // a channel about to be dropped.
@@ -810,6 +816,18 @@ impl TabSession {
     #[must_use]
     pub const fn venue_lead_in(&self) -> bool {
         self.venue.lead_in
+    }
+
+    /// How many timelines this tab has thrown away: what says a respawn kept
+    /// the chart or started another one.
+    #[must_use]
+    pub const fn timeline_generation(&self) -> u64 {
+        self.timeline_generation
+    }
+
+    /// The chart's timeline is gone: a source rewound, or a session replaced it.
+    pub const fn timeline_reset(&mut self) {
+        self.timeline_generation = self.timeline_generation.wrapping_add(1);
     }
 
     /// Forget which candle generation was acted on, so the next poll treats
