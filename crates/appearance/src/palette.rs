@@ -116,9 +116,14 @@ pub enum Token {
     FootprintTotalInk,
     LoadingLogoLow,
     LoadingLogoHigh,
+    FlowBuy,
+    FlowSell,
+    TapePath,
+    TapeLabel,
+    QuantityShadow,
 }
 impl Token {
-    pub const ALL: [Self; 50] = [
+    pub const ALL: [Self; 55] = [
         Self::Canvas,
         Self::Chrome,
         Self::Inset,
@@ -169,6 +174,11 @@ impl Token {
         Self::FootprintTotalInk,
         Self::LoadingLogoLow,
         Self::LoadingLogoHigh,
+        Self::FlowBuy,
+        Self::FlowSell,
+        Self::TapePath,
+        Self::TapeLabel,
+        Self::QuantityShadow,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -222,6 +232,11 @@ impl Token {
             Self::FootprintTotalInk => "footprint_total_ink",
             Self::LoadingLogoLow => "loading_logo_low",
             Self::LoadingLogoHigh => "loading_logo_high",
+            Self::FlowBuy => "flow_buy",
+            Self::FlowSell => "flow_sell",
+            Self::TapePath => "tape_path",
+            Self::TapeLabel => "tape_label",
+            Self::QuantityShadow => "quantity_shadow",
         }
     }
     pub fn from_key(key: &str) -> Option<Self> {

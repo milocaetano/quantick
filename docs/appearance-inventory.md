@@ -191,3 +191,29 @@ its `paint` module use `CASING` and related text/profile decoration. Their share
 `drawings::palette` aliases remain historical constants. Preserve authored object
 colors, level payloads, and existing text while resolving ambient decoration; do
 not infer ownership from equal colors or blindly scale existing mark geometry.
+
+
+## Order-flow cache and typography checkpoint
+
+Regional FLOW fill and opening perimeter use `flow_buy`/`flow_sell`; tape path and
+held/retained ink use `tape_path`/`tape_label`; quantity shadows use
+`quantity_shadow`. The composition policy remains in orderflow/chart and honors
+configured premultiplied alpha. The settings preview now uses configured canvas.
+The old app FLOW and shadow constants remain only as exact Dark regression fixtures.
+The headless historical `BLUE`/`AMBER` API remains available to existing tests and
+callers, but production regional geometry passes configured sides.
+
+FLOW, native-tape quantities, compact legends, depth/gap captions, settings preview
+labels and live-strip empty text use the retained ChartLabel role. Measurement and
+painting share the same snapshot. FLOW drawing and reusable-run cache keys include
+appearance identity; changing color/font cannot reuse stale geometry or placement.
+The compact legend reserves measured text height. Preview fixed geometry and the
+broader large-font layout audit remain outstanding.
+
+Ownership audit: `stores::footprint_config::FootprintConfig` and footprint presets
+contain numeric/layout/switch choices, no persisted RGB fields; footprint paint
+already uses semantic theme values. Do not invent a color-provenance marker for a
+store that does not persist colors. Native bubble overrides are optional RGB in
+`BubbleStyle`; their `Some` values are explicit. HeatmapTheme, default preset
+source and saved asset/preset capture still need their coordinated owner seam.
+No palette/source inference from equal RGB has been introduced.

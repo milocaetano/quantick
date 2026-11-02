@@ -82,10 +82,12 @@ pub(crate) struct FlowDrawing {
     /// Exact presentation frame when the current camera resizes tick spheres.
     pub viewport_frame: Option<Arc<FlowTapeFrame>>,
     labels: Vec<flow_labels::PlacedLabel>,
+    appearance: Arc<crate::theme::Palette>,
 }
 impl FlowDrawing {
     /// `painter` lends tessellation and fonts; `history` is the area painted in. Runs
     /// whose keys held since `previous`, this look's drawing before, are kept from it.
+    #[cfg(test)]
     pub fn styled(
         (frame, plan): (&FlowTapeFrame, FlowPresentation),
         look: (egui::Color32, Option<egui::Color32>),
@@ -93,13 +95,35 @@ impl FlowDrawing {
         (painter, history): (&egui::Painter, egui::Rect),
         previous: Option<&Self>,
     ) -> Self {
+        let appearance = crate::theme::get(painter.ctx());
+        Self::with_appearance(
+            (frame, plan),
+            look,
+            tick_look,
+            (painter, history),
+            previous,
+            appearance,
+        )
+    }
+
+    pub(super) fn with_appearance(
+        (frame, plan): (&FlowTapeFrame, FlowPresentation),
+        look: (egui::Color32, Option<egui::Color32>),
+        tick_look: Option<quantick_orderflow::TickLook>,
+        (painter, history): (&egui::Painter, egui::Rect),
+        previous: Option<&Self>,
+        appearance: Arc<crate::theme::Palette>,
+    ) -> Self {
+        let previous = previous.filter(|held| Arc::ptr_eq(&held.appearance, &appearance));
         let (made, held) = ((frame, &plan), previous.map(|previous| &previous.runs));
-        let runs = flow_runs::flow_runs(made, look, tick_look, (painter, history), held);
+        let runs =
+            flow_runs::flow_runs(made, look, tick_look, (painter, history), held, &appearance);
         Self {
             runs,
-            labels: flow_labels::placed_labels(made, tick_look, (painter, history)),
+            labels: flow_labels::placed_labels(made, tick_look, (painter, history), &appearance),
             history,
             viewport_frame: None,
+            appearance,
             plan,
         }
     }

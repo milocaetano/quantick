@@ -34,6 +34,7 @@ pub(crate) fn draw_compact_legend_avoiding(
     context: &RenderContext<'_>,
     tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
 ) -> Option<egui::Rect> {
+    let appearance = crate::theme::get(painter.ctx());
     let style = context.style.sanitized();
     let tape_header = style.live_lane.tape_only && style.live_lane.enabled;
     let (min_chart_width, row_height) = if tape_header {
@@ -86,11 +87,16 @@ pub(crate) fn draw_compact_legend_avoiding(
     if entries.is_empty() {
         return None;
     }
-    let font = egui::FontId::proportional(LEGEND_FONT_PX);
+    let font = appearance.label_font(LEGEND_FONT_PX);
     let galleys: Vec<_> = entries
         .iter()
         .map(|(_, label)| clip.layout_no_wrap(label.clone(), font.clone(), palette.legend_text))
         .collect();
+    let entry_height = galleys
+        .iter()
+        .map(|galley| galley.size().y)
+        .fold(LEGEND_ENTRY_HEIGHT_PX, f32::max);
+    let row_height = row_height.max(entry_height);
     let widths: Vec<f32> = entries
         .iter()
         .zip(&galleys)
@@ -154,7 +160,7 @@ pub(crate) fn draw_compact_legend_avoiding(
         draw_legend_glyph(&clip, *glyph, item, &palette, style.theme);
         let text_pos = egui::pos2(
             item.x + glyph_width(*glyph) + LEGEND_GLYPH_GAP_PX,
-            item.y + (LEGEND_ENTRY_HEIGHT_PX - galley.size().y) / 2.0,
+            item.y + (entry_height - galley.size().y) / 2.0,
         );
         footprint = footprint.union(egui::Rect::from_min_size(text_pos, galley.size()));
         clip.galley(text_pos, galley, palette.legend_text);

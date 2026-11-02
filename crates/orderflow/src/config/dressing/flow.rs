@@ -10,6 +10,21 @@ pub const CONTEXT_OPACITY: f32 = 0.12;
 /// an opaque canvas background so overlapping context does not accumulate ink.
 /// Background bytes are premultiplied; the oversized opening ignores them.
 pub fn colors(background: Option<[u8; 4]>, opening: bool, context: bool) -> [[u8; 4]; 2] {
+    colors_with(
+        [BLUE, AMBER].map(|[r, g, b]| [r, g, b, 255]),
+        background,
+        opening,
+        context,
+    )
+}
+
+/// Resolve regional emphasis from configured premultiplied side colors.
+pub fn colors_with(
+    sides: [[u8; 4]; 2],
+    background: Option<[u8; 4]>,
+    opening: bool,
+    context: bool,
+) -> [[u8; 4]; 2] {
     assert!(
         opening || !context || background.is_some_and(|rgba| rgba[3] == 255),
         "FLOW context requires an opaque canvas background"
@@ -21,22 +36,35 @@ pub fn colors(background: Option<[u8; 4]>, opening: bool, context: bool) -> [[u8
     } else {
         PEAK_OPACITY
     };
-    compose(background.filter(|_| !opening), opacity)
+    compose(sides, background.filter(|_| !opening), opacity)
 }
 
 /// Compose gradual ordinary emphasis into an opaque canvas so overlaps do not
 /// accumulate brightness. The sector's area remains unchanged.
 pub fn ordinary_colors(background: [u8; 4], opacity: f32) -> [[u8; 4]; 2] {
+    ordinary_colors_with(
+        [BLUE, AMBER].map(|[r, g, b]| [r, g, b, 255]),
+        background,
+        opacity,
+    )
+}
+
+/// Configured ordinary emphasis, composited into the opaque canvas.
+pub fn ordinary_colors_with(
+    sides: [[u8; 4]; 2],
+    background: [u8; 4],
+    opacity: f32,
+) -> [[u8; 4]; 2] {
     assert_eq!(
         background[3], 255,
         "FLOW ordinary emphasis requires an opaque canvas background"
     );
-    compose(Some(background), opacity)
+    compose(sides, Some(background), opacity)
 }
 
-fn compose(background: Option<[u8; 4]>, opacity: f32) -> [[u8; 4]; 2] {
-    [BLUE, AMBER].map(|[r, g, b]| {
-        let source = [r, g, b, 255].map(|v| (f32::from(v) * opacity + 0.5) as u8);
+fn compose(sides: [[u8; 4]; 2], background: Option<[u8; 4]>, opacity: f32) -> [[u8; 4]; 2] {
+    sides.map(|color| {
+        let source = color.map(|v| (f32::from(v) * opacity + 0.5) as u8);
         let Some(background) = background else {
             return source;
         };
@@ -50,6 +78,21 @@ fn compose(background: Option<[u8; 4]>, opacity: f32) -> [[u8; 4]; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_translucent_sides_compose_without_losing_alpha() {
+        let sides = [[60, 90, 120, 128], [0, 0, 0, 0]];
+        let background = [19, 23, 34, 255];
+        let transparent = colors_with(sides, None, false, false);
+        assert_eq!(transparent, [[39, 58, 78, 83], [0, 0, 0, 0]]);
+        let opaque = ordinary_colors_with(sides, background, PEAK_OPACITY);
+        assert_eq!(opaque[0], [52, 74, 101, 255]);
+        assert_eq!(opaque[1], background);
+        assert_eq!(
+            colors_with(sides, Some(background), false, true)[1],
+            background
+        );
+    }
 
     #[test]
     fn highlighted_palette_retains_the_existing_gamma_composition() {

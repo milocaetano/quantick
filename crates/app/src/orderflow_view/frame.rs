@@ -519,7 +519,7 @@ impl OrderflowView {
                 egui::pos2(strip.center().x, strip.top() + 10.0),
                 egui::Align2::CENTER_CENTER,
                 "no book",
-                egui::FontId::proportional(10.0),
+                palette.label_font(10.0),
                 palette.text_muted(),
             );
         }

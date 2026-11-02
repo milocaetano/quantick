@@ -8,8 +8,8 @@
 
 use crate::orderflow_render::constants::{
     FOLD_RING_ALPHA, FOLD_RING_GAP, FOLD_RING_WIDTH, LABEL_FONT_SCALE, LABEL_MAX_FONT_PX,
-    LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, LABEL_MIN_FONT_PX, LABEL_SHADOW_ALPHA,
-    LABEL_SHADOW_OFFSET_PX, PIE_START_ANGLE,
+    LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, LABEL_MIN_FONT_PX, LABEL_SHADOW_OFFSET_PX,
+    PIE_START_ANGLE,
 };
 use eframe::egui;
 use quantick_engine::Side;
@@ -626,6 +626,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         style.bubbles.max_radius = frame.max_radius;
     }
     let bubbles = &style.bubbles;
+    let appearance = crate::theme::get(painter.ctx());
     let palette = super::palette_for_theme(style.theme);
     let colors = BubbleColors::resolve(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
@@ -818,7 +819,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 bubbles.show_trade_count,
             )
         {
-            let font = egui::FontId::proportional(
+            let font = appearance.label_font(
                 (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
             );
             let galley = clip.layout_no_wrap(label, font, colors.text);
@@ -829,7 +830,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 clip.galley_with_override_text_color(
                     pos + LABEL_SHADOW_OFFSET_PX,
                     galley.clone(),
-                    egui::Color32::from_black_alpha(LABEL_SHADOW_ALPHA),
+                    appearance.quantity_shadow(),
                 );
                 clip.galley(pos, galley, colors.text);
             }

@@ -3,6 +3,11 @@ name = "Dark"
 dark = true
 
 [colors]
+flow_buy = "#70B9F4"
+flow_sell = "#E8AF63"
+tape_path = "#8EA6B15F"
+tape_label = "#8EA6B1"
+quantity_shadow = { premultiplied = [0, 0, 0, 190] }
 crosshair_ink = "#FFFFFF"
 footprint_total_ink = "#FFFFFF"
 loading_logo_low = "#969696"

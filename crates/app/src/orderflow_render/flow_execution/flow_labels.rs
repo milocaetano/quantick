@@ -9,10 +9,12 @@ pub(super) fn placed_labels(
     (frame, plan): (&FlowTapeFrame, &FlowPresentation),
     tick_look: Option<quantick_orderflow::TickLook>,
     (painter, history): (&egui::Painter, egui::Rect),
+    appearance: &crate::theme::Palette,
 ) -> Vec<PlacedLabel> {
     let labels = plan.quantity_labels(frame, tick_look.map(|(tick, _)| tick));
     let fit = [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE];
-    let measure = |label: &FlowQuantityLabel| quantity_galley(painter, label).size().into();
+    let measure =
+        |label: &FlowQuantityLabel| quantity_galley(painter, label, appearance).size().into();
     let area = [history.min.into(), history.max.into()];
     flow::place_quantity_labels(labels, area, fit, measure)
 }
@@ -20,37 +22,79 @@ pub(super) fn placed_labels(
 impl FlowDrawing {
     /// Labels finish the candle pass, so no candle contour crosses a quantity.
     pub fn paint_labels(&self, painter: &egui::Painter) {
-        paint_quantity_labels(painter, self.history, &self.labels);
+        paint_quantity_labels(painter, self.history, &self.labels, &self.appearance);
     }
 }
 
-fn paint_quantity_labels(painter: &egui::Painter, history: egui::Rect, labels: &[PlacedLabel]) {
-    let palette = crate::theme::get(painter.ctx());
+fn paint_quantity_labels(
+    painter: &egui::Painter,
+    history: egui::Rect,
+    labels: &[PlacedLabel],
+    appearance: &crate::theme::Palette,
+) {
     let clip = painter.with_clip_rect(history);
     for (pos, label) in labels {
         let pos = egui::Pos2::from(*pos);
         // Laid out each frame (egui's galley cache answers): a galley kept across
         // frames would outlive a font atlas egui recreates.
-        let galley = quantity_galley(painter, label);
-        let shadow = egui::Color32::from_black_alpha(super::constants::LABEL_SHADOW_ALPHA);
+        let galley = quantity_galley(painter, label, appearance);
+        let shadow = appearance.quantity_shadow();
         let offset = super::constants::LABEL_SHADOW_OFFSET_PX;
         clip.galley_with_override_text_color(pos + offset, galley.clone(), shadow);
-        clip.galley(pos, galley, palette.text_primary());
+        clip.galley(pos, galley, appearance.text_primary());
     }
 }
 
-fn quantity_galley(painter: &egui::Painter, label: &FlowQuantityLabel) -> Arc<egui::Galley> {
-    let palette = crate::theme::get(painter.ctx());
+fn quantity_galley(
+    painter: &egui::Painter,
+    label: &FlowQuantityLabel,
+    appearance: &crate::theme::Palette,
+) -> Arc<egui::Galley> {
     use super::constants::{LABEL_FONT_SCALE, LABEL_MAX_FONT_PX, LABEL_MIN_FONT_PX};
     let font = (label.radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX);
-    let font = egui::FontId::proportional(font);
-    painter.layout_no_wrap(label.text.clone(), font, palette.text_primary())
+    let font = appearance.label_font(font);
+    painter.layout_no_wrap(label.text.clone(), font, appearance.text_primary())
 }
 
 #[cfg(test)]
 mod label_tests {
     use super::*;
     use quantick_chart::flow_execution::FlowQuantityLabel;
+
+    #[test]
+    fn configured_quantity_font_drives_measurement_and_painting_from_one_snapshot() {
+        let ctx = egui::Context::default();
+        let mut state = quantick_appearance::Appearance::default();
+        state.apply("version = 1\nname = 'Quantities'\n[typography.chart_label]\nsize = 22\nfamily = 'monospace'\n[colors]\ntext_primary = '#123456'").unwrap();
+        crate::theme::sync(&ctx, &state);
+        let appearance = crate::theme::get(&ctx);
+        let label = FlowQuantityLabel {
+            center: [100.0, 90.0],
+            radius: 60.0,
+            text: "123.4".into(),
+        };
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let galley = quantity_galley(&painter, &label, &appearance);
+            let font = &galley.job.sections[0].format.font_id;
+            assert_eq!(font.family, egui::FontFamily::Monospace);
+            assert_eq!(font.size, 2.0 * super::super::constants::LABEL_MAX_FONT_PX);
+            assert_eq!(
+                galley.job.sections[0].format.color,
+                appearance.text_primary()
+            );
+            let placed = flow::place_quantity_labels(
+                vec![label.clone()],
+                [[0.0, 0.0], [240.0, 180.0]],
+                [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE],
+                |label| quantity_galley(&painter, label, &appearance).size().into(),
+            );
+            assert_eq!(placed.len(), 1);
+            let pos = egui::Pos2::from(placed[0].0);
+            assert_eq!(pos + galley.size() / 2.0, egui::Pos2::from(label.center));
+            paint_quantity_labels(&painter, painter.clip_rect(), &placed, &appearance);
+        });
+    }
 
     #[test]
     fn tick_quantities_use_fitted_nonoverlapping_galleys() {
@@ -80,12 +124,14 @@ mod label_tests {
         ];
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             let painter = ctx.layer_painter(egui::LayerId::background());
+            let appearance = crate::theme::get(ctx);
             let fit = [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE];
-            let measure =
-                |label: &FlowQuantityLabel| quantity_galley(&painter, label).size().into();
+            let measure = |label: &FlowQuantityLabel| {
+                quantity_galley(&painter, label, &appearance).size().into()
+            };
             let area = [history.min.into(), history.max.into()];
             let placed = flow::place_quantity_labels(labels.to_vec(), area, fit, measure);
-            paint_quantity_labels(&painter, history, &placed);
+            paint_quantity_labels(&painter, history, &placed, &appearance);
         });
         let bounds: Vec<_> = output
             .shapes

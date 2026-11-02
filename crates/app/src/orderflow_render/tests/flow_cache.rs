@@ -144,6 +144,7 @@ fn key(frame: &Arc<FlowTapeFrame>) -> Key<'_> {
         tick: None,
         background: crate::theme::CANVAS,
         density: None,
+        appearance: 0,
     }
 }
 
@@ -173,6 +174,7 @@ fn paint_at_density(
             .layer_painter(egui::LayerId::background())
             .with_clip_rect(key.clip);
         let actual = Key {
+            appearance: Arc::as_ptr(&crate::theme::get(ctx)) as usize,
             clip: history().intersect(painter.clip_rect()),
             density: key.tick.map(|_| pixels_per_point.to_bits()),
             ..key
@@ -751,4 +753,36 @@ fn a_resize_leaves_no_last_painted_slot_per_frame_behind() {
         slots.push(ctx.data(|data| data.len()));
     }
     assert_eq!(slots[4], slots[23], "temp data per frame: {slots:?}");
+}
+
+#[test]
+fn appearance_changes_rebuild_meshes_but_retries_and_rejected_changes_reuse_them() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let mut appearance = quantick_appearance::Appearance::default();
+    crate::theme::sync(&ctx, &appearance);
+    let (dark, dark_shapes) = paint(&ctx, key(&frame));
+    appearance
+        .apply("version = 1\nname = 'Flow'\n[colors]\nflow_buy = '#A04080'")
+        .unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    let (changed, changed_shapes) = paint(&ctx, key(&frame));
+    assert!(!Arc::ptr_eq(&dark, &changed));
+    assert_ne!(dark_shapes, changed_shapes);
+    assert_eq!(
+        dark.mesh.get().unwrap().plan,
+        changed.mesh.get().unwrap().plan
+    );
+    crate::theme::sync(&ctx, &appearance);
+    let (warm, warm_shapes) = paint(&ctx, key(&frame));
+    assert!(Arc::ptr_eq(&changed, &warm));
+    assert_eq!(changed_shapes, warm_shapes);
+    assert!(appearance.apply("version = 99\nname = 'Rejected'").is_err());
+    crate::theme::sync(&ctx, &appearance);
+    assert!(Arc::ptr_eq(&changed, &paint(&ctx, key(&frame)).0));
+    appearance.apply("version = 1\nname = 'Font'\n[colors]\nflow_buy = '#A04080'\n[typography.chart_label]\nsize = 22\nfamily = 'monospace'").unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    let (font, _) = paint(&ctx, key(&frame));
+    assert!(!Arc::ptr_eq(&changed, &font));
+    assert!(Arc::ptr_eq(&font, &paint(&ctx, key(&frame)).0));
 }

@@ -12,6 +12,22 @@ impl<T> RenderPalette<T> {
     }
 }
 impl<T: Copy> RenderPalette<T> {
+    pub fn flow_buy(&self) -> T {
+        *self.get(Token::FlowBuy)
+    }
+    pub fn flow_sell(&self) -> T {
+        *self.get(Token::FlowSell)
+    }
+    pub fn tape_path(&self) -> T {
+        *self.get(Token::TapePath)
+    }
+    pub fn tape_label(&self) -> T {
+        *self.get(Token::TapeLabel)
+    }
+    pub fn quantity_shadow(&self) -> T {
+        *self.get(Token::QuantityShadow)
+    }
+
     pub fn loading_title(&self) -> T {
         *self.get(Token::LoadingTitle)
     }

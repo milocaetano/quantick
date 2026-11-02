@@ -3,6 +3,11 @@ name = "Light"
 dark = false
 
 [colors]
+flow_buy = "#1769A5"
+flow_sell = "#9B5B12"
+tape_path = "#35566C80"
+tape_label = "#35566C"
+quantity_shadow = "#FFFFFFBE"
 crosshair_ink = "#172B4D"
 footprint_total_ink = "#172B4D"
 loading_logo_low = "#617185"

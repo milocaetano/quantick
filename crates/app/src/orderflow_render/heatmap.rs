@@ -26,6 +26,7 @@ const SMALL_PRINT_FONT_PX: f32 = 10.0;
 
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
+    let appearance = crate::theme::get(painter.ctx());
     let style = context.style.sanitized();
     let palette = super::palette_for_theme(style.theme);
     let previews = quantick_orderflow::projection::forward_book_preview(
@@ -107,7 +108,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             egui::pos2(left, context.layout.chart_rect.top()) + DEPTH_CAPTION_OFFSET,
             egui::Align2::LEFT_TOP,
             caption,
-            egui::FontId::proportional(SMALL_PRINT_FONT_PX),
+            appearance.label_font(SMALL_PRINT_FONT_PX),
             palette.muted_text,
         );
     }
@@ -156,7 +157,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             && (marks.fill || rect.right() - at.x <= GAP_HOVER_PX)
         {
             let label = quantick_orderflow::projection::gap_label(&gap.reason);
-            let font = egui::FontId::proportional(SMALL_PRINT_FONT_PX);
+            let font = appearance.label_font(SMALL_PRINT_FONT_PX);
             let anchor = at - egui::vec2(GAP_HOVER_PX, GAP_HOVER_PX);
             let align = egui::Align2::RIGHT_BOTTOM;
             draw_text_with_shadow(&clip, anchor, align, label, font, palette.muted_text);

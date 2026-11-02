@@ -8,6 +8,7 @@ pub(super) fn flow_runs(
     tick_look: Option<quantick_orderflow::TickLook>,
     (painter, history): (&egui::Painter, egui::Rect),
     previous: Option<&flow::FlowRunCache<Arc<[egui::Mesh; 2]>>>,
+    appearance: &crate::theme::Palette,
 ) -> flow::FlowRunCache<Arc<[egui::Mesh; 2]>> {
     let ppp = painter.ctx().pixels_per_point();
     let options = painter.ctx().options(|o| o.tessellation_options);
@@ -33,7 +34,7 @@ pub(super) fn flow_runs(
             let colors = match tick_colors {
                 Some(colors) => [colors.buy, colors.sell],
                 None => region
-                    .regional_fill(frame, canvas, underlay)
+                    .regional_fill_with(frame, canvas, underlay, &appearance.resolved)
                     .map(super::premultiplied),
             };
             if let Some(style) = &tick_style

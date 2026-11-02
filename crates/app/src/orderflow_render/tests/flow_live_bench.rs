@@ -559,7 +559,12 @@ fn stage_breakdown(
                 assert!(kept.meshes() == built.meshes());
                 let started = Instant::now();
                 let made = (frame.as_ref(), &built.plan);
-                std::hint::black_box(flow_labels::placed_labels(made, look, (&painter, HISTORY)));
+                std::hint::black_box(flow_labels::placed_labels(
+                    made,
+                    look,
+                    (&painter, HISTORY),
+                    &crate::theme::get(ctx),
+                ));
                 labels_time += started.elapsed();
             },
         );

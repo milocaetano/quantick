@@ -439,3 +439,25 @@ fn rgb_style_fields_reject_alpha_before_publication() {
         assert_eq!(appearance.revision(), 0);
     }
 }
+
+#[test]
+fn flow_and_tape_defaults_preserve_exact_dark_bytes_and_alpha() {
+    let dark = ResolvedTheme::bundled_dark();
+    assert_eq!(dark.color(Token::FlowBuy).to_array(), [112, 185, 244, 255]);
+    assert_eq!(dark.color(Token::FlowSell).to_array(), [232, 175, 99, 255]);
+    assert_eq!(
+        dark.color(Token::TapeLabel).to_array(),
+        [142, 166, 177, 255]
+    );
+    assert_eq!(
+        dark.color(Token::TapePath),
+        color::rgba_unmultiplied(142, 166, 177, 95)
+    );
+    assert_eq!(dark.color(Token::QuantityShadow).to_array(), [0, 0, 0, 190]);
+    let configured = ResolvedTheme::parse(
+        "version = 1\nname = 'Alpha'\n[colors]\nflow_buy = '#12345680'\ntape_label = '#ABCDEF40'",
+    )
+    .unwrap();
+    assert_eq!(configured.color(Token::FlowBuy).to_array()[3], 128);
+    assert_eq!(configured.color(Token::TapeLabel).to_array()[3], 64);
+}

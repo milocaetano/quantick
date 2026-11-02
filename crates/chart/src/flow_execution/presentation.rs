@@ -43,11 +43,31 @@ impl FlowRegionVisual {
         background: [u8; 4],
         backing: Option<[u8; 4]>,
     ) -> [[u8; 4]; 2] {
-        use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
+        self.regional_fill_with(
+            frame,
+            background,
+            backing,
+            quantick_appearance::ResolvedTheme::bundled_dark(),
+        )
+    }
+
+    /// Theme-owned FLOW fill; explicit native-tape bubble colors use their own palette.
+    pub fn regional_fill_with(
+        &self,
+        frame: &FlowTapeFrame,
+        background: [u8; 4],
+        backing: Option<[u8; 4]>,
+        appearance: &quantick_appearance::ResolvedTheme,
+    ) -> [[u8; 4]; 2] {
+        use quantick_appearance::Token;
+        use quantick_orderflow::config::dressing::flow::{colors_with, ordinary_colors_with};
+        let sides =
+            [Token::FlowBuy, Token::FlowSell].map(|token| appearance.color(token).to_array());
         match self.role {
-            FlowRegionRole::Opening => colors(None, true, false),
-            FlowRegionRole::Context => colors(Some(background), false, true),
-            FlowRegionRole::Peak => ordinary_colors(
+            FlowRegionRole::Opening => colors_with(sides, None, true, false),
+            FlowRegionRole::Context => colors_with(sides, Some(background), false, true),
+            FlowRegionRole::Peak => ordinary_colors_with(
+                sides,
                 backing.unwrap_or(background),
                 frame.ordinary_region_opacity(&frame.dots[self.dot_index]),
             ),

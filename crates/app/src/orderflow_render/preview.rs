@@ -7,8 +7,8 @@
 //! the trader tuning against something the chart never produces.
 
 use crate::orderflow_render::constants::{
-    PREVIEW_CANVAS_BACKGROUND, PREVIEW_LARGE_PRINT_SIZE, PREVIEW_MATCHED_FRACTION,
-    PREVIEW_SMALL_PRINT_SIZE, PREVIEW_SUMMARY_BUY_SHARE,
+    PREVIEW_LARGE_PRINT_SIZE, PREVIEW_MATCHED_FRACTION, PREVIEW_SMALL_PRINT_SIZE,
+    PREVIEW_SUMMARY_BUY_SHARE,
 };
 use eframe::egui;
 use quantick_engine::Side;
@@ -54,7 +54,13 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
         canvas.draw_sample_prints(config);
     }
     if config.show_legend {
-        draw_preview_legend(&canvas.painter, rect, &canvas.palette, canvas.style.theme);
+        draw_preview_legend(
+            &canvas.painter,
+            rect,
+            &canvas.palette,
+            canvas.style.theme,
+            &canvas.appearance,
+        );
     }
     response.on_hover_text(
         "Deterministic visual sample: green/red dots are confirmed trades; \
@@ -69,6 +75,7 @@ struct PreviewCanvas {
     painter: egui::Painter,
     style: OrderflowRenderStyle,
     palette: Palette,
+    appearance: std::sync::Arc<crate::theme::Palette>,
     /// The whole preview, title and legend included.
     rect: egui::Rect,
     /// The plot area every normalized coordinate below maps into.
@@ -77,8 +84,9 @@ struct PreviewCanvas {
 
 impl PreviewCanvas {
     fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig) -> Self {
-        let style = OrderflowRenderStyle::from_config(config, PREVIEW_CANVAS_BACKGROUND.to_array())
-            .sanitized();
+        let appearance = crate::theme::get(ui.ctx());
+        let style =
+            OrderflowRenderStyle::from_config(config, appearance.canvas().to_array()).sanitized();
         let palette = super::palette_for_theme(style.theme);
         let painter = ui.painter().with_clip_rect(rect);
         let chart = egui::Rect::from_min_max(
@@ -89,6 +97,7 @@ impl PreviewCanvas {
             painter,
             style,
             palette,
+            appearance,
             rect,
             chart,
         }
@@ -121,7 +130,7 @@ impl PreviewCanvas {
             title,
             egui::Align2::LEFT_TOP,
             "synthetic order-flow preview",
-            egui::FontId::proportional(10.0),
+            self.appearance.label_font(10.0),
             palette.muted_text,
         );
 
@@ -383,10 +392,11 @@ fn draw_preview_legend(
     bounds: egui::Rect,
     palette: &Palette,
     theme: HeatmapTheme,
+    appearance: &crate::theme::Palette,
 ) {
     let baseline = bounds.bottom() - 13.0;
     let mut x = bounds.left() + 10.0;
-    let font = egui::FontId::proportional(9.5);
+    let font = appearance.label_font(9.5);
 
     let heat_rect = egui::Rect::from_min_size(egui::pos2(x, baseline - 4.0), egui::vec2(34.0, 7.0));
     let mut mesh = egui::Mesh::default();

@@ -169,3 +169,25 @@ Its save operation validates first, writes a temporary sibling and renames it,
 then publishes the new state. Validation errors, I/O failures and the session's
 saves-off gate leave the active state unchanged. A missing file resolves to Dark;
 an invalid existing file is reported without overwriting the user's content.
+
+
+## FLOW geometry and tape annotations
+
+`colors.flow_buy` and `colors.flow_sell` own regional FLOW sectors and opening
+perimeters. Both accept alpha, composed into the existing factual emphasis and
+opaque context backing by the headless order-flow painter policy. `tape_path`
+owns the quiet execution path, `tape_label` its held/retained annotations, and
+`quantity_shadow` the shadow under FLOW and native-tape quantities. Each accepts
+alpha independently. Their bundled Dark values preserve historical output.
+
+FLOW and native-tape quantities, legends, depth captions, preview labels and live
+strip empty text use `typography.chart_label`, including fitting and measurement.
+FLOW caches retain one immutable appearance adapter and include its change identity
+in both drawing and reusable-run keys. A theme/font change rebuilds the affected
+drawing; warm frames reuse it. Label galleys are laid out against that retained
+snapshot each frame so the font atlas can safely change. The compact legend grows
+its row reservation to the measured text height.
+
+The Bookmap, High Contrast and Color Blind heat palettes still have their existing
+separate ownership. Configuring their ramps/default-source provenance and saved
+bubble presets is outstanding; the new FLOW keys do not redefine those choices.
