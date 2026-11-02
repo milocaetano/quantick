@@ -201,7 +201,7 @@ pub enum ToolbarAction {
 /// widget the "was something already clicked" bookkeeping.
 pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction> {
     let mut actions = Vec::new();
-    egui::TopBottomPanel::top("toolbar")
+    egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "toolbar")))
         .exact_height(TOOLBAR_HEIGHT)
         .frame(
             egui::Frame::none()

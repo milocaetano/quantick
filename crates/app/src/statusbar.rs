@@ -270,7 +270,8 @@ pub fn draw(
     lead: &StatusLead<'_>,
 ) -> StatusResponse {
     let mut response = StatusResponse::default();
-    egui::TopBottomPanel::bottom("status_bar")
+    // PanelState lives in the shared Context, not in its native viewport.
+    egui::TopBottomPanel::bottom(egui::Id::new((ctx.viewport_id(), "status_bar")))
         .min_height(STATUS_BAR_HEIGHT)
         .frame(
             egui::Frame::none()
@@ -547,6 +548,10 @@ fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
             .color(theme::TEXT_MUTED),
     );
 }
+
+#[cfg(test)]
+#[path = "statusbar/tests/native_layout_tests.rs"]
+mod native_layout_tests;
 
 #[cfg(test)]
 mod tests {

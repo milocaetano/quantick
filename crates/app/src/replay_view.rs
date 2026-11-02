@@ -1023,7 +1023,7 @@ impl ReplayView {
         let status = &link.status;
         let timezone = link.session.timezone();
 
-        egui::TopBottomPanel::bottom("replay_transport")
+        egui::TopBottomPanel::bottom(egui::Id::new((ctx.viewport_id(), "replay_transport")))
             .exact_height(TRANSPORT_HEIGHT)
             .frame(
                 egui::Frame::none()

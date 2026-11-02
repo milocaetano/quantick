@@ -63,7 +63,7 @@ pub(crate) fn draw(
         title.minimized = input.viewport().minimized.unwrap_or(false);
     });
     let mut action = None;
-    egui::TopBottomPanel::top("market_title_bar")
+    egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "market_title_bar")))
         .exact_height(HEIGHT)
         .frame(
             egui::Frame::none()

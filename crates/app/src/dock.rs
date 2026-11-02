@@ -240,10 +240,11 @@ impl Dock {
         let Some(pointer) = ctx.pointer_latest_pos().filter(|_| self.visible) else {
             return false;
         };
+        let viewport = ctx.viewport_id();
         let body = self
             .active
-            .map(|tab| egui::Id::new(("dock_body", tab.index())));
-        [Some(egui::Id::new("dock_strip")), body]
+            .map(|tab| egui::Id::new((viewport, "dock_body", tab.index())));
+        [Some(egui::Id::new((viewport, "dock_strip"))), body]
             .into_iter()
             .flatten()
             .filter_map(|id| egui::containers::panel::PanelState::load(ctx, id))
@@ -266,7 +267,7 @@ impl Dock {
             return response;
         }
 
-        egui::SidePanel::right("dock_strip")
+        egui::SidePanel::right(egui::Id::new((ctx.viewport_id(), "dock_strip")))
             .exact_width(TAB_STRIP_WIDTH)
             .resizable(false)
             .frame(
@@ -322,7 +323,8 @@ impl Dock {
 
         if let Some(tab) = self.active {
             let mut open_ticket = false;
-            let panel = egui::SidePanel::right(egui::Id::new(("dock_body", tab.index())))
+            let id = egui::Id::new((ctx.viewport_id(), "dock_body", tab.index()));
+            let panel = egui::SidePanel::right(id)
                 .resizable(true)
                 .default_width(self.widths[tab.index()])
                 .width_range(DOCK_MIN_WIDTH..=DOCK_MAX_WIDTH)
