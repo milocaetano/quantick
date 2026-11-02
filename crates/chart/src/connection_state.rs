@@ -447,7 +447,9 @@ impl ConnectionTracker {
         }
         self.retrying = facts.has_transport && facts.transport != Transport::Connected;
         self.settling = !self.pressed && now.saturating_sub(self.settle_from_ms) < BLIP_MS;
-        if facts.transport == Transport::Connected {
+        // Not while offline: a sentence reading `No connection` beside
+        // `last connected 0 s ago` is the bug it appears to be.
+        if facts.transport == Transport::Connected && link != Link::Offline {
             self.state.last_connected_at = Some(now);
         }
         if link != Link::Offline {
@@ -1223,6 +1225,29 @@ mod tests {
             run.step(1);
             thin_tape_stays_live(&mut run);
         }
+    }
+
+    /// An offline link does not refresh its own age, whatever the transport
+    /// claims while the latch holds.
+    #[test]
+    fn offline_freezes_the_last_connected_age() {
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.verdict = FAILED;
+        run.step(OVERLAY_DELAY_MS);
+        assert_eq!(run.link(), Link::Offline);
+        assert_eq!(run.tracker.state().last_connected_at, None, "never was");
+
+        let mut run = Run::new();
+        run.transport = Transport::Connected;
+        run.step(1);
+        let before = run.tracker.state().last_connected_at;
+        assert!(before.is_some());
+        run.verdict = FAILED;
+        run.step(1);
+        assert_eq!(run.link(), Link::Offline);
+        run.step(CONNECTED_HOLD_MS / 2);
+        assert_eq!(run.tracker.state().last_connected_at, before);
     }
 
     /// A print answers a report for a while, not for ever: a feed that died
