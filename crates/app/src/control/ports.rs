@@ -50,6 +50,17 @@ impl FeedSourcePort for dyn ControlPort {
     }
 }
 
+impl quantick_control_handlers::contract_roll::ContractRollPort for dyn ControlPort {
+    fn paper_position_open(&self, index: usize) -> bool {
+        let tab = self.tab_reads().tab_at(index);
+        tab.is_some_and(|tab| !tab.paper.is_flat())
+    }
+    fn carry_market_drawings(&mut self, feed_id: &str, from: &str, to: &str) -> usize {
+        self.layout_adapter()
+            .carry_market_drawings(feed_id, from, to)
+    }
+}
+
 impl TabDirectory for dyn ControlPort {
     fn active_tab_index(&self) -> usize {
         self.tab_reads().active_tab_index()

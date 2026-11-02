@@ -782,6 +782,36 @@ impl LayoutAdapter<'_> {
         pane.layout.saved_revision = pane.drawings.revision();
     }
 
+    /// A contract roll's half of the drawings: what is on screen reaches the
+    /// book, the book copies it to the next contract, and a pane already on
+    /// that contract shows the result instead of writing its old set back.
+    pub(crate) fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
+        self.persist_changed_drawings();
+        let session = self.store.session_mut();
+        let carried = session.carry_market_drawings(feed, from, to);
+        let holding: Vec<(u64, PaneSide)> = self
+            .tabs
+            .iter_with_ids()
+            .flat_map(|(tab_id, tab)| {
+                tab.panes()
+                    .filter(|(pane, _)| {
+                        let key = pane.layout.drawings_key.as_ref();
+                        key.is_some_and(|key| key.feed == feed && key.symbol == to)
+                            && !pane.drawings.in_gesture()
+                    })
+                    .map(move |(_, side)| (tab_id, side))
+            })
+            .collect();
+        for (tab, side) in holding {
+            if let Some(pane) = self.pane_mut_at(tab, side) {
+                pane.drawings.take_all();
+            }
+            self.bring_out_drawings(tab, side);
+        }
+        self.mark_layouts_dirty();
+        carried
+    }
+
     /// A tab whose market moved out from under a pane: the drawings go to
     /// the market they were drawn on and the new market's come out.
     pub(super) fn follow_market_changes(&mut self) {

@@ -251,6 +251,43 @@ mod tests {
     }
 
     #[test]
+    fn a_roll_copies_each_pane_s_drawings_and_never_duplicates_them() {
+        let mut layout = LayoutBook::default().active().clone();
+        layout.set_drawings(&key(0), vec![level(90.0)]);
+        layout.set_drawings(&key(1), vec![level(100.0)]);
+        let next = |pane| DrawingKey {
+            symbol: "BTCH27".to_owned(),
+            ..key(pane)
+        };
+        layout.set_drawings(&next(1), vec![level(120.0)]);
+
+        assert_eq!(
+            layout.carry_market_drawings("binance", "BTCUSDT", "BTCH27"),
+            2
+        );
+        assert_eq!(layout.drawings(&next(0)).unwrap(), [level(90.0)]);
+        assert_eq!(
+            layout.drawings(&next(1)).unwrap(),
+            [level(120.0), level(100.0)],
+            "what the new contract held stays"
+        );
+        assert_eq!(
+            layout.drawings(&key(0)).unwrap(),
+            [level(90.0)],
+            "the old contract keeps its copy"
+        );
+        assert_eq!(
+            layout.carry_market_drawings("binance", "BTCUSDT", "BTCH27"),
+            0,
+            "rolling again adds nothing"
+        );
+        assert_eq!(
+            layout.carry_market_drawings("other", "BTCUSDT", "BTCH27"),
+            0
+        );
+    }
+
+    #[test]
     fn a_drawing_survives_the_file_form_and_back() {
         let saved = level(101.5);
         let drawing = saved.to_drawing(DrawingId(7)).expect("a known tool");

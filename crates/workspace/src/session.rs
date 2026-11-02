@@ -159,6 +159,9 @@ impl LayoutSession {
     ) -> Option<&mut Vec<crate::indicator_document::SavedIndicator>> {
         self.book.get_mut(id).map(|layout| &mut layout.indicators)
     }
+    pub fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
+        self.book.carry_market_drawings(feed, from, to)
+    }
     pub fn store_drawings(
         &mut self,
         id: LayoutId,

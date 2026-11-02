@@ -1,0 +1,44 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "description": "False when the tab had already rolled: nothing happened on this call.",
+      "type": "boolean"
+    },
+    "drawings_carried": {
+      "description": "Drawings added to the new contract, across every layout. Those the new\ncontract already held are not counted.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "feed_id": {
+      "type": "string"
+    },
+    "from_symbol": {
+      "type": "string"
+    },
+    "symbol": {
+      "description": "The contract the tab shows now.",
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "feed_id",
+    "symbol",
+    "from_symbol",
+    "changed",
+    "drawings_carried"
+  ],
+  "title": "ContractRollResult",
+  "type": "object"
+}

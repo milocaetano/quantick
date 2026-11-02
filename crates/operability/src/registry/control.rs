@@ -156,6 +156,13 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
         )],
         mapping: capability!("feed.source.set"),
     },
+    UiBehaviour {
+        id: "tab.market.roll",
+        title: "Roll the active tab to its next configured contract",
+        reach: "the symbol list on the toolbar's market label",
+        keys: &[(Source::ToolbarAction, "RollContract")],
+        mapping: capability!("feed.contract.roll"),
+    },
 ];
 
 /// Layout tabs.

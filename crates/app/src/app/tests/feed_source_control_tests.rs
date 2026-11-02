@@ -162,3 +162,98 @@ fn a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position() 
     disable_test_gateway(&mut app, &ctx);
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+/// The roll through the gateway: the tab lands on the configured contract
+/// with its level still on the chart, the old contract keeps its copy, a
+/// repeat rolls nothing, and an open paper position refuses the roll.
+#[test]
+fn a_roll_keeps_the_drawings_and_a_repeat_rolls_nothing() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.config.feeds[0].contract_rolls =
+        std::collections::BTreeMap::from([("TESTUSDT".to_owned(), "ETHUSDT".to_owned())]);
+    place_level(&mut app, PaneSide::Flow, 100.0);
+    run_frame(&mut app, &ctx);
+    let bars = format!("{:?}", app.active_tab().flow_pane.spec.spec().definition());
+
+    let directory = gateway_test_directory("contract-roll");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.recover");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let tab_id = app.runtime.tabs.active_id();
+    let input = json!({"tab_id": tab_id.to_string(), "from_symbol": "TESTUSDT"});
+    let (denied, _) = unkeyed_call(&mut app, &mut observer, "feed.contract.roll", input.clone());
+    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
+
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.recover"]),
+    );
+    let generation = app.active_tab().feed_generation();
+    let (rolled, _) = unkeyed_call(&mut app, &mut cockpit, "feed.contract.roll", input.clone());
+    let result = success_result(&rolled);
+    assert_eq!(result["symbol"], "ETHUSDT");
+    assert_eq!(result["changed"], true);
+    assert_eq!(result["drawings_carried"], 1);
+    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().active.1, "ETHUSDT");
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![100.0]);
+    assert!(
+        !app.active_tab().flow_pane.drawings.items()[0].foreign_market,
+        "a rolled level is at home on the new contract"
+    );
+    assert_eq!(
+        format!("{:?}", app.active_tab().flow_pane.spec.spec().definition()),
+        bars,
+        "the workspace stayed"
+    );
+
+    let (repeat, _) = unkeyed_call(&mut app, &mut cockpit, "feed.contract.roll", input);
+    assert_eq!(success_result(&repeat)["changed"], false);
+    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().symbol = "TESTUSDT".to_owned();
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        drawings_on(&app, PaneSide::Flow),
+        vec![100.0],
+        "the old contract kept its copy"
+    );
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// The toolbar action runs the capability's own act and asks its own rule.
+#[test]
+fn the_toolbar_roll_is_the_capability_s_act_and_refuses_with_a_position_open() {
+    let ctx = egui::Context::default();
+    let (mut app, evt_tx, _commands, _book) = test_app();
+    let scratch = crate::scratch::ScratchDir::new("contract-roll-hand");
+    app.active_tab_mut()
+        .paper
+        .redirect_history_dir(scratch.path().to_path_buf());
+    app.config.feeds[0].contract_rolls =
+        std::collections::BTreeMap::from([("TESTUSDT".to_owned(), "ETHUSDT".to_owned())]);
+    let tab_id = app.runtime.tabs.active_id();
+    evt_tx
+        .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+        .unwrap();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    app.apply_toolbar_action(ToolbarAction::PaperBuy);
+    evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    assert!(!app.active_tab().paper.is_flat(), "a position is open");
+
+    app.apply_toolbar_action(ToolbarAction::RollContract);
+    assert_eq!(app.active_tab().active.1, "TESTUSDT", "the roll refused");
+
+    app.active_tab_mut().paper.close_position();
+    evt_tx.try_send(FeedEvent::Live(trade(5))).unwrap();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    assert!(app.active_tab().paper.is_flat(), "the position closed");
+    app.apply_toolbar_action(ToolbarAction::RollContract);
+    assert_eq!(app.active_tab().active.1, "ETHUSDT", "flat, it rolled");
+    run_frame(&mut app, &ctx);
+}

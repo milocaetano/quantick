@@ -399,6 +399,15 @@ impl<'a> TabsMut<'a> {
     }
 
     /// The mutable twin of [`TabReads::tab_at`].
+    /// Fetch one more span of older venue candles on the active tab.
+    pub(crate) fn load_older_candles(self) {
+        let (active, tab_id) = (self.tabs.active_index(), self.tabs.active_id());
+        let act = quantick_session::Act::LoadOlderCandles { tab_id };
+        if let Some(tab) = self.tabs.get_mut(active) {
+            tab.run_session(Some(self.config), act);
+        }
+    }
+
     pub(crate) fn tab_at_mut(self, index: usize) -> Option<&'a mut Tab> {
         self.tabs.get_mut(index)
     }

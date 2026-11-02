@@ -212,6 +212,48 @@ impl ChartLayout {
     /// Entries whose tool this build does not know are kept: the pane never
     /// held them, so a set written back from the pane would drop them, and
     /// a file from a newer build would lose a mark to an older one.
+    /// Copy this layout's drawings on `from` onto `to`, pane for pane, for a
+    /// contract roll. `from` keeps its own: a tab still on the old contract
+    /// and a later return to it lose nothing. What `to` already holds stays,
+    /// and an object it already holds identically is not added twice, so
+    /// rolling again duplicates nothing. Returns how many objects were added.
+    pub fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
+        let leaving: Vec<(usize, Vec<SavedDrawing>)> = self
+            .drawings
+            .iter()
+            .filter(|set| set.feed == feed && set.symbol == from)
+            .map(|set| (set.pane, set.items.clone()))
+            .collect();
+        let mut carried = 0;
+        for (pane, items) in leaving {
+            let key = DrawingKey {
+                feed: feed.to_owned(),
+                symbol: to.to_owned(),
+                pane,
+            };
+            let index = match self.drawings.iter().position(|set| set.is(&key)) {
+                Some(index) => index,
+                None => {
+                    self.drawings.push(DrawingSet {
+                        feed: key.feed,
+                        symbol: key.symbol,
+                        pane,
+                        items: Vec::new(),
+                    });
+                    self.drawings.len() - 1
+                }
+            };
+            let target = &mut self.drawings[index].items;
+            for item in items {
+                if !target.contains(&item) {
+                    target.push(item);
+                    carried += 1;
+                }
+            }
+        }
+        carried
+    }
+
     pub fn replace_drawings(
         &mut self,
         key: &DrawingKey,
@@ -338,6 +380,15 @@ impl LayoutBook {
     /// See [`Self::get`].
     pub fn get_mut(&mut self, id: LayoutId) -> Option<&mut ChartLayout> {
         self.layouts.iter_mut().find(|layout| layout.id == id)
+    }
+
+    /// [`ChartLayout::carry_market_drawings`], in every layout: a workspace
+    /// the trader switches to after the roll holds its marks too.
+    pub fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
+        self.layouts
+            .iter_mut()
+            .map(|layout| layout.carry_market_drawings(feed, from, to))
+            .sum()
     }
 
     /// Where `id` sits in the strip.

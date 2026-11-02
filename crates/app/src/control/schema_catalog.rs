@@ -46,35 +46,8 @@ pub(crate) struct SchemaDocument {
 
 pub(crate) fn documents() -> Vec<SchemaDocument> {
     let mut documents = vec![
-        document::<quantick_control_schema::native_window::WindowInput>(
-            "native-window-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::native_window::WindowResult>(
-            "native-window-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::home_tab::HomeShowInput>(
-            "home-show-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::home_tab::HomeShowResult>(
-            "home-show-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::home_tab::HomeLeaveInput>(
-            "home-leave-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::home_tab::HomeLeaveResult>(
-            "home-leave-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::indicator_picker::PickerInput>(
-            "indicator-picker-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::indicator_picker::PickerResult>(
-            "indicator-picker-result-v1.schema.json",
-        ),
         document::<EmptyInput>("observer-empty-input-v1.schema.json"),
         document::<SnapshotReadInput>("observer-snapshot-read-input-v1.schema.json"),
-        document::<quantick_control_schema::scene::SceneReadInput>(
-            "observer-scene-read-input-v1.schema.json",
-        ),
         document::<ChartWindowInput>("observer-chart-window-input-v1.schema.json"),
         document::<DescribeResult>("observer-describe-result-v1.schema.json"),
         document::<SnapshotScopeDescriptor>("observer-snapshot-scope-descriptor-v1.schema.json"),
@@ -91,65 +64,8 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<TapeSnapshot>("observer-orderflow-tape-v1.schema.json"),
         document::<FootprintSnapshot>("observer-orderflow-footprint-v1.schema.json"),
         document::<BubblesSnapshot>("observer-orderflow-bubbles-v1.schema.json"),
-        document::<quantick_control_schema::price_axis::PriceAxisInput>(
-            "chart-price-axis-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::price_axis::PriceAxisResult>(
-            "chart-price-axis-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::chart_settings::ChartSettingsInput>(
-            "chart-settings-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::chart_settings::ChartSettingsResult>(
-            "chart-settings-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::journal_sessions::JournalSessionsInput>(
-            "session-journal-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::journal_sessions::JournalSessionsResult>(
-            "session-journal-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::journal_sessions::JournalDeleteInput>(
-            "session-journal-delete-input-v1.schema.json",
-        ),
         document::<TapeViewInput>("chart-tape-view-input-v1.schema.json"),
         document::<TapeViewResult>("chart-tape-view-result-v1.schema.json"),
-        document::<quantick_control_schema::time_axis::TimeAxisResetInput>(
-            "chart-time-axis-reset-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::time_axis::TimeAxisResetResult>(
-            "chart-time-axis-reset-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::opening_scale::OpeningScaleInput>(
-            "orderflow-opening-scale-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::opening_scale::OpeningScaleResult>(
-            "orderflow-opening-scale-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::bubble_scale::BubbleScaleInput>(
-            "orderflow-bubble-scale-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::bubble_scale::BubbleScaleResult>(
-            "orderflow-bubble-scale-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::history::HistoryLoadInput>(
-            "feed-history-load-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::feed_source::FeedSourceInput>(
-            "feed-source-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::feed_source::FeedSourceResult>(
-            "feed-source-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::history::HistoryLoadResult>(
-            "feed-history-load-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::history::HistoryCancelInput>(
-            "feed-history-cancel-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::history::HistoryCancelResult>(
-            "feed-history-cancel-result-v1.schema.json",
-        ),
         document::<HeatmapSnapshot>("observer-orderflow-heatmap-v1.schema.json"),
         document::<L2Snapshot>("observer-orderflow-l2-v1.schema.json"),
         document::<ReplaySnapshot>("observer-session-replay-v1.schema.json"),
@@ -198,12 +114,7 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<VisibilityResult>("layers-visibility-set-result-v1.schema.json"),
     ];
     documents.extend(
-        quantick_control_schema::market_windows::documents()
-            .into_iter()
-            .map(|(file_name, schema)| SchemaDocument { file_name, schema }),
-    );
-    documents.extend(
-        quantick_control_schema::bubble_preset::documents()
+        quantick_control_schema::catalog::documents()
             .into_iter()
             .map(|(file_name, schema)| SchemaDocument { file_name, schema }),
     );
