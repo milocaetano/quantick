@@ -242,18 +242,6 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
         chip.width() < 100.0 && chip.height() < 30.0,
         "the corner is a corner, not a card: {chip:?}"
     );
-    // And the status line is reading the same report rather than the
-    // socket's opinion.
-    let stall = app
-        .active_tab()
-        .stall_at(&app.config, metrics::wall_clock_ms());
-    assert!(
-        app.chrome_reads()
-            .feed_offline_accent(stall.as_ref())
-            .is_some(),
-        "the line has to know what the corner knows"
-    );
-
     app.active_tab_mut().forced_stall = None;
     run_frame(&mut app, &ctx);
     assert!(
@@ -285,8 +273,8 @@ fn the_empty_chart_never_says_the_same_thing_twice() {
     };
     assert_eq!(
         says_it(&output),
-        1,
-        "the empty pane explains itself once: {headline}"
+        0,
+        "at rest the overlay and the status word have words of their own: {headline}"
     );
 
     let chip = app
@@ -299,8 +287,81 @@ fn the_empty_chart_never_says_the_same_thing_twice() {
     assert_eq!(
         says_it(&output),
         1,
-        "the popup takes the line's job rather than joining it: {headline}"
+        "the popup alone carries the reason, once: {headline}"
     );
+}
+
+/// The overlay stands down while the popup speaks: their words are about the
+/// same stall, and a provider's headline would otherwise read twice.
+#[test]
+fn the_overlay_stands_down_while_the_popup_is_open() {
+    let (mut app, _notices, _channels) = test_app_with_notices();
+    let ctx = egui::Context::default();
+    let headline = "MetaTrader 5 is not running";
+    app.active_tab_mut().notice = quantick_feed::FeedNotice::attention(headline, "Open it.");
+    run_frame(&mut app, &ctx);
+    // Stood long enough: the overlay's delay, told to the clock it reads.
+    let past = metrics::wall_clock_ms() - quantick_chart::connection_state::OVERLAY_DELAY_MS;
+    let config = app.config.clone();
+    app.active_tab_mut().connection = Default::default();
+    app.active_tab_mut().observe_connection(&config, past, None);
+    let says_it = |output: &egui::FullOutput| {
+        painted_text(output)
+            .iter()
+            .filter(|text| text.as_str() == headline)
+            .count()
+    };
+    let output = run_frame(&mut app, &ctx);
+    assert_eq!(
+        says_it(&output),
+        1,
+        "the overlay carries the provider's words"
+    );
+    assert!(
+        painted_text(&output)
+            .iter()
+            .any(|text| text.starts_with("No connection to"))
+    );
+
+    let word = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the word is a door");
+    click_chart(&mut app, &ctx, word.center());
+    let output = run_frame(&mut app, &ctx);
+    assert!(app.chrome_reads().feed_popup_open());
+    assert_eq!(says_it(&output), 1, "the popup alone, once");
+    assert!(
+        !painted_text(&output)
+            .iter()
+            .any(|text| text.starts_with("No connection to"))
+    );
+}
+
+/// The word and the state answer the same stall on one frame, and a feed that
+/// is offline offers the one-click Reconnect a script can name too. Quiet does
+/// not: reconnecting an open socket fixes nothing.
+#[test]
+fn the_status_word_and_the_recovery_on_offer_follow_the_stall() {
+    use quantick_feed::stall::ForcedStall;
+    let (mut app, _notices, _channels) = test_app_with_notices();
+    let ctx = egui::Context::default();
+    // Quiet first: offline latches, and nothing here holds a transport up.
+    for (stall, word, offered) in [
+        (ForcedStall::Silent, "quiet", false),
+        (ForcedStall::Reconnect, "offline", true),
+        (ForcedStall::FirstConnect, "offline", true),
+    ] {
+        app.active_tab_mut().forced_stall = Some(stall);
+        run_frame(&mut app, &ctx);
+        assert_eq!(app.chrome_reads().feed_word(), Some(word), "{stall:?}");
+        assert_eq!(
+            app.chrome_reads().feed_reconnect_offered(),
+            offered,
+            "{stall:?}"
+        );
+        assert!(app.chrome_reads().feed_chip_rect().is_some(), "{stall:?}");
+    }
 }
 
 /// A click on the chart puts the popup away. The rule is a table in
@@ -563,9 +624,10 @@ fn a_rebuilt_chart_still_paints_itself() {
         .spec
         .retain(crate::state::BarSpec::Tick(40));
     let armed = painted_text(&run_frame(&mut app, &ctx));
+    // Under the slot's second, the bars control alone says so: no words yet.
     assert!(
-        armed.iter().any(|text| text.contains("rebuilding bars")),
-        "the arming frame says what it is doing: {armed:?}"
+        !armed.iter().any(|text| text.contains("rebuilding bars")),
+        "a recut that lands quickly names itself nowhere: {armed:?}"
     );
 
     let texts = painted_text(&run_frame(&mut app, &ctx));

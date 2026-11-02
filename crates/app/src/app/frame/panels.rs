@@ -150,6 +150,32 @@ pub(super) fn center_flow_pane_on_trade(tab: &mut Tab, opened: i64, closed: i64)
     }
 }
 
+/// Tell the connection states what this frame found: the active tab's on the
+/// stall already taken for it, the background ones on a slower beat, because the
+/// control plane reads them all and nobody is looking at them.
+pub(super) fn observe_connections(
+    ctx: &egui::Context,
+    tabs: &mut ArrangementHost,
+    config: &crate::config::AppConfig,
+    now_ms: i64,
+    active_stall: Option<&quantick_feed::stall::Stall>,
+) {
+    #[cfg(feature = "scenario-harness")]
+    if crate::loading::reconnect_press_due(now_ms) {
+        let _ = tabs.runtime_mut(tabs.active_index()).reconnect_feed(config);
+    }
+    let active = tabs.active_index();
+    for (index, tab) in tabs.iter_mut().enumerate() {
+        if index == active {
+            tab.observe_connection(config, now_ms, active_stall);
+            super::canvas::settle_overlay_control(ctx, tab, config, now_ms);
+        } else if tab.connection.background_due(now_ms) {
+            let stall = tab.stall_at(config, now_ms);
+            tab.observe_connection(config, now_ms, stall.as_ref());
+        }
+    }
+}
+
 /// Waits owned by other components, mirrored level-style each frame so the
 /// overlay needs no push notifications from either.
 pub(super) fn mirror_loading_waits(replay_view: &ReplayView, tabs: &mut ArrangementHost) {

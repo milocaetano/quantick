@@ -135,6 +135,10 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                         .deal_recording_view()
                         .as_ref()
                         .map(super::deal_recording::snapshot),
+                    connection: Some(quantick_control_handlers::connection::snapshot(
+                        &tab.connection,
+                        now_ms,
+                    )),
                 }
             })
             .collect(),

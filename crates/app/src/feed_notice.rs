@@ -8,27 +8,14 @@
 //! reason is written down, and something the trader can press once they have
 //! read it.
 //!
-//! Until now that somewhere was a 420 px card with two buttons, drawn across
-//! whichever pane was empty, and it was drawn *because the application decided
-//! the trader needed to see it*. That is right for a terminal that froze in
-//! the middle of a session. It is wrong every morning: the chart a trader
-//! opens before the open is a chart with nothing wrong with it, and greeting
-//! them with an error panel over the whole canvas taught them to close the
-//! application rather than to read it. Their words, and the rule this module
-//! now keeps: **seeing no data at all is worse than not being connected.**
+//! The chart a trader opens before the open has nothing wrong with it, so no
+//! panel greets them. The trader's rule: **seeing no data at all is worse than
+//! not being connected.**
 //!
-//! So the news comes at three sizes, and the trader chooses which one they
-//! want:
-//!
-//! - **The chip** ([`draw_chip`]) — a dot and one word in the chart's
-//!   bottom-right corner, the resting report for every feed problem there is.
-//!   It never covers a bar, it is in the same place every time, and it is the
-//!   only one of the three drawn without being asked for.
-//! - **The popup** ([`draw_popup`]) — the headline, the next step and the two
-//!   recovery controls, opened by clicking the chip and by nothing else.
-//! - **One line on an empty pane** ([`draw_empty_pane_note`]) — because a
-//!   chart with no bars on it has room to say why, and a corner chip alone on
-//!   a blank canvas is a puzzle rather than an answer.
+//! So the news is one word in the status bar, the resting report for every feed
+//! problem there is, and **the popup** ([`draw_popup`]): the headline, the next
+//! step and the two recovery controls, opened by clicking that word and by
+//! nothing else.
 //!
 //! The two controls are [`Recovery::Reconnect`] and [`Recovery::Reload`], and
 //! which of them is offered *first* is decided upstream from what the
@@ -41,36 +28,16 @@ use crate::theme;
 use quantick_feed::FeedNotice;
 use quantick_feed::stall::{Recovery, Stall};
 
-/// The word the chip carries when the chart is not being fed.
-///
-/// One word for four different faults, and deliberately: it answers the
-/// question the trader actually has — *is what I am looking at live?* — and
-/// leaves *why* to the popup one click away. Calling a connected socket over a
-/// closed market "offline" is a true statement about the thing being reported
-/// on, which is the data, not the transport.
+/// The word when the chart is not being fed: one word for several faults, which
+/// leaves *why* to the popup one click away.
 pub const OFFLINE_LABEL: &str = "offline";
 
-/// Height of the chip, in pixels. A pill inside the canvas' bottom margin.
-pub(crate) const CHIP_HEIGHT_PX: f32 = 22.0;
-/// Padding inside the chip, left and right, in pixels.
-pub(crate) const CHIP_PAD_PX: f32 = 9.0;
-/// Diameter of the chip's state dot, in pixels.
-pub(crate) const CHIP_DOT_DIAMETER_PX: f32 = 8.0;
-/// Gap between the chip's dot and its word, in pixels.
-pub(crate) const CHIP_DOT_GAP_PX: f32 = 7.0;
-/// The chip's font size, in points.
-pub(crate) const CHIP_LABEL_PT: f32 = 11.0;
-/// How far the chip sits from the chart's bottom-right corner, in pixels.
-///
-/// Far enough not to touch the axis furniture, close enough that it reads as
-/// belonging to the corner rather than floating in the chart.
-pub(crate) const CHIP_MARGIN_PX: f32 = 10.0;
+/// The next step when the feed's own loop has gone back to "working" while the
+/// chart holds offline: a fresh attempt is what a hand can add.
+pub const HELD_NEXT_STEP: &str =
+    "It is still retrying on its own; Reconnect starts a fresh attempt.";
 
 /// Width of the popup, in pixels.
-///
-/// Narrower than the card it replaces (420 px). The card had to carry the news
-/// to someone who had not gone looking for it; the popup is opened on purpose,
-/// by someone already reading the corner it grew out of.
 const POPUP_WIDTH_PX: f32 = 340.0;
 /// Floor for the popup's text column, in pixels. A chart narrow enough to
 /// drive this negative would otherwise wrap every word onto its own line, or
@@ -108,13 +75,6 @@ const BUTTON_SPACING_PX: f32 = 8.0;
 const BUTTON_GAP_PX: f32 = 10.0;
 /// Gap between the button row and the consequence caption, in pixels.
 const CAPTION_GAP_PX: f32 = 6.0;
-
-/// Font size of the line drawn on a pane with nothing else on it, in points.
-const EMPTY_NOTE_PT: f32 = 13.0;
-/// How far above an empty pane's vertical centre that line sits, as a fraction
-/// of the pane's height. Slightly high reads as a note about the chart rather
-/// than as content in it.
-const EMPTY_NOTE_BIAS: f32 = 0.08;
 
 /// What [`Recovery::Reload`] costs, said on the popup rather than behind a
 /// confirmation dialog.
@@ -174,18 +134,11 @@ impl From<Recovery> for NoticeAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     /// Something is under way and nothing is wrong yet: a first connection, a
-    /// history block still arriving.
-    ///
-    /// Says nothing in the corner. The wait already has a surface of its own —
-    /// `loading`'s overlay, on the pane that is waiting — and a second badge
-    /// beside it would be the interface talking about itself twice.
+    /// history block still arriving. The wait has surfaces of its own.
     Progress,
-    /// The chart is not being fed, whatever the socket believes.
-    ///
-    /// The one state the chip exists for. Four faults reach it — a transport
-    /// that never landed, one that dropped, one that stayed open while the
-    /// thing behind it went quiet, and a reason the provider named itself —
-    /// and the trader is told them apart in the popup, not in the corner.
+    /// The chart is not being fed, whatever the socket believes: a transport
+    /// that never landed, one that dropped, one that stayed open while the thing
+    /// behind it went quiet, or a reason the provider named itself.
     Offline,
 }
 
@@ -193,17 +146,15 @@ pub enum Severity {
 /// however it was arrived at.
 ///
 /// Both sources of words end up here: the feed's own [`FeedNotice`], and the
-/// [`Stall`] this application infers when a notice stops being progress. The
-/// chip and the popup draw a `Report` and know nothing about which one
-/// produced it, so there is one set of words, one severity and one pair of
-/// buttons rather than a second surface for the second source.
+/// [`Stall`] this application infers when a notice stops being progress, so
+/// there is one set of words and one pair of buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Report<'a> {
     /// One line: what is happening, or what was observed.
     pub headline: &'a str,
     /// The single next step, when there is one to give.
     pub next_step: Option<&'a str>,
-    /// Red rather than amber: this needs a person, it is not just quiet.
+    /// This needs a person, it is not just quiet.
     pub needs_user: bool,
     /// Whether this is worth a corner at all.
     pub severity: Severity,
@@ -212,18 +163,15 @@ pub struct Report<'a> {
 }
 
 impl Report<'_> {
-    /// The colour carrying this report's severity.
-    ///
-    /// [`theme::WARN`] for a transport that is broken however you read it,
-    /// [`theme::AMBER`] for a tape that has merely gone quiet — which is also
-    /// what a closed market looks like, and a red dot every night on a chart
-    /// with nothing wrong with it is how a warning stops being read.
+    /// The grey carrying this report's severity: lighter for a transport that is
+    /// broken however you read it than for a tape that has merely gone quiet,
+    /// which is also what a closed market looks like.
     #[must_use]
     pub fn accent(&self) -> egui::Color32 {
         if self.needs_user {
-            theme::WARN
+            crate::loading::GREY_LIGHT
         } else {
-            theme::AMBER
+            crate::loading::GREY_MID
         }
     }
 
@@ -318,21 +266,10 @@ fn popup_open_from(value: Option<&str>) -> bool {
 
 /// Whether the recovery popup is still up after a frame.
 ///
-/// The chip is its only door, in both directions — the rule the trader asked
-/// for, after a card that opened itself over the chart every morning.
-/// Everything else here closes it: a click that landed somewhere else, a
-/// control that was pressed and is now under way, and a feed that recovered on
-/// its own while the trader was reading about it.
-///
-/// Pure, because the rule is worth a table rather than four frames of
-/// clicking, and because the frame that applies it has three other jobs on the
-/// same line.
-///
-/// `offline` is checked before anything else, and deliberately: no chip, no
-/// popup, in every combination. Today the frame cannot report a click on a
-/// chip it did not draw, so the case is unreachable — which is exactly why it
-/// is worth pinning here rather than leaving to hold by luck. A popup carries
-/// a `Report`; with no report there is nothing to draw in it.
+/// The status word is its only door, in both directions. Everything else here
+/// closes it: a click that landed somewhere else, a control that was pressed and
+/// is now under way, and a feed that recovered on its own while the trader was
+/// reading about it. With no door there is nothing to draw, in every combination.
 #[must_use]
 pub fn popup_still_open(
     was_open: bool,
@@ -348,132 +285,6 @@ pub fn popup_still_open(
         return !was_open;
     }
     was_open && !dismissed && action == NoticeAction::None
-}
-
-/// Where the chip lands inside `area`.
-///
-/// Measured from the word it carries rather than fixed, so a future state word
-/// cannot silently overflow the pill.
-///
-/// **Call this once a frame and pass the answer down.** Laying out even a
-/// seven-character static string allocates it, and the corner is drawn on
-/// every frame of a chart that is not being fed — which, since the opening
-/// backfill learned to reach the last session, is the ordinary state of a
-/// chart opened outside market hours and can be hours at a time. Passing the
-/// rectangle rather than re-deriving it also makes the drawing, the hit test
-/// and the popup's anchor share one measurement by construction rather than
-/// by three callers agreeing.
-#[must_use]
-pub fn chip_rect(painter: &egui::Painter, area: egui::Rect) -> egui::Rect {
-    let label = painter.layout_no_wrap(
-        OFFLINE_LABEL.to_owned(),
-        egui::FontId::proportional(CHIP_LABEL_PT),
-        theme::TEXT_PRIMARY,
-    );
-    let width = 2.0 * CHIP_PAD_PX + CHIP_DOT_DIAMETER_PX + CHIP_DOT_GAP_PX + label.size().x.ceil();
-    // Clamped to the chart, so a pane narrower than the chip keeps it inside
-    // rather than hanging it off the left edge.
-    let width = width.min(area.width());
-    egui::Rect::from_min_size(
-        egui::pos2(
-            area.right() - CHIP_MARGIN_PX - width,
-            area.bottom() - CHIP_MARGIN_PX - CHIP_HEIGHT_PX,
-        ),
-        egui::vec2(width, CHIP_HEIGHT_PX),
-    )
-    // A chart shorter than the margins keeps the chip on screen rather than
-    // above the canvas' own top edge.
-    .intersect(area)
-}
-
-/// Draw the chip in the bottom-right corner of `area`. Answers whether it was
-/// clicked this frame.
-///
-/// `open` is whether the popup it opens is showing, which the chip carries as
-/// a pressed look — the trader must be able to tell the click landed even
-/// though the thing it opened is above their pointer rather than under it.
-///
-/// The reason rides on the hover. The chip is one word by design, and one word
-/// answers "am I live?" and nothing else; a trader mid-session who wants *why*
-/// should not have to spend a click and a dismissal to read it. `on_hover_ui`
-/// rather than `on_hover_text`, for the reason the status line gives: the
-/// closure runs only while someone is pointing at it.
-#[must_use]
-pub fn draw_chip(ui: &mut egui::Ui, rect: egui::Rect, report: &Report<'_>, open: bool) -> bool {
-    let response = ui
-        .interact(
-            rect,
-            ui.id().with("feed_offline_chip"),
-            egui::Sense::click(),
-        )
-        .on_hover_ui(|ui| {
-            ui.label(report.headline);
-            if let Some(step) = report.next_step {
-                ui.label(egui::RichText::new(step).color(theme::TEXT_MUTED));
-            }
-        });
-    let accent = report.accent();
-    let hovered = response.hovered();
-    let painter = ui.painter();
-
-    let fill = if open || hovered {
-        theme::CONTROL
-    } else {
-        theme::CHROME
-    };
-    let radius = rect.height() / 2.0;
-    painter.rect_filled(rect, egui::Rounding::same(radius), fill);
-    painter.rect_stroke(
-        rect,
-        egui::Rounding::same(radius),
-        egui::Stroke::new(1.0_f32, accent),
-    );
-    painter.circle_filled(
-        egui::pos2(
-            rect.left() + CHIP_PAD_PX + CHIP_DOT_DIAMETER_PX / 2.0,
-            rect.center().y,
-        ),
-        CHIP_DOT_DIAMETER_PX / 2.0,
-        accent,
-    );
-    painter.text(
-        egui::pos2(
-            rect.left() + CHIP_PAD_PX + CHIP_DOT_DIAMETER_PX + CHIP_DOT_GAP_PX,
-            rect.center().y,
-        ),
-        egui::Align2::LEFT_CENTER,
-        OFFLINE_LABEL,
-        egui::FontId::proportional(CHIP_LABEL_PT),
-        theme::TEXT_PRIMARY,
-    );
-    if hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    response.clicked()
-}
-
-/// One muted line on a pane with nothing else on it.
-///
-/// The chip answers "am I live?" in a corner, which is enough on a chart full
-/// of bars and not enough on a blank one: there the trader has come to read
-/// something and there is nothing to read. This is the headline and no more —
-/// no border, no fill, no buttons. The way out is still the corner.
-pub fn draw_empty_pane_note(painter: &egui::Painter, pane: egui::Rect, report: &Report<'_>) {
-    let galley = painter.layout(
-        report.headline.to_owned(),
-        egui::FontId::proportional(EMPTY_NOTE_PT),
-        theme::TEXT_MUTED,
-        (pane.width() - 2.0 * PAD_PX).max(MIN_TEXT_WIDTH_PX),
-    );
-    let size = galley.size();
-    painter.galley(
-        egui::pos2(
-            pane.center().x - size.x / 2.0,
-            pane.center().y - pane.height() * EMPTY_NOTE_BIAS - size.y / 2.0,
-        ),
-        galley,
-        theme::TEXT_MUTED,
-    );
 }
 
 /// Where every piece of the popup lands, measured once so drawing and hit
@@ -745,10 +556,10 @@ mod tests {
         }
     }
 
-    /// Draw the chip the way the frame does: one measurement, handed down.
-    fn chip_at(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>, open: bool) -> bool {
-        let rect = chip_rect(ui.painter(), area);
-        draw_chip(ui, rect, report, open)
+    /// An anchor standing where a status word would, inside `area`.
+    fn chip_rect(_painter: &egui::Painter, area: egui::Rect) -> egui::Rect {
+        let size = egui::vec2(60.0_f32.min(area.width()), 22.0_f32.min(area.height()));
+        egui::Rect::from_min_size(area.max - size, size)
     }
 
     /// The popup, anchored on that same measurement. Answers what was
@@ -821,54 +632,6 @@ mod tests {
         assert!(
             inferred.is_offline(),
             "so is a tape that stopped without anyone saying why"
-        );
-    }
-
-    #[test]
-    fn a_quiet_tape_is_amber_and_a_broken_one_is_red() {
-        let silent = silent_stall();
-        let quiet = from_stall(&silent);
-        assert_eq!(
-            quiet.accent(),
-            theme::AMBER,
-            "a closed market wears no alarm"
-        );
-
-        let attention = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
-        let broken = plain(&attention).expect("a named reason speaks");
-        assert_eq!(broken.accent(), theme::WARN);
-    }
-
-    #[test]
-    fn the_chip_sits_in_the_bottom_right_corner_and_covers_nothing_else() {
-        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 700.0));
-        let chip = with_painter(|painter| chip_rect(painter, area));
-
-        assert!(area.contains_rect(chip), "the chip stays inside the chart");
-        assert!(
-            (area.right() - chip.right() - CHIP_MARGIN_PX).abs() < 0.5,
-            "pinned to the right edge: {chip:?}"
-        );
-        assert!(
-            (area.bottom() - chip.bottom() - CHIP_MARGIN_PX).abs() < 0.5,
-            "pinned to the bottom edge: {chip:?}"
-        );
-        // The rule the trader asked for, measured: what it covers is a corner,
-        // not a chart. Anything approaching the old card's 420 px would mean
-        // the demotion had quietly been undone.
-        assert!(
-            chip.width() < 100.0 && chip.height() <= CHIP_HEIGHT_PX,
-            "the chip is a chip: {chip:?}"
-        );
-    }
-
-    #[test]
-    fn a_chart_narrower_than_the_chip_still_holds_it() {
-        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(40.0, 30.0));
-        let chip = with_painter(|painter| chip_rect(painter, area));
-        assert!(
-            area.contains_rect(chip),
-            "a cramped chip beats one hanging off the canvas: {chip:?}"
         );
     }
 
@@ -1008,10 +771,6 @@ mod tests {
                             egui::pos2(900.0, 600.0),
                         );
                         let report = report(notice, None).expect("something to say");
-                        assert!(
-                            !chip_at(ui, area, &report, false),
-                            "an un-clicked frame presses nothing"
-                        );
                         assert_eq!(
                             popup_at(ui, area, &report),
                             NoticeAction::None,
@@ -1094,49 +853,6 @@ mod tests {
                 if secondary { "secondary" } else { "primary" }
             );
         }
-    }
-
-    /// The chip is a control, so a click on it has to register as one.
-    #[test]
-    fn the_chip_reports_a_real_click() {
-        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(900.0, 600.0));
-        let notice = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
-        let report = report(&notice, None).expect("a named reason speaks");
-        let ctx = egui::Context::default();
-
-        let mut target = egui::Pos2::ZERO;
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                assert!(!chip_at(ui, area, &report, false));
-                target = chip_rect(ui.painter(), area).center();
-            });
-        });
-
-        let input = egui::RawInput {
-            events: vec![
-                egui::Event::PointerMoved(target),
-                egui::Event::PointerButton {
-                    pos: target,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::default(),
-                },
-                egui::Event::PointerButton {
-                    pos: target,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: egui::Modifiers::default(),
-                },
-            ],
-            ..Default::default()
-        };
-        let mut clicked = false;
-        let _ = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                clicked = chip_at(ui, area, &report, false);
-            });
-        });
-        assert!(clicked, "the corner has to answer the pointer");
     }
 
     /// The consequence of the destructive control is on the popup, so a trader

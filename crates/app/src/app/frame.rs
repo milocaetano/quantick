@@ -13,7 +13,7 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
-use super::{AlertsPort, ChromePort, GatewayPort, LayersPort, LayoutPort, PaperPort};
+use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_feed::stall::Stall;
 use std::time::{Duration, Instant};
@@ -50,6 +50,9 @@ struct FrameScratch {
     /// readings a millisecond apart could disagree about whether a budget
     /// had run out.
     stall: Option<Stall>,
+    /// The one wall-clock reading the connection surfaces share this frame.
+    now_ms: i64,
+    status: statusbar::StatusResponse,
     canvas: canvas::CanvasAnswers,
 }
 
@@ -445,15 +448,17 @@ impl QuantickApp {
     }
 
     fn draw_status_line(&mut self, ctx: &egui::Context, scratch: &mut FrameScratch) {
-        scratch.stall = self
-            .active_tab()
-            .stall_at(&self.config, crate::metrics::wall_clock_ms());
-        let offline_accent = self
-            .chrome_reads()
-            .feed_offline_accent(scratch.stall.as_ref());
+        let now_ms = crate::metrics::wall_clock_ms();
+        scratch.now_ms = now_ms;
+        scratch.stall = self.active_tab().stall_at(&self.config, now_ms);
+        let stall = scratch.stall.as_ref();
+        panels::observe_connections(ctx, &mut self.runtime.tabs, &self.config, now_ms, stall);
+        let open = self.chrome.feed_popup_tab == Some(self.runtime.tabs.active_id());
         let status = self.status_model();
-        let status_response = statusbar::draw(ctx, &status, &mut self.runtime.tz, offline_accent);
-        if status_response.open_trading_tab {
+        let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
+        let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
+        scratch.status = statusbar::draw(ctx, &status, &mut self.runtime.tz, &lead);
+        if scratch.status.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
     }
@@ -563,11 +568,8 @@ impl QuantickApp {
         // Read before the canvas borrows the tabs, and answered after it
         // lets go.
         let popup_tab = self.runtime.tabs.active_id();
-        let mut answers = canvas::CanvasAnswers {
-            popup_tab,
-            popup_open: self.chrome.feed_popup_tab == Some(popup_tab),
-            ..canvas::CanvasAnswers::default()
-        };
+        let mut answers =
+            canvas::CanvasAnswers::seeded(popup_tab, self.chrome.feed_popup_tab, &scratch.status);
         // The layer menu offers what this source can produce, and the
         // footprint legend carries the side-honesty label: both resolved once
         // here rather than per pane, per entry, inside the canvas.
@@ -579,7 +581,7 @@ impl QuantickApp {
         self.drawings
             .chrome
             .sync_content_editing(&mut self.runtime.tabs);
-        let stall = scratch.stall.as_ref();
+        let (stall, now_ms) = (scratch.stall.as_ref(), scratch.now_ms);
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(background))
             .show(ctx, |ui| {
@@ -613,7 +615,8 @@ impl QuantickApp {
                 if let Some(tab) = self.layer_wiring().apply_actions() {
                     self.dock.open_tab(tab);
                 }
-                canvas::draw_overlays(ui, area, self.active_tab(), stall, &mut answers);
+                let tab = self.active_tab();
+                canvas::overlays(ui, area, tab, &self.config, stall, now_ms, &mut answers);
             });
         scratch.canvas = answers;
     }

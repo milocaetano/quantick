@@ -39,35 +39,19 @@ pub(super) struct ChromeState {
     pub(super) window_startup: crate::launch::window::WindowStartupState,
     /// Saved override for recording deal counters; `None` follows feed config.
     pub(super) record_deals: Option<bool>,
-    /// Where the offline chip was drawn, or `None` when it was not.
+    /// Where the status word was drawn while it is the popup's door, or `None`.
     ///
-    /// Written as part of drawing it, exactly as a pane records its own chart
-    /// area, and for the same two reasons. It says what is *painted* rather
-    /// than what a fresh reading of the clock would have painted a
-    /// millisecond later, so the scene and the screen cannot disagree across
-    /// the edge of a stall budget. And it is the one control on screen with
-    /// no capability behind it — opening a popup is a gesture, not a call —
-    /// so its rectangle is the only way an operator reaches it at all.
-    ///
-    /// A `Rect` per frame, and only while the chart is not being fed. Nothing
-    /// is recorded on a healthy chart, which is every frame of a normal
-    /// session.
+    /// Written as part of drawing it, so the scene says what is *painted*, and it
+    /// is the one control with no capability behind it, so its rectangle is the
+    /// only way an operator reaches it.
     pub(super) feed_chip_rect: Option<egui::Rect>,
 
-    /// The tab whose chip opened the feed's recovery popup, if any.
+    /// The tab whose status word opened the feed's recovery popup, if any.
     ///
-    /// Opened by clicking the offline chip and by nothing else — the rule the
-    /// trader asked for, after a card that opened itself over the chart every
-    /// morning. It is the *tab's* id rather than a window-wide flag because
-    /// one dead terminal stalls every MT5 tab at once: a bare flag opened on
-    /// one chart and then found the next chart already offline, and drew
-    /// itself there with nobody having clicked anything. The chip is window
-    /// chrome speaking for the active market, and this says which market it
-    /// was speaking for.
-    ///
-    /// Leaving that chart closes it, the way clicking elsewhere does: the
-    /// frame answers for the tab it is drawing, so a switch clears the flag.
-    /// A glance, not a mode — nothing waits on a chart nobody is looking at.
+    /// Opened by clicking the word and by nothing else. It is the *tab's* id
+    /// rather than a window-wide flag because one dead terminal stalls every MT5
+    /// tab at once, and a bare flag would draw itself on the next chart with
+    /// nobody having clicked anything. Leaving that chart closes it.
     pub(super) feed_popup_tab: Option<u64>,
 
     /// Whether the toolbar's layout popover is open.

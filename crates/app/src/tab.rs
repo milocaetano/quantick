@@ -232,13 +232,6 @@ pub struct Tab {
     /// blocks once and then goes quiet has to keep saying so — the chart it
     /// left empty will not.
     pub notice: FeedNotice,
-    /// Wall clock when [`Self::notice`] last changed.
-    ///
-    /// A feed cannot report that nothing is happening, because nothing
-    /// happening produces no event; the only way to tell a step in progress
-    /// from a step that has stopped progressing is how long it has stood.
-    /// Read by [`Self::stall_at`].
-    pub notice_since_ms: i64,
     /// Wall clock when the running feed session was attached — the floor for
     /// judging a first connection that never lands.
     pub feed_attached_ms: i64,
@@ -251,6 +244,8 @@ pub struct Tab {
     /// re-stamped the clock forever and the budget never ran out, which is the
     /// failure this whole module exists to end.
     pub connection_since_ms: i64,
+    /// What every surface says about this feed; read after the frame observed.
+    pub connection: quantick_chart::connection_state::ConnectionTracker,
     /// After a reconnect that kept the timeline, the market time the chart had
     /// already reached.
     ///
@@ -478,9 +473,9 @@ impl Tab {
             book_events: feed.book_events,
             notices: feed.notices,
             notice: FeedNotice::Clear,
-            notice_since_ms: metrics::wall_clock_ms(),
             feed_attached_ms: metrics::wall_clock_ms(),
             connection_since_ms: metrics::wall_clock_ms(),
+            connection: quantick_chart::connection_state::ConnectionTracker::new(),
             resume_floor_ms: None,
             feed_generation: 0,
             forced_stall: stall::ForcedStall::from_env(),
@@ -590,9 +585,8 @@ impl Tab {
         self.feed_capabilities = handle.capabilities;
         self.feed_latency = handle.latency;
         self.notice = FeedNotice::Clear;
-        self.notice_since_ms = metrics::wall_clock_ms();
-        self.feed_attached_ms = self.notice_since_ms;
-        self.connection_since_ms = self.notice_since_ms;
+        self.feed_attached_ms = metrics::wall_clock_ms();
+        self.connection_since_ms = self.feed_attached_ms;
         self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;

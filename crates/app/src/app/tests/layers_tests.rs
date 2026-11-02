@@ -1126,6 +1126,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
             notices: feed::silent_notices(),
             // A broker-quoted instrument: prices, no traded size, no book.
             capabilities: feed::fixed_capabilities(FeedCapabilities {
+                transport: true,
                 book_capture: false,
                 history_paging: false,
                 history_boundary: None,

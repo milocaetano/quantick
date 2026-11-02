@@ -361,6 +361,7 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
         // The sizes in it are the sizes that were captured, so anything
         // measuring volume still works.
         capabilities: super::fixed_capabilities(FeedCapabilities {
+            transport: false,
             book_capture: false,
             // A recording pages *candles*, never trades: the tape in the
             // file is the whole day, and there is no venue behind it to ask

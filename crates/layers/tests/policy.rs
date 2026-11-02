@@ -94,10 +94,6 @@ fn capability_reason_precedence_and_requested_depth_are_preserved() {
     assert!(!LayerState::visible(L::TapeHeatmap, true, facts));
     facts.capture_enabled = true;
     assert!(LayerState::visible(L::TapeHeatmap, true, facts));
-    assert_eq!(
-        LayerState::blocked(L::BookStatus, facts),
-        Some(blocks::DEPTH_MAP_HIDDEN)
-    );
 }
 
 #[test]

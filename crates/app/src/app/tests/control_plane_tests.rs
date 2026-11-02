@@ -162,7 +162,7 @@ fn the_scene_names_the_corner_and_what_operates_it() {
         .find(|control| control["control_id"] == "feed_status.chip")
         .expect("the corner is on screen, so the scene names it")
         .clone();
-    assert_eq!(chip["label"], crate::feed_notice::OFFLINE_LABEL);
+    assert_eq!(chip["label"], "quiet", "the word the status bar paints");
     assert_eq!(chip["role"], "toggle");
     assert_eq!(chip["selected"], false, "the popup is shut");
     assert!(
@@ -723,6 +723,7 @@ fn a_capability_that_rises_later_is_asked_again() {
     let (_book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+        transport: true,
         book_capture: false,
         history_paging: true,
         history_boundary: None,
@@ -809,6 +810,7 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
     let (_book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+        transport: true,
         book_capture: false,
         history_paging: true,
         history_boundary: None,
@@ -5757,6 +5759,7 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
             notices: feed::silent_notices(),
             // The capability, never the provider name, is what offers REC.
             capabilities: feed::fixed_capabilities(FeedCapabilities {
+                transport: true,
                 deal_counter: true,
                 ..ProviderKind::Binance.capabilities()
             }),

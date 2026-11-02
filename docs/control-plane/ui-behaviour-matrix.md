@@ -44,11 +44,11 @@ The three exclusion classes are closed:
 | --- | --- |
 | Reachable by capability | 78 |
 | Excluded: `authority` | 6 |
-| Excluded: `ui_only_by_decision` | 2 |
+| Excluded: `ui_only_by_decision` | 3 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **136** |
+| **Total** | **137** |
 
-84 of the 136 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 52 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+84 of the 137 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 53 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -132,8 +132,9 @@ The three exclusion classes are closed:
 | `trade.ticket.risk.set` | Say what one trade may lose | the Trading panel's risk section | `trade.risk.set` | — |
 | `trade.ticket.ruler.set` | Walk the projected stop and target out from the aim | the ruler wheel on the chart's aim | `trade.ruler.set` | — |
 | `trade.ticket.strategy.select` | Choose the ticket's exit ladder | the Trading panel's strategy selector | `trade.strategy.select` | — |
-| `feed.reconnect` | Respawn the transport and keep the timeline | the feed notice popup | `feed.reconnect` | — |
+| `feed.reconnect` | Respawn the transport and keep the timeline | the feed notice popup; the connection overlay's Reconnect; the status bar's Reconnect while the chart holds bars | `feed.reconnect` | — |
 | `feed.reload` | Throw the timeline away and rebuild the chart | the feed notice popup | `feed.reload` | — |
+| `feed.connection_state` | Read what the chart says about its feed, book, trades and current job | the flow header's chip and slot, the connection overlay, the status word | — | `ui_only_by_decision` — nothing to perform: the state is readable as `connection` on the `feed.status` scope, and the recovery it offers is `feed.reconnect` and `feed.reload` |
 | `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as trades bars | the REC control beside the symbol and its popover; the Tools menu's `Record deals by default` checkbox | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
 | `toolrail.dock.set` | Park the drawing rail on the left, top or bottom edge | View menu, Drawing toolbar, and dragging the rail grip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `toolrail.visible.toggle` | Show or hide the drawing rail | View menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -212,7 +213,7 @@ matrix fails the build.
 | `hotkey` | 17 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 52 |
+| `authored` | 53 |
 
 ## Appendix: rows no registry stands behind
 
@@ -260,6 +261,7 @@ declares nothing here is a guard failure.
 | `trade.ticket.risk.set` | the Trading panel risk field |
 | `trade.ticket.ruler.set` | the ruler wheel on the chart aim |
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
+| `feed.connection_state` | a readout painted from one state, with no control of its own |
 | `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
 | `toolrail.magnet.toggle` | the rail's magnet button and its More menu entry are widgets, not registry entries |
 | `drawing.remove` | the object context bar, the canvas right-click menu and the object manager rows, resolved per click |

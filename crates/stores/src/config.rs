@@ -1327,6 +1327,7 @@ mod tests {
         assert_eq!(
             hyperliquid.provider.capabilities(),
             FeedCapabilities {
+                transport: true,
                 book_capture: true,
                 history_paging: false,
                 history_boundary: None,

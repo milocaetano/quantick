@@ -296,6 +296,7 @@ fn session_capabilities(
     deal_counter: bool,
 ) -> FeedCapabilities {
     FeedCapabilities {
+        transport: true,
         book_capture: book_levels.is_some_and(|levels| levels > 0),
         // Whether *this session's* bridge answers a request for older ticks.
         // Not a property of MetaTrader and not one of the provider: the same
