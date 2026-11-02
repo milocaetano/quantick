@@ -54,6 +54,7 @@ capability that cannot change application state.
 | `events.wait` | 1 | `events` | yes | `observe`, `observe.events` |
 | `evidence.capture` | 1 | `evidence` | yes | `observe`, `observe.evidence` |
 | `evidence.read` | 1 | `evidence` | yes | `observe`, `observe.evidence` |
+| `feed.contract.roll` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `feed.deal_recording.set` | 1 | `feed` | no | `cockpit` |
 | `feed.history.cancel` | 1 | `feed` | no | `cockpit` |
 | `feed.history.load` | 1 | `feed` | no | `cockpit` |
@@ -126,4 +127,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-101 capabilities registered.
+102 capabilities registered.

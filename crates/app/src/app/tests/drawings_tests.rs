@@ -4778,44 +4778,347 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
     );
 }
 
-/// Switching one pane's layout swaps that pane's drawings only.
+/// A context chart cut to other bars is another role: its level waits under
+/// the bars it was drawn at and is back when the chart returns to them.
 #[test]
-fn switching_one_panes_layout_swaps_only_its_drawings() {
+fn a_context_chart_recut_to_other_bars_puts_its_level_away_until_it_returns() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 100.0);
     place_level(&mut app, PaneSide::Flow, 50.0);
     run_frame(&mut app, &ctx);
-    let first = app.layout_state().layouts().active_id();
-    let point = pane_point(&app, PaneSide::Time(0));
-    click_chart(&mut app, &ctx, point);
-    let second = app.layout_adapter().create_layout(None).expect("second");
+    let drawn_at = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
     assert!(
         drawings_on(&app, PaneSide::Time(0)).is_empty(),
-        "the time pane's level went with layout 1"
+        "other bars, other set"
     );
     assert_eq!(
         drawings_on(&app, PaneSide::Flow),
         vec![50.0],
-        "the flow pane, still on layout 1, kept its own"
+        "the flow chart is untouched"
     );
-    app.layout_adapter().switch_layout(first).expect("back");
+
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .set_spec(drawn_at);
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
+}
+
+/// Two context charts on one bar rule hold one set, so a shared mark is theirs
+/// already and reaches the flow chart once.
+#[test]
+fn two_context_charts_on_one_bar_rule_mirror_a_shared_mark_once() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let bars = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(1))
+        .set_spec(bars);
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+
+    let (flow, top, bottom) = (0, 1, 2);
+    let owners = |viewer| app.active_tab().mirror_owners(viewer).collect::<Vec<_>>();
+    assert_eq!(owners(flow), [top], "one mirror of the shared set");
+    assert_eq!(owners(top), [flow], "the twin adds nothing to its own set");
+    assert_eq!(owners(bottom), [flow]);
+}
+
+/// Two context charts on one bar rule claim two legacy slots into one set: both
+/// end up holding all of it, so an edit on either loses nothing.
+#[test]
+fn twin_context_charts_claiming_two_slots_keep_both_through_an_edit() {
+    const OLD_LAYOUTS: &str = r#"
+version = 1
+active = 1
+next_id = 2
+
+[[layouts]]
+id = 1
+name = "Fluxo"
+
+[[layouts.drawings]]
+feed = "binance"
+symbol = "TESTUSDT"
+pane = 1
+
+[[layouts.drawings.items]]
+id = 1
+tool = "horizontal-line"
+band = { axis = "price" }
+color = [255, 200, 0, 255]
+width_px = 1.5
+fill_alpha = 0
+points = [{ time_ms = 1000, price = 100.0, bar = 3.0 }]
+
+[[layouts.drawings]]
+feed = "binance"
+symbol = "TESTUSDT"
+pane = 2
+
+[[layouts.drawings.items]]
+id = 1
+tool = "horizontal-line"
+band = { axis = "price" }
+color = [255, 200, 0, 255]
+width_px = 1.5
+fill_alpha = 0
+points = [{ time_ms = 1000, price = 200.0, bar = 3.0 }]
+"#;
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let bars = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(1))
+        .set_spec(bars);
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    let dir = crate::scratch::ScratchDir::new("twin-claim");
+    let path = dir.join(crate::layouts::LAYOUTS_FILE);
+    app.runtime.workspace.set_layouts_path(path.clone());
+    std::fs::write(&path, OLD_LAYOUTS).unwrap();
+
+    app.layout_adapter().reload_layouts(&["layouts"]);
+    run_frame(&mut app, &ctx);
+    let both = vec![100.0, 200.0];
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), both);
+    assert_eq!(drawings_on(&app, PaneSide::Time(1)), both);
+
+    place_level(&mut app, PaneSide::Time(0), 300.0);
+    run_frame(&mut app, &ctx);
+    let all = vec![100.0, 200.0, 300.0];
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), all);
+    assert_eq!(drawings_on(&app, PaneSide::Time(1)), all);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A strategy armed on a context chart's region survives that chart being cut to
+/// other bars: the drawing it names stays on the pane until it is disarmed.
+#[test]
+fn a_context_chart_with_a_strategy_armed_keeps_its_drawings_through_a_recut() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "rectangle")
+        .unwrap();
+    let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+    pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
+    pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
+    let drawing = pane.drawings.items()[0].id;
+    let mut form =
+        crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+    form.window = 3;
+    form.min_range = "0".to_owned();
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            PaneSide::Time(0),
+            drawing,
+            &form,
+            "test BF".to_owned(),
+        )
+        .unwrap();
+    run_frame(&mut app, &ctx);
+
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert!(
+        pane.drawings.index_of(drawing).is_some(),
+        "the region stayed"
+    );
+    assert!(!pane.strategies.anchors.is_empty(), "the instance is alive");
+}
+
+fn armed_rectangle(app: &mut QuantickApp, side: PaneSide) -> drawings::DrawingId {
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "rectangle")
+        .unwrap();
+    let pane = app.active_tab_mut().pane_mut(side);
+    pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
+    pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
+    let drawing = pane.drawings.items().last().unwrap().id;
+    let mut form =
+        crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+    form.window = 3;
+    form.min_range = "0".to_owned();
+    app.runtime
+        .tabs
+        .runtime_mut(app.runtime.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            side,
+            drawing,
+            &form,
+            "BF".to_owned(),
+        )
+        .unwrap();
+    drawing
+}
+
+/// A chart held on its key by a live strategy is refreshed under that key when
+/// its twin edits it, never moved to the key of the bars it now shows.
+#[test]
+fn a_twin_edit_does_not_move_a_chart_held_by_a_strategy() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let bars = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(1))
+        .set_spec(bars);
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    let drawing = armed_rectangle(&mut app, PaneSide::Time(0));
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+
+    place_level(&mut app, PaneSide::Time(1), 300.0);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert!(
+        pane.drawings.index_of(drawing).is_some(),
+        "the region stayed"
+    );
     assert_eq!(
-        app.layout_state()
-            .layouts()
-            .get(second)
-            .unwrap()
-            .drawing_count(),
-        0
+        pane.strategies.anchors.watching(),
+        1,
+        "the instance is alive"
+    );
+    assert_eq!(
+        pane.drawings.items().len(),
+        2,
+        "and the twin's level came over"
     );
 }
 
-/// A drawing belongs to the layout, the market and the pane it was drawn
-/// on: it is put away when the layout changes and comes back when the
-/// layout does; it never appears on the pane beside it.
+/// Once the strategy has stopped, the chart follows its bars again.
 #[test]
-fn drawings_are_kept_per_layout_and_pane() {
+fn a_chart_whose_strategy_stopped_follows_its_bars() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let drawing = armed_rectangle(&mut app, PaneSide::Time(0));
+    run_frame(&mut app, &ctx);
+    let _ = app
+        .active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .strategies
+        .anchors
+        .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert!(
+        pane.drawings.index_of(drawing).is_none(),
+        "put away under its bars"
+    );
+}
+
+/// An export from before the market store still imports: its drawings land on
+/// their markets, labelled, and a context pane claims what its address held.
+#[test]
+fn an_old_export_lands_on_the_markets_labelled_and_claimed_by_its_panes() {
+    const OLD_LAYOUTS: &str = r#"
+version = 1
+active = 1
+next_id = 2
+
+[[layouts]]
+id = 1
+name = "Fluxo"
+
+[[layouts.drawings]]
+feed = "binance"
+symbol = "TESTUSDT"
+pane = 0
+
+[[layouts.drawings.items]]
+id = 1
+tool = "horizontal-line"
+band = { axis = "price" }
+color = [255, 200, 0, 255]
+width_px = 1.5
+fill_alpha = 0
+points = [{ time_ms = 1000, price = 50.0, bar = 3.0 }]
+
+[[layouts.drawings]]
+feed = "binance"
+symbol = "TESTUSDT"
+pane = 1
+
+[[layouts.drawings.items]]
+id = 1
+tool = "horizontal-line"
+band = { axis = "price" }
+color = [255, 200, 0, 255]
+width_px = 1.5
+fill_alpha = 0
+points = [{ time_ms = 1000, price = 100.0, bar = 3.0 }]
+"#;
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let dir = crate::scratch::ScratchDir::new("old-export");
+    let path = dir.join(crate::layouts::LAYOUTS_FILE);
+    app.runtime.workspace.set_layouts_path(path.clone());
+    std::fs::write(&path, OLD_LAYOUTS).unwrap();
+
+    app.layout_adapter().reload_layouts(&["layouts"]);
+    run_frame(&mut app, &ctx);
+
+    assert_eq!(drawings_on(&app, PaneSide::Flow), vec![50.0]);
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
+    let label = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0]
+        .origin
+        .as_ref()
+        .map(crate::layouts::SavedOrigin::label);
+    assert_eq!(label.as_deref(), Some("from Fluxo · TESTUSDT"));
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(!on_disk.contains("[[layouts.drawings]]"), "{on_disk}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A drawing belongs to the market and the role it was drawn on, whichever
+/// layout shows it: a layout switch leaves it where it is, and it never
+/// appears on the pane beside it.
+#[test]
+fn drawings_stay_with_their_market_when_the_layout_changes() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     place_level(&mut app, PaneSide::Time(0), 100.0);
@@ -4831,9 +5134,10 @@ fn drawings_are_kept_per_layout_and_pane() {
         .layout_adapter()
         .create_layout(None)
         .expect("a second layout");
-    assert!(
-        drawings_on(&app, PaneSide::Time(0)).is_empty(),
-        "layout 2 has no level on this market yet"
+    assert_eq!(
+        drawings_on(&app, PaneSide::Time(0)),
+        vec![100.0],
+        "the new layout shows the market's level"
     );
     place_level(&mut app, PaneSide::Time(0), 200.0);
     run_frame(&mut app, &ctx);
@@ -4841,25 +5145,34 @@ fn drawings_are_kept_per_layout_and_pane() {
     app.layout_adapter().switch_layout(first).expect("back");
     assert_eq!(
         drawings_on(&app, PaneSide::Time(0)),
-        vec![100.0],
-        "layout 1's level is back, and layout 2's is not on it"
+        vec![100.0, 200.0],
+        "one set, whichever layout it was drawn under"
     );
     app.layout_adapter().switch_layout(second).expect("forth");
-    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![200.0]);
+    assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0, 200.0]);
+    let bars = app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .state
+        .spec()
+        .to_config_string();
     let key = crate::layouts::DrawingKey {
-        feed: "binance".to_owned(),
-        symbol: "TESTUSDT".to_owned(),
-        pane: 1,
+        market: crate::layouts::MarketKey {
+            venue: "binance".to_owned(),
+            asset: "TESTUSDT".to_owned(),
+        },
+        role: crate::layouts::PaneRole::Context { bars },
     };
     assert_eq!(
-        app.layout_state()
+        app.runtime
+            .workspace
             .layouts()
-            .get(first)
-            .expect("kept")
+            .market()
+            .settings()
             .drawings(&key)
-            .map(<[_]>::len),
-        Some(1),
-        "the book holds layout 1's level under its market and pane"
+            .len(),
+        2,
+        "the market store holds them under its market and role"
     );
 }
 
@@ -4961,6 +5274,12 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
+    // Other bars, so the two charts hold two sets of drawings.
+    app.active_tab_mut()
+        .pane_mut(PaneSide::Time(1))
+        .set_spec(BarSpec::Tick(77));
+    app.active_tab_mut().apply_spec_changes();
+    run_frame(&mut app, &ctx);
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     place_level(&mut app, PaneSide::Time(0), 100.0);
@@ -4979,9 +5298,16 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
             .layout
             .drawings_key
             .as_ref()
-            .map(|key| key.pane),
-        Some(2),
-        "its drawing key names its new address"
+            .map(|key| key.role.clone()),
+        Some(crate::layouts::PaneRole::Context {
+            bars: app
+                .active_tab()
+                .pane(PaneSide::Time(1))
+                .state
+                .spec()
+                .to_config_string(),
+        }),
+        "its drawing key names its role, wherever it stands"
     );
     assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
     assert!(

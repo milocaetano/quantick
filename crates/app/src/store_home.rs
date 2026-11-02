@@ -77,6 +77,14 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         local_keys: &[],
     },
     CockpitStore {
+        key: "market_settings",
+        file: crate::layouts::MARKET_SETTINGS_FILE,
+        validate: quantick_stores::market_settings::validate,
+        path: crate::layouts::market_settings_path,
+        in_bundle: true,
+        local_keys: &[],
+    },
+    CockpitStore {
         key: "indicator_presets",
         file: crate::indicators::preset_file::PRESETS_FILE,
         validate: crate::indicators::preset_file::validate,
@@ -238,6 +246,10 @@ const CAPTURE_OVERRIDES: &[(&str, &str)] = &[
     ),
     (crate::paper_state::INSTRUMENTS_FILE, "QUANTICK_INSTRUMENTS"),
     (crate::layouts::LAYOUTS_FILE, "QUANTICK_LAYOUTS"),
+    (
+        crate::layouts::MARKET_SETTINGS_FILE,
+        "QUANTICK_MARKET_SETTINGS",
+    ),
     (crate::paper_state::STATE_FILE, "QUANTICK_PAPER_STATE"),
     (
         crate::strategy_presets::STRATEGIES_FILE,
@@ -259,6 +271,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_INDICATORS_STATE",
     "QUANTICK_INSTRUMENTS",
     "QUANTICK_LAYOUTS",
+    "QUANTICK_MARKET_SETTINGS",
     "QUANTICK_PAPER_STATE",
     "QUANTICK_STRATEGY_PRESETS",
     "QUANTICK_SYMBOLS",

@@ -23,6 +23,10 @@ impl ManagerRow {
             shared: drawing.scope == DrawingScope::AllCharts,
             off_series: drawing.off_series,
             foreign_market: drawing.foreign_market,
+            origin: drawing
+                .origin
+                .as_ref()
+                .map(crate::layouts::SavedOrigin::label),
             author: drawing.author.as_ref().map(DrawingAuthor::label),
             band,
         }
@@ -86,6 +90,14 @@ pub(crate) fn object_row(
                     "Drawn while this tab showed a different instrument. The moment still \
                      exists here; the price does not mean the same thing",
                 );
+        }
+        if let Some(origin) = &row.origin {
+            // The merge said what it merged: this mark came from another
+            // layout or contract of the market.
+            ui.label(egui::RichText::new(origin).small())
+                .on_hover_text(format!(
+                    "Merged into this market: {origin}, where it used to be kept"
+                ));
         }
         if row.off_series {
             // The mark outlived the bars it was drawn on and the chart fades

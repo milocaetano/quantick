@@ -790,6 +790,8 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("feed.reconnect", 1, json!({}), Readback::Stays),
         ("feed.reload", 1, json!({}), Readback::Stays),
         ("feed.source.set", 1, Value::Null, Readback::Stays),
+        // A tab already on the target: the retry a dropped answer sends.
+        ("feed.contract.roll", 1, Value::Null, Readback::Stays),
         // A tab whose feed declares no deal counter and has no recorded day:
         // stopping a recorder that is not running acts on nothing, and the
         // scope lists no recorder either side of the call.
@@ -940,6 +942,16 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "feed_id": app.active_tab().active.0,
                 "symbol": app.active_tab().active.1,
             }),
+            "feed.contract.roll" => {
+                let symbol = app.active_tab().active.1.clone();
+                app.config.feeds[0]
+                    .contract_rolls
+                    .insert("ROLLED-FROM".to_owned(), symbol);
+                json!({
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
+                    "from_symbol": "ROLLED-FROM",
+                })
+            }
             "chart.price_axis.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),

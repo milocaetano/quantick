@@ -63,6 +63,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::tape_view_set::register(&mut registry)?;
     quantick_control_handlers::recovery::register(&mut registry)?;
     quantick_control_handlers::feed_source::register(&mut registry)?;
+    quantick_control_handlers::contract_roll::register(&mut registry)?;
     quantick_control_handlers::history::register(&mut registry)?;
     quantick_control_handlers::journal_sessions::register(&mut registry)?;
     quantick_control_handlers::pnl_display::register(&mut registry)?;

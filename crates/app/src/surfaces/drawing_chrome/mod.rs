@@ -241,6 +241,8 @@ pub(crate) struct ManagerRow {
     pub shared: bool,
     pub off_series: bool,
     pub foreign_market: bool,
+    /// Where a migration merged this object from, in the list's words.
+    pub origin: Option<String>,
     pub author: Option<String>,
     pub band: BandLabel,
 }

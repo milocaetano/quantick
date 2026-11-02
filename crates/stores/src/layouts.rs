@@ -1,4 +1,5 @@
 //! Layout document validation and guarded disk persistence.
+use quantick_workspace::layout_commit::LayoutSave;
 use quantick_workspace::layout_document::{LayoutBook, parse};
 use std::path::Path;
 
@@ -73,10 +74,11 @@ pub fn load(path: &Path) -> Loaded {
 }
 
 /// Write the book. Temp sibling + rename, like every other store: a crash
-/// mid-write leaves the previous file, never half of the new one.
-pub fn save(path: &Path, book: &LayoutBook) {
+/// mid-write leaves the previous file, never half of the new one. Returns
+/// whether it reached disk.
+pub fn save(path: &Path, book: &LayoutBook) -> bool {
     if quantick_workspace::write_refusal::guard_write(path).is_err() {
-        return;
+        return false;
     }
     match toml::to_string_pretty(book) {
         Ok(text) => {
@@ -93,15 +95,67 @@ pub fn save(path: &Path, book: &LayoutBook) {
                     action = "layouts_not_saved",
                     "could not save the layouts"
                 );
+                return false;
             }
+            true
         }
-        Err(error) => tracing::warn!(
+        Err(error) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "LAYOUTS_WRITE_FAILED",
+                %error,
+                action = "layouts_not_saved",
+                "could not encode the layouts"
+            );
+            false
+        }
+    }
+}
+
+/// Read the layouts file, or migrate the indicator set a cockpit kept before
+/// layouts existed, or start with one empty layout.
+///
+/// The flag says whether the file must not be written back: a file this build
+/// could not read *and* could not set aside is the trader's only copy, and the
+/// empty book the session opens on must never be saved over it.
+#[must_use]
+pub fn load_or_starter(path: &Path, legacy_indicators: &Path) -> (LayoutBook, bool) {
+    match load(path) {
+        Loaded::Book(book) => (book, false),
+        Loaded::Refused { set_aside, .. } => (LayoutBook::default(), !set_aside),
+        Loaded::Missing => {
+            let legacy = crate::indicator_state::load(legacy_indicators);
+            if !legacy.is_empty() {
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LAYOUTS_MIGRATED",
+                    indicators = legacy.len(),
+                    action = "indicator_state_moved_into_layout_1",
+                    "the indicator set became Layout 1"
+                );
+            }
+            (LayoutBook::starter(legacy), false)
+        }
+    }
+}
+
+/// Carry out what the commit policy decided, which owns the debounce and the
+/// blocked condition and has consumed the pending change before this runs.
+pub fn act_on(path: &Path, book: &LayoutBook, decision: LayoutSave) {
+    match decision {
+        LayoutSave::Wait => {}
+        LayoutSave::Write => {
+            save(path, book);
+        }
+        LayoutSave::Blocked => tracing::warn!(
             target: "quantick::app",
             schema_version = 1_u8,
-            event_code = "LAYOUTS_WRITE_FAILED",
-            %error,
-            action = "layouts_not_saved",
-            "could not encode the layouts"
+            event_code = "LAYOUTS_SAVE_BLOCKED",
+            path = %path.display(),
+            action = "file_left_untouched",
+            "the layouts file could not be read at launch and was not set aside; this session's layouts are not written over it"
         ),
     }
 }
@@ -110,7 +164,6 @@ pub fn save(path: &Path, book: &LayoutBook) {
 mod tests {
     use super::*;
     use crate::indicator_state::{SavedIndicator, SavedInput, SavedKind};
-    use quantick_workspace::layout_document::{DrawingKey, SavedBand, SavedDrawing, SavedPoint};
 
     fn ema() -> SavedIndicator {
         SavedIndicator {
@@ -119,38 +172,6 @@ mod tests {
             mouse_vertical_line: false,
             inputs: vec![SavedInput::Int(20), SavedInput::Source("close".to_owned())],
             plot_styles: Vec::new(),
-        }
-    }
-
-    fn key(pane: usize) -> DrawingKey {
-        DrawingKey {
-            feed: "binance".to_owned(),
-            symbol: "BTCUSDT".to_owned(),
-            pane,
-        }
-    }
-
-    fn level(price: f64) -> SavedDrawing {
-        SavedDrawing {
-            tool: "horizontal-line".to_owned(),
-            name: Some("max".to_owned()),
-            author: None,
-            points: vec![SavedPoint {
-                time_ms: Some(1_000),
-                price,
-                bar: 3.0,
-            }],
-            band: SavedBand::Price,
-            color: [255, 200, 0, 255],
-            width_px: 1.5,
-            fill_alpha: 0,
-            locked: false,
-            hidden: false,
-            magnet: false,
-            shared: false,
-            payload: None,
-            text: None,
-            id: None,
         }
     }
 
@@ -163,8 +184,6 @@ mod tests {
         let mut book = LayoutBook::starter(vec![ema()]);
         let second = book.create(Some("levels")).unwrap();
         book.switch(second).unwrap();
-        book.active_mut()
-            .replace_drawings(&key(1), vec![level(100.0)], |_| true);
         save(&path, &book);
         assert_eq!(load(&path), Loaded::Book(book.clone()));
         assert!(validate(&std::fs::read_to_string(&path).unwrap()).is_ok());

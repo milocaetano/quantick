@@ -2,6 +2,7 @@
 use quantick_control::{registry::CapabilityDescriptor, schema::generated_schema, wire::WireU64};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const FEED_SOURCE_CAPABILITY_ID: &str = "feed.source.set";
 
@@ -15,6 +16,9 @@ pub struct FeedSourceChoice {
     pub feed_id: String,
     pub display_name: String,
     pub symbols: Vec<String>,
+    /// Which contract follows which on this feed, for feed.contract.roll.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub contract_rolls: BTreeMap<String, String>,
 }
 
 #[must_use]
@@ -26,6 +30,7 @@ pub fn choices(config: &quantick_stores::config::AppConfig) -> Vec<FeedSourceCho
             feed_id: feed.id.clone(),
             display_name: feed.name.clone(),
             symbols: feed.symbols.clone(),
+            contract_rolls: feed.contract_rolls.clone(),
         })
         .collect()
 }

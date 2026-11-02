@@ -27,48 +27,34 @@ impl LayoutView {
 /// Facts supplied by the chart, never a callback into its root.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PaneFacts {
-    pub strategy_armed: bool,
     pub gesture_in_flight: bool,
 }
 impl PaneFacts {
     fn refusal(self) -> Option<LayoutError> {
-        if self.strategy_armed {
-            Some(LayoutError::StrategyArmed)
-        } else if self.gesture_in_flight {
-            Some(LayoutError::GestureInFlight)
-        } else {
-            None
-        }
+        self.gesture_in_flight
+            .then_some(LayoutError::GestureInFlight)
     }
 }
 
 /// Ordered host operations; membership and default changes occur at distinct boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutEffect {
-    LeaveGestures,
-    PersistChangedDrawings,
-    StoreOutgoingDrawings,
     DetachIndicators,
     CommitMembership,
     MaterializeIndicators,
-    RestoreDrawings,
     RefreshLabel,
     CommitDefault,
     MarkDirty,
 }
 const SWAP_EFFECTS: &[LayoutEffect] = &[
-    LayoutEffect::LeaveGestures,
-    LayoutEffect::PersistChangedDrawings,
-    LayoutEffect::StoreOutgoingDrawings,
     LayoutEffect::DetachIndicators,
     LayoutEffect::CommitMembership,
     LayoutEffect::MaterializeIndicators,
-    LayoutEffect::RestoreDrawings,
     LayoutEffect::RefreshLabel,
     LayoutEffect::CommitDefault,
     LayoutEffect::MarkDirty,
 ];
-/// A validated selection. Outgoing effects precede committing this transition.
+/// A validated selection. Outgoing indicators leave before this transition commits.
 /// The shell can read but cannot retarget a validated selection.
 /// ```compile_fail
 /// use quantick_workspace::session::Selection;
@@ -158,17 +144,6 @@ impl LayoutSession {
         id: LayoutId,
     ) -> Option<&mut Vec<crate::indicator_document::SavedIndicator>> {
         self.book.get_mut(id).map(|layout| &mut layout.indicators)
-    }
-    pub fn store_drawings(
-        &mut self,
-        id: LayoutId,
-        key: &crate::layout_document::DrawingKey,
-        items: Vec<crate::layout_document::SavedDrawing>,
-        known_tool: impl Fn(&str) -> bool,
-    ) {
-        if let Some(layout) = self.book.get_mut(id) {
-            layout.replace_drawings(key, items, known_tool);
-        }
     }
     /// Register once; repeated registration returns the same read-only value.
     pub fn register(&mut self, pane: u64, named: Option<LayoutId>) -> LayoutView {
@@ -270,7 +245,7 @@ impl LayoutSession {
             generation: state.generation,
         })
     }
-    /// Commit at the named membership effect, after outgoing drawings and slots leave.
+    /// Commit at the named membership effect, after outgoing slots leave.
     pub fn commit_selection(
         &mut self,
         selection: Selection,
@@ -300,7 +275,7 @@ impl LayoutSession {
             generation: value.generation,
         })
     }
-    /// Last-pick default changes only after incoming indicators and drawings are restored.
+    /// Last-pick default changes only after incoming indicators are restored.
     pub fn finish_selection(&mut self, committed: CommittedSelection) -> Result<(), LayoutError> {
         let selection = committed.selection;
         let state = self

@@ -7,8 +7,10 @@
 //! what a toolbar looks like.
 
 use eframe::egui;
+use quantick_control_handlers::contract_roll;
 use quantick_engine::Side;
 
+use super::control_host::ControlPort;
 use crate::indicator_worker::SlotId;
 use crate::surfaces::ChartSettingsTab::Candles;
 use crate::tab::CanvasLayout;
@@ -75,6 +77,7 @@ impl QuantickApp {
         let layout_picker_autostart = self.chrome.harness.take_layout_picker_autostart();
         #[cfg(not(any(feature = "scenario-harness", test)))]
         let layout_picker_autostart = false;
+        let contract_roll = contract_roll::offer(self as &dyn ControlPort);
         let deal_recording = self.active_tab().deal_recording_view();
         #[cfg(any(feature = "scenario-harness", test))]
         let deal_recording_menu =
@@ -96,6 +99,7 @@ impl QuantickApp {
             feed_id: &mut tab.feed_id,
             feed_display_name,
             symbols,
+            contract_roll,
             symbol: &mut tab.symbol,
             replay,
             deal_recording,
@@ -162,20 +166,11 @@ impl QuantickApp {
                 self.tabs_mut().press_history(active, reach);
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
+            ToolbarAction::RollContract => contract_roll::roll_active(self as &mut dyn ControlPort),
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
             }
-            ToolbarAction::LoadOlderCandles => {
-                let (active, tab_id) = (
-                    self.runtime.tabs.active_index(),
-                    self.runtime.tabs.active_id(),
-                );
-                let act = quantick_session::Act::LoadOlderCandles { tab_id };
-                self.runtime
-                    .tabs
-                    .runtime_mut(active)
-                    .run_session(Some(&self.config), act);
-            }
+            ToolbarAction::LoadOlderCandles => self.tabs_mut().load_older_candles(),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.layer_wiring().toggle_settings(Candles),

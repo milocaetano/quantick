@@ -2,6 +2,7 @@
 use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
     layout_document::LayoutBook,
+    market_settings_store::MarketSettingsStore,
     session::LayoutSession,
 };
 use std::path::{Path, PathBuf};
@@ -12,12 +13,14 @@ use std::time::Instant;
 /// The pure commit policy owns the dirty/timestamp/blocked transition. This
 /// handle associates its effects with the already resolved layout path.
 pub struct LayoutStore {
-    /// The workspace's layouts: the strip's tabs, their indicator sets and
-    /// their per-market drawings. See [`crate::layout_document`].
+    /// The workspace's layouts: the strip's tabs and their indicator sets.
+    /// See [`crate::layout_document`].
     session: LayoutSession,
     /// Where the layouts persist. Handed in, never resolved here.
     path: PathBuf,
     policy: LayoutCommitPolicy,
+    /// What stays with a market whichever layout shows it.
+    market: MarketSettingsStore,
 }
 
 impl LayoutStore {
@@ -26,11 +29,27 @@ impl LayoutStore {
     /// `blocked` comes from the load: it is the "could not read it and could
     /// not set it aside" answer, which only the loader can give.
     pub fn new(book: LayoutBook, path: PathBuf, blocked: bool) -> Self {
+        let market = MarketSettingsStore::beside(&path);
         Self {
             session: LayoutSession::new(book),
             path,
             policy: LayoutCommitPolicy::new(blocked),
+            market,
         }
+    }
+
+    /// The store beside `market`, which the caller opened and migrated.
+    #[must_use]
+    pub fn with_market(mut self, market: MarketSettingsStore) -> Self {
+        self.market = market;
+        self
+    }
+
+    pub fn market(&self) -> &MarketSettingsStore {
+        &self.market
+    }
+    pub fn market_mut(&mut self) -> &mut MarketSettingsStore {
+        &mut self.market
     }
 
     /// The book, for the strip, the menu and the control plane to read.
@@ -48,6 +67,8 @@ impl LayoutStore {
     /// Redirect a fixture without exposing the document or commit policy.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_path(&mut self, path: PathBuf) {
+        self.market
+            .set_path(path.with_file_name(crate::market_settings::MARKET_SETTINGS_FILE));
         self.path = path;
     }
 

@@ -30,6 +30,7 @@ pub mod home;
 pub mod indicator_presets;
 pub mod indicator_state;
 pub mod layouts;
+pub mod market_settings;
 pub mod paths;
 #[cfg(test)]
 mod scratch;

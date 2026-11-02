@@ -84,7 +84,6 @@ use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::{Harness, ScriptedMenu};
 use crate::indicators::preset_file;
-use crate::indicators::state_file;
 use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
@@ -95,7 +94,7 @@ use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 use crate::ui_state;
 use crate::window_scale;
-use crate::workspace_store::{LayoutStore, StorePaths, WorkspaceStore};
+use crate::workspace_store::{StorePaths, WorkspaceStore};
 use quantick_feed::FeedHandle;
 use quantick_feed::history_reach;
 #[cfg(any(feature = "scenario-harness", test))]
@@ -486,10 +485,6 @@ impl QuantickApp {
             &state_path,
         );
         let mut pane_ids = PaneIdAllocator::new();
-        let loaded_layouts = layout_wiring::LayoutAdapter::load_layouts(
-            &crate::layouts::default_path(),
-            &state_file::default_path(),
-        );
         let mut tab = Tab::new(
             pane_ids.alloc(),
             feed_id.into(),
@@ -581,11 +576,7 @@ impl QuantickApp {
                     ui_state: ui_state::default_path(),
                     bubble_assets: crate::bubble_presets::assets_path(),
                 },
-                LayoutStore::new(
-                    loaded_layouts.0,
-                    crate::layouts::default_path(),
-                    loaded_layouts.1,
-                ),
+                layout_wiring::open_layout_store(&config),
                 trades_dir,
             ),
         };

@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 mod asset_modes;
+mod contract_rolls;
+mod market_asset;
 pub use asset_modes::AssetMode;
 
 use crate::symbols_file::AddedSymbols;
@@ -93,11 +95,20 @@ pub struct FeedConfig {
     /// stays the presets file's business, reported when it is applied.
     #[serde(default)]
     pub symbol_bubble_presets: BTreeMap<String, String>,
+    /// Families of dated contracts that are one market for its drawings, on top
+    /// of the keys above: `"WDO*"`. A family here moves no saved bubble look.
+    #[serde(default)]
+    pub asset_families: Vec<String>,
     /// Per-asset modes, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets):
     /// what an asset gets only because the config switches it on
     /// ([`AssetMode`]). Keys must match a symbol this feed offers.
     #[serde(default)]
     pub symbol_asset_modes: BTreeMap<String, AssetMode>,
+    /// Which dated contract follows which: `contract_rolls = { "<symbol>" =
+    /// "<next>" }`. Exact symbols, never a pattern. The one place a roll's
+    /// target comes from ([`Self::next_contract`]).
+    #[serde(default)]
+    pub contract_rolls: BTreeMap<String, String>,
     /// The canvas layout a tab on this feed opens showing.
     ///
     /// Startup-scoped, like `default_feed`: it decides what a *new* tab looks
@@ -713,6 +724,7 @@ impl AppConfig {
             // empty preset name is a config typo. Whether the name resolves
             // stays the presets file's business.
             feed.validate_asset_modes()?;
+            feed.validate_contract_rolls()?;
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed
                     .symbols
@@ -1362,7 +1374,10 @@ mod tests {
         // rather than one list that half-resolves whoever is logged in.
         let b3 = config.feed("metatrader-b3").expect("B3 feed");
         assert_eq!(b3.provider, ProviderKind::MetaTrader);
-        assert_eq!(b3.symbols, ["WIN$N", "WDO$N", "WINV26"]);
+        assert_eq!(b3.symbols, ["WIN$N", "WDO$N", "WINV26", "WINZ26", "WING27"]);
+        assert_eq!(b3.next_contract("WINV26"), Some("WINZ26"));
+        assert_eq!(b3.next_contract("WINZ26"), Some("WING27"));
+        assert_eq!(b3.next_contract("WIN$N"), None, "an alias never rolls");
         let tickmill = config.feed("metatrader-tickmill").expect("Tickmill feed");
         assert_eq!(tickmill.provider, ProviderKind::MetaTrader);
         assert_eq!(tickmill.symbols, ["XAUUSD", "US500", "US30"]);

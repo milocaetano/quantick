@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 92 |
+| Reachable by capability | 93 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **146** |
+| **Total** | **147** |
 
-86 of the 146 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 60 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+87 of the 147 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 60 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -67,6 +67,7 @@ The three exclusion classes are closed:
 | `tab.market.close` | Close the active market tab | tab strip chip, Ctrl+W | — | `pending_capability` — closing a tab discards its drawings and its paper position, and the control contract admits no destructive effect yet — the same ceiling `layout.tab.delete` sits under. Tracked in issue 401 |
 | `tab.market.open` | Open a new market tab | tab strip +, Ctrl+T | — | `pending_capability` — no capability opens a second market tab. `feed.source.set` switches the feed and symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401 |
 | `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's SOURCE feed and symbol combos | `feed.source.set` | — |
+| `tab.market.roll` | Roll the active tab to its next configured contract | the symbol list on the toolbar's market label | `feed.contract.roll` | — |
 | `replay.browser.open` | Open the market replay browser | window menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `replay.close` | Leave replay and go back to the live tape | window menu, while a tab is replaying | — | `pending_capability` — no capability drives the replay transport, so an operator can neither start a session nor end one. Tracked in issue 401 |
 | `replay.format_help.open` | Read what a replay file has to look like | window menu, Help | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -209,7 +210,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 16 |
+| `toolbar_action` | 17 |
 | `strip_action` | 6 |
 | `tab_action` | 4 |
 | `dock_tab` | 5 |

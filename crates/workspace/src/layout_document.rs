@@ -1,4 +1,37 @@
 //! Layout documents and compatibility rules, independent of chart runtime and storage.
+//!
+//! Layout tabs: named sets of indicators and drawings a chart pane switches
+//! between — the strip along the bottom of the canvas, acting on the focused
+//! pane. Two panes may show two layouts side by side.
+//!
+//! A trader keeps more than one way of reading a market. One layout holds
+//! the moving averages and the session profile; another holds nothing but
+//! the levels drawn by hand; a third is the one for the open. The strip
+//! keeps them a click apart, and the file keeps them across launches, so a
+//! set of indicators is placed once and never again.
+//!
+//! **Two scopes, deliberately different.** A layout's *indicators* are shared
+//! by every pane of every open market: the moment the layout holding `EMA
+//! 20` is active, every chart shows an `EMA 20` computed over its own bars.
+//! *Drawings* are not the layout's at all: a level belongs to its market,
+//! whichever layout shows it, and is kept in the market store under
+//! `DrawingKey`: venue, asset and pane role
+//! ([`crate::market_settings`]). A drawing marked "show on all
+//! charts" is stored once, under the role it was drawn on, and mirrored onto
+//! the other panes of that market by the tab.
+//!
+//! **The layout is the source of truth; panes materialise it.** The app
+//! holds one [`LayoutBook`] and keeps every pane's indicator set equal to the
+//! active layout's, so "add an indicator" is one edit here and a fan-out to
+//! the panes, never a per-pane collection that drifts. Autosaved, debounced,
+//! off the frame path, into one file in the cockpit home that travels in the
+//! workspace bundle.
+//!
+//! **Migration.** The layouts file replaces `indicators-state.toml`, which
+//! remembered one tab's flow pane. A cockpit that has the old file and not
+//! this one opens with its set inside "Layout 1", so nobody loses the
+//! indicators they had.
+//!
 use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 
@@ -44,10 +77,8 @@ pub enum LayoutError {
     Duplicate,
     /// Nothing was left of the name once it was cleaned.
     Empty,
-    /// A strategy is armed on a drawing; switching would put that drawing
-    /// away and orphan the instance.
-    StrategyArmed,
-    /// A drawing gesture is in flight; the stores cannot be swapped under it.
+    /// A drawing gesture is in flight; the indicator bands it addresses cannot
+    /// be swapped under it.
     GestureInFlight,
 }
 
@@ -59,26 +90,9 @@ impl std::fmt::Display for LayoutError {
             Self::Last => "the last layout cannot be deleted",
             Self::Duplicate => "another layout already has that name",
             Self::Empty => "a layout needs a name",
-            Self::StrategyArmed => {
-                "disarm the strategy before switching layouts: it is armed on a drawing this layout holds"
-            }
             Self::GestureInFlight => "finish the drawing gesture before switching layouts",
         })
     }
-}
-
-/// Where a drawing set belongs: one market, on one pane address of a tab.
-///
-/// The feed is part of the key: BTCUSDT on Binance and on Hyperliquid trade
-/// at different prices, and a level on one is not a level on the other. The
-/// pane is the address the caller's pane position uses — `0` the flow pane,
-/// `1..` the context stack top to bottom — so "the bottom chart" means the
-/// same slot whatever tab shows it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct DrawingKey {
-    pub feed: String,
-    pub symbol: String,
-    pub pane: usize,
 }
 
 /// One anchor, as the file keeps it.
@@ -156,9 +170,37 @@ pub struct SavedDrawing {
     /// trader wrote.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Where a migration found this entry. Absent on anything drawn since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<SavedOrigin>,
 }
 
-/// One market's drawings on one pane, inside a layout.
+/// The layout, contract and pane a migrated drawing was kept under.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedOrigin {
+    pub layout: String,
+    pub feed: String,
+    pub symbol: String,
+    pub pane: usize,
+    /// The id it had there; the market store may have had to renumber it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    /// Its tool and anchors as they were there, hashed: ids are local counters,
+    /// so another export can reuse one for a different mark.
+    #[serde(default)]
+    pub fingerprint: u32,
+}
+
+impl SavedOrigin {
+    /// The words a list shows for it.
+    #[must_use]
+    pub fn label(&self) -> String {
+        format!("from {} · {}", self.layout, self.symbol)
+    }
+}
+
+/// A drawing set as layouts kept them before the market store: read from old
+/// files and old exports, never written by this build's own edits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct DrawingSet {
     feed: String,
@@ -168,21 +210,19 @@ struct DrawingSet {
     items: Vec<SavedDrawing>,
 }
 
-impl DrawingSet {
-    fn key(&self) -> DrawingKey {
-        DrawingKey {
-            feed: self.feed.clone(),
-            symbol: self.symbol.clone(),
-            pane: self.pane,
-        }
-    }
-
-    fn is(&self, key: &DrawingKey) -> bool {
-        self.feed == key.feed && self.symbol == key.symbol && self.pane == key.pane
-    }
+/// One legacy set on its way out of a layout, named after it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegacyDrawings {
+    pub layout: String,
+    pub feed: String,
+    pub symbol: String,
+    pub pane: usize,
+    pub items: Vec<SavedDrawing>,
 }
 
-/// One named layout: its indicators, and its drawings by market and pane.
+/// One named layout: the indicators a pane shows while on it. Drawings belong
+/// to the market ([`crate::market_settings`]); `drawings` holds only what an
+/// old file brought, until [`LayoutBook::take_legacy_drawings`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChartLayout {
     pub id: LayoutId,
@@ -193,69 +233,6 @@ pub struct ChartLayout {
     pub indicators: Vec<SavedIndicator>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     drawings: Vec<DrawingSet>,
-}
-
-impl ChartLayout {
-    /// The drawings kept for `key`, if any.
-    #[must_use]
-    pub fn drawings(&self, key: &DrawingKey) -> Option<&[SavedDrawing]> {
-        self.drawings
-            .iter()
-            .find(|set| set.is(key))
-            .map(|set| set.items.as_slice())
-    }
-
-    /// Replace the drawings kept for `key`. An empty set removes the entry:
-    /// a market the trader cleared is a market with no drawings, not one
-    /// with an empty list to carry around.
-    ///
-    /// Entries whose tool this build does not know are kept: the pane never
-    /// held them, so a set written back from the pane would drop them, and
-    /// a file from a newer build would lose a mark to an older one.
-    pub fn replace_drawings(
-        &mut self,
-        key: &DrawingKey,
-        mut items: Vec<SavedDrawing>,
-        known_tool: impl Fn(&str) -> bool,
-    ) {
-        if let Some(previous) = self.drawings.iter().find(|set| set.is(key)) {
-            items.extend(
-                previous
-                    .items
-                    .iter()
-                    .filter(|entry| !known_tool(&entry.tool))
-                    .cloned(),
-            );
-        }
-        if let Some(index) = self.drawings.iter().position(|set| set.is(key)) {
-            if items.is_empty() {
-                self.drawings.remove(index);
-            } else {
-                self.drawings[index].items = items;
-            }
-        } else if !items.is_empty() {
-            self.drawings.push(DrawingSet {
-                feed: key.feed.clone(),
-                symbol: key.symbol.clone(),
-                pane: key.pane,
-                items,
-            });
-            // Keyed order, so the file diffs cleanly whatever order the
-            // markets were drawn on.
-            self.drawings.sort_by_key(DrawingSet::key);
-        }
-    }
-
-    /// How many drawings this layout keeps, over every market and pane.
-    #[must_use]
-    pub fn drawing_count(&self) -> usize {
-        self.drawings.iter().map(|set| set.items.len()).sum()
-    }
-
-    /// Every key this layout holds drawings for, in key order.
-    pub fn drawing_keys(&self) -> Vec<DrawingKey> {
-        self.drawings.iter().map(DrawingSet::key).collect()
-    }
 }
 
 /// Every layout of the workspace, and which one is active.
@@ -297,6 +274,32 @@ impl LayoutBook {
                 drawings: Vec::new(),
             }],
         }
+    }
+
+    /// Whether an old file left drawings in any layout.
+    #[must_use]
+    pub fn has_legacy_drawings(&self) -> bool {
+        self.layouts
+            .iter()
+            .any(|layout| !layout.drawings.is_empty())
+    }
+
+    /// Take every drawing an old file left in the layouts, in strip and file
+    /// order, each set named after its layout.
+    pub fn take_legacy_drawings(&mut self) -> Vec<LegacyDrawings> {
+        let mut taken = Vec::new();
+        for layout in &mut self.layouts {
+            for set in std::mem::take(&mut layout.drawings) {
+                taken.push(LegacyDrawings {
+                    layout: layout.name.clone(),
+                    feed: set.feed,
+                    symbol: set.symbol,
+                    pane: set.pane,
+                    items: set.items,
+                });
+            }
+        }
+        taken
     }
 
     /// Every layout, in strip order.
