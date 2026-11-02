@@ -39,6 +39,7 @@ impl ToolRail {
         drawings: &Drawings,
         range: std::ops::Range<usize>,
     ) {
+        let palette = theme::get(ui.ctx());
         // Indexed so the loop never clones the list on the per-frame path;
         // `DrawingTool` is `Copy` and arming cannot reorder favorites.
         for index in range {
@@ -62,7 +63,7 @@ impl ToolRail {
                     egui::Align2::RIGHT_TOP,
                     icons::STAR,
                     egui::FontId::proportional(FAVORITE_BADGE_PX),
-                    theme::ACCENT,
+                    palette.accent(),
                 );
             }
             #[cfg(test)]
@@ -241,6 +242,7 @@ impl ToolRail {
         leading: bool,
         live: bool,
     ) -> bool {
+        let palette = theme::get(ui.ctx());
         let size = if vertical {
             egui::vec2(TOOLRAIL_ICON.hit, BAND_ARROW_LENGTH_PX)
         } else {
@@ -266,11 +268,11 @@ impl ToolRail {
                 (false, false) => icons::CARET_RIGHT,
             };
             let color = if !live {
-                theme::TEXT_FAINT
+                palette.text_faint()
             } else if response.hovered() {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             };
             ui.painter().text(
                 rect.center(),

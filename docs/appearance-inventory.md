@@ -5,33 +5,41 @@ renderer color constructors/constants and explicit font calls, including tests.
 A match needs ownership classification before migration; transparency, geometry,
 tests and authored style identities are not automatically theme fields.
 
-Completed in the current seam:
+Completed through the consumer checkpoint:
 
-- Appearance: complete bundled Dark fallback and font defaults resolved from TOML;
-  configuration-owned footprint heat fill and ink arrays with Dark parity tests.
-- App theme adapter: per-context color/typography cache; base egui chrome widgets
-  and standard text roles; no per-frame parsing or font-definition replacement.
-- Footprint cluster heat: cached palette read once per layer, fill and ink lookups.
-- Chart: footprint heat percentile cuts/step decisions and width/fade arithmetic.
-- Stores: configured footprint dressing, LOD caches and pane footprint state.
+- Appearance: bundled Dark fallback, named renderer palette accessors, resolved
+  typography and configuration-owned footprint heat fill/ink arrays.
+- Chrome/panels: legacy theme tokens now resolve from per-context snapshots across
+  menus, rails, headers, tabs, docks, replay, indicators, settings, paper trading,
+  calendar, ledger and report panels. Icon buttons resolve their default accent
+  at paint time; an explicitly supplied accent stays explicit.
+- Chart overlays: axis text and crosshairs, day/seam/gap markers, footprint
+  plates/POC/side ink, trade marks, paper overlays and drawing context swatches
+  use the snapshot. Footprint row helpers borrow the existing frame snapshot.
+- Headless owners: footprint projection/LOD/cache policy from checkpoint 2;
+  paper report calendar statistics/selection and virtual ledger rows/pagination
+  with their tests. App retains calendar and ledger painters.
+- Runtime `app::theme` color constants are gone; the small remaining constants
+  module is compiled only for historical Dark regression tests.
 
 Required next migration:
 
-- Replace transitional `appearance::palette`/`app::theme` constants with resolved
-  palette snapshots across chrome, panels, axes, grids, candles and text. Remove
-  runtime literal bypasses when their callers are migrated. Keep historical
-  authored preset bytes explicit.
-- Inventory orderflow gradients, bubble palettes, aggression/footprint colors and
-  saved asset/preset paths. Uncustomized defaults inherit; saved/authored palettes
-  remain explicit with per-field provenance. A width-only candle edit must not
-  freeze background or color inheritance.
-- New drawing defaults follow the theme unless a saved user default exists;
-  existing drawing styles retain their authored colors. Treat indicator/script
-  plot colors as authored identities, including built-in studies.
-- Match each font consumer's current size/family before assigning a role. Explicit
-  icon-font sizes and fitted quantity layout budgets need deliberate handling.
-- Expose inspect/apply through the discoverable control contract; validate and
-  persist before live publication. Add provenance roundtrip/switch tests.
+- Direct non-token color literals remain: loading greys, paper shading/halos,
+  footprint bevel/outline/background ink, and orderflow gradients/bubble palettes.
+  Audit ordinary egui cursor, disabled, selection and hovered defaults as well.
+- Most explicit FontId/RichText size calls still use historical design metrics.
+  Match existing sizes/families before assigning semantic roles, and update
+  typography-dependent footprint LOD thresholds and axis/gutter measurements.
+- Chart/candle/canvas, orderflow/bubble/footprint saved knobs still require per-field
+  inheritance provenance. Legacy saved values are explicit; width-only edits must
+  not freeze colors. New drawing defaults must inherit unless saved user defaults
+  apply. Authored drawings, scripts, indicators and presets retain their colors.
+- Expose discoverable inspect/apply operations, atomically persist before live
+  publication, and invalidate any cached painted text/meshes on palette revision.
+- Independent Dark/Light visual and performance acceptance remains outstanding.
+
+The following table is the earlier literal scan, retained as a candidate worklist;
+its counts have not been presented as a completed semantic audit.
 
 Scan candidates at this checkpoint:
 

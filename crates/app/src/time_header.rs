@@ -99,6 +99,7 @@ pub fn draw(
     reserve_px: f32,
     bars: impl FnOnce(&mut egui::Ui),
 ) -> HeaderLayout {
+    let palette = theme::get(ui.ctx());
     let mut changed = false;
     #[cfg(test)]
     let mut chips = [egui::Rect::NOTHING; PRESETS.len()];
@@ -120,9 +121,9 @@ pub fn draw(
         for (label, preset_ms) in PRESETS {
             let selected = *interval_ms == preset_ms;
             let ink = if selected {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             };
             let chip = content.add(
                 egui::Button::new(

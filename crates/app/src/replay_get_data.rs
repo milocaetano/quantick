@@ -34,7 +34,7 @@ use quantick_replay::download_selection::{
 };
 
 use crate::config::ProviderKind;
-use crate::theme::{AMBER, TEXT_MUTED, TEXT_PRIMARY, WARN};
+use crate::theme;
 use quantick_feed::replay_download::{
     self, DEFAULT_CONTEXT_SESSIONS, DEFAULT_JOIN_DAY_BEFORE, DownloadError, DownloadEvent,
     DownloadJob, DownloadRequest, Mt5SessionSource, SessionSource,
@@ -773,19 +773,29 @@ impl GetDataPanel {
     }
 
     fn draw_source_row(&self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Source").color(TEXT_MUTED).small());
-            ui.label(egui::RichText::new("MetaTrader 5").color(TEXT_PRIMARY));
+            ui.label(
+                egui::RichText::new("Source")
+                    .color(palette.text_muted())
+                    .small(),
+            );
+            ui.label(egui::RichText::new("MetaTrader 5").color(palette.text_primary()));
             ui.label(
                 egui::RichText::new("— the terminal you are logged in to")
-                    .color(TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
         });
     }
 
     fn draw_symbol_row(&mut self, ui: &mut egui::Ui, out_dir: &str) {
-        ui.label(egui::RichText::new("Symbol").color(TEXT_MUTED).small());
+        let palette = theme::get(ui.ctx());
+        ui.label(
+            egui::RichText::new("Symbol")
+                .color(palette.text_muted())
+                .small(),
+        );
         let mut look_up = false;
         let busy = self.is_busy();
         ui.horizontal(|ui| {
@@ -837,13 +847,18 @@ impl GetDataPanel {
     /// of months, so this row is where "the current one, or the one before it"
     /// actually lives.
     fn draw_offered_row(&mut self, ui: &mut egui::Ui, out_dir: &str, offered: &[String]) {
+        let palette = theme::get(ui.ctx());
         if offered.is_empty() {
             return;
         }
         let busy = self.is_busy();
         let mut picked = None;
         ui.horizontal_wrapped(|ui| {
-            ui.label(egui::RichText::new("Contracts").color(TEXT_MUTED).small());
+            ui.label(
+                egui::RichText::new("Contracts")
+                    .color(palette.text_muted())
+                    .small(),
+            );
             for symbol in offered {
                 let on = self.symbol.trim() == symbol;
                 let response = ui.add_enabled(
@@ -867,7 +882,12 @@ impl GetDataPanel {
     /// not clickable — because finding out after a failed download is the worst
     /// possible time to learn a day was a holiday.
     fn draw_calendar(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Days").color(TEXT_MUTED).small());
+        let palette = theme::get(ui.ctx());
+        ui.label(
+            egui::RichText::new("Days")
+                .color(palette.text_muted())
+                .small(),
+        );
         // A retyped symbol invalidates the calendar rather than showing another
         // instrument's days under the new name — the fastest way to download
         // the wrong contract.
@@ -887,7 +907,7 @@ impl GetDataPanel {
                             "Type a symbol and look up its days — quantick asks the \
                              terminal what it holds before you pick.",
                         )
-                        .color(TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                     );
                 });
@@ -906,7 +926,7 @@ impl GetDataPanel {
                     }
                     ui.label(
                         egui::RichText::new(format!("{} {year}", month_name(month)))
-                            .color(TEXT_PRIMARY),
+                            .color(palette.text_primary()),
                     );
                     if ui.small_button(icons::CARET_RIGHT).clicked() {
                         self.month = next_month(year, month);
@@ -920,7 +940,11 @@ impl GetDataPanel {
                     .spacing([2.0, 2.0])
                     .show(ui, |ui| {
                         for name in ["M", "T", "W", "T", "F", "S", "S"] {
-                            ui.label(egui::RichText::new(name).color(TEXT_MUTED).small());
+                            ui.label(
+                                egui::RichText::new(name)
+                                    .color(palette.text_muted())
+                                    .small(),
+                            );
                         }
                         ui.end_row();
 
@@ -952,14 +976,14 @@ impl GetDataPanel {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("{} already downloaded", icons::CHECK))
-                            .color(AMBER)
+                            .color(palette.amber())
                             .small(),
                     );
                     ui.label(
                         egui::RichText::new(
                             "· greyed days have no data at this broker · Shift+click adds a range",
                         )
-                        .color(TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                     );
                 });
@@ -968,9 +992,10 @@ impl GetDataPanel {
     }
 
     fn draw_context_row(&mut self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         ui.label(
             egui::RichText::new("Run-up before that day")
-                .color(TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         );
         let busy = self.is_busy();
@@ -992,7 +1017,7 @@ impl GetDataPanel {
             }
             ui.label(
                 egui::RichText::new("sessions, as minute candles")
-                    .color(TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
         });
@@ -1001,7 +1026,7 @@ impl GetDataPanel {
                 "1m, 2m, 5m and 15m all come from these. Broker candles carry no \
                  order flow, so the chart shows none before the tape starts.",
             )
-            .color(TEXT_MUTED)
+            .color(palette.text_muted())
             .small(),
         );
     }
@@ -1015,6 +1040,7 @@ impl GetDataPanel {
     /// when it was changed here; the browser owns it, and draws the same
     /// setting beside **Play session**.
     fn draw_day_before_row(&mut self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         ui.add_space(8.0);
         let mut wanted = self.day_before;
         let one_day = self.days.selection.len() < 2;
@@ -1038,7 +1064,7 @@ impl GetDataPanel {
         }
         ui.label(
             egui::RichText::new(self.day_before_note())
-                .color(TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         );
     }
@@ -1061,13 +1087,14 @@ impl GetDataPanel {
     /// already standing, and the answer is labelled as *stated* rather than
     /// measured: the timestamps in the file are only as right as this is.
     fn draw_clock_row(&mut self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         if !self.clock_needed {
             return;
         }
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new("Broker clock")
-                .color(TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         );
         ui.horizontal(|ui| {
@@ -1086,12 +1113,13 @@ impl GetDataPanel {
                  the times in the file will be written in, so it is stated, not measured. \
                  B3 brokers run at -03:00.",
             )
-            .color(TEXT_MUTED)
+            .color(palette.text_muted())
             .small(),
         );
     }
 
     fn draw_estimate_and_button(&mut self, ui: &mut egui::Ui, out_dir: &str) {
+        let palette = theme::get(ui.ctx());
         match &self.phase {
             Phase::Failed { headline, fix } => {
                 egui::Frame::none()
@@ -1099,9 +1127,9 @@ impl GetDataPanel {
                     .inner_margin(8.0)
                     .rounding(4.0)
                     .show(ui, |ui| {
-                        ui.label(egui::RichText::new(headline).color(WARN));
+                        ui.label(egui::RichText::new(headline).color(palette.warn()));
                         if let Some(fix) = fix {
-                            ui.label(egui::RichText::new(fix).color(TEXT_MUTED).small());
+                            ui.label(egui::RichText::new(fix).color(palette.text_muted()).small());
                         }
                     });
                 ui.add_space(6.0);
@@ -1117,14 +1145,14 @@ impl GetDataPanel {
                         icons::CHECK,
                         prints(*ticks)
                     ))
-                    .color(AMBER),
+                    .color(palette.amber()),
                 );
                 if !complete {
                     ui.label(
                         egui::RichText::new(
                             "The broker held fewer sessions than asked for; the run-up is short.",
                         )
-                        .color(TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                     );
                 }
@@ -1165,7 +1193,7 @@ impl GetDataPanel {
                         icons::CHECK,
                         prints(*ticks)
                     ))
-                    .color(AMBER)
+                    .color(palette.amber())
                     .small(),
                 );
                 ui.add_space(6.0);
@@ -1173,14 +1201,14 @@ impl GetDataPanel {
             Some(DayBeforeStage::Failed { day, headline }) => {
                 ui.label(
                     egui::RichText::new(format!("The day before ({day}) did not come: {headline}"))
-                        .color(WARN)
+                        .color(palette.warn())
                         .small(),
                 );
                 ui.label(
                     egui::RichText::new(
                         "The day you picked is downloaded and will replay on its own.",
                     )
-                    .color(TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
                 );
                 ui.add_space(6.0);
@@ -1210,7 +1238,11 @@ impl GetDataPanel {
         ui.horizontal(|ui| {
             if self.days.selection.len() > 1 {
                 let estimate = self.days.estimate(self.context_sessions);
-                ui.label(egui::RichText::new(estimate).color(TEXT_MUTED).small());
+                ui.label(
+                    egui::RichText::new(estimate)
+                        .color(palette.text_muted())
+                        .small(),
+                );
             } else if let Some(day) = self.days.selection.only() {
                 // Two tapes cost twice one tape, and nobody may find that out
                 // from a progress bar that keeps going after they expected it
@@ -1226,7 +1258,7 @@ impl GetDataPanel {
                         size_label(tape_bytes(tapes)),
                         self.context_sessions
                     ))
-                    .color(TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
                 );
             }
@@ -1237,7 +1269,7 @@ impl GetDataPanel {
                 };
                 let button =
                     egui::Button::new(egui::RichText::new(text).color(egui::Color32::BLACK))
-                        .fill(AMBER);
+                        .fill(palette.amber());
                 if ui
                     .add_enabled(
                         ready && !self.days.nothing_to_fetch() && !self.is_busy(),
@@ -1263,6 +1295,7 @@ impl GetDataPanel {
     /// A several-day download's rows, with Cancel while it runs and the
     /// summary once it ends. True while it runs, so the button stays away.
     fn draw_batch(&mut self, ui: &mut egui::Ui) -> bool {
+        let palette = theme::get(ui.ctx());
         let Some(batch) = self.days.batch() else {
             return false;
         };
@@ -1276,10 +1309,12 @@ impl GetDataPanel {
                             crate::loading::inline(ui, &row.line(asked));
                             continue;
                         }
-                        DayStatus::Refused { .. } => WARN,
-                        DayStatus::Fetched { .. } | DayStatus::AlreadyHere { .. } => AMBER,
+                        DayStatus::Refused { .. } => palette.warn(),
+                        DayStatus::Fetched { .. } | DayStatus::AlreadyHere { .. } => {
+                            palette.amber()
+                        }
                         DayStatus::Waiting | DayStatus::NotTried | DayStatus::Cancelled => {
-                            TEXT_MUTED
+                            palette.text_muted()
                         }
                     };
                     ui.label(egui::RichText::new(row.line(asked)).color(colour).small());
@@ -1287,7 +1322,7 @@ impl GetDataPanel {
             });
         let running = batch.running().is_some();
         if !running {
-            ui.label(egui::RichText::new(batch.summary().line()).color(AMBER));
+            ui.label(egui::RichText::new(batch.summary().line()).color(palette.amber()));
             ui.add_space(6.0);
         } else if ui
             .button("Cancel")
@@ -1316,18 +1351,23 @@ fn draw_day_cell(
     iso: &str,
     on_disk: bool,
 ) {
+    let palette = theme::get(ui.ctx());
     if !offered.contains(iso) {
         // Not a disabled button: there is nothing here to press, and a greyed
         // number reads as "no data" faster than a dead control does.
         ui.label(
             egui::RichText::new(format!("{day:2}"))
-                .color(TEXT_MUTED)
+                .color(palette.text_muted())
                 .weak(),
         );
         return;
     }
     let selected = selection.contains(iso);
-    let colour = if on_disk { AMBER } else { TEXT_PRIMARY };
+    let colour = if on_disk {
+        palette.amber()
+    } else {
+        palette.text_primary()
+    };
     let response = ui
         .selectable_label(
             selected,

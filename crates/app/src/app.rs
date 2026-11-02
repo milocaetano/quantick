@@ -125,8 +125,6 @@ use crate::tab::CanvasLayout;
 #[cfg(test)]
 use crate::tabstrip::TabAction;
 #[cfg(test)]
-use crate::theme;
-#[cfg(test)]
 use crate::toolbar::ToolbarAction;
 #[cfg(test)]
 use crate::toolrail::{Tool, ToolboxDock};

@@ -316,6 +316,7 @@ fn geometry(
     chip: egui::Rect,
     report: &Report<'_>,
 ) -> Geometry {
+    let palette = theme::get(painter.ctx());
     let accent = report.accent();
 
     // Wrap against the width the popup will actually have, not the width it
@@ -331,11 +332,11 @@ fn geometry(
             text_width,
         )
     };
-    let headline = wrap(report.headline, HEADLINE_PT, theme::TEXT_PRIMARY);
+    let headline = wrap(report.headline, HEADLINE_PT, palette.text_primary());
     let step = report
         .next_step
-        .map(|step| wrap(step, STEP_PT, theme::TEXT_MUTED));
-    let caption = wrap(RELOAD_CAPTION, CAPTION_PT, theme::TEXT_FAINT);
+        .map(|step| wrap(step, STEP_PT, palette.text_muted()));
+    let caption = wrap(RELOAD_CAPTION, CAPTION_PT, palette.text_faint());
 
     // Two buttons share the text column. On a chart too narrow for both at
     // their preferred width they shrink together rather than one of them
@@ -429,6 +430,7 @@ pub fn draw_popup(
     chip: egui::Rect,
     report: &Report<'_>,
 ) -> (NoticeAction, egui::Rect) {
+    let palette = theme::get(ui.ctx());
     let painter = ui.painter().clone();
     let Geometry {
         popup,
@@ -459,7 +461,11 @@ pub fn draw_popup(
     // rather than to the chart. Opaque, because an instruction someone has to
     // follow should not be read through candles; the accent carries the
     // severity.
-    painter.rect_filled(popup, egui::Rounding::same(CORNER_RADIUS_PX), theme::CHROME);
+    painter.rect_filled(
+        popup,
+        egui::Rounding::same(CORNER_RADIUS_PX),
+        palette.chrome(),
+    );
     painter.rect_stroke(
         popup,
         egui::Rounding::same(CORNER_RADIUS_PX),
@@ -480,13 +486,13 @@ pub fn draw_popup(
     painter.galley(
         egui::pos2(text_left, headline_top),
         headline,
-        theme::TEXT_PRIMARY,
+        palette.text_primary(),
     );
     if let Some(step) = step {
         painter.galley(
             egui::pos2(text_left, headline_top + headline_height + LINE_GAP_PX),
             step,
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
 
@@ -499,8 +505,10 @@ pub fn draw_popup(
     if ui
         .put(
             primary_rect,
-            egui::Button::new(egui::RichText::new(primary_recovery.label()).color(theme::CHIP_INK))
-                .fill(accent),
+            egui::Button::new(
+                egui::RichText::new(primary_recovery.label()).color(palette.chip_ink()),
+            )
+            .fill(accent),
         )
         .on_hover_text(recovery_cost(primary_recovery))
         .clicked()
@@ -511,7 +519,7 @@ pub fn draw_popup(
     if ui
         .put(
             secondary_rect,
-            egui::Button::new(secondary_recovery.label()).fill(theme::CONTROL),
+            egui::Button::new(secondary_recovery.label()).fill(palette.control()),
         )
         .on_hover_text(recovery_cost(secondary_recovery))
         .clicked()
@@ -521,7 +529,7 @@ pub fn draw_popup(
     painter.galley(
         egui::pos2(text_left, primary_rect.bottom() + CAPTION_GAP_PX),
         caption,
-        theme::TEXT_FAINT,
+        palette.text_faint(),
     );
     (action, popup)
 }

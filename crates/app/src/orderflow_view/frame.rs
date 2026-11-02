@@ -34,16 +34,19 @@ use crate::viewport::Viewport;
 
 use super::{OrderflowView, VisibleBarTimeline};
 
-pub(super) fn status_color(status: &CaptureStatus) -> egui::Color32 {
+pub(super) fn status_color(
+    palette: &crate::theme::Palette,
+    status: &CaptureStatus,
+) -> egui::Color32 {
     match status {
-        CaptureStatus::Live { .. } => crate::theme::BUY,
+        CaptureStatus::Live { .. } => palette.buy(),
         CaptureStatus::Connecting | CaptureStatus::Buffering | CaptureStatus::SnapshotFetching => {
-            crate::theme::AMBER
+            palette.amber()
         }
-        CaptureStatus::Disabled => crate::theme::TEXT_MUTED,
+        CaptureStatus::Disabled => palette.text_muted(),
         CaptureStatus::Resyncing { .. }
         | CaptureStatus::Disconnected { .. }
-        | CaptureStatus::Error => crate::theme::WARN,
+        | CaptureStatus::Error => palette.warn(),
     }
 }
 
@@ -409,13 +412,16 @@ impl OrderflowView {
         bar_open_ms: Option<i64>,
         forming: Option<&BarFootprint>,
     ) {
+        let palette = crate::theme::get(painter.ctx());
         self.sync_published();
         painter.rect_filled(strip, egui::Rounding::ZERO, canvas_background);
         painter.line_segment(
             [strip.left_top(), strip.left_bottom()],
             egui::Stroke::new(
                 1.0_f32,
-                crate::theme::TEXT_MUTED.gamma_multiply(live_strip::STRIP_BORDER_ALPHA),
+                palette
+                    .text_muted()
+                    .gamma_multiply(live_strip::STRIP_BORDER_ALPHA),
             ),
         );
 
@@ -514,7 +520,7 @@ impl OrderflowView {
                 egui::Align2::CENTER_CENTER,
                 "no book",
                 egui::FontId::proportional(10.0),
-                crate::theme::TEXT_MUTED,
+                palette.text_muted(),
             );
         }
     }

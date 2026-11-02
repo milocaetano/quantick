@@ -1,3 +1,4 @@
+use crate::theme;
 mod pane_model_tests;
 
 // The `pane.rs` unit tests, moved out of the file so a session opening

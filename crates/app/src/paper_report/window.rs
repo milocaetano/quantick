@@ -226,6 +226,7 @@ impl ReportState {
         tz: TzOffset,
         env: &ReportEnv<'_>,
     ) -> ReportResponse {
+        let palette = theme::get(ctx);
         let mut asked = ReportResponse {
             // Anything the filter row posted before this frame leaves now,
             // whether or not the window is still open: a refusal the trader
@@ -308,7 +309,7 @@ impl ReportState {
                         ui.add_space(8.0);
                         ui.label(
                             egui::RichText::new("No saved trades for this filter.")
-                                .color(theme::TEXT_PRIMARY),
+                                .color(palette.text_primary()),
                         );
                         let scope = self
                             .report_symbol
@@ -341,7 +342,11 @@ impl ReportState {
                                 self.report_period.phrase(),
                             )
                         };
-                        ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
+                        ui.label(
+                            egui::RichText::new(text)
+                                .color(palette.text_support())
+                                .small(),
+                        );
                         let default_symbol =
                             (!env.symbol.is_empty()).then(|| env.symbol.to_owned());
                         if (self.report_period != ReportPeriod::All
@@ -369,7 +374,7 @@ impl ReportState {
                                  silently dropped.",
                                 history.unreadable_files, history.problem_rows,
                             ))
-                            .color(theme::WARN)
+                            .color(palette.warn())
                             .small(),
                         );
                     }
@@ -379,13 +384,13 @@ impl ReportState {
                             history.rows.len(),
                             history.files
                         ))
-                        .color(theme::TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                     );
                 }
                 ui.label(
                     egui::RichText::new(env.pnl.footnote())
-                        .color(theme::TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                 );
             });
@@ -410,11 +415,12 @@ impl ReportState {
     /// history must be re-read; anything it wants the *host* to do goes
     /// into `asked`.
     fn draw_report_filters(&mut self, ui: &mut egui::Ui, asked: &mut ReportResponse) -> bool {
+        let palette = theme::get(ui.ctx());
         let mut reload = false;
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("Symbol")
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
             let selected = self
@@ -444,7 +450,7 @@ impl ReportState {
             ui.separator();
             ui.label(
                 egui::RichText::new("Source")
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
             for source in SourceFilter::PILLS {
@@ -457,7 +463,7 @@ impl ReportState {
             ui.separator();
             ui.label(
                 egui::RichText::new("Period")
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
             // A picked calendar range takes the cut over, so no pill may
@@ -578,7 +584,11 @@ impl ReportState {
                 ),
                 (None, None) => "no saved trades in this scope".to_owned(),
             };
-            ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
+            ui.label(
+                egui::RichText::new(text)
+                    .color(palette.text_support())
+                    .small(),
+            );
         }
         reload
     }
@@ -588,6 +598,7 @@ impl ReportState {
     /// layout it always had; expanded it answers "which days did I trade,
     /// and what happened on the 12th" without a text field.
     fn draw_report_calendar(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
+        let palette = theme::get(ui.ctx());
         ui.horizontal(|ui| {
             let picked = self.calendar.selection.range();
             let label = match picked {
@@ -611,7 +622,7 @@ impl ReportState {
                         range.days(),
                         self.report_view.as_ref().map_or(0, |view| view.rows.len()),
                     ))
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
                 );
                 if ui
@@ -624,7 +635,7 @@ impl ReportState {
             } else if self.report_days.is_empty() {
                 ui.label(
                     egui::RichText::new("no days on record in this scope")
-                        .color(theme::TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                 );
             } else if let (Some(oldest), Some(newest)) =
@@ -643,7 +654,7 @@ impl ReportState {
                         oldest.iso(),
                         newest.iso(),
                     ))
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
                 );
             }

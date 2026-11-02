@@ -17,7 +17,6 @@ use quantick_paper::report::ledger_state::{
 use quantick_paper::report::session_edit::JournalEdit;
 use quantick_paper::report::sessions::{LedgerFilter, SessionKey, TradeRef};
 use quantick_sim::history::SessionSource;
-use rust_decimal::Decimal;
 
 use quantick_paper::report::fit::count_and_net;
 
@@ -48,18 +47,7 @@ pub(crate) struct LedgerSessions {
     days: Option<DayIndex>,
 }
 
-/// A session's row as the list paints it.
-pub(super) struct SessionHead {
-    pub(super) key: SessionKey,
-    pub(super) label: String,
-    pub(super) source: Option<SessionSource>,
-    pub(super) count: usize,
-    pub(super) net: (Decimal, String),
-    pub(super) folded: bool,
-    pub(super) focused: bool,
-    /// A tab is still journaling to it: delete is refused.
-    pub(super) live: bool,
-}
+pub(super) use quantick_paper::report::ledger_rows::SessionHead;
 
 impl LedgerSessions {
     /// The folder was read again.
@@ -157,6 +145,7 @@ impl LedgerSessions {
     /// `N of M · K hidden [clear]`, pinned under the filter row while any
     /// filter cuts.
     pub(super) fn draw_filter_status(&mut self, ui: &mut egui::Ui, shown: usize, total: usize) {
+        let palette = theme::get(ui.ctx());
         if self.state.view.filter.is_default() {
             return;
         }
@@ -168,7 +157,7 @@ impl LedgerSessions {
                 ))
                 .monospace()
                 .small()
-                .color(theme::TEXT_MUTED),
+                .color(palette.text_muted()),
             );
             if ui
                 .small_button("clear")
@@ -189,6 +178,7 @@ impl LedgerSessions {
         target: Option<(SessionKey, TradeRef, &[String])>,
         focus: bool,
     ) -> Option<JournalEdit> {
+        let palette = theme::get(ui.ctx());
         let Some((session, trade, tags)) = target else {
             self.state.tag_text = None;
             return None;
@@ -213,7 +203,7 @@ impl LedgerSessions {
             ui.label(
                 egui::RichText::new("#")
                     .monospace()
-                    .color(theme::TEXT_MUTED),
+                    .color(palette.text_muted()),
             );
             // Save first, from the right edge, and the field takes exactly
             // what is left: a row wider than the dock widens the dock.
@@ -270,6 +260,7 @@ impl LedgerSessions {
 /// A session's row inside its day: fold caret, source glyph, label, count
 /// and net. A click folds it; the menu renames or deletes it.
 pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option<SessionPress> {
+    let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
@@ -279,7 +270,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         if head.focused || response.hovered() {
-            painter.rect_filled(rect, egui::Rounding::ZERO, theme::BORDER);
+            painter.rect_filled(rect, egui::Rounding::ZERO, palette.border());
         }
         let mid = rect.center().y;
         let mut x = rect.left() + SESSION_INDENT_PX;
@@ -293,10 +284,10 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
             egui::Align2::LEFT_CENTER,
             caret,
             egui::FontId::proportional(10.0),
-            theme::TEXT_FAINT,
+            palette.text_faint(),
         );
         x += 14.0;
-        if let Some((glyph, color)) = source_glyph(head.source) {
+        if let Some((glyph, color)) = source_glyph(&palette, head.source) {
             painter.text(
                 egui::pos2(x, mid),
                 egui::Align2::LEFT_CENTER,
@@ -313,7 +304,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
             [x, rect.right() - 6.0, mid],
             &[&head.label],
             &[&rights[0], &rights[1]],
-            [theme::TEXT_PRIMARY, points_color(head.net.0)],
+            [palette.text_primary(), points_color(&palette, head.net.0)],
         );
     }
     if response.clicked() {
@@ -369,6 +360,7 @@ pub(super) fn draw_inline(
     edit: &mut LedgerEdit,
     focus: &mut bool,
 ) -> Option<SessionPress> {
+    let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let mut press = None;
     ui.allocate_ui_with_layout(
@@ -412,7 +404,7 @@ pub(super) fn draw_inline(
                         egui::RichText::new(format!("Delete \"{label}\"? {trades} trade(s)"))
                             .monospace()
                             .small()
-                            .color(theme::WARN),
+                            .color(palette.warn()),
                     );
                     // Keep holds the focus: Enter is the safe answer.
                     let keep = ui.small_button("Keep");
@@ -425,7 +417,7 @@ pub(super) fn draw_inline(
                         press = Some(SessionPress::Cancel);
                     }
                     if ui
-                        .small_button(egui::RichText::new("Delete session").color(theme::WARN))
+                        .small_button(egui::RichText::new("Delete session").color(palette.warn()))
                         .on_hover_text(
                             "moves the file to .deleted in the trades folder - recoverable by hand",
                         )
@@ -468,6 +460,7 @@ fn escape_pressed(ui: &egui::Ui, held: &egui::Response) -> bool {
 
 /// The line that says the current session is there, only filtered out.
 pub(super) fn draw_hidden_live(ui: &mut egui::Ui, hidden: usize) {
+    let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
@@ -479,16 +472,19 @@ pub(super) fn draw_hidden_live(ui: &mut egui::Ui, hidden: usize) {
             egui::Align2::LEFT_CENTER,
             format!("current session · {hidden} hidden by filter"),
             egui::FontId::monospace(10.0),
-            theme::TEXT_FAINT,
+            palette.text_faint(),
         );
     }
 }
 
 /// Replay wears an amber play glyph, live none, unrecorded a faint `?`.
-pub(super) fn source_glyph(source: Option<SessionSource>) -> Option<(&'static str, egui::Color32)> {
+pub(super) fn source_glyph(
+    palette: &crate::theme::Palette,
+    source: Option<SessionSource>,
+) -> Option<(&'static str, egui::Color32)> {
     match source {
-        Some(SessionSource::Replay) => Some((icons::PLAY, theme::AMBER)),
+        Some(SessionSource::Replay) => Some((icons::PLAY, palette.amber())),
         Some(SessionSource::Live) => None,
-        None => Some(("?", theme::TEXT_FAINT)),
+        None => Some(("?", palette.text_faint())),
     }
 }

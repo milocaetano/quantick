@@ -11,6 +11,7 @@ pub(super) fn render(
     entries: &[Entry],
     mut paper: Option<&mut crate::paper_trading::PaperTrading>,
 ) -> Vec<MenuIntent> {
+    let palette = crate::theme::get(ui.ctx());
     let mut out = Vec::new();
     for entry in entries {
         let response = ui
@@ -94,13 +95,13 @@ pub(super) fn render(
                         };
                     }
                     if *muted {
-                        text = text.color(crate::theme::TEXT_MUTED);
+                        text = text.color(palette.text_muted());
                     }
                     if *amber {
-                        text = text.color(crate::theme::AMBER);
+                        text = text.color(palette.amber());
                     }
                     if *support {
-                        text = text.color(crate::theme::TEXT_SUPPORT);
+                        text = text.color(palette.text_support());
                     }
                     Some(ui.label(text))
                 }

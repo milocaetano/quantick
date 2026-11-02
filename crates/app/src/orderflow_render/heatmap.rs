@@ -209,6 +209,7 @@ pub(crate) fn draw_lane_boundary(
     lane_width: f32,
     style: &super::OrderflowRenderStyle,
 ) {
+    let palette = crate::theme::get(painter.ctx());
     if !style.live_lane.show_marks {
         return;
     }
@@ -216,7 +217,7 @@ pub(crate) fn draw_lane_boundary(
         painter.with_clip_rect(rect).vline(
             x,
             rect.y_range(),
-            egui::Stroke::new(LANE_DIVIDER_WIDTH_PX, crate::theme::BORDER),
+            egui::Stroke::new(LANE_DIVIDER_WIDTH_PX, palette.border()),
         );
     }
 }

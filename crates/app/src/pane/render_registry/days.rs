@@ -36,8 +36,9 @@ pub(in crate::pane) struct DayRulePass<'a> {
     pub turns: &'a [DayTurn],
 }
 fn day_rule(p: &mut DayRulePass<'_>) {
+    let palette = theme::get(p.painter.ctx());
     let span = (p.history.left(), p.history.right());
-    let stroke = egui::Stroke::new(1.0_f32, theme::DAY_RULE);
+    let stroke = egui::Stroke::new(1.0_f32, palette.day_rule());
     for (x, _) in day_turn::turn_xs(p.turns, p.viewport, span, p.total, p.candle_width) {
         p.painter.vline(x, p.history.y_range(), stroke);
     }
@@ -64,6 +65,7 @@ pub(in crate::pane) struct DaySeparatorPass<'a> {
     pub named: Vec<day_turn::WrittenDate>,
 }
 fn day_separator(p: &mut DaySeparatorPass<'_>) {
+    let palette = theme::get(p.painter.ctx());
     let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
     let (painter, chip, tz) = (p.painter, p.chip, p.tz);
     let (left, right) = (p.history.left(), p.history.right());
@@ -99,10 +101,10 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         let galley = painter.layout_job(job);
         reserved.push((start, start + galley.size().x));
         let at = egui::pos2(start, y - galley.size().y / 2.0);
-        painter.galley(at, galley, theme::TEXT_MUTED);
+        painter.galley(at, galley, palette.text_muted());
     };
     if let (Some(at), Some(text), Some(date)) = (plan.pinned_at, pinned, p.first_visible) {
-        draw(&mut p.reserved, at, job(text, theme::TEXT_MUTED));
+        draw(&mut p.reserved, at, job(text, palette.text_muted()));
         p.named.push(day_turn::WrittenDate::pinned(date));
     }
     for (&(x, turn), tick) in ticks.iter().zip(&plan.ticks) {
@@ -115,7 +117,7 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
                 egui::pos2(x, p.strip.top()),
                 egui::pos2(x, p.strip.bottom()),
             ],
-            egui::Stroke::new(1.0_f32, theme::TEXT_MUTED),
+            egui::Stroke::new(1.0_f32, palette.text_muted()),
         );
         // No time label is written across the tick either.
         p.reserved.push((x, x));
@@ -124,13 +126,13 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         };
         if let (Some(at), Some(ms)) = (labels.ended_at, turn.ended_ms) {
             let ended = ended_text(ms, tz);
-            draw(&mut p.reserved, at, job(ended, theme::TEXT_MUTED));
+            draw(&mut p.reserved, at, job(ended, palette.text_muted()));
         }
         // The date as bright as a date alone, its start time as muted as
         // the clock labels beside it.
-        let mut dated = job(day_text(turn.date), theme::TEXT_PRIMARY);
+        let mut dated = job(day_text(turn.date), palette.text_primary());
         if let (true, Some(ms)) = (labels.with_opened, turn.opened_ms) {
-            dated.append(&opened_suffix(ms, tz), 0.0, format(theme::TEXT_MUTED));
+            dated.append(&opened_suffix(ms, tz), 0.0, format(palette.text_muted()));
         }
         draw(&mut p.reserved, x + DAY_LABEL_GAP_PX, dated);
         p.named.push(day_turn::WrittenDate::turn(turn.date));

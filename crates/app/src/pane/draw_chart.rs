@@ -582,13 +582,14 @@ impl ChartPane {
     /// already says which pane has focus: one accent hairline on the top
     /// edge. Painted after the drawings so a dense band cannot bury it.
     fn paint_band_hint(&self, painter: &egui::Painter) {
+        let palette = theme::get(painter.ctx());
         if let Some(hint) = self.gestures.band_hint {
             painter.line_segment(
                 [
                     egui::pos2(hint.left(), hint.top() + 0.5),
                     egui::pos2(hint.right(), hint.top() + 0.5),
                 ],
-                egui::Stroke::new(1.0_f32, theme::ACCENT),
+                egui::Stroke::new(1.0_f32, palette.accent()),
             );
         }
     }

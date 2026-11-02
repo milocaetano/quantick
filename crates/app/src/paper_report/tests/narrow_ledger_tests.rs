@@ -10,11 +10,12 @@ use quantick_sim::history::SessionSource;
 use quantick_sim::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
-use super::super::ledger::{LedgerPage, draw_totals_strip};
+use super::super::ledger::draw_totals_strip;
 use super::super::rows::{TradeMeta, draw_day_header, draw_ledger_row};
 use super::super::sessions::{SessionHead, draw_session_head};
 use crate::paper_calendar::CivilDate;
 use crate::timezone::TzOffset;
+use quantick_paper::report::ledger_rows::LedgerPage;
 
 /// The docked trades panel's width in the trader's screenshot.
 const NARROW_PX: f32 = 300.0;

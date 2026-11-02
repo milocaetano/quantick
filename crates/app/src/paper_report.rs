@@ -153,7 +153,7 @@ const TOTALS_STRIP_PX: f32 = 26.0;
 /// Saved trades one ledger page reveals. A folder holding a year of
 /// sessions must not paint a year of rows to show today's; the "show
 /// older" control adds another page and says how many are left.
-const LEDGER_PAGE_TRADES: usize = 50;
+use quantick_paper::report::ledger_rows::LEDGER_PAGE_TRADES;
 
 /// The ledger's instrument picker. Wide enough for "This chart · BTCUSDT"
 /// without pushing the refresh and fold controls off the row.

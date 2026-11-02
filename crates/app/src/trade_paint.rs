@@ -100,6 +100,7 @@ pub(crate) fn draw(
     slot_at_time: impl Fn(i64) -> Option<usize>,
     x_at_slot: impl Fn(usize) -> f32,
 ) {
+    let palette = theme::get(frame.painter.ctx());
     let painter = frame.painter.with_clip_rect(frame.chart_rect);
     let mut marks: Vec<Mark<'_>> = Vec::new();
     let mut drawn = 0usize;
@@ -124,7 +125,7 @@ pub(crate) fn draw(
         let is_selected = selected == Some(index);
         // Win, loss or scratch — the one hue the whole round trip wears;
         // direction is carried by the entry mark's shape instead.
-        let color = points_color(trade.pnl_points);
+        let color = points_color(&palette, trade.pnl_points);
         let connector = if is_selected {
             egui::Stroke::new(SELECTED_CONNECTOR_WIDTH_PX, color)
         } else {
@@ -187,7 +188,7 @@ pub(crate) fn draw(
             egui::Align2::LEFT_BOTTOM,
             note,
             egui::FontId::proportional(10.0),
-            theme::TEXT_FAINT,
+            palette.text_faint(),
         );
     }
     if let Some(pointer) = frame.pointer
@@ -316,6 +317,7 @@ fn draw_tooltip(
     pointer: egui::Pos2,
     trade: &ClosedTrade,
 ) {
+    let palette = theme::get(painter.ctx());
     let font = egui::FontId::monospace(11.0);
     let caption = egui::FontId::monospace(10.0);
     let head = format!(
@@ -332,8 +334,8 @@ fn draw_tooltip(
         crate::plot_area::fmt_time(trade.closed_ms, frame.tz),
         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
     );
-    let head_galley = painter.layout_no_wrap(head, font, theme::TEXT_PRIMARY);
-    let detail_galley = painter.layout_no_wrap(detail, caption, theme::TEXT_MUTED);
+    let head_galley = painter.layout_no_wrap(head, font, palette.text_primary());
+    let detail_galley = painter.layout_no_wrap(detail, caption, palette.text_muted());
     let head_height = head_galley.size().y;
     let width = head_galley.size().x.max(detail_galley.size().x) + 16.0;
     let height = head_height + detail_galley.size().y + 14.0;
@@ -344,16 +346,16 @@ fn draw_tooltip(
         .max(frame.chart_rect.left());
     origin.y = origin.y.max(frame.chart_rect.top());
     let rect = egui::Rect::from_min_size(origin, egui::vec2(width, height));
-    painter.rect_filled(rect, egui::Rounding::same(4.0), theme::TAG_BG);
+    painter.rect_filled(rect, egui::Rounding::same(4.0), palette.tag_bg());
     painter.galley(
         rect.min + egui::vec2(8.0, 4.0),
         head_galley,
-        theme::TEXT_PRIMARY,
+        palette.text_primary(),
     );
     painter.galley(
         rect.min + egui::vec2(8.0, head_height + 8.0),
         detail_galley,
-        theme::TEXT_MUTED,
+        palette.text_muted(),
     );
 }
 

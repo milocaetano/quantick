@@ -18,6 +18,7 @@ pub(crate) fn draw_flow_perimeters(
     frame: &FlowTapeFrame,
     presentation: &FlowPresentation,
 ) {
+    let palette = crate::theme::get(painter.ctx());
     let clip = painter.with_clip_rect(history);
     for region in presentation
         .regions
@@ -46,7 +47,7 @@ pub(crate) fn draw_flow_perimeters(
                 if clipped { " (clipped)" } else { "" }
             ),
             egui::FontId::monospace(FLOW_OPENING_LABEL_FONT_PX),
-            crate::theme::TEXT_PRIMARY,
+            palette.text_primary(),
         );
         if label.size().x <= history.width() && label.size().y <= history.height() {
             let origin = history
@@ -58,7 +59,7 @@ pub(crate) fn draw_flow_perimeters(
                 label.clone(),
                 egui::Color32::BLACK,
             );
-            clip.galley(origin, label, crate::theme::TEXT_PRIMARY);
+            clip.galley(origin, label, palette.text_primary());
         }
     }
 }

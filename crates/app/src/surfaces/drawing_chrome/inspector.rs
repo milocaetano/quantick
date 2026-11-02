@@ -529,6 +529,7 @@ fn title_bar(
     env: &DrawingEnv<'_>,
     floating: bool,
 ) -> InspectorActions {
+    let palette = theme::get(ui.ctx());
     let mut actions = InspectorActions::default();
     let hidden = drawing.hidden;
     // The band belongs in the title, because that is where "which of these
@@ -559,7 +560,7 @@ fn title_bar(
                 egui::Align2::LEFT_CENTER,
                 icons::DOTS_SIX_VERTICAL,
                 egui::FontId::proportional(INSPECTOR_TITLE_GRIP_GLYPH_PX),
-                theme::TEXT_FAINT,
+                palette.text_faint(),
             );
         }
         let title_x = if floating {
@@ -572,7 +573,7 @@ fn title_bar(
             egui::Align2::LEFT_CENTER,
             title,
             egui::FontId::proportional(INSPECTOR_TITLE_TEXT_PX),
-            theme::TEXT_PRIMARY,
+            palette.text_primary(),
         );
     }
     // The controls are registered after the bar, so they win its pointer.

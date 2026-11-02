@@ -202,16 +202,16 @@ pub(crate) fn single_action_bar_size() -> egui::Vec2 {
 }
 
 /// The shared floating context-bar frame.
-pub(crate) fn floating_frame() -> egui::Frame {
+pub(crate) fn floating_frame(palette: &crate::theme::Palette) -> egui::Frame {
     egui::Frame::none()
-        .fill(theme::CHROME)
-        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .fill(palette.chrome())
+        .stroke(egui::Stroke::new(1.0_f32, palette.border()))
         .rounding(egui::Rounding::same(CORNER_RADIUS_PX))
         .shadow(egui::epaint::Shadow {
             offset: egui::vec2(0.0, 2.0),
             blur: 12.0,
             spread: 0.0,
-            color: theme::FLOAT_SHADOW,
+            color: palette.float_shadow(),
         })
         .inner_margin(egui::Margin::symmetric(BAR_PAD_X_PX, BAR_PAD_Y_PX))
 }
@@ -627,6 +627,7 @@ pub fn show(
     popover_bounds: egui::Rect,
     object: &mut BarObject<'_>,
 ) -> ContextBarIntent {
+    let palette = theme::get(ctx);
     let mut intent = ContextBarIntent::default();
     let cells = slots(capabilities(object));
     let size = bar_size(&cells);
@@ -649,7 +650,7 @@ pub fn show(
         FADE_SECONDS,
     );
 
-    let frame = floating_frame();
+    let frame = floating_frame(&palette);
 
     egui::Area::new(egui::Id::new("drawing_context_bar"))
         .order(egui::Order::Foreground)
@@ -677,6 +678,7 @@ fn draw_slot(
     object: &mut BarObject<'_>,
     intent: &mut ContextBarIntent,
 ) {
+    let palette = theme::get(ui.ctx());
     match slot {
         Slot::Grip => draw_grip(ui, intent),
         Slot::Author => {
@@ -685,7 +687,7 @@ fn draw_slot(
             // object manager spell it out in words.
             let author = object.author.unwrap_or_default();
             IconButton::new(icons::ROBOT, TOOLRAIL_ICON)
-                .accent(theme::TEXT_SUPPORT)
+                .accent(palette.text_support())
                 .hover_text(&format!("Placed by {author}, not by you"))
                 .show(ui);
         }
@@ -778,7 +780,7 @@ fn draw_slot(
             // question, which is a visible, deliberate transition rather
             // than the silent no-op a locked object would otherwise give.
             if ui
-                .button(egui::RichText::new("Delete locked drawing?").color(theme::WARN))
+                .button(egui::RichText::new("Delete locked drawing?").color(palette.warn()))
                 .clicked()
             {
                 intent.force_delete = true;
@@ -796,7 +798,7 @@ fn draw_slot(
             // object, the toast that names it again on the way out, and the
             // undo behind both.
             if IconButton::new(icons::TRASH_SIMPLE, TOOLRAIL_ICON)
-                .accent(theme::WARN)
+                .accent(palette.warn())
                 .hover_text(&bar.delete_hover)
                 .show(ui)
                 .clicked()
@@ -829,15 +831,16 @@ fn sharing_control(shared: bool) -> (&'static str, &'static str) {
 /// never draggable, so a click that lands slightly off a button can only
 /// miss — it can never smear the bar across the chart.
 fn draw_grip(ui: &mut egui::Ui, intent: &mut ContextBarIntent) {
+    let palette = theme::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(GRIP_WIDTH_PX, TOOLRAIL_ICON.hit),
         egui::Sense::click_and_drag(),
     );
     if ui.is_rect_visible(rect) {
         let color = if response.hovered() {
-            theme::TEXT_MUTED
+            palette.text_muted()
         } else {
-            theme::TEXT_FAINT
+            palette.text_faint()
         };
         ui.painter().text(
             rect.center(),
@@ -856,6 +859,7 @@ fn draw_grip(ui: &mut egui::Ui, intent: &mut ContextBarIntent) {
 }
 
 fn draw_separator(ui: &mut egui::Ui) {
+    let palette = theme::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(SEPARATOR_WIDTH_PX, TOOLRAIL_ICON.hit),
         egui::Sense::hover(),
@@ -866,7 +870,7 @@ fn draw_separator(ui: &mut egui::Ui) {
                 egui::pos2(rect.center().x, rect.top() + SEPARATOR_INSET_Y_PX),
                 egui::pos2(rect.center().x, rect.bottom() - SEPARATOR_INSET_Y_PX),
             ],
-            egui::Stroke::new(SEPARATOR_WIDTH_PX, theme::BORDER),
+            egui::Stroke::new(SEPARATOR_WIDTH_PX, palette.border()),
         );
     }
 }
@@ -875,6 +879,7 @@ fn draw_separator(ui: &mut egui::Ui) {
 /// the control *is* the current value, which is what lets it answer "what
 /// colour is this?" without being clicked.
 fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'_>) {
+    let palette = theme::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(TOOLRAIL_ICON.hit, TOOLRAIL_ICON.hit),
         egui::Sense::click(),
@@ -887,7 +892,7 @@ fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
         painter.rect_stroke(
             swatch,
             egui::Rounding::same(4.0),
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            egui::Stroke::new(1.0_f32, palette.border()),
         );
     }
     #[cfg(test)]
@@ -907,15 +912,16 @@ fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
 /// Same idea as the colour slot: the button is a stroke drawn at the width
 /// it sets.
 fn draw_width_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'_>) {
+    let palette = theme::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(TOOLRAIL_ICON.hit, TOOLRAIL_ICON.hit),
         egui::Sense::click(),
     );
     if ui.is_rect_visible(rect) {
         let color = if response.hovered() {
-            theme::TEXT_PRIMARY
+            palette.text_primary()
         } else {
-            theme::TEXT_MUTED
+            palette.text_muted()
         };
         ui.painter().line_segment(
             [
@@ -1036,6 +1042,7 @@ fn draw_popover(
     object: &mut BarObject<'_>,
     intent: &mut ContextBarIntent,
 ) {
+    let palette = theme::get(ctx);
     let (popover, anchor) = match (bar.open, bar.anchor) {
         (Popover::None, _) | (_, None) => return,
         (popover, Some(anchor)) => (popover, anchor),
@@ -1059,8 +1066,8 @@ fn draw_popover(
         .fixed_pos(at)
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
-                .fill(theme::CONTROL)
-                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                .fill(palette.control())
+                .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                 .show(ui, |ui| match popover {
                     Popover::Color => draw_color_popover(
                         ui,
@@ -1100,9 +1107,10 @@ fn draw_color_popover(
     intent: &mut ContextBarIntent,
     #[cfg(test)] swatch_rects: &mut Vec<egui::Rect>,
 ) {
+    let palette = theme::get(ui.ctx());
     ui.spacing_mut().item_spacing.x = ITEM_GAP_PX;
     ui.horizontal(|ui| {
-        for swatch in theme::DRAWING_SWATCHES {
+        for swatch in palette.drawing_swatches() {
             let (rect, response) = ui.allocate_exact_size(
                 egui::vec2(PALETTE_SWATCH_PX, PALETTE_SWATCH_PX),
                 egui::Sense::click(),
@@ -1116,13 +1124,13 @@ fn draw_color_popover(
                     painter.rect_stroke(
                         rect,
                         egui::Rounding::same(4.0),
-                        egui::Stroke::new(2.0_f32, theme::TEXT_PRIMARY),
+                        egui::Stroke::new(2.0_f32, palette.text_primary()),
                     );
                 } else if response.hovered() {
                     painter.rect_stroke(
                         rect,
                         egui::Rounding::same(4.0),
-                        egui::Stroke::new(1.0_f32, theme::TEXT_MUTED),
+                        egui::Stroke::new(1.0_f32, palette.text_muted()),
                     );
                 }
             }
@@ -1144,7 +1152,7 @@ fn draw_color_popover(
         ui.label(
             egui::RichText::new("Custom")
                 .small()
-                .color(theme::TEXT_SUPPORT),
+                .color(palette.text_support()),
         );
         let mut color = object.style.color32();
         if ui.color_edit_button_srgba(&mut color).changed() {
@@ -1157,7 +1165,7 @@ fn draw_color_popover(
             ui.label(
                 egui::RichText::new("Fill")
                     .small()
-                    .color(theme::TEXT_SUPPORT),
+                    .color(palette.text_support()),
             );
             if ui
                 .add(egui::Slider::new(
@@ -1241,6 +1249,7 @@ fn draw_preview_row(
     label: &str,
     preview: impl FnOnce(&egui::Painter, egui::Rect, egui::Color32),
 ) -> bool {
+    let palette = theme::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(POPOVER_ROW_WIDTH_PX, POPOVER_ROW_HEIGHT_PX),
         egui::Sense::click(),
@@ -1251,15 +1260,15 @@ fn draw_preview_row(
             painter.rect_filled(
                 rect,
                 egui::Rounding::same(4.0),
-                theme::active_tint(theme::ACCENT),
+                theme::active_tint(palette.accent()),
             );
         } else if response.hovered() {
-            painter.rect_filled(rect, egui::Rounding::same(4.0), theme::BORDER);
+            painter.rect_filled(rect, egui::Rounding::same(4.0), palette.border());
         }
         let ink = if active {
-            theme::ACCENT
+            palette.accent()
         } else {
-            theme::TEXT_MUTED
+            palette.text_muted()
         };
         preview(painter, rect, ink);
         painter.text(
@@ -1267,7 +1276,7 @@ fn draw_preview_row(
             egui::Align2::RIGHT_CENTER,
             label,
             egui::FontId::proportional(11.0),
-            theme::TEXT_FAINT,
+            palette.text_faint(),
         );
     }
     response.clicked()

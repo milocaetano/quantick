@@ -14,14 +14,12 @@ use rust_decimal::Decimal;
 
 // The items the split gave owners; `super::*` still carries the state
 // itself, the environment types and the module's constants.
-use super::ledger::LedgerPage;
-use super::rows::{GroupView, Item, LedgerRow, TradeMeta, ledger_detail, push_groups};
+use super::rows::ledger_detail;
 use super::window::ReportPeriod;
 use super::*;
 use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
 use crate::paper_trading::PaperTrading;
 use quantick_paper::pnl::PnlReader;
-use quantick_paper::report::readout::LedgerTotals;
 
 mod ledger_keys_tests;
 mod narrow_ledger_tests;
@@ -42,47 +40,6 @@ fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
         mae_points: None,
         mfe_points: None,
     }
-}
-
-/// Saved rows no session file names, as the ledger cuts them.
-fn plain_items<'a>(items: &[(&'a str, &'a ClosedTrade)]) -> Vec<Item<'a>> {
-    items
-        .iter()
-        .map(|&(symbol, trade)| Item {
-            trade,
-            symbol,
-            live: None,
-            meta: TradeMeta {
-                session: None,
-                trade_ref: Default::default(),
-                source: None,
-                tags: &[],
-                pnl: PnlReader::plain().of(symbol),
-            },
-        })
-        .collect()
-}
-
-/// Cut `items` into rows with nothing focused, edited or folded but
-/// `collapsed_days`.
-fn push_plain<'a>(
-    rows: &mut Vec<LedgerRow<'a>>,
-    items: &'a [Item<'a>],
-    tz: TzOffset,
-    collapsed_days: &std::collections::BTreeSet<i64>,
-) {
-    let sessions = std::collections::BTreeSet::new();
-    let labels = std::collections::BTreeMap::new();
-    let view = GroupView {
-        collapsed_days,
-        collapsed_sessions: &sessions,
-        focused: None,
-        editing: None,
-        labels: &labels,
-        live: &sessions,
-        tz,
-    };
-    push_groups(rows, items, &view, &mut false);
 }
 
 fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade) -> HistoryRow {
@@ -334,60 +291,6 @@ fn days_fold_shut_one_at_a_time_or_all_at_once() {
     });
 }
 
-/// The rows the ledger builds each frame are bounded by the revealed
-/// page, and so is every other per-frame pass it makes. A trader with
-/// a year of sessions must pay the same per-frame cost as one with a
-/// week — which means the totals strip cannot walk the history either.
-#[test]
-fn the_ledger_builds_a_bounded_number_of_rows_however_deep_the_history() {
-    let tz = TzOffset::new(-180);
-    let day = CivilDate::from_ymd(2026, 8, 17);
-    // Five thousand saved trades over fifty days.
-    let saved: Vec<ClosedTrade> = (0..5_000)
-        .map(|index| {
-            trade_at(
-                day.offset_days(-(index / 100)).start_ms(tz) + (index % 100) * 60_000,
-                1,
-            )
-        })
-        .collect();
-    let items: Vec<(&str, &ClosedTrade)> = saved.iter().map(|trade| ("WINV26", trade)).collect();
-
-    let page = LedgerPage::of(items.len(), 1);
-    assert_eq!(page.shown, LEDGER_PAGE_TRADES);
-    assert_eq!(page.remaining, 4_950, "and the control says so out loud");
-    let mut rows = Vec::new();
-    let plain = plain_items(&items[..page.shown]);
-    push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
-    // Fifty trades plus at most one day caption each — nowhere near
-    // the five thousand rows the pre-paging ledger would have built.
-    assert!(
-        rows.len() <= 2 * LEDGER_PAGE_TRADES,
-        "{} rows for a page of {LEDGER_PAGE_TRADES}",
-        rows.len()
-    );
-    // Revealing pages grows the list by one page at a time, never all
-    // at once.
-    let deeper = LedgerPage::of(items.len(), 2);
-    assert_eq!(deeper.shown - page.shown, LEDGER_PAGE_TRADES);
-
-    // And the strip under the list is summed with the load, not on the
-    // frame: the totals are a stored value, so the frame reads them
-    // rather than walking five thousand trades to print one line.
-    let totals = LedgerTotals::of_trades(PnlReader::plain(), "X", saved.iter());
-    assert_eq!(totals.trades, 5_000);
-    assert_eq!(totals.wins, 5_000, "every fixture trade is a winner");
-    assert_eq!(totals.net.grouped(), Decimal::from(5_000));
-    assert_eq!(totals.win_rate(), Some(100));
-    // Nothing saved plus this session's own trades still adds up.
-    assert_eq!(
-        LedgerTotals::default().plus(&totals),
-        totals,
-        "an empty half must be the identity"
-    );
-    assert_eq!(LedgerTotals::default().win_rate(), None, "0/0 is not 0%");
-}
-
 /// Everything a trader must be able to read off one ledger row: which
 /// market, when on the clock, how long, and why it ended — plus the
 /// date, which rides the row's right-hand stamp rather than the detail
@@ -424,100 +327,6 @@ fn a_ledger_row_names_its_market_its_clock_its_age_and_its_ending() {
         CivilDate::from_ms(trade.closed_ms, TzOffset::new(-180)).short(),
         "16 Mar"
     );
-}
-
-/// The ledger reveals saved history one page at a time and states how
-/// much it is holding back — a list that simply ends looks like the
-/// end of the history, which is the confusion the control exists for.
-#[test]
-fn the_ledger_reveals_saved_history_one_page_at_a_time() {
-    let page = LedgerPage::of(120, 1);
-    assert_eq!(page.shown, LEDGER_PAGE_TRADES);
-    assert_eq!(page.remaining, 120 - LEDGER_PAGE_TRADES);
-    let page = LedgerPage::of(120, 2);
-    assert_eq!(page.shown, 2 * LEDGER_PAGE_TRADES);
-    assert_eq!(page.remaining, 120 - 2 * LEDGER_PAGE_TRADES);
-    // The last page shows the tail and offers nothing more.
-    let page = LedgerPage::of(120, 3);
-    assert_eq!(page.shown, 120);
-    assert_eq!(page.remaining, 0);
-    let page = LedgerPage::of(120, 99);
-    assert_eq!(page.shown, 120, "extra pages cannot invent trades");
-    assert_eq!(page.remaining, 0);
-    // A short history fits in one page and never offers "show older".
-    let page = LedgerPage::of(7, 1);
-    assert_eq!((page.shown, page.remaining), (7, 0));
-    // Page zero is treated as one: the ledger always shows something.
-    assert_eq!(LedgerPage::of(7, 0), LedgerPage::of(7, 1));
-    assert_eq!(
-        LedgerPage::of(0, 1),
-        LedgerPage {
-            shown: 0,
-            remaining: 0
-        }
-    );
-}
-
-/// Rows are grouped under the civil day they closed on, and each day's
-/// caption carries that day's own count and net.
-#[test]
-fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
-    let tz = TzOffset::new(-180);
-    let day = CivilDate::from_ymd(2026, 8, 17);
-    // Newest first, the order the ledger cuts in.
-    let items = [
-        (
-            "WINV26",
-            trade_at(day.offset_days(1).start_ms(tz) + 3_600_000, 8),
-        ),
-        ("WINV26", trade_at(day.end_ms(tz) - 1, -25)),
-        ("WINV26", trade_at(day.start_ms(tz) + 60_000, 139)),
-    ];
-    let items: Vec<(&str, &ClosedTrade)> = items
-        .iter()
-        .map(|(symbol, trade)| (*symbol, trade))
-        .collect();
-    let mut rows = Vec::new();
-    let plain = plain_items(&items);
-    push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
-    assert_eq!(rows.len(), 5, "two day captions over three trades");
-    match &rows[0] {
-        LedgerRow::Day(date, count, net, folded) => {
-            assert_eq!(*date, day.offset_days(1));
-            assert_eq!(*count, 1);
-            assert_eq!(net.0, Decimal::from(8));
-            assert!(!*folded);
-        }
-        _ => panic!("the list opens on a day caption"),
-    }
-    assert!(matches!(rows[1], LedgerRow::Earlier(..)));
-    match &rows[2] {
-        LedgerRow::Day(date, count, net, _) => {
-            assert_eq!(*date, day);
-            assert_eq!(*count, 2, "both of the 17th's trades");
-            assert_eq!(net.0, Decimal::from(114), "and what the day netted");
-        }
-        _ => panic!("the next day opens its own caption"),
-    }
-    assert!(matches!(rows[3], LedgerRow::Earlier(..)));
-    assert!(matches!(rows[4], LedgerRow::Earlier(..)));
-
-    // Folded, the 17th keeps its caption — with its count and its net
-    // intact — and contributes no trade rows at all.
-    let mut folded_days = std::collections::BTreeSet::new();
-    folded_days.insert(day.day_number());
-    let mut rows = Vec::new();
-    push_plain(&mut rows, &plain, tz, &folded_days);
-    assert_eq!(rows.len(), 3, "two captions and only the open day's row");
-    match &rows[2] {
-        LedgerRow::Day(date, count, net, folded) => {
-            assert_eq!(*date, day);
-            assert!(*folded, "and it says it is folded");
-            assert_eq!(*count, 2, "a folded day still counts its trades");
-            assert_eq!(net.0, Decimal::from(114), "and still states its net");
-        }
-        _ => panic!("a folded day keeps its caption"),
-    }
 }
 
 /// A picked day cuts the report to that civil day, and a picked span
@@ -828,55 +637,4 @@ fn a_refusal_the_report_raises_reaches_the_windows_one_toast() {
         None,
         "and once only - the outbox is a slot that is handed over, not a copy"
     );
-}
-
-/// A session renamed while it spans two days gets one rename row, not one
-/// per day: two would be two text fields under one id fighting for focus,
-/// and a delete would ask twice.
-#[test]
-fn an_inline_edit_row_stands_once_however_many_days_its_session_spans() {
-    use quantick_paper::report::sessions::SessionKey;
-    let tz = TzOffset::new(0);
-    let day = 86_400_000_i64;
-    let a = SessionKey::parse("X/a.csv").unwrap();
-    let b = SessionKey::parse("X/b.csv").unwrap();
-    let trades = [
-        trade_at(2 * day + 10, 1),
-        trade_at(2 * day + 5, 2),
-        trade_at(day + 10, 3),
-        trade_at(day + 5, 4),
-    ];
-    let items: Vec<Item<'_>> = trades
-        .iter()
-        .zip([&a, &b, &a, &b])
-        .map(|(trade, key)| Item {
-            trade,
-            symbol: "X",
-            live: None,
-            meta: TradeMeta {
-                session: Some(key),
-                trade_ref: Default::default(),
-                source: None,
-                tags: &[],
-                pnl: PnlReader::plain().of("X"),
-            },
-        })
-        .collect();
-    let none = std::collections::BTreeSet::new();
-    let labels = std::collections::BTreeMap::new();
-    let view = GroupView {
-        collapsed_days: &none,
-        collapsed_sessions: &std::collections::BTreeSet::new(),
-        focused: None,
-        editing: Some(&a),
-        labels: &labels,
-        live: &std::collections::BTreeSet::new(),
-        tz,
-    };
-    let mut rows = Vec::new();
-    push_groups(&mut rows, &items, &view, &mut false);
-    let count = |pick: fn(&LedgerRow<'_>) -> bool| rows.iter().filter(|row| pick(row)).count();
-    assert_eq!(count(|row| matches!(row, LedgerRow::Inline)), 1);
-    assert_eq!(count(|row| matches!(row, LedgerRow::SessionHead(_))), 3);
-    assert_eq!(count(|row| matches!(row, LedgerRow::Day(..))), 2);
 }

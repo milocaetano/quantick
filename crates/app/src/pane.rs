@@ -27,8 +27,6 @@ use crate::indicator_render;
 #[cfg(test)]
 use crate::plot_area::split_time_strip;
 #[cfg(test)]
-use crate::theme;
-#[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 #[cfg(test)]
 use quantick_drawings::gesture::MAGNET_REACH_PX;

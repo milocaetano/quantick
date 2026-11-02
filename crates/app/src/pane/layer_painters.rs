@@ -352,6 +352,7 @@ impl ChartPane {
         compass: Option<&PointerCompass>,
         chrome: &PaneChrome<'_>,
     ) {
+        let palette = theme::get(frame.painter.ctx());
         let &DrawFrame {
             painter,
             areas,
@@ -374,7 +375,7 @@ impl ChartPane {
                 egui::Align2::CENTER_CENTER,
                 "no bars in view — double-click to return to the live edge",
                 egui::FontId::proportional(EMPTY_VIEW_FONT_SIZE),
-                theme::TEXT_MUTED,
+                palette.text_muted(),
             );
         }
         if self.layer_visible(ChartLayer::Crosshair, chrome.style) {

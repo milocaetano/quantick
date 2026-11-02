@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use super::{Palette, active_tint};
-use quantick_appearance::{FontRole, Token};
+use quantick_appearance::FontRole;
 
 /// Point egui's own widgets at the tokens, so combos, sliders and windows
 /// drawn anywhere in the app match the chrome without per-call overrides.
@@ -31,30 +31,29 @@ pub(super) fn apply_palette(ctx: &egui::Context, palette: &Palette) {
     } else {
         egui::Visuals::light()
     };
-    visuals.panel_fill = palette.color(Token::Chrome);
-    visuals.window_fill = palette.color(Token::Chrome);
-    visuals.window_stroke = egui::Stroke::new(1.0_f32, palette.color(Token::Border));
-    visuals.extreme_bg_color = palette.color(Token::Inset);
-    visuals.faint_bg_color = palette.color(Token::Inset);
-    visuals.widgets.noninteractive.bg_fill = palette.color(Token::Chrome);
-    visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0_f32, palette.color(Token::Border));
-    visuals.widgets.noninteractive.fg_stroke.color = palette.color(Token::TextMuted);
-    visuals.widgets.inactive.bg_fill = palette.color(Token::Control);
-    visuals.widgets.inactive.weak_bg_fill = palette.color(Token::Control);
-    visuals.widgets.inactive.fg_stroke.color = palette.color(Token::TextPrimary);
-    visuals.widgets.hovered.bg_fill = palette.color(Token::Border);
-    visuals.widgets.hovered.weak_bg_fill = palette.color(Token::Border);
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, palette.color(Token::Border));
-    visuals.widgets.hovered.fg_stroke.color = palette.color(Token::TextPrimary);
-    visuals.widgets.active.bg_fill = active_tint(palette.color(Token::Accent));
-    visuals.widgets.active.weak_bg_fill = active_tint(palette.color(Token::Accent));
-    visuals.widgets.active.fg_stroke.color = palette.color(Token::TextPrimary);
-    visuals.widgets.open.bg_fill = palette.color(Token::Control);
-    visuals.widgets.open.weak_bg_fill = palette.color(Token::Control);
-    visuals.widgets.open.fg_stroke.color = palette.color(Token::TextPrimary);
-    visuals.selection.bg_fill = active_tint(palette.color(Token::Accent));
-    visuals.selection.stroke = egui::Stroke::new(1.0_f32, palette.color(Token::Accent));
-    visuals.hyperlink_color = palette.color(Token::Accent);
+    visuals.panel_fill = palette.chrome();
+    visuals.window_fill = palette.chrome();
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, palette.border());
+    visuals.extreme_bg_color = palette.inset();
+    visuals.faint_bg_color = palette.inset();
+    visuals.widgets.noninteractive.bg_fill = palette.chrome();
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, palette.border());
+    visuals.widgets.noninteractive.fg_stroke.color = palette.text_muted();
+    visuals.widgets.inactive.bg_fill = palette.control();
+    visuals.widgets.inactive.weak_bg_fill = palette.control();
+    visuals.widgets.inactive.fg_stroke.color = palette.text_primary();
+    visuals.widgets.hovered.bg_fill = palette.border();
+    visuals.widgets.hovered.weak_bg_fill = palette.border();
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, palette.border());
+    visuals.widgets.hovered.fg_stroke.color = palette.text_primary();
+    visuals.widgets.active.bg_fill = active_tint(palette.accent());
+    visuals.widgets.active.weak_bg_fill = active_tint(palette.accent());
+    visuals.widgets.active.fg_stroke.color = palette.text_primary();
+    visuals.widgets.open.bg_fill = palette.control();
+    visuals.widgets.open.weak_bg_fill = palette.control();
+    visuals.widgets.open.fg_stroke.color = palette.text_primary();
+    visuals.selection.bg_fill = active_tint(palette.accent());
+    visuals.selection.stroke = egui::Stroke::new(1.0_f32, palette.accent());
+    visuals.hyperlink_color = palette.accent();
     ctx.set_style(style);
 }

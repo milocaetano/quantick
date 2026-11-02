@@ -48,6 +48,7 @@ pub(crate) fn draw(
     chart: egui::Rect,
     folds: &mut AssetFolds,
 ) -> egui::Rect {
+    let palette = theme::get(ui.ctx());
     let symbol = tab.symbol.as_str();
     let pane = &mut tab.flow_pane;
     let id = pane.id;
@@ -75,7 +76,7 @@ pub(crate) fn draw(
         .width_range(PANEL_MIN_WIDTH_PX..=PANEL_MAX_WIDTH_PX)
         .frame(
             egui::Frame::none()
-                .fill(theme::CHROME)
+                .fill(palette.chrome())
                 .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
         )
         .show_inside(&mut seat, |ui| {
@@ -124,10 +125,11 @@ pub(crate) fn draw(
 
 /// "ORDER FLOW · <symbol>" and ×; answers whether × was clicked.
 fn title_line(ui: &mut egui::Ui, symbol: &str, painted: &mut PaintedControls) -> bool {
+    let palette = theme::get(ui.ctx());
     ui.horizontal(|ui| {
         let words = egui::RichText::new(format!("ORDER FLOW · {symbol}"))
             .size(TITLE_SIZE)
-            .color(theme::TEXT_PRIMARY);
+            .color(palette.text_primary());
         ui.add(egui::Label::new(words).truncate().selectable(false));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let close = ui.small_button("×").on_hover_text("close the panel");
@@ -151,7 +153,8 @@ fn section_block(
     landing: Option<(PanelSection, f32, f32)>,
     painted: &mut PaintedControls,
 ) -> (bool, bool) {
-    let words = egui::RichText::new(section.title().to_uppercase()).color(theme::TEXT_PRIMARY);
+    let palette = theme::get(ui.ctx());
+    let words = egui::RichText::new(section.title().to_uppercase()).color(palette.text_primary());
     let block = egui::CollapsingHeader::new(words)
         .id_salt(("orderflow_panel_section", section.id()))
         .open(Some(open))
@@ -171,12 +174,12 @@ fn section_block(
     if room > 0.0 {
         let font = egui::FontId::monospace(STATE_SIZE);
         let mut job =
-            egui::text::LayoutJob::simple_singleline(state.to_owned(), font, theme::TEXT_FAINT);
+            egui::text::LayoutJob::simple_singleline(state.to_owned(), font, palette.text_faint());
         job.wrap = egui::text::TextWrapping::truncate_at_width(room);
         let galley = ui.fonts(|fonts| fonts.layout_job(job));
         let y = header.rect.center().y - galley.size().y / 2.0;
         let at = egui::pos2(right - galley.size().x, y);
-        ui.painter().galley(at, galley, theme::TEXT_FAINT);
+        ui.painter().galley(at, galley, palette.text_faint());
     }
     (header.clicked(), block.body_returned.unwrap_or(false))
 }

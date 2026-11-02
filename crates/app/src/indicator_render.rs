@@ -293,6 +293,7 @@ pub(crate) fn draw_pane(
     end: usize,
     partial_slot: Option<usize>,
 ) {
+    let palette = theme::get(painter.ctx());
     let pane = frame.rect;
     // The pane is the plot area *and* the lane band beside it: one strip of
     // canvas from the chart's left edge to its gutter. Anything less leaves a
@@ -307,7 +308,7 @@ pub(crate) fn draw_pane(
         [band.left_top(), band.right_top()],
         Stroke::new(
             PANE_RULE_WIDTH_PX,
-            theme::TEXT_MUTED.gamma_multiply(PANE_FRAME_ALPHA),
+            palette.text_muted().gamma_multiply(PANE_FRAME_ALPHA),
         ),
     );
     // The rule that closes the pane's right edge is drawn whatever the pane
@@ -332,7 +333,7 @@ pub(crate) fn draw_pane(
             egui::Align2::CENTER_CENTER,
             format!("{} — warming up", view.label()),
             egui::FontId::proportional(PANE_LABEL_FONT_PX),
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
         return;
     };
@@ -349,7 +350,7 @@ pub(crate) fn draw_pane(
             [pos2(band.left(), y), pos2(band.right(), y)],
             Stroke::new(
                 PANE_RULE_WIDTH_PX,
-                theme::TEXT_MUTED.gamma_multiply(ZERO_LINE_ALPHA),
+                palette.text_muted().gamma_multiply(ZERO_LINE_ALPHA),
             ),
         );
     }
@@ -387,7 +388,7 @@ pub(crate) fn draw_pane(
         egui::Align2::LEFT_TOP,
         format!("{EXPANDED_CHEVRON} {}", view.label()),
         egui::FontId::proportional(PANE_LABEL_FONT_PX),
-        theme::TEXT_MUTED,
+        palette.text_muted(),
     );
     if let Some(last) = last_value(view) {
         painter.text(
@@ -395,7 +396,7 @@ pub(crate) fn draw_pane(
             egui::Align2::RIGHT_TOP,
             format_value(last),
             egui::FontId::monospace(PANE_LABEL_FONT_PX),
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
 }
@@ -408,6 +409,7 @@ pub(crate) fn draw_pane(
 /// off without being asked. The chevron points right, the direction a closed
 /// disclosure points.
 fn draw_collapsed_pane(painter: &egui::Painter, band: Rect, view: &IndicatorView) {
+    let palette = theme::get(painter.ctx());
     let font = egui::FontId::proportional(PANE_LABEL_FONT_PX);
     let y = band.center().y;
     painter.text(
@@ -415,7 +417,7 @@ fn draw_collapsed_pane(painter: &egui::Painter, band: Rect, view: &IndicatorView
         egui::Align2::LEFT_CENTER,
         format!("{COLLAPSED_CHEVRON} {}", view.label()),
         font,
-        theme::TEXT_MUTED,
+        palette.text_muted(),
     );
     if let Some(last) = last_value(view) {
         painter.text(
@@ -423,7 +425,7 @@ fn draw_collapsed_pane(painter: &egui::Painter, band: Rect, view: &IndicatorView
             egui::Align2::RIGHT_CENTER,
             format_value(last),
             egui::FontId::monospace(PANE_LABEL_FONT_PX),
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
 }
@@ -523,6 +525,7 @@ fn draw_pane_axis(
     scale: &PriceScale,
     band: Rect,
 ) {
+    let palette = theme::get(painter.ctx());
     let pane = frame.rect;
     let (lo, hi) = scale.range();
     let font = egui::FontId::monospace(crate::chart::AXIS_LABEL_FONT_PX);
@@ -544,7 +547,7 @@ fn draw_pane_axis(
             egui::Align2::LEFT_CENTER,
             label,
             font.clone(),
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
 }

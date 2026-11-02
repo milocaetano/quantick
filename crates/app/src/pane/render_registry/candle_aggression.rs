@@ -3,7 +3,6 @@
 use super::{Contribution, FootprintPass, Package};
 use crate::orderflow_render::{PIE_START_ANGLE, SphereShading, add_shaded_sector};
 use crate::pane::constants::CANDLE_AGGRESSION_DOT_OPACITY;
-use crate::theme;
 use eframe::egui;
 use quantick_layers::ChartLayer;
 use quantick_orderflow::projection::{CandleDotView, PriceWindow, project_candle_dots};
@@ -15,6 +14,7 @@ pub(super) const PACKAGE: Package = Package {
 };
 
 fn paint(pass: &mut FootprintPass<'_>) {
+    let palette = &pass.frame.palette;
     if !pass.candle_aggression {
         return;
     }
@@ -33,8 +33,8 @@ fn paint(pass: &mut FootprintPass<'_>) {
         .map(|ladder| (frame.partial_slot, ladder));
     let inputs = view.trade_built(frame.footprints, frame.first_state_slot, partial);
     let projected = project_candle_dots(inputs, pass.native_grid, view);
-    let buy = theme::BUY.gamma_multiply(CANDLE_AGGRESSION_DOT_OPACITY);
-    let sell = theme::SELL.gamma_multiply(CANDLE_AGGRESSION_DOT_OPACITY);
+    let buy = palette.buy().gamma_multiply(CANDLE_AGGRESSION_DOT_OPACITY);
+    let sell = palette.sell().gamma_multiply(CANDLE_AGGRESSION_DOT_OPACITY);
     let mut mesh = egui::Mesh::default();
     for dot in projected.marks {
         let Some(price) = dot.price.to_f64() else {

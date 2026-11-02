@@ -167,7 +167,7 @@ impl QuantickApp {
             .exact_height(MENU_BAR_HEIGHT)
             .frame(
                 egui::Frame::none()
-                    .fill(theme::CHROME)
+                    .fill(theme::get(ctx).chrome())
                     .inner_margin(egui::Margin::symmetric(6.0, 4.0)),
             )
             .show(ctx, |ui| {

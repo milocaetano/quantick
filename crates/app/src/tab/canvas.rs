@@ -251,6 +251,7 @@ impl Tab {
         frame: &CanvasFrame,
         chrome: &mut CanvasChrome<'_>,
     ) -> PaneRects {
+        let palette = theme::get(ui.ctx());
         let context_shown = frame.context_shown;
         let bar_inputs = crate::toolbar::available_bar_inputs(
             chrome.capabilities,
@@ -299,14 +300,14 @@ impl Tab {
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
                 if self.context_stack.heights[slot].is_collapsed() {
                     ui.painter()
-                        .rect_filled(*band, egui::Rounding::ZERO, theme::CHROME);
+                        .rect_filled(*band, egui::Rounding::ZERO, palette.chrome());
                     ui.painter().rect_filled(
                         egui::Rect::from_center_size(
                             band.center(),
                             egui::vec2(RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX),
                         ),
                         egui::Rounding::same(1.0),
-                        theme::TEXT_MUTED,
+                        palette.text_muted(),
                     );
                     rects.context_charts.push(None);
                     continue;
@@ -699,6 +700,7 @@ impl Tab {
         frame: &CanvasFrame,
         rects: &PaneRects,
     ) {
+        let palette = theme::get(ui.ctx());
         let area = frame.area;
         if let Some(rail) = frame.collapsed_rail {
             self.draw_collapsed_rail(tab_id, ui, rail, area, false);
@@ -731,7 +733,7 @@ impl Tab {
                 egui::pos2(focused.left(), focused.top() + FOCUS_RULE_PX / 2.0),
                 egui::pos2(focused.right(), focused.top() + FOCUS_RULE_PX / 2.0),
             ],
-            egui::Stroke::new(FOCUS_RULE_PX, theme::ACCENT),
+            egui::Stroke::new(FOCUS_RULE_PX, palette.accent()),
         );
     }
 
@@ -997,12 +999,13 @@ impl Tab {
         drawn_width: f32,
         canvas_width: f32,
     ) {
+        let palette = theme::get(ui.ctx());
         #[cfg(test)]
         {
             self.canvas_divider = Some(divider);
         }
         ui.painter()
-            .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
+            .rect_filled(divider, egui::Rounding::ZERO, palette.border());
         // Namespaced by tab for the same reason a pane namespaces its own ids
         // (see [`crate::pane`]): egui keeps drag state per id, so one shared
         // id would let a drag started on this tab's divider carry on into the
@@ -1075,6 +1078,7 @@ impl Tab {
     /// exchange height while every other boundary stays put. Registered after
     /// the pane bodies so a resize wins over the chart pan beneath its handle.
     fn draw_context_dividers(&mut self, tab_id: u64, ui: &egui::Ui, dividers: &[egui::Rect]) {
+        let palette = theme::get(ui.ctx());
         #[cfg(test)]
         self.context_dividers.extend(dividers.iter().copied());
 
@@ -1082,7 +1086,7 @@ impl Tab {
             let upper_collapsed = self.context_stack.heights[index].is_collapsed();
             let lower_collapsed = self.context_stack.heights[index + 1].is_collapsed();
             ui.painter()
-                .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
+                .rect_filled(divider, egui::Rounding::ZERO, palette.border());
             let handle = ui
                 .interact(
                     divider.expand2(egui::vec2(
@@ -1133,15 +1137,16 @@ impl Tab {
 /// the chart starts after), and a grip in the colour a reader knows means
 /// "chrome you can take hold of", lit while `hot`.
 pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, edge_x: f32, hot: bool) {
-    painter.rect_filled(rail, egui::Rounding::ZERO, theme::CHROME);
-    let stroke = egui::Stroke::new(1.0_f32, theme::BORDER);
+    let palette = theme::get(painter.ctx());
+    painter.rect_filled(rail, egui::Rounding::ZERO, palette.chrome());
+    let stroke = egui::Stroke::new(1.0_f32, palette.border());
     painter.vline(edge_x, rail.y_range(), stroke);
     let size = egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX);
     let grip = egui::Rect::from_center_size(rail.center(), size);
     let colour = if hot {
-        theme::ACCENT
+        palette.accent()
     } else {
-        theme::TEXT_MUTED
+        palette.text_muted()
     };
     painter.rect_filled(grip, egui::Rounding::same(1.0), colour);
 }

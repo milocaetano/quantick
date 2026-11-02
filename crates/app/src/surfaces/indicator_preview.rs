@@ -57,6 +57,7 @@ impl Surface for IndicatorPreviewSurface {
     }
 
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        let palette = theme::get(ctx);
         // The real preview wins over the hook: a capture that stages one and
         // then also forces the banner must photograph the pane the
         // application actually chose, not the focused one.
@@ -78,7 +79,7 @@ impl Surface for IndicatorPreviewSurface {
             egui::Align2::CENTER_TOP,
             WATERMARK_TEXT,
             egui::FontId::proportional(WATERMARK_FONT_PX),
-            theme::ACCENT,
+            palette.accent(),
         );
         SurfaceResponse::default()
     }

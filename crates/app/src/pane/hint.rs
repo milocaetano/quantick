@@ -34,6 +34,7 @@ pub fn paint_placement_hint(
     tool: drawings::DrawingTool,
     placed: usize,
 ) {
+    let palette = theme::get(painter.ctx());
     let required = tool.required_points();
     if required < 2 || placed == 0 || placed >= required {
         return;
@@ -44,7 +45,7 @@ pub fn paint_placement_hint(
     let galley = painter.layout_no_wrap(
         text,
         egui::FontId::proportional(HINT_TEXT_PX),
-        theme::TEXT_PRIMARY,
+        palette.text_primary(),
     );
     let size = galley.size() + egui::vec2(2.0 * HINT_PAD_X_PX, 2.0 * HINT_PAD_Y_PX);
     // Flip to the other side of the cursor rather than let the chip leave the
@@ -61,6 +62,6 @@ pub fn paint_placement_hint(
     painter.galley(
         plate.min + egui::vec2(HINT_PAD_X_PX, HINT_PAD_Y_PX),
         galley,
-        theme::TEXT_PRIMARY,
+        palette.text_primary(),
     );
 }

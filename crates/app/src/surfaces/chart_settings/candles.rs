@@ -128,6 +128,7 @@ impl CandlesTab {
 
     /// The built-ins and the saved looks, one row; Reset beside them.
     fn presets_row(&mut self, ui: &mut egui::Ui, edited: &mut ChartStyle) -> StylePanelResponse {
+        let palette = theme::get(ui.ctx());
         let mut response = StylePanelResponse::default();
         ui.horizontal(|ui| {
             ui.heading("Preset");
@@ -206,7 +207,11 @@ impl CandlesTab {
             }
         });
         if let Some(refusal) = &self.refusal {
-            ui.label(egui::RichText::new(refusal).size(10.5).color(theme::WARN));
+            ui.label(
+                egui::RichText::new(refusal)
+                    .size(10.5)
+                    .color(palette.warn()),
+            );
         }
         response
     }

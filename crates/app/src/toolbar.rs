@@ -200,12 +200,13 @@ pub enum ToolbarAction {
 /// list carries zero or one action in practice; a `Vec` only spares every
 /// widget the "was something already clicked" bookkeeping.
 pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction> {
+    let palette = theme::get(ctx);
     let mut actions = Vec::new();
     egui::TopBottomPanel::top("toolbar")
         .exact_height(TOOLBAR_HEIGHT)
         .frame(
             egui::Frame::none()
-                .fill(theme::CHROME)
+                .fill(palette.chrome())
                 .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
         )
         .show(ctx, |ui| {
@@ -271,11 +272,12 @@ fn draw_source(
     plan: CollapsePlan,
     actions: &mut Vec<ToolbarAction>,
 ) {
+    let palette = theme::get(ui.ctx());
     if let Some(replay) = &model.replay {
-        ui.label(egui::RichText::new("source:").color(theme::TEXT_MUTED));
+        ui.label(egui::RichText::new("source:").color(palette.text_muted()));
         ui.label(
             egui::RichText::new(&replay.label)
-                .color(theme::AMBER)
+                .color(palette.amber())
                 .strong(),
         )
         .on_hover_text(&replay.hover);
@@ -292,7 +294,7 @@ fn draw_source(
             .map(String::from)
             .unwrap_or_default()
     };
-    ui.label(egui::RichText::new("feed").color(theme::TEXT_MUTED));
+    ui.label(egui::RichText::new("feed").color(palette.text_muted()));
     egui::ComboBox::from_id_salt("feed_sel")
         .selected_text(feed_text)
         .show_ui(ui, |ui| {
@@ -300,7 +302,7 @@ fn draw_source(
                 ui.selectable_value(model.feed_id, id.clone(), name);
             }
         });
-    ui.label(egui::RichText::new("symbol").color(theme::TEXT_MUTED));
+    ui.label(egui::RichText::new("symbol").color(palette.text_muted()));
     egui::ComboBox::from_id_salt("symbol_sel")
         .selected_text(model.symbol.clone())
         .show_ui(ui, |ui| {
@@ -525,6 +527,7 @@ fn draw_history_menu(
 /// Trading dock tab; the labels disclose them. Gated on the simulator having
 /// seen a price, never on the provider — paper trading works on any feed.
 fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<ToolbarAction>) {
+    let palette = theme::get(ui.ctx());
     // The entries speak the chip language: solid side colour, dark ink —
     // the same grammar as the price chips in the gutter, because the button
     // and the entry line it will create are one statement. Both wear one
@@ -534,24 +537,28 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
         ui.add_enabled_ui(enabled, |ui| {
             ui.add_sized(
                 egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0),
-                egui::Button::new(egui::RichText::new(label).color(theme::CHIP_INK).strong())
-                    .wrap_mode(egui::TextWrapMode::Truncate)
-                    .fill(fill)
-                    .stroke(egui::Stroke::NONE)
-                    .rounding(egui::Rounding::same(3.0)),
+                egui::Button::new(
+                    egui::RichText::new(label)
+                        .color(palette.chip_ink())
+                        .strong(),
+                )
+                .wrap_mode(egui::TextWrapMode::Truncate)
+                .fill(fill)
+                .stroke(egui::Stroke::NONE)
+                .rounding(egui::Rounding::same(3.0)),
             )
         })
         .inner
     };
     let enabled = paper.blocked.is_none();
     let locked = paper.blocked.as_deref().unwrap_or_default();
-    let buy = entry(ui, &paper.buy.face, theme::BUY, enabled)
+    let buy = entry(ui, &paper.buy.face, palette.buy(), enabled)
         .on_hover_text(&paper.buy.hover)
         .on_disabled_hover_text(locked);
     if buy.clicked() {
         actions.push(ToolbarAction::PaperBuy);
     }
-    let sell = entry(ui, &paper.sell.face, theme::SELL, enabled)
+    let sell = entry(ui, &paper.sell.face, palette.sell(), enabled)
         .on_hover_text(&paper.sell.hover)
         .on_disabled_hover_text(locked);
     if sell.clicked() {
@@ -570,12 +577,12 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
                     egui::vec2(width, 24.0),
                     egui::Button::new(
                         egui::RichText::new(text)
-                            .color(theme::TEXT_PRIMARY)
+                            .color(palette.text_primary())
                             .strong(),
                     )
                     .wrap_mode(egui::TextWrapMode::Truncate)
-                    .fill(theme::CONTROL)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .fill(palette.control())
+                    .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                     .rounding(egui::Rounding::same(3.0)),
                 )
             })

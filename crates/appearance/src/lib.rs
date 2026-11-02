@@ -24,3 +24,6 @@ pub const LIGHT: &str = include_str!("../themes/light.toml");
 
 #[cfg(test)]
 mod tests;
+
+mod render_palette;
+pub use render_palette::RenderPalette;

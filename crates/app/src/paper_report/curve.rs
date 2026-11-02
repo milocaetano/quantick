@@ -22,11 +22,12 @@ use crate::theme;
 /// baseline answers "was I ever under water?" at a glance; the deepest
 /// drawdown is annotated so the number in the grid below is locatable.
 pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32) {
+    let palette = theme::get(ui.ctx());
     let n = view.rows.len();
     if n == 0 {
         return;
     }
-    ui.label(caption(&view.equity.caption()));
+    ui.label(caption(&palette, &view.equity.caption()));
     if !view.equity.plotted() {
         return;
     }
@@ -41,6 +42,7 @@ pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32
     // The walk E_0..E_n was cut with the view; the frame only plots it.
     let (low, high) = (view.equity.low, view.equity.high);
     let curve = CurveFrame {
+        palette: palette.clone(),
         painter: ui.painter_at(rect),
         rect,
         plot: egui::Rect::from_min_max(
@@ -73,6 +75,7 @@ pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32
 /// paint in the order the eye reads them — grid, fill, baseline and line,
 /// drawdown, axis words, hover.
 struct CurveFrame<'a> {
+    palette: std::sync::Arc<theme::Palette>,
     painter: egui::Painter,
     rect: egui::Rect,
     /// The plotting area inside `rect`, past the tick gutter.
@@ -95,6 +98,7 @@ impl CurveFrame<'_> {
 
     /// Gridlines + y ticks at the floor, zero and the ceiling.
     fn grid(&self, high: f32) {
+        let palette = &self.palette;
         let plot = self.plot;
         let mut ticks = vec![self.low, 0.0, high];
         ticks.dedup_by(|a, b| (*a - *b).abs() < f32::EPSILON);
@@ -105,9 +109,9 @@ impl CurveFrame<'_> {
                 egui::Stroke::new(
                     1.0_f32,
                     egui::Color32::from_rgba_unmultiplied(
-                        theme::CONTROL.r(),
-                        theme::CONTROL.g(),
-                        theme::CONTROL.b(),
+                        palette.control().r(),
+                        palette.control().g(),
+                        palette.control().b(),
                         CURVE_GRID_LINE_ALPHA,
                     ),
                 ),
@@ -117,7 +121,7 @@ impl CurveFrame<'_> {
                 egui::Align2::RIGHT_CENTER,
                 fmt_points(Decimal::from_f64_retain(f64::from(tick)).unwrap_or_default()),
                 egui::FontId::monospace(10.0),
-                theme::TEXT_FAINT,
+                palette.text_faint(),
             );
         }
     }
@@ -126,6 +130,7 @@ impl CurveFrame<'_> {
     /// SELL, split exactly at each crossing. Then the zero baseline over the
     /// fill, and the line over everything.
     fn fill_and_line(&self, stride: usize) {
+        let palette = &self.palette;
         let (n, equity) = (self.n, self.equity);
         let zero_y = self.y_at(0.0);
         let mut drawn_points = vec![egui::pos2(self.x_at(0), self.y_at(equity[0]))];
@@ -145,35 +150,36 @@ impl CurveFrame<'_> {
                 egui::pos2(plot.left(), zero_y),
                 egui::pos2(plot.right(), zero_y),
             ],
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            egui::Stroke::new(1.0_f32, palette.border()),
         );
         self.painter.add(egui::Shape::line(
             drawn_points,
-            egui::Stroke::new(1.5_f32, theme::TEXT_PRIMARY),
+            egui::Stroke::new(1.5_f32, palette.text_primary()),
         ));
         if n == 1 {
             self.painter.circle_filled(
                 egui::pos2(self.x_at(1), self.y_at(equity[1])),
                 2.0,
-                theme::TEXT_PRIMARY,
+                palette.text_primary(),
             );
             self.painter.text(
                 plot.center(),
                 egui::Align2::CENTER_CENTER,
                 "one trade — no curve yet",
                 egui::FontId::monospace(10.0),
-                theme::TEXT_FAINT,
+                palette.text_faint(),
             );
         }
     }
 
     /// The fill under one step of the walk, from `a` at `x0` to `b` at `x1`.
     fn fill_step(&self, x0: f32, x1: f32, a: f32, b: f32, zero_y: f32) {
+        let palette = &self.palette;
         let fill_of = |value: f32| {
             let color = if value >= 0.0 {
-                theme::BUY
+                palette.buy()
             } else {
-                theme::SELL
+                palette.sell()
             };
             egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), CURVE_FILL_ALPHA)
         };
@@ -218,6 +224,7 @@ impl CurveFrame<'_> {
     /// The deepest drawdown, locatable: its peak level dotted, the drop
     /// solid, the number on a chip at the drop's midpoint.
     fn drawdown(&self, peak: usize, trough: usize, view: &ReportView) {
+        let palette = &self.palette;
         if trough > self.n {
             return;
         }
@@ -230,49 +237,51 @@ impl CurveFrame<'_> {
                 egui::pos2(self.x_at(peak), peak_y),
                 egui::pos2(trough_x, peak_y),
             ],
-            egui::Stroke::new(1.0_f32, theme::SELL),
+            egui::Stroke::new(1.0_f32, palette.sell()),
             2.0,
             3.0,
         ));
         painter.line_segment(
             [egui::pos2(trough_x, peak_y), egui::pos2(trough_x, trough_y)],
-            egui::Stroke::new(1.0_f32, theme::SELL),
+            egui::Stroke::new(1.0_f32, palette.sell()),
         );
         let label = view.equity.drawdown_text();
-        let galley = painter.layout_no_wrap(label, egui::FontId::monospace(10.0), theme::CHIP_INK);
+        let galley =
+            painter.layout_no_wrap(label, egui::FontId::monospace(10.0), palette.chip_ink());
         let center = egui::pos2(
             (self.x_at(peak) + trough_x) / 2.0,
             (peak_y + trough_y) / 2.0,
         );
         let bg = egui::Rect::from_center_size(center, galley.size() + egui::vec2(8.0, 4.0));
-        painter.rect_filled(bg, egui::Rounding::same(2.0), theme::SELL);
-        painter.galley(bg.min + egui::vec2(4.0, 2.0), galley, theme::CHIP_INK);
+        painter.rect_filled(bg, egui::Rounding::same(2.0), palette.sell());
+        painter.galley(bg.min + egui::vec2(4.0, 2.0), galley, palette.chip_ink());
     }
 
     /// Axis words: first and last trade index, with the unit between them,
     /// and the downsampling note when the line skips trades.
     fn axis_words(&self, stride: usize) {
+        let palette = &self.palette;
         let (painter, plot, rect) = (&self.painter, self.plot, self.rect);
         painter.text(
             egui::pos2(plot.left(), rect.bottom()),
             egui::Align2::LEFT_BOTTOM,
             "1",
             egui::FontId::monospace(10.0),
-            theme::TEXT_FAINT,
+            palette.text_faint(),
         );
         painter.text(
             egui::pos2(plot.right(), rect.bottom()),
             egui::Align2::RIGHT_BOTTOM,
             self.n.to_string(),
             egui::FontId::monospace(10.0),
-            theme::TEXT_FAINT,
+            palette.text_faint(),
         );
         painter.text(
             egui::pos2(plot.center().x, rect.bottom()),
             egui::Align2::CENTER_BOTTOM,
             "trades",
             egui::FontId::monospace(10.0),
-            theme::TEXT_FAINT,
+            palette.text_faint(),
         );
         if stride > 1 {
             painter.text(
@@ -282,13 +291,14 @@ impl CurveFrame<'_> {
                     "curve downsampled to ~{CURVE_MAX_POINTS} points; every metric uses every trade"
                 ),
                 egui::FontId::proportional(10.0),
-                theme::TEXT_SUPPORT,
+                palette.text_support(),
             );
         }
     }
 
     /// The crosshair at the trade nearest the pointer, and its card.
     fn hover(&self, pointer: egui::Pos2, view: &ReportView) {
+        let palette = &self.palette;
         let (n, plot) = (self.n, self.plot);
         let k = (((pointer.x - plot.left()) / plot.width()) * (n as f32))
             .round()
@@ -296,7 +306,7 @@ impl CurveFrame<'_> {
         let x = self.x_at(k);
         self.painter.line_segment(
             [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
-            egui::Stroke::new(1.0_f32, theme::TEXT_FAINT),
+            egui::Stroke::new(1.0_f32, palette.text_faint()),
         );
         let head = if k == 0 {
             "start".to_owned()
@@ -333,11 +343,12 @@ fn draw_hover_card(
     pointer: egui::Pos2,
     lines: &[String],
 ) {
+    let palette = theme::get(painter.ctx());
     let font = egui::FontId::monospace(10.0);
     let galleys: Vec<_> = lines
         .iter()
         .filter(|line| !line.is_empty())
-        .map(|line| painter.layout_no_wrap(line.clone(), font.clone(), theme::TEXT_PRIMARY))
+        .map(|line| painter.layout_no_wrap(line.clone(), font.clone(), palette.text_primary()))
         .collect();
     if galleys.is_empty() {
         return;
@@ -352,14 +363,14 @@ fn draw_hover_card(
     origin.x = origin.x.min(rect.right() - width).max(rect.left());
     origin.y = origin.y.max(rect.top());
     let card = egui::Rect::from_min_size(origin, egui::vec2(width, height));
-    painter.rect_filled(card, egui::Rounding::same(4.0), theme::TAG_BG);
+    painter.rect_filled(card, egui::Rounding::same(4.0), palette.tag_bg());
     let mut y = card.top() + 5.0;
     for galley in galleys {
         let advance = galley.size().y;
         painter.galley(
             egui::pos2(card.left() + 6.0, y),
             galley,
-            theme::TEXT_PRIMARY,
+            palette.text_primary(),
         );
         y += advance;
     }

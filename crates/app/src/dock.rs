@@ -93,6 +93,7 @@ pub fn holds_pointer(dock: &Dock, ctx: &egui::Context) -> bool {
 
 /// Draw the strip and, when a tab is open, its body panel.
 pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResponse {
+    let palette = theme::get(ctx);
     // A chart-leg click flips this ticket's switch: saved and fanned out like a pick.
     let mut response = DockResponse {
         risk_settings_changed: env.paper.take_pnl_flip(),
@@ -107,7 +108,7 @@ pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResp
         .resizable(false)
         .frame(
             egui::Frame::none()
-                .fill(theme::CHROME)
+                .fill(palette.chrome())
                 .inner_margin(egui::Margin::symmetric(3.0, 8.0)),
         )
         .show(ctx, |ui| {
@@ -141,8 +142,8 @@ pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResp
                     && let Some(summary) = &position
                 {
                     let color = match summary.side {
-                        Side::Buy => theme::BUY,
-                        Side::Sell => theme::SELL,
+                        Side::Buy => palette.buy(),
+                        Side::Sell => palette.sell(),
                     };
                     let center = egui::pos2(
                         button.rect.right() - BADGE_RADIUS_PX - 1.0,
@@ -165,7 +166,7 @@ pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResp
             .width_range(DOCK_MIN_WIDTH..=DOCK_MAX_WIDTH)
             .frame(
                 egui::Frame::none()
-                    .fill(theme::CHROME)
+                    .fill(palette.chrome())
                     .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
             )
             .show(ctx, |ui| {
@@ -241,11 +242,12 @@ fn draw_tab_header(
     collapse: &mut bool,
     actions: impl FnOnce(&mut egui::Ui),
 ) {
+    let palette = theme::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(tab.title())
                 .strong()
-                .color(theme::TEXT_PRIMARY),
+                .color(palette.text_primary()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // `×` is Latin-1, so it renders in egui's default proportional
@@ -266,12 +268,13 @@ fn draw_tab_header(
 /// The Session tab: what is playing (amber, like everything not live) and
 /// the entry to the transient browser window.
 fn draw_session_tab(ui: &mut egui::Ui, env: &mut DockEnv) -> Option<ReplayAction> {
+    let palette = theme::get(ui.ctx());
     let mut action = None;
     match env.replay {
         Some(link) => {
             ui.label(
                 egui::RichText::new(link.label())
-                    .color(theme::AMBER)
+                    .color(palette.amber())
                     .strong(),
             );
             ui.small(format!("file: {}", link.session.path.display()));
@@ -293,7 +296,7 @@ fn draw_session_tab(ui: &mut egui::Ui, env: &mut DockEnv) -> Option<ReplayAction
             }
         }
         None => {
-            ui.label(egui::RichText::new("No recording is playing.").color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new("No recording is playing.").color(palette.text_muted()));
         }
     }
     ui.add_space(6.0);

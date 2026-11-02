@@ -176,15 +176,16 @@ pub(crate) fn flow_caption(
     frame: Option<&FlowTapeFrame>,
     progress: FlowProgress,
 ) -> Option<egui::Rect> {
+    let palette = crate::theme::get(painter.ctx());
     let notes = quantick_orderflow::projection::flow_tape::notes_caption(frame, progress)?;
     let at = egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top);
     let wrap = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
     let font = egui::FontId::proportional(FLOW_CAPTION_FONT_PX);
-    let galley = painter.layout(notes, font, crate::theme::TEXT_MUTED, wrap);
+    let galley = painter.layout(notes, font, palette.text_muted(), wrap);
     let rect = egui::Rect::from_min_size(at, galley.size());
     painter
         .with_clip_rect(history)
-        .galley(at, galley, crate::theme::TEXT_MUTED);
+        .galley(at, galley, palette.text_muted());
     Some(rect)
 }
 

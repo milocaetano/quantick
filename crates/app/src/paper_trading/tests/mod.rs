@@ -1663,6 +1663,7 @@ fn the_cmd_preview_paints_line_label_and_price_chip() {
     let output = ctx.run(egui::RawInput::default(), |ctx| {
         let painter = ctx.layer_painter(egui::LayerId::background());
         let paint = PaintCtx {
+            palette: crate::theme::get(&egui::Context::default()),
             painter: &painter,
             chart_rect: chart,
             tag_right: chart.right(),
@@ -1797,6 +1798,7 @@ fn the_aim_paints_only_in_the_band_it_was_aimed_in() {
         let painter = ctx.layer_painter(egui::LayerId::background());
         paper.draw_cmd_preview(
             &PaintCtx {
+                palette: crate::theme::get(&egui::Context::default()),
                 painter: &painter,
                 chart_rect: other,
                 tag_right: other.right(),

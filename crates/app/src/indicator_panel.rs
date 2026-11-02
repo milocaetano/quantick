@@ -126,6 +126,7 @@ pub(crate) fn draw(
     style: &mut StyleOverride,
     presets: Option<&[String]>,
 ) -> SettingsOutcome {
+    let palette = theme::get(ctx);
     let mut outcome = SettingsOutcome::Open;
     let mut open = true;
     let mut changed = false;
@@ -191,7 +192,7 @@ pub(crate) fn draw(
                             ui.label(
                                 egui::RichText::new(section)
                                     .strong()
-                                    .color(theme::TEXT_MUTED),
+                                    .color(palette.text_muted()),
                             );
                             ui.label("");
                             ui.end_row();
@@ -203,7 +204,7 @@ pub(crate) fn draw(
             if specs.is_empty() {
                 ui.label(
                     egui::RichText::new("this indicator declares no settings")
-                        .color(theme::TEXT_MUTED),
+                        .color(palette.text_muted()),
                 );
             }
             draw_buttons(ui, previewed, &mut outcome);
@@ -250,6 +251,7 @@ pub(crate) fn draw(
 /// The button row, shared by both tabs so the way out of the dialog is in the
 /// same place whichever half you are on.
 fn draw_buttons(ui: &mut egui::Ui, previewed: bool, outcome: &mut SettingsOutcome) {
+    let palette = theme::get(ui.ctx());
     ui.separator();
     ui.horizontal(|ui| {
         if ui
@@ -277,7 +279,7 @@ fn draw_buttons(ui: &mut egui::Ui, previewed: bool, outcome: &mut SettingsOutcom
         if previewed {
             ui.label(
                 egui::RichText::new("previewing — Apply keeps, Discard reverts")
-                    .color(theme::TEXT_MUTED),
+                    .color(palette.text_muted()),
             );
         }
     });
@@ -365,6 +367,7 @@ fn draw_style(ui: &mut egui::Ui, plots: &[PlotSpec], style: &mut StyleOverride) 
 /// when the plot is switched off, because a preview of a line nobody is drawing
 /// has to look like one.
 fn draw_plot_preview(ui: &mut egui::Ui, resolved: ResolvedPlot, visible: bool) {
+    let palette = theme::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(PLOT_PREVIEW_SIZE, egui::Sense::hover());
     let color = egui::Color32::from_rgba_unmultiplied(
         resolved.color.r,
@@ -376,7 +379,7 @@ fn draw_plot_preview(ui: &mut egui::Ui, resolved: ResolvedPlot, visible: bool) {
         (color, resolved.width)
     } else {
         (
-            theme::TEXT_MUTED.gamma_multiply(PREVIEW_OFF_FADE),
+            palette.text_muted().gamma_multiply(PREVIEW_OFF_FADE),
             PREVIEW_OFF_WIDTH_PX,
         )
     };
@@ -458,11 +461,12 @@ fn preset_row(
     preset_name_draft: &mut String,
     outcome: &mut SettingsOutcome,
 ) {
+    let palette = theme::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Preset")
                 .strong()
-                .color(theme::TEXT_MUTED),
+                .color(palette.text_muted()),
         );
         egui::ComboBox::from_id_salt(("indicator-preset", slot_id))
             .selected_text(preset_label.as_deref().unwrap_or("custom"))
@@ -548,6 +552,7 @@ fn input_row(
     applied: &InputValue,
     label: &str,
 ) -> bool {
+    let palette = theme::get(ui.ctx());
     match (spec, value) {
         (
             InputSpec::Int {
@@ -694,7 +699,7 @@ fn input_row(
         // Spec/value variant mismatch: impossible through the worker's
         // plumbing; drawing nothing beats panicking the frame.
         _ => {
-            ui.label(egui::RichText::new("(unrenderable input)").color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new("(unrenderable input)").color(palette.text_muted()));
             ui.label("");
             false
         }

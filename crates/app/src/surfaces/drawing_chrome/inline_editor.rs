@@ -103,6 +103,7 @@ fn draw_inner(
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
+    let palette = theme::get(ctx);
     // The `QUANTICK_TEXT_NOTE` hook: the placement rules — where the middle
     // of the visible window is, what the saved defaults say a note opens
     // like — belong to the host, so the surface asks and the host places.
@@ -195,8 +196,8 @@ fn draw_inner(
             // The fill is opaque for the same reason — words typed over wicks
             // are words nobody can read back.
             egui::Frame::none()
-                .fill(theme::CHROME)
-                .stroke(egui::Stroke::new(1.0_f32, theme::ACCENT))
+                .fill(palette.chrome())
+                .stroke(egui::Stroke::new(1.0_f32, palette.accent()))
                 .rounding(egui::Rounding::same(3.0))
                 .inner_margin(egui::Margin::symmetric(4.0, 2.0))
                 .show(ui, |ui| {

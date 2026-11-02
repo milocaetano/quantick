@@ -27,6 +27,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::chart::PriceScale;
 use crate::footprint_config::{FootprintStyle, StylePlate};
+#[cfg(test)]
 use crate::theme;
 
 use bar::{BarPaint, draw_bar, draw_poc_dot, draw_zone_mark};
@@ -446,7 +447,7 @@ impl<'p, 'f> LayerPass<'p, 'f> {
             frame.painter.rect_filled(
                 rect,
                 egui::Rounding::same(2.0),
-                theme::side_color(side).gamma_multiply(0.8),
+                frame.palette.side_color(side).gamma_multiply(0.8),
             );
             frame.painter.galley(
                 rect.min + egui::vec2(3.0, 1.5),
@@ -494,6 +495,7 @@ struct Legend {
 
 impl Legend {
     fn draw(self, frame: &LayerFrame<'_>) {
+        let palette = &frame.palette;
         let Self {
             level,
             style,
@@ -535,7 +537,7 @@ impl Legend {
             egui::Align2::LEFT_BOTTOM,
             text,
             egui::FontId::proportional(10.5),
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
 }

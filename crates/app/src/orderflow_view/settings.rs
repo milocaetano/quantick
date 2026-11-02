@@ -154,12 +154,13 @@ impl OrderflowView {
     /// The layer's *toggle* lives in the toolbar; this body is settings only —
     /// opening it never starts capture (looking is not enabling).
     pub fn draw_l2_tab(&mut self, ui: &mut egui::Ui) -> bool {
+        let palette = crate::theme::get(ui.ctx());
         self.sync_published();
         let before = self.config.clone();
         ui.label(
             egui::RichText::new(self.published.status.label())
                 .small()
-                .color(status_color(&self.published.status)),
+                .color(status_color(&palette, &self.published.status)),
         );
         ui.small("Brightness is resting liquidity. Green/red bubbles are confirmed trades.");
         ui.small(

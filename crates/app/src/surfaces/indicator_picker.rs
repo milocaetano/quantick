@@ -208,19 +208,20 @@ fn draw_active(
     entries: &[IndicatorMenuEntry],
     actions: &mut Vec<ToolbarAction>,
 ) -> bool {
+    let palette = theme::get(ui.ctx());
     let mut close = false;
     for entry in entries {
         ui.horizontal(|ui| {
             // Status dot: honest state at a glance — errored beats hidden.
             let (dot, color) = if entry.errored {
-                (icons::WARNING_CIRCLE, theme::SELL)
+                (icons::WARNING_CIRCLE, palette.sell())
             } else if entry.stale {
                 // Running, but the file on disk has errors.
-                (icons::WARNING, theme::ACCENT)
+                (icons::WARNING, palette.accent())
             } else if entry.hidden {
-                (icons::EYE_SLASH, theme::TEXT_MUTED)
+                (icons::EYE_SLASH, palette.text_muted())
             } else {
-                (icons::CIRCLE, theme::BUY)
+                (icons::CIRCLE, palette.buy())
             };
             ui.label(egui::RichText::new(dot).color(color));
             ui.label(&entry.label);

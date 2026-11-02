@@ -25,6 +25,7 @@ use crate::theme;
 /// The frame geometry every paper paint helper reads: one struct so a tag,
 /// a chip and a line can never disagree about where the plot ends.
 pub(super) struct PaintCtx<'a> {
+    pub(super) palette: std::sync::Arc<theme::Palette>,
     pub(super) painter: &'a egui::Painter,
     pub(super) chart_rect: egui::Rect,
     /// Right edge of the tag band (`tag_band`: the candles' band, or the
@@ -98,14 +99,21 @@ impl PaintCtx<'_> {
     /// chip's geometry. The line stays at its true price; only the chip
     /// dodges the reserved last-price row.
     pub(super) fn gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
-        self.chip(y, color, text, (color, theme::CHIP_INK, egui::Stroke::NONE));
+        let palette = &self.palette;
+        self.chip(
+            y,
+            color,
+            text,
+            (color, palette.chip_ink(), egui::Stroke::NONE),
+        );
     }
 
     /// Hollow: a `color` border and ink on the chart's ground, for a level
     /// that is no order (the aim's echo).
     pub(super) fn hollow_gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
+        let palette = &self.palette;
         let border = egui::Stroke::new(LINE_WIDTH_PX, color);
-        self.chip(y, color, text, (theme::CANVAS, color, border));
+        self.chip(y, color, text, (palette.canvas(), color, border));
     }
 
     fn chip(&self, y: f32, color: Color32, text: &str, look: (Color32, Color32, Stroke)) {
@@ -173,7 +181,8 @@ impl PaintCtx<'_> {
         with_close: bool,
         ghost: bool,
     ) {
-        let ink = if ghost { fill } else { theme::CHIP_INK };
+        let palette = &self.palette;
+        let ink = if ghost { fill } else { palette.chip_ink() };
         let galley =
             self.painter
                 .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), ink);
@@ -188,7 +197,7 @@ impl PaintCtx<'_> {
         );
         if ghost {
             self.painter
-                .rect_filled(full, egui::Rounding::same(3.0), theme::INSET);
+                .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
             self.painter.rect_stroke(
                 full,
                 egui::Rounding::same(3.0),
@@ -244,6 +253,7 @@ impl PaintCtx<'_> {
         side_text: &str,
         points: Option<(String, egui::Color32)>,
     ) -> egui::Rect {
+        let palette = &self.palette;
         let font = egui::FontId::monospace(11.0);
         let side_galley =
             self.painter
@@ -267,11 +277,11 @@ impl PaintCtx<'_> {
             egui::pos2(right, center_y + half),
         );
         self.painter
-            .rect_filled(full, egui::Rounding::same(3.0), theme::INSET);
+            .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
         self.painter.rect_stroke(
             full,
             egui::Rounding::same(3.0),
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            egui::Stroke::new(1.0_f32, palette.border()),
         );
         // The side rail rides the card's left edge.
         self.painter.rect_filled(
@@ -308,9 +318,9 @@ impl PaintCtx<'_> {
             "×",
             egui::FontId::monospace(11.0),
             if over_button {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             },
         );
         // A hairline between the words and the ✕ zone.
@@ -319,7 +329,7 @@ impl PaintCtx<'_> {
                 egui::pos2(button.left(), full.top() + 3.0),
                 egui::pos2(button.left(), full.bottom() - 3.0),
             ],
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            egui::Stroke::new(1.0_f32, palette.border()),
         );
         full
     }
@@ -327,13 +337,14 @@ impl PaintCtx<'_> {
     /// A labelled `SL`/`TP` handle on the entry line: quiet control fill,
     /// the leg's own colour on hover.
     pub(super) fn bracket_handle(&self, rect: egui::Rect, label: &str, leg_color: egui::Color32) {
+        let palette = &self.palette;
         let hovered = self.pointer.is_some_and(|pointer| rect.contains(pointer));
         self.painter
-            .rect_filled(rect, egui::Rounding::same(3.0), theme::CONTROL);
+            .rect_filled(rect, egui::Rounding::same(3.0), palette.control());
         self.painter.rect_stroke(
             rect,
             egui::Rounding::same(3.0),
-            egui::Stroke::new(1.0_f32, if hovered { leg_color } else { theme::BORDER }),
+            egui::Stroke::new(1.0_f32, if hovered { leg_color } else { palette.border() }),
         );
         self.painter.text(
             rect.center(),
@@ -341,9 +352,9 @@ impl PaintCtx<'_> {
             label,
             egui::FontId::monospace(9.0),
             if hovered {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             },
         );
     }

@@ -19,24 +19,33 @@ pub fn install_fonts(ctx: &egui::Context) {
 
 pub struct Palette {
     pub resolved: ResolvedTheme,
-    colors: [egui::Color32; Token::ALL.len()],
+    colors: quantick_appearance::RenderPalette<egui::Color32>,
     pub heat_buy: [egui::Color32; 6],
     pub heat_sell: [egui::Color32; 6],
     pub heat_ink: [egui::Color32; 6],
+}
+
+impl std::ops::Deref for Palette {
+    type Target = quantick_appearance::RenderPalette<egui::Color32>;
+    fn deref(&self) -> &Self::Target {
+        &self.colors
+    }
 }
 
 impl Palette {
     fn new(resolved: &ResolvedTheme) -> Self {
         Self {
             resolved: resolved.clone(),
-            colors: Token::ALL.map(|token| rendered(resolved.color(token))),
+            colors: quantick_appearance::RenderPalette::from_fn(|token| {
+                rendered(resolved.color(token))
+            }),
             heat_buy: resolved.footprint_heat.buy.map(rendered),
             heat_sell: resolved.footprint_heat.sell.map(rendered),
             heat_ink: resolved.footprint_heat.ink.map(rendered),
         }
     }
     pub fn color(&self, token: Token) -> egui::Color32 {
-        self.colors[token as usize]
+        *self.colors.get(token)
     }
     pub fn font(&self, role: FontRole) -> egui::FontId {
         let font = self.resolved.typography.get(role);

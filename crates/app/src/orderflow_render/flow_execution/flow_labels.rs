@@ -25,6 +25,7 @@ impl FlowDrawing {
 }
 
 fn paint_quantity_labels(painter: &egui::Painter, history: egui::Rect, labels: &[PlacedLabel]) {
+    let palette = crate::theme::get(painter.ctx());
     let clip = painter.with_clip_rect(history);
     for (pos, label) in labels {
         let pos = egui::Pos2::from(*pos);
@@ -34,15 +35,16 @@ fn paint_quantity_labels(painter: &egui::Painter, history: egui::Rect, labels: &
         let shadow = egui::Color32::from_black_alpha(super::constants::LABEL_SHADOW_ALPHA);
         let offset = super::constants::LABEL_SHADOW_OFFSET_PX;
         clip.galley_with_override_text_color(pos + offset, galley.clone(), shadow);
-        clip.galley(pos, galley, crate::theme::TEXT_PRIMARY);
+        clip.galley(pos, galley, palette.text_primary());
     }
 }
 
 fn quantity_galley(painter: &egui::Painter, label: &FlowQuantityLabel) -> Arc<egui::Galley> {
+    let palette = crate::theme::get(painter.ctx());
     use super::constants::{LABEL_FONT_SCALE, LABEL_MAX_FONT_PX, LABEL_MIN_FONT_PX};
     let font = (label.radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX);
     let font = egui::FontId::proportional(font);
-    painter.layout_no_wrap(label.text.clone(), font, crate::theme::TEXT_PRIMARY)
+    painter.layout_no_wrap(label.text.clone(), font, palette.text_primary())
 }
 
 #[cfg(test)]

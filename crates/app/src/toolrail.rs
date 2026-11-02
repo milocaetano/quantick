@@ -681,6 +681,7 @@ impl ToolRail {
     /// The rail also hosts the object-manager entry and the global protection
     /// toggles (hide-all / lock-all), which act on the store.
     pub fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings, manager_open: &mut bool) {
+        let palette = theme::get(ctx);
         if !self.visible {
             return;
         }
@@ -689,17 +690,17 @@ impl ToolRail {
             ToolboxDock::Left => egui::SidePanel::left("drawing_toolbox_left")
                 .exact_width(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
-                .frame(rail_frame())
+                .frame(rail_frame(&palette))
                 .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
             ToolboxDock::Top => egui::TopBottomPanel::top("drawing_toolbox_top")
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
-                .frame(rail_frame())
+                .frame(rail_frame(&palette))
                 .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
             ToolboxDock::Bottom => egui::TopBottomPanel::bottom("drawing_toolbox_bottom")
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
-                .frame(rail_frame())
+                .frame(rail_frame(&palette))
                 .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
         };
 
@@ -714,6 +715,7 @@ impl ToolRail {
         drawings: &mut Drawings,
         manager_open: &mut bool,
     ) {
+        let palette = theme::get(ui.ctx());
         #[cfg(test)]
         {
             self.button_rects.fill(None);
@@ -756,7 +758,7 @@ impl ToolRail {
             ToolboxDock::Bottom => [rail_rect.left_top(), rail_rect.right_top()],
         };
         ui.painter()
-            .line_segment(edge, egui::Stroke::new(1.0_f32, theme::BORDER));
+            .line_segment(edge, egui::Stroke::new(1.0_f32, palette.border()));
 
         let leading = if vertical {
             egui::Layout::top_down(egui::Align::Center)
@@ -831,6 +833,7 @@ impl ToolRail {
 
     /// The grip: hold and drag to dock the rail against another window edge.
     fn draw_grip(&mut self, ui: &mut egui::Ui, vertical: bool) {
+        let palette = theme::get(ui.ctx());
         let size = if vertical {
             egui::vec2(TOOLRAIL_ICON.hit, TOOLBOX_GRIP_LENGTH_PX)
         } else {
@@ -849,9 +852,9 @@ impl ToolRail {
                 icons::DOTS_SIX_VERTICAL
             };
             let color = if grip.hovered() || self.dragging {
-                theme::TEXT_MUTED
+                palette.text_muted()
             } else {
-                theme::TEXT_FAINT
+                palette.text_faint()
             };
             ui.painter().text(
                 rect.center(),
@@ -897,6 +900,7 @@ impl ToolRail {
     /// A separator: a 1 px hairline across the rail, floated off both edges.
     /// The 4 px clear space each side comes from the cluster's item spacing.
     fn draw_separator(&self, ui: &mut egui::Ui, vertical: bool) {
+        let palette = theme::get(ui.ctx());
         let size = if vertical {
             egui::vec2(ui.available_width(), 1.0)
         } else {
@@ -918,7 +922,7 @@ impl ToolRail {
             )
         };
         ui.painter()
-            .line_segment([from, to], egui::Stroke::new(1.0_f32, theme::BORDER));
+            .line_segment([from, to], egui::Stroke::new(1.0_f32, palette.border()));
     }
 
     /// The repeat pin: keep the armed drawing tool active after it completes
@@ -1032,6 +1036,7 @@ impl ToolRail {
         drawings: &Drawings,
         manager_open: &mut bool,
     ) {
+        let palette = theme::get(ui.ctx());
         let response = IconButton::new(icons::LIST, TOOLRAIL_ICON)
             .active(*manager_open)
             .active_marker(self.dock.marker_edge())
@@ -1039,7 +1044,7 @@ impl ToolRail {
             .show(ui);
         let count = drawings.items().len();
         if count > 0 {
-            paint_badge(ui, response.rect, &count.to_string(), theme::TEXT_MUTED);
+            paint_badge(ui, response.rect, &count.to_string(), palette.text_muted());
         }
         #[cfg(test)]
         {
@@ -1131,6 +1136,7 @@ impl ToolRail {
         tool: Tool,
         drawings: &Drawings,
     ) -> bool {
+        let palette = theme::get(ui.ctx());
         let Some(drawing_tool) = tool.drawing_tool() else {
             return false;
         };
@@ -1142,22 +1148,23 @@ impl ToolRail {
             drawings.draft_len(),
             drawing_tool.required_points()
         );
-        paint_badge(ui, response.rect, &text, theme::ACCENT);
+        paint_badge(ui, response.rect, &text, palette.accent());
         true
     }
 }
 
 /// The rail's frame: chrome fill, margins, and no stroke — the chart-facing
 /// hairline is painted by the rail itself.
-fn rail_frame() -> egui::Frame {
+fn rail_frame(palette: &crate::theme::Palette) -> egui::Frame {
     egui::Frame::none()
-        .fill(theme::CHROME)
+        .fill(palette.chrome())
         .inner_margin(egui::Margin::same(TOOLBOX_MARGIN_PX))
 }
 
 /// The drop preview: the band the rail will occupy on the candidate edge,
 /// with an accent line on its chart-facing side.
 fn paint_drop_preview(ctx: &egui::Context, target: ToolboxDock) {
+    let palette = theme::get(ctx);
     let screen = ctx.screen_rect();
     let thickness = TOOLBOX_THICKNESS_PX;
     let band = match target {
@@ -1192,12 +1199,13 @@ fn paint_drop_preview(ctx: &egui::Context, target: ToolboxDock) {
         egui::Order::Foreground,
         egui::Id::new("toolbox_drop_preview"),
     ));
-    painter.rect_filled(band, 0.0, theme::active_tint(theme::ACCENT));
-    painter.rect_filled(line, 0.0, theme::ACCENT);
+    painter.rect_filled(band, 0.0, theme::active_tint(palette.accent()));
+    painter.rect_filled(line, 0.0, palette.accent());
 }
 
 /// A pill badge in a button's trailing-bottom corner (§2.5).
 fn paint_badge(ui: &egui::Ui, button: egui::Rect, text: &str, color: egui::Color32) {
+    let palette = theme::get(ui.ctx());
     let painter = ui.painter();
     let font = egui::FontId::monospace(BADGE_TEXT_PX);
     let galley = painter.layout_no_wrap(text.to_owned(), font, color);
@@ -1212,7 +1220,7 @@ fn paint_badge(ui: &egui::Ui, button: egui::Rect, text: &str, color: egui::Color
             button.bottom() - BADGE_CORNER_INSET_PX,
         ),
     );
-    painter.rect_filled(rect, egui::Rounding::same(BADGE_RADIUS_PX), theme::INSET);
+    painter.rect_filled(rect, egui::Rounding::same(BADGE_RADIUS_PX), palette.inset());
     painter.galley(
         egui::pos2(
             rect.left() + BADGE_PAD_X_PX,

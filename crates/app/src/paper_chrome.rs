@@ -44,21 +44,22 @@ pub(crate) use quantick_paper::format::{
 };
 
 /// Uppercase section caption — the ledger's group labels and column header.
-pub(crate) fn caption(text: &str) -> egui::RichText {
+pub(crate) fn caption(palette: &crate::theme::Palette, text: &str) -> egui::RichText {
     egui::RichText::new(text)
         .size(10.0)
-        .color(theme::TEXT_FAINT)
+        .color(palette.text_faint())
 }
 
 /// A pill-shaped toggle chip: accent fill while on, quiet control while off.
 pub(crate) fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str) -> egui::Response {
+    let palette = theme::get(ui.ctx());
     let (fill, ink, stroke) = if on {
-        (theme::ACCENT, theme::CHIP_INK, egui::Stroke::NONE)
+        (palette.accent(), palette.chip_ink(), egui::Stroke::NONE)
     } else {
         (
-            theme::CONTROL,
-            theme::TEXT_MUTED,
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            palette.control(),
+            palette.text_muted(),
+            egui::Stroke::new(1.0_f32, palette.border()),
         )
     };
     ui.add(
@@ -83,11 +84,11 @@ pub(crate) fn fmt_duration_ms(ms: i64) -> String {
 }
 
 /// Green gains, red losses, muted zero — shared with the HUD.
-pub(crate) fn points_color(points: Decimal) -> egui::Color32 {
+pub(crate) fn points_color(palette: &crate::theme::Palette, points: Decimal) -> egui::Color32 {
     match points.cmp(&Decimal::ZERO) {
-        std::cmp::Ordering::Greater => theme::BUY,
-        std::cmp::Ordering::Less => theme::SELL,
-        std::cmp::Ordering::Equal => theme::TEXT_MUTED,
+        std::cmp::Ordering::Greater => palette.buy(),
+        std::cmp::Ordering::Less => palette.sell(),
+        std::cmp::Ordering::Equal => palette.text_muted(),
     }
 }
 

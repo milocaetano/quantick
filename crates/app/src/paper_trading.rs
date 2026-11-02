@@ -42,7 +42,6 @@ use crate::chart::PriceScale;
 // One date law for every trade surface - see `paper_calendar`.
 pub(crate) use crate::paper_account::{Leg, side_word};
 use crate::paper_chrome::PositionSummary;
-use crate::theme;
 // The desk's values, under the names the app's callers already use.
 pub(crate) use quantick_paper::desk::{
     ArmedPlacement, CmdEntryKind, CmdModifier, CmdTradingSettings,
@@ -257,10 +256,10 @@ impl Default for PaperTrading {
 /// A free function here rather than a method on `Leg`, because `Leg` moved to
 /// the account and a colour is a pixel. The account decides which leg a
 /// gesture is about; this decides what that leg looks like.
-fn leg_color(leg: Leg) -> egui::Color32 {
+fn leg_color(palette: &crate::theme::Palette, leg: Leg) -> egui::Color32 {
     match leg {
-        Leg::StopLoss => theme::SELL,
-        Leg::TakeProfit => theme::BUY,
+        Leg::StopLoss => palette.sell(),
+        Leg::TakeProfit => palette.buy(),
     }
 }
 
