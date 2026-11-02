@@ -119,6 +119,22 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
             "feed-history-cancel-result-v1.schema.json",
             schema::<crate::history::HistoryCancelResult>(),
         ),
+        (
+            "chart-tape-view-input-v1.schema.json",
+            schema::<crate::tape_view::TapeViewInput>(),
+        ),
+        (
+            "chart-tape-view-result-v1.schema.json",
+            schema::<crate::tape_view::TapeViewResult>(),
+        ),
+        (
+            "observer-session-paper-v1.schema.json",
+            schema::<crate::session::PaperSnapshot>(),
+        ),
+        (
+            "observer-session-replay-v1.schema.json",
+            schema::<crate::session::ReplaySnapshot>(),
+        ),
     ];
     documents.extend(crate::contract_roll::documents());
     documents.extend(crate::market_windows::documents());

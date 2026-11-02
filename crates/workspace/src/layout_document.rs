@@ -168,6 +168,23 @@ struct DrawingSet {
     items: Vec<SavedDrawing>,
 }
 
+impl SavedDrawing {
+    /// The same mark, whatever a pane did to it since. Its id is the holding
+    /// pane's and its bar offsets are the series it was last anchored on, so
+    /// neither says whether two entries are one object.
+    fn same_mark(&self, other: &Self) -> bool {
+        let plain = |drawing: &Self| {
+            let mut drawing = drawing.clone();
+            drawing.id = None;
+            for point in &mut drawing.points {
+                point.bar = 0.0;
+            }
+            drawing
+        };
+        plain(self) == plain(other)
+    }
+}
+
 impl DrawingSet {
     fn key(&self) -> DrawingKey {
         DrawingKey {
@@ -205,18 +222,11 @@ impl ChartLayout {
             .map(|set| set.items.as_slice())
     }
 
-    /// Replace the drawings kept for `key`. An empty set removes the entry:
-    /// a market the trader cleared is a market with no drawings, not one
-    /// with an empty list to carry around.
-    ///
-    /// Entries whose tool this build does not know are kept: the pane never
-    /// held them, so a set written back from the pane would drop them, and
-    /// a file from a newer build would lose a mark to an older one.
     /// Copy this layout's drawings on `from` onto `to`, pane for pane, for a
     /// contract roll. `from` keeps its own: a tab still on the old contract
     /// and a later return to it lose nothing. What `to` already holds stays,
-    /// and an object it already holds identically is not added twice, so
-    /// rolling again duplicates nothing. Returns how many objects were added.
+    /// and a mark it already holds ([`SavedDrawing::same_mark`]) is not added
+    /// twice, so rolling again duplicates nothing. Returns how many objects were added.
     pub fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
         let leaving: Vec<(usize, Vec<SavedDrawing>)> = self
             .drawings
@@ -245,7 +255,7 @@ impl ChartLayout {
             };
             let target = &mut self.drawings[index].items;
             for item in items {
-                if !target.contains(&item) {
+                if !target.iter().any(|held| held.same_mark(&item)) {
                     target.push(item);
                     carried += 1;
                 }
@@ -254,6 +264,13 @@ impl ChartLayout {
         carried
     }
 
+    /// Replace the drawings kept for `key`. An empty set removes the entry:
+    /// a market the trader cleared is a market with no drawings, not one
+    /// with an empty list to carry around.
+    ///
+    /// Entries whose tool this build does not know are kept: the pane never
+    /// held them, so a set written back from the pane would drop them, and
+    /// a file from a newer build would lose a mark to an older one.
     pub fn replace_drawings(
         &mut self,
         key: &DrawingKey,

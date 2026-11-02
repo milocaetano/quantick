@@ -10,6 +10,7 @@ struct Window {
     symbol: String,
     replay: bool,
     paper_open: bool,
+    gesture: bool,
     offered: Vec<String>,
     switches: usize,
     carries: Vec<(String, String, String)>,
@@ -21,6 +22,7 @@ impl Window {
             symbol: symbol.into(),
             replay: false,
             paper_open: false,
+            gesture: false,
             offered: vec!["AAAZ26".into(), "AAAG27".into(), "AAAJ27".into()],
             switches: 0,
             carries: Vec::new(),
@@ -64,12 +66,24 @@ impl FeedSourcePort for Window {
     }
 }
 impl ContractRollPort for Window {
-    fn paper_position_open(&self, _index: usize) -> bool {
+    fn next_contract(&self, _feed_id: &str, symbol: &str) -> Option<String> {
+        self.feed_choices()[0].contract_rolls.get(symbol).cloned()
+    }
+    fn feed_offers(&self, _feed_id: &str, symbol: &str) -> bool {
+        self.offered.iter().any(|offered| offered == symbol)
+    }
+    fn paper_not_flat(&self, _index: usize) -> bool {
         self.paper_open
     }
+    fn drawing_gesture_on(&self, _feed_id: &str, _from: &str, _to: &str) -> bool {
+        self.gesture
+    }
     fn carry_market_drawings(&mut self, feed_id: &str, from: &str, to: &str) -> usize {
-        self.carries.push((feed_id.into(), from.into(), to.into()));
-        3
+        // Like the real copy: the second time adds nothing.
+        let carry = (feed_id.to_owned(), from.to_owned(), to.to_owned());
+        let first = !self.carries.contains(&carry);
+        self.carries.push(carry);
+        if first { 3 } else { 0 }
     }
 }
 
@@ -113,8 +127,17 @@ fn a_retry_after_a_lost_answer_does_not_roll_a_contract_further() {
     let again = call(&mut window, "AAAZ26").unwrap();
     assert_eq!(again["symbol"], "AAAG27");
     assert_eq!(again["changed"], false);
+    assert_eq!(again["drawings_carried"], 0);
     assert_eq!(window.switches, 1, "the retry rolled again");
-    assert_eq!(window.carries.len(), 1);
+}
+
+#[test]
+fn a_tab_switched_to_the_target_by_hand_still_gets_its_drawings() {
+    let mut window = Window::on("AAAG27");
+    let result = call(&mut window, "AAAZ26").unwrap();
+    assert_eq!(result["changed"], false);
+    assert_eq!(result["drawings_carried"], 3);
+    assert_eq!(window.switches, 0);
 }
 
 #[test]
@@ -138,6 +161,9 @@ fn every_refusal_names_its_precondition_and_touches_nothing() {
     window.paper_open = true;
     refused(&mut window, "AAAZ26", PAPER_FLAT_PRECONDITION);
     let mut window = Window::on("AAAZ26");
+    window.gesture = true;
+    refused(&mut window, "AAAZ26", NO_GESTURE_PRECONDITION);
+    let mut window = Window::on("AAAZ26");
     window.replay = true;
     refused(&mut window, "AAAZ26", LIVE_SOURCE_PRECONDITION);
 }
@@ -154,5 +180,5 @@ fn the_toolbar_asks_the_same_rule_the_capability_answers_with() {
     );
     let mut open = Window::on("AAAZ26");
     open.paper_open = true;
-    assert_eq!(target(&open, 0), Some(Err(RollRefusal::PaperPositionOpen)));
+    assert_eq!(target(&open, 0), Some(Err(RollRefusal::PaperNotFlat)));
 }

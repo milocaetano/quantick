@@ -285,6 +285,17 @@ mod tests {
             layout.carry_market_drawings("other", "BTCUSDT", "BTCH27"),
             0
         );
+
+        // A visit re-anchors the copy and a pane may renumber it: still one mark.
+        let mut visited = level(90.0);
+        visited.points[0].bar += 17.0;
+        visited.id = Some(40);
+        layout.set_drawings(&next(0), vec![visited]);
+        assert_eq!(
+            layout.carry_market_drawings("binance", "BTCUSDT", "BTCH27"),
+            0,
+            "a mark the new contract already shows is not added twice"
+        );
     }
 
     #[test]

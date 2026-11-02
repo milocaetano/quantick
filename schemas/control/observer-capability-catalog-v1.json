@@ -8907,7 +8907,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Switches the tab to the contract feed.status.sources[].contract_rolls names after from_symbol, on the same feed. The workspace, pane layout and bar specs stay, and the tab's drawings are copied to the new contract in every layout; the old contract keeps its copy. Every pane timeline is rebuilt from the new contract and armed strategies are disarmed by name. Refuses while replay owns the tab, while a paper position is open, when no roll is configured, or when the feed does not offer the target. Requires the same cockpit.recover permission as feed.source.set. Repeating a roll whose target the tab already shows is a no-op. A roll journals `feed.contract.rolled`. Read active_symbol and feed_generation in feed.status.",
+      "description": "Switches the tab to the contract feed.status.sources[].contract_rolls names after from_symbol, on the same feed. The workspace, pane layout and bar specs stay, and the tab's drawings are copied to the new contract in every layout; the old contract keeps its copy. Every pane timeline is rebuilt from the new contract and armed strategies are disarmed by name. Refuses while replay owns the tab, while a paper position or working order is open, while a drawing gesture is in flight on either contract, when no roll is configured, or when the feed does not offer the target. Requires the same cockpit.recover permission as feed.source.set. Repeating a roll whose target the tab already shows does not move the feed and adds no drawing twice. A roll through this capability journals `feed.contract.rolled` under the caller's name; the toolbar's does not, like the toolbar's own source switch. Read active_symbol and feed_generation in feed.status.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit.recover",
@@ -8954,7 +8954,7 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "changed": {
-            "description": "False when the tab had already rolled: nothing happened on this call.",
+            "description": "False when the tab already showed the target: the feed did not move.\nThe drawings are still copied, so a tab switched there by hand gets them.",
             "type": "boolean"
           },
           "drawings_carried": {
@@ -9007,8 +9007,12 @@
           "id": "feed.contract.target_offered"
         },
         {
-          "description": "The tab holds no open paper position.",
+          "description": "The tab holds no paper position or working order.",
           "id": "feed.contract.paper_flat"
+        },
+        {
+          "description": "No drawing gesture is in flight on a pane of either contract.",
+          "id": "feed.contract.no_gesture"
         }
       ],
       "read_only": false,
@@ -9022,7 +9026,7 @@
         "timeline_rebuilt"
       ],
       "risk_reducing": false,
-      "stale_input_safety": "No expected revision is checked. A stale caller can only rebuild a chart that had already come back, or switch a tab to the pair it already shows, which changes nothing; otherwise it costs the history refetch, any open paper position — journaled, with its reason — and the tab's armed strategies. The call names the tab and the market it acted on and whether it really respawned or changed, and journals who did it (`feed.timeline.rebuilt` for a reload, `feed.source.changed` for a switch), so a caller that guessed wrong can see it did.",
+      "stale_input_safety": "from_symbol is checked against the tab before anything changes: a stale caller is refused, or answered changed:false when the tab already shows the target. A roll rebuilds the pane timelines and disarms strategies; it never touches a paper position, which refuses it.",
       "title": "Roll the tab to its next contract",
       "version": 1
     },

@@ -87,6 +87,19 @@ pub(crate) struct LayoutRead<'a> {
     pub(super) session: &'a quantick_workspace::session::LayoutSession,
 }
 impl<'a> LayoutRead<'a> {
+    /// A drawing gesture in flight on a pane holding `from`'s or `to`'s marks.
+    pub(crate) fn drawing_gesture_on(&self, feed: &str, from: &str, to: &str) -> bool {
+        self.tabs.iter_with_ids().any(|(_, tab)| {
+            tab.panes().any(|(pane, _)| {
+                let key = pane.layout.drawings_key.as_ref();
+                pane.drawings.in_gesture()
+                    && key.is_some_and(|key| {
+                        key.feed == feed && (key.symbol == from || key.symbol == to)
+                    })
+            })
+        })
+    }
+
     pub(crate) fn layouts(&self) -> &'a LayoutBook {
         self.session.book()
     }
@@ -785,10 +798,14 @@ impl LayoutAdapter<'_> {
     /// A contract roll's half of the drawings: what is on screen reaches the
     /// book, the book copies it to the next contract, and a pane already on
     /// that contract shows the result instead of writing its old set back.
+    /// The roll's rule refused a gesture on either contract before this.
     pub(crate) fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
         self.persist_changed_drawings();
         let session = self.store.session_mut();
         let carried = session.carry_market_drawings(feed, from, to);
+        if carried == 0 {
+            return 0;
+        }
         let holding: Vec<(u64, PaneSide)> = self
             .tabs
             .iter_with_ids()
@@ -797,16 +814,12 @@ impl LayoutAdapter<'_> {
                     .filter(|(pane, _)| {
                         let key = pane.layout.drawings_key.as_ref();
                         key.is_some_and(|key| key.feed == feed && key.symbol == to)
-                            && !pane.drawings.in_gesture()
                     })
                     .map(move |(_, side)| (tab_id, side))
             })
             .collect();
         for (tab, side) in holding {
-            if let Some(pane) = self.pane_mut_at(tab, side) {
-                pane.drawings.take_all();
-            }
-            self.bring_out_drawings(tab, side);
+            self.rebuild_keeping_selection(tab, side);
         }
         self.mark_layouts_dirty();
         carried
@@ -906,28 +919,33 @@ impl LayoutAdapter<'_> {
                 .filter(|target| *target != (tab, side))
                 .collect();
             for (twin_tab, twin_side) in twins {
-                let selected_id = self.pane_at(twin_tab, twin_side).and_then(|twin| {
-                    let index = twin.drawings.selected()?;
-                    Some(twin.drawings.items().get(index)?.id)
-                });
-                if let Some(twin) = self.pane_mut_at(twin_tab, twin_side) {
-                    twin.drawings.take_all();
-                }
-                self.bring_out_drawings(twin_tab, twin_side);
-                // By id, not by index: the set that came back may hold one
-                // more object than the one that went away, and the index the
-                // trader selected now points at a different mark.
-                if let Some(id) = selected_id
-                    && let Some(twin) = self.pane_mut_at(twin_tab, twin_side)
-                {
-                    let index = twin
-                        .drawings
-                        .items()
-                        .iter()
-                        .position(|drawing| drawing.id == id);
-                    twin.drawings.select(index);
-                }
+                self.rebuild_keeping_selection(twin_tab, twin_side);
             }
+        }
+    }
+
+    /// Bring a pane to what its layout now holds for its market.
+    fn rebuild_keeping_selection(&mut self, tab: u64, side: PaneSide) {
+        let selected_id = self.pane_at(tab, side).and_then(|pane| {
+            let index = pane.drawings.selected()?;
+            Some(pane.drawings.items().get(index)?.id)
+        });
+        if let Some(pane) = self.pane_mut_at(tab, side) {
+            pane.drawings.take_all();
+        }
+        self.bring_out_drawings(tab, side);
+        // By id, not by index: the set that came back may hold one more
+        // object than the one that went away, and the index the trader
+        // selected now points at a different mark.
+        if let Some(id) = selected_id
+            && let Some(pane) = self.pane_mut_at(tab, side)
+        {
+            let index = pane
+                .drawings
+                .items()
+                .iter()
+                .position(|drawing| drawing.id == id);
+            pane.drawings.select(index);
         }
     }
 }

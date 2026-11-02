@@ -51,9 +51,20 @@ impl FeedSourcePort for dyn ControlPort {
 }
 
 impl quantick_control_handlers::contract_roll::ContractRollPort for dyn ControlPort {
-    fn paper_position_open(&self, index: usize) -> bool {
+    fn next_contract(&self, feed_id: &str, symbol: &str) -> Option<String> {
+        let feed = self.tab_reads().config().feed(feed_id)?;
+        feed.next_contract(symbol).map(str::to_owned)
+    }
+    fn feed_offers(&self, feed_id: &str, symbol: &str) -> bool {
+        let feed = self.tab_reads().config().feed(feed_id);
+        feed.is_some_and(|feed| feed.symbols.iter().any(|offered| offered == symbol))
+    }
+    fn paper_not_flat(&self, index: usize) -> bool {
         let tab = self.tab_reads().tab_at(index);
         tab.is_some_and(|tab| !tab.paper.is_flat())
+    }
+    fn drawing_gesture_on(&self, feed_id: &str, from: &str, to: &str) -> bool {
+        self.layout_state().drawing_gesture_on(feed_id, from, to)
     }
     fn carry_market_drawings(&mut self, feed_id: &str, from: &str, to: &str) -> usize {
         self.layout_adapter()

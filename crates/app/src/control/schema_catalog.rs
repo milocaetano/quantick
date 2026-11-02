@@ -2,7 +2,6 @@
 
 use quantick_control::annotation::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult};
 use quantick_control::schema::generated_schema;
-use quantick_control_schema::tape_view::{TapeViewInput, TapeViewResult};
 use serde_json::{Value, json};
 
 use quantick_control_handlers::attention::{MarkInput, MarkResult};
@@ -11,7 +10,6 @@ use quantick_control_schema::analysis::{DrawingsSnapshot, IndicatorsSnapshot};
 use quantick_control_schema::orderflow::{
     BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot,
 };
-use quantick_control_schema::session::{PaperSnapshot, ReplaySnapshot};
 
 use super::{
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
@@ -64,12 +62,8 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<TapeSnapshot>("observer-orderflow-tape-v1.schema.json"),
         document::<FootprintSnapshot>("observer-orderflow-footprint-v1.schema.json"),
         document::<BubblesSnapshot>("observer-orderflow-bubbles-v1.schema.json"),
-        document::<TapeViewInput>("chart-tape-view-input-v1.schema.json"),
-        document::<TapeViewResult>("chart-tape-view-result-v1.schema.json"),
         document::<HeatmapSnapshot>("observer-orderflow-heatmap-v1.schema.json"),
         document::<L2Snapshot>("observer-orderflow-l2-v1.schema.json"),
-        document::<ReplaySnapshot>("observer-session-replay-v1.schema.json"),
-        document::<PaperSnapshot>("observer-session-paper-v1.schema.json"),
         document::<SceneSnapshot>("observer-scene-controls-v1.schema.json"),
         document::<ChartWindowQuery>("observer-chart-window-query-v1.schema.json"),
         document::<ChartWindowPage>("observer-chart-window-page-v1.schema.json"),

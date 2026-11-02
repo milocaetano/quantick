@@ -10,11 +10,17 @@ impl FeedConfig {
         self.contract_rolls.get(symbol).map(String::as_str)
     }
 
-    /// Typos only. A target the feed does not offer is not one: the symbols
-    /// sidecar can take a symbol away at any time, so that is answered when
-    /// the roll is asked for.
+    /// A key that names no symbol would have silence as its only symptom. A
+    /// target the feed does not offer is not checked here: the symbols sidecar
+    /// can take a symbol away at any time, so that is answered at the roll.
     pub(super) fn validate_contract_rolls(&self) -> Result<(), String> {
         for (symbol, next) in &self.contract_rolls {
+            if !self.symbols.contains(symbol) {
+                return Err(format!(
+                    "feed '{}' rolls symbol '{symbol}', which it does not offer",
+                    self.id
+                ));
+            }
             if next.trim().is_empty() {
                 return Err(format!(
                     "feed '{}' rolls symbol '{symbol}' to an empty contract",
@@ -74,5 +80,7 @@ symbols = ["AAAZ26", "AAAG27"]
         assert!(empty.contains("empty contract"), "{empty}");
         let itself = config(r#"contract_rolls = { "AAAZ26" = "AAAZ26" }"#).unwrap_err();
         assert!(itself.contains("to itself"), "{itself}");
+        let unknown = config(r#"contract_rolls = { "AAAZ62" = "AAAG27" }"#).unwrap_err();
+        assert!(unknown.contains("does not offer"), "{unknown}");
     }
 }
