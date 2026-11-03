@@ -8,6 +8,16 @@ use super::{ExclusionClass, Mapping, PENDING_SURFACE, Source, UiBehaviour};
 /// Every row this family owns.
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "appearance.configuration",
+        title: "Apply a complete appearance configuration",
+        reach: "versioned TOML through the local control plane; startup selected appearance store",
+        keys: &[(
+            Source::Authored,
+            "configuration-driven appearance has no theme picker",
+        )],
+        mapping: capability!("appearance.apply"),
+    },
+    UiBehaviour {
         id: "indicator.picker.open",
         title: "Open and search the indicator library",
         reach: "the ƒx glyph on each pane header, searchable centered modal",

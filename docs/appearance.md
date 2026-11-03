@@ -118,12 +118,13 @@ immutable fallback through the same resolver used by authored documents.
 At startup the host reads `QUANTICK_THEME=<toml>` when set, otherwise
 `appearance.toml` from the normal cockpit directory. The explicit path also
 isolates appearance state during harness runs and is excluded from cockpit rescue.
-The override selects the appearance store path; this checkpoint only reads it,
-without automatic writes or file polling. The appearance store is excluded from
-workspace bundles. An eventual explicit persistent apply must document whether
-it writes this selected path before calling the headless save operation. Use a
-scratch copy of a theme for harness runs that exercise persistence, rather than
-pointing at an authored or tracked source file.
+The override selects the appearance store path for both startup reads and an
+explicit `appearance.apply` with `persist: true`. Otherwise the destination is
+`appearance.toml` in the normal cockpit directory. Remote callers never choose
+a path. Session applies write nothing; no automatic writes or external file
+polling occur. Appearance remains excluded from workspace bundles. A durable
+apply intentionally replaces the selected file, so use a scratch theme copy for
+harness runs that exercise persistence.
 The application owns its active state, and each egui context caches converted
 colors and typography by revision. Repeated frames reuse that cache. Typography
 changes update text roles without replacing font definitions, so Phosphor icons
@@ -131,7 +132,7 @@ and the bundled fallback chains remain installed.
 
 The [migration inventory](appearance-inventory.md) records completed boundaries
 and remaining candidate values. Runtime migration is in progress: enlarged-font layout,
-and live inspect/apply still require integration before this feature is complete.
+and the final ambient drawing/layout audit still require integration before this feature is complete.
 
 ## Authoring example
 
@@ -218,3 +219,67 @@ its row reservation to the measured text height.
 The Bookmap, High Contrast and Color Blind heat palettes still have their existing
 separate ownership. Configuring their ramps/default-source provenance and saved
 bubble presets is outstanding; the new FLOW keys do not redefine those choices.
+
+
+## Live inspection and atomic application
+
+Discover `appearance.apply` version 1 and the `appearance.state` snapshot scope
+with `control.describe`. Inspection uses the existing `observe` and
+`observe.workspace` permissions. Applying requires the cockpit profile and
+`cockpit` and `cockpit.layout` permissions, including session-only changes. It never enters replay
+control traces.
+
+These are complete capability inputs (the MCP adapter supplies its normal
+request envelope). Read first with `snapshot.read`, version 1:
+
+```json
+{"scopes":["appearance.state"]}
+```
+
+The scope value contains `revision`, `origin`, `source`, `durable`,
+`writes_enabled` and `load_failed`. `source` is the active original TOML, or the
+complete bundled Dark TOML at fallback. `origin` is `bundled_dark`, `session`, or
+`selected_store`; no selected filesystem path is disclosed. `durable` means the
+last successful load/save established this source, not that an external file
+watcher has confirmed it still exists. `load_failed` records startup fallback
+from an invalid/unreadable file and clears on a successful explicit save.
+
+Apply a session candidate with `appearance.apply`, version 1:
+
+```json
+{"source":"version = 1\nname = 'Ocean'\n[colors]\naccent = '#55BBCC'","persist":false}
+```
+
+Apply and save that same source to the selected destination:
+
+```json
+{"source":"version = 1\nname = 'Ocean'\n[colors]\naccent = '#55BBCC'","persist":true}
+```
+
+Both return `{ "changed": boolean, "state": <appearance.state value> }`.
+`changed` and `revision` track resolved theme changes; formatting-only changes
+can update source or persistence status without rebuilding palette caches.
+A save after a session apply still writes, even when the source text matches.
+A fresh explicit save also repairs a removed destination. The save uses a
+distinct temporary sibling even for a selected `.tmp` filename, refuses an
+occupied staging file, and publishes only after writing and renaming succeed.
+The session's saves-off gate refuses the entire persistent apply.
+
+The JSON schema limits source to 65,536 Unicode characters. Load and runtime
+apply additionally enforce 65,536 UTF-8 bytes before parsing, so multibyte input
+can hit the byte limit sooner. A whole candidate must pass version, color,
+opacity and typography validation. `control.invalid_request` with
+`details.code = "invalid_theme"` names `details.field`; persistence failure uses
+`details.code = "persistence_failed"`, `details.field = "persist"` and a bounded
+error kind without local paths. Refusal preserves active source, revision,
+fonts, palette, chart/default owners and the prior destination file.
+
+Supply the normal request-envelope idempotency key for retries on the same
+connection. A successful keyed retry returns the original result and performs
+no second mutation or disk write. After reconnecting or expiration of the key's
+retention window, inspect `appearance.state` to reconcile; a new unkeyed durable
+apply intentionally attempts the write again. Publication synchronizes the
+context palette, inherited chart inputs and new-drawing defaults before another
+command or paint can observe the candidate. Order-flow rendering reads that
+same cached appearance snapshot; warm frames never parse TOML or reinstall font
+definitions.

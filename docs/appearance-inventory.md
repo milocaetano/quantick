@@ -217,3 +217,21 @@ store that does not persist colors. Native bubble overrides are optional RGB in
 `BubbleStyle`; their `Some` values are explicit. HeatmapTheme, default preset
 source and saved asset/preset capture still need their coordinated owner seam.
 No palette/source inference from equal RGB has been introduced.
+
+
+## Live configuration boundary
+
+`appearance.state` and `appearance.apply` now expose bounded inspection and
+atomic session/durable application. Stores owns the selected destination,
+startup fallback, byte limits, source/durability state and write-before-publish
+policy. The handler names field-specific validation errors; the existing
+cockpit/layout permission and idempotency gates authorize and deduplicate writes.
+The adapter publishes chart inputs, drawing defaults and the retained context
+palette before returning to the next command or paint. Font definitions remain
+installed, text roles update only on typography changes, and unchanged frames
+retain the cached palette. See [the live examples](appearance.md#live-inspection-and-atomic-application).
+
+This boundary completes the discoverable live apply gap listed in earlier
+checkpoint sections. Remaining acceptance includes the enlarged-font and toolkit
+layout audit, ambient drawing decoration, and independent Dark/Light visual,
+glyph and performance evidence.

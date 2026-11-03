@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 82 |
+| Reachable by capability | 83 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 3 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **141** |
+| **Total** | **142** |
 
-85 of the 141 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 56 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+85 of the 142 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 57 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -108,6 +108,7 @@ The three exclusion classes are closed:
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
 | `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `appearance.configuration` | Apply a complete appearance configuration | versioned TOML through the local control plane; startup selected appearance store | `appearance.apply` | — |
 | `indicator.picker.open` | Open and search the indicator library | the ƒx glyph on each pane header, searchable centered modal | `indicator.picker.set` | — |
 | `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Tools menu, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
@@ -217,7 +218,7 @@ matrix fails the build.
 | `hotkey` | 19 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 56 |
+| `authored` | 57 |
 
 ## Appendix: rows no registry stands behind
 
@@ -253,6 +254,7 @@ declares nothing here is a guard failure.
 | `orderflow.bubbles.size.set` | independent sample bubbles appear while their bubble display is active |
 | `orderflow.bubbles.tick.set` | chart-only preset picker under the whole-look presets |
 | `orderflow.bubbles.preset.apply` | whole-look preset selection permits same-name reapplication |
+| `appearance.configuration` | configuration-driven appearance has no theme picker |
 | `indicator.picker.open` | the glyph is a pane header widget, not an entry in the toolbar's action enum |
 | `appearance.candle_presets` | the Candles tab's preset row, save field and Reset are widgets, not registry entries |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |

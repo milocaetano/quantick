@@ -366,7 +366,7 @@ fn the_frame_publishes_chart_and_new_drawing_defaults_together() {
     app.runtime.style.candles.wick_width = 3.0;
     app.runtime
         .appearance
-        .apply(quantick_appearance::LIGHT)
+        .apply_candidate(quantick_appearance::LIGHT, false)
         .unwrap();
     run_frame(&mut app, &ctx);
     let theme = app.runtime.appearance.resolved();

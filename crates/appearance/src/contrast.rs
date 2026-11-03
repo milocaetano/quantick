@@ -59,3 +59,15 @@ pub fn ink_on(
         second
     }
 }
+
+impl crate::ResolvedTheme {
+    /// Theme-owned foreground selection for an authored fill.
+    pub fn ink_on(&self, fill: PremultipliedRgba) -> PremultipliedRgba {
+        ink_on(
+            fill,
+            self.color(crate::Token::Canvas),
+            self.color(crate::Token::ChipInk),
+            self.color(crate::Token::TextPrimary),
+        )
+    }
+}

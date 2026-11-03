@@ -93,7 +93,6 @@ impl QuantickApp {
     /// what was painted — the only honest way to assert that a chart is on
     /// screen rather than a blank rectangle.
     pub(super) fn draw_frame(&mut self, ctx: &egui::Context, now: Instant) {
-        sync_appearance(ctx, &mut self.runtime, &mut self.drawings.presets);
         self.draw_frame_with_tail(
             ctx,
             now,
@@ -124,6 +123,8 @@ impl QuantickApp {
         stages: impl IntoIterator<Item = FrameStage>,
         tail: T,
     ) {
+        self.presentation.context = Some(ctx.clone());
+        sync_appearance(Some(ctx), &mut self.runtime, &mut self.drawings.presets);
         let mut scratch = FrameScratch::default();
         let mut tail = Some(tail);
         for stage in stages {
@@ -719,12 +720,14 @@ impl QuantickApp {
 }
 
 /// Publish already-validated per-owner defaults before any frame operation creates or paints objects.
-fn sync_appearance(
-    ctx: &egui::Context,
+pub(super) fn sync_appearance(
+    ctx: Option<&egui::Context>,
     runtime: &mut super::workspace_runtime::WorkspaceRuntime,
     presets: &mut quantick_drawings::presets::PresetStore,
 ) {
-    crate::theme::sync(ctx, &runtime.appearance);
+    if let Some(ctx) = ctx {
+        crate::theme::sync(ctx, &runtime.appearance);
+    }
     presets.sync_theme(&runtime.appearance);
     if runtime
         .chart_theme

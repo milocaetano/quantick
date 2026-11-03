@@ -182,6 +182,7 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
     documents.extend(
         quantick_control_schema::bubble_preset::documents()
             .into_iter()
+            .chain(quantick_control_schema::appearance::documents())
             .map(|(file_name, schema)| SchemaDocument { file_name, schema }),
     );
     documents

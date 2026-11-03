@@ -29,39 +29,13 @@ pub const fn side_color(side: quantick_engine::Side) -> Color32 {
 
 impl super::Palette {
     pub fn side_color(&self, side: quantick_engine::Side) -> Color32 {
-        self.color(match side {
-            quantick_engine::Side::Buy => quantick_appearance::Token::Buy,
-            quantick_engine::Side::Sell => quantick_appearance::Token::Sell,
-        })
+        self.side_color_for(side == quantick_engine::Side::Buy)
     }
     pub fn ink(&self, side: quantick_engine::Side) -> Color32 {
-        self.color(match side {
-            quantick_engine::Side::Buy => quantick_appearance::Token::BuyInk,
-            quantick_engine::Side::Sell => quantick_appearance::Token::SellInk,
-        })
+        self.side_ink_for(side == quantick_engine::Side::Buy)
     }
     pub fn ink_on(&self, fill: Color32) -> Color32 {
-        use quantick_appearance::Token;
-        rendered(contrast::ink_on(
-            headless(fill),
-            headless(self.color(Token::Canvas)),
-            headless(self.color(Token::ChipInk)),
-            headless(self.color(Token::TextPrimary)),
-        ))
-    }
-    pub fn drawing_swatches(&self) -> [Color32; 8] {
-        use quantick_appearance::Token;
-        [
-            Token::Accent,
-            Token::TextPrimary,
-            Token::TextMuted,
-            Token::Buy,
-            Token::Sell,
-            Token::Poc,
-            Token::DrawViolet,
-            Token::DrawCyan,
-        ]
-        .map(|token| self.color(token))
+        rendered(self.resolved.ink_on(headless(fill)))
     }
 }
 

@@ -11,16 +11,18 @@ pub fn apply(ctx: &egui::Context) {
     super::sync(ctx, &quantick_appearance::Appearance::default());
 }
 
-pub(super) fn apply_palette(ctx: &egui::Context, palette: &Palette) {
+pub(super) fn apply_palette(ctx: &egui::Context, palette: &Palette, typography_changed: bool) {
     let mut style = (*ctx.style()).clone();
-    for (style_name, role) in [
-        (egui::TextStyle::Heading, FontRole::Heading),
-        (egui::TextStyle::Body, FontRole::Body),
-        (egui::TextStyle::Button, FontRole::Button),
-        (egui::TextStyle::Monospace, FontRole::Monospace),
-        (egui::TextStyle::Small, FontRole::Small),
-    ] {
-        style.text_styles.insert(style_name, palette.font(role));
+    if typography_changed {
+        for (style_name, role) in [
+            (egui::TextStyle::Heading, FontRole::Heading),
+            (egui::TextStyle::Body, FontRole::Body),
+            (egui::TextStyle::Button, FontRole::Button),
+            (egui::TextStyle::Monospace, FontRole::Monospace),
+            (egui::TextStyle::Small, FontRole::Small),
+        ] {
+            style.text_styles.insert(style_name, palette.font(role));
+        }
     }
     // Tooltips wait a beat (350 ms) so a sweep across the tool rail does not
     // flash a trail of labels.

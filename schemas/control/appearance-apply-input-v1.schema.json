@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "persist": {
+      "default": false,
+      "description": "False is session-only. True writes the selected store before publication.",
+      "type": "boolean"
+    },
+    "source": {
+      "description": "Versioned TOML; schema maxLength is 65536 Unicode characters.\nRuntime additionally caps UTF-8 bytes at 65536 before parsing.",
+      "maxLength": 65536,
+      "type": "string"
+    }
+  },
+  "required": [
+    "source"
+  ],
+  "title": "ApplyInput",
+  "type": "object"
+}

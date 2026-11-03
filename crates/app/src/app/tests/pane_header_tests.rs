@@ -2151,6 +2151,8 @@ fn the_tape_key_stands_below_the_sides_plate() {
     for _ in 0..40 {
         run_frame(&mut app, &ctx);
     }
+    // The worker publication, not host scheduling, decides whether the key exists.
+    settled_frame(&mut app, &ctx);
     let flow = &app.active_tab().flow_pane;
     let area = flow.frame.area.expect("flow chart");
     let key = flow.frame.flow_legend.expect("the tape's key");

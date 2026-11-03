@@ -1,8 +1,8 @@
 //! Per-egui-context conversion cache. Retain one Arc at each render boundary.
 use eframe::egui;
-use quantick_appearance::{
-    Appearance, FontFamily, FontRole, PremultipliedRgba, ResolvedTheme, Token,
-};
+#[cfg(test)]
+use quantick_appearance::Token;
+use quantick_appearance::{Appearance, FontFamily, FontRole, PremultipliedRgba, ResolvedTheme};
 use std::sync::Arc;
 
 /// Install bundled definitions once; either configurable text family retains icons.
@@ -50,6 +50,7 @@ impl Palette {
             heat_ink: resolved.footprint_heat.ink.map(rendered),
         }
     }
+    #[cfg(test)]
     pub fn color(&self, token: Token) -> egui::Color32 {
         *self.colors.get(token)
     }
@@ -126,7 +127,11 @@ pub fn sync(ctx: &egui::Context, state: &Appearance) {
         return;
     }
     let palette = Arc::new(Palette::new(state.resolved()));
-    super::chrome::apply_palette(ctx, &palette);
+    let typography_changed = installed.as_ref().is_none_or(|prior| {
+        prior.revision == u64::MAX
+            || prior.palette.resolved.typography != palette.resolved.typography
+    });
+    super::chrome::apply_palette(ctx, &palette, typography_changed);
     ctx.data_mut(|data| {
         data.insert_temp(
             key(),
@@ -141,6 +146,24 @@ pub fn sync(ctx: &egui::Context, state: &Appearance) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn first_sync_installs_text_roles_even_after_an_early_palette_read() {
+        let ctx = egui::Context::default();
+        let early = get(&ctx);
+        ctx.style_mut(|style| {
+            style
+                .text_styles
+                .get_mut(&egui::TextStyle::Body)
+                .unwrap()
+                .size = 77.0;
+        });
+        sync(&ctx, &Appearance::default());
+        assert_eq!(
+            ctx.style().text_styles[&egui::TextStyle::Body],
+            early.font(FontRole::Body)
+        );
+    }
+
     #[test]
     fn configured_painter_fonts_and_axis_reservations_grow_together() {
         let ctx = egui::Context::default();

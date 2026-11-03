@@ -49,7 +49,8 @@ pub(crate) type ControlWindow = dyn ControlPort;
 /// Every family together — what the gateway itself needs to dispatch any
 /// capability. Handlers never take this; they name their families.
 pub(crate) trait ControlPort:
-    TabsPort
+    quantick_control_handlers::appearance::AppearancePort
+    + TabsPort
     + TabsMutPort
     + ChromePort
     + HealthPort
@@ -66,7 +67,8 @@ pub(crate) trait ControlPort:
 }
 
 impl<T> ControlPort for T where
-    T: TabsPort
+    T: quantick_control_handlers::appearance::AppearancePort
+        + TabsPort
         + TabsMutPort
         + ChromePort
         + HealthPort
@@ -966,3 +968,19 @@ crate::hooks::declare_hooks![
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+impl quantick_control_handlers::appearance::AppearancePort for QuantickApp {
+    fn appearance_store(&self) -> &quantick_stores::appearance::AppearanceStore {
+        &self.runtime.appearance
+    }
+    fn appearance_store_mut(&mut self) -> &mut quantick_stores::appearance::AppearanceStore {
+        &mut self.runtime.appearance
+    }
+    fn publish_appearance(&mut self) {
+        super::frame::sync_appearance(
+            self.presentation.context.as_ref(),
+            &mut self.runtime,
+            &mut self.drawings.presets,
+        );
+    }
+}

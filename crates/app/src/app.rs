@@ -78,8 +78,6 @@ use crate::drawings;
 use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::{Harness, ScriptedMenu};
-use crate::indicators::preset_file;
-use crate::indicators::state_file;
 use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
@@ -90,7 +88,6 @@ use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 use crate::ui_state;
 use crate::window_scale;
-use crate::workspace_store::LayoutStore;
 use quantick_feed::FeedHandle;
 
 #[cfg(any(feature = "scenario-harness", test))]
@@ -478,10 +475,6 @@ impl QuantickApp {
             &state_path,
         );
         let mut pane_ids = PaneIdAllocator::new();
-        let loaded_layouts = layout_wiring::LayoutAdapter::load_layouts(
-            &crate::layouts::default_path(),
-            &state_file::default_path(),
-        );
         let mut tab = Tab::new(
             pane_ids.alloc(),
             feed_id.into(),
@@ -535,26 +528,9 @@ impl QuantickApp {
                 ));
         }
         crate::paper_state::restore_money(tab.paper.account_mut(), &paper_state);
-        // Resolved once: under test the settings path is a fresh scratch
-        // file per call, and the load must read the same file the saves
-        // will write.
-        let symbols_path = symbols_file::default_path();
-        let footprint_settings_path = crate::footprint_config::settings_path();
-        let indicator_presets_path = preset_file::default_path();
-        let added_symbols = symbols_file::load(&symbols_path);
-        let mut runtime = workspace_runtime::WorkspaceRuntime::new(
-            tab,
-            symbols_path,
-            footprint_settings_path,
-            indicator_presets_path,
-            LayoutStore::new(
-                loaded_layouts.0,
-                crate::layouts::default_path(),
-                loaded_layouts.1,
-            ),
-            trades_dir,
-            reach_span_minutes,
-        );
+        let mut runtime =
+            workspace_runtime::WorkspaceRuntime::new(tab, trades_dir, reach_span_minutes);
+        let added_symbols = symbols_file::load(runtime.workspace.symbols_path());
         let presentation = workspace_runtime::WindowPresentation::new(&mut runtime);
         let mut app = Self {
             runtime,

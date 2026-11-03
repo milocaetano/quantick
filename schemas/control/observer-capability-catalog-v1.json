@@ -4056,6 +4056,120 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Validate and atomically apply a bounded version 1 TOML theme. Session-only by default; persist=true writes the host-selected appearance store before publication and is refused when saves are disabled. Input never selects a path. Invalid candidates or write failures preserve live state. Read appearance.state before/after; keyed retries replay the original answer without another write within the connection's idempotency window. External file changes are not polled.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "appearance.apply",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "persist": {
+            "default": false,
+            "description": "False is session-only. True writes the selected store before publication.",
+            "type": "boolean"
+          },
+          "source": {
+            "description": "Versioned TOML; schema maxLength is 65536 Unicode characters.\nRuntime additionally caps UTF-8 bytes at 65536 before parsing.",
+            "maxLength": 65536,
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "ApplyInput",
+        "type": "object"
+      },
+      "module": "appearance",
+      "output_schema": {
+        "$defs": {
+          "AppearanceSnapshot": {
+            "properties": {
+              "durable": {
+                "description": "Last successful load/save. Files are not polled for external edits.",
+                "type": "boolean"
+              },
+              "load_failed": {
+                "description": "Startup fell back to Dark after an invalid/unreadable selected file.",
+                "type": "boolean"
+              },
+              "origin": {
+                "description": "bundled_dark, session, or selected_store; never a local path.",
+                "type": "string"
+              },
+              "revision": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Paint revision: semantic equality does not invalidate rendering caches."
+              },
+              "source": {
+                "description": "The active candidate's original TOML, including omitted Dark fallbacks.",
+                "maxLength": 65536,
+                "type": "string"
+              },
+              "writes_enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "revision",
+              "origin",
+              "source",
+              "durable",
+              "writes_enabled",
+              "load_failed"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "Semantic palette/typography change; source/durability may change without it.",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/$defs/AppearanceSnapshot"
+          }
+        },
+        "required": [
+          "state",
+          "changed"
+        ],
+        "title": "ApplyResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The whole candidate replaces the prior theme. No expected revision is checked; inspect appearance.state before applying. Existing authored chart, drawing and preset overrides are preserved.",
+      "title": "Apply appearance configuration",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Appends a journal event carrying the fully resolved cursor target — pane, bar, price, flow cell, drawing — plus an optional note, attributed to its actor. The primitive that turns \"look at this\" into a referent a client can quote back.",
       "destructive": false,
       "dry_run_supported": false,
@@ -17882,6 +17996,11 @@
       "title": "Annotate"
     },
     {
+      "description": "Active configuration and persistence status.",
+      "id": "appearance",
+      "title": "Appearance"
+    },
+    {
       "description": "Human marks: what the user pointed at, as a durable referent.",
       "id": "attention",
       "title": "Attention"
@@ -18040,7 +18159,7 @@
     },
     {
       "default_grant": "prompt",
-      "description": "Change which charts are on screen, where they sit and how wide they are. Never places or removes an object, and never touches a position.",
+      "description": "Change which charts are on screen, where they sit, how wide they are, and their appearance configuration. Never places or removes an object, and never touches a position.",
       "id": "cockpit",
       "label": "Rearrange the window",
       "profile_ceilings": [
@@ -18060,7 +18179,7 @@
     },
     {
       "default_grant": "prompt",
-      "description": "Apply a layout preset, move a chart within the stack, resize a column, collapse it to its rail or expand it again, and move focus between charts.",
+      "description": "Apply a layout preset, move a chart within the stack, resize a column, collapse it to its rail or expand it again, move focus between charts, and apply appearance configuration.",
       "id": "cockpit.layout",
       "label": "Change the chart layout",
       "profile_ceilings": [
@@ -18240,7 +18359,7 @@
     },
     {
       "default_grant": "granted",
-      "description": "Open tabs, layout, and focus",
+      "description": "Open tabs, layout, focus, and appearance configuration",
       "id": "observe.workspace",
       "label": "observe workspace",
       "profile_ceilings": [
@@ -18858,6 +18977,62 @@
       },
       "schema_version": 1,
       "title": "Indicators"
+    },
+    {
+      "description": "Bounded active TOML, paint revision, source and last-known persistence status; no filesystem paths.",
+      "id": "appearance.state",
+      "module_id": "appearance",
+      "required_permissions": [
+        "observe",
+        "observe.workspace"
+      ],
+      "schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "durable": {
+            "description": "Last successful load/save. Files are not polled for external edits.",
+            "type": "boolean"
+          },
+          "load_failed": {
+            "description": "Startup fell back to Dark after an invalid/unreadable selected file.",
+            "type": "boolean"
+          },
+          "origin": {
+            "description": "bundled_dark, session, or selected_store; never a local path.",
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/$defs/WireU64",
+            "description": "Paint revision: semantic equality does not invalidate rendering caches."
+          },
+          "source": {
+            "description": "The active candidate's original TOML, including omitted Dark fallbacks.",
+            "maxLength": 65536,
+            "type": "string"
+          },
+          "writes_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revision",
+          "origin",
+          "source",
+          "durable",
+          "writes_enabled",
+          "load_failed"
+        ],
+        "title": "AppearanceSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Appearance state"
     },
     {
       "description": "Reports every pane's bar rule, revisions, viewport, price range, and coverage.",

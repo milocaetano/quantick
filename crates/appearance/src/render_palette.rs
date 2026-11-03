@@ -12,6 +12,26 @@ impl<T> RenderPalette<T> {
     }
 }
 impl<T: Copy> RenderPalette<T> {
+    pub fn side_color_for(&self, buy: bool) -> T {
+        *self.get(if buy { Token::Buy } else { Token::Sell })
+    }
+    pub fn side_ink_for(&self, buy: bool) -> T {
+        *self.get(if buy { Token::BuyInk } else { Token::SellInk })
+    }
+
+    pub fn drawing_swatches(&self) -> [T; 8] {
+        [
+            Token::Accent,
+            Token::TextPrimary,
+            Token::TextMuted,
+            Token::Buy,
+            Token::Sell,
+            Token::Poc,
+            Token::DrawViolet,
+            Token::DrawCyan,
+        ]
+        .map(|token| *self.get(token))
+    }
     pub fn flow_buy(&self) -> T {
         *self.get(Token::FlowBuy)
     }

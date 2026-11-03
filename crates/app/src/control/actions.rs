@@ -44,6 +44,7 @@ pub(crate) use quantick_control_host::authority::{
 pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     let mut registry = ActionRegistry::new();
     quantick_control_handlers::attention::register(&mut registry)?;
+    quantick_control_handlers::appearance::register_actions(&mut registry)?;
     quantick_control_handlers::annotate::register(&mut registry)?;
     quantick_control_handlers::notify::register(&mut registry)?;
     super::layout::register(&mut registry)?;

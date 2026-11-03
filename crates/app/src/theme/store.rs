@@ -9,9 +9,6 @@ pub fn path() -> PathBuf {
     }
     crate::store_home::resolve(quantick_stores::appearance::THEME_FILE)
 }
-pub fn load() -> quantick_appearance::Appearance {
-    quantick_stores::appearance::load(&path()).unwrap_or_else(|error| {
-        tracing::warn!(%error, "appearance could not be loaded; retaining Dark");
-        quantick_appearance::Appearance::default()
-    })
+pub fn load() -> quantick_stores::appearance::AppearanceStore {
+    quantick_stores::appearance::AppearanceStore::open(path())
 }

@@ -12,7 +12,7 @@ use quantick_workspace::lifetime::{
 
 pub(super) struct WorkspaceRuntime {
     pub(super) chart_theme: quantick_chart::style::ChartThemeSync,
-    pub(super) appearance: quantick_appearance::Appearance,
+    pub(super) appearance: quantick_stores::appearance::AppearanceStore,
     pub(super) lifetime: WorkspaceLifetime,
     pub(super) tabs: super::ArrangementHost,
     pub(super) indicators: super::indicator_manager::IndicatorState,
@@ -27,13 +27,22 @@ pub(super) struct WorkspaceRuntime {
 impl WorkspaceRuntime {
     pub(super) fn new(
         tab: crate::tab::Tab,
-        symbols_path: std::path::PathBuf,
-        footprint_settings_path: std::path::PathBuf,
-        indicator_presets_path: std::path::PathBuf,
-        layouts: crate::workspace_store::LayoutStore,
         trades_dir: std::path::PathBuf,
         reach_span_minutes: u32,
     ) -> Self {
+        // Resolve each startup path once: the owned store writes where it loaded.
+        let symbols_path = crate::symbols_file::default_path();
+        let footprint_settings_path = crate::footprint_config::settings_path();
+        let indicator_presets_path = crate::indicators::preset_file::default_path();
+        let loaded = super::layout_wiring::LayoutAdapter::load_layouts(
+            &crate::layouts::default_path(),
+            &crate::indicators::state_file::default_path(),
+        );
+        let layouts = crate::workspace_store::LayoutStore::new(
+            loaded.0,
+            crate::layouts::default_path(),
+            loaded.1,
+        );
         Self {
             chart_theme: Default::default(),
             appearance: crate::theme::store::load(),
@@ -146,6 +155,7 @@ impl WorkspaceRuntime {
 
 /// Native rendering identity stays outside the process-owned workspace payload.
 pub(super) struct WindowPresentation {
+    pub(super) context: Option<egui::Context>,
     pub(super) binding: WorkspaceView,
 }
 impl WindowPresentation {
@@ -154,7 +164,10 @@ impl WindowPresentation {
             .lifetime
             .bind_view(ViewId(0))
             .expect("initial workspace view");
-        let mut presentation = Self { binding };
+        let mut presentation = Self {
+            binding,
+            context: None,
+        };
         presentation
             .rebind(owner, egui::ViewportId::ROOT)
             .expect("initial native binding");
