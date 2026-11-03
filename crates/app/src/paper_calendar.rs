@@ -22,11 +22,8 @@ use crate::paper_chrome::{fmt_signed_points, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
-// The civil-date law itself moved into `quantick-civil`, where the
-// report cuts on it and the journal names its files by it. Re-exported here so
-// the ledger, the report window and the harness hooks keep asking this module.
-#[cfg(feature = "scenario-harness")]
-pub(crate) use quantick_civil::parse_iso_date;
+// Re-export the shared civil-date types and formatting for app consumers.
+// Selection parsing lives with the calendar policy in `quantick-paper`.
 pub(crate) use quantick_civil::{CivilDate, DateRange, WEEK_DAYS, fmt_offset_minute, weekday_abbr};
 
 /// Rows a month grid always paints. Six is the worst case (a 31-day month
