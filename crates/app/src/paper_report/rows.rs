@@ -259,22 +259,29 @@ struct RowLines {
 }
 
 fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
+    let painter = &painter.with_clip_rect(rect);
     let palette = theme::get(painter.ctx());
     let font = palette.mono_font(11.0);
     let x = rect.left() + SIDE_RAIL_WIDTH_PX + 6.0;
     let y1 = rect.top() + palette.layout(9.0);
     let y2 = rect.top() + palette.layout(24.0);
     let color = palette.side_color(lines.side);
-    let head = painter.layout_no_wrap(lines.head, font.clone(), color);
-    let route_x = x + head.size().x + 8.0;
-    painter.galley(egui::pos2(x, y1 - head.size().y / 2.0), head, color);
     // The right end is laid out first, right to left - P&L, tag, source
     // marker - each with the gap to its left. Only the tag may drop; the
     // route gets what is left.
     let piece = |text, font, color, gap| (painter.layout_no_wrap(text, font, color), color, gap);
     let points = (lines.points).map(|(points, text)| {
         piece(
-            text,
+            quantick_paper::report::fit::elide_to_width(
+                &text,
+                (rect.right()
+                    - x
+                    - DETAIL_RIGHT_PAD_PX
+                    - 2.0 * DETAIL_GAP_PX
+                    - palette.layout(12.0))
+                .max(0.0),
+                |text| text_width(painter, text, &font),
+            ),
             font.clone(),
             points_color(&palette, points),
             DETAIL_GAP_PX,
@@ -291,6 +298,14 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     };
     let mut right = rect.right() - DETAIL_RIGHT_PAD_PX;
     let fixed = span(&points) + span(&marker);
+    let head = quantick_paper::report::fit::elide_to_width(
+        &lines.head,
+        (right - x - fixed + DETAIL_GAP_PX).max(0.0),
+        |text| text_width(painter, text, &font),
+    );
+    let head = painter.layout_no_wrap(head, font.clone(), color);
+    let route_x = x + head.size().x + 8.0;
+    painter.galley(egui::pos2(x, y1 - head.size().y / 2.0), head, color);
     let fit = fit_head(right - route_x, fixed, span(&tag), &lines.route, |text| {
         text_width(painter, text, &font)
     });

@@ -378,6 +378,7 @@ fn role_hierarchy_uses_fixed_units_and_configuration_controls_all_sizes() {
     assert_eq!(
         base,
         AxisMetrics {
+            indicator_header: 18.0,
             gutter: 64.0,
             strip: 24.0
         }
@@ -389,6 +390,7 @@ fn role_hierarchy_uses_fixed_units_and_configuration_controls_all_sizes() {
     assert_eq!(
         AxisMetrics::new(&large.typography),
         AxisMetrics {
+            indicator_header: 36.0,
             gutter: 128.0,
             strip: 48.0
         }
@@ -473,4 +475,42 @@ fn ambient_layout_scale_preserves_dark_and_tracks_the_largest_role() {
         30.0
     );
     assert_eq!(34.0 * large.typography.layout_scale(), 102.0);
+}
+
+#[test]
+fn preview_and_selection_keep_exact_dark_and_complete_light_values() {
+    let dark = ResolvedTheme::default();
+    for (token, expected) in [
+        (Token::TradeSelectionHalo, [40, 40, 40, 40]),
+        (Token::RetainedTapeShade, [0, 0, 0, 90]),
+        (Token::CandlePreviewBackground, [12, 15, 22, 255]),
+    ] {
+        assert_eq!(dark.color(token).to_array(), expected);
+    }
+    for (token, rgb) in [
+        (Token::CandlePreviewBid, [20, 185, 230]),
+        (Token::CandlePreviewAsk, [245, 70, 70]),
+    ] {
+        for alpha in [36, 54, 78, 48] {
+            assert_eq!(
+                color::with_opacity(dark.color(token), alpha),
+                color::rgba_unmultiplied(rgb[0], rgb[1], rgb[2], alpha)
+            );
+        }
+    }
+    for (token, rgb) in [
+        (Token::CandlePreviewBuy, [55, 226, 176]),
+        (Token::CandlePreviewSell, [255, 91, 105]),
+    ] {
+        assert_eq!(
+            dark.color(token),
+            color::rgba_unmultiplied(rgb[0], rgb[1], rgb[2], 210)
+        );
+    }
+    let light = ThemeDocument::parse(LIGHT).unwrap();
+    assert_eq!(light.colors.len(), Token::ALL.len());
+    assert_eq!(
+        light.orderflow.colors.len(),
+        ThemeDocument::parse(DARK).unwrap().orderflow.colors.len()
+    );
 }

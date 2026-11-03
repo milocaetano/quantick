@@ -16,8 +16,8 @@ use quantick_paper::desk::geometry::{
 pub(crate) use quantick_paper::desk::geometry::{clamp_tag_center, dodged_chip_y};
 
 use super::{
-    CLOSE_DIVIDER_ALPHA, DRAG_HALO_COLOR, DRAG_HALO_EXTRA_WIDTH_PX, GUTTER_NOTCH_PX,
-    LINE_DRAG_WIDTH_PX, LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
+    CLOSE_DIVIDER_ALPHA, DRAG_HALO_EXTRA_WIDTH_PX, GUTTER_NOTCH_PX, LINE_DRAG_WIDTH_PX,
+    LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
 };
 use crate::chart::PriceScale;
 use crate::theme;
@@ -79,7 +79,10 @@ impl PaintCtx<'_> {
         if dragged {
             self.painter.line_segment(
                 points,
-                egui::Stroke::new(width + DRAG_HALO_EXTRA_WIDTH_PX, DRAG_HALO_COLOR),
+                egui::Stroke::new(
+                    width + DRAG_HALO_EXTRA_WIDTH_PX,
+                    self.palette.trade_selection_halo(),
+                ),
             );
         }
         let stroke = egui::Stroke::new(width, color);

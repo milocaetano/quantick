@@ -30,6 +30,4 @@ pub(super) const FLOW_OPENING_LABEL_SHADOW_OFFSET: egui::Vec2 = egui::vec2(1.0, 
 pub(super) const PAST_TAPE_LABEL_FONT_PX: f32 = 11.0;
 /// Where the held-tape label starts inside the lane, in pixels.
 pub(super) const PAST_TAPE_LABEL_INSET: egui::Vec2 = egui::vec2(6.0, 4.0);
-/// Alpha of the shade over the stretch before the retained tape begins (0-255).
-pub(super) const PAST_TAPE_SHADE_ALPHA: u8 = 90;
 pub(crate) use quantick_orderflow::config::painting::*;

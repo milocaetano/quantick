@@ -260,6 +260,9 @@ impl ColorStop {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Palette<C> {
+    pub crown_backing: C,
+    pub separator: C,
+
     pub buy: C,
     pub sell: C,
     pub consumption: C,
@@ -281,6 +284,8 @@ impl<C> Palette<C> {
     pub fn for_theme(theme: HeatmapTheme, rgba: impl Fn([u8; 4]) -> C) -> Self {
         match theme {
             HeatmapTheme::Bookmap => Self {
+                crown_backing: rgba(quantick_appearance::orderflow::legacy_crown_backing()),
+                separator: rgba(quantick_appearance::orderflow::legacy_separator()),
                 preview_grid: rgba([16, 16, 16, 16]),
                 preview_path: rgba([145, 145, 145, 145]),
                 buy: rgba([46, 224, 150, 255]),
@@ -297,6 +302,8 @@ impl<C> Palette<C> {
                 legend_border: rgba([130, 145, 170, 90]),
             },
             HeatmapTheme::HighContrast => Self {
+                crown_backing: rgba(quantick_appearance::orderflow::legacy_crown_backing()),
+                separator: rgba(quantick_appearance::orderflow::legacy_separator()),
                 preview_grid: rgba([16, 16, 16, 16]),
                 preview_path: rgba([145, 145, 145, 145]),
                 buy: rgba([0, 255, 138, 255]),
@@ -313,6 +320,8 @@ impl<C> Palette<C> {
                 legend_border: rgba([175, 175, 175, 255]),
             },
             HeatmapTheme::ColorBlind => Self {
+                crown_backing: rgba(quantick_appearance::orderflow::legacy_crown_backing()),
+                separator: rgba(quantick_appearance::orderflow::legacy_separator()),
                 preview_grid: rgba([16, 16, 16, 16]),
                 preview_path: rgba([145, 145, 145, 145]),
                 buy: rgba([64, 160, 255, 255]),

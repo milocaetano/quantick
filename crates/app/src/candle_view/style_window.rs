@@ -273,6 +273,7 @@ pub fn draw_canvas_settings(ui: &mut egui::Ui, style: &mut ChartStyle, changed: 
 }
 
 pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
+    let palette = crate::theme::get(ui.ctx());
     ui.add_space(4.0);
     let width = ui.available_width().max(260.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 112.0), egui::Sense::hover());
@@ -280,7 +281,7 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
     let background = if style.canvas.background_enabled {
         color32(style.canvas.background_rgba())
     } else {
-        egui::Color32::from_rgb(12, 15, 22)
+        palette.candle_preview_background()
     };
     painter.rect_filled(rect, egui::Rounding::same(4.0), background);
 
@@ -297,8 +298,8 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
     // A few liquidity bands make transparency immediately visible in preview.
     for (index, alpha) in [36_u8, 54, 78, 48].into_iter().enumerate() {
         let y = rect.top() + 22.0 + index as f32 * 19.0;
-        let bid = egui::Color32::from_rgba_unmultiplied(20, 185, 230, alpha);
-        let ask = egui::Color32::from_rgba_unmultiplied(245, 70, 70, alpha);
+        let bid = crate::theme::with_opacity(palette.candle_preview_bid(), alpha);
+        let ask = crate::theme::with_opacity(palette.candle_preview_ask(), alpha);
         painter.line_segment(
             [
                 egui::pos2(rect.left() + 12.0, y),
@@ -338,12 +339,12 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
     painter.circle_filled(
         egui::pos2(rect.left() + rect.width() * 0.43, rect.center().y),
         5.0,
-        egui::Color32::from_rgba_unmultiplied(55, 226, 176, 210),
+        palette.candle_preview_buy(),
     );
     painter.circle_filled(
         egui::pos2(rect.left() + rect.width() * 0.69, rect.center().y + 8.0),
         6.0,
-        egui::Color32::from_rgba_unmultiplied(255, 91, 105, 210),
+        palette.candle_preview_sell(),
     );
 }
 

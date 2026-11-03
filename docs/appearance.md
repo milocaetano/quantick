@@ -87,18 +87,34 @@ note payload fonts are preserved. Profile POC/side labels, casing, directional
 readouts and empty-note placeholders read the current scene's borrowed theme.
 `modal_scrim`, `replay_well`, `replay_inset`, `replay_error`, `action_ink`,
 `error_text` and `text_shadow` cover modal/replay/error/action decorations.
+`trade_selection_halo` covers selected trade marks and dragged paper levels.
+`candle_preview_background/bid/ask/buy/sell` (five separate keys) color the
+illustrative candle-style preview; its actual candles and enabled canvas retain
+the edited chart style. `retained_tape_shade` is ambient missing-history shading
+alongside `tape_label`, independent of the selected market palette.
 
 Ledger allocation, virtual scrolling and two-line baselines share one text
 scale. Report table columns, calendar cells, pane header reservation/input,
 loading chips and preview legend spacing now account for configured text.
-This is not yet a claim that every constrained layout handles enlarged fonts:
-[the classified inventory](appearance-inventory.md) names remaining acceptance work.
+Indicator headers share a label/axis-aware height with gesture hit tests and
+collapsed strips. Narrow indicator titles, preview titles, report tiles and ledger
+readouts visibly elide; report tile hover text retains the complete figure.
+The expanded calendar scrolls in both directions within a bounded portion of the
+report. Side-label plates reject insufficient measured height; tape keys and FLOW
+captions reserve matching enlarged clearance. These layout policies preserve the
+normal hierarchy while making practical enlarged roles usable in constrained panes.
 
 ## Order-flow palette
 
 `[orderflow.colors]` contains the stable named fields listed in Dark: trade sides,
 consumption and depth-only marks, bubble text, gaps, the live boundary, legend
-chrome, bid/ask tints and preview grid/path. Values use the same color syntax as
+chrome, bid/ask tints, preview grid/path, `crown_backing` and `separator`.
+The last two are the full premultiplied decorations, including their opacity;
+no second fixed alpha is applied. Live bubbles and cached native FLOW runs read
+the same selected palette. Historical choices preserve black alpha 110/170.
+Saved palette snapshots created before these keys existed default only those
+missing fields to those historical bytes, retaining every saved field. Explicit
+new fields survive round trips and never inherit by RGB comparison. Values use the same color syntax as
 `[colors]`. `buy`, `sell`, `consumption`, `bubble_text`, `bid_tint` and `ask_tint`
 must be opaque because bubble overrides, saved looks and the thermal pipeline
 use RGB there; validation rejects unsupported alpha before publication. Other
@@ -149,9 +165,10 @@ colors and typography by revision. Repeated frames reuse that cache. Typography
 changes update text roles without replacing font definitions, so Phosphor icons
 and the bundled fallback chains remain installed.
 
-The [migration inventory](appearance-inventory.md) records completed boundaries
-and remaining candidate values. Runtime migration is in progress: enlarged-font layout,
-and the final ambient drawing/layout audit still require integration before this feature is complete.
+The [appearance inventory](appearance-inventory.md) records production boundaries
+and classified exclusions. Independent screenshots, glyph checks and matched
+performance evidence are delivery checks; source and unit tests do not substitute
+for visual acceptance.
 
 ## Authoring example
 

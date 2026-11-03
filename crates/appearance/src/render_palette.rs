@@ -12,6 +12,28 @@ impl<T> RenderPalette<T> {
     }
 }
 impl<T: Copy> RenderPalette<T> {
+    pub fn trade_selection_halo(&self) -> T {
+        *self.get(Token::TradeSelectionHalo)
+    }
+    pub fn candle_preview_background(&self) -> T {
+        *self.get(Token::CandlePreviewBackground)
+    }
+    pub fn candle_preview_bid(&self) -> T {
+        *self.get(Token::CandlePreviewBid)
+    }
+    pub fn candle_preview_ask(&self) -> T {
+        *self.get(Token::CandlePreviewAsk)
+    }
+    pub fn candle_preview_buy(&self) -> T {
+        *self.get(Token::CandlePreviewBuy)
+    }
+    pub fn candle_preview_sell(&self) -> T {
+        *self.get(Token::CandlePreviewSell)
+    }
+    pub fn retained_tape_shade(&self) -> T {
+        *self.get(Token::RetainedTapeShade)
+    }
+
     pub fn text_shadow(&self) -> T {
         *self.get(Token::TextShadow)
     }

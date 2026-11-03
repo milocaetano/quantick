@@ -797,3 +797,39 @@ fn appearance_changes_rebuild_meshes_but_retries_and_rejected_changes_reuse_them
     assert!(!Arc::ptr_eq(&changed, &font));
     assert!(Arc::ptr_eq(&font, &paint(&ctx, key(&frame)).0));
 }
+
+#[test]
+fn tick_separator_palette_changes_rebuild_cached_meshes_and_keep_snapshots() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let mut appearance = quantick_appearance::Appearance::default();
+    crate::theme::sync(&ctx, &appearance);
+    let mut k = key(&frame);
+    k.tick = Some((
+        quantick_orderflow::TickBubbleStyle {
+            viewport_scale: None,
+            reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+            reference_quantity: 9000.0,
+            max_radius: 12.0,
+            label_min_radius: 8.0,
+            opacity: 0.9,
+        },
+        quantick_orderflow::config::theme::PaletteChoice::Inherited,
+    ));
+    let (dark, dark_shapes) = paint(&ctx, k);
+    appearance
+        .apply("version=1\nname='separator'\n[orderflow.colors]\nseparator='#FF00CCAA'")
+        .unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    let (changed, shapes) = paint(&ctx, k);
+    assert!(!Arc::ptr_eq(&dark, &changed));
+    assert_ne!(dark_shapes, shapes);
+    assert!(Arc::ptr_eq(&changed, &paint(&ctx, k).0));
+    let snapshot = appearance.resolved().orderflow;
+    k.tick.as_mut().unwrap().1 =
+        quantick_orderflow::config::theme::PaletteChoice::Snapshot(snapshot);
+    let (_, saved_shapes) = paint(&ctx, k);
+    appearance.apply(quantick_appearance::DARK).unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    assert_eq!(saved_shapes, paint(&ctx, k).1);
+}

@@ -34,7 +34,7 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
         .frame
         .chart_area
         .expect("price chart drawn");
-    let header = crate::indicator_render::pane_header_rect(band, false);
+    let header = crate::indicator_render::pane_header_rect(band, false, 18.0);
     let bar = app
         .drawings
         .chrome

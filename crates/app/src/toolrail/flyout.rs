@@ -165,7 +165,10 @@ impl ToolRail {
                         ui.label(
                             egui::RichText::new(family.title)
                                 .color(palette.text_muted())
-                                .size(FLYOUT_HEADER_TEXT_PX),
+                                .font(crate::theme::get(ui.ctx()).font_at(
+                                    quantick_appearance::FontRole::Heading,
+                                    FLYOUT_HEADER_TEXT_PX,
+                                )),
                         );
                         for member in members {
                             match self.draw_flyout_row(ui, *member) {

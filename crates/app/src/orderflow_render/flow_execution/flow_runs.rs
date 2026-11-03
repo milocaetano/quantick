@@ -23,7 +23,7 @@ pub(super) fn flow_runs(
     let canvas = background.to_array();
     let underlay = backing.as_ref().map(egui::Color32::to_array);
     let keys = plan.region_keys(frame, tick_look.is_some());
-    let hair_color = egui::Color32::from_black_alpha(super::bubbles::SEPARATOR_RING_ALPHA);
+    let hair_color = tick_colors.map_or(egui::Color32::TRANSPARENT, |colors| colors.separator);
     let light = tick_style.as_ref().map_or(0.0, |_| SPHERE_LIGHT_OFFSET);
     let shade = |color| match &tick_style {
         Some(style) => SphereShading::sphere(color, style).faded(style.opacity),

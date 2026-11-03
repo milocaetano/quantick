@@ -369,7 +369,9 @@ impl OrderflowView {
                 let header = egui::Rect::from_min_size(
                     egui::pos2(
                         chart_rect.right() - lane_width_px + TAPE_HEADER_INSET_PX,
-                        chart_rect.top() + quantick_chart::side_label::TAPE_KEY_TOP_PX,
+                        chart_rect.top()
+                            + crate::theme::get(painter.ctx())
+                                .layout(quantick_chart::side_label::TAPE_KEY_TOP_PX),
                     ),
                     egui::vec2(
                         (lane_width_px * 0.5 - TAPE_HEADER_INSET_PX).max(0.0),

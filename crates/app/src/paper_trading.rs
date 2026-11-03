@@ -142,10 +142,6 @@ const LINE_WIDTH_PX: f32 = 1.0;
 const LINE_HOVER_WIDTH_PX: f32 = 1.5;
 /// Width of a paper line while it is being dragged.
 const LINE_DRAG_WIDTH_PX: f32 = 2.0;
-/// The drawings' selection-halo treatment, mirrored for a dragged paper
-/// line so a grabbed stop feels identical to a grabbed drawing (the
-/// originals are private to `drawings`).
-const DRAG_HALO_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(40, 40, 40, 40);
 /// How much wider than the line the halo pass paints.
 const DRAG_HALO_EXTRA_WIDTH_PX: f32 = 3.5;
 /// Horizontal padding inside a tag.

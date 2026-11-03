@@ -59,6 +59,13 @@ not a claim that those features have shipped.
 | [`../CLAUDE.md`](../CLAUDE.md) | The working rules, authoritative for any agent changing this repository |
 | [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The guardrail hooks — the four modes, which three are gates and which one only reports, why they fail open, and how to override them |
 
+## Appearance
+
+[Theme authoring and live application](appearance.md) defines the versioned TOML
+contract, Dark/Light fixtures, ownership and validation. The
+[classified appearance inventory](appearance-inventory.md) maps paint consumers
+to their owners and records intentional renderer/authored-value exclusions.
+
 ## Scripting and indicators
 
 | Document | What it covers |

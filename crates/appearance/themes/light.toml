@@ -3,6 +3,13 @@ name = "Light"
 dark = false
 
 [colors]
+trade_selection_halo = "#24588740"
+candle_preview_background = "#E7EDF4"
+candle_preview_bid = "#157EAE"
+candle_preview_ask = "#BD394C"
+candle_preview_buy = "#087F68D2"
+candle_preview_sell = "#C9364CD2"
+retained_tape_shade = "#6D819A38"
 text_shadow = "#FFFFFF"
 replay_error = "#FFE6E1"
 replay_inset = "#F0F3F8"
@@ -85,6 +92,8 @@ ink = ["#374151", "#374151", "#273142", "#202A38", "#FFFFFF", "#FFFFFF"]
 ramp = ["#f7f9fc", "#e1ecf7", "#b4d2eb", "#77b1d8", "#3a90ae", "#2f7f68", "#7b801a", "#b45c0c", "#6b230f"]
 
 [orderflow.colors]
+crown_backing = "#F4F7FC6E"
+separator = "#F4F7FCAA"
 buy = { premultiplied = [0, 119, 82, 255] }
 sell = { premultiplied = [187, 39, 62, 255] }
 consumption = { premultiplied = [97, 70, 13, 255] }

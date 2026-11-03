@@ -229,7 +229,7 @@ impl ChartPane {
             layout.tape_only.then(|| {
                 use quantick_chart::side_label::{SIDE_LABEL_INSET_LEFT_PX, TAPE_KEY_TOP_PX};
                 let left = chart_rect.left() + SIDE_LABEL_INSET_LEFT_PX;
-                let top = area.top() + TAPE_KEY_TOP_PX;
+                let top = area.top() + crate::theme::get(painter.ctx()).layout(TAPE_KEY_TOP_PX);
                 let height = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX;
                 egui::Rect::from_x_y_ranges(left..=chart_rect.right(), top..=top + height)
             }),

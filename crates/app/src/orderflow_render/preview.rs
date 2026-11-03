@@ -12,7 +12,6 @@ use crate::orderflow_render::constants::{
 };
 use eframe::egui;
 use quantick_engine::Side;
-use quantick_orderbook::BookSide;
 use quantick_orderflow::{BubbleStyle, HeatmapConfig};
 
 use super::bubbles::{
@@ -31,7 +30,7 @@ use super::{OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, rgba}
 /// Painted back to front: the frame and grid, the resting walls, the price
 /// path, the two reductions, the sample prints and the legend.
 pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::Response {
-    let width = ui.available_width().clamp(240.0, 680.0);
+    let width = ui.available_width().clamp(0.0, 680.0);
     let desired = egui::vec2(width, crate::theme::get(ui.ctx()).label_space(196.0));
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -133,12 +132,14 @@ impl PreviewCanvas {
         );
 
         let title = egui::pos2(rect.left() + 9.0, rect.top() + 7.0);
-        painter.text(
+        crate::theme::text_fitted(
+            painter,
             title,
             egui::Align2::LEFT_TOP,
             "synthetic order-flow preview",
             self.appearance.label_font(10.0),
             palette.muted_text,
+            (rect.width() - 18.0).max(0.0),
         );
 
         let chart = self.chart;
@@ -155,21 +156,9 @@ impl PreviewCanvas {
     fn draw_resting_walls(&self, opacity: f32) {
         // Each tuple is `(y, height, x0, x1, intensity, side)`. Segment boundaries
         // make additions and reductions visible without animation or live data.
-        let segments = [
-            (0.16, 0.034, 0.00, 0.48, 0.34, BookSide::Ask),
-            (0.16, 0.034, 0.48, 0.76, 0.73, BookSide::Ask),
-            (0.27, 0.042, 0.00, 0.58, 0.92, BookSide::Ask),
-            (0.27, 0.042, 0.58, 0.98, 0.40, BookSide::Ask),
-            (0.39, 0.030, 0.08, 0.88, 0.50, BookSide::Ask),
-            (0.61, 0.032, 0.00, 0.44, 0.36, BookSide::Bid),
-            (0.61, 0.032, 0.44, 1.00, 0.66, BookSide::Bid),
-            (0.72, 0.045, 0.00, 0.43, 0.88, BookSide::Bid),
-            (0.72, 0.045, 0.43, 0.82, 0.24, BookSide::Bid),
-            (0.84, 0.032, 0.10, 1.00, 0.54, BookSide::Bid),
-        ];
         let style = &self.style;
         let mut heat_mesh = egui::Mesh::default();
-        for (y, height, x0, x1, intensity, side) in segments {
+        for (y, height, x0, x1, intensity, side) in quantick_orderflow::config::preview::WALLS {
             let band = normalized_rect(self.chart, x0, x1, y - height / 2.0, y + height / 2.0);
             let rgb = style.resting_rgb(side, intensity);
             let alpha = opacity.clamp(0.0, 1.0) * 0.94;
@@ -192,19 +181,10 @@ impl PreviewCanvas {
     /// A subdued price path gives the liquidity/trade interaction context while
     /// keeping the preview focused on the order-flow layers.
     fn draw_price_path(&self) {
-        let price_points = [
-            (0.00, 0.59),
-            (0.15, 0.57),
-            (0.29, 0.63),
-            (0.43, 0.68),
-            (0.56, 0.53),
-            (0.66, 0.29),
-            (0.79, 0.36),
-            (1.00, 0.25),
-        ]
-        .into_iter()
-        .map(|(x, y)| egui::pos2(self.x(x), self.y(y)))
-        .collect();
+        let price_points = quantick_orderflow::config::preview::PATH
+            .into_iter()
+            .map(|(x, y)| egui::pos2(self.x(x), self.y(y)))
+            .collect();
         self.painter.add(egui::Shape::line(
             price_points,
             egui::Stroke::new(1.1_f32, self.palette.preview_path),
@@ -434,12 +414,14 @@ fn draw_preview_legend(
     }
     painter.add(egui::Shape::mesh(mesh));
     x += 39.0;
-    painter.text(
+    crate::theme::text_fitted(
+        painter,
         egui::pos2(x, baseline),
         egui::Align2::LEFT_CENTER,
         "liquidity",
         font.clone(),
         palette.legend_text,
+        bounds.right() - x - 8.0,
     );
     x += 54.0_f32.max(width("liquidity") + 8.0);
 

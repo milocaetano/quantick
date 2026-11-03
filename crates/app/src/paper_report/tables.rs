@@ -83,26 +83,36 @@ fn draw_tile(
     subline: String,
 ) {
     let palette = theme::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, palette.layout(TILE_HEIGHT_PX)),
         egui::Sense::hover(),
     );
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let painter = ui.painter();
+    response.on_hover_text(format!("{label}: {value}{unit} ? {subline}"));
+    let painter = &ui.painter().with_clip_rect(rect);
+    let room = (rect.width() - 24.0).max(0.0);
     painter.rect_filled(rect, egui::Rounding::same(4.0), palette.inset());
     painter.rect_stroke(
         rect,
         egui::Rounding::same(4.0),
         egui::Stroke::new(1.0_f32, palette.border()),
     );
-    painter.text(
+    theme::text_fitted(
+        painter,
         rect.min + egui::vec2(12.0, palette.layout(6.0)),
         egui::Align2::LEFT_TOP,
         label,
         palette.mono_font(10.0),
         palette.text_faint(),
+        room,
+    );
+    let value = elide_to_width(
+        &value,
+        room - text_width(painter, unit, &palette.mono_font(11.0))
+            - if unit.is_empty() { 0.0 } else { 4.0 },
+        |text| text_width(painter, text, &palette.mono_font(HEADLINE_FONT_PX)),
     );
     let value_galley =
         painter.layout_no_wrap(value, palette.mono_font(HEADLINE_FONT_PX), value_color);
@@ -122,12 +132,14 @@ fn draw_tile(
             palette.text_muted(),
         );
     }
-    painter.text(
+    theme::text_fitted(
+        painter,
         egui::pos2(rect.left() + 12.0, rect.bottom() - palette.layout(6.0)),
         egui::Align2::LEFT_BOTTOM,
         subline,
         palette.mono_font(10.0),
         palette.text_faint(),
+        room,
     );
 }
 

@@ -15,6 +15,10 @@ pub struct OrderflowOverride {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OrderflowAppearance {
+    #[serde(default = "legacy_crown_backing")]
+    pub crown_backing: [u8; 4],
+    #[serde(default = "legacy_separator")]
+    pub separator: [u8; 4],
     pub buy: [u8; 4],
     pub sell: [u8; 4],
     pub consumption: [u8; 4],
@@ -32,6 +36,15 @@ pub struct OrderflowAppearance {
     pub preview_grid: [u8; 4],
     pub preview_path: [u8; 4],
     pub ramp: [[u8; 3]; 9],
+}
+
+/// Missing version-1 snapshot fields retain the historical decoration.
+pub const fn legacy_crown_backing() -> [u8; 4] {
+    [0, 0, 0, 110]
+}
+/// Missing version-1 snapshot fields retain the historical decoration.
+pub const fn legacy_separator() -> [u8; 4] {
+    [0, 0, 0, 170]
 }
 
 impl OrderflowOverride {
@@ -57,6 +70,12 @@ impl OrderflowOverride {
             Ok(bytes)
         };
         let mut resolved = OrderflowAppearance {
+            crown_backing: color(
+                "crown_backing",
+                fallback.map(|old| old.crown_backing),
+                false,
+            )?,
+            separator: color("separator", fallback.map(|old| old.separator), false)?,
             buy: color("buy", fallback.map(|old| old.buy), true)?,
             sell: color("sell", fallback.map(|old| old.sell), true)?,
             consumption: color("consumption", fallback.map(|old| old.consumption), true)?,

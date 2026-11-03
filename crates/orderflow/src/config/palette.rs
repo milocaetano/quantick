@@ -48,6 +48,8 @@ impl PaletteChoice {
             Self::Historical(theme) => {
                 let p = Palette::for_theme(theme, |c| c);
                 let mut result = *inherited;
+                result.crown_backing = p.crown_backing;
+                result.separator = p.separator;
                 result.preview_grid = p.preview_grid;
                 result.preview_path = p.preview_path;
                 result.buy = p.buy;
@@ -79,6 +81,9 @@ impl OrderflowRenderStyle {
     pub fn colors<C>(&self, rgba: impl Fn([u8; 4]) -> C) -> Palette<C> {
         match self.palette {
             Some(p) => Palette {
+                crown_backing: rgba(p.crown_backing),
+                separator: rgba(p.separator),
+
                 preview_grid: rgba(p.preview_grid),
                 preview_path: rgba(p.preview_path),
                 buy: rgba(p.buy),
@@ -198,5 +203,44 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod decoration_tests {
+    use super::*;
+    #[test]
+    fn snapshot_missing_decoration_uses_legacy_bytes_without_discarding_saved_colors() {
+        let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let mut saved = light.orderflow;
+        saved.buy = [12, 34, 56, 255];
+        let source = toml::to_string(&PaletteChoice::Snapshot(saved)).unwrap();
+        let legacy = source
+            .lines()
+            .filter(|line| !line.starts_with("crown_backing =") && !line.starts_with("separator ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let choice: PaletteChoice = toml::from_str(&legacy).unwrap();
+        let restored = choice.resolve(&light.orderflow);
+        assert_eq!(restored.buy, [12, 34, 56, 255]);
+        assert_eq!(restored.crown_backing, [0, 0, 0, 110]);
+        assert_eq!(restored.separator, [0, 0, 0, 170]);
+        let roundtrip: PaletteChoice = toml::from_str(&toml::to_string(&choice).unwrap()).unwrap();
+        assert_eq!(roundtrip, choice);
+        assert_eq!(
+            PaletteChoice::Snapshot(saved)
+                .resolve(&quantick_appearance::ResolvedTheme::default().orderflow),
+            saved
+        );
+        assert_eq!(
+            PaletteChoice::Historical(HeatmapTheme::Bookmap)
+                .resolve(&light.orderflow)
+                .separator,
+            [0, 0, 0, 170]
+        );
+        assert_ne!(
+            PaletteChoice::Inherited.resolve(&light.orderflow).separator,
+            [0, 0, 0, 170]
+        );
     }
 }

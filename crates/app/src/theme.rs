@@ -27,6 +27,25 @@ pub use quantick_appearance::palette::CASING_EXTRA_PX;
 #[cfg(test)]
 use eframe::egui::Color32;
 
+/// Single-line text with an explicit width budget; truncation remains visible.
+pub fn text_fitted(
+    painter: &eframe::egui::Painter,
+    at: eframe::egui::Pos2,
+    align: eframe::egui::Align2,
+    text: impl Into<String>,
+    font: eframe::egui::FontId,
+    color: eframe::egui::Color32,
+    width: f32,
+) {
+    let mut job = eframe::egui::text::LayoutJob::simple_singleline(text.into(), font, color);
+    job.wrap.max_width = width.max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = painter.layout_job(job);
+    let rect = align.anchor_size(at, galley.size());
+    painter.galley(rect.min, galley, color);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

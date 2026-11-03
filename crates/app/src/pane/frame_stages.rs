@@ -321,7 +321,11 @@ impl<'a> FlowFrame<'a> {
                 .map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
                     rect.bottom() + FLOW_CAPTION_GAP_PX
                 })
-                .max(history.top() + SIDE_LABEL_BOTTOM_PX + FLOW_CAPTION_GAP_PX);
+                .max(
+                    history.top()
+                        + crate::theme::get(self.painter.ctx()).layout(SIDE_LABEL_BOTTOM_PX)
+                        + FLOW_CAPTION_GAP_PX,
+                );
             if let Some(caption) = crate::orderflow_render::flow_caption(
                 self.painter,
                 history,

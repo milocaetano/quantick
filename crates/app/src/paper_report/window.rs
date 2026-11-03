@@ -665,17 +665,23 @@ impl ReportState {
         // The grid is drawn from a cached day index, so an open calendar
         // costs a fixed 42 cells per frame however long the history is.
         let mut calendar = self.calendar;
-        let action = crate::paper_calendar::draw_month(
-            ui,
-            &self.report_days,
-            &mut calendar,
-            egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
-            // Only reached when nothing on disk names a month. The
-            // calendar module is deliberately clock-free, so the host —
-            // which may read a clock — says where "no history at all"
-            // should open.
-            today(tz),
-        );
+        let action = egui::ScrollArea::both()
+            .id_salt("report_calendar_grid")
+            .max_height(ui.available_height().max(0.0) * 0.45)
+            .show(ui, |ui| {
+                crate::paper_calendar::draw_month(
+                    ui,
+                    &self.report_days,
+                    &mut calendar,
+                    egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
+                    // Only reached when nothing on disk names a month. The
+                    // calendar module is deliberately clock-free, so the host —
+                    // which may read a clock — says where "no history at all"
+                    // should open.
+                    today(tz),
+                )
+            })
+            .inner;
         // The grid reports a pick; applying it is the named action's job,
         // never the paint's — the click and the hook take one path.
         self.calendar.month = calendar.month;

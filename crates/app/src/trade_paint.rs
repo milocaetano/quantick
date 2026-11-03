@@ -58,8 +58,6 @@ const CONNECTOR_GAP_PX: f32 = 3.0;
 const CONNECTOR_ALPHA: u8 = 115;
 /// Emphasis width of a selected trade's connector.
 const SELECTED_CONNECTOR_WIDTH_PX: f32 = 1.5;
-/// The drawings' halo treatment, for the selected trade's marks.
-const SELECTION_HALO_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(40, 40, 40, 40);
 /// How far past a mark's edge the selection halo reaches.
 const SELECTION_HALO_EXTRA_PX: f32 = 3.5;
 /// At most this many trades paint, newest first; past it the paint is
@@ -266,10 +264,11 @@ fn draw_entry_mark(
         egui::pos2(at.x + half, base_y),
     ];
     if selected {
+        let halo = theme::get(painter.ctx()).trade_selection_halo();
         painter.add(egui::Shape::convex_polygon(
             points.clone(),
-            SELECTION_HALO_COLOR,
-            egui::Stroke::new(SELECTION_HALO_EXTRA_PX, SELECTION_HALO_COLOR),
+            halo,
+            egui::Stroke::new(SELECTION_HALO_EXTRA_PX, halo),
         ));
     }
     painter.add(egui::Shape::convex_polygon(
@@ -296,10 +295,11 @@ fn draw_exit_mark(
         egui::pos2(at.x - r, at.y),
     ];
     if selected {
+        let halo = theme::get(painter.ctx()).trade_selection_halo();
         painter.add(egui::Shape::convex_polygon(
             points.clone(),
-            SELECTION_HALO_COLOR,
-            egui::Stroke::new(SELECTION_HALO_EXTRA_PX, SELECTION_HALO_COLOR),
+            halo,
+            egui::Stroke::new(SELECTION_HALO_EXTRA_PX, halo),
         ));
     }
     painter.add(egui::Shape::convex_polygon(

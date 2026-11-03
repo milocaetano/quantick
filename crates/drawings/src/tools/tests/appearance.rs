@@ -121,3 +121,116 @@ fn ruler_uses_the_same_configured_font_for_plate_measurement_and_paint() {
         if *fill == theme.color(Token::DrawingReadoutPlate)))
     );
 }
+
+#[test]
+fn light_enlarged_fib_labels_follow_ambient_font_without_changing_levels() {
+    use crate::tools::fib::{FibKind, FibPayload};
+    let payload = FibPayload::new(FibKind::Retracement);
+    let before = payload.export_preset();
+    let dark = ResolvedTheme::default();
+    let light = ResolvedTheme::parse(&format!(
+        "{}\n[typography.monospace]\nsize=24.0",
+        quantick_appearance::LIGHT
+    ))
+    .unwrap();
+    assert_eq!(
+        light
+            .typography
+            .get(quantick_appearance::FontRole::Monospace)
+            .size,
+        24.0
+    );
+    let small = scene(&dark, "fib-retracement", &payload, false);
+    let large = scene(&light, "fib-retracement", &payload, false);
+    let fonts = |scene: &MarkScene| {
+        scene
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let MarkShape::Text { font, .. } = shape {
+                    Some(font.size_px)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    let (small, large) = (fonts(&small), fonts(&large));
+    assert!(!small.is_empty());
+    assert_eq!(small.len(), large.len());
+    assert!(small.iter().zip(large).all(|(a, b)| b == a * 2.0));
+    assert_eq!(payload.export_preset(), before);
+}
+
+#[test]
+fn light_enlarged_profile_status_uses_ambient_font_and_ink() {
+    use quantick_anchored_studies::{ProfileInputs, ProfileRequest, RangeProfile};
+    use quantick_engine::{BarSpec, Side, Trade, bar_registry::BarConfiguration};
+    let mut builder = BarConfiguration::from(BarSpec::Tick(1)).build();
+    let mut bars = Vec::new();
+    builder.push_into(
+        &Trade {
+            agg_id: 1,
+            timestamp_ms: 0,
+            price: 50.into(),
+            quantity: 1.into(),
+            side: Side::Buy,
+        },
+        &mut bars,
+    );
+    let mut payload = crate::tools::fixed_range_profile::FrvpPayload {
+        show_labels: true,
+        ..Default::default()
+    };
+    RangeProfile::refresh(
+        &mut payload.cache,
+        ProfileRequest {
+            min_bar: 0.0,
+            max_bar: 1.0,
+            extend_right: true,
+            approximate_history: false,
+            value_area_pct: 70,
+        },
+        &ProfileInputs {
+            closed: &bars,
+            ladders: &[],
+            prefix: &[],
+            partial_ladder: None,
+            group: 1.into(),
+            series_revision: 0,
+            partial_version: 0,
+            blocked: true,
+            side_inferred: false,
+            partial_bucket_slot: None,
+            budget: 1500,
+        },
+    );
+    let theme = ResolvedTheme::parse(&format!(
+        "{}\n[typography.body]\nsize=25.0",
+        quantick_appearance::LIGHT
+    ))
+    .unwrap();
+    assert_eq!(
+        theme
+            .typography
+            .get(quantick_appearance::FontRole::Body)
+            .size,
+        25.0
+    );
+    assert!(
+        payload.cache.is_some(),
+        "refresh must install the blocked cache"
+    );
+    for (appearance, expected_size) in [(&ResolvedTheme::default(), 10.0), (&theme, 20.0)] {
+        let painted = scene(appearance, "fixed-range-profile", &payload, false);
+        assert!(
+            painted.shapes.iter().any(|shape| matches!(shape,
+                MarkShape::Text { text, font, color, .. }
+                if text == "feed reports no traded volume"
+                    && font.size_px == expected_size
+                    && *color == appearance.color(Token::TextMuted)
+            )),
+            "expected visible status at {expected_size}px: {painted:?}"
+        );
+    }
+}

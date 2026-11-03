@@ -2,8 +2,8 @@
 //! held in the past carries.
 
 use crate::orderflow_render::constants::{
-    PAST_TAPE_LABEL_FONT_PX, PAST_TAPE_LABEL_INSET, PAST_TAPE_SHADE_ALPHA, PATH_WIDTH_PX,
-    RETAINED_EDGE_LABEL_GAP_PX, RETAINED_EDGE_LABEL_TOP_PX,
+    PAST_TAPE_LABEL_FONT_PX, PAST_TAPE_LABEL_INSET, PATH_WIDTH_PX, RETAINED_EDGE_LABEL_GAP_PX,
+    RETAINED_EDGE_LABEL_TOP_PX,
 };
 use eframe::egui::{self, Align2};
 use quantick_orderflow::projection::{PastTape, TapeHorizontalGeometry};
@@ -54,11 +54,7 @@ pub(crate) fn draw_past_tape_edge(
     let geometry =
         TapeHorizontalGeometry::resolve(lane.width(), lane.height(), &context.style.bubbles);
     let x = lane.left() + geometry.x(fraction);
-    clip.rect_filled(
-        lane.with_max_x(x),
-        0.0,
-        egui::Color32::from_black_alpha(PAST_TAPE_SHADE_ALPHA),
-    );
+    clip.rect_filled(lane.with_max_x(x), 0.0, appearance.retained_tape_shade());
     clip.vline(x, lane.y_range(), egui::Stroke::new(1.0_f32, color));
     let at = egui::pos2(
         x - RETAINED_EDGE_LABEL_GAP_PX,

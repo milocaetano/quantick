@@ -13,7 +13,9 @@
 // One instance in `view`, the collection and its delta handling in `views`,
 // the height a pane asks for in `pane_sizing`. The leaves are private: the
 // re-exports below are this module's address.
+mod pane_layout;
 mod pane_sizing;
+pub use pane_layout::{MIN_CHART_HEIGHT_PX, format_value, pane_heights};
 mod view;
 mod views;
 

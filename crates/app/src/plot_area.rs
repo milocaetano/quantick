@@ -53,7 +53,8 @@ pub fn plot_split_with_metrics(
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
     let split_y = (plot.bottom() - metrics.strip).max(plot.top() + 20.0);
     let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
-    let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_sizing);
+    let (chart, indicator_panes) =
+        crate::indicators::split_panes_with_header(body, pane_sizing, metrics.indicator_header);
     // The gutter is banded exactly like the body it labels: the candles' price
     // scale owns the height of the candles and not a pixel more, so a drag
     // over a pane's numbers can only ever move that pane.

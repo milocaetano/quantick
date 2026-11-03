@@ -1256,3 +1256,4 @@ mod tests {
 
 pub mod controls;
 pub mod painting;
+pub mod preview;

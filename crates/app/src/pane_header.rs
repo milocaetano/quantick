@@ -384,9 +384,6 @@ pub fn draw_side_label(ui: &egui::Ui, label: &SideLabel, side: egui::Rect, capsu
         side.left() + SIDE_LABEL_INSET_LEFT_PX,
         side.top() + CAPSULE_INSET_TOP_PX,
     );
-    if min.y + CAPSULE_HEIGHT_PX > side.bottom() {
-        return;
-    }
     let room = capsule_left - SIDE_LABEL_GAP_PX - min.x - 2.0 * SIDE_LABEL_PADDING_PX;
     let measure = |fit| {
         let job = side_label_text(ui.ctx(), label, fit);
@@ -398,7 +395,9 @@ pub fn draw_side_label(ui: &egui::Ui, label: &SideLabel, side: egui::Rect, capsu
         LabelFit::NoClock => short,
         LabelFit::None => return,
     };
-    plated_text(&ui.painter().with_clip_rect(side), min, galley);
+    if min.y + CAPSULE_HEIGHT_PX.max(galley.size().y + 8.0) <= side.bottom() {
+        plated_text(&ui.painter().with_clip_rect(side), min, galley);
+    }
 }
 
 /// Words on the casing plate that keeps them readable over heat, its corner at `min`.
@@ -591,7 +590,7 @@ fn paint_value(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, scale: f32) {
     );
     let at = egui::pos2(
         rect.center().x - galley.size().x / 2.0,
-        rect.bottom() + VALUE_GAP_PX,
+        rect.top() + rect.height().max(palette.layout(CAPSULE_HEIGHT_PX)) + VALUE_GAP_PX,
     );
     painter.rect_filled(
         egui::Rect::from_min_size(at, galley.size()).expand(2.0),

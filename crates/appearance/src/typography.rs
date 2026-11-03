@@ -177,6 +177,7 @@ impl Typography {
 /// Text-dependent reservations shared by chart input and painting.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AxisMetrics {
+    pub indicator_header: f32,
     pub gutter: f32,
     pub strip: f32,
 }
@@ -193,6 +194,7 @@ impl AxisMetrics {
             FontFamily::Proportional => 1.0 / 0.6,
         };
         Self {
+            indicator_header: 18.0 * scale.max(typography.scale(FontRole::ChartLabel)).max(1.0),
             gutter: 64.0 * scale * width,
             strip: 24.0 * scale,
         }

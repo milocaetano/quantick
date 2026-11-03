@@ -1,8 +1,7 @@
 ﻿# Appearance ownership inventory
 
-This inventory classifies production values after the ambient drawing/widget
-seam. It is not a completed-feature claim: required residual work is explicit
-below. The authoritative key list is the complete bundled Dark document at
+This inventory classifies production painting and default-creation paths after
+the source migration. Visual/performance acceptance is recorded separately. The authoritative key list is the complete bundled Dark document at
 `crates/appearance/themes/dark.toml`; Light uses the identical schema.
 
 ## Resolved semantic consumers
@@ -20,6 +19,11 @@ below. The authoritative key list is the complete bundled Dark document at
 | Empty note, VWAP anchor | drawings/tools/text, anchored_vwap | text_muted and canvas; object color remains authored |
 | Ruler, Fib and profile annotations | drawings/tools | monospace/body roles, buy/sell/poc/text_muted/casing and drawing_readout_plate |
 | Script object labels/marker captions | app/indicator_render | body role, historical proportional 11-pixel reference; authored object colors remain intact |
+| Candle-style preview | appearance; app/candle_view/style_window | candle_preview_background/bid/ask/buy/sell; authored candle/canvas fields remain explicit |
+| Trade selection / paper drag | appearance; app trade/paper painters | trade_selection_halo |
+| Bubble crown / separator | appearance/orderflow; selected orderflow palette | crown_backing/separator; legacy snapshots default missing properties to historical bytes |
+| Retained-tape shade | appearance; app/orderflow_render/tape_path | retained_tape_shade, ambient alongside tape_label |
+| Indicator headers | appearance/AxisMetrics; chart/indicator_views/pane_layout | shared label/axis height, collapsed strip floor, paint and hit rectangles; title/value fitting |
 | Paper rows/table/calendar | paper/report/layout; app report/calendar | shared role scale for virtual rows/baselines/cells/column widths; side/text/surface tokens |
 | Indicator picker/preview | app/surfaces | heading/body, modal_scrim/accent |
 
@@ -48,25 +52,42 @@ objects are not recolored by mutating saved styles.
   cfg(test) constants are Dark regression fixtures, not active theme state.
   A constant is not exempt merely because its file also contains tests.
 
-## Required residual acceptance work
+## Constrained layout policy
 
-The remaining values below are production matches inspected during this seam;
-they must not be treated as authored user choices or as completed migration.
+- Report rows use one role scale for allocations, virtual scrolling and baselines.
+  Primary head text fits beside the P&L/source; overlong P&L and day/session results
+  visibly elide only when they cannot fit alone. Optional route/tag text yields first.
+- Headline tiles bound caption/value/unit/subline to their cell; hover retains the
+  complete content. The calendar has a bounded two-axis scroll area.
+- Indicator titles and values have disjoint width budgets; collapsed strips and
+  expanded header hit areas grow with the larger chart-label/axis role.
+- Side-label plates require their full measured height and width. Tape key and
+  FLOW caption clearances scale with their header; sample values clear the enlarged
+  capsule reservation. Icons retain their geometric boxes.
+- Preview title/liquidity labels elide within available width; optional legend
+  entries yield when they cannot fit. The synthetic scene's geometry lives in
+  headless orderflow configuration and the live paint vocabulary is reused.
 
-| Owner | Residual |
+## Final bounded scan classification
+
+The scan includes multiline constructors and inline `cfg(test)` modules, rather
+than excluding a file because its name contains a painter or tests. Inspected
+production matches in app and drawings fall into the following classes:
+
+| Match | Classification |
 | --- | --- |
-| app/candle_view/style_window.rs::draw_preview | Fixed disabled-background sample, bid/ask bands and aggression bubble colors; distinguish the preview's illustrative backdrop from the authored candles, then give theme-owned decoration exact-Dark defaults |
-| app/trade_paint.rs and app/paper_trading.rs plus paper overlays | Fixed selected-trade/drag halo [40,40,40,40]; ambient selection decoration |
-| app/orderflow_render/bubbles.rs and flow_execution/flow_runs.rs | Fixed black crown/separator backing; inspect factual edge contrast/compositing versus configurable ambient paint consistently across both cached/live paths |
-| app/orderflow_render/tape_path.rs | Retained-tape shade uses fixed black plus PAST_TAPE_SHADE_ALPHA; theme-owned underlay candidate |
-| app/toolrail/flyout.rs | Heading RichText explicit size still needs role-relative font inspection |
-| app/indicator_render.rs::pane_header_rect and callers | Fixed indicator header geometry must agree with enlarged text and input |
-| app/paper_report/{rows,tables,window}.rs and paper_calendar.rs | Larger row/table/calendar geometry is wired, but narrow headline tiles and primary ledger text can still require deliberate elision; the expanded calendar needs bounded scrolling at large roles |
-| app/pane_header.rs | Icon-only capsules intentionally keep icon geometry; side-label plate now measures height, but available-height rejection and sample-value/capsule clearance need enlarged-font QA |
-| app/orderflow_render/preview.rs | Legend labels measure width and suppress optional tail when it cannot fit; very narrow primary liquidity label/title fitting still needs QA |
+| Color conversion from candle/drawing/script payloads and saved override arrays | Explicit authored data adapters |
+| Drawing palette aliases and legacy orderflow palette literals | Historical compatibility/default fixtures; current inherited defaults resolve through the theme |
+| `drawings/fib.rs`, `footprint_render.rs`, `loading.rs`, `trade_paint.rs`, `orderflow_view.rs`, `flow_perimeter.rs` inline tests | Regression inputs below explicit test boundaries |
+| FLOW one-pixel white texture; day-label measurement white; transparent/PLACEHOLDER values | Neutral renderer/measurement mechanics |
+| Sphere white highlight / black shading endpoints | Lighting transform of the selected palette's authored side color, controlled by visualization shading parameters |
+| Body/axis/label reference sizes | Relative hierarchy through configured roles, not fixed final font sizes |
+| Fixed icon glyph size, vectors, spinner diameter, sample radii and dash widths | Geometry; no ordinary text inherits icon sizing |
+| Note payload font and size picker samples | Explicit authored typography; script object default fonts are ambient because their model has no font fields |
 
+The complete Dark contract and explicit Light core-key inventory are tested.
+Owner coverage pins preview alpha parity, palette legacy/snapshot preservation,
+font-aware pane allocation, narrow enlarged ledger geometry and drawing scenes.
 Independent Dark/Light/enlarged-family screenshots, glyph checks and matched
-hot-path performance evidence remain required. Unit and scene tests are not
-visual acceptance. Final delivery must remove this residual section only after
-those owners are resolved and verified, then re-run production searches for
-`FontId::`, RichText size overrides, `Color32::` and historical palette aliases.
+hot-path performance evidence remain required for delivery. Unit/scene tests
+establish source behavior, not visual acceptance.

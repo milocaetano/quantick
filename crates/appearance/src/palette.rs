@@ -66,6 +66,13 @@ pub const DRAWING_SWATCHES: [PremultipliedRgba; 8] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(usize)]
 pub enum Token {
+    TradeSelectionHalo,
+    CandlePreviewBackground,
+    CandlePreviewBid,
+    CandlePreviewAsk,
+    CandlePreviewBuy,
+    CandlePreviewSell,
+    RetainedTapeShade,
     TextShadow,
     ReplayError,
     ReplayInset,
@@ -140,7 +147,14 @@ pub enum Token {
     QuantityShadow,
 }
 impl Token {
-    pub const ALL: [Self; 72] = [
+    pub const ALL: [Self; 79] = [
+        Self::TradeSelectionHalo,
+        Self::CandlePreviewBackground,
+        Self::CandlePreviewBid,
+        Self::CandlePreviewAsk,
+        Self::CandlePreviewBuy,
+        Self::CandlePreviewSell,
+        Self::RetainedTapeShade,
         Self::TextShadow,
         Self::ReplayError,
         Self::ReplayInset,
@@ -232,6 +246,13 @@ impl Token {
             Self::ReplayWell => "replay_well",
             Self::ReplayInset => "replay_inset",
             Self::ReplayError => "replay_error",
+            Self::TradeSelectionHalo => "trade_selection_halo",
+            Self::CandlePreviewBackground => "candle_preview_background",
+            Self::CandlePreviewBid => "candle_preview_bid",
+            Self::CandlePreviewAsk => "candle_preview_ask",
+            Self::CandlePreviewBuy => "candle_preview_buy",
+            Self::CandlePreviewSell => "candle_preview_sell",
+            Self::RetainedTapeShade => "retained_tape_shade",
             Self::TextShadow => "text_shadow",
             Self::Canvas => "canvas",
             Self::Chrome => "chrome",

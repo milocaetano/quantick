@@ -1795,7 +1795,7 @@ fn a_double_click_on_a_pane_header_asks_for_that_indicators_settings() {
     let areas = test_areas(&pane, TEST_PLOT);
     let slot = areas.indicator_panes.first().copied().expect("one pane");
     assert!(!slot.collapsed, "the fixture pane has room for its curve");
-    let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed);
+    let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed, slot.header_height);
     let expected = pane.indicators.all()[0].slot;
 
     assert_eq!(
@@ -2039,7 +2039,7 @@ fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
     let pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
     let areas = test_areas(&pane, TEST_PLOT);
     let slot = areas.indicator_panes.first().expect("one pane");
-    let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed);
+    let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed, slot.header_height);
     let chevron = indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed);
 
     assert!(header.is_positive(), "an open pane has a header row");
@@ -2058,7 +2058,7 @@ fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
 
     // A collapsed strip has no header of its own: the strip *is* the
     // disclosure, and reads its double click from there.
-    assert!(!indicator_render::pane_header_rect(slot.rect, true).is_positive());
+    assert!(!indicator_render::pane_header_rect(slot.rect, true, slot.header_height).is_positive());
 }
 
 /// A CVD level and a price level can be one pixel apart on screen and

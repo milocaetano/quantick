@@ -4,7 +4,8 @@
 //! a narrow panel makes the two meet. The right part carries the result (a
 //! trade's P&L, a day's net), so it is placed first and the left part gets
 //! what is left: optional pieces drop, then the left text is elided with a
-//! visible `…`. The result is never cut and the two parts never overlap.
+//! visible `…`. The result is preserved whenever it fits; otherwise it is visibly elided.
+//! The two parts never overlap.
 //!
 //! Widths come from a `measure` the caller supplies - the painter's text
 //! layout in the app, a character count in a test - so the decision is the
@@ -78,7 +79,8 @@ pub struct FittedLine {
 /// `lefts` and `rights` are each part's forms, longest first. The left part
 /// gives way before the right does: every left form is tried against the
 /// full right before the right falls back to a shorter form. When no pair
-/// fits, the shortest right stays whole and the shortest left is elided
+/// fits, the shortest right is elided only if it alone exceeds the width,
+/// and the shortest left is elided
 /// into what remains. An empty right needs no gap.
 pub fn fit_line(
     width: f32,
@@ -96,15 +98,15 @@ pub fn fit_line(
             };
         }
     }
-    let right = rights.last().copied().unwrap_or_default();
+    let right = elide_to_width(rights.last().copied().unwrap_or_default(), width, &measure);
     let left = lefts.last().copied().unwrap_or_default();
     FittedLine {
         left: elide_to_width(
             left,
-            width - gap_before(right, gap) - measure(right),
+            width - gap_before(&right, gap) - measure(&right),
             &measure,
         ),
-        right: right.to_owned(),
+        right,
     }
 }
 
