@@ -11,6 +11,7 @@ use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand};
 use quantick_stores::workspaces::{SeedTab, TabAdoption, WorkspaceRecipe, capture_recipe};
 
 use super::QuantickApp;
+use super::control_host::LayoutPort as _;
 use crate::pane::PaneSide;
 use crate::tab::{CanvasCollapseRestore, CanvasLayout, LegendFold};
 
@@ -20,13 +21,22 @@ fn belongs_to_recipe(layer: ChartLayer) -> bool {
     !matches!(layer.0.source, LayerSource::Grid | LayerSource::Drawings)
 }
 
-fn layer_states(recipe: &WorkspaceRecipe) -> BTreeMap<ChartLayer, bool> {
+fn layer_states(layers: &BTreeMap<String, bool>) -> BTreeMap<ChartLayer, bool> {
     crate::pane::registered_layers()
         .layers()
         .iter()
         .copied()
         .filter(|layer| belongs_to_recipe(*layer))
-        .filter_map(|layer| recipe.layers.get(layer.id()).map(|on| (layer, *on)))
+        .filter_map(|layer| layers.get(layer.id()).map(|on| (layer, *on)))
+        .collect()
+}
+
+/// What a pane's switches read as in a recipe.
+fn pane_layers(pane: &crate::pane::ChartPane, app: &QuantickApp) -> BTreeMap<String, bool> {
+    pane.layer_states(&app.runtime.style)
+        .into_iter()
+        .filter(|(layer, _)| belongs_to_recipe(*layer))
+        .map(|(layer, on)| (layer.id().to_owned(), on))
         .collect()
 }
 
@@ -61,13 +71,12 @@ fn tab_settled(app: &QuantickApp, id: u64) -> bool {
 pub(super) fn live_recipe(app: &QuantickApp, id: u64) -> Option<WorkspaceRecipe> {
     let tab = app.runtime.tabs.by_id(id)?;
     let saved = super::arrangement_adapter::saved_tab_of(tab);
-    let layers = tab
-        .flow_pane
-        .layer_states(&app.runtime.style)
-        .into_iter()
-        .filter(|(layer, _)| belongs_to_recipe(*layer))
-        .map(|(layer, on)| (layer.id().to_owned(), on))
+    let context_layers = tab
+        .panes()
+        .filter(|(_, side)| *side != PaneSide::Flow)
+        .map(|(pane, _)| pane_layers(pane, app))
         .collect();
+    let layers = (pane_layers(&tab.flow_pane, app), context_layers);
     let footprint = tab
         .flow_pane
         .footprint_config(&app.runtime.footprint_config);
@@ -100,13 +109,16 @@ fn adopt_tabs(app: &mut QuantickApp) {
             TabAdoption::Restore { workspace, copy } => {
                 let book = store.book_mut();
                 book.restore_tab(id, &workspace, copy);
-                if let Some(recipe) = book.tab_copy(id).cloned() {
+                if let Some(recipe) = book.tab_copy(id).filter(|copy| !copy.is_factory()) {
+                    let recipe = recipe.clone();
                     store.sync_mut().queue(id, recipe);
                 }
             }
             TabAdoption::OnDefault => {
                 let recipe = store.book_mut().open_tab(id).clone();
-                store.sync_mut().queue(id, recipe);
+                if !recipe.is_factory() {
+                    store.sync_mut().queue(id, recipe);
+                }
             }
             TabAdoption::Seed => {
                 pin_tab_footprint(app, id);
@@ -150,6 +162,27 @@ fn pin_tab_footprint(app: &mut QuantickApp, id: u64) {
             pane.set_footprint_style(window.style, &window);
         }
     }
+}
+
+/// Put `recipe` on a tab. The factory `Default` amounts to what a new tab on
+/// this feed opens with: never a bare canvas.
+pub(super) fn show_recipe(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe) {
+    let shown = if recipe.is_factory() {
+        let declared = app
+            .runtime
+            .tabs
+            .by_id(id)
+            .and_then(|tab| app.config.feed(&tab.feed_id))
+            .and_then(|feed| feed.default_layout)
+            .unwrap_or(crate::config::DeclaredLayout::Flow);
+        let layouts = app.layout_state().layouts();
+        WorkspaceRecipe::new_tab_arrangement(declared, &layouts.active().indicators)
+    } else {
+        recipe.clone()
+    };
+    let sync = app.runtime.workspace.book.sync_mut();
+    sync.queue(id, shown);
+    apply_pending_recipes(app);
 }
 
 /// Carry each recipe on its way as far as the tab's panes allow.
@@ -222,7 +255,6 @@ fn apply_recipe_canvas(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe)
 
 /// Layers and the footprint style, on every pane the tab has now.
 fn apply_recipe_switches(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe) {
-    let states = layer_states(recipe);
     let window = app.runtime.footprint_config.clone();
     let style = recipe
         .footprint_style
@@ -231,8 +263,13 @@ fn apply_recipe_switches(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecip
     let Some(tab) = app.runtime.tabs.by_id_mut(id) else {
         return;
     };
-    for pane in tab.panes_mut() {
-        pane.apply_layer_states(&states);
+    let mut context = recipe.context_panes.iter();
+    for (pane, side) in tab.panes_with_sides_mut() {
+        if side == PaneSide::Flow {
+            pane.apply_layer_states(&layer_states(&recipe.layers));
+        } else if let Some(saved) = context.next() {
+            pane.apply_layer_states(&layer_states(&saved.layers));
+        }
         if let Some(style) = style {
             pane.set_footprint_style(style, &window);
         }
@@ -244,7 +281,7 @@ fn apply_recipe_indicators(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRec
     let Some(tab) = app.runtime.tabs.by_id(id) else {
         return;
     };
-    let mut context = recipe.context_indicators.iter();
+    let mut context = recipe.context_panes.iter();
     let targets: Vec<_> = tab
         .panes()
         .map(|(_, side)| {

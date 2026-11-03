@@ -26,9 +26,9 @@
 mod button;
 mod paging;
 pub mod tab_chip;
-pub mod workspace_menu;
 mod venue;
 mod view;
+pub mod workspace_menu;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

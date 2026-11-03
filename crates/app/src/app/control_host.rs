@@ -748,14 +748,8 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
     fn persist_workspace_book(&mut self) -> Result<(), String> {
         self.runtime.workspace.book.persist()
     }
-    fn show_tab_recipe(
-        &mut self,
-        tab: u64,
-        recipe: &quantick_stores::workspaces::WorkspaceRecipe,
-    ) {
-        let sync = self.runtime.workspace.book.sync_mut();
-        sync.queue(tab, recipe.clone());
-        super::tab_workspaces::apply_pending_recipes(self);
+    fn show_tab_recipe(&mut self, tab: u64, recipe: &quantick_stores::workspaces::WorkspaceRecipe) {
+        super::tab_workspaces::show_recipe(self, tab, recipe);
     }
     fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
         self.runtime.workspace.book.tab_row(tab)

@@ -176,7 +176,7 @@ pub fn tab_workspace_set_descriptor() -> CapabilityDescriptor {
         TabWorkspaceSetResult,
     >(
         TAB_WORKSPACE_SET_CAPABILITY_ID,
-        MODULE_ID,
+        quantick_control_host::authority::TAB_MODULE_ID,
         "Put a tab on a workspace",
         "Switches one tab to a saved workspace: its charts, context intervals, indicators, layers and footprint style. Drawings, anchored studies, bar size and the paper position stay with the market. It never asks: unsaved edits on the tab are dropped and the answer says so. Discover names with workspace.list.",
         "The call names the workspace it wants, so a repeat leaves the tab there, keeps any edits made since and answers changed false.",
@@ -184,17 +184,22 @@ pub fn tab_workspace_set_descriptor() -> CapabilityDescriptor {
 }
 
 pub fn workspace_save_to_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<WorkspaceTabInput, WorkspaceSaveResult>(
-        WORKSPACE_SAVE_TO_CAPABILITY_ID,
-        MODULE_ID,
-        "Save a tab's edits to its workspace",
-        "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them.",
-        "A repeat finds no edits, writes nothing and answers changed false.",
-    ))
+    writes_the_book(
+        transient_descriptor::<WorkspaceTabInput, WorkspaceSaveResult>(
+            WORKSPACE_SAVE_TO_CAPABILITY_ID,
+            MODULE_ID,
+            "Save a tab's edits to its workspace",
+            "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them.",
+            "A repeat finds no edits, writes nothing and answers changed false.",
+        ),
+    )
 }
 
 pub fn workspace_save_as_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<WorkspaceSaveAsInput, WorkspaceSaveResult>(
+    writes_the_book(transient_descriptor::<
+        WorkspaceSaveAsInput,
+        WorkspaceSaveResult,
+    >(
         WORKSPACE_SAVE_AS_CAPABILITY_ID,
         MODULE_ID,
         "Save a tab as a new workspace",
@@ -204,7 +209,10 @@ pub fn workspace_save_as_descriptor() -> CapabilityDescriptor {
 }
 
 pub fn workspace_revert_descriptor() -> CapabilityDescriptor {
-    bounded(transient_descriptor::<WorkspaceTabInput, WorkspaceRevertResult>(
+    bounded(transient_descriptor::<
+        WorkspaceTabInput,
+        WorkspaceRevertResult,
+    >(
         WORKSPACE_REVERT_CAPABILITY_ID,
         MODULE_ID,
         "Drop a tab's unsaved edits",
@@ -214,7 +222,10 @@ pub fn workspace_revert_descriptor() -> CapabilityDescriptor {
 }
 
 pub fn workspace_rename_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<WorkspaceRenameInput, WorkspaceRenameResult>(
+    writes_the_book(transient_descriptor::<
+        WorkspaceRenameInput,
+        WorkspaceRenameResult,
+    >(
         WORKSPACE_RENAME_CAPABILITY_ID,
         MODULE_ID,
         "Rename a workspace",
@@ -224,7 +235,10 @@ pub fn workspace_rename_descriptor() -> CapabilityDescriptor {
 }
 
 pub fn workspace_delete_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<WorkspaceDeleteInput, WorkspaceDeleteResult>(
+    writes_the_book(transient_descriptor::<
+        WorkspaceDeleteInput,
+        WorkspaceDeleteResult,
+    >(
         WORKSPACE_DELETE_CAPABILITY_ID,
         MODULE_ID,
         "Delete a workspace",

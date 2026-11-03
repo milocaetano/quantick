@@ -26,7 +26,6 @@ pub mod chart;
 pub mod connection;
 pub mod contract_roll;
 pub mod desk;
-pub mod workspace_book;
 pub mod dock;
 pub mod feed_source;
 pub mod history;
@@ -47,6 +46,7 @@ pub mod tape_fold;
 pub mod tape_view_set;
 pub mod ticket_money;
 pub mod trade;
+pub mod workspace_book;
 
 pub use tabs::{JournalAccess, TabDirectory, tab_index};
 

@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 93 |
+| Reachable by capability | 100 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **147** |
+| **Total** | **154** |
 
-87 of the 147 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 60 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+94 of the 154 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 60 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -194,6 +194,13 @@ The three exclusion classes are closed:
 | `desk.save` | Remember this arrangement as what quantick opens on | window menu, Save desk, Ctrl+Shift+S | `desk.save` | — |
 | `desk.reopen_on_launch.set` | Keep the arrangement automatically when the window closes | window menu, Desk | `desk.reopen_on_launch.set` | — |
 | `desk.forget` | Forget the saved workspace and open on the configured default | window menu, Desk, Reset startup desk | `desk.forget` | — |
+| `tab.workspace.set` | Put a tab on a saved workspace | the active tab's workspace button | `tab.workspace.set` | — |
+| `workspace.save_to` | Save a tab's edits to its workspace | window menu, Save to | `workspace.save_to` | — |
+| `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new | `workspace.save_as` | — |
+| `workspace.revert` | Drop a tab's unsaved edits | window menu, Workspace, Revert | `workspace.revert` | — |
+| `workspace.rename` | Rename a workspace | window menu, Workspace, Rename | `workspace.rename` | — |
+| `workspace.delete` | Delete a workspace, moving its tabs to Default | window menu, Workspace, Delete | `workspace.delete` | — |
+| `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
 | `window.menu.open` | Open the window menu | the kebab button on the title strip, F10 | — | `ui_only_by_decision` — the menu holds rows, and every row names its own behaviour; an operator calls those directly, and a transient popup is not state worth driving |
 | `settings.open` | Open the Settings window on a section | window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the section a call is refused | `settings.open` | — |
 | `window.help.open` | Read a help page: keyboard shortcuts, workspaces, the version | window menu, Help | — | `ui_only_by_decision` — reference text for a human; the shortcuts and the workspace rules are the contract an operator already reads |
@@ -210,9 +217,9 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 17 |
+| `toolbar_action` | 19 |
 | `strip_action` | 6 |
-| `tab_action` | 4 |
+| `tab_action` | 5 |
 | `dock_tab` | 5 |
 | `layer_toggle` | 6 |
 | `drawing_tool` | 22 |
@@ -220,8 +227,8 @@ matrix fails the build.
 | `toolbox_dock` | 3 |
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
-| `hotkey` | 21 |
-| `menu_entry` | 38 |
+| `hotkey` | 22 |
+| `menu_entry` | 44 |
 | `scripted_menu` | 0 |
 | `authored` | 60 |
 
@@ -306,7 +313,6 @@ disagree with.
 
 | Source | Entry | Why not a behaviour |
 | --- | --- | --- |
-| `menu_entry` | `Workspace` | a submenu of the window menu; it holds entries and performs nothing |
 | `menu_entry` | `Help` | a submenu of the window menu; it holds entries and performs nothing |
 | `menu_entry` | `Panels` | a submenu of the window menu; it holds entries and performs nothing |
 | `menu_entry` | `Desk` | a submenu of the window menu; it holds entries and performs nothing |
@@ -316,4 +322,4 @@ disagree with.
 | `scripted_menu` | `window` | a capture hook that opens the window menu so a screenshot can see it. It performs nothing the menu's own entries do not |
 | `scripted_menu` | `history` | a capture hook that opens the toolbar's history caret. The behaviour behind it is `history.reach.set` |
 
-9 entries.
+8 entries.

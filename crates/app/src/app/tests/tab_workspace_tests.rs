@@ -108,3 +108,111 @@ fn panes_on_one_strip_layout_end_on_copies_of_their_own() {
     assert!(book.is_private(own(first)) && book.is_private(own(second)));
     assert_eq!(book.layouts().len(), 1, "the strip did not grow");
 }
+
+/// The trader's report: a new tab opened empty on Default. It opens with what a
+/// new tab has always opened with, and clean.
+#[test]
+fn a_new_tab_on_the_factory_default_keeps_its_charts_and_its_indicators() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-new-tab", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let ema = quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native("native.ema"),
+        hidden: false,
+        mouse_vertical_line: false,
+        inputs: Vec::new(),
+        plot_styles: Vec::new(),
+    };
+    let focused = app
+        .active_tab()
+        .flow_pane
+        .layout_id()
+        .expect("a seeded pane");
+    app.runtime
+        .workspace
+        .layouts_mut()
+        .session_mut()
+        .indicators_mut(focused)
+        .expect("the pane's own copy")
+        .push(ema);
+    app.config.feeds[0].default_layout = Some(crate::config::DeclaredLayout::TimeAndFlow);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "THIRDUSDT".to_owned(), None);
+    let third = app.runtime.tabs.active_id();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(third),
+        ("Default".to_owned(), false)
+    );
+    let tab = app.runtime.tabs.by_id(third).expect("the new tab");
+    assert_eq!(
+        tab.layout,
+        CanvasLayout::TimeAndFlow,
+        "the feed's declaration"
+    );
+    assert!(!tab.time_panes.is_empty());
+    let live = live_recipe(&app, third).expect("an open tab");
+    assert_eq!(
+        live.flow_indicators.len(),
+        1,
+        "what the tab it came from shows"
+    );
+}
+
+/// Switching a tab onto the factory Default lays out a new tab, not a blank.
+#[test]
+fn switching_to_the_factory_default_is_never_a_bare_canvas() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-to-default", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    let strip = app.layout_state().layouts().active().indicators.clone();
+    set_tab_workspace(&mut app, first, "Default").expect("always there");
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(first),
+        ("Default".to_owned(), false),
+        "the arrangement it landed on is no edit"
+    );
+    let live = live_recipe(&app, first).expect("an open tab");
+    assert_eq!(live.flow_indicators, strip);
+}
+
+/// A layer switched on a context pane belongs to that pane's role in the recipe.
+#[test]
+fn a_context_pane_layer_edit_lands_on_that_pane_in_the_copy() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-pane-layers", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeAndFlow);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let live = live_recipe(&app, first).expect("an open tab");
+    let (layer, was) = live.context_panes[0]
+        .layers
+        .iter()
+        .next()
+        .map(|(layer, on)| (layer.clone(), *on))
+        .expect("a context pane reads its layers");
+    let layer_id = crate::pane::registered_layers()
+        .layers()
+        .iter()
+        .copied()
+        .find(|known| known.id() == layer)
+        .expect("a registered layer");
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.time_panes[0].apply_layer_states(&std::collections::BTreeMap::from([(layer_id, !was)]));
+    observe_tab(&mut app, first);
+    let store = &app.runtime.workspace.book;
+    assert!(store.tab_row(first).1, "the edit marks the tab");
+    let copy = store.book().tab_copy(first).expect("held");
+    assert_eq!(copy.context_panes[0].layers.get(&layer), Some(&!was));
+    assert_eq!(
+        copy.layers.get(&layer),
+        live.layers.get(&layer),
+        "the flow pane did not move, so its switch reads as it did"
+    );
+}

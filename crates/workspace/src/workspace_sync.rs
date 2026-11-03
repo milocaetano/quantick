@@ -8,6 +8,19 @@
 use crate::workspace_recipe::WorkspaceRecipe;
 use std::collections::BTreeMap;
 
+/// Keep in `edit` a layer the copy names, or one that moved since the recipe
+/// settled. The rest stay open.
+fn keep_named_layers(
+    edit: &mut BTreeMap<String, bool>,
+    copy: Option<&BTreeMap<String, bool>>,
+    baseline: Option<&BTreeMap<String, bool>>,
+) {
+    edit.retain(|layer, on| {
+        copy.is_some_and(|copy| copy.contains_key(layer))
+            || baseline.and_then(|baseline| baseline.get(layer)) != Some(&*on)
+    });
+}
+
 /// How a tab the window holds joins the book.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TabAdoption {
@@ -160,9 +173,14 @@ impl TabRecipeSync {
         seen.last = live.clone();
         let mut edit = live;
         let baseline = &seen.baseline;
-        edit.layers.retain(|layer, on| {
-            copy.layers.contains_key(layer) || baseline.layers.get(layer) != Some(&*on)
-        });
+        keep_named_layers(&mut edit.layers, Some(&copy.layers), Some(&baseline.layers));
+        for (index, pane) in edit.context_panes.iter_mut().enumerate() {
+            keep_named_layers(
+                &mut pane.layers,
+                copy.context_panes.get(index).map(|pane| &pane.layers),
+                baseline.context_panes.get(index).map(|pane| &pane.layers),
+            );
+        }
         if copy.footprint_style.is_none() && edit.footprint_style == baseline.footprint_style {
             edit.footprint_style = None;
         }

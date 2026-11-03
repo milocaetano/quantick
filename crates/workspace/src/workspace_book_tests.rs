@@ -265,7 +265,7 @@ fn a_seed_from_an_old_desk_tab_copies_the_indicators_and_holds_no_layout_id() {
     let mut layouts = LayoutBook::starter(vec![ema()]);
     let second = layouts.create(Some("Empty")).unwrap();
     assert_eq!(second.0, 2);
-    let live = capture_recipe(&tab, &layouts, BTreeMap::new(), None);
+    let live = capture_recipe(&tab, &layouts, (BTreeMap::new(), Vec::new()), None);
     assert_eq!(live.layout, DeclaredLayout::TimeAndFlow);
     assert_eq!(live.context_bars, ["time:1m"]);
     assert_eq!(live.split_fraction, Some(0.25));
@@ -274,7 +274,7 @@ fn a_seed_from_an_old_desk_tab_copies_the_indicators_and_holds_no_layout_id() {
         [ema()],
         "an unknown id reads the active"
     );
-    assert_eq!(live.context_indicators[0].indicators, [ema()]);
+    assert_eq!(live.context_panes[0].indicators, [ema()]);
 
     let mut book = WorkspaceBook::default();
     book.seed_first_run(vec![SeedTab {
@@ -339,12 +339,14 @@ fn a_full_recipe_round_trips_through_the_file_exactly() {
         context_panes_collapsed: vec![false, true],
         context_bars: vec!["time:1m".to_owned(), "time:1h".to_owned()],
         flow_indicators: vec![ema()],
-        context_indicators: vec![
-            ContextPaneIndicators {
+        context_panes: vec![
+            ContextPaneRecipe {
                 indicators: vec![ema()],
+                layers: BTreeMap::from([("grid".to_owned(), true)]),
             },
-            ContextPaneIndicators {
+            ContextPaneRecipe {
                 indicators: Vec::new(),
+                layers: BTreeMap::new(),
             },
         ],
         layers: BTreeMap::from([("grid".to_owned(), false)]),
@@ -360,4 +362,44 @@ fn a_full_recipe_round_trips_through_the_file_exactly() {
         parse_book("version = 9\n"),
         Err(BookParseError::Version(9))
     ));
+}
+
+#[test]
+fn the_factory_default_amounts_to_what_a_new_tab_opens_with_and_no_saved_recipe_reads_as_it() {
+    let book = WorkspaceBook::default();
+    assert!(book.recipe(DEFAULT_WORKSPACE).unwrap().is_factory());
+    let opened = WorkspaceRecipe::new_tab_arrangement(DeclaredLayout::TimeTimeAndFlow, &[ema()]);
+    assert_eq!(opened.layout, DeclaredLayout::TimeTimeAndFlow);
+    assert_eq!(opened.flow_indicators, [ema()]);
+    assert_eq!(opened.context_panes.len(), 2);
+    assert_eq!(opened.context_panes[1].indicators, [ema()]);
+    assert!(!opened.is_factory());
+}
+
+#[test]
+fn each_context_pane_keeps_its_own_layers_by_place() {
+    let tab: SavedTab = toml::from_str(concat!(
+        "feed = \"mt5\"
+symbol = \"WINV26\"
+layout = \"time+time+flow\"
+",
+        "flow_bars = \"tick:50\"
+context_bars = [\"time:1m\", \"time:1h\"]
+",
+    ))
+    .unwrap();
+    let top = BTreeMap::from([("bubbles".to_owned(), true)]);
+    let flow = BTreeMap::from([("bubbles".to_owned(), false)]);
+    let recipe = capture_recipe(
+        &tab,
+        &LayoutBook::starter(vec![ema()]),
+        (flow.clone(), vec![top.clone()]),
+        None,
+    );
+    assert_eq!(recipe.layers, flow);
+    assert_eq!(recipe.context_panes[0].layers, top);
+    assert!(
+        recipe.context_panes[1].layers.is_empty(),
+        "a pane the window did not read leaves its layers open"
+    );
 }

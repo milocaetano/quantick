@@ -8,7 +8,7 @@ pub use quantick_workspace::workspace_book::{
     SetOutcome, TabWorkspaceState, WORKSPACES_FILE, WorkspaceBook, WorkspaceListing,
     WorkspaceRefusal, apply_canvas, capture_recipe, parse_book,
 };
-pub use quantick_workspace::workspace_recipe::{ContextPaneIndicators, WorkspaceRecipe};
+pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
 
 /// The file beside a layouts file.
@@ -234,6 +234,7 @@ mod tests {
             book: WorkspaceBook::default(),
             path: path.clone(),
             blocked: true,
+            sync: TabRecipeSync::default(),
         };
         assert!(store.persist().unwrap_err().contains("left untouched"));
         assert!(!path.exists());

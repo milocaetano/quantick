@@ -137,11 +137,6 @@ pub const UI_BEHAVIOURS: &[UiBehaviour] = &JOINED;
 pub const NOT_A_BEHAVIOUR: &[(Source, &str, &str)] = &[
     (
         Source::MenuEntry,
-        "Workspace",
-        "a submenu of the window menu; it holds entries and performs nothing",
-    ),
-    (
-        Source::MenuEntry,
         "Help",
         "a submenu of the window menu; it holds entries and performs nothing",
     ),

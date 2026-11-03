@@ -12,7 +12,7 @@
 use crate::arrangement_document::{LAYOUT_UNRECORDED, SavedTab};
 use crate::indicator_document::SavedIndicator;
 use crate::layout_document::{LayoutBook, LayoutId};
-use crate::workspace_recipe::{ContextPaneIndicators, WorkspaceRecipe};
+use crate::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -304,6 +304,8 @@ impl WorkspaceBook {
     }
 
     /// A new tab opens on `Default`. A tab the book already holds stays as it is.
+    /// While `Default` [`is_factory`](WorkspaceRecipe::is_factory) the window
+    /// leaves what the tab opened with where it is.
     pub fn open_tab(&mut self, tab: u64) -> &WorkspaceRecipe {
         let copy = self.default_recipe().clone();
         &self
@@ -608,12 +610,13 @@ fn indicators_of(layouts: &LayoutBook, id: Option<u64>) -> Vec<SavedIndicator> {
 
 /// The recipe a saved tab amounts to: the canvas it carries, and copies of the
 /// indicators its panes' layout ids point at. The caller adds what the window
-/// keeps elsewhere: the layer switches and the footprint style.
+/// keeps elsewhere: each pane's layer switches, flow first and then the context
+/// panes top to bottom, and the footprint style.
 #[must_use]
 pub fn capture_recipe(
     tab: &SavedTab,
     layouts: &LayoutBook,
-    layers: BTreeMap<String, bool>,
+    (layers, context_layers): (BTreeMap<String, bool>, Vec<BTreeMap<String, bool>>),
     footprint_style: Option<String>,
 ) -> WorkspaceRecipe {
     let context_bars: Vec<String> = if tab.context_bars.is_empty() {
@@ -631,9 +634,10 @@ pub fn capture_recipe(
         context_panes_collapsed: tab.context_panes_collapsed.clone(),
         context_bars,
         flow_indicators: indicators_of(layouts, tab.flow_layout),
-        context_indicators: (0..panes)
-            .map(|pane| ContextPaneIndicators {
+        context_panes: (0..panes)
+            .map(|pane| ContextPaneRecipe {
                 indicators: indicators_of(layouts, tab.context_layouts.get(pane).copied()),
+                layers: context_layers.get(pane).cloned().unwrap_or_default(),
             })
             .collect(),
         layers,

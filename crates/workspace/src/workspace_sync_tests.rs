@@ -148,3 +148,57 @@ fn a_private_copy_leaves_with_its_pane_or_when_its_pane_switches_away() {
     session.commit_selection(selection).unwrap();
     assert!(session.book().get(two).is_none());
 }
+
+#[test]
+fn a_tab_on_the_factory_default_is_clean_until_it_moves_and_then_holds_what_it_shows() {
+    let mut sync = TabRecipeSync::default();
+    let factory = WorkspaceRecipe::default();
+    let opened = WorkspaceRecipe::new_tab_arrangement(
+        crate::workspace_recipe::DeclaredLayout::TimeAndFlow,
+        &[],
+    );
+    assert_eq!(sync.observe(1, opened.clone(), &factory), None);
+    assert_eq!(sync.observe(1, opened.clone(), &factory), None);
+    let moved = WorkspaceRecipe {
+        split_fraction: Some(0.4),
+        ..opened
+    };
+    assert_eq!(sync.observe(1, moved.clone(), &factory), Some(moved));
+}
+
+#[test]
+fn a_layer_moved_on_a_context_pane_is_an_edit_of_that_pane_only() {
+    use crate::workspace_recipe::ContextPaneRecipe;
+    let pane = |on: bool| ContextPaneRecipe {
+        indicators: Vec::new(),
+        layers: BTreeMap::from([("bubbles".to_owned(), on)]),
+    };
+    let settled = WorkspaceRecipe {
+        context_panes: vec![pane(true), pane(true)],
+        ..WorkspaceRecipe::default()
+    };
+    let copy = WorkspaceRecipe {
+        context_panes: vec![
+            ContextPaneRecipe {
+                indicators: Vec::new(),
+                layers: BTreeMap::new(),
+            };
+            2
+        ],
+        ..WorkspaceRecipe::default()
+    };
+    let mut sync = TabRecipeSync::default();
+    sync.settle(1, settled);
+    let edit = sync
+        .observe(
+            1,
+            WorkspaceRecipe {
+                context_panes: vec![pane(true), pane(false)],
+                ..WorkspaceRecipe::default()
+            },
+            &copy,
+        )
+        .expect("the second pane moved");
+    assert!(edit.context_panes[0].layers.is_empty());
+    assert_eq!(edit.context_panes[1].layers.get("bubbles"), Some(&false));
+}

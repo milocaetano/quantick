@@ -14,10 +14,6 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
              dialog is the ceiling's other side, not a gap in it",
 };
 
-/// The list's rows are computed from the book, so a label is a workspace's name
-/// and not an entry to look up.
-const COMPUTED_ROWS: &str = "each row of the workspace list is named by the trader";
-
 /// Every row this family owns.
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
@@ -81,7 +77,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         id: "tab.workspace.set",
         title: "Put a tab on a saved workspace",
         reach: "the active tab's workspace button",
-        keys: &[(Source::Authored, COMPUTED_ROWS)],
+        keys: &[(Source::TabAction, "WorkspaceMenu")],
         mapping: Mapping::Capabilities(&["tab.workspace.set"]),
     },
     UiBehaviour {
@@ -91,6 +87,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         keys: &[
             (Source::MenuEntry, "Save to workspace"),
             (Source::Hotkey, "SAVE_TO_WORKSPACE_SHORTCUT"),
+            (Source::ToolbarAction, "SaveToWorkspace"),
         ],
         mapping: Mapping::Capabilities(&["workspace.save_to"]),
     },
@@ -105,7 +102,10 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         id: "workspace.revert",
         title: "Drop a tab's unsaved edits",
         reach: "window menu, Workspace, Revert",
-        keys: &[(Source::MenuEntry, "Revert edits")],
+        keys: &[
+            (Source::MenuEntry, "Revert edits"),
+            (Source::ToolbarAction, "RevertWorkspace"),
+        ],
         mapping: Mapping::Capabilities(&["workspace.revert"]),
     },
     UiBehaviour {
@@ -125,8 +125,8 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "workspace.list",
         title: "List the workspaces and the tabs using each",
-        reach: "the active tab's workspace menu",
-        keys: &[(Source::Authored, COMPUTED_ROWS)],
+        reach: "window menu, Workspace, whose list names each workspace",
+        keys: &[(Source::MenuEntry, "Workspace")],
         mapping: Mapping::Capabilities(&["workspace.list"]),
     },
 ];

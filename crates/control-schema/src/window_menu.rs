@@ -565,6 +565,7 @@ mod tests {
         assert_eq!(
             labels,
             [
+                "Save to workspace",
                 "Save desk",
                 "Hide panels",
                 "Market Replay…",

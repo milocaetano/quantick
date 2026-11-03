@@ -252,6 +252,11 @@
         "layout": {
           "$ref": "#/$defs/CanvasLayoutDto"
         },
+        "modified": {
+          "default": false,
+          "description": "Whether the tab holds edits it has not saved to that workspace.",
+          "type": "boolean"
+        },
         "panes": {
           "items": {
             "$ref": "#/$defs/WorkspacePane"
@@ -270,6 +275,11 @@
         },
         "tab_id": {
           "$ref": "#/$defs/WireU64"
+        },
+        "venue": {
+          "default": "",
+          "description": "The tab's venue. Additive; empty from a build that predates it.",
+          "type": "string"
         },
         "window_id": {
           "anyOf": [
@@ -292,6 +302,11 @@
             }
           ],
           "default": null
+        },
+        "workspace": {
+          "default": "",
+          "description": "The workspace this tab uses. Additive; empty from a build that predates\nit.",
+          "type": "string"
         }
       },
       "required": [
