@@ -6,7 +6,6 @@ use rust_decimal::prelude::ToPrimitive as _;
 /// Inputs shared by automatic framing and the gutter's flip threshold.
 pub struct PriceAxisFit {
     pub native_tape: bool,
-    pub tape_only: bool,
     pub tape_range: Option<(f64, f64)>,
     pub previous_auto: Option<(f64, f64)>,
     pub bounds: (f32, f32),
@@ -14,8 +13,10 @@ pub struct PriceAxisFit {
 }
 
 impl PriceAxisFit {
-    /// The native Tape frames its prints together with any visible candles.
-    /// Tape-only panes keep their own fit; ordinary charts fit their candles.
+    /// The native Tape frames its prints together with `visible`, the candles
+    /// that stand beside it; ordinary charts fit their candles. Tape only
+    /// passes the candles the beside view would show, so switching views
+    /// never rescales the prices.
     pub fn resolve<'a>(
         &self,
         visible: impl Iterator<Item = &'a Bar> + Clone,
@@ -24,20 +25,16 @@ impl PriceAxisFit {
     ) -> Option<((f64, f64), f64)> {
         let (top, bottom) = self.bounds;
         let auto = if self.native_tape {
-            let tape_range = if self.tape_only {
-                self.tape_range
-            } else {
-                PriceScale::auto_including(
-                    visible.clone(),
-                    partial,
-                    self.tape_range,
-                    top,
-                    bottom,
-                    0.0,
-                )
-                .map(|scale| scale.range())
-                .or(self.tape_range)
-            };
+            let tape_range = PriceScale::auto_including(
+                visible.clone(),
+                partial,
+                self.tape_range,
+                top,
+                bottom,
+                0.0,
+            )
+            .map(|scale| scale.range())
+            .or(self.tape_range);
             tape_price_window(
                 tape_range,
                 newest.and_then(|bar| bar.close.to_f64()),
@@ -74,6 +71,29 @@ impl PriceAxisFit {
     }
 }
 
+/// The bars in slots `start..end` of the venue `prefix` followed by `closed`,
+/// plus the forming `partial` if its slot falls in it. The window can straddle
+/// both series, so it is two slices, chained where they are read rather than
+/// copied into one: copying was 24-48 KB every frame for the life of the pane.
+#[must_use]
+pub fn window_slices<'a>(
+    series: (&'a [Bar], &'a [Bar], Option<&'a Bar>),
+    (start, end): (usize, usize),
+) -> (&'a [Bar], &'a [Bar], Option<&'a Bar>) {
+    let (prefix, closed, partial) = series;
+    let closed_total = prefix.len() + closed.len();
+    let (from, to) = (
+        start.min(closed_total),
+        end.min(closed_total).max(start.min(closed_total)),
+    );
+    let shift = |slot: usize| slot.saturating_sub(prefix.len());
+    (
+        &prefix[from.min(prefix.len())..to.min(prefix.len())],
+        &closed[shift(from)..shift(to)],
+        partial.filter(|_| closed_total >= start && closed_total < end),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,7 +116,6 @@ mod tests {
     fn split_fit() -> PriceAxisFit {
         PriceAxisFit {
             native_tape: true,
-            tape_only: false,
             tape_range: Some((90.0, 130.0)),
             previous_auto: None,
             bounds: (20.0, 220.0),
@@ -144,18 +163,34 @@ mod tests {
     }
 
     #[test]
-    fn tape_only_ignores_closed_and_forming_candle_extremes() {
+    fn window_slices_straddle_the_seam_and_take_the_partial_in_its_slot() {
+        let (prefix, closed, partial) =
+            (vec![bar(1, 2, 1); 3], vec![bar(3, 4, 3); 2], bar(5, 6, 5));
+        let series = (&prefix[..], &closed[..], Some(&partial));
+        let (p, c, f) = window_slices(series, (2, 6));
+        assert_eq!((p.len(), c.len(), f.is_some()), (1, 2, true));
+        let (p, c, f) = window_slices(series, (4, 5));
+        assert_eq!((p.len(), c.len(), f.is_some()), (0, 1, false));
+        let (p, c, f) = window_slices(series, (9, 12));
+        assert_eq!((p.len(), c.len(), f.is_some()), (0, 0, false));
+    }
+
+    /// Trader 2026-11-03: a few cents of prints filled the whole tape-only
+    /// pane, and a short squeeze of the gutter turned it upside down. A narrow
+    /// tape beside wide candles fits the candles, and the flip counts in that
+    /// fit, not in the prints.
+    #[test]
+    fn a_narrow_tape_fits_the_candles_beside_it_and_flips_against_them() {
         let mut fit = split_fit();
-        fit.tape_only = true;
-        let bars = [bar(-10_000, 20_000, 100)];
-        let partial = bar(-20_000, 30_000, 100);
-        let range = fit
-            .resolve(bars.iter(), Some(&partial), Some(&partial))
-            .unwrap()
-            .0;
-        let expected = tape_price_window(fit.tape_range, Some(100.0), None, 20.0, 220.0, 30.0)
-            .unwrap()
-            .range();
-        assert_eq!(range, expected);
+        fit.tape_range = Some((100.0, 100.2));
+        let bars = [bar(70, 130, 100)];
+        let (range, flip_span) = fit.resolve(bars.iter(), None, bars.last()).unwrap();
+        assert!(range.0 < 70.0 && range.1 > 130.0, "{range:?}");
+        assert!(flip_span >= range.1 - range.0, "{flip_span} for {range:?}");
+        let mut view = crate::price_view::PriceView::new();
+        for _ in 0..4 {
+            view.drag_zoom_against(2.0, range, flip_span);
+        }
+        assert!(!view.is_inverted(), "a sixteenfold squeeze stays upright");
     }
 }

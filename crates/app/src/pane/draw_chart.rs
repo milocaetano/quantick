@@ -397,7 +397,17 @@ impl ChartPane {
         }
         let view = self.shown_viewport();
         let (start, end) = view.visible_range(width, total);
+        let fit_width = self
+            .orderflow
+            .as_ref()
+            .filter(|_| tape_only)
+            .map_or(width, |of| {
+                of.cached_config()
+                    .live_lane
+                    .candles_beside_px(chart_rect.width())
+            });
         Some(FrameLayout {
+            fit_slots: view.visible_range(fit_width, total),
             areas,
             chart_rect,
             history_rect,
