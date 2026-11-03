@@ -246,6 +246,8 @@ impl ReportState {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
+            // Keep every section reachable when typography exceeds the viewport budget.
+            .vscroll(true)
             // Wide enough for every column of the trade list and tall
             // enough for the tiles, the curve and a readable page of it.
             // Both are still only a starting size — the window resizes.
