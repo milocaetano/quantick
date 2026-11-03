@@ -71,6 +71,29 @@ impl PriceAxisFit {
     }
 }
 
+/// The candles' right edge beside the tape whose divider stands at `divider`
+/// on a chart from `left`: the trail strip's left edge where
+/// [`trail_strip`](crate::flow_band::trail_strip) stands a `strip_px` strip,
+/// else the divider. The beside layout stops its candles there, and tape only
+/// fits the candles that edge would hold ([`tape_only_candles_px`]).
+#[must_use]
+pub fn beside_candles_right(left: f32, divider: f32, strip_px: f32) -> f32 {
+    let beside = Some(quantick_orderflow::LaneView::Beside);
+    crate::flow_band::trail_strip(beside, left, Some(divider), strip_px)
+        .map_or(divider, |(strip_left, _)| strip_left)
+}
+
+/// The candles' width in the beside view tape only returns to, on a chart
+/// `chart_width` wide with a `strip_px` live strip: the tape back on its
+/// reopening band (`LiveLaneStyle::reopened_beside_px`) and the strip on the
+/// trail beside it. Tape only fits its prints with the candles this holds, so
+/// both views share one price window.
+#[must_use]
+pub fn tape_only_candles_px(chart_width: f32, strip_px: f32) -> f32 {
+    let band = quantick_orderflow::LiveLaneStyle::reopened_beside_px(chart_width);
+    beside_candles_right(0.0, chart_width - band, strip_px).max(0.0)
+}
+
 /// The bars in slots `start..end` of the venue `prefix` followed by `closed`,
 /// plus the forming `partial` if its slot falls in it. The window can straddle
 /// both series, so it is two slices, chained where they are read rather than
@@ -175,22 +198,57 @@ mod tests {
         assert_eq!((p.len(), c.len(), f.is_some()), (0, 0, false));
     }
 
-    /// Trader 2026-11-03: a few cents of prints filled the whole tape-only
-    /// pane, and a short squeeze of the gutter turned it upside down. A narrow
-    /// tape beside wide candles fits the candles, and the flip counts in that
-    /// fit, not in the prints.
+    /// The beside view tape only returns to: the tape back on its default
+    /// band, the strip on the trail left of it, and the candles' floor kept.
     #[test]
-    fn a_narrow_tape_fits_the_candles_beside_it_and_flips_against_them() {
+    fn tape_only_measures_the_candles_of_the_beside_view_it_returns_to() {
+        assert_eq!(tape_only_candles_px(1_000.0, 0.0), 650.0);
+        assert_eq!(tape_only_candles_px(1_000.0, 84.0), 566.0);
+        let floor = crate::flow_band::TRAIL_CANDLES_MIN_PX;
+        assert_eq!(tape_only_candles_px(100.0, 84.0), floor);
+        assert_eq!(beside_candles_right(10.0, 660.0, 84.0), 576.0);
+        assert_eq!(beside_candles_right(10.0, 660.0, 0.0), 660.0);
+    }
+
+    /// Trader 2026-11-03: a few cents of prints filled the whole tape-only
+    /// pane, and a short squeeze of the gutter turned it upside down. Tape
+    /// only fits a narrow tape with the candles the beside view holds, never
+    /// the spike just left of them, and the flip counts in that fit.
+    #[test]
+    fn tape_only_fits_the_beside_candles_and_flips_against_them() {
+        let view = crate::viewport::Viewport::new();
+        let (total, chart_width, strip) = (400, 1_000.0, 84.0);
+        let (start, end) = view.visible_range(tape_only_candles_px(chart_width, strip), total);
+        assert!(start > 0 && end == total, "{start}..{end}");
+        let mut closed = vec![bar(95, 105, 100); total];
+        closed[start - 1] = bar(95, 500, 100);
         let mut fit = split_fit();
         fit.tape_range = Some((100.0, 100.2));
-        let bars = [bar(70, 130, 100)];
-        let (range, flip_span) = fit.resolve(bars.iter(), None, bars.last()).unwrap();
-        assert!(range.0 < 70.0 && range.1 > 130.0, "{range:?}");
-        assert!(flip_span >= range.1 - range.0, "{flip_span} for {range:?}");
-        let mut view = crate::price_view::PriceView::new();
-        for _ in 0..4 {
-            view.drag_zoom_against(2.0, range, flip_span);
-        }
-        assert!(!view.is_inverted(), "a sixteenfold squeeze stays upright");
+        let none: &[Bar] = &[];
+        let fitted = |slots| {
+            let (prefix, closed, partial) = window_slices((none, &closed, None), slots);
+            fit.resolve(prefix.iter().chain(closed), partial, closed.last())
+                .unwrap()
+        };
+        let (range, flip_span) = fitted((start, end));
+        assert!(range.0 < 95.0 && range.1 > 105.0, "the candles: {range:?}");
+        assert!(range.1 < 500.0, "never the spike left of them: {range:?}");
+        let wider = view.visible_range(tape_only_candles_px(chart_width, 0.0), total);
+        assert!(
+            fitted(wider).0.1 > 500.0,
+            "the strip's width holds the spike"
+        );
+        let mut price = crate::price_view::PriceView::new();
+        price.drag_zoom_against(1e6, range, flip_span);
+        assert!(!price.is_inverted(), "the first pull only flattens");
+        let (lo, hi) = price.resolve(range);
+        let threshold = flip_span * crate::price_view::FLIP_SPAN_FACTOR;
+        assert!(
+            (hi - lo - threshold).abs() < 1e-6,
+            "{} vs {threshold}",
+            hi - lo
+        );
+        price.drag_zoom_against(1.01, range, flip_span);
+        assert!(price.is_inverted(), "and the next pull flips it");
     }
 }
