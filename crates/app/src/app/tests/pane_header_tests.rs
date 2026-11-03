@@ -1550,6 +1550,7 @@ const WINDOWED: quantick_chart::pane_header::FlowHeaderState =
         tape_sample: None,
         window: quantick_orderflow::LaneWindow::Auto { zoom: 1.0 },
         window_reference_ms: None,
+        window_setting: quantick_orderflow::LaneWindow::Auto { zoom: 1.0 },
     };
 
 /// However narrow the pane, the glyph is on it, off the bars control, and it

@@ -223,19 +223,21 @@ pub fn side_fit(widths: &SideWidths) -> SideFit {
 
 /// A docked capsule's corner in a header ending at `side_right`, spanning
 /// `top..bottom`: against the header's far end, centred above its 1 px rule. A
-/// flow side's header and a time pane's dock it alike.
+/// flow side's header and a time pane's dock it alike. `None` when a short pane
+/// clamped the header below the capsule's height: the capsule goes rather than
+/// rise over the band above or sink into the chart below.
 #[must_use]
 pub fn docked_capsule_corner(
     side_right: f32,
     top: f32,
     bottom: f32,
     capsule_px: f32,
-) -> (f32, f32) {
+) -> Option<(f32, f32)> {
     let spare = bottom - top - 1.0 - DOCKED_CAPSULE_HEIGHT_PX;
-    (
+    (spare >= 0.0).then_some((
         side_right - SIDE_PAD_RIGHT_PX - capsule_px,
         top + spare / 2.0,
-    )
+    ))
 }
 
 /// What a header keeps free at its right end for `side`'s capsule with every
@@ -270,7 +272,7 @@ pub struct WindowOption {
     pub label: String,
     pub selected: bool,
     /// What a click asks for ([`lane_window_pick`]): nothing on `auto` while it is
-    /// in force, so its zoom is kept; a fixed window in force is filed again.
+    /// in force and filed, so its zoom is kept; a fixed window in force is filed again.
     pub pick: Option<LaneWindow>,
 }
 
@@ -290,7 +292,7 @@ pub fn window_options(state: &FlowHeaderState) -> Vec<WindowOption> {
         .map(|window| WindowOption {
             label: lane_window_label(window, state.window_reference_ms),
             selected: same_lane_window(state.window, window),
-            pick: lane_window_pick(state.window, window),
+            pick: lane_window_pick(state.window, state.window_setting, window),
         })
         .collect()
 }
@@ -307,6 +309,7 @@ mod flow_band_tests {
         tape_sample: None,
         window: LaneWindow::Auto { zoom: 1.0 },
         window_reference_ms: None,
+        window_setting: LaneWindow::Auto { zoom: 1.0 },
     };
 
     /// The band is the mock's 26 px, the side headers its 28, and the frame's 3 px
@@ -537,11 +540,34 @@ mod flow_band_tests {
     #[test]
     fn a_docked_capsule_stands_against_its_sides_end() {
         let corner = docked_capsule_corner(500.0, 40.0, 40.0 + SIDE_HEADER_HEIGHT_PX, 100.0);
-        assert_eq!(corner, (392.0, 43.5));
-        assert_eq!(docked_slot_origin(corner), (397.0, 44.5));
+        assert_eq!(corner, Some((392.0, 43.5)));
+        assert_eq!(docked_slot_origin((392.0, 43.5)), (397.0, 44.5));
         assert_eq!(DOCKED_CAPSULE_HEIGHT_PX, 20.0);
         let time = docked_capsule_corner(500.0, 0.0, 34.0, 100.0);
-        assert_eq!(time.1, 6.5, "a time pane's taller header centres it too");
+        assert_eq!(
+            time.map(|c| c.1),
+            Some(6.5),
+            "a time pane's taller header centres it too"
+        );
+    }
+
+    /// A pane too short for its side row clamps the row; the capsule then fits it
+    /// exactly or goes, and never stands over the band or below the row.
+    #[test]
+    fn a_short_pane_keeps_its_capsule_inside_the_row() {
+        for height in [0.0, 6.0, 12.0, 20.0, 21.0, 24.0, 40.0, 54.0, 90.0] {
+            let row = flow_pane_layout(100.0, 50.0, 900.0, 50.0 + height).side_row;
+            let corner = docked_capsule_corner(row.right, row.top, row.bottom, 100.0);
+            let fits = row.bottom - row.top >= DOCKED_CAPSULE_HEIGHT_PX + 1.0;
+            assert_eq!(corner.is_some(), fits, "{height}");
+            if let Some((_, top)) = corner {
+                assert!(top >= row.top, "{height}: over the band");
+                assert!(
+                    top + DOCKED_CAPSULE_HEIGHT_PX <= row.bottom,
+                    "{height}: below the row"
+                );
+            }
+        }
     }
 
     /// A time pane's header keeps its capsule's widest room: the footprint glyph in
@@ -608,6 +634,24 @@ mod flow_band_tests {
         assert!(options[3].selected);
         assert_eq!(options[3].pick, Some(minute));
         assert_eq!(options[0].pick, Some(LaneWindow::default()));
+    }
+
+    /// A tape navigated to `auto` over a filed fixed window files `auto` when the
+    /// selector picks it; filed too, it keeps the zoom.
+    #[test]
+    fn auto_over_a_filed_fixed_window_is_filed() {
+        let state = FlowHeaderState {
+            window: LaneWindow::Auto { zoom: 2.0 },
+            window_setting: LaneWindow::Fixed { ms: 60_000 },
+            ..OPEN
+        };
+        assert!(window_options(&state)[0].selected);
+        assert_eq!(window_options(&state)[0].pick, Some(LaneWindow::default()));
+        let filed = FlowHeaderState {
+            window_setting: LaneWindow::Auto { zoom: 2.0 },
+            ..state
+        };
+        assert_eq!(window_options(&filed)[0].pick, None);
     }
 
     /// A 15 s stored before the presets moved loads, reads and stays what it is.

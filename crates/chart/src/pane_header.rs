@@ -445,6 +445,9 @@ pub struct FlowHeaderState {
     /// out to while the frame knows.
     pub window: LaneWindow,
     pub window_reference_ms: Option<i64>,
+    /// The window the asset files, which a double click returns to and a pick
+    /// is judged against ([`quantick_orderflow::lane_window_pick`]).
+    pub window_setting: LaneWindow,
 }
 
 impl FlowHeaderState {
@@ -465,6 +468,7 @@ impl FlowHeaderState {
         candle_sample: Option<f32>,
         tape_sample: Option<f32>,
         window_reference_ms: Option<i64>,
+        window_setting: LaneWindow,
     ) -> Self {
         Self {
             view: lane.view(),
@@ -474,6 +478,7 @@ impl FlowHeaderState {
             tape_sample,
             window: lane.window,
             window_reference_ms,
+            window_setting,
         }
     }
 }
@@ -1024,6 +1029,7 @@ mod tests {
             tape_sample: None,
             window: LaneWindow::default(),
             window_reference_ms: None,
+            window_setting: LaneWindow::default(),
         }
     }
 

@@ -331,6 +331,7 @@ impl Tab {
                 .rect_filled(pane_areas.body, egui::Rounding::ZERO, theme::FLOW_SURFACE);
             self.draw_flow_header(ui, areas.band, chrome);
             rects.flow_side_row = Some((areas.side_row, bar_inputs));
+            self.flow_pane.frame.side_row = Some(areas.side_row);
             PaneAreas {
                 body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
                 layout_strip: pane_areas.layout_strip,

@@ -31,8 +31,10 @@ pub struct TapeViewInput {
     pub window: Option<TapeWindowInput>,
     /// File the window as the asset's setting, as the tape header's selector
     /// and its window menu do: a double click on the tape then returns to it.
-    /// Without it the window is navigation, as the wheel's, and is never filed.
-    /// Needs a window.
+    /// Their rule too: `auto` while the tape follows the bars and the asset
+    /// files following them changes nothing, so the zoom stays; the result
+    /// reports the window in force. Without it the window is navigation, as
+    /// the wheel's, and is never filed. Needs a window.
     #[serde(default)]
     pub file: bool,
 }

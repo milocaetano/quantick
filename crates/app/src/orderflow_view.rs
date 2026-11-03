@@ -13,7 +13,9 @@ pub(crate) use quantick_orderflow::FlowCellHit;
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::pane_tape::PaneTape;
 use quantick_orderflow::projection::GapPrimitive;
-use quantick_orderflow::{HeatmapConfig, LaneWindow, LiveLaneStyle, reserved_span_ms};
+use quantick_orderflow::{
+    HeatmapConfig, LaneWindow, LiveLaneStyle, lane_window_pick, reserved_span_ms,
+};
 use quantick_stores::bubble_asset_store::AssetBinding;
 use quantick_stores::bubble_asset_store::SaveSwitch;
 use quantick_stores::bubble_assets::AssetBubbles;
@@ -742,19 +744,26 @@ impl OrderflowView {
         self.look.note_lane_set(&self.config);
     }
 
-    /// The tape's window back to its setting ([`BubbleLook::lane_window_setting`]):
-    /// navigation undone, the asset untouched.
-    pub fn reset_live_lane_window(&mut self) {
-        self.navigate_live_lane_window(self.look.lane_window_setting());
+    /// The tape's window as the asset files it ([`BubbleLook::lane_window_setting`]).
+    #[must_use]
+    pub fn lane_window_setting(&self) -> LaneWindow {
+        self.look.lane_window_setting()
     }
 
-    /// The window a call names: filed as the asset's, as the selector files it, or
-    /// navigation, as the wheel's.
+    /// The tape's window back to its setting: navigation undone, the asset untouched.
+    pub fn reset_live_lane_window(&mut self) {
+        self.navigate_live_lane_window(self.lane_window_setting());
+    }
+
+    /// The window a call names: filed as the asset's under the selector's own rule
+    /// ([`lane_window_pick`]), or navigation, as the wheel's.
     pub fn move_live_lane_window(&mut self, window: LaneWindow, file: bool) {
-        if file {
+        if !file {
+            return self.navigate_live_lane_window(window);
+        }
+        let shown = self.live_lane_window();
+        if let Some(window) = lane_window_pick(shown, self.lane_window_setting(), window) {
             self.set_live_lane_window(window);
-        } else {
-            self.navigate_live_lane_window(window);
         }
     }
 
@@ -798,41 +807,6 @@ impl OrderflowView {
             return None;
         }
         self.published.health.tape_age
-    }
-
-    /// Name of the preset the panel currently wears.
-    #[cfg(test)]
-    pub(crate) fn active_preset_for_test(&self) -> &str {
-        self.look.look_name()
-    }
-
-    /// Read-only view of the heatmap config, for app-level assertions.
-    #[cfg(test)]
-    pub(crate) fn config_for_test(&self) -> &HeatmapConfig {
-        &self.config
-    }
-
-    #[cfg(test)]
-    pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
-        let before = self.config.clone();
-        self.config.price_grouping = grouping;
-        self.capture_grouping_draft = grouping.to_f64().unwrap_or(self.capture_grouping_draft);
-        self.commit_config_changes(before)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn base_capture_grouping_for_test(&mut self) -> Decimal {
-        self.flush_for_test();
-        self.published.base_price_grouping
-    }
-
-    /// Wait until the worker has applied and published everything sent so
-    /// far, then adopt the result. Makes the async pipeline deterministic in
-    /// tests; production code never blocks on the worker.
-    #[cfg(test)]
-    pub(crate) fn flush_for_test(&mut self) {
-        self.worker.flush();
-        self.sync_published();
     }
 
     /// Reset market-specific history while preserving visual/retention
@@ -1262,6 +1236,36 @@ impl OrderflowView {
 impl OrderflowView {
     pub(crate) fn apply_preset(&mut self, name: &str, spheres: bool) -> bool {
         self.look.apply_preset(name, &mut self.config, spheres)
+    }
+
+    /// Name of the preset the panel currently wears.
+    pub(crate) fn active_preset_for_test(&self) -> &str {
+        self.look.look_name()
+    }
+
+    /// Read-only view of the heatmap config, for app-level assertions.
+    pub(crate) fn config_for_test(&self) -> &HeatmapConfig {
+        &self.config
+    }
+
+    pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
+        let before = self.config.clone();
+        self.config.price_grouping = grouping;
+        self.capture_grouping_draft = grouping.to_f64().unwrap_or(self.capture_grouping_draft);
+        self.commit_config_changes(before)
+    }
+
+    pub(crate) fn base_capture_grouping_for_test(&mut self) -> Decimal {
+        self.flush_for_test();
+        self.published.base_price_grouping
+    }
+
+    /// Wait until the worker has applied and published everything sent so
+    /// far, then adopt the result. Makes the async pipeline deterministic in
+    /// tests; production code never blocks on the worker.
+    pub(crate) fn flush_for_test(&mut self) {
+        self.worker.flush();
+        self.sync_published();
     }
 }
 

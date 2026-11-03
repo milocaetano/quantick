@@ -1572,13 +1572,46 @@ fn the_tape_window_selector_and_the_filing_call_are_one_setting() {
         "without `file` the call only navigates"
     );
 
-    let payload = input(&app, json!({"window": {"kind":"auto"}, "file": true}));
+    // Navigated to `auto` and zoomed over the filed 2 min: filing `auto` files it,
+    // as the selector's pick does, judged against the setting and not the view.
+    let auto = json!({"kind":"auto"});
+    let zoomed = LaneWindow::Auto { zoom: 2.0 };
+    app.active_tab_mut()
+        .tape_mut()
+        .navigate_live_lane_window(zoomed);
+    let payload = input(&app, json!({"window": auto, "file": true}));
     keyed_call(&mut app, &mut client, "auto", CAPABILITY, payload, "auto");
+    let filed = || app.active_tab().tape().lane_window_setting();
+    assert_eq!(
+        filed(),
+        LaneWindow::default(),
+        "auto over a filed fixed files"
+    );
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
         texts.iter().any(|text| text.starts_with("auto")),
         "auto reads the label's words: {texts:?}"
     );
+
+    // Filed and shown, `auto` again files nothing and keeps the zoom; the
+    // readback says so.
+    app.active_tab_mut()
+        .tape_mut()
+        .navigate_live_lane_window(zoomed);
+    let payload = input(&app, json!({"window": auto, "file": true}));
+    let (response, _) = keyed_call(&mut app, &mut client, "again", CAPABILITY, payload, "again");
+    assert_eq!(
+        app.active_tab().tape().live_lane_window(),
+        zoomed,
+        "zoom kept"
+    );
+    assert_eq!(
+        app.active_tab().tape().lane_window_setting(),
+        LaneWindow::default()
+    );
+    let window = &success_result(&response)["tape"]["window"];
+    assert_eq!(window["mode"], "auto");
+    assert_eq!(window["zoom"], "2", "the result reports the zoom in force");
     disable_test_gateway(&mut app, &ctx);
 }
 

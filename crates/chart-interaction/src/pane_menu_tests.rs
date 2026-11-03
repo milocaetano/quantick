@@ -43,6 +43,7 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
     facts.tape = Some(TapeFact {
         window: LaneWindow::Fixed { ms: 60_000 },
         reference_ms: Some(20_000),
+        window_setting: LaneWindow::Fixed { ms: 60_000 },
     });
     let entries = describe(&model, &facts);
     assert_eq!(
@@ -332,16 +333,27 @@ fn blocked_layer_retains_requested_check_and_explanation() {
 /// still files itself: the wheel may have reached it without filing it.
 #[test]
 fn only_auto_in_force_picks_nothing() {
-    let windows = |window| {
+    let filed = |window, window_setting| {
         let mut facts = facts();
         facts.tape = Some(TapeFact {
             window,
             reference_ms: None,
+            window_setting,
         });
         window_lines(&facts)
     };
+    let windows = |window| filed(window, window);
     let auto = windows(LaneWindow::Auto { zoom: 2.0 });
     assert_eq!(auto[0], (true, None));
+    // Navigated to `auto` over a filed fixed window: the pick files `auto`.
+    let navigated = filed(
+        LaneWindow::Auto { zoom: 2.0 },
+        LaneWindow::Fixed { ms: 60_000 },
+    );
+    assert_eq!(
+        navigated[0],
+        (true, Some(MenuIntent::SetLaneWindow(LaneWindow::default())))
+    );
     let minute = LaneWindow::Fixed { ms: 60_000 };
     let fixed = windows(minute);
     assert_eq!(fixed[3], (true, Some(MenuIntent::SetLaneWindow(minute))));

@@ -166,6 +166,8 @@ pub fn inverted_entry(inverted: bool) -> Entry {
 pub struct TapeFact {
     pub window: LaneWindow,
     pub reference_ms: Option<i64>,
+    /// The asset's filed window, which a pick is judged against.
+    pub window_setting: LaneWindow,
 }
 pub struct PlaceFact {
     pub tool: &'static str,
@@ -328,7 +330,8 @@ fn tape_entries(facts: &Facts, tape: &TapeFact) -> Vec<Entry> {
             lane_window_label(window, tape.reference_ms),
             Kind::Select {
                 selected: same_lane_window(tape.window, window),
-                choice: lane_window_pick(tape.window, window).map(MenuIntent::SetLaneWindow),
+                choice: lane_window_pick(tape.window, tape.window_setting, window)
+                    .map(MenuIntent::SetLaneWindow),
                 weak: false,
             },
         )

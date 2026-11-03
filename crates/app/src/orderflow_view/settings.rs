@@ -265,6 +265,7 @@ impl OrderflowView {
         // Read after the clustering section drew: a history window picked
         // this frame is the one the live lane's "Same as history" inherits.
         let lane_set = LiveLaneSection {
+            window_setting: self.look.lane_window_setting(),
             inherited_cluster_ms: config.bubble_cluster_ms,
             volume_dots: config.volume_dots.enabled,
             native_block: super::layers::native_tape_block(config),

@@ -773,6 +773,7 @@ impl ChartPane {
             .map(|orderflow| TapeMenuView {
                 window: orderflow.live_lane_window(),
                 reference_ms: self.frame.lane_reference_ms,
+                window_setting: orderflow.lane_window_setting(),
             });
         let flow_opening = self
             .orderflow
@@ -1116,8 +1117,8 @@ impl ChartPane {
         let header = egui::Rect::from_x_y_ranges(area.x_range(), area.top() - height..=area.top());
         let (mut intent, painted) = (None, &mut self.frame.header_controls);
         let at = (CapsuleSide::Time, self.id);
-        let rect = draw_docked_capsule(ui, &capsule, header, at, painted, &mut intent);
-        self.frame.capsules[0] = Some(rect);
+        self.frame.capsules[0] =
+            draw_docked_capsule(ui, &capsule, header, at, painted, &mut intent);
         intent
     }
 
@@ -1246,6 +1247,7 @@ impl ChartPane {
             scale(BubbleSample::Candle),
             scale(BubbleSample::Tape),
             self.frame.lane_reference_ms,
+            owner.lane_window_setting(),
         ))
     }
 

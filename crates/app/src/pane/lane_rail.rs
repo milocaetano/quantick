@@ -1,9 +1,7 @@
 //! The tape lane divider's pointer, and the rail a closed side leaves; the
 //! decisions are [`quantick_orderflow::LaneDividerDrag`]'s.
 use eframe::egui;
-use quantick_chart::flow_band::{
-    DIVIDER_WIDTH_PX, GRIP_DOT_PX, SIDE_HEADER_HEIGHT_PX, grip_dots, side_headers,
-};
+use quantick_chart::flow_band::{DIVIDER_WIDTH_PX, GRIP_DOT_PX, grip_dots, side_headers};
 use quantick_chart_interaction::{pane::Intent, pane_axis::AxisGesture};
 use quantick_orderflow::{FoldRail, LaneFold, LaneSide, LiveLaneStyle};
 
@@ -55,9 +53,9 @@ pub(super) fn lane_handle(pane: &ChartPane, chart: egui::Rect) -> Option<egui::R
     pane.frame.candles_right?;
     let hit = lane(pane)?.divider_hit(chart.width(), LANE_HANDLE_HALF_WIDTH_PX)?;
     let rect = span(chart, hit);
-    // An open divider takes the hand all the way up through its side headers: the
-    // row `flow_pane_layout` carves right above the pane's area.
-    let row_top = pane.frame.area.map_or(chart.top(), |area| area.top()) - SIDE_HEADER_HEIGHT_PX;
+    // An open divider takes the hand up through the side headers `flow_pane_layout`
+    // carved, clamped as they are, and never into the band; no row, no reach.
+    let row_top = pane.frame.side_row.map_or(chart.top(), |row| row.top());
     Some(match rail(pane, chart) {
         Some(_) => rect,
         None => rect.with_min_y(row_top),

@@ -456,7 +456,7 @@ pub fn close_unseen_window_list(ctx: &egui::Context) {
 
 /// A capsule at a header's far end, `header` spanning the header: fixed in the
 /// row, so it neither fades nor lifts. The chart's divider keeps its own grab band
-/// clear of it. Answers where it stands.
+/// clear of it. Answers where it stands; `None` in a header too short to hold it.
 pub fn draw_docked_capsule(
     ui: &mut egui::Ui,
     capsule: &Capsule,
@@ -464,9 +464,9 @@ pub fn draw_docked_capsule(
     (which, salt): (CapsuleSide, u64),
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
-) -> egui::Rect {
+) -> Option<egui::Rect> {
     let width = capsule.width_px();
-    let corner = docked_capsule_corner(header.right(), header.top(), header.bottom(), width);
+    let corner = docked_capsule_corner(header.right(), header.top(), header.bottom(), width)?;
     let rect = egui::Rect::from_min_size(
         egui::pos2(corner.0, corner.1),
         egui::vec2(width, DOCKED_CAPSULE_HEIGHT_PX),
@@ -480,7 +480,7 @@ pub fn draw_docked_capsule(
     );
     let origin = docked_slot_origin(corner);
     capsule_slots(&ui, capsule, origin, salt, painted, intent);
-    rect
+    Some(rect)
 }
 
 /// The gear, bare like the indicators button, pressed while the panel is open.
