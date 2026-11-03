@@ -439,8 +439,7 @@ impl ChartPane {
 
     /// Width reserved for the live strip this frame. The aggression histogram runs on the trade
     /// stream every source provides (replay included), so without book data the strip degrades to
-    /// that histogram alone. A pane with no tape has no strip (§11), and neither has the tape
-    /// alone: the strip is the trail's, and its filed switch waits for the trail.
+    /// that histogram alone. No tape, or the tape alone, has no strip: it is the trail's (§11).
     pub fn live_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
         // Both halves of the strip come from the source: resting depth and the aggressions landing
         // into it. A source producing neither fills none of it, and the band would be an empty rect
@@ -461,8 +460,7 @@ impl ChartPane {
         }
     }
 
-    /// The tape's view the plot is carved for, `None` without a tape: the one on screen, but
-    /// the committed one while a close is previewed, so the drag's chart keeps its width.
+    /// The view the plot is carved for: the committed one while a close is only previewed.
     pub(crate) fn plot_lane_view(&self) -> Option<quantick_orderflow::LaneView> {
         let lane = &self.orderflow.as_ref()?.cached_config().live_lane;
         Some(lane.drag_close.map_or(lane.shown_view(), |_| lane.view()))
@@ -472,10 +470,9 @@ impl ChartPane {
     /// the renderer can never disagree about a boundary; `lay_out` puts the strip on the trail.
     pub(super) fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
         let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
-        let strip = self.live_strip_width(capabilities);
         let mut areas = plot_split(
             area,
-            gutter_strip_px(self.plot_lane_view(), strip),
+            gutter_strip_px(self.plot_lane_view(), self.live_strip_width(capabilities)),
             self.indicators.pane_sizing(&mut sizing),
         );
         areas.capsules = self.frame.capsules;

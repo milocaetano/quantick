@@ -68,6 +68,11 @@ impl ChartPane {
         let Some(layout) = self.lay_out(area, chrome) else {
             return;
         };
+        // The flow pane's time axis stands on the frame's tone: its chart's dark ends at the plot.
+        if self.orderflow.is_some() {
+            let axis = area.with_min_y(layout.areas.time_strip.top());
+            painter.rect_filled(axis, egui::Rounding::ZERO, theme::FLOW_SURFACE);
+        }
         let tape_range = self
             .orderflow
             .as_ref()

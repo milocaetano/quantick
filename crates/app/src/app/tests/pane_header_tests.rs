@@ -2558,6 +2558,51 @@ fn a_tape_alone_shows_no_bars_and_no_indicators_button() {
     assert!(bars.right() <= indicators.left() && indicators.right() < split);
 }
 
+/// The flow pane's time axis and its bottom padding stand on the frame's tone, the
+/// chart's dark ending at the plot's bottom edge, square across the price gutter's
+/// corner; a context pane keeps its axis on the chart's own background.
+#[test]
+fn the_flow_time_axis_stands_on_the_frame_tone() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let output = run_frame(&mut app, &ctx);
+    fn rects(shape: &egui::Shape, found: &mut Vec<(egui::Rect, egui::Color32)>) {
+        match shape {
+            egui::Shape::Rect(rect) => found.push((rect.rect, rect.fill)),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| rects(shape, found)),
+            _ => {}
+        }
+    }
+    let mut painted = Vec::new();
+    output
+        .shapes
+        .iter()
+        .for_each(|clipped| rects(&clipped.shape, &mut painted));
+    let axis_of = |side| {
+        let frame = &app.active_tab().pane(side).frame;
+        let (area, strip) = (
+            frame.area.expect("drawn"),
+            frame.time_strip.expect("an axis"),
+        );
+        (area, area.with_min_y(strip.top()))
+    };
+    let (area, axis) = axis_of(PaneSide::Flow);
+    assert!(
+        axis.height() > 0.0 && axis.bottom() == area.bottom(),
+        "{axis:?} in {area:?}"
+    );
+    let at = |rect: egui::Rect, fill| painted.iter().position(|seen| *seen == (rect, fill));
+    let canvas = at(area, crate::theme::CANVAS).expect("the chart's dark goes down first");
+    let tone = at(axis, crate::theme::FLOW_SURFACE).expect("then the frame's tone below the plot");
+    assert!(canvas < tone, "the tone lies over the dark, not under it");
+    let (_, context_axis) = axis_of(PaneSide::Time(0));
+    assert_eq!(
+        at(context_axis, crate::theme::FLOW_SURFACE),
+        None,
+        "context panes keep theirs"
+    );
+}
+
 /// The scene lists what the row paints: beside the tape the flow pane's bars and
 /// indicators calls are there, the trail's; the tape alone lists neither, while a
 /// context pane keeps both.
