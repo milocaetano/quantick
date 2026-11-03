@@ -445,7 +445,7 @@ impl MarkTool for AnchoredVwapTool {
                 _ => anchor,
             };
             if chart_rect.contains(marker) {
-                painter.circle_filled(marker, ANCHOR_RADIUS_PX, crate::palette::CANVAS);
+                painter.circle_filled(marker, ANCHOR_RADIUS_PX, ctxt.appearance.color(quantick_appearance::Token::Canvas));
                 painter.circle_stroke(
                     marker,
                     ANCHOR_RADIUS_PX,
@@ -635,6 +635,7 @@ mod tests {
         // Anchor bar 10 sits at x=100 with 20 px per bar.
         let anchor_screen = [pos2(100.0, scale.y(100.0))];
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: &payload,
             anchors: &anchors,
             scale: &scale,

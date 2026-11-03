@@ -67,13 +67,32 @@ editing Dark's own configured size changes its output just like an external them
 Configured families apply to both measurement and painting. Axis reservations grow
 with their role, and footprint row/width floors and fitted fonts share one budget.
 Variable-width footprint digits use a conservative one-em width budget. Authored
-drawing text and script object typography remain stored object properties; ambient
-roles must not resize an existing drawing.
+note text family/size remain stored object properties. Script label and marker
+models do not store typography: their default text uses the body role at the
+historical 11-pixel reference size, while their authored colors remain intact.
+Fib, measurement and profile annotations use ambient roles; they have no saved
+font-size fields.
 
-The `dark` flag also chooses egui's base cursor, disabled text, window shadows and
-other widget defaults. Quantick then applies its semantic surface, text, hover,
-selection and link colors. Presentation opacity composes with configured alpha;
-it does not reinterpret premultiplied channels as straight RGB.
+The `dark` flag chooses egui's base widget geometry and behavior. Semantic
+`widget_code`, `widget_warn`, `widget_error`, `widget_cursor`, `widget_shadow`,
+`widget_noninteractive`, `widget_active_border` and `widget_open_border` replace
+its remaining painted color defaults. Disabled fading, corner radii, stroke
+widths, cursor blinking and shadow geometry remain toolkit policy. The inactive
+widget border has zero width and no visible color. Presentation opacity composes
+with configured alpha rather than reinterpreting premultiplied channels.
+
+`drawing_selection_halo` and `drawing_readout_plate` configure ambient drawing
+selection and measurement/placement plates. Existing drawing style colors and
+note payload fonts are preserved. Profile POC/side labels, casing, directional
+readouts and empty-note placeholders read the current scene's borrowed theme.
+`modal_scrim`, `replay_well`, `replay_inset`, `replay_error`, `action_ink`,
+`error_text` and `text_shadow` cover modal/replay/error/action decorations.
+
+Ledger allocation, virtual scrolling and two-line baselines share one text
+scale. Report table columns, calendar cells, pane header reservation/input,
+loading chips and preview legend spacing now account for configured text.
+This is not yet a claim that every constrained layout handles enlarged fonts:
+[the classified inventory](appearance-inventory.md) names remaining acceptance work.
 
 ## Order-flow palette
 
@@ -215,10 +234,6 @@ in both drawing and reusable-run keys. A theme/font change rebuilds the affected
 drawing; warm frames reuse it. Label galleys are laid out against that retained
 snapshot each frame so the font atlas can safely change. The compact legend grows
 its row reservation to the measured text height.
-
-The Bookmap, High Contrast and Color Blind heat palettes still have their existing
-separate ownership. Configuring their ramps/default-source provenance and saved
-bubble presets is outstanding; the new FLOW keys do not redefine those choices.
 
 
 ## Live inspection and atomic application

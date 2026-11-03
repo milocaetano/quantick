@@ -43,7 +43,7 @@ pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
     let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::hover(),
     );
     if !ui.is_rect_visible(rect) {
@@ -73,7 +73,7 @@ pub(super) fn draw_day_header(
     let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::click(),
     );
     if !ui.is_rect_visible(rect) {
@@ -122,7 +122,7 @@ pub(super) fn draw_day_header(
         palette.text_muted()
     };
     let ends = [
-        rect.left() + DAY_HEADER_TEXT_X_PX,
+        rect.left() + palette.layout(DAY_HEADER_TEXT_X_PX),
         rect.right() - 6.0,
         band.center().y,
     ];
@@ -151,7 +151,7 @@ pub(super) fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
     let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::click(),
     );
     if !ui.is_rect_visible(rect) {
@@ -188,7 +188,7 @@ pub(super) fn draw_open_row(ui: &mut egui::Ui, open: &OpenRow, symbol: Option<&s
     let summary = &open.summary;
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::hover(),
     );
     if !ui.is_rect_visible(rect) {
@@ -262,8 +262,8 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     let palette = theme::get(painter.ctx());
     let font = palette.mono_font(11.0);
     let x = rect.left() + SIDE_RAIL_WIDTH_PX + 6.0;
-    let y1 = rect.top() + 9.0;
-    let y2 = rect.top() + 24.0;
+    let y1 = rect.top() + palette.layout(9.0);
+    let y2 = rect.top() + palette.layout(24.0);
     let color = palette.side_color(lines.side);
     let head = painter.layout_no_wrap(lines.head, font.clone(), color);
     let route_x = x + head.size().x + 8.0;
@@ -380,7 +380,7 @@ pub(super) fn draw_ledger_row(
     let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::click(),
     );
     if !ui.is_rect_visible(rect) {
@@ -438,7 +438,7 @@ pub(super) fn draw_ledger_row(
     let mut navigate = false;
     if session && response.hovered() {
         let nav_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.right() - 14.0, rect.top() + 24.0),
+            egui::pos2(rect.right() - 14.0, rect.top() + palette.layout(24.0)),
             egui::vec2(16.0, 14.0),
         );
         let nav = ui

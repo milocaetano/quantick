@@ -961,6 +961,7 @@ fn rectangle_interior_hit_tests_only_while_the_fill_is_visible() {
     let border = pos2(100.0, 150.0);
 
     let filled = DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload: payload.as_ref(),
         anchors: &anchors,
         scale: &scale,
@@ -976,6 +977,7 @@ fn rectangle_interior_hit_tests_only_while_the_fill_is_visible() {
     assert!(rectangle.hit_test(chart, &points, center, 5.0, &filled));
 
     let outline_only = DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         style: DrawingStyle {
             fill_alpha: 0,
             ..DrawingStyle::default()
@@ -1044,6 +1046,7 @@ fn selection_preserves_the_drawing_color_and_adds_white_handles() {
     let mut scene = MarkScene::default();
     {
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
@@ -1424,6 +1427,7 @@ fn horizontal_line_is_selectable_from_anywhere_on_its_stroke() {
     let points = [pos2(100.0, 120.0)];
     let anchors = anchors_for(&points, &scale);
     let ctxt = DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload: payload.as_ref(),
         anchors: &anchors,
         scale: &scale,
@@ -1677,6 +1681,7 @@ fn a_tool_may_own_its_handles_and_the_host_paints_hits_and_drags_them() {
     let anchors = anchors_for(&points, &scale);
     let payload = tool.default_payload();
     let ctxt = DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload: payload.as_ref(),
         anchors: &anchors,
         scale: &scale,
@@ -1786,6 +1791,7 @@ fn a_tool_that_declares_no_handles_is_still_grabbed_by_its_anchors() {
         let payload = drawing_tool.default_payload();
         let anchors = anchors_for(&points, &scale);
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
@@ -1871,6 +1877,7 @@ fn every_registered_tool_paints_and_hits_its_finished_geometry() {
         let payload = drawing_tool.default_payload();
         let anchors = anchors_for(&points, &scale);
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
@@ -2114,6 +2121,7 @@ fn the_background_pass_reaches_a_tool_that_wants_it_and_no_other() {
     let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
     let payload: Box<dyn DrawingPayload> = Box::new(NoPayload);
     let ctxt = DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload: payload.as_ref(),
         anchors: &[],
         scale: &scale,
@@ -2198,3 +2206,5 @@ fn set_own_magnet_refuses_what_the_bar_would_not_offer() {
     assert!(matches!(refused, Err(Some((_, "arrow-mark-up")))));
     assert_eq!(drawings.set_own_magnet(mark, false), Ok(false));
 }
+
+mod appearance;

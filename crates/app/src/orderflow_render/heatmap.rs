@@ -565,7 +565,7 @@ fn draw_text_with_shadow(
         align,
         text,
         font.clone(),
-        egui::Color32::from_black_alpha(190),
+        crate::theme::get(painter.ctx()).quantity_shadow(),
     );
     painter.text(anchor, align, text, font, color);
 }

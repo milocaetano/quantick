@@ -898,7 +898,7 @@ impl GetDataPanel {
         let Some(available) = self.available.take().filter(|_| !stale) else {
             self.days.selection.clear();
             egui::Frame::none()
-                .fill(egui::Color32::from_black_alpha(60))
+                .fill(palette.replay_well())
                 .inner_margin(10.0)
                 .rounding(4.0)
                 .show(ui, |ui| {
@@ -915,7 +915,7 @@ impl GetDataPanel {
         };
 
         egui::Frame::none()
-            .fill(egui::Color32::from_black_alpha(60))
+            .fill(palette.replay_well())
             .inner_margin(8.0)
             .rounding(4.0)
             .show(ui, |ui| {
@@ -1123,7 +1123,7 @@ impl GetDataPanel {
         match &self.phase {
             Phase::Failed { headline, fix } => {
                 egui::Frame::none()
-                    .fill(egui::Color32::from_rgba_unmultiplied(90, 30, 25, 120))
+                    .fill(palette.replay_error())
                     .inner_margin(8.0)
                     .rounding(4.0)
                     .show(ui, |ui| {
@@ -1268,7 +1268,7 @@ impl GetDataPanel {
                     days => format!("Download {days} days"),
                 };
                 let button =
-                    egui::Button::new(egui::RichText::new(text).color(egui::Color32::BLACK))
+                    egui::Button::new(egui::RichText::new(text).color(palette.action_ink()))
                         .fill(palette.amber());
                 if ui
                     .add_enabled(

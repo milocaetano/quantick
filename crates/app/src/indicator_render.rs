@@ -884,6 +884,7 @@ pub(crate) fn draw_objects(
     // galley builds per frame for labels that are mostly off-screen. The
     // test is overlap, not containment: a line that starts left of the
     // window and ends right of it crosses the whole screen.
+    let palette = theme::get(painter.ctx());
     let visible_span = |lo: i64, hi: i64| {
         let (lo, hi) = (lo.min(hi), lo.max(hi));
         hi >= 0 && (lo as usize) < end && (hi as usize) >= start
@@ -938,7 +939,7 @@ pub(crate) fn draw_objects(
         let anchor = pos2(x.x(label.x as usize), y_of(label.y));
         let galley = painter.layout_no_wrap(
             label.text.clone(),
-            egui::FontId::proportional(OBJECT_LABEL_FONT),
+            palette.body_font(OBJECT_LABEL_FONT),
             color32(label.text_color),
         );
         let size = galley.size() + egui::vec2(OBJECT_LABEL_PAD * 2.0, OBJECT_LABEL_PAD * 2.0);
@@ -1038,6 +1039,7 @@ fn draw_shape_markers(
     bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
 ) {
     use quantick_indicators::{MarkerLocation, MarkerShape};
+    let palette = theme::get(painter.ctx());
     for (row, value) in plot.cells() {
         if value.is_nan() {
             continue;
@@ -1116,7 +1118,7 @@ fn draw_shape_markers(
                 center + egui::vec2(0.0, offset),
                 anchor,
                 text,
-                egui::FontId::proportional(OBJECT_LABEL_FONT),
+                palette.body_font(OBJECT_LABEL_FONT),
                 color,
             );
         }

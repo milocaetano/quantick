@@ -738,6 +738,7 @@ impl DrawingProjection<'_> {
         selected: bool,
     ) -> DrawContext<'a> {
         DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: drawing.payload.as_ref(),
             anchors: &drawing.points,
             scale,

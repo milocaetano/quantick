@@ -12,6 +12,7 @@ use std::any::Any;
 use crate::icons;
 
 use super::{DrawContext, DrawingPayload, DrawingStyle, MarkTool, GlyphSize, ToolShortcut};
+#[cfg(test)]
 use crate::palette as theme;
 
 pub(super) static TOOL: Text = Text;
@@ -109,9 +110,9 @@ fn payload_of<'a>(ctxt: &'a DrawContext<'_>) -> Option<&'a TextPayload> {
 /// The words as painted, and the colour they are painted in — an empty note
 /// shows its placeholder muted, so it reads as "nothing typed yet" rather
 /// than as content.
-fn shown(payload: &TextPayload, style: DrawingStyle) -> (&str, PremultipliedRgba) {
+fn shown<'a>(payload: &'a TextPayload, style: DrawingStyle, appearance: &quantick_appearance::ResolvedTheme) -> (&'a str, PremultipliedRgba) {
     if payload.text.trim().is_empty() {
-        (PLACEHOLDER, theme::TEXT_MUTED)
+        (PLACEHOLDER, appearance.color(quantick_appearance::Token::TextMuted))
     } else {
         (payload.text.as_str(), style.color)
     }
@@ -209,7 +210,7 @@ impl MarkTool for Text {
         let Some(payload) = payload_of(ctxt) else {
             return;
         };
-        let (text, color) = shown(payload, style);
+        let (text, color) = shown(payload, style, ctxt.appearance);
         painter.text(
             *anchor - vec2(0.0, TEXT_LIFT_PX),
             Align2::LEFT_BOTTOM,
@@ -232,7 +233,7 @@ impl MarkTool for Text {
         let Some(payload) = payload_of(ctxt) else {
             return false;
         };
-        let (text, _) = shown(payload, ctxt.style);
+        let (text, _) = shown(payload, ctxt.style, ctxt.appearance);
         // Measured from the type size rather than laid out: hit-testing runs
         // per frame per object and must not build a galley to answer.
         let lines = text.lines().count().max(1) as f32;
@@ -266,7 +267,7 @@ mod tests {
     #[test]
     fn an_empty_note_still_shows_something_to_click() {
         let empty = TextPayload::default();
-        let (text, color) = shown(&empty, DrawingStyle::default());
+        let (text, color) = shown(&empty, DrawingStyle::default(), quantick_appearance::ResolvedTheme::bundled_dark());
         assert_eq!(text, PLACEHOLDER);
         assert_eq!(
             color,
@@ -282,7 +283,7 @@ mod tests {
             ..TextPayload::default()
         };
         let style = DrawingStyle::default();
-        let (text, color) = shown(&payload, style);
+        let (text, color) = shown(&payload, style, quantick_appearance::ResolvedTheme::bundled_dark());
         assert_eq!(text, "Daily high");
         assert_eq!(color, style.color);
     }
@@ -295,7 +296,7 @@ mod tests {
             text: "   \n ".to_owned(),
             ..TextPayload::default()
         };
-        assert_eq!(shown(&payload, DrawingStyle::default()).0, PLACEHOLDER);
+        assert_eq!(shown(&payload, DrawingStyle::default(), quantick_appearance::ResolvedTheme::bundled_dark()).0, PLACEHOLDER);
     }
 
     #[test]

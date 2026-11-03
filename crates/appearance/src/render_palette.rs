@@ -12,6 +12,57 @@ impl<T> RenderPalette<T> {
     }
 }
 impl<T: Copy> RenderPalette<T> {
+    pub fn text_shadow(&self) -> T {
+        *self.get(Token::TextShadow)
+    }
+    pub fn replay_error(&self) -> T {
+        *self.get(Token::ReplayError)
+    }
+    pub fn replay_inset(&self) -> T {
+        *self.get(Token::ReplayInset)
+    }
+    pub fn replay_well(&self) -> T {
+        *self.get(Token::ReplayWell)
+    }
+    pub fn error_text(&self) -> T {
+        *self.get(Token::ErrorText)
+    }
+    pub fn action_ink(&self) -> T {
+        *self.get(Token::ActionInk)
+    }
+    pub fn modal_scrim(&self) -> T {
+        *self.get(Token::ModalScrim)
+    }
+    pub fn widget_open_border(&self) -> T {
+        *self.get(Token::WidgetOpenBorder)
+    }
+    pub fn widget_active_border(&self) -> T {
+        *self.get(Token::WidgetActiveBorder)
+    }
+    pub fn widget_noninteractive(&self) -> T {
+        *self.get(Token::WidgetNoninteractive)
+    }
+    pub fn widget_shadow(&self) -> T {
+        *self.get(Token::WidgetShadow)
+    }
+    pub fn widget_cursor(&self) -> T {
+        *self.get(Token::WidgetCursor)
+    }
+    pub fn widget_error(&self) -> T {
+        *self.get(Token::WidgetError)
+    }
+    pub fn widget_warn(&self) -> T {
+        *self.get(Token::WidgetWarn)
+    }
+    pub fn widget_code(&self) -> T {
+        *self.get(Token::WidgetCode)
+    }
+    pub fn drawing_readout_plate(&self) -> T {
+        *self.get(Token::DrawingReadoutPlate)
+    }
+    pub fn drawing_selection_halo(&self) -> T {
+        *self.get(Token::DrawingSelectionHalo)
+    }
     pub fn side_color_for(&self, buy: bool) -> T {
         *self.get(if buy { Token::Buy } else { Token::Sell })
     }

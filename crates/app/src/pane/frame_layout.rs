@@ -238,6 +238,7 @@ impl CandleDress {
         chrome: &PaneChrome<'_>,
         paints: bool,
         cw: f32,
+        text_width_scale: f32,
     ) -> Self {
         let half = chrome.style.candles.body_half_width(cw);
         // The style that will actually draw, not the one that was asked for:
@@ -255,7 +256,7 @@ impl CandleDress {
             paints,
             treatment,
             cw,
-            config.body_fade_end_px(),
+            config.body_fade_end_px() * text_width_scale,
             chrome.style.candles,
         );
         // The half-width the footprint's content actually spans. The lane is

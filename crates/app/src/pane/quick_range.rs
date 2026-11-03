@@ -220,6 +220,7 @@ impl QuickRangeView<'_> {
                         .drawing_screen_point(anchor, history_right, total, scale)
                 });
                 let ctxt = DrawContext {
+                    appearance: &crate::theme::get(painter.ctx()).resolved,
                     payload: quick.payload,
                     anchors: &quick.anchors,
                     scale,

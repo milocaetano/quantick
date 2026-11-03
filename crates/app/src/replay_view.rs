@@ -817,7 +817,7 @@ impl ReplayView {
                 .small(),
         );
         let frame = egui::Frame::none()
-            .fill(egui::Color32::from_black_alpha(60))
+            .fill(palette.replay_well())
             .inner_margin(8.0)
             .rounding(4.0);
 
@@ -947,7 +947,7 @@ impl ReplayView {
             return;
         }
         egui::Frame::none()
-            .fill(egui::Color32::from_black_alpha(90))
+            .fill(palette.replay_inset())
             .inner_margin(8.0)
             .rounding(4.0)
             .show(ui, |ui| {
@@ -971,7 +971,7 @@ impl ReplayView {
         let palette = theme::get(ui.ctx());
         if let Some(error) = &self.error {
             egui::Frame::none()
-                .fill(egui::Color32::from_rgba_unmultiplied(90, 30, 25, 120))
+                .fill(palette.replay_error())
                 .inner_margin(8.0)
                 .rounding(4.0)
                 .show(ui, |ui| {
@@ -1006,7 +1006,7 @@ impl ReplayView {
                 }
                 let ready = self.selected_entry().is_some();
                 let button = egui::Button::new(
-                    egui::RichText::new("Play session").color(egui::Color32::BLACK),
+                    egui::RichText::new("Play session").color(palette.action_ink()),
                 )
                 .fill(palette.amber());
                 if ui
@@ -1165,7 +1165,7 @@ fn speed_chip(ui: &mut egui::Ui, speed: f32, selected: bool) -> egui::Response {
     };
     let mut rich = egui::RichText::new(text).monospace().small();
     if selected {
-        rich = rich.color(egui::Color32::BLACK).strong();
+        rich = rich.color(palette.action_ink()).strong();
     }
     let mut button = egui::Button::new(rich).min_size(egui::vec2(30.0, 18.0));
     if selected {
@@ -1184,7 +1184,7 @@ fn badge(ui: &mut egui::Ui, text: &str) {
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(text)
-                    .color(egui::Color32::BLACK)
+                    .color(palette.action_ink())
                     .small()
                     .strong(),
             );

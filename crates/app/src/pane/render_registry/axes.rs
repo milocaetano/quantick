@@ -1,7 +1,7 @@
 //! Axis contributions share the claims and geometry resolved for the current frame.
 use super::super::{
-    LAST_PRICE_CHIP_TEXT, LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA,
-    PointerCompass, PriceAxisClaims, grid_color,
+    LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, PointerCompass, PriceAxisClaims,
+    grid_color,
 };
 use super::{Contribution, Package};
 use crate::{
@@ -163,7 +163,7 @@ fn last_price(p: &mut LastPricePass<'_>) {
         y,
         pointer_compass::price_text(price),
         color,
-        LAST_PRICE_CHIP_TEXT,
+        theme::get(painter.ctx()).chip_ink(),
     );
 }
 fn crosshair(p: &mut CrosshairPass<'_>) {

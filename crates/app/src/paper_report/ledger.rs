@@ -280,7 +280,8 @@ impl ReportState {
         };
         let shown = live.len() + cut.kept.len();
         let rows_listed = live.len() + saved.len();
-        let list_height = (ui.available_height() - TOTALS_STRIP_PX * 3.0).max(LEDGER_ROW_HEIGHT_PX);
+        let list_height = (ui.available_height() - palette.layout(TOTALS_STRIP_PX) * 3.0)
+            .max(palette.layout(LEDGER_ROW_HEIGHT_PX));
         // Session rows carry the chart's own instrument; a ledger row that
         // does not name its market is unreadable the moment a second tab
         // exists.
@@ -540,16 +541,22 @@ struct RowPresses {
 
 impl RowList<'_, '_> {
     fn show(mut self, ui: &mut egui::Ui, list_height: f32) -> RowPresses {
+        let palette = theme::get(ui.ctx());
         let mut presses = RowPresses::default();
         let output = egui::ScrollArea::vertical()
             .id_salt("paper_trades_ledger")
             .auto_shrink([false, false])
             .max_height(list_height)
-            .show_rows(ui, LEDGER_ROW_HEIGHT_PX, self.rows.len(), |ui, range| {
-                for index in range {
-                    self.row(ui, index, &mut presses);
-                }
-            });
+            .show_rows(
+                ui,
+                palette.layout(LEDGER_ROW_HEIGHT_PX),
+                self.rows.len(),
+                |ui, range| {
+                    for index in range {
+                        self.row(ui, index, &mut presses);
+                    }
+                },
+            );
         // Keys belong to the ledger only while the pointer is over it and
         // nothing is being typed: a trading hotkey is never taken. The
         // chart's Del and Backspace stand down while the pointer is on the

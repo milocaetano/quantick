@@ -759,7 +759,11 @@ pub(super) fn paint(
                 pos2(x, level.y),
                 anchor,
                 text,
-                FontSpec::monospace(FIB_LABEL_SIZE_PX),
+                FontSpec::themed(
+                    ctxt.appearance,
+                    quantick_appearance::FontRole::Monospace,
+                    FIB_LABEL_SIZE_PX,
+                ),
                 level.color,
             );
         }
@@ -1126,6 +1130,7 @@ mod tests {
         halo: bool,
     ) -> DrawContext<'a> {
         DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload,
             anchors,
             scale,

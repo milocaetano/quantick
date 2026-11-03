@@ -461,3 +461,16 @@ fn flow_and_tape_defaults_preserve_exact_dark_bytes_and_alpha() {
     assert_eq!(configured.color(Token::FlowBuy).to_array()[3], 128);
     assert_eq!(configured.color(Token::TapeLabel).to_array()[3], 64);
 }
+
+#[test]
+fn ambient_layout_scale_preserves_dark_and_tracks_the_largest_role() {
+    use crate::{FontRole, ResolvedTheme};
+    assert_eq!(ResolvedTheme::bundled_dark().typography.layout_scale(), 1.0);
+    let large = ResolvedTheme::parse("version = 1\nname = 'Large'\n[typography.body]\nsize = 25\nfamily = 'monospace'\n[typography.monospace]\nsize = 36").unwrap();
+    assert_eq!(large.typography.layout_scale(), 3.0);
+    assert_eq!(
+        large.typography.at_size(FontRole::Monospace, 10.0).size,
+        30.0
+    );
+    assert_eq!(34.0 * large.typography.layout_scale(), 102.0);
+}

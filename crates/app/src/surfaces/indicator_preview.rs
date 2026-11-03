@@ -78,7 +78,7 @@ impl Surface for IndicatorPreviewSurface {
             egui::pos2(rect.center().x, rect.top() + WATERMARK_TOP_OFFSET_PX),
             egui::Align2::CENTER_TOP,
             WATERMARK_TEXT,
-            egui::FontId::proportional(WATERMARK_FONT_PX),
+            palette.body_font(WATERMARK_FONT_PX),
             palette.accent(),
         );
         SurfaceResponse::default()

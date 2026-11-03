@@ -105,6 +105,19 @@ impl Typography {
         }
     }
 
+    /// Reserve existing chrome geometry for the largest participating text role.
+    /// Smaller roles retain historical target sizes; larger roles grow the same
+    /// geometry used for painting, hit tests and virtual scrolling.
+    pub fn reserve(&self, role: FontRole, reference: f32) -> f32 {
+        reference * self.scale(role).max(1.0)
+    }
+    pub fn layout_scale(&self) -> f32 {
+        [FontRole::Body, FontRole::Button, FontRole::Monospace]
+            .into_iter()
+            .map(|role| self.scale(role))
+            .fold(1.0, f32::max)
+    }
+
     pub fn scale(&self, role: FontRole) -> f32 {
         self.get(role).size / role.reference_size()
     }

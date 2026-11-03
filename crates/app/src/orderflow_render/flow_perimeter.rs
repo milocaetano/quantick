@@ -56,7 +56,7 @@ pub(crate) fn draw_flow_perimeters(
             clip.galley_with_override_text_color(
                 origin + FLOW_OPENING_LABEL_SHADOW_OFFSET,
                 label.clone(),
-                egui::Color32::BLACK,
+                palette.text_shadow(),
             );
             clip.galley(origin, label, palette.text_primary());
         }

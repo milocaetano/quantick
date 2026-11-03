@@ -32,7 +32,7 @@ use super::{OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, rgba}
 /// path, the two reductions, the sample prints and the legend.
 pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::Response {
     let width = ui.available_width().clamp(240.0, 680.0);
-    let desired = egui::vec2(width, 196.0);
+    let desired = egui::vec2(width, crate::theme::get(ui.ctx()).label_space(196.0));
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
         return response;
@@ -89,8 +89,16 @@ impl PreviewCanvas {
         let palette = style.colors(super::premultiplied);
         let painter = ui.painter().with_clip_rect(rect);
         let chart = egui::Rect::from_min_max(
-            rect.left_top() + egui::vec2(8.0, 24.0),
-            rect.right_bottom() - egui::vec2(8.0, if config.show_legend { 30.0 } else { 8.0 }),
+            rect.left_top() + egui::vec2(8.0, appearance.label_space(24.0)),
+            rect.right_bottom()
+                - egui::vec2(
+                    8.0,
+                    if config.show_legend {
+                        appearance.label_space(30.0)
+                    } else {
+                        8.0
+                    },
+                ),
         );
         Self {
             painter,
@@ -393,9 +401,15 @@ fn draw_preview_legend(
     style: &OrderflowRenderStyle,
     appearance: &crate::theme::Palette,
 ) {
-    let baseline = bounds.bottom() - 13.0;
+    let baseline = bounds.bottom() - appearance.label_space(13.0);
     let mut x = bounds.left() + 10.0;
     let font = appearance.label_font(9.5);
+    let width = |text: &str| {
+        painter
+            .layout_no_wrap(text.into(), font.clone(), palette.legend_text)
+            .size()
+            .x
+    };
 
     let heat_rect = egui::Rect::from_min_size(egui::pos2(x, baseline - 4.0), egui::vec2(34.0, 7.0));
     let mut mesh = egui::Mesh::default();
@@ -427,9 +441,12 @@ fn draw_preview_legend(
         font.clone(),
         palette.legend_text,
     );
-    x += 54.0;
+    x += 54.0_f32.max(width("liquidity") + 8.0);
 
     for (color, label) in [(palette.buy, "buy"), (palette.sell, "sell")] {
+        if x + 11.0 + width(label) > bounds.right() {
+            return;
+        }
         painter.circle_filled(
             egui::pos2(x + 4.0, baseline),
             4.0,
@@ -447,11 +464,13 @@ fn draw_preview_legend(
             font.clone(),
             palette.legend_text,
         );
-        x += 41.0;
+        x += 41.0_f32.max(width(label) + 19.0);
     }
 
     // On narrow settings windows the hover text remains the complete legend.
-    if x + 200.0 > bounds.right() {
+    if x + 200.0_f32.max(width("aligned depletion") + width("unattributed L2 reduction") + 26.0)
+        > bounds.right()
+    {
         return;
     }
     painter.line_segment(
@@ -468,7 +487,7 @@ fn draw_preview_legend(
         font.clone(),
         palette.legend_text,
     );
-    x += 105.0;
+    x += 105.0_f32.max(width("aligned depletion") + 17.0);
     painter.line_segment(
         [
             egui::pos2(x + 3.0, baseline - 5.0),

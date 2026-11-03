@@ -3,6 +3,23 @@ name = "Dark"
 dark = true
 
 [colors]
+text_shadow = "#000000"
+replay_error = "#5A1E1978"
+replay_inset = { premultiplied = [0, 0, 0, 90] }
+replay_well = { premultiplied = [0, 0, 0, 60] }
+error_text = "#FF8080"
+action_ink = "#000000"
+modal_scrim = { premultiplied = [0, 0, 0, 90] }
+widget_open_border = "#3C3C3C"
+widget_active_border = "#FFFFFF"
+widget_noninteractive = "#1B1B1B"
+widget_shadow = { premultiplied = [0, 0, 0, 96] }
+widget_cursor = "#C0DEFF"
+widget_error = "#FF0000"
+widget_warn = "#FF8F00"
+widget_code = "#404040"
+drawing_readout_plate = { premultiplied = [14, 18, 26, 216] }
+drawing_selection_halo = { premultiplied = [28, 28, 28, 28] }
 flow_buy = "#70B9F4"
 flow_sell = "#E8AF63"
 tape_path = "#8EA6B15F"

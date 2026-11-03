@@ -356,14 +356,19 @@ pub fn draw_chip(ui: &egui::Ui, right: f32, strip: egui::Rect, dots: &[Dot; 3], 
     let palette = crate::theme::get(ui.ctx());
     let (with_words, alone) = chip_widths(ui, dots);
     let width = if words { with_words } else { alone };
+    let height = CHIP_HEIGHT_PX.max(if words {
+        word_galley(ui, dots[0].name).size().y + 4.0
+    } else {
+        0.0
+    });
     let rect = egui::Rect::from_min_size(
-        egui::pos2(right - width, strip.center().y - CHIP_HEIGHT_PX / 2.0),
-        egui::vec2(width, CHIP_HEIGHT_PX),
+        egui::pos2(right - width, strip.center().y - height / 2.0),
+        egui::vec2(width, height),
     );
     let painter = ui.painter();
     painter.rect_stroke(
         rect,
-        egui::Rounding::same(CHIP_HEIGHT_PX / 2.0),
+        egui::Rounding::same(height / 2.0),
         egui::Stroke::new(1.0_f32, palette.loading_border()),
     );
     let mut x = rect.left() + CHIP_PAD_PX;

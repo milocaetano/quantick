@@ -8,14 +8,13 @@ use std::fmt;
 
 use quantick_chart::style::PremultipliedRgba;
 
-use crate::palette as theme;
 use crate::{
     AnchorSnap, AxisLevels, BodySnap, Constrain, DEFAULT_DRAWING_COLOR, DRAWING_TOOLS, DrawContext,
     DrawingBand, DrawingPayload, DrawingStyle, GlyphSize, Handles, IconDots, IconLetter,
-    IconStrokes, MarkScene, NoPayload, Px, PxRect, SELECTED_ANCHOR_FILL, SELECTED_ANCHOR_RADIUS_PX,
-    SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_COLOR, SELECTION_HALO_EXTRA_WIDTH_PX, Stroke,
-    ToolFamily, ToolShortcut,
+    IconStrokes, MarkScene, NoPayload, Px, PxRect, SELECTED_ANCHOR_RADIUS_PX,
+    SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_EXTRA_WIDTH_PX, Stroke, ToolFamily, ToolShortcut,
 };
+use quantick_appearance::Token;
 
 /// One drawn mark, holding the registry tool that paints it.
 type Drawing = crate::Drawing<DrawingTool>;
@@ -668,7 +667,7 @@ impl DrawingTool {
     ) {
         if ctxt.selected {
             let halo_style = DrawingStyle {
-                color: SELECTION_HALO_COLOR,
+                color: ctxt.appearance.color(Token::DrawingSelectionHalo),
                 width_px: style.width_px + SELECTION_HALO_EXTRA_WIDTH_PX,
                 fill_alpha: 0,
             };
@@ -682,9 +681,16 @@ impl DrawingTool {
         }
         self.0.paint(painter, chart_rect, style, points, ctxt);
         if ctxt.selected && show_handles {
-            let ring = Stroke::new(SELECTED_ANCHOR_RING_WIDTH_PX, theme::ACCENT);
+            let ring = Stroke::new(
+                SELECTED_ANCHOR_RING_WIDTH_PX,
+                ctxt.appearance.color(Token::Accent),
+            );
             for point in self.handles(chart_rect, points, ctxt) {
-                painter.circle_filled(point, SELECTED_ANCHOR_RADIUS_PX, SELECTED_ANCHOR_FILL);
+                painter.circle_filled(
+                    point,
+                    SELECTED_ANCHOR_RADIUS_PX,
+                    ctxt.appearance.color(Token::Canvas),
+                );
                 painter.circle_stroke(point, SELECTED_ANCHOR_RADIUS_PX, ring);
             }
         }

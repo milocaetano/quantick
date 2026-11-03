@@ -60,8 +60,8 @@ pub fn clamp_pane_fraction(fraction: f32) -> f32 {
 /// chart. The header is a strip rather than an overlay so it is never painted
 /// across market data.
 #[must_use]
-pub fn split_pane_header(area: egui::Rect) -> PaneHeaderAreas {
-    let split_y = (area.top() + crate::time_header::HEIGHT_PX).min(area.bottom());
+pub fn split_pane_header(area: egui::Rect, height: f32) -> PaneHeaderAreas {
+    let split_y = (area.top() + height).min(area.bottom());
     PaneHeaderAreas {
         header: egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),
         chart: egui::Rect::from_min_max(egui::pos2(area.left(), split_y), area.max),

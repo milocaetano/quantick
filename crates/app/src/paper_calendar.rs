@@ -71,6 +71,7 @@ pub(crate) fn draw_month(
     fallback: CivilDate,
 ) -> Option<CalendarAction> {
     let palette = theme::get(ui.ctx());
+    let cell = cell * palette.resolved.typography.layout_scale();
     // `fallback` comes from the caller because this module is deliberately
     // clock-free. Without it an empty index fell back to epoch zero and
     // opened the grid on January 1970 — a month nobody asked about.
@@ -193,7 +194,7 @@ fn draw_day_cell(
         ui.painter().rect_filled(
             body,
             egui::Rounding::same(3.0),
-            egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), DAY_TINT_ALPHA),
+            theme::with_opacity(base, DAY_TINT_ALPHA),
         );
     } else if response.hovered() {
         ui.painter()
@@ -221,7 +222,10 @@ fn draw_day_cell(
         (false, _) => palette.text_faint(),
     };
     ui.painter().text(
-        egui::pos2(body.center().x, body.top() + DAY_NUMBER_BASELINE_PX),
+        egui::pos2(
+            body.center().x,
+            body.top() + palette.layout(DAY_NUMBER_BASELINE_PX),
+        ),
         egui::Align2::CENTER_CENTER,
         format!("{day}"),
         palette.mono_font(11.0),
@@ -229,7 +233,10 @@ fn draw_day_cell(
     );
     if let Some(stat) = stat {
         ui.painter().text(
-            egui::pos2(body.center().x, body.bottom() - DAY_COUNT_BASELINE_PX),
+            egui::pos2(
+                body.center().x,
+                body.bottom() - palette.layout(DAY_COUNT_BASELINE_PX),
+            ),
             egui::Align2::CENTER_CENTER,
             format!("{}", stat.trades),
             palette.mono_font(8.0),

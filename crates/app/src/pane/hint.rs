@@ -19,8 +19,6 @@ pub const HINT_PAD_Y_PX: f32 = 3.0;
 
 pub const HINT_RADIUS_PX: f32 = 3.0;
 
-pub const HINT_PLATE: egui::Color32 = egui::Color32::from_rgba_premultiplied(14, 18, 26, 216);
-
 /// Tell the trader what the next click does, beside the cursor.
 ///
 /// A tool that knows says so in words (`placement_hint`); one that does not
@@ -58,7 +56,11 @@ pub fn paint_placement_hint(
         min.y = cursor.y - HINT_CURSOR_OFFSET_PX.y - size.y;
     }
     let plate = egui::Rect::from_min_size(min, size);
-    painter.rect_filled(plate, egui::Rounding::same(HINT_RADIUS_PX), HINT_PLATE);
+    painter.rect_filled(
+        plate,
+        egui::Rounding::same(HINT_RADIUS_PX),
+        palette.drawing_readout_plate(),
+    );
     painter.galley(
         plate.min + egui::vec2(HINT_PAD_X_PX, HINT_PAD_Y_PX),
         galley,

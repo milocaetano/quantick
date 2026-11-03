@@ -59,6 +59,12 @@ impl Palette {
         font.size = self.footprint_text.fitted_size(row_height, width);
         font
     }
+    pub fn label_space(&self, size: f32) -> f32 {
+        self.resolved.typography.reserve(FontRole::ChartLabel, size)
+    }
+    pub fn layout(&self, size: f32) -> f32 {
+        size * self.resolved.typography.layout_scale()
+    }
     pub fn body_font(&self, size: f32) -> egui::FontId {
         self.font_at(FontRole::Body, size)
     }

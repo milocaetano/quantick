@@ -174,7 +174,15 @@ impl ChartPane {
             frame: &frame,
             clip: painter.with_clip_rect(layout.history_rect),
             viewport: &frame.view,
-            dress: CandleDress::resolve(&self.footprint, chrome, start.footprint_paints, frame.cw),
+            dress: CandleDress::resolve(
+                &self.footprint,
+                chrome,
+                start.footprint_paints,
+                frame.cw,
+                crate::theme::get(frame.painter.ctx())
+                    .footprint_text
+                    .width_scale(),
+            ),
         };
         let mut carved = std::mem::take(&mut self.frame.bands);
         let clear_depth = flow.projected() && depth_visible;

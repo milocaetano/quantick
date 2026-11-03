@@ -83,7 +83,10 @@ fn draw_tile(
     subline: String,
 ) {
     let palette = theme::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TILE_HEIGHT_PX), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(width, palette.layout(TILE_HEIGHT_PX)),
+        egui::Sense::hover(),
+    );
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -95,7 +98,7 @@ fn draw_tile(
         egui::Stroke::new(1.0_f32, palette.border()),
     );
     painter.text(
-        rect.min + egui::vec2(12.0, 6.0),
+        rect.min + egui::vec2(12.0, palette.layout(6.0)),
         egui::Align2::LEFT_TOP,
         label,
         palette.mono_font(10.0),
@@ -104,7 +107,7 @@ fn draw_tile(
     let value_galley =
         painter.layout_no_wrap(value, palette.mono_font(HEADLINE_FONT_PX), value_color);
     let value_w = value_galley.size().x;
-    let baseline = rect.top() + 38.0;
+    let baseline = rect.top() + palette.layout(38.0);
     painter.galley(
         egui::pos2(rect.left() + 12.0, baseline - value_galley.size().y),
         value_galley,
@@ -120,7 +123,7 @@ fn draw_tile(
         );
     }
     painter.text(
-        egui::pos2(rect.left() + 12.0, rect.bottom() - 6.0),
+        egui::pos2(rect.left() + 12.0, rect.bottom() - palette.layout(6.0)),
         egui::Align2::LEFT_BOTTOM,
         subline,
         palette.mono_font(10.0),
@@ -131,22 +134,7 @@ fn draw_tile(
 /// The trade list's columns: caption and width in pixels, in paint order.
 /// One table, so the header row and every trade row can only ever agree
 /// about where a column begins.
-const TRADE_LIST_COLUMNS: [(&str, f32); 11] = [
-    ("#", 38.0),
-    ("DATE", 70.0),
-    ("TIME", 58.0),
-    ("SYMBOL", 66.0),
-    ("SIDE", 56.0),
-    ("ENTRY → EXIT", 122.0),
-    ("HELD", 52.0),
-    ("EXIT", 74.0),
-    ("P&L", 196.0),
-    ("EQUITY", 96.0),
-    // Not a hover: under Source "Both" a practice trade and a real one
-    // are otherwise the same row, and a replay result readable as a real
-    // one is the worst thing this window could do.
-    ("SOURCE", 58.0),
-];
+use quantick_paper::report::layout::TRADE_LIST_COLUMNS;
 
 /// One trade-list row's height. Tight on purpose: this is a table to scan,
 /// not a list to browse.
@@ -167,6 +155,7 @@ fn paint_list_row(painter: &egui::Painter, rect: egui::Rect, cells: &[(String, e
     let font = palette.mono_font(10.0);
     let mut x = rect.left();
     for ((text, color), (_, width)) in cells.iter().zip(TRADE_LIST_COLUMNS) {
+        let width = palette.layout(width);
         let room = width - 2.0 * TRADE_LIST_CELL_PAD_PX;
         painter.text(
             egui::pos2(x + TRADE_LIST_CELL_PAD_PX, rect.center().y),
@@ -220,7 +209,7 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
     if !open {
         return toggled;
     }
-    let width = trade_list_width();
+    let width = palette.layout(trade_list_width());
     // Wide by nature — ten columns of facts — and long by nature too. It
     // scrolls both ways inside a bounded strip rather than pushing the
     // window wider, clipping a number in half, or growing until the metric
@@ -234,12 +223,12 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
         .auto_shrink([false, true])
         .show_rows(
             ui,
-            REPORT_LIST_ROW_H_PX,
+            palette.layout(REPORT_LIST_ROW_H_PX),
             view.rows.len() + 1,
             |ui, range| {
                 for index in range {
                     let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(width, REPORT_LIST_ROW_H_PX),
+                        egui::vec2(width, palette.layout(REPORT_LIST_ROW_H_PX)),
                         egui::Sense::hover(),
                     );
                     if !ui.is_rect_visible(rect) {

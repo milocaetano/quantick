@@ -3,6 +3,23 @@ name = "Light"
 dark = false
 
 [colors]
+text_shadow = "#FFFFFF"
+replay_error = "#FFE6E1"
+replay_inset = "#F0F3F8"
+replay_well = { premultiplied = [255, 255, 255, 255] }
+error_text = "#B3261E"
+action_ink = "#172331"
+modal_scrim = { premultiplied = [0, 0, 0, 60] }
+widget_open_border = "#A0A0A0"
+widget_active_border = "#000000"
+widget_noninteractive = "#F8F8F8"
+widget_shadow = { premultiplied = [0, 0, 0, 25] }
+widget_cursor = "#00537D"
+widget_error = "#C62828"
+widget_warn = "#B84600"
+widget_code = "#E6E6E6"
+drawing_readout_plate = { premultiplied = [210, 212, 216, 230] }
+drawing_selection_halo = { premultiplied = [0, 0, 0, 28] }
 flow_buy = "#1769A5"
 flow_sell = "#9B5B12"
 tape_path = "#35566C80"

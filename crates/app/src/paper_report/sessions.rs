@@ -263,7 +263,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
     let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::click(),
     );
     let mut press = None;
@@ -286,7 +286,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
             palette.body_font(10.0),
             palette.text_faint(),
         );
-        x += 14.0;
+        x += palette.layout(14.0);
         if let Some((glyph, color)) = source_glyph(&palette, head.source) {
             painter.text(
                 egui::pos2(x, mid),
@@ -296,7 +296,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
                 color,
             );
         }
-        x += 14.0;
+        x += palette.layout(14.0);
         let rights = count_and_net(head.count, &head.net.1);
         paint_fitted(
             painter,
@@ -364,10 +364,10 @@ pub(super) fn draw_inline(
     let width = ui.available_width();
     let mut press = None;
     ui.allocate_ui_with_layout(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.set_min_height(LEDGER_ROW_HEIGHT_PX);
+            ui.set_min_height(palette.layout(LEDGER_ROW_HEIGHT_PX));
             ui.add_space(SESSION_INDENT_PX);
             match edit {
                 LedgerEdit::Rename { session, text } => {
@@ -463,7 +463,7 @@ pub(super) fn draw_hidden_live(ui: &mut egui::Ui, hidden: usize) {
     let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::hover(),
     );
     if ui.is_rect_visible(rect) {

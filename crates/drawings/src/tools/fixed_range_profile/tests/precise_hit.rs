@@ -13,6 +13,7 @@ fn payload_with_rows(rows: &[(i64, i64)]) -> FrvpPayload {
 
 fn context<'a>(payload: &'a FrvpPayload, scale: &'a PriceScale) -> DrawContext<'a> {
     DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload,
         anchors: &[],
         scale,
@@ -119,6 +120,7 @@ fn precise_profile_outline_interior_passes_through_but_its_staircase_hits() {
     for inverted in [false, true] {
         let scale = PriceScale::from_range(99.0, 106.0, 0.0, 490.0).with_inverted(inverted);
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             anchors: &anchors,
             ..context(&payload, &scale)
         };
@@ -169,6 +171,7 @@ fn precise_profile_reversed_anchors_developing_edge_and_clip_agree() {
     let anchors = [ChartPoint::at(30.0, 104.0), ChartPoint::at(10.0, 100.0)];
     let points = [pos2(500.0, 0.0), pos2(100.0, 400.0)];
     let ctxt = DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         anchors: &anchors,
         ..context(&payload, &scale)
     };

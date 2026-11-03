@@ -133,7 +133,10 @@ pub fn indicators_button(
     words: bool,
 ) -> bool {
     let palette = theme::get(ui.ctx());
-    let size = egui::vec2(indicators_width(ui, words), INDICATORS_HEIGHT);
+    let size = egui::vec2(
+        indicators_width(ui, words),
+        palette.layout(INDICATORS_HEIGHT),
+    );
     let center = egui::pos2(left + size.x / 2.0, strip.center().y);
     let rect = egui::Rect::from_center_size(center, size);
     let id = ui.id().with(("pane_indicators", salt));
@@ -402,7 +405,10 @@ pub fn draw_side_label(ui: &egui::Ui, label: &SideLabel, side: egui::Rect, capsu
 fn plated_text(painter: &egui::Painter, min: egui::Pos2, galley: std::sync::Arc<egui::Galley>) {
     let palette = theme::get(painter.ctx());
     let width = galley.size().x + 2.0 * SIDE_LABEL_PADDING_PX;
-    let plate = egui::Rect::from_min_size(min, egui::vec2(width, CAPSULE_HEIGHT_PX));
+    let plate = egui::Rect::from_min_size(
+        min,
+        egui::vec2(width, CAPSULE_HEIGHT_PX.max(galley.size().y + 8.0)),
+    );
     let rounding = egui::Rounding::same(SIDE_LABEL_ROUNDING);
     painter.rect_filled(plate, rounding, palette.casing());
     let at = plate.left_center() + egui::vec2(SIDE_LABEL_PADDING_PX, -galley.size().y / 2.0);
@@ -676,7 +682,7 @@ fn side_control(
         ),
         egui::vec2(
             inner_px + 2.0 * SEGMENT_FRAME_PAD_PX,
-            SEGMENT_FRAME_HEIGHT_PX.min(room.height()),
+            palette.layout(SEGMENT_FRAME_HEIGHT_PX).min(room.height()),
         ),
     );
     ui.painter().rect(
@@ -689,7 +695,7 @@ fn side_control(
     for (segment, width) in SideSegment::pair(state).into_iter().zip(widths) {
         let rect = egui::Rect::from_center_size(
             egui::pos2(left + width / 2.0, frame.center().y),
-            egui::vec2(width, SEGMENT_HEIGHT_PX.min(frame.height())),
+            egui::vec2(width, palette.layout(SEGMENT_HEIGHT_PX).min(frame.height())),
         );
         side_segment(ui, rect, salt, segment, words.is_some(), painted, intent);
         left = rect.right() + SEGMENT_GAP_PX;

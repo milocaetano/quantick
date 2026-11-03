@@ -81,107 +81,114 @@ impl Surface for IndicatorPickerSurface {
                 let (rect, response) =
                     ui.allocate_exact_size(available, egui::Sense::click_and_drag());
                 ui.painter()
-                    .rect_filled(rect, 0.0, egui::Color32::from_black_alpha(90));
+                    .rect_filled(rect, 0.0, crate::theme::get(ctx).modal_scrim());
                 response
             })
             .inner;
-        egui::Window::new(egui::RichText::new("Indicators").size(20.0).strong())
-            .id(egui::Id::new(self.id()))
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .resizable(false)
-            .collapsible(false)
-            .title_bar(false)
-            .fixed_size(egui::vec2(width, height + 60.0))
-            .frame(egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16.0)))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Indicators").size(20.0).strong());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(icons::X)
-                            .on_hover_text("Close indicators")
-                            .clicked()
-                        {
-                            open = false;
-                        }
-                    });
-                });
-                ui.separator();
-                let search = ui.add_sized(
-                    [ui.available_width(), 30.0],
-                    egui::TextEdit::singleline(&mut self.state.query)
-                        .hint_text("Search indicators")
-                        .char_limit(256),
+        egui::Window::new(
+            egui::RichText::new("Indicators")
+                .font(crate::theme::get(ctx).font_at(quantick_appearance::FontRole::Heading, 20.0))
+                .strong(),
+        )
+        .id(egui::Id::new(self.id()))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .resizable(false)
+        .collapsible(false)
+        .title_bar(false)
+        .fixed_size(egui::vec2(width, height + 60.0))
+        .frame(egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16.0)))
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Indicators")
+                        .font(
+                            crate::theme::get(ctx)
+                                .font_at(quantick_appearance::FontRole::Heading, 20.0),
+                        )
+                        .strong(),
                 );
-                if self.state.take_focus() {
-                    search.request_focus();
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.horizontal_top(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width(if width < 460.0 { 110.0 } else { 160.0 });
-                        for category in Category::ALL {
-                            ui.selectable_value(
-                                &mut self.state.category,
-                                category,
-                                category.label(),
-                            );
-                        }
-                    });
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width());
-                        egui::ScrollArea::vertical()
-                            .id_salt("indicator-results")
-                            .max_height(height)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                if self.state.category == Category::Active {
-                                    let entries: Vec<_> = env
-                                        .picker_indicators
-                                        .iter()
-                                        .filter(|e| self.state.matches(&e.label))
-                                        .cloned()
-                                        .collect();
-                                    if entries.is_empty() {
-                                        ui.label("No indicators on this chart match your search.");
-                                    }
-                                    if draw_active(ui, &entries, &mut actions) {
-                                        self.state.close();
-                                    }
-                                } else {
-                                    let entries = self.state.entries(env.picker_scripts);
-                                    if entries.is_empty() {
-                                        ui.label("No indicators match your search.");
-                                    }
-                                    for entry in entries {
-                                        if ui
-                                            .allocate_ui_with_layout(
-                                                egui::vec2(ui.available_width(), 32.0),
-                                                egui::Layout::left_to_right(egui::Align::Center)
-                                                    .with_main_align(egui::Align::Min)
-                                                    .with_main_justify(true),
-                                                |ui| ui.selectable_label(false, &entry.name),
-                                            )
-                                            .inner
-                                            .clicked()
-                                        {
-                                            actions.push(match entry.choice {
-                                                Choice::Native(id) => ToolbarAction::AddNative(id),
-                                                Choice::Script(index) => {
-                                                    ToolbarAction::AddScriptIndicator(index)
-                                                }
-                                            });
-                                            self.state.close();
-                                        }
-                                    }
-                                }
-                            });
-                    });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(icons::X)
+                        .on_hover_text("Close indicators")
+                        .clicked()
+                    {
+                        open = false;
+                    }
                 });
             });
+            ui.separator();
+            let search = ui.add_sized(
+                [ui.available_width(), 30.0],
+                egui::TextEdit::singleline(&mut self.state.query)
+                    .hint_text("Search indicators")
+                    .char_limit(256),
+            );
+            if self.state.take_focus() {
+                search.request_focus();
+            }
+            ui.add_space(8.0);
+            ui.separator();
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(if width < 460.0 { 110.0 } else { 160.0 });
+                    for category in Category::ALL {
+                        ui.selectable_value(&mut self.state.category, category, category.label());
+                    }
+                });
+                ui.separator();
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width());
+                    egui::ScrollArea::vertical()
+                        .id_salt("indicator-results")
+                        .max_height(height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if self.state.category == Category::Active {
+                                let entries: Vec<_> = env
+                                    .picker_indicators
+                                    .iter()
+                                    .filter(|e| self.state.matches(&e.label))
+                                    .cloned()
+                                    .collect();
+                                if entries.is_empty() {
+                                    ui.label("No indicators on this chart match your search.");
+                                }
+                                if draw_active(ui, &entries, &mut actions) {
+                                    self.state.close();
+                                }
+                            } else {
+                                let entries = self.state.entries(env.picker_scripts);
+                                if entries.is_empty() {
+                                    ui.label("No indicators match your search.");
+                                }
+                                for entry in entries {
+                                    if ui
+                                        .allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 32.0),
+                                            egui::Layout::left_to_right(egui::Align::Center)
+                                                .with_main_align(egui::Align::Min)
+                                                .with_main_justify(true),
+                                            |ui| ui.selectable_label(false, &entry.name),
+                                        )
+                                        .inner
+                                        .clicked()
+                                    {
+                                        actions.push(match entry.choice {
+                                            Choice::Native(id) => ToolbarAction::AddNative(id),
+                                            Choice::Script(index) => {
+                                                ToolbarAction::AddScriptIndicator(index)
+                                            }
+                                        });
+                                        self.state.close();
+                                    }
+                                }
+                            }
+                        });
+                });
+            });
+        });
         // A press raises the layer under it, and the scrim shares this layer
         // order: left alone, it would cover the window and take every click.
         ctx.move_to_top(egui::LayerId::new(

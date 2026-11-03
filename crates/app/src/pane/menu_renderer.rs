@@ -89,7 +89,7 @@ pub(super) fn render(
                     let mut text = egui::RichText::new(&entry.label);
                     if *small {
                         text = if *muted {
-                            text.size(11.0)
+                            text.font(crate::theme::get(ui.ctx()).body_font(11.0))
                         } else {
                             text.small()
                         };

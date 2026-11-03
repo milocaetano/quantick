@@ -18,10 +18,6 @@ pub const LAST_PRICE_DASH_PX: f32 = 4.0;
 /// See [`LAST_PRICE_DASH_PX`].
 pub const LAST_PRICE_GAP_PX: f32 = 4.0;
 
-/// Ink on the last-price chip. The chip is filled with a saturated candle
-/// colour, so its text is the one place on the chrome that goes dark.
-pub const LAST_PRICE_CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 0x1A);
-
 /// Dash length, in pixels, of the venue↔prints seam marker. Long enough to
 /// read as deliberate beside the solid backfill divider, short enough not to
 /// be mistaken for one.

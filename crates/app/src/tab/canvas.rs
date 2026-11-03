@@ -313,7 +313,10 @@ impl Tab {
                     continue;
                 }
                 let pane_areas = split_pane_layout_strip(*band);
-                let areas = split_pane_header(pane_areas.body);
+                let areas = split_pane_header(
+                    pane_areas.body,
+                    palette.layout(crate::time_header::HEIGHT_PX),
+                );
                 self.draw_time_header(ui, slot, areas.header, bar_inputs, job_slot.take());
                 rects
                     .context_charts
@@ -322,7 +325,10 @@ impl Tab {
         }
         rects.flow_areas = frame.show_flow.then(|| {
             let pane_areas = split_pane_layout_strip(frame.flow_band);
-            let areas = split_pane_header(pane_areas.body);
+            let areas = split_pane_header(
+                pane_areas.body,
+                palette.layout(crate::time_header::HEIGHT_PX),
+            );
             self.draw_flow_header(ui, areas.header, bar_inputs, chrome);
             PaneAreas {
                 body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
@@ -896,7 +902,14 @@ impl Tab {
         let Some(position) = pressed else { return };
         // A header line governs its own pane wherever focus sits: changing a
         // pane's bars from there never moves focus. Only the chart below takes it.
-        let on_header = |band: &egui::Rect| split_pane_header(*band).header.contains(position);
+        let on_header = |band: &egui::Rect| {
+            split_pane_header(
+                *band,
+                crate::theme::get(ui.ctx()).layout(crate::time_header::HEIGHT_PX),
+            )
+            .header
+            .contains(position)
+        };
         if context_bands.iter().chain([&flow_area]).any(on_header) {
             return;
         }
