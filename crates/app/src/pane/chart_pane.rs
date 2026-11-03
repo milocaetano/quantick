@@ -3,10 +3,9 @@
 
 use eframe::egui;
 
-use quantick_chart::flow_band::side_headers;
+use quantick_chart::flow_band::{flow_sides, side_headers, side_parts};
 use quantick_chart::pane_header::{
     BubbleSample, Capsule, CapsuleSide, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle,
-    flow_sides,
 };
 use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
 use quantick_chart::side_label::{LabelFit, SideLabel};
@@ -1062,6 +1061,16 @@ pub(crate) struct SideChrome<'a> {
     pub seam_words: Option<String>,
 }
 
+/// What the flow pane's side headers read from its tab this frame.
+pub(crate) struct SideRowChrome<'a> {
+    pub style: &'a ChartStyle,
+    pub capabilities: FeedCapabilities,
+    pub tz: quantick_civil::TzOffset,
+    pub inputs: BarInputAvailability,
+    /// The bars are being rebuilt.
+    pub rebuilding: bool,
+}
+
 impl ChartPane {
     /// One layer glyph: its lamp the *switch*, not what the source lets through
     /// it, with what blocks it beside it, read through the calls the pane's layer
@@ -1137,8 +1146,8 @@ impl ChartPane {
         let Some(state) = self.flow_header_state() else {
             return;
         };
-        let (left, right) = (chart.left(), chart.right());
-        let sides = flow_sides(state.shown_view, left, right, self.frame.candles_right);
+        let (left, right, split) = (chart.left(), chart.right(), self.frame.candles_right);
+        let sides = flow_sides(Some(state.shown_view), left, right, split);
         let Some((_, left, right)) = sides
             .into_iter()
             .flatten()
@@ -1169,49 +1178,57 @@ impl ChartPane {
         &mut self,
         ui: &mut egui::Ui,
         row: egui::Rect,
-        inputs: BarInputAvailability,
-        rebuilding: bool,
-        chrome: &SideChrome<'_>,
+        chrome: &SideRowChrome<'_>,
     ) -> (Option<HeaderIntent>, bool) {
-        use crate::pane_header::{TrailSide, draw_tape_side, draw_trail_side};
+        use crate::pane_header::{BarsPart, SideHeader, draw_side_header};
         // An open settings panel takes the end of the row with the end of the chart.
         let row = self
             .frame
             .area
             .map_or(row, |area| row.with_max_x(area.right()));
-        crate::pane_header::paint_side_row(ui, row);
+        // The row's fill, and the rule closing it against the chart.
+        ui.painter()
+            .rect_filled(row, egui::Rounding::ZERO, crate::theme::CANVAS);
+        crate::pane_header::paint_rule(ui, row);
         let state = self.flow_header_state();
         let shown = state.map(|state| state.shown_view);
-        let split = self.frame.candles_right;
-        let headers = side_headers(shown, row.left(), row.right(), split);
-        let (mut intent, mut indicators) = (None, false);
-        for (side, left, right) in headers.into_iter().flatten() {
-            let rect = egui::Rect::from_x_y_ranges(left..=right, row.y_range());
+        let headers = side_headers(shown, row.left(), row.right(), self.frame.candles_right);
+        let bars = PaneHeader::of(PaneIdentity::OrderFlow, self.spec.spec());
+        let (mut intent, mut indicators, mut window) = (None, false, false);
+        for (index, (side, left, right)) in headers.into_iter().flatten().enumerate() {
+            let parts = side_parts(side, index == 0, state.is_some());
             let scale = state.and_then(|state| state.sample_of(side));
             let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
             let capsule = Some(Capsule::of(side, glyph, scale))
-                .filter(|capsule| self.slots() > 0 && !capsule.is_empty());
-            if let (CapsuleSide::Tape, Some(state)) = (side, state) {
-                let painted = &mut self.frame.header_controls;
-                draw_tape_side(ui, rect, self.id, &state, capsule, painted, &mut intent);
-                continue;
-            }
-            let clock = SideLabel::of(CapsuleSide::Candles, &self.state, chrome.tz, None)
-                .map_or_else(String::new, |label| label.text(LabelFit::Whole));
-            let header = PaneHeader::of(PaneIdentity::OrderFlow, self.spec.spec());
-            let trail = TrailSide {
-                header: &header,
-                salt: self.id,
-                selection: &mut self.spec,
-                inputs,
-                rebuilding,
-                capsule,
-                clock,
+                .filter(|capsule| parts.capsule && self.slots() > 0 && !capsule.is_empty());
+            let (chart, tz) = (&self.state, chrome.tz);
+            let clock = move || {
+                SideLabel::of(CapsuleSide::Candles, chart, tz, None)
+                    .map_or_else(String::new, |label| label.text(LabelFit::Whole))
             };
+            let header = SideHeader {
+                which: side,
+                salt: self.id,
+                plate: parts.plate,
+                clock: (side == CapsuleSide::Candles).then_some(&clock as &dyn Fn() -> String),
+                bars: parts.bars.then(|| BarsPart {
+                    header: &bars,
+                    selection: &mut self.spec,
+                    inputs: chrome.inputs,
+                    rebuilding: chrome.rebuilding,
+                }),
+                window: state.as_ref().filter(|_| parts.window),
+                capsule,
+            };
+            let rect = egui::Rect::from_x_y_ranges(left..=right, row.y_range());
             let painted = &mut self.frame.header_controls;
-            indicators |= draw_trail_side(ui, rect, trail, painted, &mut intent);
+            let drawn = draw_side_header(ui, rect, header, painted, &mut intent);
+            (indicators, window) = (indicators || drawn.0, window || drawn.1);
         }
-        super::lane_rail::paint_flow_divider(self, ui, row.top(), state, chrome.capabilities);
+        if !window {
+            crate::pane_header::close_window_list(ui, self.id);
+        }
+        super::lane_rail::paint_flow_divider(self, ui, row.top(), shown);
         (intent, indicators)
     }
 

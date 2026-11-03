@@ -72,9 +72,9 @@ fn set_tape<P: TabsPort + TabsMutPort + ?Sized>(
     let tape = tape
         .filter(|tape| tape.cached_config().native_tape())
         .ok_or_else(|| invalid("the pane draws no native tape"))?;
-    // The wheel's path: the view moves, the asset's settings do not.
+    // Filed, the selector's path; else the wheel's, which leaves the asset alone.
     if let Some(window) = window {
-        tape.navigate_live_lane_window(window);
+        tape.move_live_lane_window(window, input.file);
     }
     if let Some(end) = end {
         tape.set_tape_end(end);

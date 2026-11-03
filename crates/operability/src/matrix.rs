@@ -298,9 +298,8 @@ mod tests {
         }
     }
 
-    /// The toolbar's SOURCE combos and `feed.source.set` are one act: an
-    /// operator reading the matrix finds the capability behind the combos, and
-    /// is not told the picker is the only door to a market.
+    /// The tape header's window selector and `chart.tape_view.set` with `file`
+    /// are one act, and the row says that flag is what makes them one.
     #[test]
     fn the_tape_window_selector_maps_to_the_tape_view_call() {
         let window = UI_BEHAVIOURS
@@ -311,8 +310,12 @@ mod tests {
             matches!(window.mapping, Mapping::Capabilities(ids) if ids == ["chart.tape_view.set"])
         );
         assert!(window.reach.contains("selector"), "{}", window.reach);
+        assert!(window.reach.contains("`file`"), "{}", window.reach);
     }
 
+    /// The toolbar's SOURCE combos and `feed.source.set` are one act: an
+    /// operator reading the matrix finds the capability behind the combos, and
+    /// is not told the picker is the only door to a market.
     #[test]
     fn the_source_combos_map_to_the_source_capability() {
         let source = UI_BEHAVIOURS

@@ -114,8 +114,9 @@ struct PaneRects {
     context_charts: SmallVec<[Option<(egui::Rect, egui::Rect)>; MAX_CONTEXT_PANES]>,
     context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
     flow_areas: Option<PaneAreas>,
-    /// The row of the flow pane's side headers, painted after its chart.
-    flow_side_row: Option<egui::Rect>,
+    /// The row of the flow pane's side headers, painted after its chart, and the
+    /// bar inputs its bars control offers.
+    flow_side_row: Option<(egui::Rect, BarInputAvailability)>,
 }
 
 impl Tab {
@@ -329,7 +330,7 @@ impl Tab {
             ui.painter()
                 .rect_filled(pane_areas.body, egui::Rounding::ZERO, theme::FLOW_SURFACE);
             self.draw_flow_header(ui, areas.band, chrome);
-            rects.flow_side_row = Some(areas.side_row);
+            rects.flow_side_row = Some((areas.side_row, bar_inputs));
             PaneAreas {
                 body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
                 layout_strip: pane_areas.layout_strip,
@@ -471,27 +472,19 @@ impl Tab {
     fn draw_flow_sides(
         &mut self,
         ui: &mut egui::Ui,
-        row: Option<egui::Rect>,
+        row: Option<(egui::Rect, BarInputAvailability)>,
         chrome: &mut CanvasChrome<'_>,
     ) {
-        let Some(row) = row else { return };
-        let inputs = crate::toolbar::available_bar_inputs(
-            chrome.capabilities,
-            self.deal_recording_view().as_ref(),
-        );
-        let rebuilding = self
-            .loading
-            .is_active(crate::loading::LoadingTask::BarRebuild);
-        let sides = crate::pane::SideChrome {
+        let Some((row, inputs)) = row else { return };
+        let sides = crate::pane::SideRowChrome {
             style: chrome.style,
             capabilities: chrome.capabilities,
-            focused: false,
             tz: chrome.tz,
-            link: None,
-            seam_words: None,
+            inputs,
+            rebuilding: (self.loading).is_active(crate::loading::LoadingTask::BarRebuild),
         };
         let pane = &mut self.flow_pane;
-        let (intent, indicators) = pane.draw_flow_sides(ui, row, inputs, rebuilding, &sides);
+        let (intent, indicators) = pane.draw_flow_sides(ui, row, &sides);
         if indicators {
             pane.request_indicator_picker();
         }

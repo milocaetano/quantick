@@ -14,7 +14,8 @@ use crate::market_fold::last_print_ms;
 use crate::pane_header::CapsuleSide;
 use crate::state::ChartState;
 
-/// The room a label leaves before the capsule beside it.
+/// The room the tape's plate leaves before its side's right end: the capsules
+/// dock in the header now, so nothing else shares its line.
 pub const SIDE_LABEL_GAP_PX: f32 = 8.0;
 /// How far the plate stands off its side's left edge.
 pub const SIDE_LABEL_INSET_LEFT_PX: f32 = 8.0;
@@ -25,8 +26,8 @@ pub const SIDE_LABEL_PADDING_PX: f32 = 7.0;
 /// The plate's height.
 pub const SIDE_LABEL_HEIGHT_PX: f32 = 18.0;
 
-/// How far below the side's header the plate ends: what stands under it starts
-/// here.
+/// How far below the side's header the tape's plate ends: what stands under it
+/// starts here. The trail wears no plate inside the chart.
 pub const SIDE_LABEL_BOTTOM_PX: f32 = SIDE_LABEL_INSET_TOP_PX + SIDE_LABEL_HEIGHT_PX;
 /// Where the tape's Buy/Sell key starts, below the side's plate.
 pub const TAPE_KEY_TOP_PX: f32 = SIDE_LABEL_BOTTOM_PX + 4.0;

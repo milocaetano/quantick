@@ -4,7 +4,6 @@ use eframe::egui;
 use quantick_chart::flow_band::{
     DIVIDER_WIDTH_PX, GRIP_DOT_PX, SIDE_HEADER_HEIGHT_PX, grip_dots, side_headers,
 };
-use quantick_chart::pane_header::FlowHeaderState;
 use quantick_chart_interaction::{pane::Intent, pane_axis::AxisGesture};
 use quantick_orderflow::{FoldRail, LaneFold, LaneSide, LiveLaneStyle};
 
@@ -103,10 +102,8 @@ pub(super) fn paint_flow_divider(
     pane: &ChartPane,
     ui: &egui::Ui,
     top: f32,
-    state: Option<FlowHeaderState>,
-    capabilities: crate::config::FeedCapabilities,
+    shown: Option<quantick_orderflow::LaneView>,
 ) {
-    let shown = state.map(|state| state.shown_view);
     let (Some(chart), Some(area)) = (pane.frame.chart_rect, pane.frame.area) else {
         return;
     };
@@ -123,10 +120,10 @@ pub(super) fn paint_flow_divider(
         let at = egui::Rect::from_x_y_ranges(x - dot..=x + dot, y..=y + GRIP_DOT_PX);
         painter.rect_filled(at, egui::Rounding::ZERO, theme::TEXT_PRIMARY);
     }
-    let panes = pane.plot_areas(area, capabilities).indicator_panes;
-    if let Some(last) = panes.last() {
+    // The chart pass's own carve: the price band, then each indicator pane.
+    if let Some(last) = pane.frame.cached_bands().get(1..).and_then(<[_]>::last) {
         let faint = egui::Stroke::new(1.0_f32, theme::FLOW_DIVIDER.gamma_multiply(FAINT_TRACE));
-        painter.vline(x, chart.bottom()..=last.rect.bottom(), faint);
+        painter.vline(x, chart.bottom()..=last.rect.max.y, faint);
     }
 }
 

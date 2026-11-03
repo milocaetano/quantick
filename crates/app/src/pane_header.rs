@@ -9,8 +9,8 @@ use egui_phosphor::regular as icons;
 use quantick_chart::connection_state::Dot;
 use quantick_chart::flow_band::{
     DOCKED_CAPSULE_HEIGHT_PX, FRAME_PX, SIDE_GAP_PX, SIDE_PAD_LEFT_PX, SIDE_PAD_RIGHT_PX,
-    TapeWidths, TrailWidths, WINDOW_SELECTOR_HINT, docked_capsule_corner, docked_slot_origin,
-    plate_word, tape_fit, trail_fit, window_label, window_options,
+    SideWidths, WINDOW_SELECTOR_HINT, docked_capsule_corner, docked_slot_origin, plate_word,
+    side_fit, window_label, window_options,
 };
 use quantick_chart::pane_header::{
     BubbleSample, CAPSULE_HEIGHT_PX, CAPSULE_SLOT_HEIGHT_PX, Capsule, CapsuleAttention,
@@ -262,133 +262,108 @@ pub fn draw_marked(
     intent
 }
 
-/// What the trail's header draws.
-pub struct TrailSide<'a> {
+/// The pane's bars control and what it reads; the row's first header carries it.
+pub struct BarsPart<'a> {
     pub header: &'a PaneHeader,
-    pub salt: u64,
     pub selection: &'a mut BarSelection,
     pub inputs: BarInputAvailability,
     /// The bars are being rebuilt: the bars control says so, and nothing else.
     pub rebuilding: bool,
+}
+
+/// What one side header draws; an absent part is `None`.
+pub struct SideHeader<'a> {
+    pub which: CapsuleSide,
+    pub salt: u64,
+    pub plate: bool,
+    /// What the plate's tooltip says, worked out only while it is hovered.
+    pub clock: Option<&'a dyn Fn() -> String>,
+    pub bars: Option<BarsPart<'a>>,
+    pub window: Option<&'a FlowHeaderState>,
     pub capsule: Option<Capsule>,
-    /// How far the bars reach, on the plate's tooltip.
-    pub clock: String,
 }
 
-/// The row under the band: its fill and the rule closing it against the chart.
-pub fn paint_side_row(ui: &egui::Ui, row: egui::Rect) {
-    ui.painter()
-        .rect_filled(row, egui::Rounding::ZERO, theme::CANVAS);
-    paint_rule(ui, row);
-}
-
-/// The trail's header: plate, bars, indicators, and the capsule at the far end.
-/// Answers whether the indicators button was clicked.
-pub fn draw_trail_side(
+/// One side header, left to right: plate, the pane's bars and indicators, the
+/// window selector, and the capsule docked at the far end, each where the header
+/// carries it and while it fits. Answers whether the indicators button was clicked
+/// and whether the selector drew.
+pub fn draw_side_header(
     ui: &mut egui::Ui,
     side: egui::Rect,
-    trail: TrailSide<'_>,
+    header: SideHeader<'_>,
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
-) -> bool {
-    let salt = trail.salt;
-    let plate = plate_galley(ui, CapsuleSide::Candles);
-    let fit = trail_fit(&TrailWidths {
+) -> (bool, bool) {
+    let salt = header.salt;
+    let plate = header.plate.then(|| plate_galley(ui, header.which));
+    let plate_w = plate.as_ref().map_or(0.0, |plate| plate_px(plate));
+    let words = header.window.map(window_label);
+    let window_w = words.as_deref().map_or(0.0, |words| {
+        let caret = ui.fonts(|fonts| fonts.layout_job(caret_text(words)));
+        caret.size().x + 2.0 * PLATE_PADDING.x
+    });
+    let has_bars = header.bars.is_some();
+    let indicators = |words| f32::from(u8::from(has_bars)) * indicators_width(ui, words);
+    let fit = side_fit(&SideWidths {
         side: side.width(),
-        plate: plate_px(&plate),
-        bars: bars_width(ui, trail.header),
-        indicators_with_words: indicators_width(ui, true),
-        indicators_icon: indicators_width(ui, false),
-        capsule: trail.capsule.map_or(0.0, |capsule| capsule.width_px()),
+        plate: plate_w,
+        bars: header
+            .bars
+            .as_ref()
+            .map_or(0.0, |bars| bars_width(ui, bars.header)),
+        indicators_with_words: indicators(true),
+        indicators_icon: indicators(false),
+        window: window_w,
+        capsule: header.capsule.map_or(0.0, |capsule| capsule.width_px()),
     });
     let mut left = side.left() + SIDE_PAD_LEFT_PX;
-    if fit.plate {
-        let response = side_plate(ui, left, side, salt, plate, CapsuleSide::Candles);
-        response.on_hover_text(trail.clock.as_str());
-        left = left + SIDE_GAP_PX + plate_px(&plate_galley(ui, CapsuleSide::Candles));
+    if let Some(plate) = plate.filter(|_| fit.plate) {
+        let response = side_plate(ui, left, side, salt, plate, header.which);
+        if let Some(clock) = header.clock {
+            response.on_hover_ui(|ui| _ = ui.label(clock()));
+        }
+        left += plate_w + SIDE_GAP_PX;
     }
-    let capsule = trail.capsule.filter(|_| fit.capsule);
-    let end = capsule.map_or(side.right() - SIDE_PAD_RIGHT_PX, |capsule| {
-        side.right() - SIDE_PAD_RIGHT_PX - capsule.width_px() - SIDE_GAP_PX
-    });
-    let limit = (end - indicators_width(ui, fit.indicators_words)).max(left);
-    let room = egui::Rect::from_x_y_ranges(left..=limit.max(left), side.y_range());
-    let mut content = ui.new_child(
-        egui::UiBuilder::new()
-            .id_salt(("pane_header", salt))
-            .max_rect(room)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    content.set_clip_rect(room.with_max_x(limit).intersect(ui.clip_rect()));
-    content.spacing_mut().item_spacing.x = 0.0;
-    bars_control(
-        &mut content,
-        trail.header,
-        salt,
-        trail.selection,
-        trail.inputs,
-        trail.rebuilding,
-    );
-    let button_left = (content.cursor().left() + SIDE_GAP_PX).min(limit);
-    let clicked = indicators_button(ui, button_left, side, salt, fit.indicators_words);
-    if let Some(capsule) = capsule {
-        draw_docked_capsule(
-            ui,
-            &capsule,
-            side,
-            CapsuleSide::Candles,
-            salt,
-            painted,
-            intent,
+    let capsule = header.capsule.filter(|_| fit.capsule);
+    let window = header.window.zip(words).filter(|_| fit.window);
+    let mut end = side.right() - SIDE_PAD_RIGHT_PX;
+    end -= capsule.map_or(0.0, |capsule| capsule.width_px() + SIDE_GAP_PX);
+    end -= window.as_ref().map_or(0.0, |_| window_w + SIDE_GAP_PX);
+    let mut clicked = false;
+    if let Some(bars) = header.bars {
+        let button_px = indicators(fit.indicators_words);
+        let limit = (end - button_px).max(left);
+        let room = egui::Rect::from_x_y_ranges(left..=limit, side.y_range());
+        let mut content = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(("pane_header", salt))
+                .max_rect(room)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-    }
-    clicked
-}
-
-/// The tape's header: plate, window selector, and the capsule at the far end.
-pub fn draw_tape_side(
-    ui: &mut egui::Ui,
-    side: egui::Rect,
-    salt: u64,
-    state: &FlowHeaderState,
-    capsule: Option<Capsule>,
-    painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
-) {
-    let plate = plate_galley(ui, CapsuleSide::Tape);
-    let words = window_label(state);
-    let selector_px = ui
-        .fonts(|fonts| fonts.layout_job(caret_text(&words)))
-        .size()
-        .x
-        + 2.0 * PLATE_PADDING.x;
-    let fit = tape_fit(&TapeWidths {
-        side: side.width(),
-        plate: plate_px(&plate),
-        selector: selector_px,
-        capsule: capsule.map_or(0.0, |capsule| capsule.width_px()),
-    });
-    let mut left = side.left() + SIDE_PAD_LEFT_PX;
-    if fit.plate {
-        left += plate_px(&plate) + SIDE_GAP_PX;
-        side_plate(
-            ui,
-            side.left() + SIDE_PAD_LEFT_PX,
-            side,
+        content.set_clip_rect(room.intersect(ui.clip_rect()));
+        content.spacing_mut().item_spacing.x = 0.0;
+        bars_control(
+            &mut content,
+            bars.header,
             salt,
-            plate,
-            CapsuleSide::Tape,
+            bars.selection,
+            bars.inputs,
+            bars.rebuilding,
         );
+        let button_left = (content.cursor().left() + SIDE_GAP_PX).min(limit);
+        clicked = indicators_button(ui, button_left, side, salt, fit.indicators_words);
+        left = button_left + button_px + SIDE_GAP_PX;
     }
-    if fit.selector {
-        let size = egui::vec2(selector_px, INDICATORS_HEIGHT);
+    if let Some((state, words)) = window.as_ref() {
+        let size = egui::vec2(window_w, INDICATORS_HEIGHT);
         let center = egui::pos2(left + size.x / 2.0, side.center().y);
         let rect = egui::Rect::from_center_size(center, size);
-        window_selector(ui, rect, salt, state, &words, painted, intent);
+        window_selector(ui, rect, salt, state, words, painted, intent);
     }
-    if let Some(capsule) = capsule.filter(|_| fit.capsule) {
-        draw_docked_capsule(ui, &capsule, side, CapsuleSide::Tape, salt, painted, intent);
+    if let Some(capsule) = capsule {
+        draw_docked_capsule(ui, &capsule, side, header.which, salt, painted, intent);
     }
+    (clicked, window.is_some())
 }
 
 /// A side's plate word, as it paints.
@@ -441,6 +416,7 @@ fn window_selector(
 ) {
     let id = ui.id().with(("flow_tape_window", salt));
     let response = ui.interact(rect, id, egui::Sense::click());
+    let popup = window_list_id(salt);
     if response.hovered() {
         let rounding = egui::Rounding::same(HOVER_ROUNDING);
         ui.painter().rect_filled(rect, rounding, theme::BARE_HOVER);
@@ -450,7 +426,6 @@ fn window_selector(
     ui.painter().galley(at, galley, theme::TEXT_PRIMARY);
     record(ui, HeaderControl::TapeWindow, rect, painted);
     let response = response.on_hover_text(WINDOW_SELECTOR_HINT);
-    let popup = id.with("list");
     if response.clicked() {
         ui.memory_mut(|memory| memory.toggle_popup(popup));
     }
@@ -463,12 +438,24 @@ fn window_selector(
             ui.set_min_width(rect.width().max(120.0));
             for option in window_options(state) {
                 if ui.selectable_label(option.selected, option.label).clicked() {
-                    *intent = Some(HeaderIntent::SetLaneWindow(option.window));
+                    *intent = option.pick.map(HeaderIntent::SetLaneWindow).or(*intent);
                     ui.memory_mut(egui::Memory::close_popup);
                 }
             }
         },
     );
+}
+
+/// The window list of the pane keyed by `salt`.
+fn window_list_id(salt: u64) -> egui::Id {
+    egui::Id::new(("flow_tape_window_list", salt))
+}
+
+/// Close the pane's window list when its selector was not drawn this frame: egui
+/// would hold it open, and every "a popup is open" check with it.
+pub fn close_window_list(ui: &egui::Ui, salt: u64) {
+    let id = window_list_id(salt);
+    ui.memory_mut(|memory| memory.is_popup_open(id).then(|| memory.close_popup()));
 }
 
 /// A capsule at its side header's far end: fixed in the row, so it neither fades

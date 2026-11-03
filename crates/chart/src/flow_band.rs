@@ -3,10 +3,12 @@
 //! Where each stands, what each says and what a narrow pane gives up; the window
 //! only paints the result.
 
-use quantick_orderflow::{LaneView, LaneWindow, lane_window_label, lane_window_options};
+use quantick_orderflow::{
+    LaneView, LaneWindow, lane_window_label, lane_window_options, same_lane_window,
+};
 
 use crate::pane_header::{
-    CAPSULE_FRAME_X_PX, CAPSULE_SLOT_HEIGHT_PX, CapsuleSide, FlowHeaderState,
+    CAPSULE_FRAME_X_PX, CAPSULE_SLOT_HEIGHT_PX, CapsuleSide, FlowHeaderState, item_px,
 };
 
 /// The band's height.
@@ -81,9 +83,30 @@ pub fn flow_pane_layout(left: f32, top: f32, right: f32, bottom: f32) -> FlowPan
     }
 }
 
-/// The headers of a row spanning `left..right` for this view, the chart's split at
-/// `split` if it has one. Two sides meet at the split; a closed side, or a pane
-/// without a tape (`shown` absent), leaves one header at full width.
+/// The sides on screen for this view over a chart spanning `left..right`, with the
+/// tape's divider if there is one, leftmost first: the one split every flow surface
+/// reads. A hidden side has none; a closed side's rail stays outside the open one;
+/// a pane without a tape (`shown` absent) is all candles. A divider on or past an
+/// edge splits nothing.
+#[must_use]
+pub fn flow_sides(
+    shown: Option<LaneView>,
+    left: f32,
+    right: f32,
+    divider: Option<f32>,
+) -> [Option<(CapsuleSide, f32, f32)>; 2] {
+    let candles = |end| Some((CapsuleSide::Candles, left, end));
+    let tape = |start| Some((CapsuleSide::Tape, start, right));
+    match (shown, divider.filter(|x| *x > left && *x < right)) {
+        (Some(LaneView::Beside), Some(x)) => [candles(x), tape(x)],
+        (Some(LaneView::CandlesOnly), Some(x)) => [candles(x), None],
+        (Some(LaneView::TapeOnly), x) => [tape(x.unwrap_or(left)), None],
+        _ => [candles(right), None],
+    }
+}
+
+/// The headers of a row spanning `left..right`: [`flow_sides`], a lone side's
+/// header taking the whole row, the closed side's rail included.
 #[must_use]
 pub fn side_headers(
     shown: Option<LaneView>,
@@ -91,14 +114,33 @@ pub fn side_headers(
     right: f32,
     split: Option<f32>,
 ) -> [Option<(CapsuleSide, f32, f32)>; 2] {
-    let beside = split.filter(|x| shown == Some(LaneView::Beside) && *x > left && *x < right);
-    match (shown, beside) {
-        (_, Some(x)) => [
-            Some((CapsuleSide::Candles, left, x)),
-            Some((CapsuleSide::Tape, x, right)),
-        ],
-        (Some(LaneView::TapeOnly), None) => [Some((CapsuleSide::Tape, left, right)), None],
-        _ => [Some((CapsuleSide::Candles, left, right)), None],
+    match flow_sides(shown, left, right, split) {
+        [Some((side, ..)), None] => [Some((side, left, right)), None],
+        sides => sides,
+    }
+}
+
+/// What one side header carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SideParts {
+    pub plate: bool,
+    /// The pane's bars control and its indicators button.
+    pub bars: bool,
+    pub window: bool,
+    pub capsule: bool,
+}
+
+/// What the header for `side` carries, `first` in its row, on a pane with a tape
+/// or without. The first header carries the pane's bars and indicators whatever
+/// its side, so a tape alone keeps them; the tape's carries the window; a pane
+/// without a tape names no side and docks no capsule.
+#[must_use]
+pub fn side_parts(side: CapsuleSide, first: bool, has_tape: bool) -> SideParts {
+    SideParts {
+        plate: has_tape,
+        bars: first,
+        window: has_tape && side == CapsuleSide::Tape,
+        capsule: has_tape,
     }
 }
 
@@ -115,85 +157,51 @@ pub fn plate_word(side: CapsuleSide) -> &'static str {
 /// How far the bars text clips before the capsule gives up its room.
 pub const BARS_MIN_PX: f32 = 36.0;
 
-/// The widths of the trail's header. An absent capsule is zero.
+/// The widths of a side header's items, left to right. An absent item is zero.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct TrailWidths {
+pub struct SideWidths {
     pub side: f32,
     pub plate: f32,
     pub bars: f32,
     pub indicators_with_words: f32,
     pub indicators_icon: f32,
+    pub window: f32,
     pub capsule: f32,
 }
 
-/// What the trail's header keeps at a given width.
+/// What a side header keeps at a given width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TrailFit {
+pub struct SideFit {
     pub plate: bool,
     pub indicators_words: bool,
+    pub window: bool,
     pub capsule: bool,
 }
 
-/// The narrow rule of the trail's header, in the order things go: the word beside
-/// the indicators icon, then the plate, then the bars text clips down to
-/// [`BARS_MIN_PX`], then the capsule. The icon and the clipped bars always stay.
+/// The narrow rule of a side header, in the order things go: the word beside the
+/// indicators icon, then the plate, then the window selector (the tape's menu
+/// still sets the window), then the bars text clips down to [`BARS_MIN_PX`], then
+/// the capsule. The indicators icon and the clipped bars never go.
 #[must_use]
-pub fn trail_fit(widths: &TrailWidths) -> TrailFit {
-    let item = |width: f32| {
-        if width > 0.0 {
-            width + SIDE_GAP_PX
-        } else {
-            0.0
-        }
+pub fn side_fit(widths: &SideWidths) -> SideFit {
+    let fits = |items: &[f32]| {
+        let items: f32 = items.iter().map(|px| item_px(*px, SIDE_GAP_PX)).sum();
+        let pads = SIDE_PAD_LEFT_PX + SIDE_PAD_RIGHT_PX;
+        pads + (items - SIDE_GAP_PX).max(0.0) <= widths.side
     };
-    let (plate, capsule) = (item(widths.plate), item(widths.capsule));
+    let SideWidths {
+        plate,
+        bars,
+        window,
+        capsule,
+        ..
+    } = *widths;
     let icon = widths.indicators_icon;
-    let fits = |bars: f32, indicators: f32, plate: f32| {
-        let core = SIDE_PAD_LEFT_PX + bars + SIDE_GAP_PX + indicators + SIDE_PAD_RIGHT_PX;
-        core + plate + capsule <= widths.side
-    };
-    TrailFit {
-        indicators_words: fits(widths.bars, widths.indicators_with_words, plate),
-        plate: fits(widths.bars, icon, plate),
-        capsule: widths.capsule > 0.0 && fits(widths.bars.min(BARS_MIN_PX), icon, 0.0),
-    }
-}
-
-/// The widths of the tape's header. An absent capsule is zero.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct TapeWidths {
-    pub side: f32,
-    pub plate: f32,
-    pub selector: f32,
-    pub capsule: f32,
-}
-
-/// What the tape's header keeps at a given width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TapeFit {
-    pub plate: bool,
-    pub selector: bool,
-    pub capsule: bool,
-}
-
-/// The narrow rule of the tape's header, in the order things go: the plate, then
-/// the selector (the tape's menu still sets the window), then the capsule.
-#[must_use]
-pub fn tape_fit(widths: &TapeWidths) -> TapeFit {
-    let room = widths.side - SIDE_PAD_LEFT_PX - SIDE_PAD_RIGHT_PX;
-    let item = |width: f32| {
-        if width > 0.0 {
-            width + SIDE_GAP_PX
-        } else {
-            0.0
-        }
-    };
-    let capsule = widths.capsule;
-    let selector = item(widths.selector) + capsule;
-    TapeFit {
-        plate: item(widths.plate) + selector <= room,
-        selector: selector <= room,
-        capsule: capsule > 0.0 && capsule <= room,
+    SideFit {
+        indicators_words: fits(&[plate, bars, widths.indicators_with_words, window, capsule]),
+        plate: fits(&[plate, bars, icon, window, capsule]),
+        window: fits(&[bars, icon, window, capsule]),
+        capsule: capsule > 0.0 && fits(&[bars.min(BARS_MIN_PX), icon, capsule]),
     }
 }
 
@@ -224,9 +232,11 @@ pub fn grip_dots(top: f32, bottom: f32) -> [f32; 3] {
 /// One line of the window selector's list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowOption {
-    pub window: LaneWindow,
     pub label: String,
     pub selected: bool,
+    /// What a click asks for: nothing on the line in force, so picking `auto`
+    /// again never resets its zoom.
+    pub pick: Option<LaneWindow>,
 }
 
 /// What the selector reads this frame.
@@ -242,10 +252,13 @@ pub fn window_label(state: &FlowHeaderState) -> String {
 pub fn window_options(state: &FlowHeaderState) -> Vec<WindowOption> {
     lane_window_options()
         .into_iter()
-        .map(|window| WindowOption {
-            window,
-            label: lane_window_label(window, state.window_reference_ms),
-            selected: quantick_orderflow::same_lane_window(state.window, window),
+        .map(|window| {
+            let selected = same_lane_window(state.window, window);
+            WindowOption {
+                label: lane_window_label(window, state.window_reference_ms),
+                selected,
+                pick: (!selected).then_some(window),
+            }
         })
         .collect()
 }
@@ -309,7 +322,34 @@ mod flow_band_tests {
         assert!(layout.chart.left <= layout.chart.right);
     }
 
-    /// The split is the chart's; a closed side or a tape alone is one whole header.
+    /// A hidden side has no room, and a side keeps its own edge; a divider on an
+    /// edge splits nothing.
+    #[test]
+    fn the_view_decides_the_sides() {
+        let candles = |end| Some((CapsuleSide::Candles, 0.0, end));
+        let tape = |start| Some((CapsuleSide::Tape, start, 100.0));
+        let sides = |view, divider| flow_sides(Some(view), 0.0, 100.0, divider);
+        assert_eq!(
+            sides(LaneView::Beside, Some(70.0)),
+            [candles(70.0), tape(70.0)]
+        );
+        assert_eq!(sides(LaneView::Beside, None), [candles(100.0), None]);
+        assert_eq!(sides(LaneView::Beside, Some(0.0)), [candles(100.0), None]);
+        assert_eq!(sides(LaneView::CandlesOnly, None), [candles(100.0), None]);
+        assert_eq!(
+            sides(LaneView::CandlesOnly, Some(92.0)),
+            [candles(92.0), None]
+        );
+        assert_eq!(sides(LaneView::TapeOnly, Some(8.0)), [tape(8.0), None]);
+        assert_eq!(sides(LaneView::TapeOnly, None), [tape(0.0), None]);
+        assert_eq!(
+            flow_sides(None, 0.0, 100.0, Some(70.0)),
+            [candles(100.0), None]
+        );
+    }
+
+    /// The headers split where the sides do; a lone side's header, rail and all,
+    /// is the whole row.
     #[test]
     fn the_headers_split_where_the_chart_does() {
         let candles = |end| Some((CapsuleSide::Candles, 0.0, end));
@@ -324,20 +364,20 @@ mod flow_band_tests {
             "the closed tape's rail is not a side"
         );
         assert_eq!(
-            headers(Some(LaneView::TapeOnly), Some(0.0)),
+            headers(Some(LaneView::TapeOnly), Some(8.0)),
             [tape(0.0), None]
         );
         assert_eq!(headers(None, Some(70.0)), [candles(100.0), None]);
-        assert_eq!(headers(beside, Some(0.0)), [candles(100.0), None]);
     }
 
-    fn trail(side: f32) -> TrailWidths {
-        TrailWidths {
+    fn trail(side: f32) -> SideWidths {
+        SideWidths {
             side,
             plate: 40.0,
             bars: 80.0,
             indicators_with_words: 90.0,
             indicators_icon: 30.0,
+            window: 0.0,
             capsule: 100.0,
         }
     }
@@ -349,7 +389,7 @@ mod flow_band_tests {
         let plate = 40.0 + SIDE_GAP_PX;
         let capsule = 100.0 + SIDE_GAP_PX;
         let keeps = |side: f32| {
-            let fit = trail_fit(&trail(side));
+            let fit = side_fit(&trail(side));
             (fit.indicators_words, fit.plate, fit.capsule)
         };
         assert_eq!(keeps(core + 90.0 + plate + capsule), (true, true, true));
@@ -364,10 +404,25 @@ mod flow_band_tests {
         assert_eq!(keeps(clipped + 30.0 + capsule - 1.0), (false, false, false));
     }
 
+    /// The bars clip away first; only then does the button lose its word. Its
+    /// icon is in every sum the rule makes, so nothing it drops takes the button.
+    #[test]
+    fn the_indicators_button_keeps_its_icon_when_its_word_cannot_fit() {
+        let bare = SideWidths {
+            plate: 0.0,
+            capsule: 0.0,
+            ..trail(0.0)
+        };
+        let least = SIDE_PAD_LEFT_PX + 80.0 + SIDE_GAP_PX + 90.0 + SIDE_PAD_RIGHT_PX;
+        let words = |side| side_fit(&SideWidths { side, ..bare }).indicators_words;
+        assert!(words(least));
+        assert!(!words(least - 1.0));
+    }
+
     /// A capsule the data emptied asks for no room and is not listed as kept.
     #[test]
     fn an_empty_capsule_takes_no_room() {
-        let fit = trail_fit(&TrailWidths {
+        let fit = side_fit(&SideWidths {
             capsule: 0.0,
             ..trail(500.0)
         });
@@ -378,15 +433,16 @@ mod flow_band_tests {
     #[test]
     fn a_narrowing_tape_gives_things_up_in_order() {
         let pads = SIDE_PAD_LEFT_PX + SIDE_PAD_RIGHT_PX;
-        let widths = |side| TapeWidths {
+        let widths = |side| SideWidths {
             side,
             plate: 40.0,
-            selector: 60.0,
+            window: 60.0,
             capsule: 78.0,
+            ..SideWidths::default()
         };
         let keeps = |side: f32| {
-            let fit = tape_fit(&widths(side));
-            (fit.plate, fit.selector, fit.capsule)
+            let fit = side_fit(&widths(side));
+            (fit.plate, fit.window, fit.capsule)
         };
         let selector = 60.0 + SIDE_GAP_PX + 78.0;
         let all = 40.0 + SIDE_GAP_PX + selector;
@@ -394,6 +450,46 @@ mod flow_band_tests {
         assert_eq!(keeps(pads + all - 1.0), (false, true, true));
         assert_eq!(keeps(pads + selector - 1.0), (false, false, true));
         assert_eq!(keeps(pads + 78.0 - 1.0), (false, false, false));
+    }
+
+    /// A tape alone carries the pane's bars and indicators between its plate and
+    /// its selector: the word, the plate, the selector, then the capsule go.
+    #[test]
+    fn a_lone_tape_keeps_the_bars_and_gives_things_up_in_order() {
+        let widths = |side| SideWidths {
+            window: 60.0,
+            ..trail(side)
+        };
+        let keeps = |side: f32| {
+            let fit = side_fit(&widths(side));
+            (fit.indicators_words, fit.plate, fit.window, fit.capsule)
+        };
+        let pads = SIDE_PAD_LEFT_PX + SIDE_PAD_RIGHT_PX;
+        let all = pads + 40.0 + 80.0 + 90.0 + 60.0 + 100.0 + 4.0 * SIDE_GAP_PX;
+        assert_eq!(keeps(all), (true, true, true, true));
+        assert_eq!(keeps(all - 60.0), (false, true, true, true));
+        let no_plate = all - 60.0 - 40.0 - SIDE_GAP_PX;
+        assert_eq!(keeps(no_plate), (false, false, true, true));
+        let no_window = no_plate - 60.0 - SIDE_GAP_PX;
+        assert_eq!(keeps(no_window), (false, false, false, true));
+        let clipped = no_window - 80.0 + BARS_MIN_PX;
+        assert_eq!(keeps(clipped), (false, false, false, true));
+        assert_eq!(keeps(clipped - 1.0), (false, false, false, false));
+    }
+
+    /// The first header carries the bars; the tape's the window; a pane with no
+    /// tape names no side and docks nothing.
+    #[test]
+    fn each_header_carries_its_parts() {
+        let parts = |side, first, tape| {
+            let p = side_parts(side, first, tape);
+            (p.plate, p.bars, p.window, p.capsule)
+        };
+        let (candles, tape) = (CapsuleSide::Candles, CapsuleSide::Tape);
+        assert_eq!(parts(candles, true, true), (true, true, false, true));
+        assert_eq!(parts(tape, false, true), (true, false, true, true));
+        assert_eq!(parts(tape, true, true), (true, true, true, true));
+        assert_eq!(parts(candles, true, false), (false, true, false, false));
     }
 
     /// Docked 8 px off its side's end, centred above the rule, slots inside.
@@ -426,6 +522,12 @@ mod flow_band_tests {
             .into_iter()
             .map(|option| (option.label, option.selected))
             .collect();
+        let picks: Vec<_> = window_options(&state)
+            .into_iter()
+            .map(|option| option.pick)
+            .collect();
+        assert_eq!(picks[0], None, "auto in force picks nothing, zoom kept");
+        assert_eq!(picks[1], Some(LaneWindow::Fixed { ms: 10_000 }));
         assert_eq!(
             words,
             [

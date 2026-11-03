@@ -748,6 +748,16 @@ impl OrderflowView {
         self.navigate_live_lane_window(self.look.lane_window_setting());
     }
 
+    /// The window a call names: filed as the asset's, as the selector files it, or
+    /// navigation, as the wheel's.
+    pub fn move_live_lane_window(&mut self, window: LaneWindow, file: bool) {
+        if file {
+            self.set_live_lane_window(window);
+        } else {
+            self.navigate_live_lane_window(window);
+        }
+    }
+
     /// Move the tape's window as the wheel does: the view, not the asset.
     pub fn navigate_live_lane_window(&mut self, window: LaneWindow) {
         let before = self.config.clone();

@@ -467,6 +467,7 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
         json!({"window": {"kind":"fixed","ms":0}}),
         json!({"window": {"kind":"fixed","ms":-5}}),
         json!({}),
+        json!({"end": {"kind":"live"}, "file": true}),
     ] {
         let payload = input(&app, fields);
         let (invalid, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, payload);
@@ -1512,13 +1513,16 @@ fn header_rect(
         .expect("the header painted it")
 }
 
-/// The selector and the named call are one setting: a press reads back through
-/// the call's scope, the call's write shows on the selector, and `auto` follows.
+/// The selector and the call with `file` are one setting: a press files the window
+/// and reads back through the call's scope, the call's filing shows on the selector
+/// and outlives a double click's reset, and `auto` follows.
 #[test]
-fn the_tape_window_selector_and_the_call_are_one_setting() {
+fn the_tape_window_selector_and_the_filing_call_are_one_setting() {
     use quantick_chart::pane_header::HeaderControl;
+    use quantick_orderflow::LaneWindow;
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
+    app.layer_wiring().maintain(&ctx);
     let directory = gateway_test_directory("tape-window-selector");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
@@ -1526,6 +1530,11 @@ fn the_tape_window_selector_and_the_call_are_one_setting() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
+    // What a double click on the tape returns to: the window filed as the asset's.
+    let setting = |app: &mut QuantickApp| {
+        app.active_tab_mut().tape_mut().reset_live_lane_window();
+        app.active_tab().tape().live_lane_window()
+    };
 
     let selector = header_rect(&app, HeaderControl::TapeWindow);
     click_chart(&mut app, &ctx, selector.center());
@@ -1535,22 +1544,42 @@ fn the_tape_window_selector_and_the_call_are_one_setting() {
     run_frame(&mut app, &ctx);
     let tape = read_tape(&mut app, &mut client);
     assert_eq!(tape["window_ms"], 30_000);
+    assert_eq!(
+        setting(&mut app),
+        LaneWindow::Fixed { ms: 30_000 },
+        "a pick files"
+    );
 
-    let payload = input(&app, json!({"window": {"kind":"fixed","ms":120_000}}));
+    let window = json!({"kind":"fixed","ms":120_000});
+    let payload = input(&app, json!({"window": window, "file": true}));
     keyed_call(&mut app, &mut client, "two", CAPABILITY, payload, "two");
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
         texts.iter().any(|text| text.starts_with("2 min")),
         "the selector says what the call wrote: {texts:?}"
     );
+    let two = LaneWindow::Fixed { ms: 120_000 };
+    assert_eq!(
+        setting(&mut app),
+        two,
+        "the call files as the selector does"
+    );
+    let wheel = input(&app, json!({"window": {"kind":"fixed","ms":5_000}}));
+    keyed_call(&mut app, &mut client, "nav", CAPABILITY, wheel, "nav");
+    assert_eq!(
+        setting(&mut app),
+        two,
+        "without `file` the call only navigates"
+    );
 
-    let payload = input(&app, json!({"window": {"kind":"auto"}}));
+    let payload = input(&app, json!({"window": {"kind":"auto"}, "file": true}));
     keyed_call(&mut app, &mut client, "auto", CAPABILITY, payload, "auto");
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
         texts.iter().any(|text| text.starts_with("auto")),
         "auto reads the label's words: {texts:?}"
     );
+    disable_test_gateway(&mut app, &ctx);
 }
 
 /// The bar reaches up through the side headers and takes the hand there too, the

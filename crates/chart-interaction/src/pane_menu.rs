@@ -43,7 +43,9 @@ pub enum Kind {
     },
     Select {
         selected: bool,
-        choice: MenuIntent,
+        /// What a click asks for; `None` when the line already names what is in
+        /// force and a click must change nothing.
+        choice: Option<MenuIntent>,
         weak: bool,
     },
     Label {
@@ -321,12 +323,14 @@ fn tape_entries(facts: &Facts, tape: &TapeFact) -> Vec<Entry> {
             .filter(|row| row.layer.on_tape())
             .map(layer_entry),
     );
+    // The window in force picks nothing: picking `auto` again would reset its zoom.
     let option = |window| {
+        let selected = same_lane_window(tape.window, window);
         Entry::new(
             lane_window_label(window, tape.reference_ms),
             Kind::Select {
-                selected: same_lane_window(tape.window, window),
-                choice: MenuIntent::SetLaneWindow(window),
+                selected,
+                choice: (!selected).then_some(MenuIntent::SetLaneWindow(window)),
                 weak: false,
             },
         )
@@ -426,7 +430,7 @@ pub fn object_entries(objects: &[ObjectFact]) -> Vec<Entry> {
                 &object.name,
                 Kind::Select {
                     selected: object.selected,
-                    choice: MenuIntent::ObjectsAsk(ObjectAction::Select(id)),
+                    choice: Some(MenuIntent::ObjectsAsk(ObjectAction::Select(id))),
                     weak: object.hidden,
                 },
             )];

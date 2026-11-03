@@ -63,37 +63,46 @@ pub const READBACKS: &[Readback] = &[journal(
 #[must_use]
 pub fn descriptor() -> CapabilityDescriptor {
     CapabilityDescriptor {
-            id: CapabilityId::new(INDICATOR_GUIDE_CAPABILITY_ID).expect("static capability ID is valid"),
-            version: CAPABILITY_VERSION,
-            title: "Set an indicator's mouse vertical line".to_owned(),
-            description: "Shows or hides a subtle dashed vertical line in one non-price indicator pane at the x coordinate hovered in its price chart. The choice is stored in the pane's workspace layout.".to_owned(),
-            module: ModuleId::new(SCRIPT_MODULE_ID).expect("static module ID is valid"),
-            input_schema: generated_schema::<IndicatorGuideInput>(),
-            output_schema: generated_schema::<IndicatorGuideResult>(),
-            examples: Vec::new(),
-            effect: EffectId::new(COCKPIT_EFFECT_ID).expect("static effect ID is valid"),
-            risk_flags: BTreeSet::<RiskFlagId>::new(),
-            read_only: false,
-            idempotency: IdempotencyPolicy::Optional,
-            revision_policy: RevisionPolicy::OptionalForAdditive,
-            stale_input_safety: Some("The call names the exact tab, pane and live indicator slot; repeating the same state is harmless and the result reads it back.".to_owned()),
-            dry_run_supported: false,
-            persistence: EffectPersistence::Durable,
-            reversible: true,
-            destructive: false,
-            risk_reducing: false,
-            required_permissions: [COCKPIT_PERMISSION_ID, COCKPIT_LAYOUT_PERMISSION_ID]
-                .into_iter()
-                .map(|id| PermissionId::new(id).expect("static permission ID is valid"))
-                .collect(),
-            preconditions: Vec::new(),
-            confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID).expect("static confirmation class is valid"),
-            availability: Availability::available(),
-            expected_cost: ExpectedCost {
-                class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-                max_items: None,
-                max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-            },
-            pagination: None,
-        }
+        id: CapabilityId::new(INDICATOR_GUIDE_CAPABILITY_ID)
+            .expect("static capability ID is valid"),
+        version: CAPABILITY_VERSION,
+        title: "Set an indicator's mouse vertical line".to_owned(),
+        description: "Shows or hides a subtle dashed vertical line in one non-price \
+            indicator pane at the x coordinate hovered in its price chart. The choice is \
+            stored in the pane's workspace layout."
+            .to_owned(),
+        module: ModuleId::new(SCRIPT_MODULE_ID).expect("static module ID is valid"),
+        input_schema: generated_schema::<IndicatorGuideInput>(),
+        output_schema: generated_schema::<IndicatorGuideResult>(),
+        examples: Vec::new(),
+        effect: EffectId::new(COCKPIT_EFFECT_ID).expect("static effect ID is valid"),
+        risk_flags: BTreeSet::<RiskFlagId>::new(),
+        read_only: false,
+        idempotency: IdempotencyPolicy::Optional,
+        revision_policy: RevisionPolicy::OptionalForAdditive,
+        stale_input_safety: Some(
+            "The call names the exact tab, pane and live indicator slot; repeating the \
+             same state is harmless and the result reads it back."
+                .to_owned(),
+        ),
+        dry_run_supported: false,
+        persistence: EffectPersistence::Durable,
+        reversible: true,
+        destructive: false,
+        risk_reducing: false,
+        required_permissions: [COCKPIT_PERMISSION_ID, COCKPIT_LAYOUT_PERMISSION_ID]
+            .into_iter()
+            .map(|id| PermissionId::new(id).expect("static permission ID is valid"))
+            .collect(),
+        preconditions: Vec::new(),
+        confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID)
+            .expect("static confirmation class is valid"),
+        availability: Availability::available(),
+        expected_cost: ExpectedCost {
+            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
+            max_items: None,
+            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
+        },
+        pagination: None,
+    }
 }

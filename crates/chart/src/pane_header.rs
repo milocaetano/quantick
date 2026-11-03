@@ -575,19 +575,20 @@ pub struct HeaderWidths {
     pub market_held: bool,
 }
 
+/// What an item takes on a line where items stand `gap` apart: its width and the
+/// gap after it, or nothing for an item that is not there.
+#[must_use]
+pub(crate) fn item_px(width: f32, gap: f32) -> f32 {
+    if width > 0.0 { width + gap } else { 0.0 }
+}
+
 /// The narrow rule of a flow pane's band, in the order things go: the slot, then
 /// the words beside the view control's glyphs, then the mark, then the chip's
 /// words, then the chip's dots. While the market holds the tape its words outlast
 /// the status: "Market closed" is all that says where the tape went.
 #[must_use]
 pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
-    let item = |width: f32| {
-        if width > 0.0 {
-            width + GROUP_GAP_PX
-        } else {
-            0.0
-        }
-    };
+    let item = |width: f32| item_px(width, GROUP_GAP_PX);
     let mark = item(widths.mark);
     let fits = |extra: f32| widths.controls + extra <= widths.strip;
     let (full_chip, dots) = (item(widths.chip_with_words), item(widths.chip_dots));
@@ -803,26 +804,6 @@ impl Capsule {
         let min_x = right - CAPSULE_INSET_RIGHT_PX - self.width_px();
         let min_y = top + CAPSULE_INSET_TOP_PX;
         (min_x >= left && min_y + CAPSULE_HEIGHT_PX <= bottom).then_some((min_x, min_y))
-    }
-}
-
-/// The sides on screen for this view over a chart spanning `left..right`, with
-/// the tape's divider if there is one, leftmost first. A hidden side has no
-/// capsule; a pane without a lane is all candles.
-#[must_use]
-pub fn flow_sides(
-    shown: LaneView,
-    left: f32,
-    right: f32,
-    divider: Option<f32>,
-) -> [Option<(CapsuleSide, f32, f32)>; 2] {
-    let candles = |end| Some((CapsuleSide::Candles, left, end));
-    let tape = |start| Some((CapsuleSide::Tape, start, right));
-    match (shown, divider) {
-        (LaneView::Beside, Some(divider)) => [candles(divider), tape(divider)],
-        (LaneView::Beside | LaneView::CandlesOnly, None) => [candles(right), None],
-        (LaneView::CandlesOnly, Some(divider)) => [candles(divider), None],
-        (LaneView::TapeOnly, divider) => [tape(divider.unwrap_or(left)), None],
     }
 }
 
@@ -1367,25 +1348,5 @@ mod tests {
         assert_eq!(place(width + 27.0, 300.0), None);
         assert_eq!(place(500.0, 82.0), Some((472.0 - width, 54.0)));
         assert_eq!(place(500.0, 81.0), None, "a plot too short holds none");
-    }
-
-    /// A hidden side has no capsule, and a side keeps its own edge.
-    #[test]
-    fn the_view_decides_the_sides() {
-        let candles = |end| Some((CapsuleSide::Candles, 0.0, end));
-        let tape = |start| Some((CapsuleSide::Tape, start, 100.0));
-        let sides = |view, divider| flow_sides(view, 0.0, 100.0, divider);
-        assert_eq!(
-            sides(LaneView::Beside, Some(70.0)),
-            [candles(70.0), tape(70.0)]
-        );
-        assert_eq!(sides(LaneView::Beside, None), [candles(100.0), None]);
-        assert_eq!(sides(LaneView::CandlesOnly, None), [candles(100.0), None]);
-        assert_eq!(
-            sides(LaneView::CandlesOnly, Some(92.0)),
-            [candles(92.0), None]
-        );
-        assert_eq!(sides(LaneView::TapeOnly, Some(0.0)), [tape(0.0), None]);
-        assert_eq!(sides(LaneView::TapeOnly, None), [tape(0.0), None]);
     }
 }

@@ -1504,8 +1504,20 @@ fn the_toolbar_leaves_bars_and_indicators_to_the_panes() {
     );
 }
 
+/// A tape alone at full width: its header carries the window selector too.
+const WINDOWED: quantick_chart::pane_header::FlowHeaderState =
+    quantick_chart::pane_header::FlowHeaderState {
+        view: LaneView::TapeOnly,
+        shown_view: LaneView::TapeOnly,
+        market_held: false,
+        candle_sample: None,
+        tape_sample: None,
+        window: quantick_orderflow::LaneWindow::Auto { zoom: 1.0 },
+        window_reference_ms: None,
+    };
+
 /// However narrow the pane, the glyph is on it, off the bars control, and it
-/// answers a click.
+/// answers a click: a tape alone, plate, selector and all, gives the rest up first.
 #[test]
 fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
     let ctx = egui::Context::default();
@@ -1525,20 +1537,25 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let trail = crate::pane_header::TrailSide {
-                        header: &header,
+                    let side = crate::pane_header::SideHeader {
+                        which: quantick_chart::pane_header::CapsuleSide::Tape,
                         salt: 7,
-                        selection: &mut selection,
-                        inputs: BarInputAvailability::PRINTS,
-                        rebuilding: false,
+                        plate: true,
+                        clock: None,
+                        bars: Some(crate::pane_header::BarsPart {
+                            header: &header,
+                            selection: &mut selection,
+                            inputs: BarInputAvailability::PRINTS,
+                            rebuilding: false,
+                        }),
+                        window: Some(&WINDOWED),
                         capsule: None,
-                        clock: String::new(),
                     };
                     let mut intent = None;
-                    clicked = crate::pane_header::draw_trail_side(
+                    (clicked, _) = crate::pane_header::draw_side_header(
                         ui,
                         strip,
-                        trail,
+                        side,
                         &mut painted,
                         &mut intent,
                     );
@@ -2447,4 +2464,74 @@ fn a_closed_side_leaves_one_header_at_full_width() {
         selector.left() - area.left() < 120.0,
         "at the pane's near end"
     );
+}
+
+/// Where the header last drew this pane's bars control and indicators button,
+/// cleared first so a rect left from an earlier frame cannot pass for this one.
+fn bars_and_indicators(app: &mut QuantickApp, ctx: &egui::Context) -> [Option<egui::Rect>; 2] {
+    let id = app.active_tab().flow_pane.id;
+    let ids = [
+        crate::pane_header::menu_id(id),
+        crate::pane_header::indicators_id(id),
+    ];
+    ctx.data_mut(|data| ids.map(|id| data.remove::<egui::Rect>(id)));
+    run_frame(app, ctx);
+    ctx.data(|data| ids.map(|id| data.get_temp(id)))
+}
+
+/// The pane's bars and its `ƒx` never go with a side: a tape alone carries them
+/// after its plate and before its window selector.
+#[test]
+fn a_tape_alone_keeps_the_bars_and_the_indicators_button() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    let [bars, indicators] = bars_and_indicators(&mut app, &ctx);
+    let (bars, indicators) = (bars.expect("the bars"), indicators.expect("the ƒx"));
+    let selector = flow_control(&app, HeaderControl::TapeWindow);
+    assert!(bars.right() <= indicators.left(), "{bars:?} {indicators:?}");
+    assert!(indicators.right() <= selector.left(), "{selector:?}");
+    let area = app.active_tab().flow_pane.frame.area.expect("flow chart");
+    assert!(indicators.bottom() <= area.top(), "in the header");
+}
+
+/// A flow pane with no order-flow view names no side and docks no capsule: its
+/// header is the bars and the indicators, as it was before the sides had headers.
+#[test]
+fn a_flow_pane_without_a_tape_docks_no_capsule() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    app.active_tab_mut().flow_pane.orderflow = None;
+    let [bars, indicators] = bars_and_indicators(&mut app, &ctx);
+    assert!(bars.is_some() && indicators.is_some());
+    let controls = &app.active_tab().flow_pane.frame.header_controls;
+    assert!(
+        controls.iter().all(|(control, _)| !matches!(
+            control,
+            HeaderControl::Layer(_) | HeaderControl::Sample(_) | HeaderControl::TapeWindow
+        )),
+        "{controls:?}"
+    );
+}
+
+/// The window list open, the view drops the tape: the list closes with its
+/// selector, so no popup stays open behind a control no one can see.
+#[test]
+fn the_window_list_closes_when_its_selector_goes() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let selector = flow_control(&app, HeaderControl::TapeWindow);
+    click_chart(&mut app, &ctx, selector.center());
+    run_frame(&mut app, &ctx);
+    assert!(
+        ctx.memory(|memory| memory.any_popup_open()),
+        "the list opened"
+    );
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::CandlesOnly);
+    run_frame(&mut app, &ctx);
+    assert!(!ctx.memory(|memory| memory.any_popup_open()));
 }

@@ -81,15 +81,19 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
         })
         .collect();
     assert_eq!(choices.len(), 6);
+    // The window in force is marked and picks nothing; every other line picks.
     for (i, ms) in LANE_WINDOW_PRESETS_MS.into_iter().enumerate() {
-        assert_eq!(
-            choices[i + 1],
-            (
-                ms == 60_000,
-                MenuIntent::SetLaneWindow(LaneWindow::Fixed { ms })
-            )
-        );
+        let selected = ms == 60_000;
+        let pick = MenuIntent::SetLaneWindow(LaneWindow::Fixed { ms });
+        assert_eq!(choices[i + 1], (selected, (!selected).then_some(pick)));
     }
+    assert_eq!(
+        choices[0],
+        (
+            false,
+            Some(MenuIntent::SetLaneWindow(LaneWindow::default()))
+        )
+    );
     assert!(matches!(
         windows.last().unwrap().kind,
         Kind::Seconds {
@@ -161,7 +165,7 @@ fn locked_drawing_and_objects_keep_verbs_stable_ids_and_chip_order() {
     assert!(matches!(
         children[0].kind,
         Kind::Select {
-            choice: MenuIntent::ObjectsAsk(ObjectAction::Select(DrawingId(99))),
+            choice: Some(MenuIntent::ObjectsAsk(ObjectAction::Select(DrawingId(99)))),
             ..
         }
     ));
@@ -318,6 +322,43 @@ fn blocked_layer_retains_requested_check_and_explanation() {
                 layer: ChartLayer::TapeHeatmap,
                 visible: false
             },
+            ..
+        }
+    ));
+}
+
+/// Following the bars at a zoom of its own, the `auto` line is in force: a click
+/// on it asks for nothing, so it cannot reset the zoom.
+#[test]
+fn the_window_in_force_picks_nothing() {
+    let mut model = Model::default();
+    let _ = update(
+        &mut model,
+        Intent::OpenMenu(ContextPress {
+            price: 1.0,
+            on_tape: true,
+            drawing: None,
+            places: vec![],
+        }),
+    );
+    let mut facts = facts();
+    facts.tape = Some(TapeFact {
+        window: LaneWindow::Auto { zoom: 2.0 },
+        reference_ms: None,
+    });
+    let entries = describe(&model, &facts);
+    let windows = entries
+        .iter()
+        .find_map(|entry| match &entry.kind {
+            Kind::Submenu(windows) if entry.label.starts_with("tape window") => Some(windows),
+            _ => None,
+        })
+        .expect("the window submenu");
+    assert!(matches!(
+        windows[0].kind,
+        Kind::Select {
+            selected: true,
+            choice: None,
             ..
         }
     ));
