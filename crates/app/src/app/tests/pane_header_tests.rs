@@ -2603,6 +2603,68 @@ fn the_flow_time_axis_stands_on_the_frame_tone() {
     );
 }
 
+/// On the flow pane the docked capsules and the Trail | Tape switch stand bare: no
+/// fill and no casing around their icons, a lit segment told by its ink alone. A
+/// time pane's capsule keeps its case.
+#[test]
+fn the_flow_headers_paint_no_wrapper_behind_their_icons() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let output = run_frame(&mut app, &ctx);
+    fn rects(shape: &egui::Shape, found: &mut Vec<egui::epaint::RectShape>) {
+        match shape {
+            egui::Shape::Rect(rect) => found.push(*rect),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| rects(shape, found)),
+            _ => {}
+        }
+    }
+    let mut painted = Vec::new();
+    output
+        .shapes
+        .iter()
+        .for_each(|clipped| rects(&clipped.shape, &mut painted));
+    let row = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .side_row
+        .expect("the side row");
+    // The band above the row and the row itself: everything the flow headers own.
+    let flow = row.with_min_y(row.top() - quantick_chart::flow_band::BAND_HEIGHT_PX);
+    let cased = |shape: &egui::epaint::RectShape| {
+        shape.fill == crate::theme::CAPSULE_FILL
+            || shape.stroke.color == crate::theme::CAPSULE_BORDER
+    };
+    let in_flow = |shape: &&egui::epaint::RectShape| flow.contains_rect(shape.rect);
+    let wrappers: Vec<_> = painted
+        .iter()
+        .filter(in_flow)
+        .filter(|shape| cased(shape))
+        .collect();
+    assert!(
+        wrappers.is_empty(),
+        "no case on the flow headers: {wrappers:?}"
+    );
+    let lit = painted
+        .iter()
+        .filter(in_flow)
+        .find(|shape| shape.fill == crate::theme::FLOW_LIT);
+    assert!(lit.is_none(), "a lit segment is its ink: {lit:?}");
+    let time = app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .frame
+        .area
+        .expect("a time pane");
+    let header = time.with_max_y(time.top()).with_min_y(time.top() - 40.0);
+    assert!(
+        painted
+            .iter()
+            .any(|shape| header.contains_rect(shape.rect) && cased(shape)),
+        "the time pane's capsule keeps its case"
+    );
+}
+
 /// The scene lists what the row paints: beside the tape the flow pane's bars and
 /// indicators calls are there, the trail's; the tape alone lists neither, while a
 /// context pane keeps both.

@@ -47,8 +47,6 @@ const PLATE_ROUNDING: f32 = 3.0;
 /// The window selector's room either side of its words: the TAPE plate then
 /// stands as far from them as the TRAIL plate from its bars.
 const WINDOW_PADDING_X: f32 = 3.0;
-/// Black at 6 %: the view control's well on the flow surface.
-const SEGMENT_WELL: egui::Color32 = egui::Color32::from_rgba_premultiplied(0, 0, 0, 15);
 /// The bars text and its faint caret.
 const BARS_SIZE: f32 = 13.0;
 const CARET_SIZE: f32 = 10.0;
@@ -75,9 +73,8 @@ const SAMPLE_OFF_DIAMETER_PX: f32 = 12.0;
 const SAMPLE_OFF_STROKE_PX: f32 = 1.2;
 /// The trail glyph's drawing box.
 const TRAIL_BOX: f32 = 20.0;
-/// A segment's word, and the corners of the control's frame and of a lit segment.
+/// A segment's word, and the corners of a segment's hover patch.
 const SEGMENT_WORD_SIZE: f32 = 11.5;
-const SEGMENT_FRAME_ROUNDING: f32 = 5.0;
 const SEGMENT_ROUNDING: f32 = 3.0;
 /// The dot a closed market's segment wears where its glyph stands.
 const MARKET_DOT_RADIUS: f32 = 3.0;
@@ -454,7 +451,8 @@ pub fn close_unseen_window_list(ctx: &egui::Context) {
 
 /// A capsule at a header's far end, `header` spanning the header: fixed in the
 /// row, so it neither fades nor lifts. The chart's divider keeps its own grab band
-/// clear of it. Answers where it stands; `None` in a header too short to hold it.
+/// clear of it. A time pane's is cased; a flow side's icons stand bare on the header.
+/// Answers where it stands; `None` in a header too short to hold it.
 pub fn draw_docked_capsule(
     ui: &mut egui::Ui,
     capsule: &Capsule,
@@ -470,12 +468,12 @@ pub fn draw_docked_capsule(
         egui::vec2(width, DOCKED_CAPSULE_HEIGHT_PX),
     );
     let ui = clipped_child(ui, rect, rect, ("pane_docked_capsule", salt, which as u8));
-    ui.painter().rect(
-        rect,
-        egui::Rounding::same(CAPSULE_ROUNDING),
-        theme::CAPSULE_FILL,
-        egui::Stroke::new(1.0_f32, theme::CAPSULE_BORDER),
-    );
+    if which == CapsuleSide::Time {
+        let stroke = egui::Stroke::new(1.0_f32, theme::CAPSULE_BORDER);
+        let rounding = egui::Rounding::same(CAPSULE_ROUNDING);
+        ui.painter()
+            .rect(rect, rounding, theme::CAPSULE_FILL, stroke);
+    }
     let origin = docked_slot_origin(corner);
     capsule_slots(&ui, capsule, origin, salt, painted, intent);
     Some(rect)
@@ -763,12 +761,6 @@ fn side_control(
             SEGMENT_FRAME_HEIGHT_PX.min(room.height()),
         ),
     );
-    ui.painter().rect(
-        frame,
-        egui::Rounding::same(SEGMENT_FRAME_ROUNDING),
-        SEGMENT_WELL,
-        egui::Stroke::new(1.0_f32, theme::FLOW_LINE),
-    );
     let mut left = frame.left() + SEGMENT_FRAME_PAD_PX;
     for (segment, width) in SideSegment::pair(state).into_iter().zip(widths) {
         let rect = egui::Rect::from_center_size(
@@ -780,8 +772,8 @@ fn side_control(
     }
 }
 
-/// One switch: lit, or faint and brighter under the pointer. A refusing segment
-/// takes the click and does nothing; its tooltip says why.
+/// One switch, bare on the band: lit ink, or faint with a hover patch under the
+/// pointer. A refusing segment takes the click and does nothing; its tooltip says why.
 fn side_segment(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -800,18 +792,17 @@ fn side_segment(
     }
     let lit = segment.ink == SegmentInk::Lit;
     let closed = segment.ink == SegmentInk::MarketClosed;
-    let colour = match (segment.ink, response.hovered()) {
-        (SegmentInk::Lit, _) => theme::FLOW_INK,
-        (SegmentInk::MarketClosed, _) => theme::WARN,
-        (SegmentInk::Unlit, true) => theme::FLOW_INK,
-        (SegmentInk::Unlit, false) => theme::FLOW_INK_MUTED,
+    let colour = match segment.ink {
+        SegmentInk::Lit => theme::FLOW_INK,
+        SegmentInk::MarketClosed => theme::WARN,
+        SegmentInk::Unlit => theme::FLOW_INK_MUTED,
     };
     let painter = ui.painter();
-    if lit {
+    if response.hovered() && !lit {
         painter.rect_filled(
             rect,
             egui::Rounding::same(SEGMENT_ROUNDING),
-            theme::FLOW_LIT,
+            theme::BARE_HOVER,
         );
     }
     if closed {

@@ -69,9 +69,6 @@ pub const FLOW_INK: Color32 = Color32::from_rgb(0xE8, 0xEC, 0xF2);
 /// `flow/ink-muted` — a control at rest on the flow surface.
 pub const FLOW_INK_MUTED: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
 
-/// `flow/line` — white at 22 %: a frame or hairline on the flow surface.
-pub const FLOW_LINE: Color32 = Color32::from_rgba_premultiplied(56, 56, 56, 56);
-
 /// `flow/lit` — white at 16 %: the fill of a lit segment on the flow surface.
 pub const FLOW_LIT: Color32 = Color32::from_rgba_premultiplied(41, 41, 41, 41);
 
