@@ -275,7 +275,8 @@ impl OrderflowView {
     }
 
     /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart
-    /// most recently painted ([`PaneTape::drawn`]). Projection and hit testing share
+    /// most recently painted ([`PaneTape::drawn`]), the candles ending at `history_right` and
+    /// the tape right of them and of the strip, as painted. Projection and hit testing share
     /// [`Self::projected`]; the lookup is O(visible cells), only for a cursor snapshot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_flow_cell_at(
@@ -283,12 +284,13 @@ impl OrderflowView {
         chart_rect: egui::Rect,
         viewport: &Viewport,
         total_bars: usize,
-        lane_width_px: f32,
+        history_right: f32,
         inverted: bool,
         position: egui::Pos2,
     ) -> Option<FlowCellHit> {
         let frame = &**self.pane_tape.drawn(self.published.frame.as_ref())?;
-        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
+        let lane_px = (chart_rect.right() - history_right - self.trail_strip_px).max(0.0);
+        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_px);
         let layout = layout.with_inverted(inverted);
         let in_lane = layout
             .lane_left_x()
@@ -1850,7 +1852,7 @@ mod tests {
             .center();
 
         let hit = view
-            .control_flow_cell_at(chart, &viewport, 1, 0.0, false, position)
+            .control_flow_cell_at(chart, &viewport, 1, chart.right(), false, position)
             .expect("the painted cell is semantically resolved");
         assert_eq!(hit.generation, cell.generation);
         assert_eq!(hit.side, cell.side);
@@ -1916,7 +1918,7 @@ mod tests {
                 .with_inverted(inverted);
                 let position = layout.current_book_preview_rect(cell.y0, cell.y1).center();
                 let hit = view
-                    .control_flow_cell_at(chart, &viewport, 1, 300.0, inverted, position)
+                    .control_flow_cell_at(chart, &viewport, 1, 700.0, inverted, position)
                     .unwrap();
                 assert!(hit.current_book_preview, "averaging {averaging}");
                 assert!(!hit.time_averaged);
@@ -1984,7 +1986,7 @@ mod tests {
                     });
                     let painted = format!("{:?}", output.shapes).contains("Current book preview");
                     let read = view
-                        .control_flow_cell_at(chart, &viewport, 1, 300.0, false, preview.center())
+                        .control_flow_cell_at(chart, &viewport, 1, 700.0, false, preview.center())
                         .is_some_and(|hit| hit.current_book_preview);
                     (painted, read)
                 };

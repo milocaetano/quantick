@@ -207,18 +207,13 @@ impl<'a> FlowFrame<'a> {
     }
 
     fn execution_geometry(&self) -> Option<quantick_chart::flow_execution::FlowExecutionGeometry> {
-        let history = self.history;
+        let h = self.history;
         quantick_chart::flow_execution::FlowExecutionGeometry::new(
             *self.viewport,
             self.total,
             self.prefix_len,
             self.price_range,
-            [
-                history.left(),
-                history.top(),
-                history.right(),
-                history.bottom(),
-            ],
+            [h.left(), h.top(), h.right(), h.bottom()],
             self.inverted,
         )
     }

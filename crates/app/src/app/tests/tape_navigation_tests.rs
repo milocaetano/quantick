@@ -1037,7 +1037,8 @@ fn the_cursor_reads_the_book_a_held_tape_paints() {
 fn lane_cells(app: &QuantickApp, lane: egui::Rect) -> Vec<crate::orderflow_view::FlowCellHit> {
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
-    let divider = pane.frame.lane_divider_x.expect("the divider");
+    // The pointer's own reading: the candles' edge, as `control_pointer_hit` passes it.
+    let history_right = pane.frame.candles_right.unwrap_or(chart.right());
     (lane.top() as i32..lane.bottom() as i32)
         .step_by(2)
         .filter_map(|y| {
@@ -1045,12 +1046,77 @@ fn lane_cells(app: &QuantickApp, lane: egui::Rect) -> Vec<crate::orderflow_view:
                 chart,
                 &pane.model.viewport,
                 pane.slots(),
-                chart.right() - divider,
+                history_right,
                 false,
                 egui::pos2(lane.center().x, y as f32),
             )
         })
         .collect()
+}
+
+/// The live strip beside the tape narrows the candles, never the tape: the cursor,
+/// reading the pane as `control_pointer_hit` does, finds on a live tape with the
+/// strip shown the very cells the tape painted right of the divider.
+#[test]
+fn the_cursor_reads_the_live_tape_unmoved_by_the_strip() {
+    let ctx = egui::Context::default();
+    let mut app = recorded_book(&ctx);
+    let flow = &mut app.active_tab_mut().flow_pane;
+    flow.set_layer_visible(ChartLayer::LiveStrip, true, &mut Default::default());
+    for _ in 0..3 {
+        app.active_tab_mut().tape_mut().flush_for_test();
+        run_frame(&mut app, &ctx);
+    }
+    assert!(app.active_tab().tape().tape_end().is_live(), "a live tape");
+    let strip = crate::live_strip::LIVE_STRIP_WIDTH_PX;
+    let pane = &app.active_tab().flow_pane;
+    let divider = pane.frame.lane_divider_x.expect("the divider");
+    assert_eq!(
+        pane.frame.candles_right,
+        Some(divider - strip),
+        "on the trail"
+    );
+    assert_eq!(
+        app.active_tab().tape().trail_strip_px,
+        strip,
+        "from a live edge"
+    );
+    let lane = lane_rect(&app);
+    let columns: Vec<_> = (lane.left() as i32..lane.right() as i32)
+        .step_by(6)
+        .collect();
+    let at = |x: &i32| egui::Rect::from_x_y_ranges(*x as f32..=*x as f32, lane.y_range());
+    let read: Vec<_> = columns.iter().map(|x| lane_cells(&app, at(x))).collect();
+    // The painted tape alone, measured from the divider with no strip to subtract.
+    app.active_tab_mut().tape_mut().trail_strip_px = 0.0;
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_rect.expect("laid out");
+    let painted: Vec<Vec<_>> = columns
+        .iter()
+        .map(|x| {
+            let rect = at(x);
+            (rect.top() as i32..rect.bottom() as i32)
+                .step_by(2)
+                .filter_map(|y| {
+                    let at = egui::pos2(rect.center().x, y as f32);
+                    let tape = app.active_tab().tape();
+                    tape.control_flow_cell_at(
+                        chart,
+                        &pane.model.viewport,
+                        pane.slots(),
+                        divider,
+                        false,
+                        at,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    assert!(
+        painted.iter().any(|column| !column.is_empty()),
+        "the book is under the cursor"
+    );
+    assert_eq!(read, painted);
 }
 
 /// A band on a held tape is the past, never the live lane: the cursor's
@@ -1101,6 +1167,82 @@ fn lane_of(app: &QuantickApp) -> quantick_orderflow::LiveLaneStyle {
 /// The view the pane's two switches read, on the pane as the hand left it.
 fn view_of(app: &QuantickApp) -> quantick_orderflow::LaneView {
     lane_of(app).view()
+}
+
+/// With the live strip on the trail, a drag that previews the tape closed and then
+/// comes back keeps one chart under the hand: the strip stays off the gutter while
+/// the close is only shown, so the chart neither narrows nor resets the drag, and
+/// the tape reopens under the hand.
+#[test]
+fn a_previewed_close_with_the_strip_shown_keeps_the_chart_and_reopens_under_the_hand() {
+    use quantick_orderflow::LaneView;
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    let flow = &mut app.active_tab_mut().flow_pane;
+    flow.set_layer_visible(ChartLayer::LiveStrip, true, &mut Default::default());
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_rect.expect("the canvas laid out");
+    let open = pane.frame.lane_divider_x.expect("the divider");
+    let strip = crate::live_strip::LIVE_STRIP_WIDTH_PX;
+    assert_eq!(
+        pane.frame.candles_right,
+        Some(open - strip),
+        "the strip is shown"
+    );
+    let (y, back) = (chart.center().y, open - 20.0);
+    let step = |app: &mut QuantickApp, x: f32| {
+        run_frame_with_events(app, &ctx, vec![egui::Event::PointerMoved(egui::pos2(x, y))]);
+        app.active_tab()
+            .flow_pane
+            .frame
+            .chart_rect
+            .expect("laid out")
+    };
+    let press = egui::pos2(open, y);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(press),
+            pointer_button(press, true),
+        ],
+    );
+    for x in [open + 40.0, chart.right() - 30.0, chart.right() - 10.0] {
+        assert_eq!(step(&mut app, x), chart, "the chart under the hand at {x}");
+    }
+    let shown = app
+        .active_tab()
+        .tape()
+        .cached_config()
+        .live_lane
+        .shown_view();
+    assert_eq!(shown, LaneView::CandlesOnly, "the close is previewed");
+    for x in [open + 40.0, back] {
+        assert_eq!(step(&mut app, x), chart, "the chart under the hand at {x}");
+    }
+    let release = egui::pos2(back, y);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(release),
+            pointer_button(release, false),
+        ],
+    );
+    run_frame(&mut app, &ctx);
+    assert_eq!(view_of(&app), LaneView::Beside);
+    let divider = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .lane_divider_x
+        .expect("reopened");
+    assert!(
+        (divider - back).abs() < 1.0,
+        "under the hand: {divider} for {back}"
+    );
 }
 
 /// The divider dropped near the right edge is the Tape switch off, and near the

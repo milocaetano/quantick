@@ -359,7 +359,7 @@ impl ChartPane {
         // Beside the tape the strip is the trail's: every candle edge stops at it.
         let width = self.live_strip_width(chrome.capabilities);
         let divider = self.frame.lane_divider_x;
-        let trail = trail_strip(self.shown_lane_view(), chart_rect.left(), divider, width);
+        let trail = trail_strip(self.plot_lane_view(), chart_rect.left(), divider, width);
         if let Some((left, right)) = trail {
             let rows = chart_rect.top()..=areas.time_strip.top();
             areas.live_strip = Some(egui::Rect::from_x_y_ranges(left..=right, rows));

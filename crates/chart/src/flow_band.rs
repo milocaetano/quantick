@@ -126,9 +126,14 @@ pub fn side_headers(
     }
 }
 
-/// The live strip's column on the trail, `width` wide against the tape's divider
-/// and never past the chart's `left`: its left and right edges. Only beside the
-/// tape; elsewhere the strip is the gutter's ([`gutter_strip_px`]).
+/// The candles' least width beside the strip, the floor the plot split keeps:
+/// on a narrow trail the strip narrows, then goes, before the candles do.
+pub const TRAIL_CANDLES_MIN_PX: f32 = 20.0;
+
+/// The live strip's column on the trail, `width` wide against the tape's divider,
+/// leaving [`TRAIL_CANDLES_MIN_PX`] of candles right of the chart's `left`: its left
+/// and right edges. Only beside the tape; elsewhere the strip is the gutter's
+/// ([`gutter_strip_px`]).
 #[must_use]
 pub fn trail_strip(
     shown: Option<LaneView>,
@@ -137,7 +142,8 @@ pub fn trail_strip(
     width: f32,
 ) -> Option<(f32, f32)> {
     let divider = divider.filter(|_| shown == Some(LaneView::Beside) && width > 0.0)?;
-    Some(((divider - width).max(left), divider))
+    let strip_left = (divider - width).max(left + TRAIL_CANDLES_MIN_PX);
+    (strip_left < divider).then_some((strip_left, divider))
 }
 
 /// The strip width the plot carves before the price gutter: the strip's own
@@ -440,10 +446,6 @@ mod flow_band_tests {
             trail_strip(beside, 0.0, Some(70.0), 10.0),
             Some((60.0, 70.0))
         );
-        assert_eq!(
-            trail_strip(beside, 65.0, Some(70.0), 10.0),
-            Some((65.0, 70.0))
-        );
         assert_eq!(trail_strip(beside, 0.0, Some(70.0), 0.0), None);
         assert_eq!(trail_strip(beside, 0.0, None, 10.0), None);
         for view in [candles, alone, None] {
@@ -453,6 +455,23 @@ mod flow_band_tests {
         assert_eq!(gutter_strip_px(alone, 10.0), 0.0);
         assert_eq!(gutter_strip_px(candles, 10.0), 10.0);
         assert_eq!(gutter_strip_px(None, 10.0), 10.0);
+    }
+
+    /// A narrow trail keeps its candles: the strip narrows to what is left past
+    /// their floor, and goes when nothing is.
+    #[test]
+    fn a_narrow_trail_keeps_its_candles_before_the_strip() {
+        let beside = Some(LaneView::Beside);
+        let floor = TRAIL_CANDLES_MIN_PX;
+        let strip = |divider| trail_strip(beside, 100.0, Some(divider), 84.0);
+        assert_eq!(strip(300.0), Some((216.0, 300.0)), "room for both");
+        assert_eq!(
+            strip(150.0),
+            Some((100.0 + floor, 150.0)),
+            "the strip narrows"
+        );
+        assert_eq!(strip(100.0 + floor), None, "no room left: the strip goes");
+        assert_eq!(strip(105.0), None, "never the candles");
     }
 
     fn trail(side: f32) -> SideWidths {

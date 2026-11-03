@@ -461,10 +461,11 @@ impl ChartPane {
         }
     }
 
-    /// The tape's view on screen, `None` on a pane without a tape.
-    pub(crate) fn shown_lane_view(&self) -> Option<quantick_orderflow::LaneView> {
-        let tape = self.orderflow.as_ref();
-        tape.map(|tape| tape.cached_config().live_lane.shown_view())
+    /// The tape's view the plot is carved for, `None` without a tape: the one on screen, but
+    /// the committed one while a close is previewed, so the drag's chart keeps its width.
+    pub(crate) fn plot_lane_view(&self) -> Option<quantick_orderflow::LaneView> {
+        let lane = &self.orderflow.as_ref()?.cached_config().live_lane;
+        Some(lane.drag_close.map_or(lane.shown_view(), |_| lane.view()))
     }
 
     /// This pane's regions inside `area`, carved once so the input handler and
@@ -474,7 +475,7 @@ impl ChartPane {
         let strip = self.live_strip_width(capabilities);
         let mut areas = plot_split(
             area,
-            gutter_strip_px(self.shown_lane_view(), strip),
+            gutter_strip_px(self.plot_lane_view(), strip),
             self.indicators.pane_sizing(&mut sizing),
         );
         areas.capsules = self.frame.capsules;
