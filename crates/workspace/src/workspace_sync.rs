@@ -29,7 +29,7 @@ pub enum TabAdoption {
     /// A desk brought it back on this workspace, with any copy it kept.
     Restore {
         workspace: String,
-        copy: Option<WorkspaceRecipe>,
+        copy: Option<Box<WorkspaceRecipe>>,
     },
     /// A first run, or a desk from before workspaces: its recipe is what it shows.
     Seed,
@@ -81,7 +81,10 @@ impl TabRecipeSync {
     pub fn adoption(&mut self, tab: u64, held: bool, unused: bool) -> TabAdoption {
         if let Some((workspace, copy)) = self.arrivals.remove(&tab) {
             return match workspace {
-                Some(workspace) => TabAdoption::Restore { workspace, copy },
+                Some(workspace) => TabAdoption::Restore {
+                    workspace,
+                    copy: copy.map(Box::new),
+                },
                 None if held => TabAdoption::Held,
                 None => TabAdoption::Seed,
             };

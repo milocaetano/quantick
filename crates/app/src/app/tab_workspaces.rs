@@ -108,7 +108,7 @@ fn adopt_tabs(app: &mut QuantickApp) {
             TabAdoption::Held => {}
             TabAdoption::Restore { workspace, copy } => {
                 let book = store.book_mut();
-                book.restore_tab(id, &workspace, copy);
+                book.restore_tab(id, &workspace, copy.map(|copy| *copy));
                 if let Some(recipe) = book.tab_copy(id).filter(|copy| !copy.is_factory()) {
                     let recipe = recipe.clone();
                     store.sync_mut().queue(id, recipe);
