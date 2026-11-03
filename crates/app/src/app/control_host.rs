@@ -754,6 +754,9 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
     fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
         self.runtime.workspace.book.tab_row(tab)
     }
+    fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
+        super::tab_workspaces::symbols_of(self, tabs)
+    }
 }
 
 impl ChromePort for QuantickApp {

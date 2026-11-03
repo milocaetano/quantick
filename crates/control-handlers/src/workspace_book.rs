@@ -14,6 +14,7 @@ use quantick_control::{
     wire::{ActorContext, WireU64},
 };
 use quantick_control_host::journal::NewEvent;
+use quantick_control_schema::window_menu as text;
 use quantick_control_schema::workspace::MODULE_ID;
 use quantick_control_schema::workspace_book::{
     TAB_WORKSPACE_SET_EVENT_KIND, TabWorkspaceSetInput, TabWorkspaceSetResult,
@@ -25,6 +26,7 @@ use quantick_control_schema::workspace_book::{
     workspace_list_descriptor, workspace_rename_descriptor, workspace_revert_descriptor,
     workspace_save_as_descriptor, workspace_save_to_descriptor,
 };
+use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::{
     DEFAULT_WORKSPACE, DeleteOutcome, SaveOutcome, SetOutcome, WorkspaceBook, WorkspaceRecipe,
     WorkspaceRefusal,
@@ -56,6 +58,81 @@ pub trait WorkspaceBookHost {
     /// The tab's workspace and whether it holds edits, as the snapshot reads it.
     fn tab_workspace_row(&self, _tab: u64) -> (String, bool) {
         (DEFAULT_WORKSPACE.to_owned(), false)
+    }
+    /// The symbols of these tabs, in the order asked.
+    fn tab_symbols(&self, _tabs: &[u64]) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// Carry out what a workspace row asked for, on the same calls the control
+/// plane makes. Answers what to tell the trader, naming the tabs.
+pub fn apply_row_command<H: WorkspaceBookHost + ?Sized>(
+    host: &mut H,
+    menu: &mut WorkspaceMenuState,
+    tab: u64,
+    symbol: &str,
+    command: WorkspaceCommand,
+) -> Option<String> {
+    let note = match command {
+        WorkspaceCommand::BeginSaveAs => {
+            menu.open_save_as();
+            return None;
+        }
+        WorkspaceCommand::BeginRename(from) => {
+            menu.open_rename(&from);
+            return None;
+        }
+        WorkspaceCommand::SubmitDialog => return submit_name_dialog(host, menu, tab, symbol),
+        WorkspaceCommand::Set(name) => set_tab_workspace(host, tab, &name).map(|set| {
+            set.changed
+                .then(|| text::switched_toast(symbol, &name, set.dropped_edits))
+        }),
+        WorkspaceCommand::SaveTo => save_tab_to(host, tab).map(|saved| {
+            saved.changed.then(|| {
+                text::saved_toast(&saved.workspace, &host.tab_symbols(&saved.tabs_changed))
+            })
+        }),
+        WorkspaceCommand::Revert => {
+            revert_tab(host, tab).map(|changed| changed.then(|| text::reverted_toast(symbol)))
+        }
+        WorkspaceCommand::Delete(name) => delete_workspace(host, &name).map(|gone| {
+            gone.changed.then(|| {
+                text::deleted_toast(
+                    &name,
+                    &host.tab_symbols(&gone.adopted),
+                    &host.tab_symbols(&gone.kept_edits),
+                )
+            })
+        }),
+    };
+    note.unwrap_or_else(|error| Some(error.message))
+}
+
+/// Enter on the name dialog: done and closed, or refused with the reason
+/// under the field and the name still there.
+fn submit_name_dialog<H: WorkspaceBookHost + ?Sized>(
+    host: &mut H,
+    menu: &mut WorkspaceMenuState,
+    tab: u64,
+    symbol: &str,
+) -> Option<String> {
+    let dialog = menu.dialog.clone()?;
+    let outcome = match &dialog.mode {
+        NameDialogMode::SaveAsNew => save_tab_as(host, tab, &dialog.name)
+            .map(|saved| text::saved_as_toast(symbol, &saved.workspace)),
+        NameDialogMode::Rename { from } => rename_workspace(host, from, &dialog.name)
+            .map(|_| text::renamed_toast(from, &dialog.name)),
+    };
+    match outcome {
+        Ok(message) => {
+            menu.close_dialog();
+            Some(message)
+        }
+        Err(error) => {
+            menu.refuse(error.message);
+            None
+        }
     }
 }
 
