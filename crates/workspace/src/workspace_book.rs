@@ -155,7 +155,7 @@ pub struct SaveOutcome {
 /// What a delete did.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DeleteOutcome {
-    /// Whether a workspace went; `false` for a repeat.
+    /// Whether a workspace went: always, as a name no workspace has is refused.
     pub changed: bool,
     /// Every tab moved to `Default`.
     pub moved: Vec<u64>,
@@ -616,16 +616,16 @@ impl WorkspaceBook {
 
     /// Delete a workspace; its tabs move to `Default`. A clean one adopts
     /// `Default`'s recipe; one with edits keeps them, marked `Default •`, so
-    /// nothing is lost. A repeat finds nothing and answers no change.
+    /// nothing is lost.
     ///
     /// # Errors
-    /// `name` is `Default`.
+    /// `name` is `Default`, or no workspace has it, as on a repeat.
     pub fn delete(&mut self, name: &str) -> Result<DeleteOutcome, WorkspaceRefusal> {
         if name == DEFAULT_WORKSPACE {
             return Err(WorkspaceRefusal::DefaultProtected);
         }
         let Some(recipe) = self.recipes.remove(name) else {
-            return Ok(DeleteOutcome::default());
+            return Err(WorkspaceRefusal::UnknownWorkspace(name.to_owned()));
         };
         self.renamed.retain(|_, current| current != name);
         let fallback = self.default_recipe().clone();

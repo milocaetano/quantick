@@ -19675,7 +19675,7 @@
         "description": "What a delete did.",
         "properties": {
           "changed": {
-            "description": "`false` when no workspace had that name.",
+            "description": "Always `true`: a name no workspace has is refused with `workspace.unknown`.",
             "type": "boolean"
           },
           "kept_edits": {
@@ -19712,7 +19712,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "A repeat finds no such workspace, writes nothing and answers changed false.",
+      "stale_input_safety": "A repeat finds no such workspace and is refused with workspace.unknown; nothing is written.",
       "title": "Delete a workspace",
       "version": 1
     },

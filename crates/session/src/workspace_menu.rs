@@ -32,7 +32,8 @@ pub struct NameDialog {
     pub name: String,
     /// Why the last Enter was refused, shown under the field.
     pub refusal: Option<String>,
-    /// The field takes the keyboard on the dialog's first frame.
+    /// The field takes the keyboard on the dialog's first frame, and again
+    /// after a refusal, so the trader retypes without reaching for the mouse.
     pub wants_focus: bool,
 }
 
@@ -98,10 +99,11 @@ impl WorkspaceMenuState {
         );
     }
 
-    /// Enter was refused: the dialog stays up and says why.
+    /// Enter was refused: the dialog stays up, says why and keeps the keyboard.
     pub fn refuse(&mut self, reason: String) {
         if let Some(dialog) = &mut self.dialog {
             dialog.refusal = Some(reason);
+            dialog.wants_focus = true;
         }
     }
 
@@ -141,14 +143,17 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_keeps_the_dialog_and_the_name_typed() {
+    fn a_refusal_keeps_the_dialog_the_name_typed_and_the_focus() {
         let mut state = WorkspaceMenuState::default();
         state.open_save_as();
-        state.dialog.as_mut().unwrap().name = "Scalp".to_owned();
+        let dialog = state.dialog.as_mut().unwrap();
+        dialog.name = "Scalp".to_owned();
+        dialog.wants_focus = false;
         state.refuse("a workspace is already called Scalp".to_owned());
         let dialog = state.dialog.as_ref().unwrap();
         assert_eq!(dialog.name, "Scalp");
         assert!(dialog.refusal.is_some());
+        assert!(dialog.wants_focus, "the field takes the keyboard back");
     }
 
     #[test]

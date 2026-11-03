@@ -166,12 +166,7 @@ impl WindowMenu<'_> {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(PANE_MIN_WIDTH_PX);
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                        ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-                        // Rows read as lines of a list until the pointer is on one.
-                        let idle = &mut ui.visuals_mut().widgets.inactive;
-                        idle.weak_bg_fill = egui::Color32::TRANSPARENT;
-                        idle.bg_stroke = egui::Stroke::NONE;
+                        flat_rows(ui);
                         for item in items {
                             match *item {
                                 Item::Separator => {
@@ -563,6 +558,14 @@ impl WindowMenu<'_> {
             }
         }
     }
+}
+
+/// Rows read as lines of a list until the pointer is on one, in `⋮` and the chip menu.
+pub(super) fn flat_rows(ui: &mut egui::Ui) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+    ui.visuals_mut().widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+    ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
 }
 
 fn take_focus(state: &mut WindowMenuState, level: usize, response: &egui::Response) {

@@ -177,7 +177,7 @@ impl WorkspaceRows<'_> {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(CHIP_MENU_MIN_WIDTH_PT);
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        super::menus::flat_rows(ui);
                         ui.weak(text::uses_caption(self.symbol));
                         self.list(ui, commands);
                         ui.separator();

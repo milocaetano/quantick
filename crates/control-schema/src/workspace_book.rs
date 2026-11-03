@@ -4,8 +4,10 @@
 //! A refusal carries `control.invalid_request` with the reason and a stable
 //! `details.code`; a write that did not reach the disk carries
 //! `control.capability_unavailable` with [`WRITE_FAILED_CODE`] and changes
-//! nothing, as does a tab still opening, with [`TAB_NOT_READY_CODE`]. A repeat
-//! answers `changed: false` and journals nothing.
+//! nothing, as does a tab still opening, with [`TAB_NOT_READY_CODE`]. A tab id
+//! no open tab has is refused with `workspace.unknown_tab`. A repeat answers
+//! `changed: false` and journals nothing, bar a delete, which is refused with
+//! `workspace.unknown`.
 
 use quantick_control::id::PermissionId;
 use quantick_control::registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy};
@@ -133,7 +135,7 @@ pub struct WorkspaceDeleteInput {
 /// What a delete did.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct WorkspaceDeleteResult {
-    /// `false` when no workspace had that name.
+    /// Always `true`: a name no workspace has is refused with `workspace.unknown`.
     pub changed: bool,
     /// Every tab moved to `Default`.
     pub moved: Vec<WireU64>,
@@ -247,7 +249,7 @@ pub fn workspace_delete_descriptor() -> CapabilityDescriptor {
         MODULE_ID,
         "Delete a workspace",
         "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
-        "A repeat finds no such workspace, writes nothing and answers changed false.",
+        "A repeat finds no such workspace and is refused with workspace.unknown; nothing is written.",
     ))
 }
 

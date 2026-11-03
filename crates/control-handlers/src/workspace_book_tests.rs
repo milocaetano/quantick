@@ -132,6 +132,7 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     menu.dialog.as_mut().unwrap().name = "  The   open ".to_owned();
     let note = apply_row_command(
         &mut host,
+        Some((&mut access, &actor)),
         &mut menu,
         1,
         "WINV26",
@@ -143,6 +144,7 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     menu.dialog.as_mut().unwrap().name = " The open".to_owned();
     let note = apply_row_command(
         &mut host,
+        Some((&mut access, &actor)),
         &mut menu,
         1,
         "WINV26",
@@ -150,6 +152,86 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     );
     assert_eq!(note, None, "no toast for a rename that moved nothing");
     assert!(menu.dialog.is_none());
+}
+
+/// The journal rows a run left, as module, kind and payload.
+fn rows(access: &FakeAccess) -> Vec<(String, String, Value)> {
+    let row = |event: &NewEvent| {
+        let module = event.module_id.as_str().to_owned();
+        (
+            module,
+            event.kind.as_str().to_owned(),
+            event.payload.clone(),
+        )
+    };
+    access.events.iter().map(row).collect()
+}
+
+/// A hand on the `⋮` rows and a script on the calls leave one journal: a
+/// menu switch is `tab.workspace.set`'s row and a menu delete
+/// `workspace.delete`'s, payload for payload.
+#[test]
+fn a_menu_set_and_delete_journal_the_rows_the_calls_do() {
+    let (mut by_call, mut call_access, actor) = parts();
+    save_as(
+        &mut by_call,
+        &mut call_access,
+        &actor,
+        &json!({ "name": "Scalp" }),
+    )
+    .unwrap();
+    let value = json!({ "tab_id": "2", "name": "Scalp" });
+    set(&mut by_call, &mut call_access, &actor, &value).unwrap();
+    delete(
+        &mut by_call,
+        &mut call_access,
+        &actor,
+        &json!({ "name": "Scalp" }),
+    )
+    .unwrap();
+
+    let (mut by_hand, mut hand_access, hand) = parts();
+    save_as(
+        &mut by_hand,
+        &mut hand_access,
+        &hand,
+        &json!({ "name": "Scalp" }),
+    )
+    .unwrap();
+    let mut menu = WorkspaceMenuState::default();
+    for command in [
+        WorkspaceCommand::Set("Scalp".to_owned()),
+        WorkspaceCommand::Delete("Scalp".to_owned()),
+    ] {
+        let journal = Some((&mut hand_access, &hand));
+        let note = apply_row_command(&mut by_hand, journal, &mut menu, 2, "WDOV26", command);
+        assert!(note.is_some(), "each row changed something and says so");
+    }
+
+    let kinds: Vec<_> = rows(&call_access).into_iter().map(|row| row.1).collect();
+    assert_eq!(
+        kinds,
+        [
+            WORKSPACE_SAVED_EVENT_KIND,
+            TAB_WORKSPACE_SET_EVENT_KIND,
+            WORKSPACE_DELETED_EVENT_KIND
+        ]
+    );
+    assert_eq!(rows(&hand_access), rows(&call_access));
+    assert_eq!(by_hand.book, by_call.book, "and the same book after");
+}
+
+/// A window without a control identity has no journal; the row still lands.
+#[test]
+fn a_menu_row_without_a_journal_still_changes_the_book() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let mut menu = WorkspaceMenuState::default();
+    let none: Journal<'_, FakeAccess> = None;
+    let command = WorkspaceCommand::Set("Scalp".to_owned());
+    apply_row_command(&mut host, none, &mut menu, 2, "WDOV26", command);
+    assert_eq!(host.book.tab_state(2).unwrap().workspace, "Scalp");
+    assert_eq!(access.events.len(), 1, "only the call's save");
 }
 
 fn detail(error: &ControlError) -> String {
@@ -240,6 +322,15 @@ fn bad_names_are_refused_with_a_stable_code_and_the_reason() {
     let value = json!({ "tab_id": "9", "name": "Default" });
     let stranger = set(&mut host, &mut access, &actor, &value).unwrap_err();
     assert_eq!(stranger.code.as_str(), codes::INVALID_REQUEST);
+    assert_eq!(detail(&stranger), "workspace.unknown_tab");
+    assert_eq!(stranger.message, "no open tab has id 9");
+    let value = json!({ "tab_id": "9" });
+    let stranger = save_to(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&stranger), "workspace.unknown_tab");
+    let gone = delete(&mut host, &mut access, &actor, &json!({ "name": "Nope" })).unwrap_err();
+    assert_eq!(gone.code.as_str(), codes::INVALID_REQUEST);
+    assert_eq!(detail(&gone), "workspace.unknown");
+    assert_eq!(gone.message, "no workspace is called Nope");
     assert_eq!(host.writes, 0);
     assert!(access.events.is_empty());
 }
@@ -257,7 +348,7 @@ fn default_cannot_be_deleted_or_renamed() {
 }
 
 #[test]
-fn delete_moves_tabs_to_default_keeps_edits_and_a_repeat_is_no_change() {
+fn delete_moves_tabs_to_default_keeps_edits_and_a_repeat_is_refused() {
     let (mut host, mut access, actor) = parts();
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let value = json!({ "tab_id": "2", "name": "Scalp" });
@@ -272,8 +363,10 @@ fn delete_moves_tabs_to_default_keeps_edits_and_a_repeat_is_no_change() {
     assert_eq!(host.shown, [1], "the tab with edits stays as it is");
     let edited = host.book.tab_state(2).unwrap();
     assert_eq!((edited.workspace, edited.modified), ("Default", true));
-    let again = delete(&mut host, &mut access, &actor, &value).unwrap();
-    assert_eq!(again["changed"], false);
+    let journaled = access.events.len();
+    let again = delete(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&again), "workspace.unknown");
+    assert_eq!(access.events.len(), journaled, "a refusal journals nothing");
 }
 
 #[test]
