@@ -208,7 +208,7 @@ impl ReplayView {
             day_before_stored: day_before,
             scrub: None,
             tab: BrowserTab::Sessions,
-            get_data: GetDataPanel::new(),
+            get_data: GetDataPanel::new(crate::paper_home::shelf_dir().as_deref()),
             folder_dirty: false,
         }
     }
@@ -702,7 +702,7 @@ impl ReplayView {
                     BrowserTab::GetData => {
                         let folder = self.folder.clone();
                         let offered = self.offered_symbols(market);
-                        self.get_data.draw(ui, &folder, &offered);
+                        crate::replay_get_data::draw(&mut self.get_data, ui, &folder, &offered);
                         // Drained apart from the action, so a tick and a
                         // landed tape in the same frame do not compete for the
                         // one slot an action has.
