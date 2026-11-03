@@ -627,7 +627,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
     let bubbles = &style.bubbles;
     let appearance = crate::theme::get(painter.ctx());
-    let palette = super::palette_for_theme(style.theme);
+    let palette = style.colors(super::premultiplied);
     let colors = BubbleColors::resolve(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
 

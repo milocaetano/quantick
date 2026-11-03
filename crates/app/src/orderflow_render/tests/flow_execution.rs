@@ -646,7 +646,7 @@ fn dense_tick_drawing_after(
     );
     let look = (
         DENSE_TICK,
-        quantick_orderflow::config::HeatmapTheme::default(),
+        quantick_orderflow::config::theme::PaletteChoice::default(),
     );
     let background = crate::theme::CANVAS;
     let built = (frame, plan);

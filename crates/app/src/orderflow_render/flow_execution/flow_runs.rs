@@ -16,7 +16,9 @@ pub(super) fn flow_runs(
     tessellator.set_clip_rect(history.intersect(painter.clip_rect()));
     let tick_style = tick_look.map(|(tick, _)| tick.bubbles());
     let tick_colors = tick_look.map(|(tick, theme)| {
-        BubbleColors::resolve(&super::palette_for_theme(theme), &tick.bubbles())
+        let mut style = quantick_orderflow::config::theme::OrderflowRenderStyle::default();
+        style.resolve_palette(theme, &appearance.resolved.orderflow);
+        BubbleColors::resolve(&style.colors(super::super::premultiplied), &tick.bubbles())
     });
     let canvas = background.to_array();
     let underlay = backing.as_ref().map(egui::Color32::to_array);

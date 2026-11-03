@@ -85,6 +85,9 @@ impl<T> ControlPort for T where
 
 /// Tabs and panes, read: the markets, their config and drawing defaults.
 pub(crate) trait TabsPort {
+    fn appearance(&self) -> &quantick_appearance::ResolvedTheme {
+        self.tab_reads().appearance
+    }
     fn tab_reads(&self) -> TabReads<'_>;
 }
 
@@ -284,9 +287,14 @@ pub(crate) struct TabReads<'a> {
     config: &'a AppConfig,
     footprint_config: &'a crate::footprint_config::FootprintConfig,
     presets: &'a drawings::presets::PresetStore,
+    appearance: &'a quantick_appearance::ResolvedTheme,
 }
 
 impl<'a> TabReads<'a> {
+    fn with_appearance(mut self, appearance: &'a quantick_appearance::ResolvedTheme) -> Self {
+        self.appearance = appearance;
+        self
+    }
     /// The view over the window's own roots. The window's adapter builds it,
     /// and so does a test's fake window over roots it owns.
     pub(crate) fn new(
@@ -300,6 +308,7 @@ impl<'a> TabReads<'a> {
             config,
             footprint_config,
             presets,
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         }
     }
 
@@ -669,13 +678,13 @@ impl TabsPort for QuantickApp {
         self.runtime
             .resolve(&self.presentation.binding)
             .expect("bound workspace");
-        let presets = &self.drawings.presets;
         TabReads::new(
             &self.runtime.tabs,
             &self.config,
             &self.runtime.footprint_config,
-            presets,
+            &self.drawings.presets,
         )
+        .with_appearance(self.runtime.appearance.resolved())
     }
 }
 

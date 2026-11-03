@@ -60,6 +60,8 @@ pub struct ThemeDocument {
     pub typography: BTreeMap<String, FontOverride>,
     #[serde(default)]
     pub footprint_heat: crate::heat::HeatOverride,
+    #[serde(default)]
+    pub orderflow: crate::orderflow::OrderflowOverride,
 }
 
 fn dark_mode() -> bool {
@@ -138,6 +140,9 @@ impl ThemeDocument {
                 &self.typography,
                 fallback.map(|theme| &theme.typography),
             )?,
+            orderflow: self
+                .orderflow
+                .resolve(fallback.map(|theme| &theme.orderflow))?,
             footprint_heat: self
                 .footprint_heat
                 .resolve(fallback.map(|theme| &theme.footprint_heat))?,
@@ -152,6 +157,7 @@ pub struct ResolvedTheme {
     colors: [PremultipliedRgba; Token::ALL.len()],
     pub typography: Typography,
     pub footprint_heat: crate::heat::HeatRamp,
+    pub orderflow: crate::orderflow::OrderflowAppearance,
 }
 
 impl ResolvedTheme {

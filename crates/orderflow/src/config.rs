@@ -16,6 +16,7 @@ mod lane;
 mod lane_fold;
 mod lane_view;
 pub mod legend;
+mod palette;
 pub mod theme;
 mod tick_bubbles;
 mod viewport_bubbles;
@@ -195,7 +196,10 @@ impl DisplayGrouping {
 }
 
 /// Visual palette selected by the renderer.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum HeatmapTheme {
     /// Dark Bookmap-inspired palette.
     #[default]
@@ -403,7 +407,7 @@ pub struct HeatmapConfig {
     /// written while it was a setting still parses.
     pub show_status_badge: bool,
     /// Renderer palette.
-    pub theme: HeatmapTheme,
+    pub palette: theme::PaletteChoice,
     /// Maximum number of closed RLE runs retained. Active levels are separate.
     pub max_history_runs: usize,
     /// Approximate byte budget for closed runs and aggressions.
@@ -453,7 +457,7 @@ impl Default for HeatmapConfig {
             liquidity_correlation_ms: DEFAULT_LIQUIDITY_CORRELATION_MS,
             show_legend: true,
             show_status_badge: true,
-            theme: HeatmapTheme::Bookmap,
+            palette: theme::PaletteChoice::Inherited,
             max_history_runs: 500_000,
             max_history_bytes: 64 * 1024 * 1024,
             max_aggressions: 100_000,
@@ -857,7 +861,7 @@ mod tests {
         );
         assert!(config.show_legend);
         assert!(config.show_status_badge);
-        assert_eq!(config.theme, HeatmapTheme::Bookmap);
+        assert_eq!(config.palette, theme::PaletteChoice::Inherited);
         assert_eq!(config.max_visible_cells, 12_000);
         assert_eq!(config.max_aggression_primitives, 700);
     }

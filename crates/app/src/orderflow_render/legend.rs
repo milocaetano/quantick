@@ -14,12 +14,12 @@ use crate::orderflow_render::constants::{
 };
 use eframe::egui;
 use quantick_chart::flow_execution::flow_chrome_layout;
-use quantick_orderflow::HeatmapTheme;
+
 use quantick_orderflow::config::legend::{LegendGlyph, legend_entries};
 
 use super::bubbles::BubbleColors;
 use super::layout::RenderContext;
-use super::{Palette, add_gradient_rect, draw_dashed_vertical, rgba, thermal_rgb};
+use super::{OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, rgba};
 
 /// Draw the canvas key, or a compact buy/sell key in the tape-only header.
 pub(crate) fn draw_compact_legend(
@@ -61,7 +61,7 @@ pub(crate) fn draw_compact_legend_avoiding(
     }
     // The legend is a key for what is on screen, so the aggression swatches
     // follow the bubble panel's colour overrides.
-    let mut palette = super::palette_for_theme(style.theme);
+    let mut palette = style.colors(super::premultiplied);
     let colors = BubbleColors::resolve(&palette, &style.bubbles);
     palette.buy = colors.buy;
     palette.sell = colors.sell;
@@ -157,7 +157,7 @@ pub(crate) fn draw_compact_legend_avoiding(
     let origin = panel.left_top() + egui::vec2(inner_margin, inner_margin);
     for (((glyph, _), galley), offset) in entries.iter().zip(galleys).zip(flow.positions) {
         let item = origin + egui::Vec2::from(offset);
-        draw_legend_glyph(&clip, *glyph, item, &palette, style.theme);
+        draw_legend_glyph(&clip, *glyph, item, &palette, &style);
         let text_pos = egui::pos2(
             item.x + glyph_width(*glyph) + LEGEND_GLYPH_GAP_PX,
             item.y + (entry_height - galley.size().y) / 2.0,
@@ -182,7 +182,7 @@ fn draw_legend_glyph(
     glyph: LegendGlyph,
     origin: egui::Pos2,
     palette: &Palette,
-    theme: HeatmapTheme,
+    style: &OrderflowRenderStyle,
 ) {
     let center = origin + egui::vec2(glyph_width(glyph), LEGEND_ENTRY_HEIGHT_PX) / 2.0;
     match glyph {
@@ -203,8 +203,8 @@ fn draw_legend_glyph(
                         egui::pos2(x0, rect.top()),
                         egui::pos2(x1, rect.bottom()),
                     ),
-                    rgba(thermal_rgb(theme, t0), 1.0),
-                    rgba(thermal_rgb(theme, t1), 1.0),
+                    rgba(style.thermal_rgb(t0), 1.0),
+                    rgba(style.thermal_rgb(t1), 1.0),
                 );
             }
             painter.add(egui::Shape::mesh(mesh));
@@ -224,8 +224,8 @@ fn draw_legend_glyph(
             add_gradient_rect(
                 &mut mesh,
                 egui::Rect::from_min_max(band.left_top(), egui::pos2(center.x, band.bottom())),
-                rgba(thermal_rgb(theme, 0.72), 0.92),
-                rgba(thermal_rgb(theme, 0.72), 0.92),
+                rgba(style.thermal_rgb(0.72), 0.92),
+                rgba(style.thermal_rgb(0.72), 0.92),
             );
             add_gradient_rect(
                 &mut mesh,

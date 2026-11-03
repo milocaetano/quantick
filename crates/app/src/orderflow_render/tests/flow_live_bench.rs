@@ -249,7 +249,10 @@ fn live_flow_frames_at(ticks: u64) {
     viewport.set_px_per_bar(PX_PER_BAR);
     let ctx = egui::Context::default();
     ctx.set_pixels_per_point(PIXELS_PER_POINT);
-    let look = (TICK, quantick_orderflow::config::HeatmapTheme::default());
+    let look = (
+        TICK,
+        quantick_orderflow::config::theme::PaletteChoice::default(),
+    );
     let mut range = None;
     let mut clock_ms = tape.time_ms;
     let mut pending = Some(tape.next(LIVE_PACE));
@@ -540,7 +543,10 @@ fn stage_breakdown(
                 let started = Instant::now();
                 let (canvas, look) = (
                     crate::theme::CANVAS,
-                    Some((TICK, quantick_orderflow::config::HeatmapTheme::default())),
+                    Some((
+                        TICK,
+                        quantick_orderflow::config::theme::PaletteChoice::default(),
+                    )),
                 );
                 let build = |plan, previous| {
                     FlowDrawing::styled(

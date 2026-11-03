@@ -8,6 +8,7 @@ pub mod contrast;
 mod document;
 mod error;
 pub mod heat;
+pub mod orderflow;
 pub mod palette;
 mod state;
 mod typography;

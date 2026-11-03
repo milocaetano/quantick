@@ -28,7 +28,7 @@ const SMALL_PRINT_FONT_PX: f32 = 10.0;
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
     let appearance = crate::theme::get(painter.ctx());
     let style = context.style.sanitized();
-    let palette = super::palette_for_theme(style.theme);
+    let palette = style.colors(super::premultiplied);
     let previews = quantick_orderflow::projection::forward_book_preview(
         &style.live_lane,
         context.current_book_live,
@@ -187,7 +187,7 @@ pub(crate) fn draw_live_lane_marks(painter: &egui::Painter, context: &RenderCont
     if context.layout.lane_left_x().is_none() {
         return;
     }
-    let palette = super::palette_for_theme(style.theme);
+    let palette = style.colors(super::premultiplied);
     let clip = painter.with_clip_rect(rect);
     let x = context.layout.x(now_x);
     if x.is_finite() && rect.x_range().contains(x) {
@@ -283,7 +283,7 @@ struct EventPass<'c, 'a> {
 impl<'c, 'a> EventPass<'c, 'a> {
     fn new(context: &'c RenderContext<'a>) -> Self {
         let style = context.style.sanitized();
-        let palette = super::palette_for_theme(style.theme);
+        let palette = style.colors(super::premultiplied);
         Self {
             context,
             style,

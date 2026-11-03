@@ -157,7 +157,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // The order-flow engine reads bars from `engine` and depth events from
     // `orderbook`, and is told the time by its caller. It sits beside
     // `indicators`: something the chart draws and `backtest` may consume.
-    ("orderflow", &["engine", "orderbook"]),
+    ("orderflow", &["appearance", "engine", "orderbook"]),
     ("replay", &["civil", "engine"]),
     // One tab's reaching back behind a command bus: venue candles and the
     // trade-history run, over the source vocabulary. Told the time; its feed

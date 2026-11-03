@@ -1,5 +1,6 @@
 //! Portable order-flow render choices and theme colour arithmetic.
 
+pub use super::palette::PaletteChoice;
 use super::{BubbleStyle, HeatmapConfig, HeatmapTheme, LiveLaneStyle};
 use quantick_orderbook::BookSide;
 
@@ -44,6 +45,7 @@ const COLOR_BLIND_RAMP: [ColorStop; 6] = [
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrderflowRenderStyle {
     pub theme: HeatmapTheme,
+    pub palette: Option<quantick_appearance::orderflow::OrderflowAppearance>,
     /// Additional multiplier over the projection's factual alpha.
     pub heat_opacity: f32,
     /// Minimum on-screen band height after price projection.
@@ -117,6 +119,7 @@ impl Default for OrderflowRenderStyle {
     fn default() -> Self {
         Self {
             theme: HeatmapTheme::Bookmap,
+            palette: None,
             heat_opacity: 1.0,
             min_cell_height: 1.5,
             // Off by default: the per-cell glow doubles the heatmap's quad count,
@@ -146,6 +149,15 @@ impl Default for OrderflowRenderStyle {
 }
 
 impl OrderflowRenderStyle {
+    pub fn with_appearance(
+        config: &HeatmapConfig,
+        canvas: [u8; 4],
+        appearance: &quantick_appearance::orderflow::OrderflowAppearance,
+    ) -> Self {
+        let mut style = Self::from_config(config, canvas);
+        style.resolve_palette(config.palette, appearance);
+        style
+    }
     /// Resolve every renderer choice that has a corresponding user setting.
     ///
     /// The whole bubble vocabulary — alpha, radii, marks, colours — now comes
@@ -153,7 +165,13 @@ impl OrderflowRenderStyle {
     #[must_use]
     pub fn from_config(config: &HeatmapConfig, canvas_background: [u8; 4]) -> Self {
         Self {
-            theme: config.theme,
+            theme: config.palette.historical(),
+            palette: match config.palette {
+                PaletteChoice::Historical(_) => None,
+                choice => Some(
+                    choice.resolve(&quantick_appearance::ResolvedTheme::bundled_dark().orderflow),
+                ),
+            },
             bubbles: config.bubbles.clone(),
             dot_sizing: None,
             native_tape: config.native_tape(),
@@ -229,13 +247,13 @@ pub fn theme_bubble_rgb(theme: HeatmapTheme) -> ThemeBubbleRgb {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ColorStop {
+pub(super) struct ColorStop {
     at: f32,
     rgb: [u8; 3],
 }
 
 impl ColorStop {
-    const fn new(at: f32, rgb: [u8; 3]) -> Self {
+    pub(super) const fn new(at: f32, rgb: [u8; 3]) -> Self {
         Self { at, rgb }
     }
 }
@@ -255,12 +273,16 @@ pub struct Palette<C> {
     pub legend_text: C,
     pub legend_background: C,
     pub legend_border: C,
+    pub preview_grid: C,
+    pub preview_path: C,
 }
 
 impl<C> Palette<C> {
     pub fn for_theme(theme: HeatmapTheme, rgba: impl Fn([u8; 4]) -> C) -> Self {
         match theme {
             HeatmapTheme::Bookmap => Self {
+                preview_grid: rgba([16, 16, 16, 16]),
+                preview_path: rgba([145, 145, 145, 145]),
                 buy: rgba([46, 224, 150, 255]),
                 sell: rgba([255, 82, 96, 255]),
                 consumption: rgba([255, 246, 205, 255]),
@@ -275,6 +297,8 @@ impl<C> Palette<C> {
                 legend_border: rgba([130, 145, 170, 90]),
             },
             HeatmapTheme::HighContrast => Self {
+                preview_grid: rgba([16, 16, 16, 16]),
+                preview_path: rgba([145, 145, 145, 145]),
                 buy: rgba([0, 255, 138, 255]),
                 sell: rgba([255, 45, 70, 255]),
                 consumption: rgba([255, 255, 255, 255]),
@@ -289,6 +313,8 @@ impl<C> Palette<C> {
                 legend_border: rgba([175, 175, 175, 255]),
             },
             HeatmapTheme::ColorBlind => Self {
+                preview_grid: rgba([16, 16, 16, 16]),
+                preview_path: rgba([145, 145, 145, 145]),
                 buy: rgba([64, 160, 255, 255]),
                 sell: rgba([255, 159, 28, 255]),
                 consumption: rgba([255, 238, 170, 255]),
@@ -328,7 +354,7 @@ pub fn thermal_rgb(theme: HeatmapTheme, intensity: f32) -> [u8; 3] {
     sample_ramp(stops, intensity)
 }
 
-fn sample_ramp(stops: &[ColorStop], intensity: f32) -> [u8; 3] {
+pub(super) fn sample_ramp(stops: &[ColorStop], intensity: f32) -> [u8; 3] {
     let t = finite_unit(intensity);
     let Some(first) = stops.first() else {
         return [0, 0, 0];
@@ -399,7 +425,7 @@ pub fn heat_fill_parts(
     if alpha <= 0.0 {
         return None;
     }
-    Some((resting_rgb(style.theme, side, intensity), alpha))
+    Some((style.resting_rgb(side, intensity), alpha))
 }
 
 /// Number of discrete magnitude bands the heatmap collapses intensity into.

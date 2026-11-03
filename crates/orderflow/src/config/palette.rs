@@ -1,0 +1,202 @@
+//! Explicit palette ownership and immutable render snapshots.
+use super::{
+    HeatmapTheme,
+    theme::{OrderflowRenderStyle, Palette, finite_unit, mix_rgb},
+};
+use quantick_appearance::orderflow::OrderflowAppearance;
+use quantick_orderbook::BookSide;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "source", content = "value", rename_all = "snake_case")]
+pub enum PaletteChoice {
+    #[default]
+    Inherited,
+    Historical(HeatmapTheme),
+    Snapshot(#[serde(deserialize_with = "read_snapshot")] OrderflowAppearance),
+}
+impl PaletteChoice {
+    pub const SELECTABLE: [Self; 4] = [
+        Self::Inherited,
+        Self::Historical(HeatmapTheme::Bookmap),
+        Self::Historical(HeatmapTheme::HighContrast),
+        Self::Historical(HeatmapTheme::ColorBlind),
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            PaletteChoice::Inherited => "Application appearance",
+            PaletteChoice::Snapshot(_) => "Saved palette",
+            PaletteChoice::Historical(HeatmapTheme::Bookmap) => "Bookmap",
+            PaletteChoice::Historical(HeatmapTheme::HighContrast) => "High contrast",
+            PaletteChoice::Historical(HeatmapTheme::ColorBlind) => "Color blind",
+        }
+    }
+
+    pub fn legacy() -> Self {
+        Self::Historical(HeatmapTheme::Bookmap)
+    }
+    pub fn historical(self) -> HeatmapTheme {
+        match self {
+            Self::Historical(theme) => theme,
+            _ => HeatmapTheme::Bookmap,
+        }
+    }
+    pub fn resolve(self, inherited: &OrderflowAppearance) -> OrderflowAppearance {
+        match self {
+            Self::Inherited => *inherited,
+            Self::Snapshot(palette) => palette,
+            Self::Historical(theme) => {
+                let p = Palette::for_theme(theme, |c| c);
+                let mut result = *inherited;
+                result.preview_grid = p.preview_grid;
+                result.preview_path = p.preview_path;
+                result.buy = p.buy;
+                result.sell = p.sell;
+                result.consumption = p.consumption;
+                result.depth_only = p.depth_only;
+                result.bubble_text = p.bubble_text;
+                result.gap_fill = p.gap_fill;
+                result.gap_boundary = p.gap_boundary;
+                result.lane_now = p.lane_now;
+                result.muted_text = p.muted_text;
+                result.legend_text = p.legend_text;
+                result.legend_background = p.legend_background;
+                result.legend_border = p.legend_border;
+                // Historical ramps retain their original knots in the renderer.
+                result
+            }
+        }
+    }
+}
+impl OrderflowRenderStyle {
+    pub fn resolve_palette(&mut self, choice: PaletteChoice, inherited: &OrderflowAppearance) {
+        self.theme = choice.historical();
+        self.palette = match choice {
+            PaletteChoice::Historical(_) => None,
+            _ => Some(choice.resolve(inherited)),
+        };
+    }
+    pub fn colors<C>(&self, rgba: impl Fn([u8; 4]) -> C) -> Palette<C> {
+        match self.palette {
+            Some(p) => Palette {
+                preview_grid: rgba(p.preview_grid),
+                preview_path: rgba(p.preview_path),
+                buy: rgba(p.buy),
+                sell: rgba(p.sell),
+                consumption: rgba(p.consumption),
+                depth_only: rgba(p.depth_only),
+                bubble_text: rgba(p.bubble_text),
+                gap_fill: rgba(p.gap_fill),
+                gap_boundary: rgba(p.gap_boundary),
+                lane_now: rgba(p.lane_now),
+                muted_text: rgba(p.muted_text),
+                legend_text: rgba(p.legend_text),
+                legend_background: rgba(p.legend_background),
+                legend_border: rgba(p.legend_border),
+            },
+            None => Palette::for_theme(self.theme, rgba),
+        }
+    }
+    pub fn thermal_rgb(&self, intensity: f32) -> [u8; 3] {
+        let Some(p) = self.palette else {
+            return super::theme::thermal_rgb(self.theme, intensity);
+        };
+        let positions = [0.00, 0.09, 0.22, 0.38, 0.55, 0.70, 0.83, 0.93, 1.00];
+        let t = finite_unit(intensity);
+        for i in 1..positions.len() {
+            if t <= positions[i] {
+                return mix_rgb(
+                    p.ramp[i - 1],
+                    p.ramp[i],
+                    (t - positions[i - 1]) / (positions[i] - positions[i - 1]),
+                );
+            }
+        }
+        p.ramp[8]
+    }
+    pub fn resting_rgb(&self, side: BookSide, intensity: f32) -> [u8; 3] {
+        let Some(p) = self.palette else {
+            return super::theme::resting_rgb(self.theme, side, intensity);
+        };
+        let [r, g, b, _] = match side {
+            BookSide::Bid => p.bid_tint,
+            BookSide::Ask => p.ask_tint,
+        };
+        mix_rgb(
+            self.thermal_rgb(intensity),
+            [r, g, b],
+            (1.0 - finite_unit(intensity)) * 0.045,
+        )
+    }
+}
+impl PaletteChoice {
+    pub fn bubble_rgb(self, inherited: &OrderflowAppearance) -> super::theme::ThemeBubbleRgb {
+        let p = self.resolve(inherited);
+        let rgb = |[r, g, b, _]: [u8; 4]| [r, g, b];
+        super::theme::ThemeBubbleRgb {
+            buy: rgb(p.buy),
+            sell: rgb(p.sell),
+            front: rgb(p.consumption),
+            text: rgb(p.bubble_text),
+        }
+    }
+}
+
+fn read_snapshot<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<OrderflowAppearance, D::Error> {
+    let palette = OrderflowAppearance::deserialize(deserializer)?;
+    palette.validate().map_err(serde::de::Error::custom)?;
+    Ok(palette)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn configured_dark_preserves_every_historical_palette_byte_and_ramp_sample() {
+        let inherited = &quantick_appearance::ResolvedTheme::bundled_dark().orderflow;
+        let mut style = OrderflowRenderStyle::default();
+        style.resolve_palette(PaletteChoice::Inherited, inherited);
+        let p = style.colors(|c| c);
+        let old = Palette::for_theme(HeatmapTheme::Bookmap, |c| c);
+        assert_eq!(format!("{p:?}"), format!("{old:?}"));
+        for i in 0..=1000 {
+            let intensity = i as f32 / 1000.0;
+            assert_eq!(
+                style.thermal_rgb(intensity),
+                super::super::theme::thermal_rgb(HeatmapTheme::Bookmap, intensity)
+            );
+            for side in [BookSide::Bid, BookSide::Ask] {
+                assert_eq!(
+                    style.resting_rgb(side, intensity),
+                    super::super::theme::resting_rgb(HeatmapTheme::Bookmap, side, intensity)
+                );
+            }
+        }
+    }
+    #[test]
+    fn light_changes_fresh_defaults_while_historical_choices_keep_exact_output() {
+        let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let mut style = OrderflowRenderStyle::default();
+        style.resolve_palette(PaletteChoice::Inherited, &light.orderflow);
+        assert_ne!(
+            style.thermal_rgb(0.5),
+            super::super::theme::thermal_rgb(HeatmapTheme::Bookmap, 0.5)
+        );
+        assert_eq!(style.colors(|c| c).buy, light.orderflow.buy);
+        for theme in [
+            HeatmapTheme::Bookmap,
+            HeatmapTheme::HighContrast,
+            HeatmapTheme::ColorBlind,
+        ] {
+            style.resolve_palette(PaletteChoice::Historical(theme), &light.orderflow);
+            for i in 0..=100 {
+                assert_eq!(
+                    style.thermal_rgb(i as f32 / 100.0),
+                    super::super::theme::thermal_rgb(theme, i as f32 / 100.0)
+                );
+            }
+        }
+    }
+}

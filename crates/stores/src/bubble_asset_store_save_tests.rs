@@ -260,7 +260,9 @@ fn named_bubble_preset_file_retains_explicit_equal_default_and_absent_overrides(
     let dir = ScratchDir::new("preset-color-provenance");
     let path = dir.join("bubbles.toml");
     let mut config = HeatmapConfig::default();
-    let rgb = quantick_orderflow::config::theme::theme_bubble_rgb(config.theme);
+    let rgb = config
+        .palette
+        .bubble_rgb(&quantick_appearance::ResolvedTheme::bundled_dark().orderflow);
     config.bubbles.buy_color = Some(rgb.buy);
     config.bubbles.label_color = Some(rgb.text);
     config.bubbles.max_radius = 31.0;

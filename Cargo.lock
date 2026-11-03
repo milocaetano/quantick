@@ -3258,6 +3258,7 @@ dependencies = [
 name = "quantick-orderflow"
 version = "0.1.0"
 dependencies = [
+ "quantick-appearance",
  "quantick-engine",
  "quantick-orderbook",
  "rust_decimal",

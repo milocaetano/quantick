@@ -406,10 +406,24 @@ impl BubbleLook {
     /// An unknown name changes nothing and returns `false`; the caller
     /// decides how loudly to say so.
     pub fn apply_preset(&mut self, name: &str, config: &mut HeatmapConfig, spheres: bool) -> bool {
+        self.apply_preset_with(
+            name,
+            config,
+            spheres,
+            &quantick_appearance::ResolvedTheme::bundled_dark().orderflow,
+        )
+    }
+    pub fn apply_preset_with(
+        &mut self,
+        name: &str,
+        config: &mut HeatmapConfig,
+        spheres: bool,
+        appearance: &quantick_appearance::orderflow::OrderflowAppearance,
+    ) -> bool {
         let Some(preset) = self.presets.get(name).cloned() else {
             return false;
         };
-        dress(&preset, config, spheres);
+        dress(&preset, config, spheres, appearance);
         if self.spend_old_tape_fold(name) {
             config.live_lane.set_view(LaneView::CandlesOnly);
         }
@@ -428,6 +442,18 @@ impl BubbleLook {
         config: &HeatmapConfig,
         writer: impl FnOnce(&BubblePresetFile) -> Result<PathBuf, String>,
     ) {
+        self.save_preset_with(
+            config,
+            &quantick_appearance::ResolvedTheme::bundled_dark().orderflow,
+            writer,
+        );
+    }
+    pub fn save_preset_with(
+        &mut self,
+        config: &HeatmapConfig,
+        appearance: &quantick_appearance::orderflow::OrderflowAppearance,
+        writer: impl FnOnce(&BubblePresetFile) -> Result<PathBuf, String>,
+    ) {
         let name = self.name_draft.trim().to_owned();
         if name.is_empty() {
             self.status = Some("name the preset before saving".to_owned());
@@ -436,7 +462,8 @@ impl BubbleLook {
         if self.refused_preset_name(&name) {
             return;
         }
-        self.presets.upsert(BubblePreset::capture(&name, config));
+        self.presets
+            .upsert(BubblePreset::capture_look(&name, config, appearance));
         self.look_name = name.clone();
         self.note_edit();
         self.persist(format!("'{name}' saved"), writer);
@@ -479,7 +506,17 @@ impl BubbleLook {
                     self.status = Some("presets reloaded".to_owned());
                 } else {
                     // A view with no asset has no mode to wear spheres by.
-                    self.apply_preset(&active, config, false);
+                    if let Some(preset) = self.presets.get(&active) {
+                        let owned = config.palette;
+                        let spheres = config.volume_dots.tick_bubbles;
+                        preset.apply_to(config);
+                        if config.palette
+                            == quantick_orderflow::config::theme::PaletteChoice::Inherited
+                        {
+                            config.palette = owned;
+                        }
+                        config.volume_dots.tick_bubbles = spheres;
+                    }
                     self.status = Some(format!("reloaded · '{active}' applied"));
                 }
             }
@@ -562,9 +599,17 @@ impl BubbleLook {
 /// says so: its spheres only where the tick sphere rule admits them. Where it
 /// does not, the look keeps the spheres it wears, none added and none taken:
 /// the look is the asset's, and the asset's tick chart wears it too.
-fn dress(preset: &BubblePreset, config: &mut HeatmapConfig, spheres: bool) {
+fn dress(
+    preset: &BubblePreset,
+    config: &mut HeatmapConfig,
+    spheres: bool,
+    appearance: &quantick_appearance::orderflow::OrderflowAppearance,
+) {
     let worn = config.volume_dots.tick_bubbles;
     preset.apply_to(config);
+    if config.palette == quantick_orderflow::config::theme::PaletteChoice::Inherited {
+        config.palette = quantick_orderflow::config::theme::PaletteChoice::Snapshot(*appearance);
+    }
     if !spheres {
         config.volume_dots.tick_bubbles = worn;
     }

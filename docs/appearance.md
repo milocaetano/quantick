@@ -75,6 +75,33 @@ other widget defaults. Quantick then applies its semantic surface, text, hover,
 selection and link colors. Presentation opacity composes with configured alpha;
 it does not reinterpret premultiplied channels as straight RGB.
 
+## Order-flow palette
+
+`[orderflow.colors]` contains the stable named fields listed in Dark: trade sides,
+consumption and depth-only marks, bubble text, gaps, the live boundary, legend
+chrome, bid/ask tints and preview grid/path. Values use the same color syntax as
+`[colors]`. `buy`, `sell`, `consumption`, `bubble_text`, `bid_tint` and `ask_tint`
+must be opaque because bubble overrides, saved looks and the thermal pipeline
+use RGB there; validation rejects unsupported alpha before publication. Other
+palette fields preserve premultiplied alpha.
+
+`[orderflow].ramp` has nine opaque colors at fixed intensity positions
+`0, .09, .22, .38, .55, .70, .83, .93, 1`. Missing colors or the ramp inherit
+Dark independently. Heat cells, preview and legend sample the same resolved
+ramp; the live strip and bubble controls read the same selected palette.
+
+Fresh order-flow settings, the shipped `default` preset, and the four shipped
+feed-declared startup looks (BTC Spot, BTC perpetual, live lane pie and mini index
+regions) explicitly inherit application appearance. A preset's `palette = { source = "inherited" }`
+is source metadata, not a rule inferred from its name or RGB values. Files
+without this marker retain historical Bookmap. Other historical palette choices
+remain explicit. A manual preset selection captures its inherited palette at
+selection time; a named save captures the visible palette in the saved look.
+Ordinary asset/settings capture retains ownership, so radius-only edits keep
+inherited colors. Optional RGB overrides remain explicit even when equal to a
+historical default. Ownership participates in saved asset equality and survives
+reload, tab adoption and the asset save switch.
+
 ## Footprint heat
 
 `[footprint_heat]` defines `buy`, `sell`, and `ink`, each an array of exactly six
@@ -103,7 +130,7 @@ changes update text roles without replacing font definitions, so Phosphor icons
 and the bundled fallback chains remain installed.
 
 The [migration inventory](appearance-inventory.md) records completed boundaries
-and remaining candidate values. Runtime migration is in progress: orderflow colors/cached typography, enlarged-font layout,
+and remaining candidate values. Runtime migration is in progress: enlarged-font layout,
 and live inspect/apply still require integration before this feature is complete.
 
 ## Authoring example

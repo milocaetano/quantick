@@ -56,6 +56,8 @@ active = "default"
 # overlap_merge replaces dust_merge, region_rows and candle_summary when enabled.
 [[presets]]
 name = "default"
+# Automatic startup follows application appearance; a manual pick captures it.
+palette = { source = "inherited" }
 cluster_ms = 500
 dust_merge_ms = 1500
 candle_summary = true
@@ -173,6 +175,8 @@ label_min_radius = 9.2
 # No quantity floor delays the first print, and the left context keeps its bars.
 [[presets]]
 name = "mini index regions"
+# Feed-declared startup defaults inherit; manually choosing this look captures them.
+palette = { source = "inherited" }
 cluster_ms = 300
 dust_merge_ms = 1500
 candle_summary = true
@@ -323,6 +327,8 @@ label_min_radius = 12.6
 
 [[presets]]
 name = "live lane pie"
+# Feed-declared startup defaults inherit; manually choosing this look captures them.
+palette = { source = "inherited" }
 cluster_ms = 500
 dust_merge_ms = 1500
 candle_summary = true
@@ -364,6 +370,8 @@ show_marks = true
 # Scoped BTC spheres: visible-relative area and gradual camera scaling.
 [[presets]]
 name = "Binance BTC Spot spheres"
+# Feed-declared startup defaults inherit; manually choosing this look captures them.
+palette = { source = "inherited" }
 cluster_ms = 500
 dust_merge_ms = 1500
 candle_summary = true
@@ -420,6 +428,8 @@ forward_book_preview = true
 stable_size = true
 [[presets]]
 name = "Binance BTC perpetual spheres"
+# Feed-declared startup defaults inherit; manually choosing this look captures them.
+palette = { source = "inherited" }
 cluster_ms = 500
 dust_merge_ms = 1500
 candle_summary = true

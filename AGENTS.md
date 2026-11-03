@@ -41,7 +41,7 @@ Cargo workspace: `crates/`. One-way edges: `crates/guards/src/graph.rs`.
 | `feed` | feed-*, sources, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port, its adapters, session export. Owns runtimes, threads, clock. |
 | `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook, sources | Produce trades. |
 | `sources` | engine | Feed config vocabulary and the history reach, below `feed`. |
-| `orderflow` | engine, orderbook | Liquidity history, grouping, timeline, settled/live heatmap projections. Told the time. |
+| `orderflow` | appearance, engine, orderbook | Liquidity history, grouping, timeline and heatmaps. Told the time. |
 | `engine` | — | Trades in, bars out. Deterministic, no clock. |
 | `orderbook` | — | L2 book core: validated snapshots, absolute level updates, update-id continuity. |
 | `control` | — | Control-plane contracts and the published `fake` host/client ports. |

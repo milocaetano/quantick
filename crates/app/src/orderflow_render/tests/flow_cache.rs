@@ -109,7 +109,10 @@ fn tick_spheres_stand_on_their_executions() {
             geometry(),
             crate::theme::CANVAS,
             None,
-            Some((tick, quantick_orderflow::HeatmapTheme::default())),
+            Some((
+                tick,
+                quantick_orderflow::config::theme::PaletteChoice::default(),
+            )),
         ));
     });
     let drawing = drawn.unwrap();
@@ -235,7 +238,7 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
             label_min_radius: 8.0,
             opacity: 0.9,
         },
-        quantick_orderflow::HeatmapTheme::default(),
+        quantick_orderflow::config::theme::PaletteChoice::default(),
     ));
     let (sphere, shapes) = paint(&ctx, styled);
     let (warm, repeated) = paint(&ctx, styled);
@@ -282,7 +285,10 @@ fn viewport_tick_mesh_and_readback_follow_the_current_camera_before_worker_publi
         opacity: 0.9,
     };
     let mut a = key(&frame);
-    a.tick = Some((style, quantick_orderflow::HeatmapTheme::default()));
+    a.tick = Some((
+        style,
+        quantick_orderflow::config::theme::PaletteChoice::default(),
+    ));
     let (first, first_shapes) = paint(&ctx, a);
     let first_draw = first.mesh.get().unwrap();
     let first_frame = first_draw.viewport_frame.as_ref().unwrap();
@@ -373,12 +379,17 @@ fn tick_spheres_follow_the_pane_theme() {
             label_min_radius: 8.0,
             opacity: 1.0,
         },
-        quantick_orderflow::HeatmapTheme::default(),
+        quantick_orderflow::config::theme::PaletteChoice::default(),
     ));
     let blind = Key {
-        tick: bookmap
-            .tick
-            .map(|(style, _)| (style, quantick_orderflow::HeatmapTheme::ColorBlind)),
+        tick: bookmap.tick.map(|(style, _)| {
+            (
+                style,
+                quantick_orderflow::config::theme::PaletteChoice::Historical(
+                    quantick_orderflow::HeatmapTheme::ColorBlind,
+                ),
+            )
+        }),
         ..bookmap
     };
     let (default_entry, default_shapes) = paint(&ctx, bookmap);

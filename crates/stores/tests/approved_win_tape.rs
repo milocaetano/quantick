@@ -233,7 +233,7 @@ enum Command {
         enabled: bool,
         generation_floor: u64,
     },
-    ApplyVisualConfig(HeatmapConfig),
+    ApplyVisualConfig(Box<HeatmapConfig>),
     TapePriceGrid {
         step: Decimal,
         reference_price: Option<Decimal>,
@@ -297,7 +297,7 @@ impl Worker {
                     enabled,
                     generation_floor,
                 } => self.engine.set_enabled(enabled, generation_floor),
-                Command::ApplyVisualConfig(config) => self.engine.apply_visual_config(config),
+                Command::ApplyVisualConfig(config) => self.engine.apply_visual_config(*config),
                 Command::TapePriceGrid {
                     step,
                     reference_price,
@@ -405,7 +405,7 @@ impl View {
         }
         assert_eq!(self.config.price_grouping, before.price_grouping);
         self.worker
-            .send(Command::ApplyVisualConfig(self.config.clone()));
+            .send(Command::ApplyVisualConfig(Box::new(self.config.clone())));
     }
 
     fn set_projection_demand(&mut self, wanted: bool) {
@@ -428,7 +428,7 @@ impl View {
             let print = self.pane_tape.record(trade, &self.config);
             if let Some(epoch) = print.opens {
                 self.worker
-                    .send(Command::ApplyVisualConfig(self.config.clone()));
+                    .send(Command::ApplyVisualConfig(Box::new(self.config.clone())));
                 self.worker.send(Command::TapeEpoch(epoch));
             }
             self.worker.send(Command::TapeTrade {

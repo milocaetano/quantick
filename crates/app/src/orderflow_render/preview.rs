@@ -13,15 +13,13 @@ use crate::orderflow_render::constants::{
 use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderbook::BookSide;
-use quantick_orderflow::{BubbleStyle, HeatmapConfig, HeatmapTheme};
+use quantick_orderflow::{BubbleStyle, HeatmapConfig};
 
 use super::bubbles::{
     BubbleColors, BubbleMark, bubble_radius, draw_bubble, front_half_length, trail_rect,
 };
 use super::layout::EventBand;
-use super::{
-    OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, resting_rgb, rgba, thermal_rgb,
-};
+use super::{OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, rgba};
 
 /// Deterministic visual sample used by the settings panel and screenshot tests.
 ///
@@ -58,7 +56,7 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
             &canvas.painter,
             rect,
             &canvas.palette,
-            canvas.style.theme,
+            &canvas.style,
             &canvas.appearance,
         );
     }
@@ -85,9 +83,10 @@ struct PreviewCanvas {
 impl PreviewCanvas {
     fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig) -> Self {
         let appearance = crate::theme::get(ui.ctx());
-        let style =
+        let mut style =
             OrderflowRenderStyle::from_config(config, appearance.canvas().to_array()).sanitized();
-        let palette = super::palette_for_theme(style.theme);
+        style.resolve_palette(config.palette, &appearance.resolved.orderflow);
+        let palette = style.colors(super::premultiplied);
         let painter = ui.painter().with_clip_rect(rect);
         let chart = egui::Rect::from_min_max(
             rect.left_top() + egui::vec2(8.0, 24.0),
@@ -139,7 +138,7 @@ impl PreviewCanvas {
             let y = self.y(step as f32 / 5.0);
             painter.line_segment(
                 [egui::pos2(chart.left(), y), egui::pos2(chart.right(), y)],
-                egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(16)),
+                egui::Stroke::new(0.5_f32, palette.preview_grid),
             );
         }
     }
@@ -164,7 +163,7 @@ impl PreviewCanvas {
         let mut heat_mesh = egui::Mesh::default();
         for (y, height, x0, x1, intensity, side) in segments {
             let band = normalized_rect(self.chart, x0, x1, y - height / 2.0, y + height / 2.0);
-            let rgb = resting_rgb(style.theme, side, intensity);
+            let rgb = style.resting_rgb(side, intensity);
             let alpha = opacity.clamp(0.0, 1.0) * 0.94;
             let glow = egui::Rect::from_min_max(
                 egui::pos2(band.left(), band.top() - 0.7),
@@ -200,7 +199,7 @@ impl PreviewCanvas {
         .collect();
         self.painter.add(egui::Shape::line(
             price_points,
-            egui::Stroke::new(1.1_f32, egui::Color32::from_white_alpha(145)),
+            egui::Stroke::new(1.1_f32, self.palette.preview_path),
         ));
     }
 
@@ -391,7 +390,7 @@ fn draw_preview_legend(
     painter: &egui::Painter,
     bounds: egui::Rect,
     palette: &Palette,
-    theme: HeatmapTheme,
+    style: &OrderflowRenderStyle,
     appearance: &crate::theme::Palette,
 ) {
     let baseline = bounds.bottom() - 13.0;
@@ -415,8 +414,8 @@ fn draw_preview_legend(
                     heat_rect.bottom(),
                 ),
             ),
-            rgba(thermal_rgb(theme, t0), 1.0),
-            rgba(thermal_rgb(theme, t1), 1.0),
+            rgba(style.thermal_rgb(t0), 1.0),
+            rgba(style.thermal_rgb(t1), 1.0),
         );
     }
     painter.add(egui::Shape::mesh(mesh));

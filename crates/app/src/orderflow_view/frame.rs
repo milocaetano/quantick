@@ -27,7 +27,7 @@ use crate::live_strip;
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
     draw_compact_legend, draw_compact_legend_avoiding, draw_heatmap_background,
-    draw_liquidity_events, draw_live_lane_marks, theme_bubble_rgb,
+    draw_liquidity_events, draw_live_lane_marks,
 };
 use crate::orderflow_worker::BookCommand;
 use crate::viewport::Viewport;
@@ -59,7 +59,11 @@ impl OrderflowView {
         lane_width: f32,
         background: egui::Color32,
     ) {
-        let style = OrderflowRenderStyle::from_config(&self.config, background.to_array());
+        let style = OrderflowRenderStyle::with_appearance(
+            &self.config,
+            background.to_array(),
+            &crate::theme::get(painter.ctx()).resolved.orderflow,
+        );
         crate::orderflow_render::draw_lane_boundary(painter, rect, lane_width, &style);
     }
 
@@ -143,7 +147,11 @@ impl OrderflowView {
             lane_width_px,
         )
         .with_inverted(inverted);
-        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        let style = OrderflowRenderStyle::with_appearance(
+            &self.config,
+            canvas_background.to_array(),
+            &crate::theme::get(painter.ctx()).resolved.orderflow,
+        );
         // The frame's book is today's: a held tape draws its own beside it.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
@@ -190,8 +198,11 @@ impl OrderflowView {
             lane_width_px,
         )
         .with_inverted(inverted);
-        let mut style =
-            OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        let mut style = OrderflowRenderStyle::with_appearance(
+            &self.config,
+            canvas_background.to_array(),
+            &crate::theme::get(painter.ctx()).resolved.orderflow,
+        );
         // FLOW owns tick-candle executions even when the Tape lane is hidden.
         style.aggression_layer &= !self.flow_execution_replaces_history();
         style.bubbles.display_scale = style.bubbles.display_scale.painted(tick_chart);
@@ -344,8 +355,11 @@ impl OrderflowView {
             frame.slot_count,
             lane_width_px,
         );
-        let mut style =
-            OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        let mut style = OrderflowRenderStyle::with_appearance(
+            &self.config,
+            canvas_background.to_array(),
+            &crate::theme::get(painter.ctx()).resolved.orderflow,
+        );
         style.legend_top_inset = top_inset_px;
         if self.flow_execution_replaces_history() && !style.live_lane.tape_only {
             if lane_width_px > 0.0 {
@@ -427,7 +441,7 @@ impl OrderflowView {
 
         let ladder = self.published.ladder.clone();
         let frame = self.published.frame.clone();
-        let colors = theme_bubble_rgb(self.config.theme);
+        let colors = self.config.palette.bubble_rgb(&palette.resolved.orderflow);
         let clip = painter.with_clip_rect(strip);
         let rows_left = strip.left() + live_strip::STRIP_ROW_INSET_PX;
 

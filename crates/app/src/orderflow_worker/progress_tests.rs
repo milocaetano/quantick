@@ -101,10 +101,10 @@ fn request(first_bar_index: usize) -> ProjectionRequest {
     }
 }
 fn replay(worker: &BookWorker) -> Receiver<()> {
-    worker.send(BookCommand::ApplyVisualConfig(HeatmapConfig {
+    worker.send(BookCommand::ApplyVisualConfig(Box::new(HeatmapConfig {
         show_aggressions: true,
         ..HeatmapConfig::default()
-    }));
+    })));
     worker.send(BookCommand::Depth {
         event: DepthEvent::Snapshot {
             symbol: "BTCUSDT".into(),

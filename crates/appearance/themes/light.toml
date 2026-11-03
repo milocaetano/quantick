@@ -63,3 +63,24 @@ sell_ink = "#9A2433"
 buy = ["#E8F5F2", "#D0EBE5", "#AFE0D5", "#75C8B5", "#227C6B", "#116454"]
 sell = ["#FCEEEA", "#F9DCD3", "#F3BDB0", "#EB9783", "#B74730", "#8B2F20"]
 ink = ["#374151", "#374151", "#273142", "#202A38", "#FFFFFF", "#FFFFFF"]
+
+[orderflow]
+ramp = ["#f7f9fc", "#e1ecf7", "#b4d2eb", "#77b1d8", "#3a90ae", "#2f7f68", "#7b801a", "#b45c0c", "#6b230f"]
+
+[orderflow.colors]
+buy = { premultiplied = [0, 119, 82, 255] }
+sell = { premultiplied = [187, 39, 62, 255] }
+consumption = { premultiplied = [97, 70, 13, 255] }
+depth_only = { premultiplied = [119, 65, 167, 255] }
+bubble_text = { premultiplied = [255, 255, 255, 255] }
+gap_fill = { premultiplied = [70, 78, 92, 20] }
+gap_boundary = { premultiplied = [83, 96, 115, 115] }
+lane_now = { premultiplied = [45, 61, 82, 150] }
+muted_text = { premultiplied = [75, 88, 106, 255] }
+legend_text = { premultiplied = [30, 44, 63, 255] }
+legend_background = { premultiplied = [239, 244, 250, 225] }
+legend_border = { premultiplied = [92, 110, 134, 90] }
+bid_tint = { premultiplied = [0, 105, 158, 255] }
+ask_tint = { premultiplied = [187, 39, 62, 255] }
+preview_grid = { premultiplied = [0, 0, 0, 16] }
+preview_path = { premultiplied = [35, 52, 72, 145] }
