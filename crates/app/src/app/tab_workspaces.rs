@@ -5,39 +5,18 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use quantick_control_handlers::workspace_book as ops;
-use quantick_layers::{ChartLayer, LayerSource};
+use quantick_layers::{ChartLayer, recipe_layers};
 use quantick_session::workspace_menu::WorkspaceCommand;
 use quantick_stores::tab_recipes::{self, TabRecipeHost};
 use quantick_stores::workspaces::{WorkspaceBookStore, WorkspaceRecipe, capture_recipe};
 
 use super::QuantickApp;
 use super::control_host::LayoutPort as _;
-use crate::pane::PaneSide;
+use crate::pane::{ChartPane, PaneSide};
 use crate::tab::{CanvasCollapseRestore, CanvasLayout, LegendFold};
 
-/// A recipe never speaks for the grid, which is the window's, or the drawings'
-/// switch, which is the market's.
-fn belongs_to_recipe(layer: ChartLayer) -> bool {
-    !matches!(layer.0.source, LayerSource::Grid | LayerSource::Drawings)
-}
-
 fn layer_states(layers: &BTreeMap<String, bool>) -> BTreeMap<ChartLayer, bool> {
-    crate::pane::registered_layers()
-        .layers()
-        .iter()
-        .copied()
-        .filter(|layer| belongs_to_recipe(*layer))
-        .filter_map(|layer| layers.get(layer.id()).map(|on| (layer, *on)))
-        .collect()
-}
-
-/// What a pane's switches read as in a recipe.
-fn pane_layers(pane: &crate::pane::ChartPane, app: &QuantickApp) -> BTreeMap<String, bool> {
-    pane.layer_states(&app.runtime.style)
-        .into_iter()
-        .filter(|(layer, _)| belongs_to_recipe(*layer))
-        .map(|(layer, on)| (layer.id().to_owned(), on))
-        .collect()
+    quantick_layers::recipe_states(crate::pane::registered_layers().layers(), layers)
 }
 
 /// What the frame owes the book, once its panes are built and seeded.
@@ -46,23 +25,9 @@ pub(super) fn maintain(app: &mut QuantickApp) {
     tab_recipes::maintain(&mut BookTabs(app));
 }
 
-/// Put `recipe` on a tab. The factory `Default` amounts to what a new tab on
-/// this feed opens with: never a bare canvas.
+/// Put `recipe` on a tab.
 pub(super) fn show_recipe(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe) {
-    let shown = if recipe.is_factory() {
-        let declared = app
-            .runtime
-            .tabs
-            .by_id(id)
-            .and_then(|tab| app.config.feed(&tab.feed_id))
-            .and_then(|feed| feed.default_layout)
-            .unwrap_or(crate::config::DeclaredLayout::Flow);
-        let layouts = app.layout_state().layouts();
-        WorkspaceRecipe::new_tab_arrangement(declared, &layouts.active().indicators)
-    } else {
-        recipe.clone()
-    };
-    tab_recipes::show_recipe(&mut BookTabs(app), id, shown);
+    tab_recipes::show_recipe(&mut BookTabs(app), id, recipe);
 }
 
 /// The window as [`TabRecipeHost`]: the protected root gains no impl.
@@ -89,7 +54,8 @@ impl TabRecipeHost for BookTabs<'_> {
     fn tab_settled(&self, id: u64) -> bool {
         self.0.runtime.tabs.by_id(id).is_some_and(|tab| {
             tab.panes().all(|(pane, _)| pane.layout_seeded())
-                && (!tab.layout.shows_time() || !tab.time_panes.is_empty())
+                && tab.time_panes.len()
+                    >= crate::config::DeclaredLayout::from(tab.layout).context_panes()
         })
     }
     fn live_recipe(&self, id: u64) -> Option<WorkspaceRecipe> {
@@ -98,12 +64,45 @@ impl TabRecipeHost for BookTabs<'_> {
     fn recipe_tab_symbol(&self, id: u64) -> Option<String> {
         self.0.runtime.tabs.by_id(id).map(|tab| tab.symbol.clone())
     }
-    fn pin_tab_footprint(&mut self, id: u64) {
-        let window = self.0.runtime.footprint_config.clone();
-        if let Some(tab) = self.0.runtime.tabs.by_id_mut(id) {
-            for pane in tab.panes_mut() {
-                pane.set_footprint_style(window.style, &window);
+    fn new_tab_recipe(&self, id: u64) -> WorkspaceRecipe {
+        let app = &*self.0;
+        let feed = app
+            .runtime
+            .tabs
+            .by_id(id)
+            .and_then(|tab| app.config.feed(&tab.feed_id));
+        let declared = feed.and_then(|feed| feed.default_layout);
+        let indicators = &app.layout_state().layouts().active().indicators;
+        WorkspaceRecipe::new_tab_arrangement(declared.unwrap_or_default(), indicators)
+    }
+    fn recipe_signal(&self, id: u64) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let (app, mut hash) = (&*self.0, std::hash::DefaultHasher::new());
+        app.runtime.workspace.layouts().revision().hash(&mut hash);
+        if let Some(tab) = app.runtime.tabs.by_id(id) {
+            let canvas = (tab.layout as u8, tab.context_collapsed, tab.flow_collapsed);
+            (canvas, tab.split_fraction.to_bits()).hash(&mut hash);
+            tab.context_collapsed_slots().hash(&mut hash);
+            for share in tab.context_height_shares() {
+                share.to_bits().hash(&mut hash);
             }
+            for (pane, _) in tab.panes() {
+                let spec = pane.state.spec();
+                let style = pane.footprint_config(&app.runtime.footprint_config).style;
+                (pane.layout_id(), pane.layer_mask(&app.runtime.style)).hash(&mut hash);
+                (style.id(), spec.id(), spec.parameter(), spec.choice()).hash(&mut hash);
+            }
+        }
+        hash.finish()
+    }
+    fn pin_tab_footprint(&mut self, id: u64) {
+        let (window, tabs) = (&self.0.runtime.footprint_config, &mut self.0.runtime.tabs);
+        for pane in tabs
+            .by_id_mut(id)
+            .into_iter()
+            .flat_map(|tab| tab.panes_mut())
+        {
+            pane.footprint.config.pin_current_style(window);
         }
     }
     fn apply_recipe_canvas(&mut self, id: u64, recipe: &WorkspaceRecipe) {
@@ -121,20 +120,17 @@ impl TabRecipeHost for BookTabs<'_> {
 pub(super) fn live_recipe(app: &QuantickApp, id: u64) -> Option<WorkspaceRecipe> {
     let tab = app.runtime.tabs.by_id(id)?;
     let saved = super::arrangement_adapter::saved_tab_of(tab);
-    let context_layers = tab
-        .panes()
-        .filter(|(_, side)| *side != PaneSide::Flow)
-        .map(|(pane, _)| pane_layers(pane, app))
-        .collect();
-    let layers = (pane_layers(&tab.flow_pane, app), context_layers);
-    let footprint = tab
-        .flow_pane
-        .footprint_config(&app.runtime.footprint_config);
+    let pane_layers = |pane: &ChartPane| recipe_layers(pane.layer_states(&app.runtime.style));
+    let context = tab.panes().filter(|(_, side)| *side != PaneSide::Flow);
+    let context_layers = context.map(|(pane, _)| pane_layers(pane)).collect();
+    let layers = (pane_layers(&tab.flow_pane), context_layers);
+    let window = &app.runtime.footprint_config;
+    let style = Some(tab.flow_pane.footprint_config(window).style.id().to_owned());
     Some(capture_recipe(
         &saved,
         app.layout_state().layouts(),
         layers,
-        Some(footprint.style.id().to_owned()),
+        style,
     ))
 }
 
@@ -200,42 +196,24 @@ fn apply_recipe_switches(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecip
     let Some(tab) = app.runtime.tabs.by_id_mut(id) else {
         return;
     };
-    let mut context = recipe.context_panes.iter();
     for (pane, side) in tab.panes_with_sides_mut() {
-        if side == PaneSide::Flow {
-            pane.apply_layer_states(&layer_states(&recipe.layers));
-        } else if let Some(saved) = context.next() {
-            pane.apply_layer_states(&layer_states(&saved.layers));
-        }
+        pane.apply_layer_states(&layer_states(recipe.for_pane(side.index()).1));
         if let Some(style) = style {
-            pane.set_footprint_style(style, &window);
+            pane.footprint.config.pin_style(style, &window);
         }
     }
 }
 
 fn apply_recipe_indicators(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe) {
-    let Some(tab) = app.runtime.tabs.by_id(id) else {
-        return;
-    };
-    let mut context = recipe.context_panes.iter();
-    let targets: Vec<_> = tab
-        .panes()
-        .map(|(_, side)| {
-            let set = if side == PaneSide::Flow {
-                recipe.flow_indicators.clone()
-            } else {
-                context
-                    .next()
-                    .map(|pane| pane.indicators.clone())
-                    .unwrap_or_default()
-            };
-            (side, set)
-        })
+    let tab = app.runtime.tabs.by_id(id);
+    let sides: Vec<_> = tab
+        .into_iter()
+        .flat_map(|tab| tab.panes().map(|(_, side)| side))
         .collect();
     let mut layouts = app.layout_adapter();
     layouts.own_indicator_copies();
-    for (side, set) in targets {
-        layouts.show_pane_indicators(id, side, &set);
+    for side in sides {
+        layouts.show_pane_indicators(id, side, recipe.for_pane(side.index()).0);
     }
 }
 

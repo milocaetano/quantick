@@ -1,7 +1,7 @@
 //! Resolved layout document storage and commit policy, independent of presentation.
 use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
-    layout_document::LayoutBook,
+    layout_document::{LayoutBook, LayoutId},
     market_settings_store::MarketSettingsStore,
     session::LayoutSession,
 };
@@ -21,6 +21,9 @@ pub struct LayoutStore {
     policy: LayoutCommitPolicy,
     /// What stays with a market whichever layout shows it.
     market: MarketSettingsStore,
+    /// Bumped with every change the book owes the file: a cheap signal that
+    /// what a pane's layout holds may have moved.
+    revision: u64,
 }
 
 impl LayoutStore {
@@ -35,6 +38,7 @@ impl LayoutStore {
             path,
             policy: LayoutCommitPolicy::new(blocked),
             market,
+            revision: 0,
         }
     }
 
@@ -91,13 +95,27 @@ impl LayoutStore {
     /// afterwards by [`Self::settle`] rather than guessed at here.
     pub fn set_book(&mut self, book: LayoutBook) {
         self.session.replace_book(book);
+        self.revision += 1;
     }
 
     pub fn settle(&mut self, changed: bool, now: Instant) {
+        self.revision += u64::from(changed);
         self.policy.settle(changed, now);
     }
     pub fn mark_changed(&mut self, now: Instant) {
+        self.revision += 1;
         self.policy.mark_changed(now);
+    }
+    /// See the field: moves whenever the book changed.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    /// After a desk is read: drop every pane's own copy that no pane holds and
+    /// no restored tab names, and owe the file the change.
+    pub fn prune_private(&mut self, named: impl IntoIterator<Item = LayoutId>, now: Instant) {
+        if self.session.prune_private(named) {
+            self.mark_changed(now);
+        }
     }
     pub fn take_save(&mut self, now: Instant) -> LayoutSave {
         self.policy.take_save(now)

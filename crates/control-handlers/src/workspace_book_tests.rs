@@ -44,9 +44,13 @@ impl WorkspaceBookHost for FakeHost {
     }
 }
 
+/// Two open tabs the book has adopted.
 fn parts() -> (FakeHost, FakeAccess, ActorContext) {
+    let mut book = WorkspaceBook::default();
+    book.open_tab(1);
+    book.open_tab(2);
     let host = FakeHost {
-        book: WorkspaceBook::default(),
+        book,
         tabs: vec![1, 2],
         writes: 0,
         write_fails: false,
@@ -60,8 +64,92 @@ fn edit(host: &mut FakeHost, tab: u64) {
         context_bars: vec!["time:1m".to_owned()],
         ..WorkspaceRecipe::default()
     };
-    host.book.open_tab(tab);
     host.book.observe(tab, &edited).unwrap();
+}
+
+/// A tab the window opened but the book has not adopted: its panes are still
+/// being built, and a workspace put on it now would be undone by the desk.
+#[test]
+fn a_tab_not_yet_adopted_is_refused_retryably_and_nothing_changes() {
+    let (mut host, mut access, actor) = parts();
+    host.tabs.push(3);
+    let before = host.book.clone();
+    let value = json!({ "tab_id": "3", "name": "Default" });
+    let error = set(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+    assert!(error.retryable);
+    assert_eq!(detail(&error), TAB_NOT_READY_CODE);
+    let value = json!({ "tab_id": "3", "name": "Scalp" });
+    save_as(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(host.book, before, "the book never met the tab");
+    assert!(host.book.tab_state(3).is_none());
+    assert_eq!((host.writes, access.events.len()), (0, 0));
+}
+
+/// Tab ids travel as strings in results, so a journal reader gets the same.
+#[test]
+fn journal_rows_carry_tab_ids_as_strings() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let value = json!({ "tab_id": "2", "name": "Scalp" });
+    set(&mut host, &mut access, &actor, &value).unwrap();
+    edit(&mut host, 1);
+    save_to(&mut host, &mut access, &actor, &json!({})).unwrap();
+    host.book.observe(1, &WorkspaceRecipe::default()).unwrap();
+    revert(&mut host, &mut access, &actor, &json!({})).unwrap();
+    delete(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let field = |kind: &str, name: &str| {
+        access
+            .events
+            .iter()
+            .find(|event| event.kind.as_str() == kind)
+            .map(|event| event.payload[name].clone())
+            .unwrap()
+    };
+    assert_eq!(field(TAB_WORKSPACE_SET_EVENT_KIND, "tab_id"), json!("2"));
+    assert_eq!(field(WORKSPACE_REVERTED_EVENT_KIND, "tab_id"), json!("1"));
+    assert_eq!(
+        field(WORKSPACE_DELETED_EVENT_KIND, "moved"),
+        json!(["1", "2"])
+    );
+    let saves: Vec<_> = access
+        .events
+        .iter()
+        .filter(|event| event.kind.as_str() == WORKSPACE_SAVED_EVENT_KIND)
+        .map(|event| event.payload["tabs_changed"].clone())
+        .collect();
+    assert_eq!(saves, [json!([]), json!(["2"])]);
+}
+
+/// The dialog, the call and the toast read one cleaned name; a rename to the
+/// same name closes the dialog and says nothing.
+#[test]
+fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let mut menu = WorkspaceMenuState::default();
+    menu.open_rename("Scalp");
+    menu.dialog.as_mut().unwrap().name = "  The   open ".to_owned();
+    let note = apply_row_command(
+        &mut host,
+        &mut menu,
+        1,
+        "WINV26",
+        WorkspaceCommand::SubmitDialog,
+    );
+    assert_eq!(note, Some(text::renamed_toast("Scalp", "The open")));
+    assert!(menu.dialog.is_none());
+    menu.open_rename("The open");
+    menu.dialog.as_mut().unwrap().name = " The open".to_owned();
+    let note = apply_row_command(
+        &mut host,
+        &mut menu,
+        1,
+        "WINV26",
+        WorkspaceCommand::SubmitDialog,
+    );
+    assert_eq!(note, None, "no toast for a rename that moved nothing");
+    assert!(menu.dialog.is_none());
 }
 
 fn detail(error: &ControlError) -> String {
@@ -217,7 +305,7 @@ fn list_names_every_workspace_with_its_tabs() {
     assert_eq!(
         rows["workspaces"],
         json!([
-            { "name": "Default", "tabs": [] },
+            { "name": "Default", "tabs": ["2"] },
             { "name": "Scalp", "tabs": ["1"] },
         ])
     );

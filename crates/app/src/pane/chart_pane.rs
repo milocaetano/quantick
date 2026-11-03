@@ -385,18 +385,7 @@ impl ChartPane {
         &'a self,
         window: &'a crate::footprint_config::FootprintConfig,
     ) -> &'a crate::footprint_config::FootprintConfig {
-        self.footprint.config.as_ref().unwrap_or(window)
-    }
-
-    /// This chart's footprint setup on `style`, and its own from here on.
-    pub fn set_footprint_style(
-        &mut self,
-        style: crate::footprint_config::FootprintStyle,
-        window: &crate::footprint_config::FootprintConfig,
-    ) {
-        let mut config = self.footprint_config(window).clone();
-        config.style = style;
-        self.footprint.config = Some(config);
+        self.footprint.config.resolve(window)
     }
 
     /// Put this pane on `spec` outright, selectors included. Startup-scoped: the caller is a
@@ -441,7 +430,7 @@ impl ChartPane {
         &mut self,
         config: Option<crate::footprint_config::FootprintConfig>,
     ) {
-        self.footprint.config = config;
+        self.footprint.config.set_own(config);
     }
 
     /// An egui interaction id scoped to this pane.

@@ -144,6 +144,17 @@ pub struct SavedTab {
     pub workspace_copy: Option<WorkspaceRecipe>,
 }
 
+impl SavedTab {
+    /// Every layout id the tab's panes name.
+    pub fn layout_ids(&self) -> impl Iterator<Item = crate::layout_document::LayoutId> + '_ {
+        self.flow_layout
+            .into_iter()
+            .chain(self.context_layouts.iter().copied())
+            .filter(|id| *id != LAYOUT_UNRECORDED)
+            .map(crate::layout_document::LayoutId)
+    }
+}
+
 /// The single-instance chrome around the tabs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedChrome {

@@ -149,6 +149,52 @@ fn a_private_copy_leaves_with_its_pane_or_when_its_pane_switches_away() {
     assert!(session.book().get(two).is_none());
 }
 
+/// The strip and the control plane name strip layouts; another pane's own copy
+/// is not one, and an edit through it would reach that pane.
+#[test]
+fn another_panes_private_copy_is_refused_by_the_strip_and_the_switch() {
+    let mut session = LayoutSession::new(LayoutBook::starter(Vec::new()));
+    seeded(&mut session, 1);
+    seeded(&mut session, 2);
+    session.own_copies([1, 2]);
+    let (one, two) = (session.layout(1), session.layout(2));
+    assert!(session.book().on_strip(two).is_none());
+    assert_eq!(
+        session.select(1, two, PaneFacts::default()).unwrap_err(),
+        crate::layout_document::LayoutError::Unknown
+    );
+    assert!(
+        session.select(1, one, PaneFacts::default()).is_ok(),
+        "its own"
+    );
+    let mut book = session.book().clone();
+    assert_eq!(
+        book.switch(two),
+        Err(crate::layout_document::LayoutError::Unknown)
+    );
+}
+
+/// A desk read from disk names the copies its tabs use; the rest are dropped.
+#[test]
+fn prune_keeps_held_and_named_copies_and_drops_the_rest() {
+    let mut session = LayoutSession::new(LayoutBook::starter(Vec::new()));
+    seeded(&mut session, 1);
+    seeded(&mut session, 2);
+    seeded(&mut session, 3);
+    session.own_copies([1, 2, 3]);
+    let (one, two, three) = (session.layout(1), session.layout(2), session.layout(3));
+    let mut book = session.book().clone();
+    let text = toml::to_string(&book).unwrap();
+    book = crate::layout_document::parse(&text).unwrap();
+    let mut reread = LayoutSession::new(book);
+    reread.register(3, Some(three));
+    assert!(reread.prune_private([one]));
+    assert!(reread.book().get(one).is_some(), "a restored tab names it");
+    assert!(reread.book().get(three).is_some(), "a pane holds it");
+    assert!(reread.book().get(two).is_none(), "nobody refers to it");
+    assert!(!reread.prune_private([one]), "a second pass finds nothing");
+}
+
 #[test]
 fn a_tab_on_the_factory_default_is_clean_until_it_moves_and_then_holds_what_it_shows() {
     let mut sync = TabRecipeSync::default();

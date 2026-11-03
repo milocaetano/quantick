@@ -386,6 +386,20 @@ impl LayoutBook {
         self.private.retain(|layout| layout.id != id);
     }
 
+    /// Keep only the private copies `keep` names. Answers whether any went.
+    pub fn retain_private(&mut self, keep: impl Fn(LayoutId) -> bool) -> bool {
+        let before = self.private.len();
+        self.private.retain(|layout| keep(layout.id));
+        self.private.len() != before
+    }
+
+    /// The strip layout with `id`: what a strip row or a control call may
+    /// name. A pane's own copy is no strip layout, so another pane's is refused.
+    #[must_use]
+    pub fn on_strip(&self, id: LayoutId) -> Option<&ChartLayout> {
+        self.layouts.iter().find(|layout| layout.id == id)
+    }
+
     /// The layout the strip lights for `id`: a copy's origin, or the active
     /// layout once that origin was deleted.
     #[must_use]
@@ -418,7 +432,7 @@ impl LayoutBook {
 
     /// Make `id` the active layout. Returns whether it changed.
     pub fn switch(&mut self, id: LayoutId) -> Result<bool, LayoutError> {
-        if self.get(id).is_none() {
+        if self.on_strip(id).is_none() {
             return Err(LayoutError::Unknown);
         }
         let changed = self.active != id;
@@ -541,12 +555,13 @@ pub fn parse(text: &str) -> Result<LayoutBook, ParseError> {
     if book.layouts.is_empty() {
         return Err(ParseError::Empty);
     }
-    if book.get(book.active).is_none() {
+    if book.on_strip(book.active).is_none() {
         return Err(ParseError::MissingActive);
     }
     if book
         .layouts
         .iter()
+        .chain(&book.private)
         .any(|layout| layout.id.0 >= book.next_id)
     {
         return Err(ParseError::IdPastCounter);

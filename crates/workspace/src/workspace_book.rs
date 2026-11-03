@@ -100,6 +100,27 @@ impl std::error::Error for BookParseError {}
 struct TabWorkspace {
     workspace: String,
     copy: WorkspaceRecipe,
+    /// On the factory `Default`, which names no arrangement: what the tab
+    /// showed when its panes last settled clean, so an edit undone by hand
+    /// reads clean again, as on any other workspace.
+    opened: Option<WorkspaceRecipe>,
+}
+
+impl TabWorkspace {
+    fn on(workspace: &str, copy: WorkspaceRecipe) -> Self {
+        Self {
+            workspace: workspace.to_owned(),
+            copy,
+            opened: None,
+        }
+    }
+}
+
+/// What a rename did: the name as cleaned and stored, and whether it moved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameOutcome {
+    pub workspace: String,
+    pub changed: bool,
 }
 
 /// What a chip and the snapshot read for one tab. Both read this, so they
@@ -165,6 +186,11 @@ pub struct WorkspaceBook {
     version: u32,
     #[serde(default)]
     recipes: BTreeMap<String, WorkspaceRecipe>,
+    /// Old name to current name. The desk names a tab's workspace and is
+    /// written only on exit or save, while a rename reaches this file at once:
+    /// a desk read after a rename still finds its workspace.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    renamed: BTreeMap<String, String>,
     /// Kept in the desk, on [`SavedTab`], not in this file.
     #[serde(skip)]
     tabs: BTreeMap<u64, TabWorkspace>,
@@ -175,6 +201,7 @@ impl Default for WorkspaceBook {
         Self {
             version: FORMAT_VERSION,
             recipes: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), WorkspaceRecipe::default())]),
+            renamed: BTreeMap::new(),
             tabs: BTreeMap::new(),
         }
     }
@@ -219,6 +246,18 @@ impl WorkspaceBook {
     #[must_use]
     pub fn recipe(&self, name: &str) -> Option<&WorkspaceRecipe> {
         self.recipes.get(name)
+    }
+
+    /// The workspace a desk's `name` means now: itself, or what it was renamed
+    /// to. `None` once it was deleted.
+    #[must_use]
+    pub fn resolve(&self, name: &str) -> Option<&str> {
+        let held = |name: &str| {
+            self.recipes
+                .get_key_value(name)
+                .map(|(held, _)| held.as_str())
+        };
+        held(name).or_else(|| self.renamed.get(name).and_then(|current| held(current)))
     }
 
     /// The name already taken by `name` up to case: `scalp` and `Scalp` would
@@ -284,10 +323,40 @@ impl WorkspaceBook {
         self.tabs.get(&tab).map(|state| &state.copy)
     }
 
+    /// The arrangement the tab's copy is told against: the recipe, or on the
+    /// factory `Default` what the tab settled on.
+    fn baseline<'a>(&'a self, state: &'a TabWorkspace) -> Option<&'a WorkspaceRecipe> {
+        let recipe = self.recipes.get(&state.workspace)?;
+        Some(
+            state
+                .opened
+                .as_ref()
+                .filter(|_| recipe.is_factory())
+                .unwrap_or(recipe),
+        )
+    }
+
     fn is_modified(&self, state: &TabWorkspace) -> bool {
-        self.recipes
+        self.baseline(state).is_none_or(|base| *base != state.copy)
+    }
+
+    /// A tab's panes stand, showing `live`. On the factory `Default`, a clean
+    /// tab takes that as its copy and its baseline; a tab with edits keeps them.
+    pub fn settle_tab(&mut self, tab: u64, live: &WorkspaceRecipe) {
+        let Some(state) = self.tabs.get(&tab) else {
+            return;
+        };
+        let factory = self
+            .recipes
             .get(&state.workspace)
-            .is_none_or(|recipe| *recipe != state.copy)
+            .is_some_and(WorkspaceRecipe::is_factory);
+        if factory
+            && !self.is_modified(state)
+            && let Some(state) = self.tabs.get_mut(&tab)
+        {
+            state.copy = live.clone();
+            state.opened = Some(live.clone());
+        }
     }
 
     /// What the desk keeps for a tab: the workspace, and the copy only while it
@@ -311,10 +380,7 @@ impl WorkspaceBook {
         &self
             .tabs
             .entry(tab)
-            .or_insert_with(|| TabWorkspace {
-                workspace: DEFAULT_WORKSPACE.to_owned(),
-                copy,
-            })
+            .or_insert_with(|| TabWorkspace::on(DEFAULT_WORKSPACE, copy))
             .copy
     }
 
@@ -323,24 +389,17 @@ impl WorkspaceBook {
         self.tabs.remove(&tab);
     }
 
-    /// A tab the desk brought back. A workspace the book no longer has hands it
-    /// to `Default`, and whatever copy the desk kept stays, marked.
+    /// A tab the desk brought back, following a rename since. A workspace the
+    /// book no longer has hands it to `Default`, keeping the copy it is given,
+    /// marked; the window gives what the tab shows when the desk kept none, so
+    /// a lost workspace never lays `Default` over the tab.
     pub fn restore_tab(&mut self, tab: u64, workspace: &str, copy: Option<WorkspaceRecipe>) {
-        let known = self.recipes.contains_key(workspace);
-        let name = if known { workspace } else { DEFAULT_WORKSPACE };
-        let copy = copy.unwrap_or_else(|| {
-            self.recipes
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| self.default_recipe().clone())
-        });
-        self.tabs.insert(
-            tab,
-            TabWorkspace {
-                workspace: name.to_owned(),
-                copy,
-            },
-        );
+        let name = self
+            .resolve(workspace)
+            .unwrap_or(DEFAULT_WORKSPACE)
+            .to_owned();
+        let copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
+        self.tabs.insert(tab, TabWorkspace::on(&name, copy));
     }
 
     /// The first run: one workspace per open tab, named `from <SYMBOL>` and
@@ -355,13 +414,7 @@ impl WorkspaceBook {
             }
             let name = self.free_seed_name(&symbol);
             self.recipes.insert(name.clone(), live.clone());
-            self.tabs.insert(
-                tab,
-                TabWorkspace {
-                    workspace: name.clone(),
-                    copy: live,
-                },
-            );
+            self.tabs.insert(tab, TabWorkspace::on(&name, live));
             seeded.push((tab, name));
         }
         seeded
@@ -411,13 +464,7 @@ impl WorkspaceBook {
             });
         }
         let dropped_edits = self.is_modified(state);
-        self.tabs.insert(
-            tab,
-            TabWorkspace {
-                workspace: name.to_owned(),
-                copy: recipe,
-            },
-        );
+        self.tabs.insert(tab, TabWorkspace::on(name, recipe));
         Ok(SetOutcome {
             changed: true,
             dropped_edits,
@@ -515,22 +562,19 @@ impl WorkspaceBook {
         if !self.is_modified(saver) {
             return Ok(false);
         }
-        let recipe = self
-            .recipes
-            .get(&saver.workspace)
-            .cloned()
-            .unwrap_or_default();
+        let recipe = self.baseline(saver).cloned().unwrap_or_default();
         if let Some(state) = self.tabs.get_mut(&tab) {
             state.copy = recipe;
         }
         Ok(true)
     }
 
-    /// Rename a workspace; its tabs follow. Answers whether the name moved.
+    /// Rename a workspace; its tabs follow, and so does a desk still naming it
+    /// the old way. Answers the name as stored and whether it moved.
     ///
     /// # Errors
     /// `Default` on either side, no such workspace, or a bad or taken new name.
-    pub fn rename(&mut self, name: &str, to: &str) -> Result<bool, WorkspaceRefusal> {
+    pub fn rename(&mut self, name: &str, to: &str) -> Result<RenameOutcome, WorkspaceRefusal> {
         if name == DEFAULT_WORKSPACE {
             return Err(WorkspaceRefusal::DefaultProtected);
         }
@@ -539,7 +583,10 @@ impl WorkspaceBook {
         }
         let cleaned = clean(to)?;
         if cleaned == name {
-            return Ok(false);
+            return Ok(RenameOutcome {
+                workspace: cleaned,
+                changed: false,
+            });
         }
         if let Some(held) = self.taken(&cleaned)
             && held != name
@@ -554,7 +601,17 @@ impl WorkspaceBook {
                 state.workspace.clone_from(&cleaned);
             }
         }
-        Ok(true)
+        self.renamed.remove(&cleaned);
+        for current in self.renamed.values_mut() {
+            if current == name {
+                current.clone_from(&cleaned);
+            }
+        }
+        self.renamed.insert(name.to_owned(), cleaned.clone());
+        Ok(RenameOutcome {
+            workspace: cleaned,
+            changed: true,
+        })
     }
 
     /// Delete a workspace; its tabs move to `Default`. A clean one adopts
@@ -570,6 +627,7 @@ impl WorkspaceBook {
         let Some(recipe) = self.recipes.remove(name) else {
             return Ok(DeleteOutcome::default());
         };
+        self.renamed.retain(|_, current| current != name);
         let fallback = self.default_recipe().clone();
         let mut outcome = DeleteOutcome {
             changed: true,
@@ -580,6 +638,7 @@ impl WorkspaceBook {
                 continue;
             }
             state.workspace = DEFAULT_WORKSPACE.to_owned();
+            state.opened = None;
             outcome.moved.push(*tab);
             if state.copy == recipe {
                 state.copy.clone_from(&fallback);
@@ -625,13 +684,19 @@ pub fn capture_recipe(
         tab.context_bars.clone()
     };
     let panes = tab.context_layouts.len().max(context_bars.len());
+    // A pane the stack has not sized yet is automatic and open, which is what
+    // a missing entry means: one reading for both, or a fresh pane is an edit.
+    let mut context_heights = tab.context_heights.clone();
+    context_heights.resize(context_heights.len().max(panes), 0.0);
+    let mut context_panes_collapsed = tab.context_panes_collapsed.clone();
+    context_panes_collapsed.resize(context_panes_collapsed.len().max(panes), false);
     WorkspaceRecipe {
         layout: tab.layout,
         split_fraction: tab.split_fraction,
         context_collapsed: tab.context_collapsed,
         flow_collapsed: tab.flow_collapsed,
-        context_heights: tab.context_heights.clone(),
-        context_panes_collapsed: tab.context_panes_collapsed.clone(),
+        context_heights,
+        context_panes_collapsed,
         context_bars,
         flow_indicators: indicators_of(layouts, tab.flow_layout),
         context_panes: (0..panes)
@@ -643,20 +708,6 @@ pub fn capture_recipe(
         layers,
         footprint_style,
     }
-}
-
-/// Lay a recipe's canvas onto a saved tab. The market's own fields stay: feed,
-/// symbol and the flow bar size are not the workspace's.
-pub fn apply_canvas(recipe: &WorkspaceRecipe, tab: &mut SavedTab) {
-    tab.layout = recipe.layout;
-    tab.split_fraction = recipe.split_fraction;
-    tab.context_collapsed = recipe.context_collapsed;
-    tab.flow_collapsed = recipe.flow_collapsed;
-    tab.context_heights.clone_from(&recipe.context_heights);
-    tab.context_panes_collapsed
-        .clone_from(&recipe.context_panes_collapsed);
-    tab.time_bars = recipe.context_bars.first().cloned();
-    tab.context_bars.clone_from(&recipe.context_bars);
 }
 
 #[cfg(test)]

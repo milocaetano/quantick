@@ -17,7 +17,7 @@ use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::window_menu as text;
 use quantick_control_schema::workspace::MODULE_ID;
 use quantick_control_schema::workspace_book::{
-    TAB_WORKSPACE_SET_EVENT_KIND, TabWorkspaceSetInput, TabWorkspaceSetResult,
+    TAB_NOT_READY_CODE, TAB_WORKSPACE_SET_EVENT_KIND, TabWorkspaceSetInput, TabWorkspaceSetResult,
     WORKSPACE_DELETED_EVENT_KIND, WORKSPACE_RENAMED_EVENT_KIND, WORKSPACE_REVERTED_EVENT_KIND,
     WORKSPACE_SAVED_EVENT_KIND, WRITE_FAILED_CODE, WorkspaceDeleteInput, WorkspaceDeleteResult,
     WorkspaceEntry, WorkspaceListInput, WorkspaceListResult, WorkspaceRenameInput,
@@ -28,8 +28,8 @@ use quantick_control_schema::workspace_book::{
 };
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::{
-    DEFAULT_WORKSPACE, DeleteOutcome, SaveOutcome, SetOutcome, WorkspaceBook, WorkspaceRecipe,
-    WorkspaceRefusal,
+    DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome, SaveOutcome, SetOutcome, WorkspaceBook,
+    WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -120,14 +120,14 @@ fn submit_name_dialog<H: WorkspaceBookHost + ?Sized>(
     let dialog = menu.dialog.clone()?;
     let outcome = match &dialog.mode {
         NameDialogMode::SaveAsNew => save_tab_as(host, tab, &dialog.name)
-            .map(|saved| text::saved_as_toast(symbol, &saved.workspace)),
+            .map(|saved| Some(text::saved_as_toast(symbol, &saved.workspace))),
         NameDialogMode::Rename { from } => rename_workspace(host, from, &dialog.name)
-            .map(|_| text::renamed_toast(from, &dialog.name)),
+            .map(|to| to.changed.then(|| text::renamed_toast(from, &to.workspace))),
     };
     match outcome {
         Ok(message) => {
             menu.close_dialog();
-            Some(message)
+            message
         }
         Err(error) => {
             menu.refuse(error.message);
@@ -187,15 +187,24 @@ fn book<H: WorkspaceBookHost + ?Sized>(app: &mut H) -> Result<&mut WorkspaceBook
     app.workspace_book().ok_or_else(unavailable)
 }
 
-/// The tab a call names, on the book: a tab the book has not met opens on
-/// `Default`, as a new tab does.
+/// The tab a call names, on the book. A tab the book has not adopted yet is
+/// refused before anything changes: its panes are still being built, and a
+/// workspace put on it now would be undone when the desk's word lands.
 fn tab_on_book<H: WorkspaceBookHost + TabDirectory + ?Sized>(
     app: &mut H,
     tab_id: Option<WireU64>,
 ) -> Result<u64, ControlError> {
     let tab = app.tab_id_at(tab_index(app, tab_id)?);
-    book(app)?.open_tab(tab);
-    Ok(tab)
+    if book(app)?.tab_state(tab).is_some() {
+        return Ok(tab);
+    }
+    let mut error = ControlError::new(
+        ErrorCode::new(codes::CAPABILITY_UNAVAILABLE).expect("static error code is valid"),
+        format!("tab {tab} is still opening; retry once its charts stand"),
+        true,
+    );
+    error.context.details = Some(json!({ "code": TAB_NOT_READY_CODE }));
+    Err(error)
 }
 
 /// Run `change` on the book and write the result when it says it changed;
@@ -304,7 +313,7 @@ pub fn revert_tab<H: WorkspaceBookHost + ?Sized>(
     Ok(changed)
 }
 
-/// Rename a workspace. Answers whether the name moved.
+/// Rename a workspace. Answers the name as stored and whether it moved.
 ///
 /// # Errors
 /// The name is refused, no book, or the write failed.
@@ -312,8 +321,8 @@ pub fn rename_workspace<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     name: &str,
     to: &str,
-) -> Result<bool, ControlError> {
-    written(app, |book| book.rename(name, to), |moved| *moved)
+) -> Result<RenameOutcome, ControlError> {
+    written(app, |book| book.rename(name, to), |moved| moved.changed)
 }
 
 /// Delete a workspace, moving its tabs to `Default` and redrawing the clean ones.
@@ -350,8 +359,8 @@ fn set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     let tab = tab_on_book(app, tab_id)?;
     let outcome = set_tab_workspace(app, tab, &name)?;
     if outcome.changed {
-        let payload =
-            json!({ "tab_id": tab, "workspace": name, "dropped_edits": outcome.dropped_edits });
+        let payload = json!({ "tab_id": WireU64::new(tab), "workspace": name,
+            "dropped_edits": outcome.dropped_edits });
         journal(access, TAB_WORKSPACE_SET_EVENT_KIND, actor, payload);
     }
     answer(&TabWorkspaceSetResult {
@@ -373,7 +382,7 @@ fn save_to<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     let outcome = save_tab_to(app, tab)?;
     if outcome.changed {
         let payload =
-            json!({ "workspace": outcome.workspace, "tabs_changed": outcome.tabs_changed });
+            json!({ "workspace": outcome.workspace, "tabs_changed": wires(&outcome.tabs_changed) });
         journal(access, WORKSPACE_SAVED_EVENT_KIND, actor, payload);
     }
     answer(&WorkspaceSaveResult {
@@ -414,7 +423,7 @@ fn revert<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     let changed = revert_tab(app, tab)?;
     let workspace = workspace_of(app, tab)?;
     if changed {
-        let payload = json!({ "tab_id": tab, "workspace": workspace });
+        let payload = json!({ "tab_id": WireU64::new(tab), "workspace": workspace });
         journal(access, WORKSPACE_REVERTED_EVENT_KIND, actor, payload);
     }
     answer(&WorkspaceRevertResult {
@@ -431,8 +440,7 @@ fn rename<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceRenameInput { name, to } = input(value)?;
-    let changed = rename_workspace(app, &name, &to)?;
-    let workspace = to.split_whitespace().collect::<Vec<_>>().join(" ");
+    let RenameOutcome { workspace, changed } = rename_workspace(app, &name, &to)?;
     if changed {
         let payload = json!({ "from": name, "workspace": workspace });
         journal(access, WORKSPACE_RENAMED_EVENT_KIND, actor, payload);
@@ -449,8 +457,8 @@ fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let WorkspaceDeleteInput { name } = input(value)?;
     let outcome = delete_workspace(app, &name)?;
     if outcome.changed {
-        let payload =
-            json!({ "workspace": name, "moved": outcome.moved, "kept_edits": outcome.kept_edits });
+        let payload = json!({ "workspace": name, "moved": wires(&outcome.moved),
+            "kept_edits": wires(&outcome.kept_edits) });
         journal(access, WORKSPACE_DELETED_EVENT_KIND, actor, payload);
     }
     answer(&WorkspaceDeleteResult {

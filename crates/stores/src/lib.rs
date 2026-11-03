@@ -23,6 +23,7 @@ pub mod bubble_look;
 pub mod bubble_presets;
 pub mod bundle;
 pub mod candle_presets;
+pub mod chart_footprint;
 pub mod config;
 pub mod footprint_config;
 pub mod footprint_presets;

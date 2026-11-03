@@ -187,6 +187,13 @@ impl LayoutSession {
             self.book.remove_private(layout);
         }
     }
+    /// Drop every private copy that no pane holds and `named` does not name: a
+    /// copy a desk read from disk no longer refers to. Answers whether any went.
+    pub fn prune_private(&mut self, named: impl IntoIterator<Item = LayoutId>) -> bool {
+        let mut keep: std::collections::BTreeSet<LayoutId> = named.into_iter().collect();
+        keep.extend(self.panes.values().filter_map(|state| state.get().layout));
+        self.book.retain_private(|id| keep.contains(&id))
+    }
     /// Put every seeded pane on a copy of its set that no other pane holds, so
     /// an edit on one reaches no other. Slots and entries keep their positions.
     /// Answers whether any pane moved.
@@ -278,6 +285,10 @@ impl LayoutSession {
     ) -> Result<Selection, LayoutError> {
         let state = self.panes.get(&pane).ok_or(LayoutError::Unknown)?.get();
         self.book.get(to).ok_or(LayoutError::Unknown)?;
+        if self.book.is_private(to) && state.layout != Some(to) {
+            // Another pane's own copy: an edit through it would reach that pane.
+            return Err(LayoutError::Unknown);
+        }
         let from = self.layout(pane);
         if from != to
             && let Some(error) = facts.refusal()

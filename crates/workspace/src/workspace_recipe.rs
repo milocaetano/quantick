@@ -22,9 +22,10 @@ use std::collections::BTreeMap;
 /// Serialized as well as deserialized: the saved workspace
 /// (`crate::ui_state`) writes a canvas layout back out, and it must speak
 /// the vocabulary the config reads — one name for one layout, in one place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub enum DeclaredLayout {
     /// The flow pane alone — the factory default.
+    #[default]
     #[serde(rename = "flow")]
     Flow,
     /// A full-window timeframe chart.
@@ -145,6 +146,20 @@ impl WorkspaceRecipe {
     #[must_use]
     pub fn is_factory(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// What the pane at `index` keeps, by its place: 0 is the flow pane, then
+    /// the context panes top to bottom. A pane past the recipe keeps nothing.
+    #[must_use]
+    pub fn for_pane(&self, index: usize) -> (&[SavedIndicator], &BTreeMap<String, bool>) {
+        static NOTHING: BTreeMap<String, bool> = BTreeMap::new();
+        match index.checked_sub(1) {
+            None => (&self.flow_indicators, &self.layers),
+            Some(slot) => self
+                .context_panes
+                .get(slot)
+                .map_or((&[], &NOTHING), |pane| (&pane.indicators, &pane.layers)),
+        }
     }
 
     /// What the factory `Default` amounts to on a tab whose feed declares

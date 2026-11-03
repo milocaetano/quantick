@@ -8,9 +8,11 @@ mod constants;
 mod descriptor;
 mod document;
 mod persistence;
+mod recipe;
 mod state;
 
 pub use descriptor::*;
 pub use document::*;
 pub use persistence::*;
+pub use recipe::*;
 pub use state::*;

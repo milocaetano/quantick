@@ -163,11 +163,20 @@ fn revert_goes_back_to_the_recipe_once() {
 #[test]
 fn rename_carries_its_tabs_and_default_cannot_be_renamed() {
     let mut book = two_tabs_on_scalp();
-    assert!(book.rename("Scalp", "Open").unwrap());
-    assert_eq!(state(&book, 2), ("Open".to_owned(), false));
-    assert!(!book.rename("Open", "Open").unwrap());
+    let renamed = book.rename("Scalp", " The  open ").unwrap();
+    assert_eq!(
+        renamed,
+        RenameOutcome {
+            workspace: "The open".to_owned(),
+            changed: true
+        },
+        "the name as stored"
+    );
+    assert_eq!(state(&book, 2), ("The open".to_owned(), false));
+    assert!(book.rename("The open", "Open").unwrap().changed);
+    assert!(!book.rename("Open", " Open ").unwrap().changed);
     assert!(
-        book.rename("Open", "OPEN").unwrap(),
+        book.rename("Open", "OPEN").unwrap().changed,
         "case alone is a rename"
     );
     assert_eq!(
@@ -292,19 +301,62 @@ fn a_seed_from_an_old_desk_tab_copies_the_indicators_and_holds_no_layout_id() {
     );
 }
 
+/// The desk is written on exit or save; workspaces.toml at the call. With
+/// save-on-exit off, the desk read at the next launch still names the old name.
 #[test]
-fn applying_a_recipe_keeps_the_markets_own_fields() {
-    let mut tab: SavedTab = toml::from_str(
-        "feed = \"mt5\"\nsymbol = \"WINV26\"\nlayout = \"flow\"\nflow_bars = \"tick:50\"\n",
-    )
-    .unwrap();
-    let mut scalp = recipe(DeclaredLayout::TimeAndFlow);
-    scalp.context_bars = vec!["time:5m".to_owned()];
-    apply_canvas(&scalp, &mut tab);
-    assert_eq!(tab.layout, DeclaredLayout::TimeAndFlow);
-    assert_eq!(tab.time_bars.as_deref(), Some("time:5m"));
-    assert_eq!(tab.flow_bars, "tick:50");
-    assert_eq!(tab.symbol, "WINV26");
+fn a_restart_follows_a_rename_and_a_lost_workspace_keeps_what_the_tab_shows() {
+    let mut book = two_tabs_on_scalp();
+    let desk = book.saved_fields(1);
+    assert_eq!(desk, (Some("Scalp".to_owned()), None));
+    book.rename("Scalp", "Tape").unwrap();
+    book.rename("Tape", "Open").unwrap();
+    let text = toml::to_string_pretty(&book).unwrap();
+    let mut reopened = parse_book(&text).unwrap();
+    reopened.restore_tab(1, "Scalp", None);
+    assert_eq!(state(&reopened, 1), ("Open".to_owned(), false));
+    assert_eq!(
+        reopened.tab_copy(1),
+        reopened.recipe("Open"),
+        "the renamed recipe"
+    );
+
+    reopened.delete("Open").unwrap();
+    assert_eq!(reopened.resolve("Scalp"), None, "deleted since");
+    let live = recipe(DeclaredLayout::TimeTimeAndFlow);
+    reopened.restore_tab(2, "Scalp", Some(live.clone()));
+    assert_eq!(state(&reopened, 2), ("Default".to_owned(), true));
+    assert_eq!(reopened.tab_copy(2), Some(&live), "Default • what it shows");
+}
+
+#[test]
+fn a_rename_back_and_forth_resolves_without_a_loop() {
+    let mut book = two_tabs_on_scalp();
+    book.rename("Scalp", "Tape").unwrap();
+    book.rename("Tape", "Scalp").unwrap();
+    assert_eq!(book.resolve("Scalp"), Some("Scalp"));
+    assert_eq!(book.resolve("Tape"), Some("Scalp"));
+}
+
+/// The factory `Default` names no arrangement, so a tab on it is told against
+/// what it settled on: undoing an edit by hand clears the mark.
+#[test]
+fn on_the_factory_default_an_edit_undone_by_hand_reads_clean() {
+    let mut book = WorkspaceBook::default();
+    book.open_tab(1);
+    let opened = recipe(DeclaredLayout::TimeAndFlow);
+    book.settle_tab(1, &opened);
+    assert_eq!(state(&book, 1), ("Default".to_owned(), false));
+    book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
+    assert_eq!(state(&book, 1), ("Default".to_owned(), true));
+    book.settle_tab(1, &recipe(DeclaredLayout::Flow));
+    assert!(book.tab_state(1).unwrap().modified, "edits are kept");
+    book.observe(1, &opened).unwrap();
+    assert_eq!(state(&book, 1), ("Default".to_owned(), false));
+
+    book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
+    assert!(book.revert(1).unwrap());
+    assert_eq!(book.tab_copy(1), Some(&opened), "revert goes back to it");
+    assert_eq!(book.saved_fields(1), (Some("Default".to_owned()), None));
 }
 
 #[test]
@@ -324,8 +376,6 @@ fn a_tab_keeps_its_edits_across_a_restart_still_marked() {
     assert_eq!(state(&reopened, 1), ("Scalp".to_owned(), false));
     reopened.restore_tab(3, "Gone", Some(recipe(DeclaredLayout::Time)));
     assert_eq!(state(&reopened, 3), ("Default".to_owned(), true));
-    reopened.restore_tab(4, "Gone", None);
-    assert_eq!(state(&reopened, 4), ("Default".to_owned(), false));
 }
 
 #[test]

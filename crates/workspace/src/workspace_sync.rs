@@ -50,6 +50,8 @@ struct SeenTab {
     /// As the tab stood when a recipe last settled on it.
     baseline: WorkspaceRecipe,
     last: WorkspaceRecipe,
+    /// The window's cheap change signal when `last` was read.
+    signal: Option<u64>,
 }
 
 /// The window's side of the book, kept apart from the recipes: none of it is
@@ -153,8 +155,32 @@ impl TabRecipeSync {
             SeenTab {
                 baseline: live.clone(),
                 last: live,
+                signal: None,
             },
         );
+    }
+
+    /// Whether a recipe has settled on this tab since it joined.
+    #[must_use]
+    pub fn is_settled(&self, tab: u64) -> bool {
+        self.seen.contains_key(&tab)
+    }
+
+    /// Whether the window's change signal for this tab still reads as it did
+    /// when the tab was last read: nothing a recipe holds can have moved, so
+    /// the frame builds no recipe for it.
+    #[must_use]
+    pub fn is_quiet(&self, tab: u64, signal: u64) -> bool {
+        self.seen
+            .get(&tab)
+            .is_some_and(|seen| seen.signal == Some(signal))
+    }
+
+    /// The signal the tab read as when it was last read.
+    pub fn note_signal(&mut self, tab: u64, signal: u64) {
+        if let Some(seen) = self.seen.get_mut(&tab) {
+            seen.signal = Some(signal);
+        }
     }
 
     /// What the tab shows now, against its held `copy`: the copy to record if

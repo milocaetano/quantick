@@ -4,7 +4,8 @@
 //! A refusal carries `control.invalid_request` with the reason and a stable
 //! `details.code`; a write that did not reach the disk carries
 //! `control.capability_unavailable` with [`WRITE_FAILED_CODE`] and changes
-//! nothing. A repeat answers `changed: false` and journals nothing.
+//! nothing, as does a tab still opening, with [`TAB_NOT_READY_CODE`]. A repeat
+//! answers `changed: false` and journals nothing.
 
 use quantick_control::id::PermissionId;
 use quantick_control::registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy};
@@ -41,6 +42,9 @@ pub const WORKSPACE_DELETED_EVENT_KIND: &str = "workspace.deleted";
 
 /// The `details.code` of a write that did not reach the disk.
 pub const WRITE_FAILED_CODE: &str = "workspace.write_failed";
+/// The `details.code` of a call naming a tab whose charts are still being
+/// built: `control.capability_unavailable`, retryable, nothing changed.
+pub const TAB_NOT_READY_CODE: &str = "workspace.tab_not_ready";
 
 const RESULT_MAX_BYTES: usize = 4096;
 

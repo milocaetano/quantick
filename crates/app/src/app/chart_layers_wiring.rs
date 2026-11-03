@@ -186,22 +186,27 @@ impl LayerWiring<'_> {
     ///
     /// Whatever is edited also becomes the window default, which is what a
     /// trader configuring their first chart means; a second chart diverges
-    /// only when they configure it too.
+    /// only when they configure it too. A tab keeps its own style: see
+    /// `quantick_stores::chart_footprint`.
     pub(crate) fn apply_footprint_change(&mut self, change: FootprintChange) {
         let tab = self.tabs.runtime_mut(self.tabs.active_index());
         let side = tab.focused_side();
         match change {
             FootprintChange::Applied(edited) => {
-                tab.pane_mut(side).footprint.config = Some((*edited).clone());
+                tab.pane_mut(side)
+                    .footprint
+                    .config
+                    .set_own(Some((*edited).clone()));
                 *self.footprint_config = *edited;
+                for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+                    pane.footprint.config.follow(self.footprint_config);
+                }
                 crate::footprint_config::save(
                     self.workspace.footprint_settings_path(),
                     self.footprint_config,
                 );
             }
-            FootprintChange::ResetToDefault => {
-                tab.pane_mut(side).footprint.config = None;
-            }
+            FootprintChange::ResetToDefault => tab.pane_mut(side).footprint.config.set_own(None),
         }
     }
 

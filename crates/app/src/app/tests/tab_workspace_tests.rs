@@ -31,6 +31,188 @@ fn edit_split(app: &mut QuantickApp, tab: u64, fraction: f32) {
     observe_tab(app, tab);
 }
 
+/// Frames that also carry the book's upkeep, which `frame::process` does not
+/// call yet.
+fn frames(app: &mut QuantickApp, count: usize) {
+    let ctx = egui::Context::default();
+    for _ in 0..count {
+        run_frame(app, &ctx);
+        app.layout_adapter().maintain_layouts();
+        maintain(app);
+    }
+}
+
+fn ema() -> quantick_workspace::indicator_document::SavedIndicator {
+    quantick_workspace::indicator_document::SavedIndicator {
+        kind: quantick_workspace::indicator_document::SavedKind::native("native.ema"),
+        hidden: false,
+        mouse_vertical_line: false,
+        inputs: Vec::new(),
+        plot_styles: Vec::new(),
+    }
+}
+
+/// A layer the pane at `index` reads, and the state it reads in.
+fn some_layer(app: &QuantickApp, tab: u64, index: usize) -> (ChartLayer, bool) {
+    let live = live_recipe(app, tab).expect("an open tab");
+    let (layer, on) = live
+        .for_pane(index)
+        .1
+        .iter()
+        .next()
+        .map(|(layer, on)| (layer.clone(), *on))
+        .expect("the pane reads its layers");
+    let layer = crate::pane::registered_layers()
+        .layers()
+        .iter()
+        .copied()
+        .find(|known| known.id() == layer)
+        .expect("a registered layer");
+    (layer, on)
+}
+
+/// The panes of a time+time+flow canvas arrive one per frame; the first run
+/// waits for all of them, so the seeded recipe is what the tab ends up showing.
+#[test]
+fn a_first_run_on_a_two_context_desk_seeds_after_every_pane_stands() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-two-context-seed", "layouts.toml");
+    let (mut app, _evt, _cmd, _book) = test_app();
+    app.runtime
+        .workspace
+        .set_layouts_path(layouts.to_path_buf());
+    app.runtime.workspace.layouts_mut().set_blocked(false);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let tab = app.runtime.tabs.active_id();
+    assert_eq!(app.active_tab().time_panes.len(), 2);
+    let store = &app.runtime.workspace.book;
+    let state = store.book().tab_state(tab).expect("seeded");
+    assert!(!state.modified, "a seeded tab reads as clean");
+    let recipe = store.book().recipe(state.workspace).expect("its recipe");
+    assert_eq!(recipe.context_panes.len(), 2, "both context panes");
+    assert_eq!(Some(recipe), live_recipe(&app, tab).as_ref());
+}
+
+/// A recipe of two context panes reaches the second pane too, which is built a
+/// frame after the first.
+#[test]
+fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-two-context-switch", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.by_id_mut(first).expect("an open tab");
+    tab.set_layout(CanvasLayout::TimeTimeAndFlow);
+    frames(&mut app, 4);
+    let (layer, on) = some_layer(&app, first, 2);
+    let mut two = live_recipe(&app, first).expect("an open tab");
+    assert_eq!(two.context_panes.len(), 2);
+    two.context_panes[1].indicators = vec![ema()];
+    two.context_panes[1]
+        .layers
+        .insert(layer.id().to_owned(), !on);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(first, &two).expect("held");
+    book.save_as(first, "Two").expect("a free name");
+
+    set_tab_workspace(&mut app, second, "Two").expect("a known workspace");
+    frames(&mut app, 5);
+    let live = live_recipe(&app, second).expect("an open tab");
+    assert_eq!(live.context_panes.len(), 2);
+    assert_eq!(live.context_panes[1].indicators, [ema()], "the second pane");
+    assert_eq!(live.context_panes[1].layers.get(layer.id()), Some(&!on));
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(second),
+        ("Two".to_owned(), false)
+    );
+}
+
+/// The footprint style, the indicators and the layers are the tab's: an edit on
+/// one tab reaches another on the same workspace only by Save to.
+#[test]
+fn footprint_style_indicators_and_layers_stay_on_their_tab_until_save_to() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-no-leak-all", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    for tab in [first, second] {
+        set_tab_workspace(&mut app, tab, "Default").expect("always there");
+    }
+    frames(&mut app, 3);
+    let edited = app.runtime.tabs.active_id();
+    let other = if edited == first { second } else { first };
+    let before = live_recipe(&app, other).expect("an open tab");
+
+    let window = app.runtime.footprint_config.clone();
+    let style = crate::footprint_config::FootprintStyle::ALL
+        .into_iter()
+        .find(|style| *style != window.style)
+        .expect("more than one style");
+    let change = crate::footprint_config::FootprintConfig { style, ..window };
+    app.layer_wiring()
+        .apply_footprint_change(crate::surfaces::FootprintChange::Applied(Box::new(change)));
+    app.layout_adapter()
+        .show_pane_indicators(edited, PaneSide::Flow, &[ema()]);
+    let (layer, on) = some_layer(&app, edited, 0);
+    let tab = app.runtime.tabs.by_id_mut(edited).expect("an open tab");
+    tab.flow_pane
+        .apply_layer_states(&std::collections::BTreeMap::from([(layer, !on)]));
+    frames(&mut app, 3);
+    observe_tab(&mut app, other);
+
+    let store = &app.runtime.workspace.book;
+    assert!(store.tab_row(edited).1, "the edits mark their tab");
+    assert!(!store.tab_row(other).1, "and no other");
+    assert_eq!(live_recipe(&app, other).as_ref(), Some(&before));
+
+    let saved = save_tab_to(&mut app, edited).expect("saved");
+    assert_eq!(saved.tabs_changed, [other]);
+    frames(&mut app, 3);
+    let followed = live_recipe(&app, other).expect("an open tab");
+    assert_eq!(followed.footprint_style.as_deref(), Some(style.id()));
+    assert_eq!(followed.flow_indicators, [ema()]);
+    assert_eq!(followed.layers.get(layer.id()), Some(&!on));
+    assert!(!app.runtime.workspace.book.tab_row(other).1);
+}
+
+/// On the factory Default an edit undone by hand clears the mark, as anywhere.
+#[test]
+fn an_edit_undone_by_hand_on_the_factory_default_reads_clean() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-default-undo", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "THIRDUSDT".to_owned(), None);
+    let third = app.runtime.tabs.active_id();
+    frames(&mut app, 3);
+    let was = app.active_tab().split_fraction;
+    edit_split(&mut app, third, 0.27);
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(third),
+        ("Default".to_owned(), true)
+    );
+    edit_split(&mut app, third, was);
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(third),
+        ("Default".to_owned(), false)
+    );
+}
+
+/// A pane's own copy is its own: no other pane switches onto it.
+#[test]
+fn a_pane_cannot_switch_onto_another_tabs_private_copy() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-private-refused", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let theirs = app
+        .runtime
+        .tabs
+        .by_id(second)
+        .and_then(|tab| tab.flow_pane.layout_id())
+        .expect("a seeded pane");
+    assert!(app.layout_state().layouts().is_private(theirs));
+    assert!(
+        app.layout_adapter()
+            .switch_pane_layout(first, PaneSide::Flow, theirs)
+            .is_err()
+    );
+}
+
 #[test]
 fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() {
     let layouts = crate::scratch::ScratchFile::new("workspace-first-run", "layouts.toml");

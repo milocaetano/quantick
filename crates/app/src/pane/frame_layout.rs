@@ -246,7 +246,7 @@ impl CandleDress {
         // a style below its own zoom floor hands over, and the candle must be
         // laid out for whichever one paints. Asking the requested style put a
         // sidebar lane under a style that draws full width.
-        let config = footprint.config.as_ref().unwrap_or(chrome.footprint);
+        let config = footprint.config.resolve(chrome.footprint);
         let footprint_style = footprint.lod.effective_style(config.style);
         let treatment = footprint_style.candle_treatment();
         // The lane a sidebar candle keeps at the left of its slot, and the

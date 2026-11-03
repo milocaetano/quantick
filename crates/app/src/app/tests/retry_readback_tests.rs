@@ -1051,6 +1051,12 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "layer_id": "grid", "visible": !app.runtime.style.canvas.grid_enabled,
             }),
             "layout.tab.switch" => json!({ "name": first_layout }),
+            "workspace.save_as" => {
+                // The book adopts a tab once its charts stand; until then a
+                // workspace call on it is refused as still opening.
+                crate::app::tab_workspaces::maintain(&mut app);
+                payload
+            }
             "layout.pane.resize_pair" => json!({
                 "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
                 "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),

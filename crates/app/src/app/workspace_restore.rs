@@ -130,6 +130,10 @@ impl ArrangementAdapter<'_> {
                 break;
             }
         }
+        let named = documents.iter().flat_map(ui_state::SavedTab::layout_ids);
+        self.workspace
+            .layouts_mut()
+            .prune_private(named, std::time::Instant::now());
     }
     fn adopt_workspace_settings(&mut self, workspace: &ui_state::Workspace) {
         self.workspace.session_mut().adopt(

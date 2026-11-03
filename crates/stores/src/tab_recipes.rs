@@ -17,8 +17,16 @@ pub trait TabRecipeHost {
     /// What the tab shows now, as a recipe.
     fn live_recipe(&self, tab: u64) -> Option<WorkspaceRecipe>;
     fn recipe_tab_symbol(&self, tab: u64) -> Option<String>;
-    /// A window-wide footprint edit must not move a tab on its own recipe, so a
-    /// seeded tab holds the setup it shows. No pixel changes.
+    /// What a new tab on this tab's feed opens with: what the factory
+    /// `Default` amounts to here.
+    fn new_tab_recipe(&self, tab: u64) -> WorkspaceRecipe;
+    /// A cheap reading of everything [`Self::live_recipe`] reads, which moves
+    /// whenever any of it may have. An idle frame compares this and builds no
+    /// recipe.
+    fn recipe_signal(&self, tab: u64) -> u64;
+    /// The footprint style is the tab's: each pane holds the style it draws
+    /// with now, and only the style, so an edit on another tab reaches every
+    /// other knob here but never the style. No pixel changes.
     fn pin_tab_footprint(&mut self, tab: u64);
     /// The canvas and the context intervals. Drawings, anchored studies, the flow
     /// bar size and the paper position are not touched: they are the market's.
@@ -57,17 +65,12 @@ fn adopt_tabs<H: TabRecipeHost + ?Sized>(host: &mut H) {
         }
         let store = host.recipe_store_mut();
         let unused = store.book().is_unused();
-        match store.sync_mut().adoption(id, held, unused) {
+        let adoption = store.sync_mut().adoption(id, held, unused);
+        match adoption {
             TabAdoption::Held => {}
-            TabAdoption::Restore { workspace, copy } => {
-                let book = store.book_mut();
-                book.restore_tab(id, &workspace, copy.map(|copy| *copy));
-                if let Some(recipe) = book.tab_copy(id).filter(|copy| !copy.is_factory()) {
-                    let recipe = recipe.clone();
-                    store.sync_mut().queue(id, recipe);
-                }
-            }
+            TabAdoption::Restore { workspace, copy } => restore(host, id, &workspace, copy),
             TabAdoption::OnDefault => {
+                let store = host.recipe_store_mut();
                 let recipe = store.book_mut().open_tab(id).clone();
                 if !recipe.is_factory() {
                     store.sync_mut().queue(id, recipe);
@@ -106,8 +109,52 @@ fn adopt_tabs<H: TabRecipeHost + ?Sized>(host: &mut H) {
     }
 }
 
-/// Queue `shown` for a tab and carry it as far as the panes allow.
-pub fn show_recipe<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64, shown: WorkspaceRecipe) {
+/// A tab the desk brought back. On a workspace the book still has, it is
+/// carried to its copy; on one deleted since, it keeps what it shows, as
+/// `Default •`, rather than take `Default`'s recipe.
+fn restore<H: TabRecipeHost + ?Sized>(
+    host: &mut H,
+    id: u64,
+    workspace: &str,
+    copy: Option<Box<WorkspaceRecipe>>,
+) {
+    let lost = copy.is_none() && host.recipe_store().book().resolve(workspace).is_none();
+    let copy = match copy {
+        Some(copy) => Some(*copy),
+        None if lost => host.live_recipe(id),
+        None => None,
+    };
+    let store = host.recipe_store_mut();
+    store.book_mut().restore_tab(id, workspace, copy);
+    if lost {
+        settle(host, id);
+    } else if let Some(recipe) = store.book().tab_copy(id).filter(|copy| !copy.is_factory()) {
+        let recipe = recipe.clone();
+        store.sync_mut().queue(id, recipe);
+    }
+}
+
+/// The tab's panes stand: what it shows is what later edits are told from.
+fn settle<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) {
+    host.pin_tab_footprint(id);
+    let signal = host.recipe_signal(id);
+    let Some(live) = host.live_recipe(id) else {
+        return;
+    };
+    let store = host.recipe_store_mut();
+    store.book_mut().settle_tab(id, &live);
+    store.sync_mut().settle(id, live);
+    store.sync_mut().note_signal(id, signal);
+}
+
+/// Queue `recipe` for a tab and carry it as far as the panes allow. The
+/// factory `Default` is laid as a new tab on its feed: never a bare canvas.
+pub fn show_recipe<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64, recipe: &WorkspaceRecipe) {
+    let shown = if recipe.is_factory() {
+        host.new_tab_recipe(id)
+    } else {
+        recipe.clone()
+    };
     host.recipe_store_mut().sync_mut().queue(id, shown);
     apply_pending_recipes(host);
 }
@@ -130,13 +177,12 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
             host.apply_recipe_switches(id, &recipe);
             host.apply_recipe_indicators(id, &recipe);
         }
-        if let Some(live) = host.live_recipe(id) {
-            host.recipe_store_mut().sync_mut().settle(id, live);
-        }
+        settle(host, id);
     }
 }
 
 /// Read one tab; a change the book has not seen becomes its copy, and only its.
+/// A tab whose change signal has not moved since it was last read is not read.
 pub fn observe_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) {
     let store = host.recipe_store();
     if store.sync().is_pending(id) || store.book().tab_state(id).is_none() {
@@ -145,10 +191,19 @@ pub fn observe_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) {
     if !host.tab_settled(id) {
         return;
     }
+    if !host.recipe_store().sync().is_settled(id) {
+        settle(host, id);
+        return;
+    }
+    let signal = host.recipe_signal(id);
+    if host.recipe_store().sync().is_quiet(id, signal) {
+        return;
+    }
     let Some(live) = host.live_recipe(id) else {
         return;
     };
     let (book, sync) = host.recipe_store_mut().parts_mut();
+    sync.note_signal(id, signal);
     let Some(copy) = book.tab_copy(id) else {
         return;
     };
@@ -168,6 +223,8 @@ mod tests {
         store: WorkspaceBookStore,
         shows: WorkspaceRecipe,
         applied: usize,
+        /// How many recipes were built off the tab.
+        builds: std::cell::Cell<usize>,
     }
 
     impl TabRecipeHost for OneTab {
@@ -187,10 +244,20 @@ mod tests {
             true
         }
         fn live_recipe(&self, _tab: u64) -> Option<WorkspaceRecipe> {
+            self.builds.set(self.builds.get() + 1);
             Some(self.shows.clone())
         }
         fn recipe_tab_symbol(&self, _tab: u64) -> Option<String> {
             Some("WINV26".to_owned())
+        }
+        fn new_tab_recipe(&self, _tab: u64) -> WorkspaceRecipe {
+            WorkspaceRecipe::default()
+        }
+        fn recipe_signal(&self, _tab: u64) -> u64 {
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::hash::DefaultHasher::new();
+            format!("{:?}", self.shows).hash(&mut hash);
+            hash.finish()
         }
         fn pin_tab_footprint(&mut self, _tab: u64) {}
         fn apply_recipe_canvas(&mut self, _tab: u64, recipe: &WorkspaceRecipe) {
@@ -207,7 +274,54 @@ mod tests {
             store: WorkspaceBookStore::open_at(path_beside(&folder.join("layouts.toml"))),
             shows: WorkspaceRecipe::default(),
             applied: 0,
+            builds: std::cell::Cell::new(0),
         }
+    }
+
+    /// The hot path: once a tab has settled, a frame where nothing moved builds
+    /// no recipe. Before the signal it built one per observed tab per frame.
+    #[test]
+    fn an_idle_frame_builds_no_recipe() {
+        let mut host = one_tab("tab-recipes-idle");
+        maintain(&mut host);
+        maintain(&mut host);
+        host.builds.set(0);
+        for _ in 0..5 {
+            maintain(&mut host);
+        }
+        assert_eq!(host.builds.get(), 0, "five idle frames");
+        host.shows.split_fraction = Some(0.4);
+        maintain(&mut host);
+        assert_eq!(host.builds.get(), 1, "an edit is read once");
+        assert!(host.store.book().tab_state(7).unwrap().modified);
+    }
+
+    /// The desk named a workspace deleted since, and kept no copy because the
+    /// tab was clean: the tab keeps what it shows, marked, on `Default`.
+    #[test]
+    fn a_tab_whose_workspace_is_gone_keeps_what_it_shows_as_default_marked() {
+        let mut host = one_tab("tab-recipes-lost");
+        let saved = WorkspaceRecipe {
+            split_fraction: Some(0.5),
+            ..WorkspaceRecipe::default()
+        };
+        host.store.book_mut().open_tab(1);
+        host.store.book_mut().observe(1, &saved).unwrap();
+        host.store.book_mut().save_to(1).unwrap();
+        host.store.book_mut().close_tab(1);
+        assert!(!host.store.book().recipe("Default").unwrap().is_factory());
+        host.shows.split_fraction = Some(0.2);
+        host.store
+            .sync_mut()
+            .arrive(7, Some("Deleted since".to_owned()), None);
+        maintain(&mut host);
+        assert_eq!(host.applied, 0, "Default's recipe was not laid over it");
+        assert_eq!(
+            host.store.tab_row(7),
+            ("Default".to_owned(), true),
+            "Default •"
+        );
+        assert_eq!(host.store.book().tab_copy(7), Some(&host.shows));
     }
 
     #[test]

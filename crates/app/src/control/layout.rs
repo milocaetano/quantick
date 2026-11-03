@@ -234,7 +234,7 @@ fn resolve_layout_tab<P: LayoutPort + ?Sized>(
         .map(|id| {
             app.layout_state()
                 .layouts()
-                .get(id)
+                .on_strip(id)
                 .map(|layout| layout.id)
                 .ok_or_else(|| ControlError::invalid_request(format!("no layout has id {}", id.0)))
         })
