@@ -1,5 +1,5 @@
 use super::*;
-use crate::layout_document::LayoutBook;
+use crate::layout_document::{LayoutBook, LayoutId};
 use crate::session::{LayoutSession, PaneFacts};
 
 fn with_layer(on: bool) -> WorkspaceRecipe {
@@ -170,7 +170,12 @@ fn a_pane_back_on_the_strip_layout_rejoins_its_tabs_edited_copy() {
     let away = session.select(1, levels, PaneFacts::default()).unwrap();
     session.commit_selection(away).unwrap();
     let back = session.select(1, public, PaneFacts::default()).unwrap();
-    assert_eq!((back.from(), back.to()), (levels, copy));
+    assert_eq!(back.to(), copy);
+    assert!(
+        session.book().is_private(back.from()),
+        "levels, as its own copy"
+    );
+    assert_eq!(session.book().origin_of(back.from()), levels);
     let committed = session.commit_selection(back).unwrap();
     session.finish_selection(committed).unwrap();
     assert_eq!(
@@ -235,20 +240,94 @@ fn a_tabs_copy_outlives_a_switch_away_and_leaves_with_the_tab() {
     assert!(session.book().get(three).is_none(), "tab 20 is gone");
 }
 
-/// Of two copies a recipe left one tab on one strip layout, the one no pane
-/// holds any more goes.
+fn switch(session: &mut LayoutSession, pane: u64, to: LayoutId) {
+    let selection = session.select(pane, to, PaneFacts::default()).unwrap();
+    let committed = session.commit_selection(selection).unwrap();
+    session.finish_selection(committed).unwrap();
+}
+
+/// Of two copies a recipe left one tab on one strip layout, the one a pane
+/// switched away from stays that pane's: back on the strip layout it finds its
+/// own set, never its twin's. It goes with the pane.
 #[test]
-fn a_parted_copy_goes_with_its_last_pane() {
+fn a_parted_copy_stays_its_panes_through_a_switch_away_and_back() {
     let mut session = two_tabs_on_one_layout();
-    let shared = session.layout(1);
+    let (shared, public) = (session.layout(1), session.book().active_id());
     let (none, one) = (Vec::new(), vec![ema()]);
     session.part_copies([(1, none.as_slice()), (2, one.as_slice())]);
     let parted = session.layout(2);
+    session.indicators_mut(parted).unwrap().push(ema());
     let levels = session.create(Some("levels")).unwrap();
-    let selection = session.select(2, levels, PaneFacts::default()).unwrap();
-    session.commit_selection(selection).unwrap();
-    assert!(session.book().get(parted).is_none());
+    switch(&mut session, 2, levels);
+    assert!(session.book().get(parted).is_some(), "kept for pane 2");
+    switch(&mut session, 2, public);
+    assert_eq!(session.layout(2), parted, "its own set");
+    assert_eq!(session.book().get(parted).unwrap().indicators, one);
+    let again = session.select(1, public, PaneFacts::default()).unwrap();
+    assert!(!again.changed(), "pane 1 stays on its own copy");
+    assert_eq!(session.layout(1), shared);
+
+    switch(&mut session, 2, levels);
+    session.remove_pane(2);
+    assert!(session.book().get(parted).is_none(), "gone with its pane");
     assert!(session.book().get(shared).is_some());
+}
+
+/// The restored-desk fallback: tab 30's pane seeded from tab 10's edited copy
+/// gets a copy of the strip layout, never tab 10's unsaved set.
+#[test]
+fn a_pane_seeded_from_another_tabs_edited_copy_never_shows_its_edits() {
+    let session = two_tabs_on_one_layout();
+    let theirs = session.layout(1);
+    let mut fresh = LayoutSession::new(session.book().clone());
+    fresh.indicators_mut(theirs).unwrap().push(ema());
+    fresh.register(1, Some(theirs));
+    fresh.seed(1, None, None);
+    fresh.register(4, None);
+    fresh.seed(4, None, Some(1));
+    assert_eq!(fresh.layout(4), theirs);
+    let owned = fresh.own_copies([(10, 1), (30, 4)]);
+    assert_eq!(owned.reshow, [4], "it showed tab 10's set");
+    let mine = fresh.layout(4);
+    assert!(fresh.book().get(mine).unwrap().indicators.is_empty());
+    assert_eq!(fresh.book().get(theirs).unwrap().indicators, [ema()]);
+}
+
+/// A pane registered with its tab lands on a copy at its first commit, even a
+/// commit that changes nothing, so no edit can reach the strip layout.
+#[test]
+fn a_fresh_pane_of_a_known_tab_never_commits_on_a_strip_layout() {
+    let mut session = LayoutSession::new(LayoutBook::starter(Vec::new()));
+    let public = session.book().active_id();
+    session.register_in(10, 1, None);
+    let selection = session.select(1, public, PaneFacts::default()).unwrap();
+    assert!(!selection.changed());
+    session.commit_selection(selection).unwrap();
+    let held = session.layout(1);
+    assert!(session.book().is_private(held));
+    assert_eq!(session.book().origin_of(held), public);
+}
+
+/// Deleting a strip layout moves the panes on its copies to the neighbour and
+/// takes the copies with it.
+#[test]
+fn deleting_a_strip_layout_moves_the_panes_on_its_copies() {
+    let mut session = two_tabs_on_one_layout();
+    let public = session.book().active_id();
+    let levels = session.create(Some("levels")).unwrap();
+    switch(&mut session, 3, levels);
+    let copy = session.layout(3);
+    assert_eq!(session.book().origin_of(copy), levels);
+    let facts = [1, 2, 3].map(|pane| (pane, PaneFacts::default()));
+    let plan = session.plan_delete(levels, facts.into_iter()).unwrap();
+    assert_eq!(plan.iter().map(|s| s.pane()).collect::<Vec<_>>(), [3]);
+    for selection in plan {
+        let committed = session.commit_selection(selection).unwrap();
+        session.finish_selection(committed).unwrap();
+    }
+    session.finish_delete(levels).unwrap();
+    assert_eq!(session.book().strip_layout(session.layout(3)), public);
+    assert!(session.book().get(copy).is_none(), "its copy went too");
 }
 
 /// The strip and the control plane name strip layouts; another tab's own copy

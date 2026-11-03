@@ -286,30 +286,27 @@ fn panes_on_one_strip_layout_end_on_copies_of_their_own() {
 }
 
 /// The trader's report: a new tab opened empty on Default. It opens with what a
-/// new tab has always opened with, and clean.
+/// new tab has always opened with, the strip layout's set, and clean; the
+/// unsaved edits of the tab it came from stay on that tab.
 #[test]
 fn a_new_tab_on_the_factory_default_keeps_its_charts_and_its_indicators() {
     let layouts = crate::scratch::ScratchFile::new("workspace-new-tab", "layouts.toml");
     let (mut app, _, _) = two_tabs(&layouts);
-    let ema = quantick_workspace::indicator_document::SavedIndicator {
-        kind: quantick_workspace::indicator_document::SavedKind::native("native.ema"),
-        hidden: false,
-        mouse_vertical_line: false,
-        inputs: Vec::new(),
-        plot_styles: Vec::new(),
-    };
     let focused = app
         .active_tab()
         .flow_pane
         .layout_id()
         .expect("a seeded pane");
-    app.runtime
-        .workspace
-        .layouts_mut()
-        .session_mut()
+    let strip = app.layout_state().layouts().strip_layout(focused);
+    let session = app.runtime.workspace.layouts_mut().session_mut();
+    session
+        .indicators_mut(strip)
+        .expect("on the strip")
+        .push(ema());
+    let copy = session
         .indicators_mut(focused)
-        .expect("the pane's own copy")
-        .push(ema);
+        .expect("the pane's own copy");
+    copy.extend([ema(), ema()]);
     app.config.feeds[0].default_layout = Some(crate::config::DeclaredLayout::TimeAndFlow);
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "THIRDUSDT".to_owned(), None);
@@ -333,7 +330,7 @@ fn a_new_tab_on_the_factory_default_keeps_its_charts_and_its_indicators() {
     assert_eq!(
         live.flow_indicators.len(),
         1,
-        "what the tab it came from shows"
+        "the strip layout's set, never the other tab's edits"
     );
 }
 
@@ -489,4 +486,73 @@ fn an_indicator_added_on_a_flow_pane_reaches_its_tabs_context_pane_and_no_other_
     let store = &app.runtime.workspace.book;
     assert!(store.tab_row(a).1, "the edit marks its tab");
     assert!(!store.tab_row(b).1, "and no other");
+}
+
+/// `layout.tab.switch` as a script calls it, answered as the wire answers.
+fn switch_by_script(app: &mut QuantickApp, input: serde_json::Value) -> serde_json::Value {
+    let mut access = crate::control::ControlAccess::new();
+    let actor = crate::app::control_host::tests::fake::FakeWindow::assistant();
+    crate::control::invoke_action(app, &mut access, &actor, "layout.tab.switch", input)
+        .expect("a strip layout")
+}
+
+/// A script's switch and an add at once, on a pane no frame has seen: the add
+/// lands on the tab's own copy, and the strip layout every tab reads is
+/// untouched.
+#[test]
+fn a_scripted_switch_then_an_add_on_a_fresh_pane_leaves_the_strip_layout_alone() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-fresh-pane-add", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let strip = app.layout_state().layouts().active().clone();
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "THIRDUSDT".to_owned(), None);
+    // As a desk that names no layout opens it.
+    app.active_tab_mut().flow_pane.request_opening_layout(None);
+    app.active_tab_mut().focus = PaneSide::Flow;
+    switch_by_script(&mut app, serde_json::json!({ "name": strip.name }));
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+
+    let held = app.active_tab().flow_pane.layout_id().expect("a layout");
+    let book = app.layout_state().layouts();
+    assert!(book.is_private(held), "the tab's own copy");
+    let added = book.get(held).expect("held").indicators.len();
+    assert_eq!(added, strip.indicators.len() + 1, "the add landed there");
+    let unchanged = |app: &QuantickApp| {
+        let book = app.layout_state().layouts();
+        book.get(strip.id).expect("on the strip").indicators == strip.indicators
+    };
+    assert!(unchanged(&app), "the strip layout is untouched");
+    frames(&mut app, 2);
+    assert!(unchanged(&app), "and stays so");
+}
+
+/// The strip's snapshot counts what the focused pane shows, its tab's copy, so
+/// the chart and the snapshot agree.
+#[test]
+fn the_layout_snapshot_counts_what_the_focused_pane_shows() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-snapshot-count", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.active_id();
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.layout_adapter()
+        .show_pane_indicators(tab, PaneSide::Flow, &[ema()]);
+    let strip = app.layout_state().focused_pane_layout();
+    let book = app.layout_state().layouts();
+    let held = app.active_tab().flow_pane.layout_id().expect("a layout");
+    let shown = book.get(held).expect("held").indicators.len();
+    assert_eq!(shown, 1, "the chart shows the tab's copy");
+    assert!(
+        book.get(strip).expect("on the strip").indicators.is_empty(),
+        "the edit is the tab's alone"
+    );
+
+    let answer = switch_by_script(&mut app, serde_json::json!({}));
+    let rows: Vec<quantick_control_schema::layout::LayoutTabSnapshot> =
+        serde_json::from_value(answer["layouts"].clone()).expect("the strip rows");
+    let row = rows
+        .iter()
+        .find(|row| row.layout_id.get() == strip.0)
+        .expect("its row");
+    assert!(row.active);
+    assert_eq!(row.indicator_count.get(), shown as u64);
 }

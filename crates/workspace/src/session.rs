@@ -72,6 +72,8 @@ pub struct Selection {
 pub struct CommittedSelection {
     selection: Selection,
     generation: u64,
+    /// What the pane holds now: `to`, or its tab's copy of it.
+    landed: LayoutId,
 }
 impl Selection {
     #[must_use]
@@ -117,11 +119,15 @@ pub struct LayoutSession {
     book: LayoutBook,
     panes: BTreeMap<u64, Rc<Cell<Membership>>>,
     next_generation: u64,
-    /// The tab each pane stood in at the last [`Self::own_copies`].
+    /// The tab each pane stands in: set at [`Self::register_in`], rebuilt by
+    /// [`Self::own_copies`].
     tab_of: BTreeMap<u64, u64>,
     /// The tab each private copy belongs to. Not saved: a desk read back
     /// hands each copy to the tab whose pane holds it.
     owner: BTreeMap<LayoutId, u64>,
+    /// `(pane, strip layout)` to the copy of it the pane last left: a copy a
+    /// recipe parted for that pane, kept so a switch back finds its set.
+    kept: BTreeMap<(u64, LayoutId), LayoutId>,
 }
 impl LayoutSession {
     #[must_use]
@@ -132,6 +138,7 @@ impl LayoutSession {
             next_generation: 0,
             tab_of: BTreeMap::new(),
             owner: BTreeMap::new(),
+            kept: BTreeMap::new(),
         }
     }
     #[must_use]
@@ -148,6 +155,23 @@ impl LayoutSession {
     pub fn shows(&self, view: &LayoutView, layout: LayoutId) -> bool {
         view.layout() == Some(layout)
     }
+    /// Whether `view` shows the strip layout `origin`, itself or a copy of it.
+    #[must_use]
+    pub fn shows_origin(&self, view: &LayoutView, origin: LayoutId) -> bool {
+        view.layout()
+            .is_some_and(|id| self.book.origin_of(id) == origin)
+    }
+    /// How many indicators `pane` shows, or would show, on strip layout `origin`.
+    #[must_use]
+    pub fn shown_count(&self, pane: u64, origin: LayoutId) -> usize {
+        let held = self.panes.get(&pane).and_then(|state| state.get().layout);
+        let shown = held
+            .filter(|held| self.book.is_private(*held) && self.book.origin_of(*held) == origin)
+            .unwrap_or_else(|| self.landing(pane, origin));
+        self.book
+            .get(shown)
+            .map_or(0, |layout| layout.indicators.len())
+    }
     pub fn matching<'a, T: 'a>(
         &'a self,
         layout: LayoutId,
@@ -161,6 +185,11 @@ impl LayoutSession {
         id: LayoutId,
     ) -> Option<&mut Vec<crate::indicator_document::SavedIndicator>> {
         self.book.get_mut(id).map(|layout| &mut layout.indicators)
+    }
+    /// [`Self::register`] a pane of `tab`, so a selection knows its tab at once.
+    pub fn register_in(&mut self, tab: u64, pane: u64, named: Option<LayoutId>) -> LayoutView {
+        self.tab_of.insert(pane, tab);
+        self.register(pane, named)
     }
     /// Register once; repeated registration returns the same read-only value.
     pub fn register(&mut self, pane: u64, named: Option<LayoutId>) -> LayoutView {
@@ -193,6 +222,15 @@ impl LayoutSession {
                 self.drop_if_unheld(held);
             }
         }
+        let left: Vec<LayoutId> = self
+            .kept
+            .iter()
+            .filter_map(|((owner, _), copy)| (*owner == pane).then_some(*copy))
+            .collect();
+        self.kept.retain(|(owner, _), _| *owner != pane);
+        for copy in left {
+            self.drop_if_unheld(copy);
+        }
         // The tab's last pane: its copies go with it.
         if let Some(tab) = self.tab_of.remove(&pane)
             && !self.tab_of.values().any(|other| *other == tab)
@@ -214,9 +252,22 @@ impl LayoutSession {
         self.copies_of(tab)
             .find(|copy| self.book.origin_of(*copy) == origin)
     }
+    /// The layout `pane` lands on for the strip layout `to`: the copy of it the
+    /// pane holds or last left, else its tab's, else `to` itself.
+    fn landing(&self, pane: u64, to: LayoutId) -> LayoutId {
+        let Some(tab) = self.tab_of.get(&pane).copied() else {
+            return to;
+        };
+        let held = self.panes.get(&pane).and_then(|state| state.get().layout);
+        let own = |copy: &LayoutId| self.owner.get(copy) == Some(&tab);
+        held.filter(|held| own(held) && self.book.origin_of(*held) == to)
+            .or_else(|| self.kept.get(&(pane, to)).copied().filter(own))
+            .or_else(|| self.tab_copy(tab, to))
+            .unwrap_or(to)
+    }
     /// A private copy no pane holds leaves the book, unless it is the only
-    /// copy of its strip layout that a standing tab owns: that one keeps the
-    /// tab's set while the tab shows another layout, as a strip layout did.
+    /// copy of its strip layout that a standing tab owns, or the one a pane of
+    /// that tab left: those keep their set while the tab shows another layout.
     fn drop_if_unheld(&mut self, layout: LayoutId) {
         let held = self
             .panes
@@ -231,12 +282,17 @@ impl LayoutSession {
             let twin = self
                 .copies_of(tab)
                 .any(|copy| copy != layout && self.book.origin_of(copy) == origin);
-            if standing && !twin {
+            let left = self
+                .kept
+                .iter()
+                .any(|((pane, _), copy)| *copy == layout && self.panes.contains_key(pane));
+            if standing && (!twin || left) {
                 return;
             }
         }
         self.book.remove_private(layout);
         self.owner.remove(&layout);
+        self.kept.retain(|_, copy| *copy != layout);
     }
     /// Drop every private copy that no pane holds and `named` does not name: a
     /// copy a desk read from disk no longer refers to. Answers whether any went.
@@ -246,6 +302,7 @@ impl LayoutSession {
         let pruned = self.book.retain_private(|id| keep.contains(&id));
         let book = &self.book;
         self.owner.retain(|copy, _| book.is_private(*copy));
+        self.kept.retain(|_, copy| book.is_private(*copy));
         pruned
     }
     /// The layout a seeded pane holds.
@@ -303,7 +360,9 @@ impl LayoutSession {
                 continue;
             }
             let found = self.tab_copy(tab, self.book.origin_of(layout));
-            let Some(copy) = found.or_else(|| self.copy_for(tab, layout)) else {
+            // Another tab's copy holds that tab's edits: cut from the strip.
+            let source = self.book.strip_layout(layout);
+            let Some(copy) = found.or_else(|| self.copy_for(tab, source)) else {
                 continue;
             };
             let set = |id: LayoutId| self.book.get(id).map(|layout| &layout.indicators);
@@ -364,6 +423,7 @@ impl LayoutSession {
         }
         self.tab_of.clear();
         self.owner.clear();
+        self.kept.clear();
         self.book = book;
     }
     #[must_use]
@@ -415,17 +475,14 @@ impl LayoutSession {
     ) -> Result<Selection, LayoutError> {
         let state = self.panes.get(&pane).ok_or(LayoutError::Unknown)?.get();
         self.book.get(to).ok_or(LayoutError::Unknown)?;
-        if self.book.is_private(to) && state.layout != Some(to) {
+        let tab = self.tab_of.get(&pane);
+        if self.book.is_private(to) && state.layout != Some(to) && self.owner.get(&to) != tab {
             // A copy is named by no strip row; another tab's would carry this
             // pane's edits to that tab.
             return Err(LayoutError::Unknown);
         }
         // A strip layout the pane's tab holds a copy of lands on that copy.
-        let tab_copy = self
-            .tab_of
-            .get(&pane)
-            .and_then(|tab| self.tab_copy(*tab, to));
-        let to = tab_copy.unwrap_or(to);
+        let to = self.landing(pane, to);
         let from = self.layout(pane);
         if from != to
             && let Some(error) = facts.refusal()
@@ -454,23 +511,40 @@ impl LayoutSession {
         {
             return Err(LayoutError::Unknown);
         }
+        let tab = self.tab_of.get(&selection.pane).copied();
+        // A pane of a known tab never holds a strip layout another tab reads.
+        let landed = match tab {
+            Some(tab) if !self.book.is_private(selection.to) => {
+                self.copy_for(tab, selection.to).unwrap_or(selection.to)
+            }
+            _ => selection.to,
+        };
+        let Some(state) = self.panes.get(&selection.pane) else {
+            return Err(LayoutError::Unknown);
+        };
         self.next_generation = self
             .next_generation
             .checked_add(1)
             .expect("layout generation exhausted");
         value.generation = self.next_generation;
-        value.layout = Some(selection.to);
+        value.layout = Some(landed);
         if selection.changed() {
             value.seeded = true;
         }
         state.set(value);
         let generation = value.generation;
         if selection.changed() {
-            self.drop_if_unheld(selection.from);
+            let from = selection.from;
+            if tab.is_some() && tab == self.owner.get(&from).copied() {
+                self.kept
+                    .insert((selection.pane, self.book.origin_of(from)), from);
+            }
+            self.drop_if_unheld(from);
         }
         Ok(CommittedSelection {
             selection,
             generation,
+            landed,
         })
     }
     /// Last-pick default changes only after incoming indicators are restored.
@@ -481,7 +555,7 @@ impl LayoutSession {
             .get(&selection.pane)
             .ok_or(LayoutError::Unknown)?
             .get();
-        if state.generation != committed.generation || state.layout != Some(selection.to) {
+        if state.generation != committed.generation || state.layout != Some(committed.landed) {
             return Err(LayoutError::Unknown);
         }
         self.book.get(selection.to).ok_or(LayoutError::Unknown)?;
@@ -540,12 +614,14 @@ impl LayoutSession {
             .id;
         let mut selections = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
+        let on = |state: &Rc<Cell<Membership>>| {
+            state
+                .get()
+                .layout
+                .is_some_and(|layout| self.book.origin_of(layout) == id)
+        };
         for (pane, facts) in ordered_facts {
-            if self
-                .panes
-                .get(&pane)
-                .is_some_and(|state| state.get().layout == Some(id))
-            {
+            if self.panes.get(&pane).is_some_and(on) {
                 if !seen.insert(pane) {
                     return Err(LayoutError::Unknown);
                 }
@@ -555,26 +631,36 @@ impl LayoutSession {
                 selections.push(self.select(pane, to, facts)?);
             }
         }
-        if seen.len()
-            != self
-                .panes
-                .values()
-                .filter(|state| state.get().layout == Some(id))
-                .count()
-        {
+        if seen.len() != self.panes.values().filter(|state| on(state)).count() {
             return Err(LayoutError::Unknown);
         }
         Ok(selections)
     }
+    /// Delete strip layout `id` once no pane shows it, and the copies of it
+    /// the tabs own with it.
     pub fn finish_delete(&mut self, id: LayoutId) -> Result<(), LayoutError> {
-        if self
-            .panes
-            .values()
-            .any(|state| state.get().layout == Some(id))
-        {
+        let book = &self.book;
+        if self.panes.values().any(|state| {
+            state
+                .get()
+                .layout
+                .is_some_and(|layout| book.origin_of(layout) == id)
+        }) {
             return Err(LayoutError::Unknown);
         }
-        self.book.delete(id)
+        self.book.delete(id)?;
+        let copies: Vec<LayoutId> = self
+            .owner
+            .keys()
+            .copied()
+            .filter(|copy| self.book.origin_of(*copy) == id)
+            .collect();
+        for copy in copies {
+            self.book.remove_private(copy);
+            self.owner.remove(&copy);
+            self.kept.retain(|_, kept| *kept != copy);
+        }
+        Ok(())
     }
 }
 

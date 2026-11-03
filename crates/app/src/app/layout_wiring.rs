@@ -112,6 +112,11 @@ impl<'a> LayoutRead<'a> {
         let tab = &self.tabs[self.active];
         self.pane_layout(tab_id, tab.focused_side())
     }
+    /// The indicators the focused pane shows, or would show, on strip layout `id`.
+    pub(crate) fn shown_count(&self, id: LayoutId) -> usize {
+        let pane = self.tabs[self.active].focused_pane().id;
+        self.session.shown_count(pane, id)
+    }
 }
 
 /// Layout shell ports. No application root or unrelated workspace/surface state is reachable.
@@ -283,7 +288,7 @@ impl LayoutAdapter<'_> {
     fn register_layout_pane(&mut self, tab: u64, side: PaneSide) -> Result<u64, LayoutError> {
         let pane = self.pane_at(tab, side).ok_or(LayoutError::Unknown)?;
         let (id, named) = (pane.id, pane.layout_id());
-        let view = self.store.session_mut().register(id, named);
+        let view = self.store.session_mut().register_in(tab, id, named);
         if let Some(pane) = self.pane_mut_at(tab, side) {
             pane.layout.view = view;
             pane.layout.opening = None;
@@ -298,15 +303,14 @@ impl LayoutAdapter<'_> {
         (tab_id, tab.focused_side())
     }
 
-    /// How many panes show `layout` — the same question [`Self::panes_on`]
-    /// answers, for the callers that want only the count and would otherwise
-    /// heap-allocate a list per frame to call `.len()` on it.
-    fn panes_on_count(&self, layout: LayoutId) -> usize {
+    /// How many panes show strip layout `layout`, on it or on a copy: the
+    /// panes its delete moves. Counted, not collected: read every frame.
+    pub(in crate::app) fn panes_on_count(&self, layout: LayoutId) -> usize {
         let session = self.store.session();
         self.tabs
             .iter()
             .flat_map(|tab| tab.panes())
-            .filter(|(pane, _)| session.shows(&pane.layout.view, layout))
+            .filter(|(pane, _)| session.shows_origin(&pane.layout.view, layout))
             .count()
     }
 

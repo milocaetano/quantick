@@ -47,16 +47,15 @@ pub(crate) fn layout_tabs<P: LayoutPort + ?Sized>(app: &P) -> Vec<LayoutTabSnaps
     layout_tabs_marking(app, app.layout_state().focused_pane_layout())
 }
 
-/// The same reading with `active` on a layout the caller names.
-///
-/// A call that addressed *another* pane answers about that pane: reporting
-/// the focused pane's layout to a client that just switched a background one
-/// tells it its call did not land, when it did.
+/// The same reading with `active` on a layout the caller names: a call that
+/// addressed another pane answers about it. Counts are what the focused pane
+/// shows, its tab's copy, as the chart does.
 fn layout_tabs_marking<P: LayoutPort + ?Sized>(
     app: &P,
     active: crate::layouts::LayoutId,
 ) -> Vec<LayoutTabSnapshot> {
-    app.layout_state()
+    let state = app.layout_state();
+    state
         .layouts()
         .layouts()
         .iter()
@@ -64,7 +63,7 @@ fn layout_tabs_marking<P: LayoutPort + ?Sized>(
             layout_id: WireU64::new(layout.id.0),
             name: layout.name.clone(),
             active: layout.id == active,
-            indicator_count: WireU64::new(layout.indicators.len() as u64),
+            indicator_count: WireU64::new(state.shown_count(layout.id) as u64),
         })
         .collect()
 }
@@ -188,12 +187,9 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         ),
         tab_rename,
     )?;
-    // `layout.tab.delete` is deliberately not registered. Deleting a layout
-    // destroys its indicator set and every drawing kept under it, and no
-    // effect policy in the control contract allows a destructive capability
-    // yet (`contract.rs`, `allows_destructive: false` on all three). The
-    // trader deletes from the strip or the window menu; the operator gets the
-    // call the day the contract grows a confirmed-destructive effect.
+    // `layout.tab.delete` is deliberately not registered: it destroys an
+    // indicator set, and no effect policy allows a destructive capability yet
+    // (`contract.rs`, `allows_destructive: false`); the strip and menu delete.
     v2::register(registry)
 }
 
