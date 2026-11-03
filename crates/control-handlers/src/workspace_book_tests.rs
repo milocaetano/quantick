@@ -322,6 +322,15 @@ fn bad_names_are_refused_with_a_stable_code_and_the_reason() {
     let value = json!({ "tab_id": "9", "name": "Default" });
     let stranger = set(&mut host, &mut access, &actor, &value).unwrap_err();
     assert_eq!(stranger.code.as_str(), codes::INVALID_REQUEST);
+    assert_eq!(detail(&stranger), "workspace.unknown_tab");
+    assert_eq!(stranger.message, "no open tab has id 9");
+    let value = json!({ "tab_id": "9" });
+    let stranger = save_to(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&stranger), "workspace.unknown_tab");
+    let gone = delete(&mut host, &mut access, &actor, &json!({ "name": "Nope" })).unwrap_err();
+    assert_eq!(gone.code.as_str(), codes::INVALID_REQUEST);
+    assert_eq!(detail(&gone), "workspace.unknown");
+    assert_eq!(gone.message, "no workspace is called Nope");
     assert_eq!(host.writes, 0);
     assert!(access.events.is_empty());
 }
@@ -339,7 +348,7 @@ fn default_cannot_be_deleted_or_renamed() {
 }
 
 #[test]
-fn delete_moves_tabs_to_default_keeps_edits_and_a_repeat_is_no_change() {
+fn delete_moves_tabs_to_default_keeps_edits_and_a_repeat_is_refused() {
     let (mut host, mut access, actor) = parts();
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let value = json!({ "tab_id": "2", "name": "Scalp" });
@@ -354,8 +363,10 @@ fn delete_moves_tabs_to_default_keeps_edits_and_a_repeat_is_no_change() {
     assert_eq!(host.shown, [1], "the tab with edits stays as it is");
     let edited = host.book.tab_state(2).unwrap();
     assert_eq!((edited.workspace, edited.modified), ("Default", true));
-    let again = delete(&mut host, &mut access, &actor, &value).unwrap();
-    assert_eq!(again["changed"], false);
+    let journaled = access.events.len();
+    let again = delete(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&again), "workspace.unknown");
+    assert_eq!(access.events.len(), journaled, "a refusal journals nothing");
 }
 
 #[test]

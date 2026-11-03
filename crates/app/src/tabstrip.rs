@@ -7,7 +7,8 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_session::tab_chip::{
-    ChipMeasure, TabButtonGesture, TabButtonRelease, fit_chip, shortened_name,
+    ChipMeasure, CloseSlot, TabButtonGesture, TabButtonRelease, close_slot, fit_chip,
+    shortened_name,
 };
 use quantick_workspace::arrangement::strip::{
     StripSurface, TabFeedDot, chip_parts, market_slots, visible_tabs,
@@ -215,12 +216,12 @@ pub(crate) fn draw(
                     ui.next_widget_position(),
                     egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
                 );
-                let show_close =
-                    selected || response.hovered() || ui.rect_contains_pointer(close_target);
+                let hovered = response.hovered() || ui.rect_contains_pointer(close_target);
+                let slot = close_slot(selected, hovered, chip.modified);
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
-                            show_close,
+                            slot == CloseSlot::Close,
                             egui::Button::new(egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX))
                                 .frame(false)
                                 .min_size(egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT)),
@@ -234,6 +235,11 @@ pub(crate) fn draw(
                         "The last tab stays open — a window with no market has nothing to show",
                     )
                 };
+                if slot == CloseSlot::Mark {
+                    let center = close.rect.center();
+                    ui.painter()
+                        .circle_filled(center, CHIP_DOT_RADIUS_PX, theme::AMBER);
+                }
                 drawn.close.push(close.rect);
                 let chip_bounds = response.rect.union(close.rect).intersect(ui.clip_rect());
                 if chip_bounds.is_positive() {
@@ -299,9 +305,9 @@ pub(crate) fn draw(
     action
 }
 
-/// The dot, the symbol in its heavier strike, the amber mark on an edited tab and
-/// the workspace: a button on the active chip, grey words on any other. Answers
-/// where the active chip's button is, when it kept any of its face.
+/// The dot, the symbol in its heavier strike and the workspace: a button on the
+/// active chip, `Scalp • ⌄` with the amber mark while edited; grey words on any
+/// other. Answers where the active chip's button is, when it kept any of its face.
 fn paint_chip_face(
     ui: &egui::Ui,
     chip: &TabChip<'_>,
@@ -342,9 +348,6 @@ fn paint_chip_face(
     let mark = chip
         .modified
         .then(|| laid(EDITED_MARK.to_owned(), SUFFIX_TEXT_PX, theme::AMBER));
-    let mark_width = mark
-        .as_ref()
-        .map_or(0.0, |galley| galley.size().x + CHIP_DOT_GAP_PX);
     let arrow = selected.then(|| {
         laid(
             icons::CARET_DOWN.to_owned(),
@@ -352,9 +355,11 @@ fn paint_chip_face(
             theme::TEXT_MUTED,
         )
     });
-    let arrow_width = arrow
-        .as_ref()
-        .map_or(0.0, |galley| galley.size().x + WORKSPACE_ARROW_GAP_PT);
+    let gapped = |galley: &Option<std::sync::Arc<egui::Galley>>| {
+        galley
+            .as_ref()
+            .map_or(0.0, |galley| galley.size().x + WORKSPACE_ARROW_GAP_PT)
+    };
     let name_ink = theme::TEXT_MUTED;
     let name_width = |letters: usize| {
         let cut = shortened_name(&chip.workspace, letters);
@@ -363,18 +368,14 @@ fn paint_chip_face(
     let fit = fit_chip(&ChipMeasure {
         available: body.width(),
         symbol: text_x - body.left() + symbol_width + CHIP_DOT_GAP_PX,
-        mark: mark_width,
-        arrow: arrow_width,
+        mark: gapped(&mark),
+        active: selected,
+        arrow: gapped(&arrow),
         close: 0.0,
         name_letters: chip.workspace.chars().count(),
         name_width: &name_width,
     });
     let mut x = text_x + symbol_width + CHIP_DOT_GAP_PX;
-    if let Some(galley) = mark {
-        let at = egui::pos2(x, center_y - galley.size().y / 2.0);
-        x += galley.size().x + CHIP_DOT_GAP_PX;
-        painter.galley(at, galley, theme::AMBER);
-    }
     let name = (fit.name_letters > 0).then(|| {
         laid(
             shortened_name(&chip.workspace, fit.name_letters),
@@ -382,11 +383,16 @@ fn paint_chip_face(
             name_ink,
         )
     });
-    let arrow = arrow.filter(|_| fit.arrow);
-    let width = name.as_ref().map_or(0.0, |galley| galley.size().x)
-        + arrow
-            .as_ref()
-            .map_or(0.0, |galley| galley.size().x + WORKSPACE_ARROW_GAP_PT);
+    // Name, mark, arrow: `Scalp • ⌄`, one button on the active chip.
+    let pieces: Vec<_> = [name, mark.filter(|_| fit.mark), arrow.filter(|_| fit.arrow)]
+        .into_iter()
+        .flatten()
+        .collect();
+    let width = pieces
+        .iter()
+        .map(|galley| galley.size().x + WORKSPACE_ARROW_GAP_PT)
+        .sum::<f32>()
+        - WORKSPACE_ARROW_GAP_PT;
     let button = (selected && width > 0.0).then(|| {
         egui::Rect::from_center_size(
             egui::pos2(x + width / 2.0, center_y),
@@ -399,13 +405,9 @@ fn paint_chip_face(
     if let Some(rect) = button.filter(|rect| ui.rect_contains_pointer(*rect)) {
         painter.rect_filled(rect, WORKSPACE_BUTTON_ROUNDING_PT, theme::BARE_HOVER);
     }
-    if let Some(galley) = name {
+    for galley in pieces {
         let at = egui::pos2(x, center_y - galley.size().y / 2.0);
         x += galley.size().x + WORKSPACE_ARROW_GAP_PT;
-        painter.galley(at, galley, name_ink);
-    }
-    if let Some(galley) = arrow {
-        let at = egui::pos2(x, center_y - galley.size().y / 2.0);
         painter.galley(at, galley, theme::TEXT_MUTED);
     }
     button

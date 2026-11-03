@@ -9,7 +9,7 @@
   "description": "What a delete did.",
   "properties": {
     "changed": {
-      "description": "`false` when no workspace had that name.",
+      "description": "Always `true`: a name no workspace has is refused with `workspace.unknown`.",
       "type": "boolean"
     },
     "kept_edits": {

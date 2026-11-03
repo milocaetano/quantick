@@ -205,7 +205,11 @@ fn delete_moves_tabs_to_default_and_edits_survive_as_default_marked() {
     assert_eq!(book.tab_copy(1).unwrap().layout, DeclaredLayout::Flow);
     assert_eq!(state(&book, 2), ("Default".to_owned(), true));
     assert_eq!(book.tab_copy(2).unwrap().layout, DeclaredLayout::Time);
-    assert!(!book.delete("Scalp").unwrap().changed);
+    assert_eq!(
+        book.delete("Scalp").unwrap_err().code(),
+        "workspace.unknown",
+        "a repeat finds no such workspace"
+    );
     assert_eq!(
         book.delete(DEFAULT_WORKSPACE),
         Err(WorkspaceRefusal::DefaultProtected)

@@ -36,7 +36,7 @@ use serde_json::{Value, json};
 
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
-use crate::tabs::{TabDirectory, tab_index};
+use crate::tabs::TabDirectory;
 
 fn unavailable() -> ControlError {
     ControlError::invalid_request("the workspaces are unavailable")
@@ -201,14 +201,21 @@ fn book<H: WorkspaceBookHost + ?Sized>(app: &mut H) -> Result<&mut WorkspaceBook
     app.workspace_book().ok_or_else(unavailable)
 }
 
-/// The tab a call names, on the book. A tab the book has not adopted yet is
+/// The tab a call names, on the book. An id no open tab has is refused with
+/// `workspace.unknown_tab`. A tab the book has not adopted yet is
 /// refused before anything changes: its panes are still being built, and a
 /// workspace put on it now would be undone when the desk's word lands.
 fn tab_on_book<H: WorkspaceBookHost + TabDirectory + ?Sized>(
     app: &mut H,
     tab_id: Option<WireU64>,
 ) -> Result<u64, ControlError> {
-    let tab = app.tab_id_at(tab_index(app, tab_id)?);
+    let index = match tab_id {
+        None => app.active_tab_index(),
+        Some(id) => app
+            .tab_position(id.get())
+            .ok_or_else(|| refused(&WorkspaceRefusal::UnknownTab(id.get())))?,
+    };
+    let tab = app.tab_id_at(index);
     if book(app)?.tab_state(tab).is_some() {
         return Ok(tab);
     }
@@ -343,7 +350,7 @@ pub fn rename_workspace<H: WorkspaceBookHost + ?Sized>(
 /// Delete a workspace, moving its tabs to `Default` and redrawing the clean ones.
 ///
 /// # Errors
-/// `Default`, no book, or the write failed.
+/// `Default`, no workspace has the name, no book, or the write failed.
 pub fn delete_workspace<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     name: &str,

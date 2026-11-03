@@ -1,11 +1,13 @@
-//! The tab chip's two pure decisions: the workspace button's gesture, and what
-//! fits on a chip. The strip paints; nothing here knows a pixel it did not get.
+//! The tab chip's pure decisions: the workspace button's gesture, what fits on
+//! a chip and what its × slot shows. The strip paints; nothing here knows a
+//! pixel it did not get.
 //!
-//! An active chip reads `SYMBOL • Scalp ⌄ ×`. An inactive one shows the
-//! workspace in grey where the venue was. The arrow goes first when narrow, the
-//! name then shortens to [`MIN_NAME_LETTERS`] and is dropped below that. The
-//! symbol never shortens, the mark never leaves, and the gap before × is never
-//! given up.
+//! An active chip reads `SYMBOL Scalp • ⌄ ×`, the amber mark after the name
+//! while the tab holds edits. An inactive one shows the workspace in grey where
+//! the venue was, and wears the mark in the × slot until the pointer brings
+//! the × back. The arrow goes first when narrow, the name then shortens to
+//! [`MIN_NAME_LETTERS`] and is dropped below that. The symbol never shortens,
+//! the mark never leaves, and the gap before × is never given up.
 
 /// How far the pointer may travel from the press before the gesture cancels.
 pub const BUTTON_CANCEL_TRAVEL_PT: f32 = 4.0;
@@ -75,8 +77,11 @@ pub struct ChipMeasure<'a> {
     pub available: f32,
     /// The symbol, which never shortens.
     pub symbol: f32,
-    /// The amber mark while the tab holds edits, zero otherwise.
+    /// The amber mark and its gap while the tab holds edits, zero otherwise.
     pub mark: f32,
+    /// Whether this is the active chip. An inactive one wears the mark in the
+    /// × slot, so the mark costs its body nothing.
+    pub active: bool,
     /// The arrow on the active chip, zero on an inactive one.
     pub arrow: f32,
     /// The close button.
@@ -92,6 +97,8 @@ pub struct ChipMeasure<'a> {
 pub struct ChipFit {
     /// How many letters of the name to draw; zero drops it.
     pub name_letters: usize,
+    /// Whether the mark is drawn after the name.
+    pub mark: bool,
     /// Whether the arrow is drawn.
     pub arrow: bool,
     /// The chip's width. Past `available` only when symbol, mark, gap and ×
@@ -110,10 +117,35 @@ pub fn shortened_name(name: &str, letters: usize) -> String {
     cut
 }
 
+/// What the slot right of a chip shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseSlot {
+    /// The close button.
+    Close,
+    /// The amber mark of an inactive tab holding edits.
+    Mark,
+    /// Nothing, the target still reserved.
+    Empty,
+}
+
+/// The × on the active chip or under the pointer; elsewhere the mark of a tab
+/// holding edits, or nothing.
+#[must_use]
+pub fn close_slot(active: bool, hovered: bool, modified: bool) -> CloseSlot {
+    if active || hovered {
+        CloseSlot::Close
+    } else if modified {
+        CloseSlot::Mark
+    } else {
+        CloseSlot::Empty
+    }
+}
+
 /// Fit one chip.
 #[must_use]
 pub fn fit_chip(measure: &ChipMeasure<'_>) -> ChipFit {
-    let fixed = measure.symbol + measure.mark + CLOSE_GAP_PT + measure.close;
+    let mark = if measure.active { measure.mark } else { 0.0 };
+    let fixed = measure.symbol + mark + CLOSE_GAP_PT + measure.close;
     let name = |letters: usize| {
         if letters == 0 {
             0.0
@@ -125,6 +157,7 @@ pub fn fit_chip(measure: &ChipMeasure<'_>) -> ChipFit {
     if fixed + whole + measure.arrow <= measure.available {
         return ChipFit {
             name_letters: measure.name_letters,
+            mark: mark > 0.0,
             arrow: measure.arrow > 0.0,
             width: fixed + whole + measure.arrow,
         };
@@ -137,6 +170,7 @@ pub fn fit_chip(measure: &ChipMeasure<'_>) -> ChipFit {
         .unwrap_or(0);
     ChipFit {
         name_letters: letters,
+        mark: mark > 0.0,
         arrow: false,
         width: fixed + name(letters),
     }
@@ -192,6 +226,7 @@ mod tests {
             available,
             symbol: 40.0,
             mark: 0.0,
+            active: true,
             arrow,
             close: 10.0,
             name_letters: letters,
@@ -242,12 +277,49 @@ mod tests {
             available: 1.0,
             symbol: 40.0,
             mark: 6.0,
+            active: true,
             arrow: 12.0,
             close: 10.0,
             name_letters: 8,
             name_width: &width,
         });
-        assert_eq!((fitted.name_letters, fitted.arrow), (0, false));
+        assert_eq!(
+            (fitted.name_letters, fitted.mark, fitted.arrow),
+            (0, true, false)
+        );
         assert_eq!(fitted.width, 40.0 + 6.0 + CLOSE_GAP_PT + 10.0);
+    }
+
+    #[test]
+    fn the_active_mark_follows_the_name_and_an_inactive_one_costs_the_body_nothing() {
+        let width = |n: usize| n as f32 * LETTER;
+        let measure = |active: bool, available: f32| {
+            fit_chip(&ChipMeasure {
+                available,
+                symbol: 40.0,
+                mark: 6.0,
+                active,
+                arrow: 0.0,
+                close: 10.0,
+                name_letters: 5,
+                name_width: &width,
+            })
+        };
+        let whole = FIXED + 5.0 * LETTER;
+        let active = measure(true, whole + 6.0);
+        assert_eq!((active.name_letters, active.mark), (5, true));
+        assert_eq!(active.width, whole + 6.0);
+        assert_eq!(measure(true, whole).name_letters, 4, "the mark takes room");
+        let inactive = measure(false, whole);
+        assert_eq!((inactive.name_letters, inactive.mark), (5, false));
+        assert_eq!(inactive.width, whole);
+    }
+
+    #[test]
+    fn the_close_slot_shows_the_mark_only_on_a_resting_inactive_edited_tab() {
+        assert_eq!(close_slot(false, false, true), CloseSlot::Mark);
+        assert_eq!(close_slot(false, true, true), CloseSlot::Close, "hover");
+        assert_eq!(close_slot(true, false, true), CloseSlot::Close, "active");
+        assert_eq!(close_slot(false, false, false), CloseSlot::Empty);
     }
 }

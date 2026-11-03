@@ -467,8 +467,13 @@ pub fn deleted_toast(workspace: &str, adopted: &[String], kept_edits: &[String])
         toast.push_str(&format!("; {} moved to Default", named(adopted)));
     }
     if !kept_edits.is_empty() {
+        let verb = if kept_edits.len() == 1 {
+            "keeps its"
+        } else {
+            "keep their"
+        };
         toast.push_str(&format!(
-            "; {} keep their edits as Default \u{2022}",
+            "; {} {verb} edits as Default \u{2022}",
             named(kept_edits)
         ));
     }
@@ -621,7 +626,12 @@ mod tests {
         let (moved, kept) = (["BTCUSDT".to_owned()], ["WDOV26".to_owned()]);
         assert_eq!(
             deleted_toast("Scalp", &moved, &kept),
-            "Deleted Scalp; BTCUSDT moved to Default; WDOV26 keep their edits as Default \u{2022}"
+            "Deleted Scalp; BTCUSDT moved to Default; WDOV26 keeps its edits as Default \u{2022}"
+        );
+        let kept = ["WINV26".to_owned(), "WDOV26".to_owned()];
+        assert_eq!(
+            deleted_toast("Scalp", &[], &kept),
+            "Deleted Scalp; WINV26, WDOV26 keep their edits as Default \u{2022}"
         );
         assert_eq!(deleted_toast("Scalp", &[], &[]), "Deleted Scalp");
     }
