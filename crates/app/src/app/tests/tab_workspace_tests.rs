@@ -556,3 +556,58 @@ fn the_layout_snapshot_counts_what_the_focused_pane_shows() {
     assert!(row.active);
     assert_eq!(row.indicator_count.get(), shown as u64);
 }
+
+/// The switch and delete rows in the window's journal, as kind and payload.
+fn workspace_journal(app: &QuantickApp) -> Vec<(String, serde_json::Value)> {
+    use quantick_control_schema::workspace_book as kinds;
+    let ours = [
+        kinds::TAB_WORKSPACE_SET_EVENT_KIND,
+        kinds::WORKSPACE_DELETED_EVENT_KIND,
+    ];
+    let access = app.control.control_access.as_ref().expect("control access");
+    let read = access.journal().read(1, 256, 1 << 20);
+    read.events
+        .iter()
+        .filter(|event| ours.contains(&event.kind.as_str()))
+        .map(|event| (event.kind.as_str().to_owned(), event.payload.clone()))
+        .collect()
+}
+
+/// The `⋮` rows take the calls' path: a switch from the menu and a delete from
+/// the menu each leave the journal row the control call leaves.
+#[test]
+fn a_menu_switch_and_delete_journal_what_the_control_calls_do() {
+    use crate::control::ActionOrigin;
+    use quantick_session::workspace_menu::WorkspaceCommand;
+    use serde_json::json;
+    let layouts = crate::scratch::ScratchFile::new("workspace-menu-journal", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.active_id();
+    let call = |app: &mut QuantickApp, id: &str, input: serde_json::Value| {
+        app.control_action(id, 1, ActionOrigin::Human, input)
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"));
+    };
+    let menu = crate::app::tab_workspaces::apply_workspace_command;
+
+    call(&mut app, "workspace.save_as", json!({ "name": "Scalp" }));
+    call(&mut app, "tab.workspace.set", json!({ "name": "Default" }));
+    call(&mut app, "tab.workspace.set", json!({ "name": "Scalp" }));
+    menu(&mut app, WorkspaceCommand::Set("Default".to_owned()));
+    let rows = workspace_journal(&app);
+    assert_eq!(rows.len(), 3, "one row per switch: {rows:?}");
+    assert_eq!(rows[2], rows[0], "the menu's switch is the call's");
+    assert_eq!(rows[0].1["tab_id"], json!(tab.to_string()));
+
+    call(&mut app, "tab.workspace.set", json!({ "name": "Scalp" }));
+    call(&mut app, "workspace.delete", json!({ "name": "Scalp" }));
+    call(&mut app, "workspace.save_as", json!({ "name": "Scalp" }));
+    menu(&mut app, WorkspaceCommand::Delete("Scalp".to_owned()));
+    let rows = workspace_journal(&app);
+    let deletes: Vec<_> = rows
+        .iter()
+        .filter(|row| row.0.ends_with("deleted"))
+        .collect();
+    assert_eq!(deletes.len(), 2, "one row per delete: {rows:?}");
+    assert_eq!(deletes[1], deletes[0], "the menu's delete is the call's");
+    assert_eq!(app.runtime.workspace.book.tab_row(tab).0, "Default");
+}

@@ -228,23 +228,18 @@ pub(super) fn edits_of_active(app: &QuantickApp) -> Option<String> {
     modified.then_some(workspace)
 }
 
-/// The toolbar's Save to.
-pub(super) fn save_active(app: &mut QuantickApp) {
-    apply_workspace_command(app, WorkspaceCommand::SaveTo);
-}
-
-/// The toolbar's Revert.
-pub(super) fn revert_active(app: &mut QuantickApp) {
-    apply_workspace_command(app, WorkspaceCommand::Revert);
-}
-
-/// Carry out what a workspace row asked for, on what the active tab shows now.
+/// Carry out what a workspace row or the toolbar asked for, on what the active
+/// tab shows now, journaled as the trader's hand.
 pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: WorkspaceCommand) {
     let tab = app.runtime.tabs.active_id();
     observe_tab(app, tab);
     let symbol = app.active_tab().symbol.clone();
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
-    let note = ops::apply_row_command(app, &mut menu, tab, &symbol, command);
+    let mut access = app.control.control_access.take();
+    let hand = access.as_mut().and_then(|access| access.hand_actor());
+    let to = access.as_mut().zip(hand.as_ref());
+    let note = ops::apply_row_command(app, to, &mut menu, tab, &symbol, command);
+    app.control.control_access = access;
     app.chrome.window_menu.tab_workspace = menu;
     if let Some(message) = note {
         app.surfaces.toast.note(message, Instant::now());

@@ -65,10 +65,17 @@ pub trait WorkspaceBookHost {
     }
 }
 
-/// Carry out what a workspace row asked for, on the same calls the control
-/// plane makes. Answers what to tell the trader, naming the tabs.
-pub fn apply_row_command<H: WorkspaceBookHost + ?Sized>(
+/// Who journals a change: the call's access and actor, or the trader's hand
+/// at the window. `None` where the window has no control identity; the change
+/// still lands, and nothing is journaled.
+pub type Journal<'a, A> = Option<(&'a mut A, &'a ActorContext)>;
+
+/// Carry out what a workspace row asked for, through the same steps the
+/// control call takes, so a row leaves the call's journal row. Answers what
+/// to tell the trader, naming the tabs.
+pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     host: &mut H,
+    mut to: Journal<'_, A>,
     menu: &mut WorkspaceMenuState,
     tab: u64,
     symbol: &str,
@@ -83,20 +90,21 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized>(
             menu.open_rename(&from);
             return None;
         }
-        WorkspaceCommand::SubmitDialog => return submit_name_dialog(host, menu, tab, symbol),
-        WorkspaceCommand::Set(name) => set_tab_workspace(host, tab, &name).map(|set| {
+        WorkspaceCommand::SubmitDialog => {
+            return submit_name_dialog(host, &mut to, menu, tab, symbol);
+        }
+        WorkspaceCommand::Set(name) => set_journaled(host, &mut to, tab, &name).map(|set| {
             set.changed
                 .then(|| text::switched_toast(symbol, &name, set.dropped_edits))
         }),
-        WorkspaceCommand::SaveTo => save_tab_to(host, tab).map(|saved| {
+        WorkspaceCommand::SaveTo => save_to_journaled(host, &mut to, tab).map(|saved| {
             saved.changed.then(|| {
                 text::saved_toast(&saved.workspace, &host.tab_symbols(&saved.tabs_changed))
             })
         }),
-        WorkspaceCommand::Revert => {
-            revert_tab(host, tab).map(|changed| changed.then(|| text::reverted_toast(symbol)))
-        }
-        WorkspaceCommand::Delete(name) => delete_workspace(host, &name).map(|gone| {
+        WorkspaceCommand::Revert => revert_journaled(host, &mut to, tab)
+            .map(|(changed, _)| changed.then(|| text::reverted_toast(symbol))),
+        WorkspaceCommand::Delete(name) => delete_journaled(host, &mut to, &name).map(|gone| {
             gone.changed.then(|| {
                 text::deleted_toast(
                     &name,
@@ -111,18 +119,24 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized>(
 
 /// Enter on the name dialog: done and closed, or refused with the reason
 /// under the field and the name still there.
-fn submit_name_dialog<H: WorkspaceBookHost + ?Sized>(
+fn submit_name_dialog<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     host: &mut H,
+    to: &mut Journal<'_, A>,
     menu: &mut WorkspaceMenuState,
     tab: u64,
     symbol: &str,
 ) -> Option<String> {
     let dialog = menu.dialog.clone()?;
     let outcome = match &dialog.mode {
-        NameDialogMode::SaveAsNew => save_tab_as(host, tab, &dialog.name)
+        NameDialogMode::SaveAsNew => save_as_journaled(host, to, tab, &dialog.name)
             .map(|saved| Some(text::saved_as_toast(symbol, &saved.workspace))),
-        NameDialogMode::Rename { from } => rename_workspace(host, from, &dialog.name)
-            .map(|to| to.changed.then(|| text::renamed_toast(from, &to.workspace))),
+        NameDialogMode::Rename { from } => {
+            rename_journaled(host, to, from, &dialog.name).map(|moved| {
+                moved
+                    .changed
+                    .then(|| text::renamed_toast(from, &moved.workspace))
+            })
+        }
     };
     match outcome {
         Ok(message) => {
@@ -250,8 +264,9 @@ fn workspace_of<H: WorkspaceBookHost + ?Sized>(
         .ok_or_else(|| refused(&WorkspaceRefusal::UnknownTab(tab)))
 }
 
-/// Put a tab on a workspace and redraw it: the one path the call and the
-/// window's rows share, so the two cannot disagree.
+/// Put a tab on a workspace and redraw it, journaling nothing: the call and
+/// the window's rows reach it through one journaled step, so they cannot
+/// disagree.
 ///
 /// # Errors
 /// No such tab or workspace, or no book.
@@ -340,13 +355,99 @@ pub fn delete_workspace<H: WorkspaceBookHost + ?Sized>(
     Ok(outcome)
 }
 
-fn journal<A: NotifyAccess>(
-    access: &mut A,
-    kind: &'static str,
-    actor: &ActorContext,
-    payload: Value,
-) {
-    access.record_event(NewEvent::by(MODULE_ID, kind, actor, payload));
+fn journal<A: NotifyAccess>(to: &mut Journal<'_, A>, kind: &'static str, payload: Value) {
+    if let Some((access, actor)) = to {
+        access.record_event(NewEvent::by(MODULE_ID, kind, actor, payload));
+    }
+}
+
+// The change and its journal row, once each: the call and the window's rows
+// both land here, so a hand on the menu journals what a script would.
+
+fn set_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    tab: u64,
+    name: &str,
+) -> Result<SetOutcome, ControlError> {
+    let outcome = set_tab_workspace(app, tab, name)?;
+    if outcome.changed {
+        let payload = json!({ "tab_id": WireU64::new(tab), "workspace": name,
+            "dropped_edits": outcome.dropped_edits });
+        journal(to, TAB_WORKSPACE_SET_EVENT_KIND, payload);
+    }
+    Ok(outcome)
+}
+
+fn save_to_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    tab: u64,
+) -> Result<SaveOutcome, ControlError> {
+    let outcome = save_tab_to(app, tab)?;
+    if outcome.changed {
+        let payload =
+            json!({ "workspace": outcome.workspace, "tabs_changed": wires(&outcome.tabs_changed) });
+        journal(to, WORKSPACE_SAVED_EVENT_KIND, payload);
+    }
+    Ok(outcome)
+}
+
+fn save_as_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    tab: u64,
+    name: &str,
+) -> Result<SaveOutcome, ControlError> {
+    let outcome = save_tab_as(app, tab, name)?;
+    if outcome.changed {
+        let payload = json!({ "workspace": outcome.workspace, "tabs_changed": [] });
+        journal(to, WORKSPACE_SAVED_EVENT_KIND, payload);
+    }
+    Ok(outcome)
+}
+
+/// Whether there were edits to drop, and the workspace the tab is on.
+fn revert_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    tab: u64,
+) -> Result<(bool, String), ControlError> {
+    let changed = revert_tab(app, tab)?;
+    let workspace = workspace_of(app, tab)?;
+    if changed {
+        let payload = json!({ "tab_id": WireU64::new(tab), "workspace": workspace });
+        journal(to, WORKSPACE_REVERTED_EVENT_KIND, payload);
+    }
+    Ok((changed, workspace))
+}
+
+fn rename_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    name: &str,
+    new_name: &str,
+) -> Result<RenameOutcome, ControlError> {
+    let outcome = rename_workspace(app, name, new_name)?;
+    if outcome.changed {
+        let payload = json!({ "from": name, "workspace": outcome.workspace });
+        journal(to, WORKSPACE_RENAMED_EVENT_KIND, payload);
+    }
+    Ok(outcome)
+}
+
+fn delete_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    name: &str,
+) -> Result<DeleteOutcome, ControlError> {
+    let outcome = delete_workspace(app, name)?;
+    if outcome.changed {
+        let payload = json!({ "workspace": name, "moved": wires(&outcome.moved),
+            "kept_edits": wires(&outcome.kept_edits) });
+        journal(to, WORKSPACE_DELETED_EVENT_KIND, payload);
+    }
+    Ok(outcome)
 }
 
 fn set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
@@ -357,12 +458,7 @@ fn set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let TabWorkspaceSetInput { tab_id, name } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = set_tab_workspace(app, tab, &name)?;
-    if outcome.changed {
-        let payload = json!({ "tab_id": WireU64::new(tab), "workspace": name,
-            "dropped_edits": outcome.dropped_edits });
-        journal(access, TAB_WORKSPACE_SET_EVENT_KIND, actor, payload);
-    }
+    let outcome = set_journaled(app, &mut Some((access, actor)), tab, &name)?;
     answer(&TabWorkspaceSetResult {
         tab_id: WireU64::new(tab),
         workspace: name,
@@ -379,12 +475,7 @@ fn save_to<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let WorkspaceTabInput { tab_id } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = save_tab_to(app, tab)?;
-    if outcome.changed {
-        let payload =
-            json!({ "workspace": outcome.workspace, "tabs_changed": wires(&outcome.tabs_changed) });
-        journal(access, WORKSPACE_SAVED_EVENT_KIND, actor, payload);
-    }
+    let outcome = save_to_journaled(app, &mut Some((access, actor)), tab)?;
     answer(&WorkspaceSaveResult {
         workspace: outcome.workspace,
         changed: outcome.changed,
@@ -400,11 +491,7 @@ fn save_as<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let WorkspaceSaveAsInput { tab_id, name } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let outcome = save_tab_as(app, tab, &name)?;
-    if outcome.changed {
-        let payload = json!({ "workspace": outcome.workspace, "tabs_changed": [] });
-        journal(access, WORKSPACE_SAVED_EVENT_KIND, actor, payload);
-    }
+    let outcome = save_as_journaled(app, &mut Some((access, actor)), tab, &name)?;
     answer(&WorkspaceSaveResult {
         workspace: outcome.workspace,
         changed: outcome.changed,
@@ -420,12 +507,7 @@ fn revert<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
 ) -> Result<Value, ControlError> {
     let WorkspaceTabInput { tab_id } = input(value)?;
     let tab = tab_on_book(app, tab_id)?;
-    let changed = revert_tab(app, tab)?;
-    let workspace = workspace_of(app, tab)?;
-    if changed {
-        let payload = json!({ "tab_id": WireU64::new(tab), "workspace": workspace });
-        journal(access, WORKSPACE_REVERTED_EVENT_KIND, actor, payload);
-    }
+    let (changed, workspace) = revert_journaled(app, &mut Some((access, actor)), tab)?;
     answer(&WorkspaceRevertResult {
         tab_id: WireU64::new(tab),
         workspace,
@@ -440,11 +522,8 @@ fn rename<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceRenameInput { name, to } = input(value)?;
-    let RenameOutcome { workspace, changed } = rename_workspace(app, &name, &to)?;
-    if changed {
-        let payload = json!({ "from": name, "workspace": workspace });
-        journal(access, WORKSPACE_RENAMED_EVENT_KIND, actor, payload);
-    }
+    let RenameOutcome { workspace, changed } =
+        rename_journaled(app, &mut Some((access, actor)), &name, &to)?;
     answer(&WorkspaceRenameResult { workspace, changed })
 }
 
@@ -455,12 +534,7 @@ fn delete<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceDeleteInput { name } = input(value)?;
-    let outcome = delete_workspace(app, &name)?;
-    if outcome.changed {
-        let payload = json!({ "workspace": name, "moved": wires(&outcome.moved),
-            "kept_edits": wires(&outcome.kept_edits) });
-        journal(access, WORKSPACE_DELETED_EVENT_KIND, actor, payload);
-    }
+    let outcome = delete_journaled(app, &mut Some((access, actor)), &name)?;
     answer(&WorkspaceDeleteResult {
         changed: outcome.changed,
         moved: wires(&outcome.moved),

@@ -9,8 +9,10 @@
 use eframe::egui;
 use quantick_control_handlers::contract_roll;
 use quantick_engine::Side;
+use quantick_session::workspace_menu::WorkspaceCommand;
 
 use super::control_host::ControlPort;
+use super::tab_workspaces::apply_workspace_command as workspace_command;
 use crate::indicator_worker::SlotId;
 use crate::surfaces::ChartSettingsTab::Candles;
 use crate::tab::CanvasLayout;
@@ -169,8 +171,8 @@ impl QuantickApp {
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
             ToolbarAction::RollContract => contract_roll::roll_active(self as &mut dyn ControlPort),
-            ToolbarAction::SaveToWorkspace => super::tab_workspaces::save_active(self),
-            ToolbarAction::RevertWorkspace => super::tab_workspaces::revert_active(self),
+            ToolbarAction::SaveToWorkspace => workspace_command(self, WorkspaceCommand::SaveTo),
+            ToolbarAction::RevertWorkspace => workspace_command(self, WorkspaceCommand::Revert),
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
             }

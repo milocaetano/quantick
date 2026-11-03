@@ -132,6 +132,7 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     menu.dialog.as_mut().unwrap().name = "  The   open ".to_owned();
     let note = apply_row_command(
         &mut host,
+        Some((&mut access, &actor)),
         &mut menu,
         1,
         "WINV26",
@@ -143,6 +144,7 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     menu.dialog.as_mut().unwrap().name = " The open".to_owned();
     let note = apply_row_command(
         &mut host,
+        Some((&mut access, &actor)),
         &mut menu,
         1,
         "WINV26",
@@ -150,6 +152,86 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     );
     assert_eq!(note, None, "no toast for a rename that moved nothing");
     assert!(menu.dialog.is_none());
+}
+
+/// The journal rows a run left, as module, kind and payload.
+fn rows(access: &FakeAccess) -> Vec<(String, String, Value)> {
+    let row = |event: &NewEvent| {
+        let module = event.module_id.as_str().to_owned();
+        (
+            module,
+            event.kind.as_str().to_owned(),
+            event.payload.clone(),
+        )
+    };
+    access.events.iter().map(row).collect()
+}
+
+/// A hand on the `⋮` rows and a script on the calls leave one journal: a
+/// menu switch is `tab.workspace.set`'s row and a menu delete
+/// `workspace.delete`'s, payload for payload.
+#[test]
+fn a_menu_set_and_delete_journal_the_rows_the_calls_do() {
+    let (mut by_call, mut call_access, actor) = parts();
+    save_as(
+        &mut by_call,
+        &mut call_access,
+        &actor,
+        &json!({ "name": "Scalp" }),
+    )
+    .unwrap();
+    let value = json!({ "tab_id": "2", "name": "Scalp" });
+    set(&mut by_call, &mut call_access, &actor, &value).unwrap();
+    delete(
+        &mut by_call,
+        &mut call_access,
+        &actor,
+        &json!({ "name": "Scalp" }),
+    )
+    .unwrap();
+
+    let (mut by_hand, mut hand_access, hand) = parts();
+    save_as(
+        &mut by_hand,
+        &mut hand_access,
+        &hand,
+        &json!({ "name": "Scalp" }),
+    )
+    .unwrap();
+    let mut menu = WorkspaceMenuState::default();
+    for command in [
+        WorkspaceCommand::Set("Scalp".to_owned()),
+        WorkspaceCommand::Delete("Scalp".to_owned()),
+    ] {
+        let journal = Some((&mut hand_access, &hand));
+        let note = apply_row_command(&mut by_hand, journal, &mut menu, 2, "WDOV26", command);
+        assert!(note.is_some(), "each row changed something and says so");
+    }
+
+    let kinds: Vec<_> = rows(&call_access).into_iter().map(|row| row.1).collect();
+    assert_eq!(
+        kinds,
+        [
+            WORKSPACE_SAVED_EVENT_KIND,
+            TAB_WORKSPACE_SET_EVENT_KIND,
+            WORKSPACE_DELETED_EVENT_KIND
+        ]
+    );
+    assert_eq!(rows(&hand_access), rows(&call_access));
+    assert_eq!(by_hand.book, by_call.book, "and the same book after");
+}
+
+/// A window without a control identity has no journal; the row still lands.
+#[test]
+fn a_menu_row_without_a_journal_still_changes_the_book() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let mut menu = WorkspaceMenuState::default();
+    let none: Journal<'_, FakeAccess> = None;
+    let command = WorkspaceCommand::Set("Scalp".to_owned());
+    apply_row_command(&mut host, none, &mut menu, 2, "WDOV26", command);
+    assert_eq!(host.book.tab_state(2).unwrap().workspace, "Scalp");
+    assert_eq!(access.events.len(), 1, "only the call's save");
 }
 
 fn detail(error: &ControlError) -> String {
