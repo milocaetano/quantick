@@ -248,17 +248,35 @@ impl LayoutAdapter<'_> {
             .resolve_layout(self.pane_at(tab, side).and_then(ChartPane::layout_id))
     }
 
-    /// Every seeded pane on a set no other pane holds; see
+    /// Every seeded pane on its tab's copy of its strip layout; see
     /// [`quantick_workspace::session::LayoutSession::own_copies`].
     pub(in crate::app) fn own_indicator_copies(&mut self) {
         let panes = self
             .tabs
+            .iter_with_ids()
+            .flat_map(|(id, tab)| tab.panes().map(move |(pane, _)| (id, pane.id)));
+        let owned = self.store.session_mut().own_copies(panes);
+        let reshow: Vec<_> = owned
+            .reshow
             .iter()
-            .flat_map(|tab| tab.panes())
-            .map(|(pane, _)| pane.id);
-        if self.store.session_mut().own_copies(panes) {
+            .filter_map(|id| self.pane_address(*id))
+            .collect();
+        for (tab, side) in reshow {
+            let layout = self.layouts().get(self.pane_own_layout(tab, side));
+            let set = layout.map(|layout| layout.indicators.clone());
+            self.show_pane_indicators(tab, side, &set.unwrap_or_default());
+        }
+        if owned.changed {
             self.mark_layouts_dirty();
         }
+    }
+
+    /// Where the pane with `id` stands.
+    fn pane_address(&self, id: u64) -> Option<(u64, PaneSide)> {
+        self.tabs.iter_with_ids().find_map(|(tab_id, tab)| {
+            let mut panes = tab.panes();
+            panes.find_map(|(pane, side)| (pane.id == id).then_some((tab_id, side)))
+        })
     }
 
     /// Attach the core's read-only membership view to an actual pane.
@@ -306,12 +324,12 @@ impl LayoutAdapter<'_> {
             .collect()
     }
 
-    /// Give a pane its layout's name for its header.
+    /// Give a pane its strip layout's name for its header.
     fn refresh_layout_label(&mut self, tab: u64, side: PaneSide) {
         let name = self
             .pane_at(tab, side)
             .and_then(ChartPane::layout_id)
-            .and_then(|id| self.layouts().get(id))
+            .and_then(|id| self.layouts().get(self.layouts().strip_layout(id)))
             .map(|layout| layout.name.clone())
             .unwrap_or_default();
         if let Some(pane) = self.pane_mut_at(tab, side) {
@@ -356,6 +374,8 @@ impl LayoutAdapter<'_> {
         if !selection.changed() {
             return Ok(false);
         }
+        // Onto the tab's copy now, so an edit before the next frame is the tab's.
+        self.own_indicator_copies();
         let from = selection.from();
         tracing::info!(
             target: "quantick::app",
@@ -451,13 +471,7 @@ impl LayoutAdapter<'_> {
         let selections = self.store.session().plan_delete(id, facts)?;
         for selection in selections {
             let (tab, side) = self
-                .tabs
-                .iter_with_ids()
-                .find_map(|(tab_id, tab)| {
-                    tab.panes()
-                        .find(|(pane, _)| pane.id == selection.pane())
-                        .map(|(_, side)| (tab_id, side))
-                })
+                .pane_address(selection.pane())
                 .ok_or(LayoutError::Unknown)?;
             self.switch_pane_layout(tab, side, selection.to())?;
         }

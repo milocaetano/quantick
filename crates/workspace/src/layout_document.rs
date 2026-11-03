@@ -251,9 +251,10 @@ pub struct LayoutBook {
     /// that version may not even have.
     #[serde(default)]
     layouts: Vec<ChartLayout>,
-    /// Each pane's own copy of a set: never on the strip and never counted
-    /// against it. A tab that shared a strip layout with another would reach
-    /// it with every edit; see `crate::workspace_recipe`.
+    /// Each tab's own copy of a strip layout's set, shared by the tab's panes
+    /// on that layout: never on the strip and never counted against it. A tab
+    /// that shared a strip layout with another would reach it with every edit;
+    /// see `crate::workspace_recipe`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     private: Vec<ChartLayout>,
 }
@@ -359,10 +360,17 @@ impl LayoutBook {
             .find(|layout| layout.id == id)
     }
 
-    /// Whether `id` is a pane's own copy rather than a strip layout.
+    /// Whether `id` is a tab's own copy rather than a strip layout.
     #[must_use]
     pub fn is_private(&self, id: LayoutId) -> bool {
         self.private.iter().any(|layout| layout.id == id)
+    }
+
+    /// The strip layout `id` was copied from, kept after that layout is
+    /// deleted; `id` itself for a strip layout.
+    #[must_use]
+    pub fn origin_of(&self, id: LayoutId) -> LayoutId {
+        self.get(id).and_then(|layout| layout.origin).unwrap_or(id)
     }
 
     /// A new private copy of `of`, remembering the strip layout it came from.

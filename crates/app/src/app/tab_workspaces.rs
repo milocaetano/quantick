@@ -208,11 +208,15 @@ fn apply_recipe_indicators(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRec
     let tab = app.runtime.tabs.by_id(id);
     let sides: Vec<_> = tab
         .into_iter()
-        .flat_map(|tab| tab.panes().map(|(_, side)| side))
+        .flat_map(|tab| tab.panes().map(|(pane, side)| (pane.id, side)))
         .collect();
     let mut layouts = app.layout_adapter();
     layouts.own_indicator_copies();
-    for side in sides {
+    let sets = sides
+        .iter()
+        .map(|(pane, side)| (*pane, recipe.for_pane(side.index()).0));
+    layouts.store.session_mut().part_copies(sets);
+    for (_, side) in sides {
         layouts.show_pane_indicators(id, side, recipe.for_pane(side.index()).0);
     }
 }

@@ -1,7 +1,7 @@
 //! The per-tab workspace at the window: one state behind chip and snapshot, an
 //! edit that stays on its tab until Save to, and a first run no one can see.
 use super::*;
-use crate::app::tab_workspaces::{live_recipe, maintain, observe_tab};
+use crate::app::tab_workspaces::{live_recipe, observe_tab};
 use quantick_control_handlers::workspace_book::{
     WorkspaceBookHost, save_tab_to, set_tab_workspace,
 };
@@ -17,8 +17,7 @@ fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u64, u64) {
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
     let (first, second) = (app.runtime.tabs.id_at(0), app.runtime.tabs.id_at(1));
-    app.layout_adapter().maintain_layouts();
-    maintain(&mut app);
+    run_frame(&mut app, &egui::Context::default());
     (app, first, second)
 }
 
@@ -31,14 +30,11 @@ fn edit_split(app: &mut QuantickApp, tab: u64, fraction: f32) {
     observe_tab(app, tab);
 }
 
-/// Frames that also carry the book's upkeep, which `frame::process` does not
-/// call yet.
+/// Real frames: `frame::process` carries the book's upkeep.
 fn frames(app: &mut QuantickApp, count: usize) {
     let ctx = egui::Context::default();
     for _ in 0..count {
         run_frame(app, &ctx);
-        app.layout_adapter().maintain_layouts();
-        maintain(app);
     }
 }
 
@@ -253,8 +249,7 @@ fn an_edit_on_one_tab_leaves_another_on_the_same_workspace_alone_until_save_to()
     let (mut app, first, second) = two_tabs(&layouts);
     let shared = app.runtime.workspace.book.tab_row(first).0;
     set_tab_workspace(&mut app, second, &shared).expect("a known workspace");
-    app.layout_adapter().maintain_layouts();
-    maintain(&mut app);
+    frames(&mut app, 1);
     let before = live_recipe(&app, second).expect("an open tab");
 
     edit_split(&mut app, first, 0.31);
@@ -265,8 +260,7 @@ fn an_edit_on_one_tab_leaves_another_on_the_same_workspace_alone_until_save_to()
 
     let saved = save_tab_to(&mut app, first).expect("saved");
     assert_eq!(saved.tabs_changed, [second]);
-    app.layout_adapter().maintain_layouts();
-    maintain(&mut app);
+    frames(&mut app, 1);
     let store = &app.runtime.workspace.book;
     assert!(!store.tab_row(first).1);
     assert!(!store.tab_row(second).1);
@@ -397,4 +391,102 @@ fn a_context_pane_layer_edit_lands_on_that_pane_in_the_copy() {
         live.layers.get(&layer),
         "the flow pane did not move, so its switch reads as it did"
     );
+}
+
+/// A desk brought back joins the book through the real frame alone, on the
+/// workspace it named, and that workspace's recipe lands on it.
+#[test]
+fn the_real_frame_adopts_a_restored_tab_on_its_saved_workspace() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-frame-adopts", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    edit_split(&mut app, first, 0.31);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(first, "Scalp").expect("a free name");
+    let tab = app.runtime.tabs.by_id(first).expect("an open tab");
+    let mut saved = crate::app::arrangement_adapter::saved_tab_of(tab);
+    saved.symbol = "ETHUSDT".to_owned();
+    saved.split_fraction = Some(0.6);
+    saved.workspace = Some("Scalp".to_owned());
+    saved.workspace_copy = None;
+    let config = app.config.clone();
+    let desk = ui_state::Workspace::new(true, None, 0, vec![saved], None);
+    app.arrangement_adapter()
+        .restore_workspace(desk.restore(&config));
+    let restored = app.runtime.tabs.active_id();
+    assert_eq!(app.active_tab().symbol, "ETHUSDT");
+    assert!(
+        app.runtime
+            .workspace
+            .book
+            .book()
+            .tab_state(restored)
+            .is_none(),
+        "nothing has adopted it yet"
+    );
+
+    frames(&mut app, 4);
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(restored),
+        ("Scalp".to_owned(), false)
+    );
+    let live = live_recipe(&app, restored).expect("an open tab");
+    assert_eq!(
+        live.split_fraction,
+        Some(0.31),
+        "the workspace's, not the desk's"
+    );
+}
+
+/// The panes of one tab on one strip layout share the tab's copy: an indicator
+/// added on the flow pane reaches the tab's context pane, and never a pane of
+/// another tab on the same workspace and the same strip layout.
+#[test]
+fn an_indicator_added_on_a_flow_pane_reaches_its_tabs_context_pane_and_no_other_tab() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-mirror-in-tab", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let a = app.runtime.tabs.active_id();
+    let b = if a == first { second } else { first };
+    for tab in [a, b] {
+        let tab = app.runtime.tabs.by_id_mut(tab).expect("an open tab");
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+    }
+    frames(&mut app, 3);
+    observe_tab(&mut app, a);
+    let book = app.runtime.workspace.book.book_mut();
+    book.save_as(a, "Pair").expect("a free name");
+    set_tab_workspace(&mut app, b, "Pair").expect("a known workspace");
+    frames(&mut app, 5);
+    assert_eq!(
+        app.runtime.workspace.book.tab_row(b),
+        ("Pair".to_owned(), false)
+    );
+    let strip = |app: &QuantickApp, tab, side| app.layout_state().pane_layout(tab, side);
+    let flow = strip(&app, a, PaneSide::Flow);
+    assert_eq!(flow, strip(&app, a, PaneSide::Time(0)), "one strip layout");
+    assert_eq!(flow, strip(&app, b, PaneSide::Flow), "on both tabs");
+    let count = |app: &QuantickApp, tab: u64, side| {
+        let tab = app.runtime.tabs.by_id(tab).expect("an open tab");
+        tab.pane_at(PaneSide::index(side))
+            .expect("a built pane")
+            .indicators
+            .all()
+            .len()
+    };
+    let context = count(&app, a, PaneSide::Time(0));
+    let other = [PaneSide::Flow, PaneSide::Time(0)].map(|side| count(&app, b, side));
+
+    app.active_tab_mut().focus = PaneSide::Flow;
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    settle_indicators(&mut app);
+    frames(&mut app, 2);
+    assert_eq!(
+        count(&app, a, PaneSide::Time(0)),
+        context + 1,
+        "its own context pane"
+    );
+    let after = [PaneSide::Flow, PaneSide::Time(0)].map(|side| count(&app, b, side));
+    assert_eq!(after, other, "never another tab");
+    let store = &app.runtime.workspace.book;
+    assert!(store.tab_row(a).1, "the edit marks its tab");
+    assert!(!store.tab_row(b).1, "and no other");
 }

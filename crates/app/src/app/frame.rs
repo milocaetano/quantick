@@ -90,6 +90,7 @@ pub(super) fn process(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
                     );
                 }
                 app.layout_adapter().maintain_layouts();
+                super::tab_workspaces::maintain(app);
             }
             FrameStage::StrategyCleanup | FrameStage::Tail => {}
             _ => app.run_frame_stage(
