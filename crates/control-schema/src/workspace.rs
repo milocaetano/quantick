@@ -125,6 +125,16 @@ pub struct WorkspaceTab {
     #[serde(default)]
     pub flow_collapsed: bool,
     pub panes: Vec<WorkspacePane>,
+    /// The tab's venue. Additive; empty from a build that predates it.
+    #[serde(default)]
+    pub venue: String,
+    /// The workspace this tab uses. Additive; empty from a build that predates
+    /// it.
+    #[serde(default)]
+    pub workspace: String,
+    /// Whether the tab holds edits it has not saved to that workspace.
+    #[serde(default)]
+    pub modified: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

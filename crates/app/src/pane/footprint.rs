@@ -17,13 +17,13 @@ pub struct PaneFootprint {
     pub visible: bool,
     /// This chart's own footprint setup, once it has been configured here.
     ///
-    /// `None` — the default — means "follow the window's last setup", which
+    /// The default means "follow the window's last setup", which
     /// keeps the common case (one chart, one taste) behaving like a global
     /// setting. A split layout is two readings of the same market (a 90-day
     /// context chart beside a 50-tick flow chart) and one set of thresholds
     /// cannot serve both, so the moment a chart is configured on its own it
-    /// keeps its own.
-    pub config: Option<crate::footprint_config::FootprintConfig>,
+    /// keeps its own. A tab's workspace pins only the style.
+    pub config: quantick_stores::chart_footprint::ChartFootprint,
     /// The footprint's sticky detail level (hysteresis on zoom-out).
     pub(super) lod: crate::footprint_render::FootprintLod,
     /// The forming bar's ladder as last snapshotted for drawing, with the

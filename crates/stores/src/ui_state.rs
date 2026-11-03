@@ -507,6 +507,8 @@ mod tests {
                     time_bars: Some("time:1m".to_owned()),
                     flow_legend_collapsed: false,
                     time_legend_collapsed: false,
+                    workspace: None,
+                    workspace_copy: None,
                 },
                 SavedTab {
                     feed: "binance".to_owned(),
@@ -526,6 +528,8 @@ mod tests {
                     time_bars: None,
                     flow_legend_collapsed: false,
                     time_legend_collapsed: false,
+                    workspace: None,
+                    workspace_copy: None,
                 },
             ],
             Some(SavedChrome {
@@ -1009,6 +1013,8 @@ mod tests {
             time_bars: None,
             flow_legend_collapsed: false,
             time_legend_collapsed: false,
+            workspace: None,
+            workspace_copy: None,
         });
         workspace.tabs.push(SavedTab {
             feed: "binance".to_owned(),
@@ -1028,6 +1034,8 @@ mod tests {
             time_bars: None,
             flow_legend_collapsed: false,
             time_legend_collapsed: false,
+            workspace: None,
+            workspace_copy: None,
         });
         let restored = restore(workspace, &catalogue(), clamp);
         assert_eq!(
@@ -1162,6 +1170,8 @@ mod tests {
                     time_bars: None,
                     flow_legend_collapsed: false,
                     time_legend_collapsed: false,
+                    workspace: None,
+                    workspace_copy: None,
                 },
                 SavedTab {
                     feed: "binance".to_owned(),
@@ -1181,6 +1191,8 @@ mod tests {
                     time_bars: None,
                     flow_legend_collapsed: false,
                     time_legend_collapsed: false,
+                    workspace: None,
+                    workspace_copy: None,
                 },
             ],
             chrome: None,
@@ -1219,6 +1231,8 @@ mod tests {
                 time_bars: None,
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
+                workspace: None,
+                workspace_copy: None,
             }],
             chrome: None,
         });
@@ -1408,6 +1422,8 @@ time_bars = "time:60000"
             time_bars: None,
             flow_legend_collapsed: false,
             time_legend_collapsed: false,
+            workspace: None,
+            workspace_copy: None,
         }];
         workspace
     }

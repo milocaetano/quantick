@@ -524,7 +524,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             // Field access, not `ChartPane::footprint_config`: the method
             // borrows the whole pane and the draw below needs the level of
             // detail mutably. Same resolution rule.
-            config: footprint.config.as_ref().unwrap_or(chrome.footprint),
+            config: footprint.config.resolve(chrome.footprint),
         };
         self.renderers.footprint(&mut FootprintPass {
             frame: &layer,

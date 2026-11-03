@@ -236,6 +236,7 @@ impl WorkspaceBundleAdapter<'_> {
         self.arrangement.indicators.indicator_presets =
             preset_file::PresetStore::load(self.arrangement.workspace.indicator_presets_path());
 
+        self.arrangement.workspace.book.reload();
         // The tab strip first, and *before* the indicators: the restore adds
         // each indicator to whatever pane is focused right now, so the tabs
         // have to be the imported ones — and the focus on the pane the file

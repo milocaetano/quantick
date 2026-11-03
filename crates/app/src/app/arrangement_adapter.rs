@@ -38,6 +38,7 @@ pub(crate) struct ArrangementRead<'a> {
     pub(super) record_deals: Option<bool>,
     pub(super) history: &'a super::tabs::HistorySettings,
     pub(super) drawing_chrome: &'a crate::surfaces::DrawingChromeSurface,
+    pub(super) workspace_book: &'a quantick_stores::workspaces::WorkspaceBook,
 }
 
 impl ArrangementAdapter<'_> {
@@ -274,6 +275,7 @@ impl ArrangementAdapter<'_> {
         let runtime = &closed.runtime;
         tracing::info!(target: "quantick::app", schema_version = 1_u8, event_code = "TAB_CLOSED", tab = closed.id, feed = %runtime.feed_id, symbol = %runtime.symbol, tabs = self.tabs.len(), action = "drop_feed_and_workers", "closing a market tab");
         self.indicators.registry.forget_tab(closed.id);
+        self.workspace.book.forget_tab(closed.id);
         let layouts = self.workspace.layouts_mut().session_mut();
         for (pane, _) in closed.runtime.panes() {
             layouts.remove_pane(pane.id);
@@ -300,6 +302,8 @@ impl ArrangementAdapter<'_> {
                 }
             }
             TabAction::New => return true,
+            // Carried out by the window menu's owner, which holds its state.
+            TabAction::WorkspaceMenu => {}
             TabAction::Home => super::home_wiring::show_home(self.tabs, self.surface),
         }
         false
@@ -391,44 +395,14 @@ impl ArrangementRead<'_> {
     pub(super) fn capture_arrangement(&self) -> (Vec<ui_state::SavedTab>, ui_state::SavedChrome) {
         let tabs = self
             .tabs
-            .iter_presented()
-            .map(|tab| ui_state::SavedTab {
-                feed: tab.feed_id.clone(),
-                symbol: tab.symbol.clone(),
-                layout: tab.layout.into(),
-                split_fraction: Some(tab.split_fraction),
-                context_collapsed: tab.context_collapsed,
-                flow_collapsed: tab.flow_collapsed,
-                context_heights: tab.context_height_shares(),
-                context_panes_collapsed: tab.context_collapsed_slots(),
-                focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
-                focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
-                flow_bars: tab.flow_pane.state.spec().to_config_string(),
-                // Only a pane that exists has an interval worth recording; a
-                // tab that never showed the split restores on the default,
-                // which is what it had.
-                time_bars: tab
-                    .time_pane()
-                    .map(|pane| pane.state.spec().to_config_string()),
-                context_bars: tab
-                    .time_panes
-                    .iter()
-                    .map(|pane| pane.state.spec().to_config_string())
-                    .collect(),
-                flow_layout: tab.flow_pane.layout_id().map(|layout| layout.0),
-                context_layouts: tab
-                    .time_panes
-                    .iter()
-                    .map(|pane| {
-                        pane.layout_id()
-                            .map_or(crate::ui_state::LAYOUT_UNRECORDED, |layout| layout.0)
-                    })
-                    .collect(),
-                flow_legend_collapsed: tab.flow_pane.legend_collapsed,
-                // A tab with no time pane has no second legend, and `false`
-                // is what it will restore into when one is opened: a pane
-                // that never existed cannot have been folded.
-                time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
+            .iter_presented_ids()
+            .filter_map(|id| {
+                let (workspace, workspace_copy) = self.workspace_book.saved_fields(id);
+                Some(ui_state::SavedTab {
+                    workspace,
+                    workspace_copy,
+                    ..saved_tab_of(self.tabs.by_id(id)?)
+                })
             })
             .collect();
         let chrome = ui_state::SavedChrome {
@@ -458,5 +432,49 @@ impl ArrangementRead<'_> {
             inspector_position: self.drawing_chrome.remembered_inspector_position(),
         };
         (tabs, chrome)
+    }
+}
+
+/// One tab as the desk records it, apart from the workspace book's two fields.
+pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
+    ui_state::SavedTab {
+        feed: tab.feed_id.clone(),
+        symbol: tab.symbol.clone(),
+        layout: tab.layout.into(),
+        split_fraction: Some(tab.split_fraction),
+        context_collapsed: tab.context_collapsed,
+        flow_collapsed: tab.flow_collapsed,
+        context_heights: tab.context_height_shares(),
+        context_panes_collapsed: tab.context_collapsed_slots(),
+        focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
+        focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
+        flow_bars: tab.flow_pane.state.spec().to_config_string(),
+        // Only a pane that exists has an interval worth recording; a
+        // tab that never showed the split restores on the default,
+        // which is what it had.
+        time_bars: tab
+            .time_pane()
+            .map(|pane| pane.state.spec().to_config_string()),
+        context_bars: tab
+            .time_panes
+            .iter()
+            .map(|pane| pane.state.spec().to_config_string())
+            .collect(),
+        flow_layout: tab.flow_pane.layout_id().map(|layout| layout.0),
+        context_layouts: tab
+            .time_panes
+            .iter()
+            .map(|pane| {
+                pane.layout_id()
+                    .map_or(crate::ui_state::LAYOUT_UNRECORDED, |layout| layout.0)
+            })
+            .collect(),
+        flow_legend_collapsed: tab.flow_pane.legend_collapsed,
+        // A tab with no time pane has no second legend, and `false`
+        // is what it will restore into when one is opened: a pane
+        // that never existed cannot have been folded.
+        time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
+        workspace: None,
+        workspace_copy: None,
     }
 }

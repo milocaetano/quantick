@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::LayoutPort;
 use crate::app::QuantickApp;
 use crate::app::tests::{click_chart, pane_point, settle_indicators, split_app};
 use crate::toolbar::ToolbarAction;
@@ -77,7 +76,7 @@ fn i1_preview_and_discard_keep_the_original_target_and_committed_values() {
         before
     );
     assert!(
-        app.layout_state().layouts().active().indicators[0]
+        crate::app::tests::pane_set(&app, PaneSide::Flow)[0]
             .inputs
             .is_empty()
     );
@@ -140,7 +139,7 @@ fn i1_preset_keeps_an_invalid_cell_position_before_a_valid_neighbor() {
     assert!(dialog.previewed);
     assert_eq!(dialog.preset_label.as_deref(), Some("positional"));
     assert!(
-        app.layout_state().layouts().active().indicators[0]
+        crate::app::tests::pane_set(&app, PaneSide::Flow)[0]
             .inputs
             .is_empty()
     );

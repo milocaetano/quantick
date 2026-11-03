@@ -90,6 +90,7 @@ pub(super) fn process(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) 
                     );
                 }
                 app.layout_adapter().maintain_layouts();
+                super::tab_workspaces::maintain(app);
             }
             FrameStage::StrategyCleanup | FrameStage::Tail => {}
             _ => app.run_frame_stage(
@@ -699,6 +700,7 @@ impl QuantickApp {
         // frame is seeded this frame and a tab that changed symbol swaps its
         // drawings before anything paints them.
         self.layout_adapter().maintain_layouts();
+        super::tab_workspaces::maintain(self);
         self.active_tab_mut().apply_spec_changes();
     }
 

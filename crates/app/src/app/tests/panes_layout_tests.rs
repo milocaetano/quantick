@@ -2373,15 +2373,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let first = app.layout_state().layouts().active_id();
-    assert_eq!(
-        app.layout_state()
-            .layouts()
-            .get(first)
-            .unwrap()
-            .indicators
-            .len(),
-        1
-    );
+    assert_eq!(pane_set(&app, PaneSide::Flow).len(), 1);
 
     // Focus the time pane and give it a layout of its own.
     let point = pane_point(&app, PaneSide::Time(0));
@@ -2432,28 +2424,12 @@ fn two_panes_show_two_layouts_side_by_side() {
         1,
         "the flow pane gained nothing"
     );
+    assert_eq!(pane_set(&app, PaneSide::Time(0)).len(), 1);
     assert_eq!(
-        app.layout_state()
-            .layouts()
-            .get(second)
-            .unwrap()
-            .indicators
-            .len(),
-        1
-    );
-    assert_eq!(
-        app.layout_state().layouts().get(second).unwrap().indicators[0].kind,
+        pane_set(&app, PaneSide::Time(0))[0].kind,
         crate::indicators::state_file::SavedKind::native("native.cvd")
     );
-    assert_eq!(
-        app.layout_state()
-            .layouts()
-            .get(first)
-            .unwrap()
-            .indicators
-            .len(),
-        1
-    );
+    assert_eq!(pane_set(&app, PaneSide::Flow).len(), 1);
     assert_eq!(
         app.runtime.indicators.registry.slot_kinds().len(),
         2,
@@ -2491,16 +2467,6 @@ fn two_panes_show_two_layouts_side_by_side() {
         "layout 1 is back on the time pane: {labels:?}"
     );
     assert!(labels[0].contains("EMA"));
-    assert_eq!(
-        app.layout_state()
-            .layouts()
-            .get(second)
-            .unwrap()
-            .indicators
-            .len(),
-        1,
-        "layout 2 kept its own set while it was away"
-    );
     // The registry, not just the views: a leaked slot changes no view
     // count but shifts every later edit's layout index by one, so a
     // mirrored remove would take the wrong indicator on the other panes.
@@ -2515,6 +2481,14 @@ fn two_panes_show_two_layouts_side_by_side() {
             .count(),
         1,
         "the time pane holds one registration after two switches, not two"
+    );
+    // Layout 2's set waited on the tab's own copy while the pane was away.
+    assert_eq!(app.layout_adapter().switch_layout(second), Ok(true));
+    settle_indicators(&mut app);
+    assert_eq!(
+        pane_set(&app, PaneSide::Time(0)).len(),
+        1,
+        "layout 2 kept its own set while it was away"
     );
 }
 
@@ -2677,8 +2651,12 @@ fn per_pane_layouts_are_recorded_and_restored() {
     app.layout_adapter().flush_layouts();
 
     let (tabs, _chrome) = app.arrangement_state().capture_arrangement();
-    assert_eq!(tabs[0].flow_layout, Some(first.0));
-    assert_eq!(tabs[0].context_layouts, vec![second.0]);
+    // The desk names the tab's own copies, so its edits come back as its own.
+    let flow = crate::layouts::LayoutId(tabs[0].flow_layout.expect("named"));
+    let context = crate::layouts::LayoutId(tabs[0].context_layouts[0]);
+    let book = app.layout_state().layouts();
+    assert_eq!(book.strip_layout(flow), first);
+    assert_eq!(book.strip_layout(context), second);
 
     let path = app.runtime.workspace.layouts().path().to_path_buf();
     let (mut again, _commands2) = split_app(&ctx, 200);
@@ -2686,11 +2664,11 @@ fn per_pane_layouts_are_recorded_and_restored() {
     again
         .active_tab_mut()
         .flow_pane
-        .request_opening_layout(Some(first));
+        .request_opening_layout(Some(flow));
     again
         .active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .request_opening_layout(Some(second));
+        .request_opening_layout(Some(context));
     again.layout_adapter().reload_layouts(&[]);
     settle_indicators(&mut again);
     assert_eq!(
@@ -2731,6 +2709,11 @@ fn layouts_come_back_after_a_restart() {
     app.layout_adapter().apply_pending_indicator_state();
     place_level(&mut app, PaneSide::Time(0), 100.0);
     run_frame(&mut app, &ctx);
+    let copy = app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .layout_id()
+        .expect("the tab's copy");
     let second = app
         .layout_adapter()
         .create_layout(Some("levels"))
@@ -2746,7 +2729,8 @@ fn layouts_come_back_after_a_restart() {
     };
     assert_eq!(book.layouts().len(), 2);
     assert_eq!(book.active().name, "open");
-    assert_eq!(book.layouts()[0].indicators.len(), 1);
+    assert_eq!(book.strip_layout(copy), book.layouts()[0].id);
+    assert_eq!(book.get(copy).expect("kept").indicators.len(), 1);
     assert!(!book.has_legacy_drawings(), "the layouts hold no drawing");
     assert_eq!(
         app.runtime
@@ -2761,12 +2745,13 @@ fn layouts_come_back_after_a_restart() {
     // A second app on the same home — the same file — opens on the book.
     let (mut again, _commands2) = split_app(&ctx, 200);
     again.runtime.workspace.set_layouts_path(path.to_path_buf());
+    // As a desk that names the tab's copy brings it back.
+    again
+        .active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .request_opening_layout(Some(copy));
     again.layout_adapter().reload_layouts(&["market_settings"]);
     assert_eq!(again.layout_state().layouts().active().name, "open");
-    again
-        .layout_adapter()
-        .switch_layout(book.layouts()[0].id)
-        .expect("layout 1");
     settle_indicators(&mut again);
     assert_eq!(
         again
@@ -2779,6 +2764,59 @@ fn layouts_come_back_after_a_restart() {
         "the EMA is back on the restored layout"
     );
     assert_eq!(drawings_on(&again, PaneSide::Time(0)), vec![100.0]);
+}
+
+/// Known gap: the desk names only the copies a pane holds, so a tab's copy of
+/// a layout none of its panes shows at quit is lost, and Layout 1 comes back
+/// without the edit made on it before the switch to Layout 2.
+#[test]
+#[ignore = "follow-up: the desk names only held copies, so a tab's unheld copy is lost on restart"]
+fn an_edit_on_layout_1_survives_a_switch_to_layout_2_and_a_restart() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let tab = app.runtime.tabs.active_id();
+    let first = app.layout_state().layouts().active_id();
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    settle_indicators(&mut app);
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    for side in [PaneSide::Flow, PaneSide::Time(0)] {
+        app.layout_adapter()
+            .switch_pane_layout(tab, side, second)
+            .expect("switched");
+    }
+    run_frame(&mut app, &ctx);
+    app.layout_adapter().flush_layouts();
+    let (tabs, _chrome) = app.arrangement_state().capture_arrangement();
+    let path = app.runtime.workspace.layouts().path().to_path_buf();
+
+    let (mut again, _commands2) = split_app(&ctx, 200);
+    again.runtime.workspace.set_layouts_path(path);
+    let flow = tabs[0].flow_layout.map(crate::layouts::LayoutId);
+    let context = tabs[0].context_layouts.first().copied();
+    again
+        .active_tab_mut()
+        .flow_pane
+        .request_opening_layout(flow);
+    again
+        .active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .request_opening_layout(context.map(crate::layouts::LayoutId));
+    again.layout_adapter().reload_layouts(&[]);
+    settle_indicators(&mut again);
+    let tab = again.runtime.tabs.active_id();
+    again
+        .layout_adapter()
+        .switch_pane_layout(tab, PaneSide::Flow, first)
+        .expect("back on Layout 1");
+    settle_indicators(&mut again);
+    assert_eq!(
+        again.active_tab().flow_pane.indicators.all().len(),
+        1,
+        "the EMA made on Layout 1"
+    );
 }
 
 /// A settings preview reaches the origin's worker and nothing else: the
@@ -2815,15 +2853,13 @@ fn a_previewed_input_never_reaches_the_layout() {
     let change = app.runtime.indicators.preview_settings();
     app.apply_indicator_settings_change(change);
     assert!(
-        app.layout_state().layouts().active().indicators[0]
-            .inputs
-            .is_empty(),
+        pane_set(&app, PaneSide::Flow)[0].inputs.is_empty(),
         "a preview is not a commit"
     );
     let change = app.runtime.indicators.apply_settings();
     app.apply_indicator_settings_change(change);
     assert_eq!(
-        app.layout_state().layouts().active().indicators[0].inputs[0],
+        pane_set(&app, PaneSide::Flow)[0].inputs[0],
         crate::indicators::state_file::SavedInput::Int(50),
         "Apply is"
     );
@@ -2868,6 +2904,43 @@ fn deleting_a_layout_waits_for_the_confirmation() {
         "and the neighbour is active"
     );
     assert!(app.chrome.layout_delete_confirm.is_none());
+}
+
+/// A pane on its tab's copy of a layout shows that layout: the delete dialog
+/// counts it, and the delete moves it to the neighbour and drops the copy.
+#[test]
+fn deleting_a_layout_moves_the_panes_on_its_copies_and_the_dialog_counts_them() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let tab = app.runtime.tabs.active_id();
+    let first = app.layout_state().pane_layout(tab, PaneSide::Flow);
+    let point = pane_point(&app, PaneSide::Time(0));
+    click_chart(&mut app, &ctx, point);
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    run_frame(&mut app, &ctx);
+    let held = |app: &QuantickApp, side| app.active_tab().pane(side).layout_id();
+    let copy = held(&app, PaneSide::Time(0)).expect("a layout");
+    assert!(app.layout_state().layouts().is_private(copy), "a copy");
+    assert_eq!(app.layout_adapter().panes_on_count(second), 1, "counted");
+
+    app.layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(second));
+    app.layout_adapter().confirm_layout_delete();
+    assert_eq!(app.layout_state().layouts().layouts().len(), 1);
+    assert_eq!(
+        app.layout_state().pane_layout(tab, PaneSide::Time(0)),
+        first,
+        "moved to the neighbour"
+    );
+    assert_eq!(
+        held(&app, PaneSide::Time(0)),
+        held(&app, PaneSide::Flow),
+        "onto its tab's copy of it"
+    );
+    assert!(app.layout_state().layouts().get(copy).is_none(), "dropped");
 }
 
 /// Going back to Single hides the context chart; it must not throw away

@@ -141,7 +141,7 @@ which evicts nothing and divides the memory by the pane count.
 
 ## Burst test
 
-`crates/app/src/live_envelope_tests/burst.rs`, a plain `cargo test` (about 8
+`crates/app/src/tests/live_envelope/burst.rs`, a plain `cargo test` (about 8
 s), drives one pane's live path — `ChartState`, the lane cursor, the real
 `IndicatorWorker` hosting `native.cvd`, the real `BookWorker` recording
 aggressions and depth — frame by frame at 60 fps of wall time, exactly as the

@@ -820,6 +820,34 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        // Last: deleting a workspace lays its tab out as a new tab, and the rows
+        // above work on the charts the earlier rows opened.
+        (
+            "workspace.save_as",
+            1,
+            json!({ "name": "Retried" }),
+            Readback::Moves,
+        ),
+        ("workspace.save_to", 1, json!({}), Readback::Stays),
+        ("workspace.revert", 1, json!({}), Readback::Stays),
+        (
+            "tab.workspace.set",
+            1,
+            json!({ "name": "Retried" }),
+            Readback::Stays,
+        ),
+        (
+            "workspace.rename",
+            1,
+            json!({ "name": "Retried", "to": "Renamed" }),
+            Readback::Moves,
+        ),
+        (
+            "workspace.delete",
+            1,
+            json!({ "name": "Renamed" }),
+            Readback::Moves,
+        ),
     ]
 }
 
@@ -1023,6 +1051,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "layer_id": "grid", "visible": !app.runtime.style.canvas.grid_enabled,
             }),
             "layout.tab.switch" => json!({ "name": first_layout }),
+            "workspace.save_as" => payload,
             "layout.pane.resize_pair" => json!({
                 "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
                 "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),

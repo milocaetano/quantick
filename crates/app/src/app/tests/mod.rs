@@ -79,6 +79,7 @@ mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
 mod settled_frame;
+mod tab_workspace_tests;
 mod time_strip_cursor_tests;
 mod title_bar_tests;
 mod toolrail_launch_baselines;
@@ -1349,6 +1350,22 @@ pub(super) fn settle_indicators(app: &mut QuantickApp) {
         pane.indicator_worker.flush();
         pane.apply_indicator_events();
     }
+}
+
+/// The set an edit on the active tab's pane on `side` writes to: the tab's own
+/// copy of the strip layout it shows. A strip layout takes no edit: it reaches
+/// every tab.
+pub(super) fn pane_set(
+    app: &QuantickApp,
+    side: PaneSide,
+) -> &[crate::indicators::state_file::SavedIndicator] {
+    let own = app
+        .active_tab()
+        .pane(side)
+        .layout_id()
+        .expect("a seeded pane");
+    let layouts = app.layout_state().layouts();
+    &layouts.get(own).expect("the tab's copy").indicators
 }
 
 /// A point inside the pane on `side`, for a click that focuses it.

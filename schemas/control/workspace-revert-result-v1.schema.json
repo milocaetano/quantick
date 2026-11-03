@@ -1,0 +1,29 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a revert did.",
+  "properties": {
+    "changed": {
+      "description": "`false` when the tab held no edits.",
+      "type": "boolean"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "tab_id",
+    "workspace",
+    "changed"
+  ],
+  "title": "WorkspaceRevertResult",
+  "type": "object"
+}

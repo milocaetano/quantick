@@ -124,6 +124,8 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
                 time_bars: None,
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
+                workspace: None,
+                workspace_copy: None,
             }],
             None,
         )
@@ -647,6 +649,8 @@ fn a_restored_workspace_puts_the_window_back() {
                 time_bars: Some("time:5m".to_owned()),
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
+                workspace: None,
+                workspace_copy: None,
             }],
             Some(ui_state::SavedChrome {
                 timezone_minutes: 330,

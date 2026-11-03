@@ -328,6 +328,8 @@ fn both_panes_reopen_with_the_legend_the_trader_folded() {
                 time_bars: Some("time:1m".to_owned()),
                 flow_legend_collapsed: true,
                 time_legend_collapsed: true,
+                workspace: None,
+                workspace_copy: None,
             }],
             None,
         ));
@@ -410,9 +412,9 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
 
     // Settled, the edited pane's set is the layout's.
     app.layout_adapter().apply_pending_indicator_state();
-    assert_eq!(app.layout_state().layouts().active().indicators.len(), 1);
+    assert_eq!(pane_set(&app, PaneSide::Flow).len(), 1);
     assert_eq!(
-        app.layout_state().layouts().active().indicators[0].kind,
+        pane_set(&app, PaneSide::Flow)[0].kind,
         crate::indicators::state_file::SavedKind::native("native.ema")
     );
 }
@@ -438,8 +440,8 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
         assert!(views[0].mouse_vertical_line, "CVD follows on {side:?}");
         assert!(!views[1].mouse_vertical_line, "EMA stays off on {side:?}");
     }
-    assert!(app.layout_state().layouts().active().indicators[0].mouse_vertical_line);
-    assert!(!app.layout_state().layouts().active().indicators[1].mouse_vertical_line);
+    assert!(pane_set(&app, PaneSide::Flow)[0].mouse_vertical_line);
+    assert!(!pane_set(&app, PaneSide::Flow)[1].mouse_vertical_line);
 
     let result = app
         .control_action(
@@ -455,7 +457,7 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
         )
         .unwrap();
     assert_eq!(result["enabled"], false);
-    assert!(!app.layout_state().layouts().active().indicators[0].mouse_vertical_line);
+    assert!(!pane_set(&app, PaneSide::Flow)[0].mouse_vertical_line);
 }
 
 /// The four doors into the dialog have to be one door: whichever gesture a

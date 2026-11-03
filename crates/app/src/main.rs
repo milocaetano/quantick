@@ -56,6 +56,7 @@ mod layout_strip;
 mod layouts;
 mod live_envelope;
 #[cfg(test)]
+#[path = "tests/live_envelope/mod.rs"]
 mod live_envelope_tests;
 mod loading;
 mod metrics;

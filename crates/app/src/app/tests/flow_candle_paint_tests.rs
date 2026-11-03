@@ -269,10 +269,12 @@ fn assert_footprint_layering(
     app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
     app.runtime.style.canvas.background = [13, 17, 23];
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.footprint.config = Some(crate::footprint_config::FootprintConfig {
-        style: crate::footprint_config::FootprintStyle::Split,
-        ..Default::default()
-    });
+    pane.footprint
+        .config
+        .set_own(Some(crate::footprint_config::FootprintConfig {
+            style: crate::footprint_config::FootprintStyle::Split,
+            ..Default::default()
+        }));
     pane.set_layer_visible(ChartLayer::Footprint, true, &mut Default::default());
     let footprint = settled_flow_frame(app, ctx);
     let isolated = regional_circles(app, &footprint);

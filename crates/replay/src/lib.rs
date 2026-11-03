@@ -62,6 +62,7 @@ pub mod context;
 pub mod deals;
 pub mod download_selection;
 pub mod format;
+pub mod home;
 pub mod library;
 pub mod recorder;
 #[cfg(test)]

@@ -18282,6 +18282,103 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Switches one tab to a saved workspace: its charts, context intervals, indicators, layers and footprint style. Drawings, anchored studies, bar size and the paper position stay with the market. It never asks: unsaved edits on the tab are dropped and the answer says so. Discover names with workspace.list.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "tab.workspace.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Put a tab on a workspace.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "TabWorkspaceSetInput",
+        "type": "object"
+      },
+      "module": "tab",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The tab, and whether unsaved edits were dropped by the switch.",
+        "properties": {
+          "changed": {
+            "description": "`false` for a repeat, which keeps any edits.",
+            "type": "boolean"
+          },
+          "dropped_edits": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "workspace",
+          "changed",
+          "dropped_edits"
+        ],
+        "title": "TabWorkspaceSetResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the workspace it wants, so a repeat leaves the tab there, keeps any edits made since and answers changed false.",
+      "title": "Put a tab on a workspace",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Records what one point of price is worth per unit held, the smallest tradable size, and the currency - the three facts no feed reports and nothing here derives, without which risk sizing has nothing to size against. Leaving any of them out clears the declaration rather than half-setting it.",
       "destructive": false,
       "dry_run_supported": false,
@@ -19534,6 +19631,515 @@
       "stale_input_safety": "The call names the strategy it selected and answers with the one that is now set, so a caller working from a stale read can see that it chose something else. It changes nothing that is already working.",
       "title": "Choose the ticket's exit ladder",
       "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.delete",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Delete a workspace.",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceDeleteInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a delete did.",
+        "properties": {
+          "changed": {
+            "description": "`false` when no workspace had that name.",
+            "type": "boolean"
+          },
+          "kept_edits": {
+            "description": "The moved tabs that kept their edits, marked `Default •`.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          },
+          "moved": {
+            "description": "Every tab moved to `Default`.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "changed",
+          "moved",
+          "kept_edits"
+        ],
+        "title": "WorkspaceDeleteResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds no such workspace, writes nothing and answers changed false.",
+      "title": "Delete a workspace",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Lists every saved workspace with the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "workspace.list",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Takes nothing: every workspace is listed.",
+        "title": "WorkspaceListInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceEntry": {
+            "description": "One workspace and the tabs using it.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "tabs": {
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "tabs"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Every workspace, `Default` first, then by name.",
+        "properties": {
+          "workspaces": {
+            "items": {
+              "$ref": "#/$defs/WorkspaceEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "workspaces"
+        ],
+        "title": "WorkspaceListResult",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.workspace"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "List the workspaces",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Renames a workspace; the tabs on it follow. Default cannot be renamed, and an empty or taken name is refused with the reason.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.rename",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Rename a workspace.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "to"
+        ],
+        "title": "WorkspaceRenameInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The name in force.",
+        "properties": {
+          "changed": {
+            "description": "`false` when the name already read so.",
+            "type": "boolean"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "changed"
+        ],
+        "title": "WorkspaceRenameResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Naming the name it already has writes nothing and answers changed false.",
+      "title": "Rename a workspace",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Puts the tab back on its workspace's saved recipe. The edits do not come back.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.revert",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "A call about one tab's copy.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "title": "WorkspaceTabInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a revert did.",
+        "properties": {
+          "changed": {
+            "description": "`false` when the tab held no edits.",
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "workspace",
+          "changed"
+        ],
+        "title": "WorkspaceRevertResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds no edits and answers changed false.",
+      "title": "Drop a tab's unsaved edits",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Makes a workspace of what the tab shows and puts the tab on it. No other tab changes. An empty or taken name is refused with the reason.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.save_as",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Make a new workspace of a tab's copy.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceSaveAsInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a save did.",
+        "properties": {
+          "changed": {
+            "description": "`false` for a repeat, which writes nothing.",
+            "type": "boolean"
+          },
+          "tabs_changed": {
+            "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "changed",
+          "tabs_changed"
+        ],
+        "title": "WorkspaceSaveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat from the tab that made the name writes nothing and answers changed false.",
+      "title": "Save a tab as a new workspace",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Writes the tab's edits into the workspace it uses and answers the other tabs that changed: the ones on that workspace without edits of their own. A tab with edits keeps them.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.save_to",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "A call about one tab's copy.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "title": "WorkspaceTabInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a save did.",
+        "properties": {
+          "changed": {
+            "description": "`false` for a repeat, which writes nothing.",
+            "type": "boolean"
+          },
+          "tabs_changed": {
+            "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+            "items": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "changed",
+          "tabs_changed"
+        ],
+        "title": "WorkspaceSaveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds no edits, writes nothing and answers changed false.",
+      "title": "Save a tab's edits to its workspace",
+      "version": 1
     }
   ],
   "catalog_version": 1,
@@ -19663,6 +20269,11 @@
       "title": "System"
     },
     {
+      "description": "What one open tab uses: the workspace it reads its market with.",
+      "id": "tab",
+      "title": "Tab"
+    },
+    {
       "description": "Placing, bracketing and cancelling orders on the charted symbol. Fills are simulated.",
       "id": "trade",
       "title": "Trade"
@@ -19746,7 +20357,7 @@
     },
     {
       "default_grant": "prompt",
-      "description": "Overwrite or forget the desk quantick opens on, and bring up the file dialogs that export or replace it. A desk overwritten or forgotten this way does not come back.",
+      "description": "Overwrite or forget the desk quantick opens on, bring up the file dialogs that export or replace it, and overwrite, rename or delete a saved workspace. What is overwritten or forgotten this way does not come back.",
       "id": "cockpit.desk",
       "label": "Change your saved desk",
       "profile_ceilings": [
@@ -25828,6 +26439,11 @@
               "layout": {
                 "$ref": "#/$defs/CanvasLayoutDto"
               },
+              "modified": {
+                "default": false,
+                "description": "Whether the tab holds edits it has not saved to that workspace.",
+                "type": "boolean"
+              },
               "panes": {
                 "items": {
                   "$ref": "#/$defs/WorkspacePane"
@@ -25846,6 +26462,11 @@
               },
               "tab_id": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "venue": {
+                "default": "",
+                "description": "The tab's venue. Additive; empty from a build that predates it.",
+                "type": "string"
               },
               "window_id": {
                 "anyOf": [
@@ -25868,6 +26489,11 @@
                   }
                 ],
                 "default": null
+              },
+              "workspace": {
+                "default": "",
+                "description": "The workspace this tab uses. Additive; empty from a build that predates\nit.",
+                "type": "string"
               }
             },
             "required": [

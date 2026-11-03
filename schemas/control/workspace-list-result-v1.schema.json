@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    },
+    "WorkspaceEntry": {
+      "description": "One workspace and the tabs using it.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "tabs": {
+          "items": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "tabs"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Every workspace, `Default` first, then by name.",
+  "properties": {
+    "workspaces": {
+      "items": {
+        "$ref": "#/$defs/WorkspaceEntry"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "workspaces"
+  ],
+  "title": "WorkspaceListResult",
+  "type": "object"
+}

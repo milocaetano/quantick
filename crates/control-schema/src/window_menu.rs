@@ -8,6 +8,11 @@
 /// One command row of the window menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RowId {
+    SaveToWorkspace,
+    WorkspaceSaveAsNew,
+    WorkspaceRename,
+    WorkspaceRevert,
+    WorkspaceDelete,
     SaveDesk,
     TogglePanels,
     MarketReplay,
@@ -74,6 +79,8 @@ pub enum LiveRows {
     ChartMoves,
     /// Workspace files opened before.
     RecentFiles,
+    /// The saved workspaces, each with the tabs on it.
+    WorkspaceList,
 }
 
 /// One line of a menu.
@@ -113,9 +120,44 @@ const fn row(id: RowId, label: &'static str, behaviour: &'static str) -> Row {
 const DOCK_BEHAVIOUR: &str = "dock.tab.open";
 const TOOLBAR_BEHAVIOUR: &str = "toolrail.dock.set";
 const HELP_BEHAVIOUR: &str = "window.help.open";
+const NO_EDITS_HOVER: &str = "This tab holds no edits";
+const DEFAULT_PROTECTED_HOVER: &str = "Default cannot be deleted or renamed";
 
 /// Every command row of the window menu, in no particular order.
 pub const ROWS: &[Row] = &[
+    Row {
+        disabled_hover: Some(NO_EDITS_HOVER),
+        ..row(
+            RowId::SaveToWorkspace,
+            "Save to workspace",
+            "workspace.save_to",
+        )
+    },
+    row(
+        RowId::WorkspaceSaveAsNew,
+        "Save as new\u{2026}",
+        "workspace.save_as",
+    ),
+    Row {
+        disabled_hover: Some(DEFAULT_PROTECTED_HOVER),
+        ..row(
+            RowId::WorkspaceRename,
+            "Rename workspace\u{2026}",
+            "workspace.rename",
+        )
+    },
+    Row {
+        disabled_hover: Some(NO_EDITS_HOVER),
+        ..row(RowId::WorkspaceRevert, "Revert edits", "workspace.revert")
+    },
+    Row {
+        disabled_hover: Some(DEFAULT_PROTECTED_HOVER),
+        ..row(
+            RowId::WorkspaceDelete,
+            "Delete workspace",
+            "workspace.delete",
+        )
+    },
     Row {
         hover: Some(
             "Remember this arrangement — the tabs, the charts on each, the panels, the \
@@ -208,6 +250,7 @@ pub const ROWS: &[Row] = &[
 
 /// The menu the `⋮` button opens.
 pub const ROOT: &[Item] = &[
+    Item::Row(RowId::SaveToWorkspace),
     Item::Row(RowId::SaveDesk),
     Item::Row(RowId::TogglePanels),
     Item::Row(RowId::MarketReplay),
@@ -229,6 +272,12 @@ pub const fn submenu(id: SubmenuId) -> (&'static str, &'static [Item]) {
         SubmenuId::Workspace => (
             "Workspace",
             &[
+                Item::Live(LiveRows::WorkspaceList),
+                Item::Row(RowId::WorkspaceSaveAsNew),
+                Item::Row(RowId::WorkspaceRename),
+                Item::Row(RowId::WorkspaceRevert),
+                Item::Row(RowId::WorkspaceDelete),
+                Item::Separator,
                 Item::Submenu(SubmenuId::Layouts),
                 Item::Submenu(SubmenuId::Layout),
                 Item::Live(LiveRows::ContextCharts),
@@ -324,18 +373,122 @@ pub fn legend_label(collapsed: bool, split: Option<&str>) -> String {
     }
 }
 
-/// What `About workspaces…` says. Written for what ships: choosing a workspace
-/// per tab is named as not built, because an About page that describes a control
-/// the trader cannot find is a false statement.
+/// The name dialog's title when it makes a new workspace.
+pub const SAVE_AS_DIALOG_TITLE: &str = "Save as new workspace";
+/// The name dialog's title when it renames one.
+pub const RENAME_DIALOG_TITLE: &str = "Rename workspace";
+pub const DIALOG_SAVE: &str = "Save";
+pub const DIALOG_CANCEL: &str = "Cancel";
+/// The toolbar's Revert, beside its Save to.
+pub const TOOLBAR_REVERT: &str = "Revert";
+
+fn named(symbols: &[String]) -> String {
+    symbols.join(", ")
+}
+
+/// The root row: `Save WINV26 to Scalp`.
+#[must_use]
+pub fn save_to_label(symbol: &str, workspace: &str) -> String {
+    format!("Save {symbol} to {workspace}")
+}
+
+/// The toolbar's shorter form, where the symbol stands beside it.
+#[must_use]
+pub fn save_to_short_label(workspace: &str) -> String {
+    format!("Save to {workspace}")
+}
+
+/// The first line of the chip's menu: `WINV26 uses`.
+#[must_use]
+pub fn uses_caption(symbol: &str) -> String {
+    format!("{symbol} uses")
+}
+
+/// Save to names the tabs it will change before the click.
+#[must_use]
+pub fn save_to_hover(followers: &[String]) -> String {
+    if followers.is_empty() {
+        "No other tab changes".to_owned()
+    } else {
+        format!("Also changes {}", named(followers))
+    }
+}
+
+/// The armed delete row, stating what the second click does.
+#[must_use]
+pub fn delete_armed_label(workspace: &str, moved: &[String]) -> String {
+    if moved.is_empty() {
+        format!("Delete {workspace}? No tab uses it")
+    } else {
+        format!("Delete {workspace}? {} move to Default", named(moved))
+    }
+}
+
+/// The toast after a switch, which says when edits were dropped.
+#[must_use]
+pub fn switched_toast(symbol: &str, workspace: &str, dropped_edits: bool) -> String {
+    if dropped_edits {
+        format!("{symbol} now uses {workspace}; its unsaved edits were dropped")
+    } else {
+        format!("{symbol} now uses {workspace}")
+    }
+}
+
+/// The toast after Save to, naming the tabs that changed.
+#[must_use]
+pub fn saved_toast(workspace: &str, followers: &[String]) -> String {
+    if followers.is_empty() {
+        format!("Saved to {workspace}")
+    } else {
+        format!("Saved to {workspace}; {} changed", named(followers))
+    }
+}
+
+#[must_use]
+pub fn saved_as_toast(symbol: &str, workspace: &str) -> String {
+    format!("{symbol} now uses the new workspace {workspace}")
+}
+
+#[must_use]
+pub fn reverted_toast(symbol: &str) -> String {
+    format!("{symbol} is back on its saved workspace")
+}
+
+#[must_use]
+pub fn renamed_toast(from: &str, to: &str) -> String {
+    format!("{from} is now {}", to.trim())
+}
+
+/// The toast after a delete, naming each tab and what became of it.
+#[must_use]
+pub fn deleted_toast(workspace: &str, adopted: &[String], kept_edits: &[String]) -> String {
+    let mut toast = format!("Deleted {workspace}");
+    if !adopted.is_empty() {
+        toast.push_str(&format!("; {} moved to Default", named(adopted)));
+    }
+    if !kept_edits.is_empty() {
+        toast.push_str(&format!(
+            "; {} keep their edits as Default \u{2022}",
+            named(kept_edits)
+        ));
+    }
+    toast
+}
+
+/// What `About workspaces…` says. Written for what ships: an About page that
+/// describes a control the trader cannot find is a false statement.
 pub const ABOUT_WORKSPACES: &[&str] = &[
     "A workspace is a saved way of reading a market: which charts the tab shows (Flow, Time \
      or both), the context panes and their intervals, the indicators on each pane, the layer \
-     toggles and the footprint style. Keep one per kind of strategy: Scalp for the open, Tape \
-     for a quiet range, Swing for the daily picture.",
+     toggles and the footprint style. Keep one per kind of strategy and switch the tab between \
+     them: Scalp for the open, Tape for a quiet range, Swing for the daily picture.",
+    "Every tab is one market and uses one workspace; a new tab opens on Default. Any number of \
+     tabs can share a workspace. Editing a tab marks only that tab (•); nothing reaches the \
+     other tabs until you choose Save to, and that step names the tabs it will change.",
     "Drawings, anchored studies, bar size and the paper position belong to the market, never \
-     to the workspace.",
-    "Not built yet: choosing a workspace per tab. Today the layouts under Workspace apply to \
-     the focused chart, and Save desk keeps the whole window.",
+     to the workspace: switching WINV26 from Scalp to Tape keeps its levels.",
+    "Deleting a workspace moves the tabs on it to Default. A tab with unsaved edits keeps them, \
+     marked Default •, so nothing is lost. Default cannot be deleted.",
 ];
 
 /// A Settings switch's tooltip.
@@ -412,6 +565,7 @@ mod tests {
         assert_eq!(
             labels,
             [
+                "Save to workspace",
                 "Save desk",
                 "Hide panels",
                 "Market Replay…",
@@ -435,6 +589,41 @@ mod tests {
             legend_label(false, Some("Flow")),
             "Collapse indicator legend (Flow)"
         );
+    }
+
+    #[test]
+    fn about_workspaces_reads_the_four_paragraphs_verbatim() {
+        assert_eq!(
+            ABOUT_WORKSPACES,
+            [
+                "A workspace is a saved way of reading a market: which charts the tab shows (Flow, Time or both), the context panes and their intervals, the indicators on each pane, the layer toggles and the footprint style. Keep one per kind of strategy and switch the tab between them: Scalp for the open, Tape for a quiet range, Swing for the daily picture.",
+                "Every tab is one market and uses one workspace; a new tab opens on Default. Any number of tabs can share a workspace. Editing a tab marks only that tab (•); nothing reaches the other tabs until you choose Save to, and that step names the tabs it will change.",
+                "Drawings, anchored studies, bar size and the paper position belong to the market, never to the workspace: switching WINV26 from Scalp to Tape keeps its levels.",
+                "Deleting a workspace moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •, so nothing is lost. Default cannot be deleted.",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_save_words_name_the_tab_and_the_tabs_it_changes() {
+        assert_eq!(save_to_label("WINV26", "Scalp"), "Save WINV26 to Scalp");
+        assert_eq!(save_to_hover(&[]), "No other tab changes");
+        let tabs = ["BTCUSDT".to_owned(), "WDOV26".to_owned()];
+        assert_eq!(save_to_hover(&tabs), "Also changes BTCUSDT, WDOV26");
+        assert_eq!(
+            saved_toast("Scalp", &tabs),
+            "Saved to Scalp; BTCUSDT, WDOV26 changed"
+        );
+    }
+
+    #[test]
+    fn a_delete_says_what_became_of_each_tab() {
+        let (moved, kept) = (["BTCUSDT".to_owned()], ["WDOV26".to_owned()]);
+        assert_eq!(
+            deleted_toast("Scalp", &moved, &kept),
+            "Deleted Scalp; BTCUSDT moved to Default; WDOV26 keep their edits as Default \u{2022}"
+        );
+        assert_eq!(deleted_toast("Scalp", &[], &[]), "Deleted Scalp");
     }
 
     #[test]

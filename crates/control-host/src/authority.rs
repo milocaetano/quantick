@@ -150,14 +150,11 @@ pub const SCRIPT_PERMISSION_ID: &str = "annotate.script";
 pub const LAYOUT_MODULE_ID: &str = "layout";
 
 /// Names that once meant something and now split, with what replaced each, and
-/// which of those are named ahead of being built.
+/// which of those are named ahead of being built (none today).
 /// A caller holding an old name is told where to go rather than that nothing
 /// by that name ever existed.
-pub const RETIRED_CAPABILITIES: &[(&str, &[&str], &[&str])] = &[(
-    "workspace.save",
-    &["desk.save", "workspace.save_to"],
-    &["workspace.save_to"],
-)];
+pub const RETIRED_CAPABILITIES: &[(&str, &[&str], &[&str])] =
+    &[("workspace.save", &["desk.save", "workspace.save_to"], &[])];
 
 /// The refusal for a retired name, naming its successors in the message and in
 /// `details.successors`; `None` for any other name.
@@ -167,12 +164,16 @@ pub fn retired_capability(id: &str) -> Option<quantick_control::error::ControlEr
     let (_, successors, planned) = RETIRED_CAPABILITIES
         .iter()
         .find(|(name, _, _)| *name == id)?;
+    let not_built = if planned.is_empty() {
+        String::new()
+    } else {
+        format!(", of which {} is not built yet", planned.join(", "))
+    };
     let mut refusal = ControlError::new(
         ErrorCode::new(codes::CAPABILITY_RETIRED).expect("static error code is valid"),
         format!(
-            "{id} is retired; its successors are {}, of which {} is not built yet",
-            successors.join(", "),
-            planned.join(", ")
+            "{id} is retired; its successors are {}{not_built}",
+            successors.join(", ")
         ),
         false,
     );
@@ -185,6 +186,8 @@ pub fn retired_capability(id: &str) -> Option<quantick_control::error::ControlEr
 pub const HOME_MODULE_ID: &str = "home";
 pub const SETTINGS_MODULE_ID: &str = "settings";
 pub const DESK_MODULE_ID: &str = "desk";
+/// Calls on one open tab.
+pub const TAB_MODULE_ID: &str = "tab";
 
 /// Evidence bundles: one hashed, redacted capture of a running session.
 pub const EVIDENCE_MODULE_ID: &str = "evidence";
@@ -414,9 +417,10 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
         PermissionDescriptor {
             id: permission(COCKPIT_DESK_PERMISSION_ID),
             label: "Change your saved desk".to_owned(),
-            description: "Overwrite or forget the desk quantick opens on, and bring up the file \
-                          dialogs that export or replace it. A desk overwritten or forgotten this \
-                          way does not come back."
+            description: "Overwrite or forget the desk quantick opens on, bring up the file \
+                          dialogs that export or replace it, and overwrite, rename or delete a \
+                          saved workspace. What is overwritten or forgotten this way does not \
+                          come back."
                 .to_owned(),
             sensitive: true,
             default_grant: DefaultGrant::Prompt,
@@ -630,6 +634,12 @@ pub fn modules() -> Vec<ModuleDescriptor> {
             id: module(DESK_MODULE_ID),
             title: "Desk".to_owned(),
             description: "The open tabs, panels and window kept as what quantick opens on."
+                .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(TAB_MODULE_ID),
+            title: "Tab".to_owned(),
+            description: "What one open tab uses: the workspace it reads its market with."
                 .to_owned(),
         },
         ModuleDescriptor {

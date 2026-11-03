@@ -103,6 +103,11 @@ impl ArrangementAdapter<'_> {
                         },
                     );
                     tab.set_opening_layouts(saved.flow_layout, &saved.context_layouts);
+                    self.workspace.book.sync_mut().arrive(
+                        target.0,
+                        saved.workspace.clone(),
+                        saved.workspace_copy.clone(),
+                    );
                 }
                 RestoreEffect::CloseStale { .. } => {
                     if let Some(plan) = self.tabs.plan_restore(&step) {
@@ -125,6 +130,10 @@ impl ArrangementAdapter<'_> {
                 break;
             }
         }
+        let named = documents.iter().flat_map(ui_state::SavedTab::layout_ids);
+        self.workspace
+            .layouts_mut()
+            .prune_private(named, std::time::Instant::now());
     }
     fn adopt_workspace_settings(&mut self, workspace: &ui_state::Workspace) {
         self.workspace.session_mut().adopt(

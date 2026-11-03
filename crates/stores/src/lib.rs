@@ -23,6 +23,7 @@ pub mod bubble_look;
 pub mod bubble_presets;
 pub mod bundle;
 pub mod candle_presets;
+pub mod chart_footprint;
 pub mod config;
 pub mod footprint_config;
 pub mod footprint_presets;
@@ -37,6 +38,8 @@ mod scratch;
 pub mod script_library;
 pub mod symbol_catalog;
 pub mod symbols_file;
+pub mod tab_recipes;
 pub mod ui_state;
+pub mod workspaces;
 
 pub mod indicator_picker;

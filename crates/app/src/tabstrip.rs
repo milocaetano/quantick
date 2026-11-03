@@ -5,6 +5,10 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
+use egui_phosphor::regular as icons;
+use quantick_session::tab_chip::{
+    ChipMeasure, TabButtonGesture, TabButtonRelease, fit_chip, shortened_name,
+};
 use quantick_workspace::arrangement::strip::{
     StripSurface, TabFeedDot, chip_parts, market_slots, visible_tabs,
 };
@@ -33,9 +37,13 @@ const ADD_WIDTH_PX: f32 = 30.0;
 const CHIP_PADDING_LEFT_PX: f32 = 10.0;
 const CHIP_DOT_RADIUS_PX: f32 = 3.0;
 const CHIP_DOT_GAP_PX: f32 = 7.0;
-/// Fixed in front of the close target, so a narrow tab loses its suffix before
-/// a click meant for the name can land on the ×.
-const CLOSE_GAP_PX: f32 = 8.0;
+/// The workspace button on the active chip, shorter than the chip it sits on.
+const WORKSPACE_BUTTON_HEIGHT_PT: f32 = 22.0;
+const WORKSPACE_BUTTON_PADDING_PT: f32 = 4.0;
+const WORKSPACE_BUTTON_ROUNDING_PT: f32 = 4.0;
+const WORKSPACE_ARROW_GAP_PT: f32 = 3.0;
+/// What marks a tab holding edits.
+const EDITED_MARK: &str = "\u{2022}";
 /// How far a second strike of the symbol sits from the first. The bundled face
 /// has one weight, and this is what reads as 600 at 13 pt.
 const SEMIBOLD_STRIKE_PX: f32 = 0.35;
@@ -65,6 +73,10 @@ pub struct TabChip<'a> {
     pub replaying: bool,
     /// The dot's state. Amber stays reserved for an edited tab.
     pub dot: TabFeedDot,
+    /// The workspace the tab uses.
+    pub workspace: String,
+    /// Whether the tab holds edits it has not saved to that workspace.
+    pub modified: bool,
 }
 
 /// What the strip asked the window to do.
@@ -76,6 +88,8 @@ pub enum TabAction {
     New,
     /// The first tab: show Home over the canvas.
     Home,
+    /// The active chip's workspace button was released on.
+    WorkspaceMenu,
 }
 
 /// Draw the strip and report the one action it produced.
@@ -95,6 +109,10 @@ pub(crate) struct StripDrawn {
     pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
+    /// Where the active chip's workspace button is, for its menu to open under.
+    pub(crate) workspace_button: Option<egui::Rect>,
+    /// The press on that button, across frames.
+    pub(crate) workspace_gesture: TabButtonGesture,
 }
 
 pub(crate) fn draw(
@@ -111,6 +129,11 @@ pub(crate) fn draw(
     drawn.tab_ids.clear();
     drawn.add = None;
     drawn.overflow = None;
+    drawn.workspace_button = None;
+    // A press whose chip went away under it must not hold the strip for ever.
+    if ui.input(|input| !input.pointer.any_down() && !input.pointer.any_released()) {
+        drawn.workspace_gesture = TabButtonGesture::default();
+    }
     let compact = ui.available_width() < 240.0;
     ui.spacing_mut().item_spacing.x = if compact { 2.0 } else { 4.0 };
     ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 4.0);
@@ -172,14 +195,20 @@ pub(crate) fn draw(
             if response.clicked() && !selected {
                 action = Some(TabAction::Activate(index));
             }
-            if response.drag_started() {
+            if response.drag_started() && !drawn.workspace_gesture.holds_pointer() {
                 drawn.drag_started = Some(chip.id);
             }
             let bounds = response.rect.intersect(ui.clip_rect());
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
             }
-            paint_chip_face(ui, chip, body, selected || response.hovered());
+            let lit = selected || response.hovered();
+            if let Some(button) = paint_chip_face(ui, chip, body, selected, lit) {
+                drawn.workspace_button = Some(button);
+                if workspace_button(ui, button, &mut drawn.workspace_gesture) {
+                    action = Some(TabAction::WorkspaceMenu);
+                }
+            }
             // Reserve a stable close target so hover never shifts adjacent controls.
             {
                 let close_target = egui::Rect::from_min_size(
@@ -270,8 +299,16 @@ pub(crate) fn draw(
     action
 }
 
-/// The dot, the symbol in its heavier strike and the suffix in muted ink.
-fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, lit: bool) {
+/// The dot, the symbol in its heavier strike, the amber mark on an edited tab and
+/// the workspace: a button on the active chip, grey words on any other. Answers
+/// where the active chip's button is, when it kept any of its face.
+fn paint_chip_face(
+    ui: &egui::Ui,
+    chip: &TabChip<'_>,
+    body: egui::Rect,
+    selected: bool,
+    lit: bool,
+) -> Option<egui::Rect> {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let center_y = body.center().y;
     let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
@@ -284,7 +321,7 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, lit: boo
             TabFeedDot::Replay => theme::REPLAY,
         },
     );
-    let (symbol, suffix) = chip_parts(chip.label);
+    let (symbol, _venue_on_hover) = chip_parts(chip.label);
     let ink = if chip.replaying {
         theme::REPLAY
     } else if lit {
@@ -293,33 +330,111 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, lit: boo
         theme::TEXT_MUTED
     };
     let text_x = dot_x + CHIP_DOT_RADIUS_PX + CHIP_DOT_GAP_PX;
-    let galley = ui.fonts(|fonts| {
-        fonts.layout_no_wrap(
-            symbol.to_owned(),
-            egui::FontId::proportional(SYMBOL_TEXT_PX),
-            ink,
-        )
-    });
+    let laid = |text: String, px: f32, color: egui::Color32| {
+        ui.fonts(|fonts| fonts.layout_no_wrap(text, egui::FontId::proportional(px), color))
+    };
+    let galley = laid(symbol.to_owned(), SYMBOL_TEXT_PX, ink);
     let symbol_width = galley.size().x;
     let at = egui::pos2(text_x, center_y - galley.size().y / 2.0);
     painter.galley(at, galley.clone(), ink);
     painter.galley(at + egui::vec2(SEMIBOLD_STRIKE_PX, 0.0), galley, ink);
-    let suffix_x = text_x + symbol_width + CHIP_DOT_GAP_PX;
-    let room = body.right() - CLOSE_GAP_PX - suffix_x;
-    if suffix.is_empty() || room <= 0.0 {
-        return;
-    }
-    let mut job = egui::text::LayoutJob::single_section(
-        suffix.to_owned(),
-        egui::TextFormat::simple(
-            egui::FontId::proportional(SUFFIX_TEXT_PX),
+
+    let mark = chip
+        .modified
+        .then(|| laid(EDITED_MARK.to_owned(), SUFFIX_TEXT_PX, theme::AMBER));
+    let mark_width = mark
+        .as_ref()
+        .map_or(0.0, |galley| galley.size().x + CHIP_DOT_GAP_PX);
+    let arrow = selected.then(|| {
+        laid(
+            icons::CARET_DOWN.to_owned(),
+            SUFFIX_TEXT_PX,
             theme::TEXT_MUTED,
-        ),
+        )
+    });
+    let arrow_width = arrow
+        .as_ref()
+        .map_or(0.0, |galley| galley.size().x + WORKSPACE_ARROW_GAP_PT);
+    let name_ink = theme::TEXT_MUTED;
+    let name_width = |letters: usize| {
+        let cut = shortened_name(&chip.workspace, letters);
+        laid(cut, SUFFIX_TEXT_PX, name_ink).size().x
+    };
+    let fit = fit_chip(&ChipMeasure {
+        available: body.width(),
+        symbol: text_x - body.left() + symbol_width + CHIP_DOT_GAP_PX,
+        mark: mark_width,
+        arrow: arrow_width,
+        close: 0.0,
+        name_letters: chip.workspace.chars().count(),
+        name_width: &name_width,
+    });
+    let mut x = text_x + symbol_width + CHIP_DOT_GAP_PX;
+    if let Some(galley) = mark {
+        let at = egui::pos2(x, center_y - galley.size().y / 2.0);
+        x += galley.size().x + CHIP_DOT_GAP_PX;
+        painter.galley(at, galley, theme::AMBER);
+    }
+    let name = (fit.name_letters > 0).then(|| {
+        laid(
+            shortened_name(&chip.workspace, fit.name_letters),
+            SUFFIX_TEXT_PX,
+            name_ink,
+        )
+    });
+    let arrow = arrow.filter(|_| fit.arrow);
+    let width = name.as_ref().map_or(0.0, |galley| galley.size().x)
+        + arrow
+            .as_ref()
+            .map_or(0.0, |galley| galley.size().x + WORKSPACE_ARROW_GAP_PT);
+    let button = (selected && width > 0.0).then(|| {
+        egui::Rect::from_center_size(
+            egui::pos2(x + width / 2.0, center_y),
+            egui::vec2(
+                width + 2.0 * WORKSPACE_BUTTON_PADDING_PT,
+                WORKSPACE_BUTTON_HEIGHT_PT,
+            ),
+        )
+    });
+    if let Some(rect) = button.filter(|rect| ui.rect_contains_pointer(*rect)) {
+        painter.rect_filled(rect, WORKSPACE_BUTTON_ROUNDING_PT, theme::BARE_HOVER);
+    }
+    if let Some(galley) = name {
+        let at = egui::pos2(x, center_y - galley.size().y / 2.0);
+        x += galley.size().x + WORKSPACE_ARROW_GAP_PT;
+        painter.galley(at, galley, name_ink);
+    }
+    if let Some(galley) = arrow {
+        let at = egui::pos2(x, center_y - galley.size().y / 2.0);
+        painter.galley(at, galley, theme::TEXT_MUTED);
+    }
+    button
+}
+
+/// The active chip's workspace button: opens on release, cancels once the pointer
+/// has travelled. Answers whether the menu should open.
+fn workspace_button(ui: &mut egui::Ui, rect: egui::Rect, gesture: &mut TabButtonGesture) -> bool {
+    let response = ui.interact(
+        rect,
+        ui.id().with("tab_workspace_button"),
+        egui::Sense::click_and_drag(),
     );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
-    let galley = ui.fonts(|fonts| fonts.layout_job(job));
-    let at = egui::pos2(suffix_x, center_y - galley.size().y / 2.0);
-    painter.galley(at, galley, theme::TEXT_MUTED);
+    let pointer = ui
+        .input(|input| input.pointer.interact_pos())
+        .map(|at| [at.x, at.y]);
+    if response.is_pointer_button_down_on()
+        && !gesture.holds_pointer()
+        && let Some(at) = pointer
+    {
+        gesture.press(at);
+    }
+    if !gesture.holds_pointer() {
+        return false;
+    }
+    if let Some(at) = pointer {
+        gesture.moved(at);
+    }
+    ui.input(|input| input.pointer.any_released()) && gesture.release() == TabButtonRelease::Open
 }
 
 /// The Home text's colour. Hover reaches this and nothing else on the tab.

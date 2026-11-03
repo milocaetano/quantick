@@ -38,15 +38,7 @@ fn human_script_operations_mirror_two_panes_and_save_once() {
     app.apply_toolbar_action(ToolbarAction::AddScriptIndicator(index));
     settle_indicators(&mut app);
     assert_one_indicator_save(&mut app);
-    assert_eq!(
-        app.layout_state()
-            .layouts()
-            .get(layout)
-            .unwrap()
-            .indicators
-            .len(),
-        1
-    );
+    assert_eq!(pane_set(&app, PaneSide::Flow).len(), 1);
     let targets: Vec<_> = app
         .runtime
         .indicators
@@ -77,14 +69,7 @@ fn human_script_operations_mirror_two_panes_and_save_once() {
     app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Remove(origin));
     settle_indicators(&mut app);
     assert_one_indicator_save(&mut app);
-    assert!(
-        app.layout_state()
-            .layouts()
-            .get(layout)
-            .unwrap()
-            .indicators
-            .is_empty()
-    );
+    assert!(pane_set(&app, PaneSide::Flow).is_empty());
     assert!(app.runtime.indicators.registry.slot_kinds().is_empty());
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
         assert!(app.active_tab().pane(side).indicators.all().is_empty());
@@ -223,9 +208,8 @@ fn invalid_library_script_retains_mirrored_error_slots_for_repair() {
         "both slots still follow the source file"
     );
     assert_eq!(app.runtime.indicators.registry.slot_kinds().len(), 2);
-    let layout = app.layout_state().focused_pane_layout();
     assert_eq!(
-        app.layout_state().layouts().get(layout).unwrap().indicators[0].kind,
+        pane_set(&app, PaneSide::Flow)[0].kind,
         SavedKind::Script {
             name: "broken.pine".into()
         }
@@ -262,15 +246,7 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
             assert_eq!(target.tab, tab);
             assert_eq!(*kind, SavedKind::Native { id: id.into() });
         }
-        assert_eq!(
-            app.layout_state()
-                .layouts()
-                .get(layout)
-                .unwrap()
-                .indicators
-                .len(),
-            1
-        );
+        assert_eq!(pane_set(&app, PaneSide::Flow).len(), 1);
         for side in [PaneSide::Flow, PaneSide::Time(0)] {
             let views = app.active_tab().pane(side).indicators.all();
             assert_eq!(views.len(), 1);
@@ -285,14 +261,7 @@ fn native_toolbar_operations_mirror_two_panes_and_save_once() {
         settle_indicators(&mut app);
         assert_one_indicator_save(&mut app);
         assert!(app.runtime.indicators.registry.slot_kinds().is_empty());
-        assert!(
-            app.layout_state()
-                .layouts()
-                .get(layout)
-                .unwrap()
-                .indicators
-                .is_empty()
-        );
+        assert!(pane_set(&app, PaneSide::Flow).is_empty());
         for side in [PaneSide::Flow, PaneSide::Time(0)] {
             assert!(app.active_tab().pane(side).indicators.all().is_empty());
         }

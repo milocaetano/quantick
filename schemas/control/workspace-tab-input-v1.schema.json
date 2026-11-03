@@ -1,0 +1,26 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A call about one tab's copy.",
+  "properties": {
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab. Left out, the one on screen."
+    }
+  },
+  "title": "WorkspaceTabInput",
+  "type": "object"
+}

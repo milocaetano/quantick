@@ -54,5 +54,6 @@ pub mod trace_replay;
 pub mod trade;
 pub mod window_menu;
 pub mod workspace;
+pub mod workspace_book;
 
 pub mod indicator_picker;

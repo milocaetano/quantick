@@ -108,10 +108,11 @@ fn workspace_save_is_refused_by_a_code_naming_both_successors() {
         );
         assert_eq!(
             error.context.details.as_ref().unwrap()["planned"],
-            json!(["workspace.save_to"])
+            json!([])
         );
         assert!(error.message.contains("desk.save"));
         assert!(error.message.contains("workspace.save_to"));
+        assert!(!error.message.contains("not built"));
     }
     assert_eq!(app.runtime.workspace.session().saved(), saved);
     disable_test_gateway(&mut app, &ctx);

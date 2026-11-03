@@ -7,6 +7,7 @@
 
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
+use quantick_session::workspace_menu::WorkspaceCommand;
 
 use crate::canvas_layout::LayoutPreset;
 use crate::dock::DockTab;
@@ -17,8 +18,8 @@ use crate::toolrail::ToolboxDock;
 use super::{
     COLLAPSE_CONTEXT_SHORTCUT, DOCK_SHORTCUT, LAYOUT_PRESET_KEYS, LEGEND_SHORTCUT,
     PAPER_BUY_SHORTCUT, PAPER_CANCEL_SHORTCUT, PAPER_FLATTEN_SHORTCUT, PAPER_REVERSE_SHORTCUT,
-    PAPER_SELL_SHORTCUT, REPLAY_SHORTCUT, SAVE_WORKSPACE_SHORTCUT, SETTINGS_SHORTCUT,
-    WINDOW_MENU_SHORTCUT, layout_preset_shortcut, layout_tab_shortcut,
+    PAPER_SELL_SHORTCUT, REPLAY_SHORTCUT, SAVE_TO_WORKSPACE_SHORTCUT, SAVE_WORKSPACE_SHORTCUT,
+    SETTINGS_SHORTCUT, WINDOW_MENU_SHORTCUT, layout_preset_shortcut, layout_tab_shortcut,
 };
 
 /// One thing a menu entry or a menu shortcut asked for.
@@ -44,6 +45,8 @@ pub(in crate::app) enum MenuCommand {
     TakeMark,
     /// Save the workspace; the reason is what the save event records.
     SaveWorkspace(&'static str),
+    /// A row of the workspace menus.
+    Workspace(WorkspaceCommand),
     ForgetWorkspace,
     ExportDesk,
     ImportDesk,
@@ -172,6 +175,10 @@ pub(super) fn read_shortcuts(
     }
     if pressed(&SAVE_WORKSPACE_SHORTCUT) {
         commands.push(MenuCommand::SaveWorkspace("shortcut"));
+    }
+    // After the desk's Ctrl+Shift+S: a logical match ignores an extra Shift.
+    if chart_on_screen && pressed(&SAVE_TO_WORKSPACE_SHORTCUT) {
+        commands.push(MenuCommand::Workspace(WorkspaceCommand::SaveTo));
     }
     // Trading hotkeys, swallowed only while no text field owns the
     // keyboard. Market entries use the ticket's quantity and offsets,

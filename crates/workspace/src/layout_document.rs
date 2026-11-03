@@ -227,6 +227,9 @@ pub struct LegacyDrawings {
 pub struct ChartLayout {
     pub id: LayoutId,
     pub name: String,
+    /// The strip layout a pane's own copy came from; `None` on a strip layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<LayoutId>,
     /// The indicator set every pane shows while this layout is active, in
     /// display order.
     #[serde(default)]
@@ -248,6 +251,12 @@ pub struct LayoutBook {
     /// that version may not even have.
     #[serde(default)]
     layouts: Vec<ChartLayout>,
+    /// Each tab's own copy of a strip layout's set, shared by the tab's panes
+    /// on that layout: never on the strip and never counted against it. A tab
+    /// that shared a strip layout with another would reach it with every edit;
+    /// see `crate::workspace_recipe`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    private: Vec<ChartLayout>,
 }
 
 impl Default for LayoutBook {
@@ -271,8 +280,10 @@ impl LayoutBook {
                 id,
                 name: format!("{DEFAULT_NAME_PREFIX}1"),
                 indicators,
+                origin: None,
                 drawings: Vec::new(),
             }],
+            private: Vec::new(),
         }
     }
 
@@ -335,12 +346,77 @@ impl LayoutBook {
     /// The layout with `id`.
     #[must_use]
     pub fn get(&self, id: LayoutId) -> Option<&ChartLayout> {
-        self.layouts.iter().find(|layout| layout.id == id)
+        self.layouts
+            .iter()
+            .chain(&self.private)
+            .find(|layout| layout.id == id)
     }
 
     /// See [`Self::get`].
     pub fn get_mut(&mut self, id: LayoutId) -> Option<&mut ChartLayout> {
-        self.layouts.iter_mut().find(|layout| layout.id == id)
+        self.layouts
+            .iter_mut()
+            .chain(&mut self.private)
+            .find(|layout| layout.id == id)
+    }
+
+    /// Whether `id` is a tab's own copy rather than a strip layout.
+    #[must_use]
+    pub fn is_private(&self, id: LayoutId) -> bool {
+        self.private.iter().any(|layout| layout.id == id)
+    }
+
+    /// The strip layout `id` was copied from, kept after that layout is
+    /// deleted; `id` itself for a strip layout.
+    #[must_use]
+    pub fn origin_of(&self, id: LayoutId) -> LayoutId {
+        self.get(id).and_then(|layout| layout.origin).unwrap_or(id)
+    }
+
+    /// A new private copy of `of`, remembering the strip layout it came from.
+    pub fn make_private_copy(&mut self, of: LayoutId) -> Option<LayoutId> {
+        let source = self.get(of)?;
+        let id = LayoutId(self.next_id);
+        let copy = ChartLayout {
+            id,
+            name: source.name.clone(),
+            origin: Some(source.origin.unwrap_or(of)),
+            indicators: source.indicators.clone(),
+            drawings: Vec::new(),
+        };
+        self.next_id += 1;
+        self.private.push(copy);
+        Some(id)
+    }
+
+    /// A private copy is gone with the last pane on it.
+    pub fn remove_private(&mut self, id: LayoutId) {
+        self.private.retain(|layout| layout.id != id);
+    }
+
+    /// Keep only the private copies `keep` names. Answers whether any went.
+    pub fn retain_private(&mut self, keep: impl Fn(LayoutId) -> bool) -> bool {
+        let before = self.private.len();
+        self.private.retain(|layout| keep(layout.id));
+        self.private.len() != before
+    }
+
+    /// The strip layout with `id`: what a strip row or a control call may
+    /// name. A pane's own copy is no strip layout, so another pane's is refused.
+    #[must_use]
+    pub fn on_strip(&self, id: LayoutId) -> Option<&ChartLayout> {
+        self.layouts.iter().find(|layout| layout.id == id)
+    }
+
+    /// The layout the strip lights for `id`: a copy's origin, or the active
+    /// layout once that origin was deleted.
+    #[must_use]
+    pub fn strip_layout(&self, id: LayoutId) -> LayoutId {
+        match self.get(id).and_then(|layout| layout.origin) {
+            Some(origin) if self.index_of(origin).is_some() => origin,
+            Some(_) => self.active,
+            None => id,
+        }
     }
 
     /// Where `id` sits in the strip.
@@ -364,7 +440,7 @@ impl LayoutBook {
 
     /// Make `id` the active layout. Returns whether it changed.
     pub fn switch(&mut self, id: LayoutId) -> Result<bool, LayoutError> {
-        if self.get(id).is_none() {
+        if self.on_strip(id).is_none() {
             return Err(LayoutError::Unknown);
         }
         let changed = self.active != id;
@@ -394,6 +470,7 @@ impl LayoutBook {
             id,
             name,
             indicators: Vec::new(),
+            origin: None,
             drawings: Vec::new(),
         });
         Ok(id)
@@ -486,12 +563,13 @@ pub fn parse(text: &str) -> Result<LayoutBook, ParseError> {
     if book.layouts.is_empty() {
         return Err(ParseError::Empty);
     }
-    if book.get(book.active).is_none() {
+    if book.on_strip(book.active).is_none() {
         return Err(ParseError::MissingActive);
     }
     if book
         .layouts
         .iter()
+        .chain(&book.private)
         .any(|layout| layout.id.0 >= book.next_id)
     {
         return Err(ParseError::IdPastCounter);
