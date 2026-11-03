@@ -270,9 +270,9 @@ pub struct SideHeader<'a> {
     pub capsule: Option<Capsule>,
 }
 
-/// One side header, left to right: plate, the pane's bars and indicators, the
-/// window selector, and the capsule docked at the far end, each where the header
-/// carries it and while it fits. Answers whether the indicators button was clicked.
+/// One side header, left to right: plate, the pane's bars and indicators (the
+/// trail's) or the window selector (the tape's), and the capsule docked at the far
+/// end, each while it fits. Answers whether the indicators button was clicked.
 pub fn draw_side_header(
     ui: &mut egui::Ui,
     side: egui::Rect,
@@ -311,9 +311,8 @@ pub fn draw_side_header(
     }
     let capsule = header.capsule.filter(|_| fit.capsule);
     let window = header.window.zip(words).filter(|_| fit.window);
-    let mut end = side.right() - SIDE_PAD_RIGHT_PX;
-    end -= capsule.map_or(0.0, |capsule| capsule.width_px() + SIDE_GAP_PX);
-    end -= window.as_ref().map_or(0.0, |_| window_w + SIDE_GAP_PX);
+    let end =
+        side.right() - SIDE_PAD_RIGHT_PX - capsule.map_or(0.0, |c| c.width_px() + SIDE_GAP_PX);
     let mut clicked = false;
     if let Some(bars) = header.bars {
         let button_px = indicators(fit.indicators_words);
@@ -337,7 +336,6 @@ pub fn draw_side_header(
         );
         let button_left = (content.cursor().left() + SIDE_GAP_PX).min(limit);
         clicked = indicators_button(ui, button_left, side, salt, fit.indicators_words);
-        left = button_left + button_px + SIDE_GAP_PX;
     }
     if let Some((state, words)) = window.as_ref() {
         let size = egui::vec2(window_w, INDICATORS_HEIGHT);

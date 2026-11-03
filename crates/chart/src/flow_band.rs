@@ -126,6 +126,30 @@ pub fn side_headers(
     }
 }
 
+/// The live strip's column on the trail, `width` wide against the tape's divider
+/// and never past the chart's `left`: its left and right edges. Only beside the
+/// tape; elsewhere the strip is the gutter's ([`gutter_strip_px`]).
+#[must_use]
+pub fn trail_strip(
+    shown: Option<LaneView>,
+    left: f32,
+    divider: Option<f32>,
+    width: f32,
+) -> Option<(f32, f32)> {
+    let divider = divider.filter(|_| shown == Some(LaneView::Beside) && width > 0.0)?;
+    Some(((divider - width).max(left), divider))
+}
+
+/// The strip width the plot carves before the price gutter: the strip's own
+/// unless the trail takes it beside the tape. The tape alone has no strip.
+#[must_use]
+pub fn gutter_strip_px(shown: Option<LaneView>, width: f32) -> f32 {
+    match shown {
+        Some(LaneView::Beside | LaneView::TapeOnly) => 0.0,
+        _ => width,
+    }
+}
+
 /// What one side header carries.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SideParts {
@@ -139,15 +163,14 @@ pub struct SideParts {
 }
 
 /// What the header for `side` carries, `first` in its row, on a pane with a tape
-/// or without. The first header carries the pane's bars and indicators whatever
-/// its side, so a tape alone keeps them; the tape's carries the window; a pane
-/// without a tape names no side and docks no capsule. The second starts further
-/// in, clear of the divider.
+/// or without. The trail's carries the pane's bars and indicators, so a tape alone
+/// has neither; the tape's carries the window; a pane without a tape names no side
+/// and docks no capsule. The second starts further in, clear of the divider.
 #[must_use]
 pub fn side_parts(side: CapsuleSide, first: bool, has_tape: bool) -> SideParts {
     SideParts {
         plate: has_tape,
-        bars: first,
+        bars: side == CapsuleSide::Candles,
         window: has_tape && side == CapsuleSide::Tape,
         capsule: has_tape,
         pad_left: if first {
@@ -194,10 +217,11 @@ pub struct SideFit {
     pub capsule: bool,
 }
 
-/// The narrow rule of a side header, in the order things go: the word beside the
-/// indicators icon, then the plate, then the window selector (the tape's menu
-/// still sets the window), then the bars text clips down to [`BARS_MIN_PX`], then
-/// the capsule. The indicators icon and the clipped bars never go.
+/// The narrow rule of a side header, in the order things go. The trail's: the
+/// word beside the indicators icon, then the plate, then the bars text clips down
+/// to [`BARS_MIN_PX`], then the capsule; the icon and the clipped bars never go.
+/// The tape's: the plate, then the window selector (the tape's menu still sets
+/// the window), then the capsule.
 #[must_use]
 pub fn side_fit(widths: &SideWidths) -> SideFit {
     let fits = |items: &[f32]| {
@@ -214,9 +238,9 @@ pub fn side_fit(widths: &SideWidths) -> SideFit {
     } = *widths;
     let icon = widths.indicators_icon;
     SideFit {
-        indicators_words: fits(&[plate, bars, widths.indicators_with_words, window, capsule]),
+        indicators_words: fits(&[plate, bars, widths.indicators_with_words, capsule]),
         plate: fits(&[plate, bars, icon, window, capsule]),
-        window: fits(&[bars, icon, window, capsule]),
+        window: fits(&[window, capsule]),
         capsule: capsule > 0.0 && fits(&[bars.min(BARS_MIN_PX), icon, capsule]),
     }
 }
@@ -405,6 +429,32 @@ mod flow_band_tests {
         assert_eq!(headers(None, Some(70.0)), [candles(100.0), None]);
     }
 
+    /// Beside the tape the strip stands on the trail against the divider, paid
+    /// for by the trail; the trail alone keeps it at the gutter; the tape alone
+    /// has none.
+    #[test]
+    fn the_strip_is_the_trails() {
+        let (beside, alone) = (Some(LaneView::Beside), Some(LaneView::TapeOnly));
+        let candles = Some(LaneView::CandlesOnly);
+        assert_eq!(
+            trail_strip(beside, 0.0, Some(70.0), 10.0),
+            Some((60.0, 70.0))
+        );
+        assert_eq!(
+            trail_strip(beside, 65.0, Some(70.0), 10.0),
+            Some((65.0, 70.0))
+        );
+        assert_eq!(trail_strip(beside, 0.0, Some(70.0), 0.0), None);
+        assert_eq!(trail_strip(beside, 0.0, None, 10.0), None);
+        for view in [candles, alone, None] {
+            assert_eq!(trail_strip(view, 0.0, Some(70.0), 10.0), None, "{view:?}");
+        }
+        assert_eq!(gutter_strip_px(beside, 10.0), 0.0);
+        assert_eq!(gutter_strip_px(alone, 10.0), 0.0);
+        assert_eq!(gutter_strip_px(candles, 10.0), 10.0);
+        assert_eq!(gutter_strip_px(None, 10.0), 10.0);
+    }
+
     fn trail(side: f32) -> SideWidths {
         SideWidths {
             side,
@@ -490,33 +540,9 @@ mod flow_band_tests {
         assert_eq!(keeps(pads + 78.0 - 1.0), (false, false, false));
     }
 
-    /// A tape alone carries the pane's bars and indicators between its plate and
-    /// its selector: the word, the plate, the selector, then the capsule go.
-    #[test]
-    fn a_lone_tape_keeps_the_bars_and_gives_things_up_in_order() {
-        let widths = |side| SideWidths {
-            window: 60.0,
-            ..trail(side)
-        };
-        let keeps = |side: f32| {
-            let fit = side_fit(&widths(side));
-            (fit.indicators_words, fit.plate, fit.window, fit.capsule)
-        };
-        let pads = SIDE_PAD_LEFT_PX + SIDE_PAD_RIGHT_PX;
-        let all = pads + 40.0 + 80.0 + 90.0 + 60.0 + 100.0 + 4.0 * SIDE_GAP_PX;
-        assert_eq!(keeps(all), (true, true, true, true));
-        assert_eq!(keeps(all - 60.0), (false, true, true, true));
-        let no_plate = all - 60.0 - 40.0 - SIDE_GAP_PX;
-        assert_eq!(keeps(no_plate), (false, false, true, true));
-        let no_window = no_plate - 60.0 - SIDE_GAP_PX;
-        assert_eq!(keeps(no_window), (false, false, false, true));
-        let clipped = no_window - 80.0 + BARS_MIN_PX;
-        assert_eq!(keeps(clipped), (false, false, false, true));
-        assert_eq!(keeps(clipped - 1.0), (false, false, false, false));
-    }
-
-    /// The first header carries the bars; the tape's the window; a pane with no
-    /// tape names no side and docks nothing.
+    /// The trail's header carries the bars; the tape's the window, alone on the
+    /// pane too, where it has no bars and no indicators; a pane with no tape names
+    /// no side and docks nothing.
     #[test]
     fn each_header_carries_its_parts() {
         let parts = |side, first, tape| {
@@ -527,7 +553,7 @@ mod flow_band_tests {
         let (first, second) = (SIDE_PAD_LEFT_PX, SECOND_SIDE_PAD_LEFT_PX);
         assert_eq!(parts(candles, true, true), (true, true, false, true, first));
         assert_eq!(parts(tape, false, true), (true, false, true, true, second));
-        assert_eq!(parts(tape, true, true), (true, true, true, true, first));
+        assert_eq!(parts(tape, true, true), (true, false, true, true, first));
         assert_eq!(
             parts(candles, true, false),
             (false, true, false, false, first)

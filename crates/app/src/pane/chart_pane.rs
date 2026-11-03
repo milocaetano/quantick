@@ -3,7 +3,7 @@
 
 use eframe::egui;
 
-use quantick_chart::flow_band::{flow_sides, side_headers, side_parts};
+use quantick_chart::flow_band::{flow_sides, gutter_strip_px, side_headers, side_parts};
 use quantick_chart::pane_header::{
     BubbleSample, Capsule, CapsuleSide, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle,
 };
@@ -439,7 +439,8 @@ impl ChartPane {
 
     /// Width reserved for the live strip this frame. The aggression histogram runs on the trade
     /// stream every source provides (replay included), so without book data the strip degrades to
-    /// that histogram alone. A pane with no tape has no strip (§11).
+    /// that histogram alone. A pane with no tape has no strip (§11), and neither has the tape
+    /// alone: the strip is the trail's, and its filed switch waits for the trail.
     pub fn live_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
         // Both halves of the strip come from the source: resting depth and the aggressions landing
         // into it. A source producing neither fills none of it, and the band would be an empty rect
@@ -447,24 +448,33 @@ impl ChartPane {
         // `layer_blocked` states: the running feed is resolved once per frame by the caller, and a
         // copy here would be one more thing to keep in step when MetaTrader narrows its
         // capabilities mid-session.
-        if quantick_layers::LayerState::effective(
-            ChartLayer::LiveStrip,
-            self.layers.requested(ChartLayer::LiveStrip),
-            self.layer_facts(Some(capabilities)),
-        ) {
+        if !self.tape_modes().0
+            && quantick_layers::LayerState::effective(
+                ChartLayer::LiveStrip,
+                self.layers.requested(ChartLayer::LiveStrip),
+                self.layer_facts(Some(capabilities)),
+            )
+        {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
             0.0
         }
     }
 
+    /// The tape's view on screen, `None` on a pane without a tape.
+    pub(crate) fn shown_lane_view(&self) -> Option<quantick_orderflow::LaneView> {
+        let tape = self.orderflow.as_ref();
+        tape.map(|tape| tape.cached_config().live_lane.shown_view())
+    }
+
     /// This pane's regions inside `area`, carved once so the input handler and
-    /// the renderer can never disagree about a boundary.
+    /// the renderer can never disagree about a boundary; `lay_out` puts the strip on the trail.
     pub(super) fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
         let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
+        let strip = self.live_strip_width(capabilities);
         let mut areas = plot_split(
             area,
-            self.live_strip_width(capabilities),
+            gutter_strip_px(self.shown_lane_view(), strip),
             self.indicators.pane_sizing(&mut sizing),
         );
         areas.capsules = self.frame.capsules;
@@ -1127,7 +1137,7 @@ impl ChartPane {
         let Some(state) = self.flow_header_state() else {
             return;
         };
-        let (left, right, split) = (chart.left(), chart.right(), self.frame.candles_right);
+        let (left, right, split) = (chart.left(), chart.right(), self.frame.lane_divider_x);
         let sides = flow_sides(Some(state.shown_view), left, right, split);
         let Some((_, left, right)) = sides
             .into_iter()
@@ -1169,7 +1179,7 @@ impl ChartPane {
         crate::pane_header::paint_rule(ui, row);
         let state = self.flow_header_state();
         let shown = state.map(|state| state.shown_view);
-        let headers = side_headers(shown, row.left(), row.right(), self.frame.candles_right);
+        let headers = side_headers(shown, row.left(), row.right(), self.frame.lane_divider_x);
         let bars = PaneHeader::of(PaneIdentity::OrderFlow, self.spec.spec());
         let (mut intent, mut indicators) = (None, false);
         for (index, (side, left, right)) in headers.into_iter().flatten().enumerate() {

@@ -24,7 +24,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
-use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout, RenderContext};
+use crate::orderflow_render::{OrderflowRenderStyle, RenderContext};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
@@ -130,6 +130,8 @@ pub struct OrderflowView {
     past_heat: std::cell::RefCell<quantick_orderflow::projection::PlacedPastHeat>,
     /// The lane divider's drag in progress, from press to release.
     lane_drag: Option<quantick_orderflow::LaneDividerDrag>,
+    /// The live strip's width left of the divider, as the pane's last frame carved it.
+    pub(crate) trail_strip_px: f32,
 }
 
 impl OrderflowView {
@@ -164,6 +166,7 @@ impl OrderflowView {
             past_dots: Default::default(),
             past_heat: Default::default(),
             lane_drag: None,
+            trail_strip_px: 0.0,
         }
     }
 
@@ -273,7 +276,7 @@ impl OrderflowView {
 
     /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart
     /// most recently painted ([`PaneTape::drawn`]). Projection and hit testing share
-    /// [`ProjectedLayout`]; the lookup is O(visible cells), only for a cursor snapshot.
+    /// [`Self::projected`]; the lookup is O(visible cells), only for a cursor snapshot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_flow_cell_at(
         &self,
@@ -285,15 +288,8 @@ impl OrderflowView {
         position: egui::Pos2,
     ) -> Option<FlowCellHit> {
         let frame = &**self.pane_tape.drawn(self.published.frame.as_ref())?;
-        let layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        )
-        .with_inverted(inverted);
+        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
+        let layout = layout.with_inverted(inverted);
         let in_lane = layout
             .lane_left_x()
             .is_some_and(|divider| position.x >= divider);
@@ -1281,6 +1277,7 @@ mod tests {
     use crate::bubble_presets::{BubblePreset, PresetSource, embedded};
     use crate::chart::PriceScale;
     use crate::live_strip;
+    use crate::orderflow_render::ProjectedLayout;
 
     impl OrderflowView {
         pub(crate) fn published_capture_grouping_for_test(&self) -> Decimal {

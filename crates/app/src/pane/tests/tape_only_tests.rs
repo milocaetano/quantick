@@ -141,18 +141,15 @@ fn tape_only_reserves_no_forming_candle_volume_profile_strip() {
     pane.set_layer_visible(ChartLayer::TapeOnly, true, &mut effects);
     assert_eq!(
         pane.live_strip_width(capabilities),
-        ordinary_width,
-        "the strip reads the book, so it stays with the candles hidden"
+        0.0,
+        "the strip is the trail's, so the tape alone has none"
     );
     let rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1_000.0, 600.0));
-    assert!(pane.plot_areas(rect, capabilities).live_strip.is_some());
-    pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut effects);
-    assert_eq!(
-        pane.live_strip_width(capabilities),
-        0.0,
-        "and it still answers to its own switch"
+    assert!(pane.plot_areas(rect, capabilities).live_strip.is_none());
+    assert!(
+        pane.layer_switched_on(ChartLayer::LiveStrip, &crate::style::ChartStyle::default()),
+        "its switch is filed as it was"
     );
-    pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut effects);
     pane.set_layer_visible(ChartLayer::TapeOnly, false, &mut effects);
     assert_eq!(pane.live_strip_width(capabilities), ordinary_width);
 }

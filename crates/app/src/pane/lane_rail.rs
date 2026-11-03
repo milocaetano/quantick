@@ -106,7 +106,7 @@ pub(super) fn paint_flow_divider(
     let (Some(chart), Some(area)) = (pane.frame.chart_rect, pane.frame.area) else {
         return;
     };
-    let headers = side_headers(shown, area.left(), area.right(), pane.frame.candles_right);
+    let headers = side_headers(shown, area.left(), area.right(), pane.frame.lane_divider_x);
     let [_, Some((_, x, _))] = headers else {
         return;
     };

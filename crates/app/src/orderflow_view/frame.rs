@@ -47,6 +47,21 @@ pub(super) fn status_color(status: &CaptureStatus) -> egui::Color32 {
 }
 
 impl OrderflowView {
+    /// `frame`'s layout over the chart, the strip the pane carved left of the
+    /// divider included: every painter and the cursor's lookup map through it.
+    pub(crate) fn projected<'a>(
+        &self,
+        (chart_rect, viewport, total_bars): (egui::Rect, &'a Viewport, usize),
+        frame: &VisibleOrderflow,
+        lane_px: f32,
+    ) -> ProjectedLayout<'a> {
+        let (first, slots) = (frame.first_bar_index, frame.slot_count);
+        let mut layout =
+            ProjectedLayout::new(chart_rect, viewport, total_bars, first, slots, lane_px);
+        layout.trail_strip_px = self.trail_strip_px;
+        layout
+    }
+
     /// The requested tape boundary remains visible while its worker has no frame.
     pub(crate) fn draw_lane_boundary(
         &self,
@@ -130,15 +145,8 @@ impl OrderflowView {
         lane_width_px: f32,
         inverted: bool,
     ) {
-        let layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        )
-        .with_inverted(inverted);
+        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
+        let layout = layout.with_inverted(inverted);
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         // The frame's book is today's: a held tape draws its own beside it.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
@@ -177,15 +185,8 @@ impl OrderflowView {
         price_range: (f64, f64),
         tick_chart: bool,
     ) {
-        let layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        )
-        .with_inverted(inverted);
+        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
+        let layout = layout.with_inverted(inverted);
         let mut style =
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         // FLOW owns tick-candle executions even when the Tape lane is hidden.
@@ -332,14 +333,7 @@ impl OrderflowView {
         top_inset_px: f32,
         tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
     ) -> Option<egui::Rect> {
-        let mut layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        );
+        let mut layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
         let mut style =
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         style.legend_top_inset = top_inset_px;

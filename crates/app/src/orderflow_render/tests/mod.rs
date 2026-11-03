@@ -1873,3 +1873,21 @@ fn a_held_book_clamped_to_the_lane_opening_is_drawn_from_the_divider() {
         "the live frame's own mapping is unchanged"
     );
 }
+
+/// A live strip on the candles' side of the divider: the candles' pane, and every
+/// bar mapped into it, ends where the strip starts; the tape still opens on the
+/// divider, as wide as it was.
+#[test]
+fn a_trail_strip_ends_the_candles_short_of_the_divider() {
+    let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
+    let viewport = Viewport::new();
+    let plain = ProjectedLayout::new(chart, &viewport, 10, 0, 11, 300.0);
+    let mut layout = plain;
+    layout.trail_strip_px = 84.0;
+    assert_eq!(plain.history_rect().right(), 700.0);
+    assert_eq!(layout.history_rect().right(), 616.0);
+    assert_eq!(layout.lane_rect(), plain.lane_rect());
+    assert_eq!(layout.lane_left_x(), Some(700.0));
+    let newest = |layout: ProjectedLayout<'_>| layout.x(9.5 / 11.0);
+    assert!((newest(plain) - newest(layout) - 84.0).abs() < 1e-3);
+}

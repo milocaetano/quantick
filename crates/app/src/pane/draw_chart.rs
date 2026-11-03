@@ -31,6 +31,7 @@ use crate::chart::PriceScale;
 use crate::orderflow_view::{LiveLane, OrderflowView};
 use crate::plot_area::split_time_strip;
 use crate::theme;
+use quantick_chart::flow_band::trail_strip;
 use quantick_layers::ChartLayer;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::{LaneView, reserved_span_ms};
@@ -337,7 +338,7 @@ impl ChartPane {
         self.sync_price_axis_mode();
         let closed_total = self.history_prefix.len() + self.state.bars().len();
         let total = closed_total + usize::from(self.state.partial().is_some());
-        let areas = self.plot_areas(area, chrome.capabilities);
+        let mut areas = self.plot_areas(area, chrome.capabilities);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
@@ -355,6 +356,15 @@ impl ChartPane {
         // beside the candles keeps its share and fits the shared price axis.
         let (tape_only, native_tape) = self.tape_modes();
         let live_lane = self.lay_out_lane(chart_rect);
+        // Beside the tape the strip is the trail's: every candle edge stops at it.
+        let width = self.live_strip_width(chrome.capabilities);
+        let divider = self.frame.lane_divider_x;
+        let trail = trail_strip(self.shown_lane_view(), chart_rect.left(), divider, width);
+        if let Some((left, right)) = trail {
+            let rows = chart_rect.top()..=areas.time_strip.top();
+            areas.live_strip = Some(egui::Rect::from_x_y_ranges(left..=right, rows));
+            self.frame.candles_right = Some(left);
+        }
         if total == 0 {
             return None;
         }

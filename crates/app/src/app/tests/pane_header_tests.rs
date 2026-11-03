@@ -557,9 +557,10 @@ fn a_right_click_opens_a_layers_settings_and_switches_nothing() {
 }
 
 /// With the candles hidden their capsule goes with them; the keys stay refused,
-/// the layers keep their state and the look returns. The strip stays live.
+/// the layers keep their state and the look returns. The strip goes with the
+/// trail; its switch stays filed.
 #[test]
-fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_stays_live() {
+fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_waits() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     let toggles = [
@@ -594,8 +595,8 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_stays_live()
         );
     }
     assert_eq!(flow.layer_blocked(ChartLayer::LiveStrip, caps), None);
-    // Its glyph lives in the trail's capsule, gone with the trail; the strip itself
-    // still answers its switch.
+    // Its glyph lives in the trail's capsule, gone with the trail, and so is the
+    // strip; its switch is still filed for the trail's return.
     let strip = HeaderControl::Layer(LayerToggle::LiveStrip);
     assert_eq!(control_rect(&app, PaneSide::Flow, strip), None);
     let strip_before = on(&app, ChartLayer::LiveStrip);
@@ -609,9 +610,11 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_stays_live()
         "the strip moved"
     );
     let flow = &app.active_tab().flow_pane;
-    if !strip_before {
-        assert!(flow.live_strip_width(caps) > 0.0, "and reserves its band");
-    }
+    assert_eq!(
+        flow.live_strip_width(caps),
+        0.0,
+        "the tape alone has no strip"
+    );
 
     app.active_tab_mut()
         .tape_mut()
@@ -1540,21 +1543,8 @@ fn the_toolbar_leaves_bars_and_indicators_to_the_panes() {
     );
 }
 
-/// A tape alone at full width: its header carries the window selector too.
-const WINDOWED: quantick_chart::pane_header::FlowHeaderState =
-    quantick_chart::pane_header::FlowHeaderState {
-        view: LaneView::TapeOnly,
-        shown_view: LaneView::TapeOnly,
-        market_held: false,
-        candle_sample: None,
-        tape_sample: None,
-        window: quantick_orderflow::LaneWindow::Auto { zoom: 1.0 },
-        window_reference_ms: None,
-        window_setting: quantick_orderflow::LaneWindow::Auto { zoom: 1.0 },
-    };
-
 /// However narrow the pane, the glyph is on it, off the bars control, and it
-/// answers a click: a tape alone, plate, selector and all, gives the rest up first.
+/// answers a click: the trail's header, plate and all, gives the rest up first.
 #[test]
 fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
     let ctx = egui::Context::default();
@@ -1575,7 +1565,7 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let side = crate::pane_header::SideHeader {
-                        which: quantick_chart::pane_header::CapsuleSide::Tape,
+                        which: quantick_chart::pane_header::CapsuleSide::Candles,
                         salt: 7,
                         pad_left: quantick_chart::flow_band::SIDE_PAD_LEFT_PX,
                         plate: true,
@@ -1586,7 +1576,7 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
                             inputs: BarInputAvailability::PRINTS,
                             rebuilding: false,
                         }),
-                        window: Some(&WINDOWED),
+                        window: None,
                         capsule: None,
                     };
                     let mut intent = None;
@@ -2428,7 +2418,7 @@ fn the_flow_pane_wears_its_band_frame_and_side_headers() {
         bubbles.top() - row_top >= 4.0,
         "clear of the band: {bubbles:?}"
     );
-    let split = flow.frame.candles_right.expect("the split");
+    let split = flow.frame.lane_divider_x.expect("the split");
     let selector = flow_control(&app, HeaderControl::TapeWindow);
     assert!(
         selector.left() - split > SECOND_SIDE_PAD_LEFT_PX,
@@ -2475,7 +2465,7 @@ fn the_side_headers_follow_a_dragged_divider() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     let flow = &app.active_tab().flow_pane;
-    let before = flow.frame.candles_right.expect("the split");
+    let before = flow.frame.lane_divider_x.expect("the split");
     let y = flow.frame.area.expect("flow chart").center().y;
     drag(
         &mut app,
@@ -2483,7 +2473,7 @@ fn the_side_headers_follow_a_dragged_divider() {
         egui::pos2(before, y),
         egui::pos2(before - 40.0, y),
     );
-    let moved = app.active_tab().flow_pane.frame.candles_right.unwrap();
+    let moved = app.active_tab().flow_pane.frame.lane_divider_x.unwrap();
     assert!(moved < before, "{moved} from {before}");
     let selector = flow_control(&app, HeaderControl::TapeWindow);
     let footprint = flow_control(&app, HeaderControl::Layer(LayerToggle::Footprint));
@@ -2518,7 +2508,7 @@ fn a_closed_side_leaves_one_header_at_full_width() {
         )
         .is_none()
     );
-    // The tape alone carries the pane's bars and ƒx before its selector.
+    // The tape alone carries its selector after its plate, and no bars.
     let selector = flow_control(&app, HeaderControl::TapeWindow);
     let area = app.active_tab().flow_pane.frame.area.expect("flow chart");
     assert!(
@@ -2540,22 +2530,92 @@ fn bars_and_indicators(app: &mut QuantickApp, ctx: &egui::Context) -> [Option<eg
     ctx.data(|data| ids.map(|id| data.get_temp(id)))
 }
 
-/// The pane's bars and its `ƒx` never go with a side: a tape alone carries them
-/// after its plate and before its window selector.
+/// The bars and the `ƒx` are the trail's: the tape alone shows neither, and keeps
+/// its plate, its window selector and its capsule. Back beside, the trail has them.
 #[test]
-fn a_tape_alone_keeps_the_bars_and_the_indicators_button() {
+fn a_tape_alone_shows_no_bars_and_no_indicators_button() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     app.active_tab_mut()
         .tape_mut()
         .set_lane_view(LaneView::TapeOnly);
+    assert_eq!(bars_and_indicators(&mut app, &ctx), [None, None]);
+    let selector = flow_control(&app, HeaderControl::TapeWindow);
+    let bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
+    assert!(
+        selector.right() <= bubbles.left(),
+        "{selector:?} {bubbles:?}"
+    );
+    let texts = painted_text(&run_frame(&mut app, &ctx));
+    assert!(texts.iter().any(|text| text == "TAPE"), "{texts:?}");
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::Beside);
     let [bars, indicators] = bars_and_indicators(&mut app, &ctx);
     let (bars, indicators) = (bars.expect("the bars"), indicators.expect("the ƒx"));
-    let selector = flow_control(&app, HeaderControl::TapeWindow);
-    assert!(bars.right() <= indicators.left(), "{bars:?} {indicators:?}");
-    assert!(indicators.right() <= selector.left(), "{selector:?}");
-    let area = app.active_tab().flow_pane.frame.area.expect("flow chart");
-    assert!(indicators.bottom() <= area.top(), "in the header");
+    let split = app.active_tab().flow_pane.frame.lane_divider_x.unwrap();
+    assert!(bars.right() <= indicators.left() && indicators.right() < split);
+}
+
+/// The live strip is the trail's. Beside the tape it stands on the candles' side
+/// of the divider and the candles pay for it: the tape keeps its width, the
+/// headers still split at the divider, and the candles end where the strip
+/// starts. The trail alone keeps it against the price gutter; the
+/// tape alone has none, its switch filed for the trail's return.
+#[test]
+fn the_live_strip_stands_on_the_trail() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let width = crate::live_strip::LIVE_STRIP_WIDTH_PX;
+    let shown = |app: &mut QuantickApp, on: bool| {
+        let flow = &mut app.active_tab_mut().flow_pane;
+        flow.set_layer_visible(ChartLayer::LiveStrip, on, &mut Default::default());
+        run_frame(app, &ctx);
+        run_frame(app, &ctx);
+        let frame = &app.active_tab().flow_pane.frame;
+        let chart = frame.chart_rect.expect("flow chart");
+        (chart, frame.lane_divider_x, frame.candles_right)
+    };
+    assert_eq!(view_of(&app), LaneView::Beside);
+    let (chart, divider, candles) = shown(&mut app, false);
+    let divider = divider.expect("a divider beside the tape");
+    assert_eq!(
+        candles,
+        Some(divider),
+        "no strip, the candles run to the tape"
+    );
+    let (on_chart, on_divider, on_candles) = shown(&mut app, true);
+    assert_eq!(on_chart, chart, "the gutter keeps no strip beside the tape");
+    assert_eq!(on_divider, Some(divider), "the tape keeps its width");
+    assert_eq!(on_candles, Some(divider - width), "the candles pay for it");
+    let glyph = flow_control(&app, HeaderControl::Layer(LayerToggle::LiveStrip));
+    assert!(
+        glyph.right() > divider - width && glyph.right() < divider,
+        "the trail's header runs over the strip to the divider: {glyph:?}"
+    );
+    assert!(flow_control(&app, HeaderControl::TapeWindow).left() > divider);
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::CandlesOnly);
+    let (chart, _, _) = shown(&mut app, true);
+    let gutter = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .price_gutter
+        .expect("gutter");
+    assert_eq!(chart.right(), gutter.left() - width, "against the gutter");
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    let (chart, _, _) = shown(&mut app, true);
+    let caps = app.active_tab().capabilities(&app.config);
+    assert_eq!(app.active_tab().flow_pane.live_strip_width(caps), 0.0);
+    assert_eq!(chart.right(), gutter.left(), "no column on the tape alone");
+    assert!(on(&app, ChartLayer::LiveStrip), "the switch is kept");
 }
 
 /// The window list open, the view drops the tape: the list closes with its
