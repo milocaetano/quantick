@@ -675,14 +675,27 @@ impl LiveLaneStyle {
             return 0.0;
         }
         match self.shown_view() {
-            LaneView::TapeOnly => return chart_width,
-            LaneView::CandlesOnly => return rail_px(chart_width),
-            LaneView::Beside => {}
+            LaneView::TapeOnly => chart_width,
+            LaneView::CandlesOnly => rail_px(chart_width),
+            LaneView::Beside => self.beside_width_px(chart_width),
         }
+    }
+
+    /// The band the tape takes beside the candles on a chart this wide.
+    fn beside_width_px(&self, chart_width: f32) -> f32 {
         // The floor yields on a narrow window: half a small chart beats a
         // fixed band that would eat all of it.
         let floor = MIN_LIVE_LANE_WIDTH_PX.min(chart_width / 2.0);
         (chart_width * self.open_share()).max(floor)
+    }
+
+    /// The width the candles keep beside the tape on a chart this wide,
+    /// whichever view is shown. Tape only fits the candles that would stand
+    /// there with its prints, so the beside view and tape only share one
+    /// price window and switching between them never rescales the prices.
+    #[must_use]
+    pub fn candles_beside_px(&self, chart_width: f32) -> f32 {
+        (chart_width - self.beside_width_px(chart_width)).max(0.0)
     }
 
     /// Market time the lane shows, given the automatic reference window (the
