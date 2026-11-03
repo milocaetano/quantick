@@ -7,7 +7,6 @@
 //! the stack from borrowed inputs and hands them to the renderer; nothing
 //! here is retained between frames.
 
-use crate::orderflow_view::constants::TAPE_HEADER_INSET_PX;
 use quantick_orderflow::engine::PENDING_LANE_REFERENCE_MS;
 use std::sync::Arc;
 
@@ -26,8 +25,8 @@ use crate::chart::PriceScale;
 use crate::live_strip;
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
-    draw_compact_legend, draw_compact_legend_avoiding, draw_heatmap_background,
-    draw_liquidity_events, draw_live_lane_marks, theme_bubble_rgb,
+    draw_compact_legend_avoiding, draw_heatmap_background, draw_liquidity_events,
+    draw_live_lane_marks, theme_bubble_rgb,
 };
 use crate::orderflow_worker::BookCommand;
 use crate::viewport::Viewport;
@@ -345,30 +344,8 @@ impl OrderflowView {
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         style.legend_top_inset = top_inset_px;
         if self.flow_execution_replaces_history() && !style.live_lane.tape_only {
-            if lane_width_px > 0.0 {
-                let mut tape_style = style.clone();
-                tape_style.live_lane.tape_only = true;
-                // The left half of the Tape header leaves its status and switch clear.
-                let header = egui::Rect::from_min_size(
-                    egui::pos2(
-                        chart_rect.right() - lane_width_px + TAPE_HEADER_INSET_PX,
-                        chart_rect.top() + quantick_chart::side_label::TAPE_KEY_TOP_PX,
-                    ),
-                    egui::vec2(
-                        (lane_width_px * 0.5 - TAPE_HEADER_INSET_PX).max(0.0),
-                        crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
-                    ),
-                );
-                let tape_layout = ProjectedLayout {
-                    chart_rect: header,
-                    ..layout
-                };
-                let _ = draw_compact_legend(
-                    painter,
-                    &RenderContext::new(&frame.projection, tape_layout, &tape_style),
-                );
-            }
             // FLOW has its own unboxed palette key; retain the historical L2 key.
+            // The tape wears no Buy/Sell key: its bubbles' colours say it.
             style.aggression_layer = false;
             style.lane_aggression_layer = false;
         }

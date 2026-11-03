@@ -141,16 +141,15 @@ pub struct TapeViewResult {
 }
 
 pub fn descriptor() -> CapabilityDescriptor {
-    let mut descriptor = crate::layout::transient_descriptor::<TapeViewInput, TapeViewResult>(
+    // Transient, as the registry has no conditional persistence: the description
+    // names `file` as the one input that also saves.
+    crate::layout::transient_descriptor::<TapeViewInput, TapeViewResult>(
         TAPE_VIEW_CAPABILITY_ID,
         MODULE_ID,
         "Move the native tape through time",
-        "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. The window is navigation, as the wheel's, unless `file` is set: then it is the asset's setting, as the tape header's window selector and its window menu set it, and the asset save switch governs whether it is saved. Never moves the candles beside it.",
+        "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. Transient by default: the window is navigation, as the wheel's, and nothing is saved. `file: true` is the one exception that saves: the window becomes the asset's setting, as the tape header's window selector and its window menu set it, written to disk while the asset save switch is on. Never moves the candles beside it.",
         "Stable tab and pane IDs select one tape; the same end or window again is harmless, and the result reports the end after clamping.",
-    );
-    // `file` writes the asset's setting.
-    descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;
-    descriptor
+    )
 }
 
 pub const READBACKS: &[Readback] = &[snapshot(

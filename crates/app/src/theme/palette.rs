@@ -75,6 +75,9 @@ pub const FLOW_LINE: Color32 = Color32::from_rgba_premultiplied(56, 56, 56, 56);
 /// `flow/lit` — white at 16 %: the fill of a lit segment on the flow surface.
 pub const FLOW_LIT: Color32 = Color32::from_rgba_premultiplied(41, 41, 41, 41);
 
+/// `flow/band-rule` — the 1 px under the band, closing it against the side headers.
+pub const FLOW_BAND_RULE: Color32 = Color32::from_rgb(0x2E, 0x36, 0x48);
+
 /// `pane/action` — a word on a header line that does something: quieter than the
 /// bars it follows, louder than muted text.
 pub const PANE_ACTION: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
@@ -82,11 +85,10 @@ pub const PANE_ACTION: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
 /// `layer/off` — a layer switched off by hand. Not in the heatmap, not a side.
 pub const OFF: Color32 = Color32::from_rgb(0xF2, 0x9A, 0x4B);
 
-/// `capsule/*` — the backdrop of the layer capsule floating over a chart side:
-/// `rgba(11,14,20,.74)`, a 9% white hairline and a soft black shadow.
+/// `capsule/*` — the backdrop of the layer capsule docked in a header:
+/// `rgba(11,14,20,.74)` and a 9% white hairline.
 pub const CAPSULE_FILL: Color32 = Color32::from_rgba_premultiplied(8, 10, 15, 189);
 pub const CAPSULE_BORDER: Color32 = Color32::from_rgba_premultiplied(23, 23, 23, 23);
-pub const CAPSULE_SHADOW: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 115);
 /// `control/hover` — the 6% white under a bare control the pointer is on.
 pub const BARE_HOVER: Color32 = Color32::from_rgba_premultiplied(15, 15, 15, 15);
 

@@ -1,31 +1,27 @@
 //! Paints a pane's chrome: the bars control and indicators button every pane
-//! carries, the flow pane's band (the mark on the left; the Trail and Tape switches,
-//! the strip and the gear on the right) and its two side headers, the tape's label,
-//! and the capsule floating over a time chart. What they say and what a press asks
-//! for are `quantick_chart`'s call; this file holds the shapes and the pointer.
+//! carries, the flow pane's band (the mark on the left; the Trail and Tape switches
+//! and the gear on the right), its two side headers, and the capsule docked in a
+//! header. What they say and what a press asks for are `quantick_chart`'s call;
+//! this file holds the shapes and the pointer.
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_chart::connection_state::Dot;
 use quantick_chart::flow_band::{
-    DOCKED_CAPSULE_HEIGHT_PX, FRAME_PX, SIDE_GAP_PX, SIDE_PAD_LEFT_PX, SIDE_PAD_RIGHT_PX,
+    DOCKED_CAPSULE_HEIGHT_PX, DOCKED_SLOT_HEIGHT_PX, FRAME_PX, SIDE_GAP_PX, SIDE_PAD_RIGHT_PX,
     SideWidths, WINDOW_SELECTOR_HINT, docked_capsule_corner, docked_slot_origin, plate_word,
     side_fit, window_label, window_options,
 };
 use quantick_chart::pane_header::{
-    BubbleSample, CAPSULE_HEIGHT_PX, CAPSULE_SLOT_HEIGHT_PX, Capsule, CapsuleAttention,
-    CapsuleItem, CapsuleSide, FLOW_CONTROLS_PX, FlowHeaderState, GLYPH_SLOT_PX, GROUP_GAP_PX,
-    GlyphInk, HAIRLINE_GAP_PX, HeaderControl, HeaderIntent, HeaderWidths, INDICATORS_GLYPH,
-    INDICATORS_LABEL, LayerGlyph, LayerToggle, PaneHeader, SAMPLE_RESET_SCALE,
-    SEGMENT_FRAME_HEIGHT_PX, SEGMENT_FRAME_PAD_PX, SEGMENT_GAP_PX, SEGMENT_GLYPH_PX,
-    SEGMENT_HEIGHT_PX, SEGMENT_PAD_WORDS_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX, SegmentInk,
-    SideSegment, dragged_scale, flow_fit, sample_diameter_px, sample_value_text, section_layer,
-    segment_px, side_word, side_words_px,
+    BubbleSample, CAPSULE_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide, FLOW_CONTROLS_PX,
+    FlowHeaderState, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk, HeaderControl, HeaderIntent,
+    HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle, PaneHeader,
+    SAMPLE_RESET_SCALE, SEGMENT_FRAME_HEIGHT_PX, SEGMENT_FRAME_PAD_PX, SEGMENT_GAP_PX,
+    SEGMENT_GLYPH_PX, SEGMENT_HEIGHT_PX, SEGMENT_PAD_WORDS_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX,
+    SegmentInk, SideSegment, dragged_scale, flow_fit, sample_diameter_px, sample_value_text,
+    section_layer, segment_px, side_word, side_words_px,
 };
-use quantick_chart::side_label::{
-    LabelFit, LabelInk, SIDE_LABEL_GAP_PX, SIDE_LABEL_HEIGHT_PX, SIDE_LABEL_INSET_LEFT_PX,
-    SIDE_LABEL_INSET_TOP_PX, SIDE_LABEL_PADDING_PX, SideLabel,
-};
+use quantick_chart::side_label::SIDE_LABEL_PADDING_PX;
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
 use quantick_orderflow::LaneSide;
 use quantick_workspace::orderflow_panel::{PanelControl, PanelSection};
@@ -48,6 +44,9 @@ const PLATE_SIZE: f32 = 10.0;
 const PLATE_LETTER_SPACING: f32 = 1.0;
 const PLATE_PADDING: egui::Vec2 = egui::vec2(6.0, 2.0);
 const PLATE_ROUNDING: f32 = 3.0;
+/// The window selector's room either side of its words: the TAPE plate then
+/// stands as far from them as the TRAIL plate from its bars.
+const WINDOW_PADDING_X: f32 = 3.0;
 /// Black at 6 %: the view control's well on the flow surface.
 const SEGMENT_WELL: egui::Color32 = egui::Color32::from_rgba_premultiplied(0, 0, 0, 15);
 /// The bars text and its faint caret.
@@ -67,8 +66,6 @@ const INDICATORS_HEIGHT: f32 = 22.0;
 /// Corner radii: the capsule's, and a control's hover patch.
 const CAPSULE_ROUNDING: f32 = 6.0;
 const HOVER_ROUNDING: f32 = 4.0;
-/// How far past the capsule its shadow paints.
-const CAPSULE_SHADOW_ROOM_PX: f32 = 6.0;
 /// Side of a layer glyph's drawing box, the unit its shapes are written in.
 const GLYPH_BOX: f32 = 16.0;
 /// The slash through a glyph switched off by hand, corner to corner.
@@ -79,16 +76,13 @@ const SAMPLE_OFF_STROKE_PX: f32 = 1.2;
 /// The trail glyph's drawing box.
 const TRAIL_BOX: f32 = 20.0;
 /// A segment's word, and the corners of the control's frame and of a lit segment.
-const SEGMENT_WORD_SIZE: f32 = 12.0;
+const SEGMENT_WORD_SIZE: f32 = 11.5;
 const SEGMENT_FRAME_ROUNDING: f32 = 5.0;
 const SEGMENT_ROUNDING: f32 = 3.0;
 /// The dot a closed market's segment wears where its glyph stands.
 const MARKET_DOT_RADIUS: f32 = 3.0;
-/// How long the capsule takes to change tier.
-const CAPSULE_FADE_S: f32 = 0.14;
-/// The side label's plate corner and its mono text.
+/// The seam plates' corner.
 const SIDE_LABEL_ROUNDING: f32 = 3.0;
-const SIDE_LABEL_SIZE: f32 = 11.0;
 /// How high the sample's value floats over the chart below it.
 const VALUE_GAP_PX: f32 = 4.0;
 
@@ -172,8 +166,6 @@ pub fn indicators_button(
 
 /// What a flow pane's band draws besides its mark: `None` without a tape.
 pub struct FlowRow {
-    /// The strip glyph, unless the data blocks it.
-    pub strip: Option<LayerGlyph>,
     pub state: Option<FlowHeaderState>,
     /// The connection chip, while some stream is not well.
     pub chip: Option<[Dot; 3]>,
@@ -193,6 +185,9 @@ pub fn draw_marked(
     painted: &mut PaintedControls,
 ) -> Option<HeaderIntent> {
     painted.clear();
+    let rule = egui::Stroke::new(1.0_f32, theme::FLOW_BAND_RULE);
+    ui.painter()
+        .hline(strip.x_range(), strip.bottom() - 0.5, rule);
     let inner = strip.shrink2(CONTENT_PADDING);
     let inner = inner.with_min_x((inner.left() + FRAME_PX).min(inner.right()));
     let bare_controls_px = row.state.map_or(0.0, |_| FLOW_CONTROLS_PX + GROUP_GAP_PX);
@@ -248,15 +243,6 @@ pub fn draw_marked(
         side_control(&right, room, salt, &state, words, painted, &mut intent);
         let gear =
             egui::Rect::from_x_y_ranges(inner.right() - GLYPH_SLOT_PX..=inner.right(), height);
-        if let Some(glyph) = row.strip {
-            let glyph_left = gear.left() - GROUP_GAP_PX - GLYPH_SLOT_PX;
-            let hairline = glyph_left - HAIRLINE_GAP_PX;
-            let around = inner.center().y - 7.0..=inner.center().y + 7.0;
-            let stroke = (1.0_f32, theme::FLOW_LINE);
-            right.painter().vline(hairline, around, stroke);
-            let rect = egui::Rect::from_x_y_ranges(glyph_left..=glyph_left + GLYPH_SLOT_PX, height);
-            layer_glyph(&right, rect, salt, glyph, painted, &mut intent);
-        }
         settings_gear(&right, gear, salt, row.settings_open, painted, &mut intent);
     }
     intent
@@ -275,9 +261,10 @@ pub struct BarsPart<'a> {
 pub struct SideHeader<'a> {
     pub which: CapsuleSide,
     pub salt: u64,
+    pub pad_left: f32,
     pub plate: bool,
     /// What the plate's tooltip says, worked out only while it is hovered.
-    pub clock: Option<&'a dyn Fn() -> String>,
+    pub clock: &'a dyn Fn() -> String,
     pub bars: Option<BarsPart<'a>>,
     pub window: Option<&'a FlowHeaderState>,
     pub capsule: Option<Capsule>,
@@ -285,27 +272,27 @@ pub struct SideHeader<'a> {
 
 /// One side header, left to right: plate, the pane's bars and indicators, the
 /// window selector, and the capsule docked at the far end, each where the header
-/// carries it and while it fits. Answers whether the indicators button was clicked
-/// and whether the selector drew.
+/// carries it and while it fits. Answers whether the indicators button was clicked.
 pub fn draw_side_header(
     ui: &mut egui::Ui,
     side: egui::Rect,
     header: SideHeader<'_>,
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
-) -> (bool, bool) {
+) -> bool {
     let salt = header.salt;
     let plate = header.plate.then(|| plate_galley(ui, header.which));
     let plate_w = plate.as_ref().map_or(0.0, |plate| plate_px(plate));
     let words = header.window.map(window_label);
     let window_w = words.as_deref().map_or(0.0, |words| {
         let caret = ui.fonts(|fonts| fonts.layout_job(caret_text(words)));
-        caret.size().x + 2.0 * PLATE_PADDING.x
+        caret.size().x + 2.0 * WINDOW_PADDING_X
     });
     let has_bars = header.bars.is_some();
     let indicators = |words| f32::from(u8::from(has_bars)) * indicators_width(ui, words);
     let fit = side_fit(&SideWidths {
         side: side.width(),
+        pad_left: header.pad_left,
         plate: plate_w,
         bars: header
             .bars
@@ -316,12 +303,10 @@ pub fn draw_side_header(
         window: window_w,
         capsule: header.capsule.map_or(0.0, |capsule| capsule.width_px()),
     });
-    let mut left = side.left() + SIDE_PAD_LEFT_PX;
+    let mut left = side.left() + header.pad_left;
     if let Some(plate) = plate.filter(|_| fit.plate) {
         let response = side_plate(ui, left, side, salt, plate, header.which);
-        if let Some(clock) = header.clock {
-            response.on_hover_ui(|ui| _ = ui.label(clock()));
-        }
+        response.on_hover_ui(|ui| _ = ui.label((header.clock)()));
         left += plate_w + SIDE_GAP_PX;
     }
     let capsule = header.capsule.filter(|_| fit.capsule);
@@ -361,9 +346,9 @@ pub fn draw_side_header(
         window_selector(ui, rect, salt, state, words, painted, intent);
     }
     if let Some(capsule) = capsule {
-        draw_docked_capsule(ui, &capsule, side, header.which, salt, painted, intent);
+        draw_docked_capsule(ui, &capsule, side, (header.which, salt), painted, intent);
     }
-    (clicked, window.is_some())
+    clicked
 }
 
 /// A side's plate word, as it paints.
@@ -416,7 +401,7 @@ fn window_selector(
 ) {
     let id = ui.id().with(("flow_tape_window", salt));
     let response = ui.interact(rect, id, egui::Sense::click());
-    let popup = window_list_id(salt);
+    let popup = egui::Id::new(("flow_tape_window_list", salt));
     if response.hovered() {
         let rounding = egui::Rounding::same(HOVER_ROUNDING);
         ui.painter().rect_filled(rect, rounding, theme::BARE_HOVER);
@@ -428,6 +413,12 @@ fn window_selector(
     let response = response.on_hover_text(WINDOW_SELECTOR_HINT);
     if response.clicked() {
         ui.memory_mut(|memory| memory.toggle_popup(popup));
+    }
+    // egui holds one popup open at a time: note it was drawn while it is this one.
+    if ui.memory(|memory| memory.is_popup_open(popup)) {
+        let pass = ui.ctx().cumulative_pass_nr();
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(seen_id(), (popup, pass)));
     }
     egui::popup_below_widget(
         ui,
@@ -446,31 +437,36 @@ fn window_selector(
     );
 }
 
-/// The window list of the pane keyed by `salt`.
-fn window_list_id(salt: u64) -> egui::Id {
-    egui::Id::new(("flow_tape_window_list", salt))
+/// Where a window selector whose list is open notes that list and the pass it drew in.
+fn seen_id() -> egui::Id {
+    egui::Id::new("flow_tape_window_seen")
 }
 
-/// Close the pane's window list when its selector was not drawn this frame: egui
-/// would hold it open, and every "a popup is open" check with it.
-pub fn close_window_list(ui: &egui::Ui, salt: u64) {
-    let id = window_list_id(salt);
-    ui.memory_mut(|memory| memory.is_popup_open(id).then(|| memory.close_popup()));
+/// Close the window list when its selector was not drawn this pass, whatever hid
+/// it: a closed side, a collapsed or hidden flow pane, another tab. egui would hold
+/// it open, and every "a popup is open" check with it. Call after the selector's
+/// chance to draw.
+pub fn close_unseen_window_list(ctx: &egui::Context) {
+    let seen = ctx.data(|data| data.get_temp::<(egui::Id, u64)>(seen_id()));
+    let pass = ctx.cumulative_pass_nr();
+    if let Some((popup, _)) = seen.filter(|(_, at)| *at != pass) {
+        ctx.memory_mut(|memory| memory.is_popup_open(popup).then(|| memory.close_popup()));
+    }
 }
 
-/// A capsule at its side header's far end: fixed in the row, so it neither fades
-/// nor lifts. The chart's divider keeps its own grab band clear of it.
-fn draw_docked_capsule(
+/// A capsule at a header's far end, `header` spanning the header: fixed in the
+/// row, so it neither fades nor lifts. The chart's divider keeps its own grab band
+/// clear of it. Answers where it stands.
+pub fn draw_docked_capsule(
     ui: &mut egui::Ui,
     capsule: &Capsule,
-    side: egui::Rect,
-    which: CapsuleSide,
-    salt: u64,
+    header: egui::Rect,
+    (which, salt): (CapsuleSide, u64),
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
-) {
+) -> egui::Rect {
     let width = capsule.width_px();
-    let corner = docked_capsule_corner(side.right(), side.top(), width);
+    let corner = docked_capsule_corner(header.right(), header.top(), header.bottom(), width);
     let rect = egui::Rect::from_min_size(
         egui::pos2(corner.0, corner.1),
         egui::vec2(width, DOCKED_CAPSULE_HEIGHT_PX),
@@ -482,14 +478,9 @@ fn draw_docked_capsule(
         theme::CAPSULE_FILL,
         egui::Stroke::new(1.0_f32, theme::CAPSULE_BORDER),
     );
-    capsule_slots(
-        &ui,
-        capsule,
-        docked_slot_origin(corner),
-        salt,
-        painted,
-        intent,
-    );
+    let origin = docked_slot_origin(corner);
+    capsule_slots(&ui, capsule, origin, salt, painted, intent);
+    rect
 }
 
 /// The gear, bare like the indicators button, pressed while the panel is open.
@@ -559,42 +550,6 @@ fn clipped_child(
     child
 }
 
-/// Where a capsule stands and what it may notice there.
-pub struct CapsuleSpot {
-    pub corner: (f32, f32),
-    /// The whole chart side it floats over.
-    pub side_rect: egui::Rect,
-    pub pane_focused: bool,
-}
-
-/// The tape's label on its plate at the side's top left, in the room the side has.
-/// Painted only: a press goes through it to the chart. A label with nothing left
-/// to say paints no plate.
-pub fn draw_side_label(ui: &egui::Ui, label: &SideLabel, side: egui::Rect) {
-    let min = egui::pos2(
-        side.left() + SIDE_LABEL_INSET_LEFT_PX,
-        side.top() + SIDE_LABEL_INSET_TOP_PX,
-    );
-    if min.y + SIDE_LABEL_HEIGHT_PX > side.bottom() {
-        return;
-    }
-    let room = side.right() - SIDE_LABEL_GAP_PX - min.x - 2.0 * SIDE_LABEL_PADDING_PX;
-    let measure = |fit| {
-        let job = side_label_text(ui.ctx(), label, fit);
-        ui.fonts(|fonts| fonts.layout_job(job))
-    };
-    let (whole, short) = (measure(LabelFit::Whole), measure(LabelFit::NoClock));
-    let galley = match LabelFit::of(whole.size().x, short.size().x, room) {
-        LabelFit::Whole => whole,
-        LabelFit::NoClock => short,
-        LabelFit::None => return,
-    };
-    if galley.size().x > 0.0 {
-        let painter = ui.painter().with_clip_rect(side);
-        plated_text(&painter, min, galley, SIDE_LABEL_HEIGHT_PX);
-    }
-}
-
 /// Words on the casing plate that keeps them readable over heat, its corner at `min`.
 fn plated_text(
     painter: &egui::Painter,
@@ -608,26 +563,6 @@ fn plated_text(
     painter.rect_filled(plate, rounding, theme::CASING);
     let at = plate.left_center() + egui::vec2(SIDE_LABEL_PADDING_PX, -galley.size().y / 2.0);
     painter.galley(at, galley, theme::TEXT_MUTED);
-}
-
-/// The label's runs in their inks: one job, so its width is what it paints.
-fn side_label_text(ctx: &egui::Context, label: &SideLabel, fit: LabelFit) -> egui::text::LayoutJob {
-    let mut text = egui::text::LayoutJob::default();
-    for (run, ink) in label.runs(fit) {
-        let color = match ink {
-            LabelInk::Muted => theme::TEXT_MUTED,
-            LabelInk::Amber => theme::AMBER,
-            LabelInk::FaintPulse => theme::TEXT_FAINT.gamma_multiply(loading::pulse(ctx)),
-            LabelInk::Warn => theme::WARN,
-        };
-        let format = egui::TextFormat {
-            font_id: egui::FontId::monospace(SIDE_LABEL_SIZE),
-            color,
-            ..Default::default()
-        };
-        text.append(run, 0.0, format);
-    }
-    text
 }
 
 /// The tape's seam: a dashed line at the last print, and its plated lines after it.
@@ -648,66 +583,6 @@ pub fn draw_tape_seam(ui: &egui::Ui, side: egui::Rect, x: f32, lines: [Option<&s
     }
 }
 
-/// One capsule at its spot: its backdrop takes the pointer so a press between
-/// the slots never reaches the chart. Registered after the chart, so it wins the
-/// press. Answers the capsule's rect.
-pub fn draw_capsule(
-    ui: &mut egui::Ui,
-    capsule: &Capsule,
-    spot: &CapsuleSpot,
-    salt: u64,
-    painted: &mut PaintedControls,
-    intent: &mut Option<HeaderIntent>,
-) -> egui::Rect {
-    let corner = spot.corner;
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(corner.0, corner.1),
-        egui::vec2(capsule.width_px(), CAPSULE_HEIGHT_PX),
-    );
-    let tier = capsule.tier(CapsuleAttention {
-        pointer_over_capsule: ui.rect_contains_pointer(rect),
-        pointer_over_side: ui.rect_contains_pointer(spot.side_rect),
-        pane_focused: spot.pane_focused,
-    });
-    let clip = rect.expand(CAPSULE_SHADOW_ROOM_PX);
-    let mut ui = clipped_child(ui, rect, clip, ("pane_capsule", salt));
-    let opacity = if loading::reduced_motion() {
-        tier.opacity()
-    } else {
-        ui.ctx()
-            .animate_value_with_time(ui.id(), tier.opacity(), CAPSULE_FADE_S)
-    };
-    ui.set_opacity(opacity);
-    let ui = ui;
-    let _ = ui.interact(rect, ui.id(), egui::Sense::click_and_drag());
-    let rounding = egui::Rounding::same(CAPSULE_ROUNDING);
-    let shadow = egui::Shadow {
-        offset: egui::vec2(0.0, 1.0),
-        blur: 4.0,
-        spread: 0.0,
-        color: theme::CAPSULE_SHADOW,
-    };
-    let painter = ui.painter();
-    if tier.shadowed() {
-        painter.add(shadow.as_shape(rect, rounding));
-    }
-    painter.rect(
-        rect,
-        rounding,
-        theme::CAPSULE_FILL,
-        egui::Stroke::new(1.0_f32, theme::CAPSULE_BORDER),
-    );
-    capsule_slots(
-        &ui,
-        capsule,
-        Capsule::slot_origin(corner.0, corner.1),
-        salt,
-        painted,
-        intent,
-    );
-    rect
-}
-
 /// A capsule's slots, left to right from `origin`.
 fn capsule_slots(
     ui: &egui::Ui,
@@ -721,7 +596,7 @@ fn capsule_slots(
     for item in capsule.items() {
         let slot = egui::Rect::from_min_size(
             egui::pos2(x, y),
-            egui::vec2(item.slot_px(), CAPSULE_SLOT_HEIGHT_PX),
+            egui::vec2(item.slot_px(), DOCKED_SLOT_HEIGHT_PX),
         );
         match item {
             CapsuleItem::Layer(glyph) => layer_glyph(ui, slot, salt, glyph, painted, intent),

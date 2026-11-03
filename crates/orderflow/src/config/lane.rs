@@ -355,6 +355,20 @@ pub fn same_lane_window(current: LaneWindow, option: LaneWindow) -> bool {
     }
 }
 
+/// What a click on `option` in a window list asks for while `current` is in force:
+/// the option, filed as the asset's setting even when it is already in force, so a
+/// window the wheel reached becomes the setting a double click returns to. Only
+/// `auto` while already following the bars asks for nothing: picking it would reset
+/// the zoom the trader set. Every picker answers through this one rule.
+#[must_use]
+pub fn lane_window_pick(current: LaneWindow, option: LaneWindow) -> Option<LaneWindow> {
+    let auto_again = matches!(
+        (current, option),
+        (LaneWindow::Auto { .. }, LaneWindow::Auto { .. })
+    );
+    (!auto_again).then_some(option)
+}
+
 /// How the rolling tape past the last bar is drawn.
 ///
 /// The live lane is a pane of its own, pinned to the right edge of the chart:
@@ -1130,6 +1144,21 @@ mod tests {
             LaneWindow::Fixed { ms: 30_000 }
         ));
         assert!(!same_lane_window(zoomed, LaneWindow::Fixed { ms: 60_000 }));
+    }
+
+    /// `auto` while following the bars keeps its zoom; a fixed window in force is
+    /// still filed, and a different window is always asked for.
+    #[test]
+    fn only_auto_while_following_the_bars_picks_nothing() {
+        let zoomed = LaneWindow::Auto { zoom: 4.0 };
+        let minute = LaneWindow::Fixed { ms: 60_000 };
+        assert_eq!(lane_window_pick(zoomed, LaneWindow::default()), None);
+        assert_eq!(lane_window_pick(minute, minute), Some(minute));
+        assert_eq!(lane_window_pick(zoomed, minute), Some(minute));
+        assert_eq!(
+            lane_window_pick(minute, LaneWindow::default()),
+            Some(LaneWindow::default())
+        );
     }
 
     /// Every preset written before the tape had a window mode says "follow the

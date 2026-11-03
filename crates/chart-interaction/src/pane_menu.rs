@@ -4,7 +4,7 @@ use crate::pane::{DrawingFact, MenuIntent, Model, ObjectAction};
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
     LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS, lane_window_label,
-    lane_window_options, same_lane_window,
+    lane_window_options, lane_window_pick, same_lane_window,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -323,14 +323,12 @@ fn tape_entries(facts: &Facts, tape: &TapeFact) -> Vec<Entry> {
             .filter(|row| row.layer.on_tape())
             .map(layer_entry),
     );
-    // The window in force picks nothing: picking `auto` again would reset its zoom.
     let option = |window| {
-        let selected = same_lane_window(tape.window, window);
         Entry::new(
             lane_window_label(window, tape.reference_ms),
             Kind::Select {
-                selected,
-                choice: (!selected).then_some(MenuIntent::SetLaneWindow(window)),
+                selected: same_lane_window(tape.window, window),
+                choice: lane_window_pick(tape.window, window).map(MenuIntent::SetLaneWindow),
                 weak: false,
             },
         )

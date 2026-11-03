@@ -212,17 +212,7 @@ impl ChartPane {
         let grid = grid_color(chrome.style);
         history.indicator_panes(&mut self.indicators, lane, layout.indicator_guide_x, grid);
         flow.aggressions(self.orderflow.as_ref());
-        self.frame.flow_legend = flow.legend(
-            self.orderflow.as_ref(),
-            self.legend_inset(chrome),
-            layout.tape_only.then(|| {
-                use quantick_chart::side_label::{SIDE_LABEL_INSET_LEFT_PX, TAPE_KEY_TOP_PX};
-                let left = chart_rect.left() + SIDE_LABEL_INSET_LEFT_PX;
-                let top = area.top() + TAPE_KEY_TOP_PX;
-                let height = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX;
-                egui::Rect::from_x_y_ranges(left..=chart_rect.right(), top..=top + height)
-            }),
-        );
+        self.frame.flow_legend = flow.legend(self.orderflow.as_ref(), self.legend_inset(chrome));
         flow.strip(
             self.orderflow.as_mut(),
             &frame,

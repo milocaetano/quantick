@@ -82,8 +82,6 @@ pub const FLOW_CAPTION_INSET_PX: f32 = 8.0;
 /// Width the FLOW caption leaves free of wrapped text: its inset on both sides, in pixels.
 pub const FLOW_CAPTION_WRAP_MARGIN_PX: f32 = 2.0 * FLOW_CAPTION_INSET_PX;
 
-/// Chart width below which the tape header legend hides, in pixels.
-pub const LEGEND_TAPE_MIN_CHART_WIDTH_PX: f32 = 90.0;
 /// Chart width below which the chart legend hides, in pixels.
 pub const LEGEND_MIN_CHART_WIDTH_PX: f32 = 150.0;
 /// Gap between a legend glyph and its label, in pixels.
@@ -98,8 +96,6 @@ pub const LEGEND_INNER_MARGIN_PX: f32 = 7.0;
 pub const LEGEND_MIN_PANEL_WIDTH_PX: f32 = 120.0;
 /// Narrowest legend content column, in pixels.
 pub const LEGEND_MIN_CONTENT_WIDTH_PX: f32 = 100.0;
-/// Legend row height in the tape header, in pixels.
-pub const LEGEND_TAPE_ROW_HEIGHT_PX: f32 = 14.0;
 /// Legend row height on the chart, in pixels.
 pub const LEGEND_ROW_HEIGHT_PX: f32 = 17.0;
 /// Gap between legend entries and rows, in pixels.

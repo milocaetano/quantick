@@ -81,11 +81,11 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
         })
         .collect();
     assert_eq!(choices.len(), 6);
-    // The window in force is marked and picks nothing; every other line picks.
+    // The fixed window in force is marked and still files itself as the setting,
+    // as `set_live_lane_window` does; every other line picks too.
     for (i, ms) in LANE_WINDOW_PRESETS_MS.into_iter().enumerate() {
-        let selected = ms == 60_000;
         let pick = MenuIntent::SetLaneWindow(LaneWindow::Fixed { ms });
-        assert_eq!(choices[i + 1], (selected, (!selected).then_some(pick)));
+        assert_eq!(choices[i + 1], (ms == 60_000, Some(pick)));
     }
     assert_eq!(
         choices[0],
@@ -328,9 +328,34 @@ fn blocked_layer_retains_requested_check_and_explanation() {
 }
 
 /// Following the bars at a zoom of its own, the `auto` line is in force: a click
-/// on it asks for nothing, so it cannot reset the zoom.
+/// on it asks for nothing, so it cannot reset the zoom. A fixed window in force
+/// still files itself: the wheel may have reached it without filing it.
 #[test]
-fn the_window_in_force_picks_nothing() {
+fn only_auto_in_force_picks_nothing() {
+    let windows = |window| {
+        let mut facts = facts();
+        facts.tape = Some(TapeFact {
+            window,
+            reference_ms: None,
+        });
+        window_lines(&facts)
+    };
+    let auto = windows(LaneWindow::Auto { zoom: 2.0 });
+    assert_eq!(auto[0], (true, None));
+    let minute = LaneWindow::Fixed { ms: 60_000 };
+    let fixed = windows(minute);
+    assert_eq!(fixed[3], (true, Some(MenuIntent::SetLaneWindow(minute))));
+    assert_eq!(
+        fixed[0],
+        (
+            false,
+            Some(MenuIntent::SetLaneWindow(LaneWindow::default()))
+        )
+    );
+}
+
+/// The window submenu's lines: marked or not, and what a click asks for.
+fn window_lines(facts: &Facts) -> Vec<(bool, Option<MenuIntent>)> {
     let mut model = Model::default();
     let _ = update(
         &mut model,
@@ -341,12 +366,7 @@ fn the_window_in_force_picks_nothing() {
             places: vec![],
         }),
     );
-    let mut facts = facts();
-    facts.tape = Some(TapeFact {
-        window: LaneWindow::Auto { zoom: 2.0 },
-        reference_ms: None,
-    });
-    let entries = describe(&model, &facts);
+    let entries = describe(&model, facts);
     let windows = entries
         .iter()
         .find_map(|entry| match &entry.kind {
@@ -354,12 +374,13 @@ fn the_window_in_force_picks_nothing() {
             _ => None,
         })
         .expect("the window submenu");
-    assert!(matches!(
-        windows[0].kind,
-        Kind::Select {
-            selected: true,
-            choice: None,
-            ..
-        }
-    ));
+    windows
+        .iter()
+        .filter_map(|line| match &line.kind {
+            Kind::Select {
+                selected, choice, ..
+            } => Some((*selected, choice.clone())),
+            _ => None,
+        })
+        .collect()
 }

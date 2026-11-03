@@ -218,9 +218,9 @@ fn drag(app: &mut QuantickApp, ctx: &egui::Context, from: egui::Pos2, to: egui::
     run_frame(app, ctx);
 }
 
-/// The toolbar has no LAYERS, and neither does a header line now: a flow pane's
-/// keeps its side switches and strip, a time pane's nothing, and each chart side's capsule
-/// floats over that side, below the header, holding that side's own controls.
+/// The toolbar has no LAYERS: a flow pane's band keeps its side switches, each
+/// side header docks that side's capsule, the strip ending the trail's against the
+/// divider, and a time pane's capsule docks at its own header's right end.
 #[test]
 fn each_pane_paints_only_the_controls_it_accepts() {
     let ctx = egui::Context::default();
@@ -228,7 +228,7 @@ fn each_pane_paints_only_the_controls_it_accepts() {
     let flow = &app.active_tab().flow_pane;
     let area = flow.frame.area.expect("flow chart");
     let divider = flow.frame.lane_divider_x.expect("the tape is beside");
-    for control in [TRAIL, TAPE, HeaderControl::Layer(LayerToggle::LiveStrip)] {
+    for control in [TRAIL, TAPE] {
         let rect = flow_control(&app, control);
         assert!(
             rect.bottom() <= area.top(),
@@ -236,11 +236,18 @@ fn each_pane_paints_only_the_controls_it_accepts() {
         );
         assert!(rect.left() > area.center().x, "{control:?} stands right");
     }
+    let strip = flow_control(&app, HeaderControl::Layer(LayerToggle::LiveStrip));
+    let footprint = flow_control(&app, HeaderControl::Layer(LayerToggle::Footprint));
+    assert!(
+        strip.left() > footprint.right(),
+        "the strip ends the trail's capsule"
+    );
     for (control, right_side) in [
         (HeaderControl::Layer(LayerToggle::Bubbles), false),
         (HeaderControl::Sample(BubbleSample::Candle), false),
         (HeaderControl::Layer(LayerToggle::Heatmap), false),
         (HeaderControl::Layer(LayerToggle::Footprint), false),
+        (HeaderControl::Layer(LayerToggle::LiveStrip), false),
         (HeaderControl::Layer(LayerToggle::TapeBubbles), true),
         (HeaderControl::Sample(BubbleSample::Tape), true),
         (HeaderControl::Layer(LayerToggle::TapeHeatmap), true),
@@ -264,10 +271,12 @@ fn each_pane_paints_only_the_controls_it_accepts() {
     assert_eq!(only, [HeaderControl::Layer(LayerToggle::Footprint)]);
     let (_, footprint) = time.header_controls[0];
     let chart = time.area.expect("time chart");
+    let header = chart.top() - crate::time_header::HEIGHT_PX;
     assert!(
-        chart.contains_rect(footprint),
-        "the capsule floats on the chart"
+        footprint.top() >= header && footprint.bottom() <= chart.top(),
+        "the capsule docks in the header: {footprint:?} over {chart:?}"
     );
+    assert!(chart.right() - footprint.right() < 20.0, "at its right end");
 }
 
 /// Both lit is beside, one lit is that side alone, and a click on the last lit
@@ -344,13 +353,15 @@ fn the_side_switches_wear_their_words_and_lose_them_on_a_narrow_line() {
     assert_eq!(bare, quantick_chart::pane_header::segment_px(None));
 }
 
-/// Each side's plate names it in its header, the tape's clock and status read
-/// inside the tape with no name of their own, and both leave with their side.
+/// Each side's plate names it in its header and leaves with its side. How far
+/// its data reaches, and on the tape whether more is coming, is the plate's
+/// tooltip: nothing of it is printed inside the chart.
 #[test]
 fn each_side_wears_its_label() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = charted_fixture(&ctx);
     app.active_tab_mut().set_layout(CanvasLayout::Single);
+    let clock = |text: &String| text.starts_with("prints to ") || text.starts_with("no prints");
     let has = |app: &mut QuantickApp, head: &str| {
         painted_text(&run_frame(app, &ctx))
             .iter()
@@ -359,20 +370,31 @@ fn each_side_wears_its_label() {
     run_frame(&mut app, &ctx);
     assert!(has(&mut app, "TRAIL"));
     assert!(has(&mut app, "TAPE"));
-    assert!(has(&mut app, "prints to "));
+    assert!(!painted_text(&run_frame(&mut app, &ctx)).iter().any(clock));
     assert!(!has(&mut app, "bars to "), "the trail's clock is a tooltip");
-    assert!(!has(&mut app, "TAPE · "), "the tape's name left the chart");
+    let plate = painted_text_rects(&run_frame(&mut app, &ctx), "TAPE")[0];
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(plate.center())],
+    );
+    let tip = (0..90)
+        .map(|_| painted_text(&run_frame(&mut app, &ctx)))
+        .find(|texts| texts.iter().any(clock));
+    assert!(
+        tip.is_some(),
+        "the TAPE plate's tooltip says how far the prints reach"
+    );
     app.active_tab_mut()
         .tape_mut()
         .set_lane_view(LaneView::CandlesOnly);
     assert!(has(&mut app, "TRAIL"));
     assert!(!has(&mut app, "TAPE"));
-    assert!(!has(&mut app, "prints to "));
     app.active_tab_mut()
         .tape_mut()
         .set_lane_view(LaneView::TapeOnly);
     assert!(has(&mut app, "TAPE"));
-    assert!(has(&mut app, "prints to "));
+    assert!(!has(&mut app, "prints to "));
     assert!(!has(&mut app, "TRAIL"));
 }
 
@@ -572,9 +594,14 @@ fn candles_hidden_take_their_capsule_keep_their_state_and_the_strip_stays_live()
         );
     }
     assert_eq!(flow.layer_blocked(ChartLayer::LiveStrip, caps), None);
-    let strip = flow_control(&app, HeaderControl::Layer(LayerToggle::LiveStrip));
+    // Its glyph lives in the trail's capsule, gone with the trail; the strip itself
+    // still answers its switch.
+    let strip = HeaderControl::Layer(LayerToggle::LiveStrip);
+    assert_eq!(control_rect(&app, PaneSide::Flow, strip), None);
     let strip_before = on(&app, ChartLayer::LiveStrip);
-    click_chart(&mut app, &ctx, strip.center());
+    let actions = &mut Default::default();
+    let flow = &mut app.active_tab_mut().flow_pane;
+    flow.set_layer_visible(ChartLayer::LiveStrip, !strip_before, actions);
     run_frame(&mut app, &ctx);
     assert_ne!(
         on(&app, ChartLayer::LiveStrip),
@@ -818,11 +845,11 @@ fn the_header_is_painted_in_all_three_views() {
         run_frame(&mut app, &ctx);
         assert_eq!(view_of(&app), view);
         assert_eq!(flow_control(&app, control), button, "{view:?}");
-        flow_control(&app, HeaderControl::Layer(LayerToggle::LiveStrip));
         let (candles, tape) = (view != LaneView::TapeOnly, view != LaneView::CandlesOnly);
         for (toggle, side) in [
             (LayerToggle::Bubbles, candles),
             (LayerToggle::Footprint, candles),
+            (LayerToggle::LiveStrip, candles),
             (LayerToggle::TapeBubbles, tape),
             (LayerToggle::TapeHeatmap, tape),
         ] {
@@ -1005,8 +1032,10 @@ fn the_scene_names_each_header_control_and_its_call() {
         !scene_control_ids(&scene).contains(&id("layer.heatmap")),
         "a blocked glyph is not there to name"
     );
-    let strip = scene_control(&scene, &id("layer.live_strip"));
-    assert_eq!(strip["availability"]["available"], true);
+    assert!(
+        !scene_control_ids(&scene).contains(&id("layer.live_strip")),
+        "the strip's glyph goes with the trail's capsule"
+    );
     let sample = scene_control(&scene, &id("sample.tape"));
     assert_eq!(sample["capability_id"], "orderflow.bubbles.size.set");
     assert!(sample["bounds"]["x_pt"].is_string());
@@ -1016,6 +1045,13 @@ fn the_scene_names_each_header_control_and_its_call() {
             .any(|id| id.starts_with("toolbar.layers")),
         "the toolbar has no LAYERS"
     );
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::Beside);
+    run_frame(&mut app, &ctx);
+    let scene = observer_scene(&app);
+    let strip = scene_control(&scene, &id("layer.live_strip"));
+    assert_eq!(strip["availability"]["available"], true);
 }
 
 /// On a narrow pane the words and the mark go; the switches and strip keep the right end,
@@ -1540,8 +1576,9 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
                     let side = crate::pane_header::SideHeader {
                         which: quantick_chart::pane_header::CapsuleSide::Tape,
                         salt: 7,
+                        pad_left: quantick_chart::flow_band::SIDE_PAD_LEFT_PX,
                         plate: true,
-                        clock: None,
+                        clock: &String::new,
                         bars: Some(crate::pane_header::BarsPart {
                             header: &header,
                             selection: &mut selection,
@@ -1552,7 +1589,7 @@ fn a_narrow_pane_keeps_its_indicators_glyph_in_reach() {
                         capsule: None,
                     };
                     let mut intent = None;
-                    (clicked, _) = crate::pane_header::draw_side_header(
+                    clicked = crate::pane_header::draw_side_header(
                         ui,
                         strip,
                         side,
@@ -2153,9 +2190,10 @@ fn a_sections_state_stands_right_and_never_over_its_title() {
     }
 }
 
-/// Tape alone, the Buy/Sell key stands below the side's plate, never under it.
+/// Tape alone, nothing is printed over its top: no Buy/Sell key, no `prints to`
+/// plate. The plate's words are the TAPE plate's tooltip.
 #[test]
-fn the_tape_key_stands_below_the_sides_plate() {
+fn the_tape_alone_prints_nothing_over_its_top() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = charted_fixture(&ctx);
     app.active_tab_mut()
@@ -2164,13 +2202,14 @@ fn the_tape_key_stands_below_the_sides_plate() {
     for _ in 0..40 {
         run_frame(&mut app, &ctx);
     }
-    let flow = &app.active_tab().flow_pane;
-    let area = flow.frame.area.expect("flow chart");
-    let key = flow.frame.flow_legend.expect("the tape's key");
-    let plate = area.top() + quantick_chart::side_label::SIDE_LABEL_BOTTOM_PX;
+    let output = run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().flow_pane.frame.flow_legend, None);
+    let texts = painted_text(&output);
     assert!(
-        key.top() >= plate,
-        "{key:?} under the plate ending at {plate}"
+        !texts
+            .iter()
+            .any(|text| text.starts_with("prints to ") || text == "Buy"),
+        "{texts:?}"
     );
 }
 
@@ -2355,31 +2394,51 @@ fn a_market_hold_refuses_both_segments_and_both_keys() {
     }
 }
 
-/// The numbers of the approved mock, on a real pane: the 26 px band holds the view
-/// controls, the 28 px row under it the capsules and the selector, and the 3 px
-/// frame closes the chart on the other three sides.
+/// The numbers of the approved mock, as the trader cut them: the 26 px band holds
+/// the view controls 14 tall, the 28 px row under it the capsules, docked 18 tall
+/// clear of the band, and the selector, and the 3 px frame closes the chart on the
+/// other three sides.
 #[test]
 fn the_flow_pane_wears_its_band_frame_and_side_headers() {
-    use quantick_chart::flow_band::{BAND_HEIGHT_PX, FRAME_PX, SIDE_HEADER_HEIGHT_PX};
+    use quantick_chart::flow_band::{
+        BAND_HEIGHT_PX, DOCKED_SLOT_HEIGHT_PX, FRAME_PX, SECOND_SIDE_PAD_LEFT_PX,
+        SIDE_HEADER_HEIGHT_PX,
+    };
     let ctx = egui::Context::default();
     let (app, _ends) = flow_fixture(&ctx);
     let flow = &app.active_tab().flow_pane;
     let area = flow.frame.area.expect("flow chart");
     let row_top = area.top() - SIDE_HEADER_HEIGHT_PX;
     let band_top = row_top - BAND_HEIGHT_PX;
-    for control in [TRAIL, TAPE, HeaderControl::Layer(LayerToggle::LiveStrip)] {
+    for control in [TRAIL, TAPE] {
         let rect = flow_control(&app, control);
         assert!(
             rect.top() >= band_top && rect.bottom() <= row_top,
             "{control:?}"
         );
+        assert_eq!(
+            rect.height(),
+            quantick_chart::pane_header::SEGMENT_HEIGHT_PX
+        );
     }
+    let bubbles = flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
+    assert_eq!(bubbles.height(), DOCKED_SLOT_HEIGHT_PX);
+    assert!(
+        bubbles.top() - row_top >= 4.0,
+        "clear of the band: {bubbles:?}"
+    );
     let split = flow.frame.candles_right.expect("the split");
+    let selector = flow_control(&app, HeaderControl::TapeWindow);
+    assert!(
+        selector.left() - split > SECOND_SIDE_PAD_LEFT_PX,
+        "{selector:?}"
+    );
     for (control, tape) in [
         (HeaderControl::Layer(LayerToggle::Bubbles), false),
         (HeaderControl::Sample(BubbleSample::Candle), false),
         (HeaderControl::Layer(LayerToggle::Heatmap), false),
         (HeaderControl::Layer(LayerToggle::Footprint), false),
+        (HeaderControl::Layer(LayerToggle::LiveStrip), false),
         (HeaderControl::TapeWindow, true),
         (HeaderControl::Layer(LayerToggle::TapeBubbles), true),
         (HeaderControl::Sample(BubbleSample::Tape), true),
@@ -2458,11 +2517,12 @@ fn a_closed_side_leaves_one_header_at_full_width() {
         )
         .is_none()
     );
+    // The tape alone carries the pane's bars and ƒx before its selector.
     let selector = flow_control(&app, HeaderControl::TapeWindow);
     let area = app.active_tab().flow_pane.frame.area.expect("flow chart");
     assert!(
-        selector.left() - area.left() < 120.0,
-        "at the pane's near end"
+        selector.left() - area.left() < area.width() / 2.0,
+        "in the header's near half: {selector:?} in {area:?}"
     );
 }
 
@@ -2497,25 +2557,6 @@ fn a_tape_alone_keeps_the_bars_and_the_indicators_button() {
     assert!(indicators.bottom() <= area.top(), "in the header");
 }
 
-/// A flow pane with no order-flow view names no side and docks no capsule: its
-/// header is the bars and the indicators, as it was before the sides had headers.
-#[test]
-fn a_flow_pane_without_a_tape_docks_no_capsule() {
-    let ctx = egui::Context::default();
-    let (mut app, _ends) = flow_fixture(&ctx);
-    app.active_tab_mut().flow_pane.orderflow = None;
-    let [bars, indicators] = bars_and_indicators(&mut app, &ctx);
-    assert!(bars.is_some() && indicators.is_some());
-    let controls = &app.active_tab().flow_pane.frame.header_controls;
-    assert!(
-        controls.iter().all(|(control, _)| !matches!(
-            control,
-            HeaderControl::Layer(_) | HeaderControl::Sample(_) | HeaderControl::TapeWindow
-        )),
-        "{controls:?}"
-    );
-}
-
 /// The window list open, the view drops the tape: the list closes with its
 /// selector, so no popup stays open behind a control no one can see.
 #[test]
@@ -2534,4 +2575,86 @@ fn the_window_list_closes_when_its_selector_goes() {
         .set_lane_view(LaneView::CandlesOnly);
     run_frame(&mut app, &ctx);
     assert!(!ctx.memory(|memory| memory.any_popup_open()));
+}
+
+/// The list open, the flow pane collapses, then another tab takes the canvas: the
+/// selector is not drawn either way, so its list closes wherever that was decided.
+#[test]
+fn the_window_list_closes_when_its_pane_or_its_tab_goes() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let open = |app: &mut QuantickApp| {
+        run_frame(app, &ctx);
+        let selector = flow_control(app, HeaderControl::TapeWindow);
+        click_chart(app, &ctx, selector.center());
+        run_frame(app, &ctx);
+        assert!(
+            ctx.memory(|memory| memory.any_popup_open()),
+            "the list opened"
+        );
+    };
+    open(&mut app);
+    assert!(app.active_tab_mut().set_flow_collapsed(true));
+    run_frame(&mut app, &ctx);
+    assert!(!ctx.memory(|memory| memory.any_popup_open()), "collapsed");
+    app.active_tab_mut().set_flow_collapsed(false);
+    open(&mut app);
+    let first = app.runtime.tabs.active_index();
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+    app.runtime.tabs.select(app.runtime.tabs.len() - 1);
+    assert_ne!(app.runtime.tabs.active_index(), first);
+    run_frame(&mut app, &ctx);
+    assert!(!ctx.memory(|memory| memory.any_popup_open()), "another tab");
+}
+
+/// The rule under the flow pane's side headers stays as faint as a time pane's,
+/// focused or not; a focused time pane keeps its accent under its header.
+#[test]
+fn only_a_focused_time_pane_wears_the_accent_rule() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let accent = egui::epaint::ColorMode::Solid(crate::theme::ACCENT);
+    let rules_at = |output: &egui::FullOutput, y: f32| {
+        let rule = |shape: &egui::Shape| match shape {
+            egui::Shape::LineSegment { points, stroke } => {
+                stroke.color == accent
+                    && (points[0].y - y).abs() < 2.0
+                    && points[0].y == points[1].y
+            }
+            _ => false,
+        };
+        output
+            .shapes
+            .iter()
+            .filter(|clipped| rule(&clipped.shape))
+            .count()
+    };
+    let output = run_frame(&mut app, &ctx);
+    let flow_top = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .area
+        .expect("flow chart")
+        .top();
+    assert_eq!(
+        rules_at(&output, flow_top),
+        0,
+        "the flow pane's rule stays faint"
+    );
+    app.active_tab_mut().focus = PaneSide::Time(0);
+    let output = run_frame(&mut app, &ctx);
+    let time_top = app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .frame
+        .area
+        .expect("time chart")
+        .top();
+    assert_eq!(
+        rules_at(&output, time_top),
+        1,
+        "the time pane keeps its accent"
+    );
 }

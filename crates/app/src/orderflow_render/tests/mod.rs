@@ -804,7 +804,8 @@ fn the_legend_starts_below_the_corner_it_was_told_about() {
         let ctx = egui::Context::default();
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             let context = RenderContext::new(&projection, layout, &style);
-            draw_compact_legend(&ctx.layer_painter(egui::LayerId::background()), &context);
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            draw_compact_legend_avoiding(&painter, &context, None);
         });
         let mut top = f32::INFINITY;
         for shape in output.shapes {

@@ -8,7 +8,7 @@ use quantick_chart::pane_header::{
     BubbleSample, Capsule, CapsuleSide, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle,
 };
 use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
-use quantick_chart::side_label::{LabelFit, SideLabel};
+use quantick_chart::side_label::SideLabel;
 use quantick_control_handlers::bubble_scale::{BubbleScalePane, sample_target as target};
 use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_layers::{ChartLayer, LayerActions};
@@ -20,6 +20,7 @@ use crate::drawings::{self, Drawings};
 use crate::indicator_worker::{IndicatorWorker, LaneTransport, SlotId};
 use crate::indicators::{IndicatorViews, PaneSizing};
 use crate::orderflow_view::OrderflowView;
+use crate::pane_header::draw_docked_capsule;
 use crate::plot_area::{PlotAreas, plot_split};
 use crate::price_view::PriceView;
 use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
@@ -1048,12 +1049,10 @@ impl ChartPane {
     }
 }
 
-/// What a pane's capsules and side labels read from the window.
+/// What a time pane's capsule and the tape's seam read from the window.
 pub(crate) struct SideChrome<'a> {
     pub style: &'a ChartStyle,
     pub capabilities: FeedCapabilities,
-    /// This pane has focus.
-    pub focused: bool,
     pub tz: quantick_civil::TzOffset,
     /// The word the feed speaks this frame, if any yet.
     pub link: Option<quantick_chart::connection_state::Link>,
@@ -1069,6 +1068,8 @@ pub(crate) struct SideRowChrome<'a> {
     pub inputs: BarInputAvailability,
     /// The bars are being rebuilt.
     pub rebuilding: bool,
+    /// The word the feed speaks this frame: the TAPE plate's tooltip says it.
+    pub link: Option<quantick_chart::connection_state::Link>,
 }
 
 impl ChartPane {
@@ -1088,19 +1089,9 @@ impl ChartPane {
         }
     }
 
-    /// The header's strip glyph, unless the data blocks it.
-    pub(crate) fn strip_glyph(
-        &self,
-        style: &ChartStyle,
-        capabilities: FeedCapabilities,
-    ) -> Option<LayerGlyph> {
-        let glyph = self.header_glyph(LayerToggle::LiveStrip, style, capabilities);
-        glyph.blocked.is_none().then_some(glyph)
-    }
-
     /// Paint what this pane wears over the chart just drawn: a time chart's capsule,
-    /// or the flow tape's seam and label. Answers what a press on the capsule asked
-    /// for.
+    /// docked at its header's right end, or the flow tape's seam. Answers what a
+    /// press on the capsule asked for.
     pub(crate) fn draw_capsules(
         &mut self,
         ui: &mut egui::Ui,
@@ -1113,35 +1104,24 @@ impl ChartPane {
             return None;
         }
         let chart = self.frame.chart_rect?;
-        let top = self.frame.area.map_or(chart.top(), |area| area.top());
+        let area = self.frame.area.unwrap_or(chart);
         if side == PaneSide::Flow {
-            self.draw_tape_marks(ui, chart, top, chrome);
+            self.draw_tape_marks(ui, chart, area.top(), chrome);
             return None;
         }
         let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
-        let capsule = Capsule::of(CapsuleSide::Time, glyph, None);
-        let corner = capsule
-            .place(chart.left(), chart.right(), top, chart.bottom())
-            .filter(|_| !capsule.is_empty())?;
-        let spot = crate::pane_header::CapsuleSpot {
-            corner,
-            side_rect: chart.with_min_y(top),
-            pane_focused: chrome.focused,
-        };
-        let mut intent = None;
-        let rect = crate::pane_header::draw_capsule(
-            ui,
-            &capsule,
-            &spot,
-            self.id,
-            &mut self.frame.header_controls,
-            &mut intent,
-        );
+        let capsule =
+            Some(Capsule::of(CapsuleSide::Time, glyph, None)).filter(|c| !c.is_empty())?;
+        let height = crate::time_header::HEIGHT_PX;
+        let header = egui::Rect::from_x_y_ranges(area.x_range(), area.top() - height..=area.top());
+        let (mut intent, painted) = (None, &mut self.frame.header_controls);
+        let at = (CapsuleSide::Time, self.id);
+        let rect = draw_docked_capsule(ui, &capsule, header, at, painted, &mut intent);
         self.frame.capsules[0] = Some(rect);
         intent
     }
 
-    /// The tape's seam and its `prints to` label, over the tape just drawn.
+    /// The tape's seam, over the tape just drawn.
     fn draw_tape_marks(&self, ui: &egui::Ui, chart: egui::Rect, top: f32, chrome: &SideChrome<'_>) {
         let Some(state) = self.flow_header_state() else {
             return;
@@ -1164,10 +1144,6 @@ impl ChartPane {
             let line = chrome.seam_words.as_deref();
             let words = quantick_chart::market_fold::seam_words(line, held, chrome.tz);
             crate::pane_header::draw_tape_seam(ui, side_rect, x, words.lines());
-        }
-        let label = SideLabel::of(CapsuleSide::Tape, &self.state, chrome.tz, chrome.link);
-        if let Some(label) = label {
-            crate::pane_header::draw_side_label(ui, &label, side_rect);
         }
     }
 
@@ -1194,24 +1170,24 @@ impl ChartPane {
         let shown = state.map(|state| state.shown_view);
         let headers = side_headers(shown, row.left(), row.right(), self.frame.candles_right);
         let bars = PaneHeader::of(PaneIdentity::OrderFlow, self.spec.spec());
-        let (mut intent, mut indicators, mut window) = (None, false, false);
+        let (mut intent, mut indicators) = (None, false);
         for (index, (side, left, right)) in headers.into_iter().flatten().enumerate() {
             let parts = side_parts(side, index == 0, state.is_some());
             let scale = state.and_then(|state| state.sample_of(side));
             let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
             let capsule = Some(Capsule::of(side, glyph, scale))
                 .filter(|capsule| parts.capsule && self.slots() > 0 && !capsule.is_empty());
-            let (chart, tz) = (&self.state, chrome.tz);
-            let clock = move || {
-                SideLabel::of(CapsuleSide::Candles, chart, tz, None)
-                    .map_or_else(String::new, |label| label.text(LabelFit::Whole))
-            };
+            let (chart, tz, link) = (&self.state, chrome.tz, chrome.link);
+            // How far the side's data reaches, and on the tape whether more is coming.
+            let clock =
+                move || SideLabel::of(side, chart, tz, link).map_or_else(String::new, |l| l.text());
             let header = SideHeader {
                 which: side,
                 salt: self.id,
+                pad_left: parts.pad_left,
                 plate: parts.plate,
-                clock: (side == CapsuleSide::Candles).then_some(&clock as &dyn Fn() -> String),
-                bars: parts.bars.then(|| BarsPart {
+                clock: &clock,
+                bars: parts.bars.then_some(BarsPart {
                     header: &bars,
                     selection: &mut self.spec,
                     inputs: chrome.inputs,
@@ -1222,11 +1198,7 @@ impl ChartPane {
             };
             let rect = egui::Rect::from_x_y_ranges(left..=right, row.y_range());
             let painted = &mut self.frame.header_controls;
-            let drawn = draw_side_header(ui, rect, header, painted, &mut intent);
-            (indicators, window) = (indicators || drawn.0, window || drawn.1);
-        }
-        if !window {
-            crate::pane_header::close_window_list(ui, self.id);
+            indicators |= draw_side_header(ui, rect, header, painted, &mut intent);
         }
         super::lane_rail::paint_flow_divider(self, ui, row.top(), shown);
         (intent, indicators)

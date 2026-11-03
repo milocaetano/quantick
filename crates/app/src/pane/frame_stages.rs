@@ -284,7 +284,6 @@ impl<'a> FlowFrame<'a> {
         &self,
         owner: Option<&OrderflowView>,
         legend_inset: f32,
-        header: Option<egui::Rect>,
     ) -> Option<egui::Rect> {
         let mut bounds = None;
         let tick_regions = owner
@@ -303,7 +302,7 @@ impl<'a> FlowFrame<'a> {
             self.renderers.legend(&mut LegendPass {
                 owner,
                 painter: self.painter,
-                rect: header.unwrap_or(self.rect),
+                rect: self.rect,
                 viewport: self.viewport,
                 total: self.total,
                 projection,

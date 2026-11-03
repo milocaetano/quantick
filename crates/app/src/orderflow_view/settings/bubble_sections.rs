@@ -11,12 +11,11 @@ use quantick_orderflow::config::labels::{
 };
 use quantick_orderflow::engine::OrderflowHealth;
 use quantick_orderflow::{
-    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig,
-    LANE_WINDOW_PRESETS_MS, LaneView, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
-    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
-    MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE,
-    MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_window_label,
-    same_lane_window,
+    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig, LaneView,
+    LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE,
+    MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS,
+    MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM,
+    format_window_ms, lane_window_label, lane_window_options, lane_window_pick, same_lane_window,
 };
 use rust_decimal::Decimal;
 
@@ -275,8 +274,8 @@ impl LiveLaneSection<'_> {
 
 /// The lane's window picker, and the one row that tunes whichever mode it
 /// is in: the zoom while it follows the bars, the duration while pinned.
-/// Returns whether the trader picked or tuned the window — even the one
-/// already shown.
+/// Returns whether the trader picked or tuned the window — a fixed one even
+/// when already shown, as every picker files it ([`lane_window_pick`]).
 fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) -> bool {
     let mut picked = false;
     ui.horizontal(|ui| {
@@ -284,23 +283,15 @@ fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) -
         egui::ComboBox::from_id_salt("bubble_live_lane_window")
             .selected_text(lane_window_label(lane.window, None))
             .show_ui(ui, |ui| {
-                let mut choose = |ui: &mut egui::Ui, option: LaneWindow| {
-                    // Selecting the mode the lane is already in must
-                    // not overwrite the number it is carrying, so
-                    // the entry compares modes and assigns whole
-                    // values only when the mode actually changes.
+                // The tape menu's and the header's list, and their pick rule.
+                for option in lane_window_options() {
                     let selected = same_lane_window(lane.window, option);
-                    let clicked = ui
-                        .selectable_label(selected, lane_window_label(option, None))
-                        .clicked();
-                    picked |= clicked;
-                    if clicked && !selected {
-                        lane.window = option;
+                    let label = lane_window_label(option, None);
+                    let clicked = ui.selectable_label(selected, label).clicked();
+                    if let Some(window) = lane_window_pick(lane.window, option).filter(|_| clicked) {
+                        lane.window = window;
+                        picked = true;
                     }
-                };
-                choose(ui, LaneWindow::default());
-                for ms in LANE_WINDOW_PRESETS_MS {
-                    choose(ui, LaneWindow::Fixed { ms });
                 }
             });
     })

@@ -73,7 +73,7 @@ The three exclusion classes are closed:
 | `chart.time_axis.reset` | Reset a time axis to where it opened, or the candles to a live overview | double-click the candles' time strip, or the tape's; double-click open canvas | `chart.time_axis.reset` | — |
 | `chart.tape.pan` | Drag the tape beside the candles through time and price | primary or middle drag over the native tape; double-click it to return to live | `chart.tape_view.set`, `chart.price_axis.set` | — |
 | `chart.tape.zoom` | Zoom the tape's time window in or out | wheel over the native tape; drag or wheel on its time strip; its window menu | `chart.tape_view.set` | — |
-| `chart.tape.window` | Choose how much market time the tape shows | the window selector in the tape's header; its window menu | `chart.tape_view.set` | — |
+| `chart.tape.window` | Choose how much market time the tape shows | the window selector in the tape's header and its window menu, both the call with `file` set | `chart.tape_view.set` | — |
 | `chart.zoom` | Zoom the chart's time window in or out | wheel on the canvas; drag on the time axis | — | `pending_capability` — `chart.window.read` reports the time window; no capability changes its zoom. Price-axis zoom has its own capability above. Tracked in issue 401 |
 | `layout.context.collapse` | Put the context charts away, or bring them back | View menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
 | `layout.flow.collapse` | Put the flow chart away, or bring it back | drag the vertical canvas divider toward the right edge or drag its rail left | `layout.flow.collapse`, `layout.flow.expand` | — |
@@ -237,7 +237,7 @@ declares nothing here is a guard failure.
 | `chart.time_axis.reset` | a time-strip double-click the canvas handles directly |
 | `chart.tape.pan` | a pointer drag over the tape the canvas handles directly; no registry names it |
 | `chart.tape.zoom` | a wheel over the tape and its time strip the canvas handles directly |
-| `chart.tape.window` | a selector in the tape's header the canvas handles directly; no key names it |
+| `chart.tape.window` | a selector in the tape's header the canvas handles directly; no key names it. A pick files the window as the asset's, which is `chart.tape_view.set` with `file`; without `file` the call navigates as the wheel does |
 | `chart.zoom` | a wheel and an axis drag the canvas handles directly; no registry names it |
 | `layout.flow.collapse` | the right-side canvas rail and divider |
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |

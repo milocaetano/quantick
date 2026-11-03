@@ -4,11 +4,12 @@
 //! only paints the result.
 
 use quantick_orderflow::{
-    LaneView, LaneWindow, lane_window_label, lane_window_options, same_lane_window,
+    LaneView, LaneWindow, lane_window_label, lane_window_options, lane_window_pick,
+    same_lane_window,
 };
 
 use crate::pane_header::{
-    CAPSULE_FRAME_X_PX, CAPSULE_SLOT_HEIGHT_PX, CapsuleSide, FlowHeaderState, item_px,
+    CAPSULE_FRAME_X_PX, Capsule, CapsuleSide, FlowHeaderState, LayerGlyph, item_px,
 };
 
 /// The band's height.
@@ -22,8 +23,13 @@ pub const FRAME_PX: f32 = 3.0;
 pub const SIDE_PAD_LEFT_PX: f32 = 10.0;
 pub const SIDE_PAD_RIGHT_PX: f32 = 8.0;
 pub const SIDE_GAP_PX: f32 = 7.0;
-/// A capsule docked in a side header: one row of slots and its 1 px border.
-pub const DOCKED_CAPSULE_HEIGHT_PX: f32 = CAPSULE_SLOT_HEIGHT_PX + 2.0;
+/// The second header's left end, clear of the divider standing on its edge.
+pub const SECOND_SIDE_PAD_LEFT_PX: f32 = 14.0;
+/// A docked capsule's slots: lower than a floating capsule's, so the capsule sits
+/// in its header with room above and below.
+pub const DOCKED_SLOT_HEIGHT_PX: f32 = 18.0;
+/// A capsule docked in a header: one row of slots and its 1 px border.
+pub const DOCKED_CAPSULE_HEIGHT_PX: f32 = DOCKED_SLOT_HEIGHT_PX + 2.0;
 /// The divider's bar.
 pub const DIVIDER_WIDTH_PX: f32 = 4.0;
 /// The grip's three dots: their side, and the distance from one to the next.
@@ -121,19 +127,22 @@ pub fn side_headers(
 }
 
 /// What one side header carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SideParts {
     pub plate: bool,
     /// The pane's bars control and its indicators button.
     pub bars: bool,
     pub window: bool,
     pub capsule: bool,
+    /// The room at its left end.
+    pub pad_left: f32,
 }
 
 /// What the header for `side` carries, `first` in its row, on a pane with a tape
 /// or without. The first header carries the pane's bars and indicators whatever
 /// its side, so a tape alone keeps them; the tape's carries the window; a pane
-/// without a tape names no side and docks no capsule.
+/// without a tape names no side and docks no capsule. The second starts further
+/// in, clear of the divider.
 #[must_use]
 pub fn side_parts(side: CapsuleSide, first: bool, has_tape: bool) -> SideParts {
     SideParts {
@@ -141,6 +150,11 @@ pub fn side_parts(side: CapsuleSide, first: bool, has_tape: bool) -> SideParts {
         bars: first,
         window: has_tape && side == CapsuleSide::Tape,
         capsule: has_tape,
+        pad_left: if first {
+            SIDE_PAD_LEFT_PX
+        } else {
+            SECOND_SIDE_PAD_LEFT_PX
+        },
     }
 }
 
@@ -161,6 +175,8 @@ pub const BARS_MIN_PX: f32 = 36.0;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SideWidths {
     pub side: f32,
+    /// The header's room at its left end ([`SideParts::pad_left`]).
+    pub pad_left: f32,
     pub plate: f32,
     pub bars: f32,
     pub indicators_with_words: f32,
@@ -186,7 +202,7 @@ pub struct SideFit {
 pub fn side_fit(widths: &SideWidths) -> SideFit {
     let fits = |items: &[f32]| {
         let items: f32 = items.iter().map(|px| item_px(*px, SIDE_GAP_PX)).sum();
-        let pads = SIDE_PAD_LEFT_PX + SIDE_PAD_RIGHT_PX;
+        let pads = widths.pad_left + SIDE_PAD_RIGHT_PX;
         pads + (items - SIDE_GAP_PX).max(0.0) <= widths.side
     };
     let SideWidths {
@@ -205,15 +221,34 @@ pub fn side_fit(widths: &SideWidths) -> SideFit {
     }
 }
 
-/// A docked capsule's corner in a side ending at `side_right`, the row's top at
-/// `row_top`: against the side's far end, centred above the row's rule.
+/// A docked capsule's corner in a header ending at `side_right`, spanning
+/// `top..bottom`: against the header's far end, centred above its 1 px rule. A
+/// flow side's header and a time pane's dock it alike.
 #[must_use]
-pub fn docked_capsule_corner(side_right: f32, row_top: f32, capsule_px: f32) -> (f32, f32) {
-    let spare = SIDE_HEADER_HEIGHT_PX - 1.0 - DOCKED_CAPSULE_HEIGHT_PX;
+pub fn docked_capsule_corner(
+    side_right: f32,
+    top: f32,
+    bottom: f32,
+    capsule_px: f32,
+) -> (f32, f32) {
+    let spare = bottom - top - 1.0 - DOCKED_CAPSULE_HEIGHT_PX;
     (
         side_right - SIDE_PAD_RIGHT_PX - capsule_px,
-        row_top + spare / 2.0,
+        top + spare / 2.0,
     )
+}
+
+/// What a header keeps free at its right end for `side`'s capsule with every
+/// layer in it, the gap before it included: what a time pane's header lays out
+/// around before its capsule paints.
+#[must_use]
+pub fn docked_reserve_px(side: CapsuleSide) -> f32 {
+    let every = |toggle| LayerGlyph {
+        toggle,
+        on: true,
+        blocked: None,
+    };
+    Capsule::of(side, every, Some(1.0)).width_px() + SIDE_GAP_PX
 }
 
 /// Where a docked capsule's first slot starts, from the capsule's own corner.
@@ -234,8 +269,8 @@ pub fn grip_dots(top: f32, bottom: f32) -> [f32; 3] {
 pub struct WindowOption {
     pub label: String,
     pub selected: bool,
-    /// What a click asks for: nothing on the line in force, so picking `auto`
-    /// again never resets its zoom.
+    /// What a click asks for ([`lane_window_pick`]): nothing on `auto` while it is
+    /// in force, so its zoom is kept; a fixed window in force is filed again.
     pub pick: Option<LaneWindow>,
 }
 
@@ -252,13 +287,10 @@ pub fn window_label(state: &FlowHeaderState) -> String {
 pub fn window_options(state: &FlowHeaderState) -> Vec<WindowOption> {
     lane_window_options()
         .into_iter()
-        .map(|window| {
-            let selected = same_lane_window(state.window, window);
-            WindowOption {
-                label: lane_window_label(window, state.window_reference_ms),
-                selected,
-                pick: (!selected).then_some(window),
-            }
+        .map(|window| WindowOption {
+            label: lane_window_label(window, state.window_reference_ms),
+            selected: same_lane_window(state.window, window),
+            pick: lane_window_pick(state.window, window),
         })
         .collect()
 }
@@ -373,6 +405,7 @@ mod flow_band_tests {
     fn trail(side: f32) -> SideWidths {
         SideWidths {
             side,
+            pad_left: SIDE_PAD_LEFT_PX,
             plate: 40.0,
             bars: 80.0,
             indicators_with_words: 90.0,
@@ -429,12 +462,14 @@ mod flow_band_tests {
         assert!(fit.plate && fit.indicators_words && !fit.capsule);
     }
 
-    /// The plate, then the selector, then the capsule.
+    /// The plate, then the selector, then the capsule; the second header measures
+    /// from its own, wider, left end.
     #[test]
     fn a_narrowing_tape_gives_things_up_in_order() {
-        let pads = SIDE_PAD_LEFT_PX + SIDE_PAD_RIGHT_PX;
+        let pads = SECOND_SIDE_PAD_LEFT_PX + SIDE_PAD_RIGHT_PX;
         let widths = |side| SideWidths {
             side,
+            pad_left: side_parts(CapsuleSide::Tape, false, true).pad_left,
             plate: 40.0,
             window: 60.0,
             capsule: 78.0,
@@ -483,23 +518,42 @@ mod flow_band_tests {
     fn each_header_carries_its_parts() {
         let parts = |side, first, tape| {
             let p = side_parts(side, first, tape);
-            (p.plate, p.bars, p.window, p.capsule)
+            (p.plate, p.bars, p.window, p.capsule, p.pad_left)
         };
         let (candles, tape) = (CapsuleSide::Candles, CapsuleSide::Tape);
-        assert_eq!(parts(candles, true, true), (true, true, false, true));
-        assert_eq!(parts(tape, false, true), (true, false, true, true));
-        assert_eq!(parts(tape, true, true), (true, true, true, true));
-        assert_eq!(parts(candles, true, false), (false, true, false, false));
+        let (first, second) = (SIDE_PAD_LEFT_PX, SECOND_SIDE_PAD_LEFT_PX);
+        assert_eq!(parts(candles, true, true), (true, true, false, true, first));
+        assert_eq!(parts(tape, false, true), (true, false, true, true, second));
+        assert_eq!(parts(tape, true, true), (true, true, true, true, first));
+        assert_eq!(
+            parts(candles, true, false),
+            (false, true, false, false, first)
+        );
     }
 
-    /// Docked 8 px off its side's end, centred above the rule, slots inside.
+    /// Docked 8 px off its header's end, centred above the rule, slots inside: 3.5
+    /// under the band in a side header, which with the band's own 3 below its
+    /// switches leaves 6.5 between them.
     #[test]
     fn a_docked_capsule_stands_against_its_sides_end() {
-        let corner = docked_capsule_corner(500.0, 40.0, 100.0);
-        assert_eq!(corner, (392.0, 42.5));
-        assert_eq!(docked_slot_origin(corner), (397.0, 43.5));
-        let spare = SIDE_HEADER_HEIGHT_PX - 1.0 - DOCKED_CAPSULE_HEIGHT_PX;
-        assert!(spare >= 0.0, "the capsule fits the row");
+        let corner = docked_capsule_corner(500.0, 40.0, 40.0 + SIDE_HEADER_HEIGHT_PX, 100.0);
+        assert_eq!(corner, (392.0, 43.5));
+        assert_eq!(docked_slot_origin(corner), (397.0, 44.5));
+        assert_eq!(DOCKED_CAPSULE_HEIGHT_PX, 20.0);
+        let time = docked_capsule_corner(500.0, 0.0, 34.0, 100.0);
+        assert_eq!(time.1, 6.5, "a time pane's taller header centres it too");
+    }
+
+    /// A time pane's header keeps its capsule's widest room: the footprint glyph in
+    /// its frame, and the gap before it.
+    #[test]
+    fn a_time_header_reserves_its_capsule() {
+        let glyph = crate::pane_header::GLYPH_SLOT_PX;
+        let frame = 2.0 * CAPSULE_FRAME_X_PX;
+        assert_eq!(
+            docked_reserve_px(CapsuleSide::Time),
+            glyph + frame + SIDE_GAP_PX
+        );
     }
 
     /// Three dots around the divider's middle.
@@ -539,6 +593,21 @@ mod flow_band_tests {
                 ("5 min".to_owned(), false),
             ]
         );
+    }
+
+    /// A fixed window in force is marked and still filed when picked: the wheel may
+    /// have reached it without making it the setting.
+    #[test]
+    fn a_fixed_window_in_force_is_filed_again() {
+        let minute = LaneWindow::Fixed { ms: 60_000 };
+        let state = FlowHeaderState {
+            window: minute,
+            ..OPEN
+        };
+        let options = window_options(&state);
+        assert!(options[3].selected);
+        assert_eq!(options[3].pick, Some(minute));
+        assert_eq!(options[0].pick, Some(LaneWindow::default()));
     }
 
     /// A 15 s stored before the presets moved loads, reads and stays what it is.

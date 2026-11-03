@@ -157,10 +157,12 @@ fn tape_only_reserves_no_forming_candle_volume_profile_strip() {
     assert_eq!(pane.live_strip_width(capabilities), ordinary_width);
 }
 
+/// The tape alone wears no Buy/Sell key over its prints: its bubbles' colours are
+/// the key, and nothing covers the high forming dot.
 #[test]
-fn the_key_stays_in_the_header_without_covering_the_live_edge() {
+fn the_tape_alone_wears_no_key() {
     use crate::orderflow_render::{
-        OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_compact_legend,
+        OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_compact_legend_avoiding,
     };
     use quantick_orderflow::{DisplayGrouping, EffectiveGrouping, HeatmapProjection};
 
@@ -170,32 +172,19 @@ fn the_key_stays_in_the_header_without_covering_the_live_edge() {
         EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, Decimal::from(100)),
     );
     let area = egui::Rect::from_min_size(egui::pos2(30.0, 50.0), egui::vec2(281.0, 300.0));
-    let plot = crate::plot_area::plot_split(area, 0.0, &[]).chart;
-    assert_eq!(plot.width(), 185.0);
-    let header = egui::Rect::from_min_max(egui::pos2(plot.left(), area.top()), plot.right_top());
     let mut config = quantick_orderflow::HeatmapConfig::default();
     config.live_lane.tape_only = true;
     config.live_lane.show_aggressions = true;
     config.live_lane.show_depth = false;
     let style = OrderflowRenderStyle::from_config(&config, egui::Color32::BLACK.to_array());
-    let layout = ProjectedLayout::new(header, &pane.model.viewport, 2, 0, 2, header.width());
+    let layout = ProjectedLayout::new(area, &pane.model.viewport, 2, 0, 2, area.width());
     let ctx = egui::Context::default();
-    let mut key = None;
+    let mut key = Some(egui::Rect::NOTHING);
     let output = ctx.run(egui::RawInput::default(), |ctx| {
         let painter = ctx.layer_painter(egui::LayerId::background());
-        key = draw_compact_legend(&painter, &RenderContext::new(&projection, layout, &style));
+        let context = RenderContext::new(&projection, layout, &style);
+        key = draw_compact_legend_avoiding(&painter, &context, None);
     });
-    assert!(key.is_some(), "the buy/sell key remains visible");
-    for shape in &output.shapes {
-        let ink = shape
-            .shape
-            .visual_bounding_rect()
-            .intersect(shape.clip_rect);
-        if ink.is_positive() {
-            assert!(
-                ink.bottom() <= plot.top(),
-                "no header ink can hide the high forming dot"
-            );
-        }
-    }
+    assert_eq!(key, None, "no key on the tape");
+    assert!(output.shapes.is_empty(), "and no ink");
 }

@@ -55,11 +55,12 @@ pub(super) fn lane_handle(pane: &ChartPane, chart: egui::Rect) -> Option<egui::R
     pane.frame.candles_right?;
     let hit = lane(pane)?.divider_hit(chart.width(), LANE_HANDLE_HALF_WIDTH_PX)?;
     let rect = span(chart, hit);
-    // An open divider takes the hand all the way up through its side headers.
-    let header = crate::plot_area::PLOT_PADDING_PX + SIDE_HEADER_HEIGHT_PX;
+    // An open divider takes the hand all the way up through its side headers: the
+    // row `flow_pane_layout` carves right above the pane's area.
+    let row_top = pane.frame.area.map_or(chart.top(), |area| area.top()) - SIDE_HEADER_HEIGHT_PX;
     Some(match rail(pane, chart) {
         Some(_) => rect,
-        None => rect.with_min_y(chart.top() - header),
+        None => rect.with_min_y(row_top),
     })
 }
 

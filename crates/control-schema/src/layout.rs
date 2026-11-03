@@ -301,7 +301,8 @@ pub fn descriptor(
 
 /// A transient cockpit capability another module owns: [`descriptor`]'s
 /// effect, permissions and retry policy, with its own module, output schema
-/// and stale-input note. Nothing it changes is saved.
+/// and stale-input note. Nothing it changes is saved, unless its description
+/// names the one input that saves.
 pub(crate) fn transient_descriptor<Input: schemars::JsonSchema, Output: schemars::JsonSchema>(
     id: &str,
     module: &str,
