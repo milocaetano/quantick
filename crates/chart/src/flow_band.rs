@@ -187,6 +187,20 @@ pub fn side_parts(side: CapsuleSide, first: bool, has_tape: bool) -> SideParts {
     }
 }
 
+/// Whether a flow pane's header row carries the pane's bars and indicators in this
+/// view: the [`side_parts`] of the headers the row paints, asked by the scene too,
+/// so the two never list what the other does not show.
+#[must_use]
+pub fn row_carries_bars(shown: Option<LaneView>) -> bool {
+    let headers = side_headers(shown, 0.0, 2.0, Some(1.0))
+        .into_iter()
+        .flatten();
+    let mut parts = headers
+        .enumerate()
+        .map(|(index, (side, ..))| side_parts(side, index == 0, shown.is_some()));
+    parts.any(|parts| parts.bars)
+}
+
 /// The word on a side's plate.
 #[must_use]
 pub fn plate_word(side: CapsuleSide) -> &'static str {
@@ -455,6 +469,15 @@ mod flow_band_tests {
         assert_eq!(gutter_strip_px(alone, 10.0), 0.0);
         assert_eq!(gutter_strip_px(candles, 10.0), 10.0);
         assert_eq!(gutter_strip_px(None, 10.0), 10.0);
+    }
+
+    /// The row carries the bars wherever the trail has a header, and only there.
+    #[test]
+    fn the_row_carries_bars_with_the_trail() {
+        assert!(row_carries_bars(None), "a pane without a tape");
+        assert!(row_carries_bars(Some(LaneView::Beside)));
+        assert!(row_carries_bars(Some(LaneView::CandlesOnly)));
+        assert!(!row_carries_bars(Some(LaneView::TapeOnly)));
     }
 
     /// A narrow trail keeps its candles: the strip narrows to what is left past

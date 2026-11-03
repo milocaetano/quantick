@@ -2558,6 +2558,47 @@ fn a_tape_alone_shows_no_bars_and_no_indicators_button() {
     assert!(bars.right() <= indicators.left() && indicators.right() < split);
 }
 
+/// The scene lists what the row paints: beside the tape the flow pane's bars and
+/// indicators calls are there, the trail's; the tape alone lists neither, while a
+/// context pane keeps both.
+#[test]
+fn the_scene_lists_the_bars_and_indicators_only_with_the_trail() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    let listed = |app: &QuantickApp, pane: u64| {
+        let ids = scene_control_ids(&observer_scene(app));
+        ["bars", "indicators"].map(|what| ids.contains(&format!("pane_header.{pane}.{what}")))
+    };
+    let flow = app.active_tab().flow_pane.id;
+    let context = app.active_tab().pane(PaneSide::Time(0)).id;
+    assert_eq!(view_of(&app), LaneView::Beside);
+    assert_eq!(
+        listed(&app, flow),
+        [true, true],
+        "the trail's, beside the tape"
+    );
+    assert!(
+        bars_and_indicators(&mut app, &ctx)
+            .iter()
+            .all(Option::is_some)
+    );
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::TapeOnly);
+    assert_eq!(
+        bars_and_indicators(&mut app, &ctx),
+        [None, None],
+        "not painted"
+    );
+    assert_eq!(listed(&app, flow), [false, false], "and not listed");
+    assert_eq!(
+        listed(&app, context),
+        [true, true],
+        "a context pane keeps its own"
+    );
+}
+
 /// The live strip is the trail's. Beside the tape it stands on the candles' side
 /// of the divider and the candles pay for it: the tape keeps its width, the
 /// headers still split at the divider, and the candles end where the strip

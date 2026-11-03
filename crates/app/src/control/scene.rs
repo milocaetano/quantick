@@ -631,12 +631,12 @@ fn push_panes(
             bounds: bounds.into_snapshot(),
             capability_id: None,
         });
-        controls.extend(pane_header_controls(
-            pane.id,
-            &side.title(),
-            tab_control_id(tab_id),
-            bounds_not_recorded(),
-        ));
+        let shown = pane.flow_header_state().map(|state| state.shown_view);
+        if side != PaneSide::Flow || quantick_chart::flow_band::row_carries_bars(shown) {
+            let (title, owner) = (side.title(), tab_control_id(tab_id));
+            let header = pane_header_controls(pane.id, &title, owner, bounds_not_recorded());
+            controls.extend(header);
+        }
     }
     focused_pane_id
 }
