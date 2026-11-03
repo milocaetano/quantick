@@ -18,13 +18,8 @@ pub(crate) use quantick_control_schema::layout::*;
 use quantick_control::{
     error::ControlError,
     registry::RegistryError,
-    schema::generated_schema,
     wire::{ActorContext, WireU64},
 };
-
-use schemars::JsonSchema;
-
-use serde::{Deserialize, Serialize};
 
 use serde_json::Value;
 
@@ -38,9 +33,6 @@ use super::{
 pub(super) mod stack;
 
 mod v2;
-
-#[cfg(test)]
-pub(crate) use v2::{LayoutResultV2, ResizeInputV2};
 
 /// The strip as the control plane reports it — one reading for the layout
 /// calls and `observe.workspace` alike.
@@ -74,123 +66,19 @@ fn layout_tabs_marking<P: LayoutPort + ?Sized>(
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     stack::register(registry)?;
-    registry.register(
-        descriptor(
-            APPLY_PRESET_CAPABILITY_ID,
-            "Apply a layout preset",
-            "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
-            generated_schema::<ApplyPresetInput>(),
-        ),
-        apply_preset,
-    )?;
-    registry.register(
-        descriptor(
-            MOVE_PANE_CAPABILITY_ID,
-            "Move a chart within the stack",
-            "Moves one context chart up or down the column beside the heatmap. The flow pane does not move: its column is the one thing every preset agrees on.",
-            generated_schema::<MovePaneInput>(),
-        ),
-        move_pane,
-    )?;
-    registry.register(
-        descriptor(
-            RESIZE_CAPABILITY_ID,
-            "Resize the context column",
-            "Sets the context column's share of the canvas, held inside the same floor a divider drag is held to.",
-            generated_schema::<ResizeInput>(),
-        ),
-        resize,
-    )?;
-    registry.register(
-        descriptor(
-            COLLAPSE_CAPABILITY_ID,
-            "Collapse the context column",
-            "Puts the context charts away, leaving the rail that brings them back. The width they had is kept, so expanding returns the layout the trader chose.",
-            generated_schema::<TabTarget>(),
-        ),
-        collapse,
-    )?;
-    registry.register(
-        descriptor(
-            EXPAND_CAPABILITY_ID,
-            "Expand the context column",
-            "Brings the context charts back at the width they had before they were collapsed.",
-            generated_schema::<TabTarget>(),
-        ),
-        expand,
-    )?;
-    registry.register(
-        descriptor(
-            FLOW_COLLAPSE_CAPABILITY_ID,
-            "Collapse the flow chart",
-            "Folds the right flow chart to a draggable rail and preserves its width for reopening.",
-            generated_schema::<TabTarget>(),
-        ),
-        collapse_flow,
-    )?;
-    registry.register(
-        descriptor(
-            FLOW_EXPAND_CAPABILITY_ID,
-            "Expand the flow chart",
-            "Restores the right flow chart at its previous width.",
-            generated_schema::<TabTarget>(),
-        ),
-        expand_flow,
-    )?;
-    registry.register(
-        descriptor(
-            FOCUS_CAPABILITY_ID,
-            "Focus a chart",
-            "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on.",
-            generated_schema::<FocusInput>(),
-        ),
-        focus,
-    )?;
-    registry.register(
-        descriptor(
-            INTERVAL_CAPABILITY_ID,
-            "Set a chart's timeframe",
-            "Sets one context chart's interval, the same value its own header selector writes.",
-            generated_schema::<IntervalInput>(),
-        ),
-        set_interval,
-    )?;
-    registry.register(
-        descriptor(
-            BAR_SPEC_CAPABILITY_ID,
-            "Set a chart's bar rule",
-            "Sets one pane's complete alternative-bar rule through the same recut path the toolbar and recording popover use.",
-            generated_schema::<BarSpecInput>(),
-        ),
-        set_bar_spec,
-    )?;
-    registry.register(
-        tab_descriptor(
-            TAB_SWITCH_CAPABILITY_ID,
-            "Switch layout tab",
-            "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and the market's drawings under it come out. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
-            generated_schema::<SwitchLayoutTabInput>(),
-        ),
-        tab_switch,
-    )?;
-    registry.register(
-        tab_descriptor(
-            TAB_CREATE_CAPABILITY_ID,
-            "Create layout tab",
-            "Adds an empty layout after the others and puts it on one pane — the focused pane of the active tab, the way the strip's + does. The panes on other layouts are untouched.",
-            generated_schema::<CreateLayoutTabInput>(),
-        ),
-        tab_create,
-    )?;
-    registry.register(
-        tab_descriptor(
-            TAB_RENAME_CAPABILITY_ID,
-            "Rename layout tab",
-            "Renames one layout. Names are unique within the workspace and bounded to what a tab can show.",
-            generated_schema::<RenameLayoutTabInput>(),
-        ),
-        tab_rename,
-    )?;
+    registry.register(apply_preset_descriptor(), apply_preset)?;
+    registry.register(move_pane_descriptor(), move_pane)?;
+    registry.register(resize_descriptor(), resize)?;
+    registry.register(collapse_descriptor(), collapse)?;
+    registry.register(expand_descriptor(), expand)?;
+    registry.register(flow_collapse_descriptor(), collapse_flow)?;
+    registry.register(flow_expand_descriptor(), expand_flow)?;
+    registry.register(focus_descriptor(), focus)?;
+    registry.register(interval_descriptor(), set_interval)?;
+    registry.register(bar_spec_descriptor(), set_bar_spec)?;
+    registry.register(tab_switch_descriptor(), tab_switch)?;
+    registry.register(tab_create_descriptor(), tab_create)?;
+    registry.register(tab_rename_descriptor(), tab_rename)?;
     // `layout.tab.delete` is deliberately not registered. Deleting a layout
     // destroys its indicator set and every drawing kept under it, and no
     // effect policy in the control contract allows a destructive capability

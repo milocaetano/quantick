@@ -1,5 +1,6 @@
-//! What the plate at the top left of each flow-pane side says: which side it is,
-//! how far its data reaches, and on the tape whether more is coming.
+//! What a flow-pane side says about its data: how far it reaches and, on the tape,
+//! whether more is coming. The tape wears it as a plate inside the chart; the trail
+//! says it in its header plate's tooltip.
 //!
 //! The clock is the market's, told by the caller, and the status is the word
 //! [`crate::connection_state::Link`] speaks, so a blip the other surfaces keep
@@ -10,19 +11,23 @@ use quantick_civil::TzOffset;
 use crate::connection_state::Link;
 use crate::geometry::{TimeLabelFormat, time_label};
 use crate::market_fold::last_print_ms;
-use crate::pane_header::{CAPSULE_HEIGHT_PX, CAPSULE_INSET_TOP_PX, CapsuleSide};
+use crate::pane_header::CapsuleSide;
 use crate::state::ChartState;
 
 /// The room a label leaves before the capsule beside it.
 pub const SIDE_LABEL_GAP_PX: f32 = 8.0;
 /// How far the plate stands off its side's left edge.
-pub const SIDE_LABEL_INSET_LEFT_PX: f32 = 14.0;
+pub const SIDE_LABEL_INSET_LEFT_PX: f32 = 8.0;
+/// How far the plate stands below the side's header.
+pub const SIDE_LABEL_INSET_TOP_PX: f32 = 6.0;
 /// The plate's padding across.
 pub const SIDE_LABEL_PADDING_PX: f32 = 7.0;
+/// The plate's height.
+pub const SIDE_LABEL_HEIGHT_PX: f32 = 18.0;
 
-/// How far below the header's rule the plate ends: what stands under it starts
+/// How far below the side's header the plate ends: what stands under it starts
 /// here.
-pub const SIDE_LABEL_BOTTOM_PX: f32 = CAPSULE_INSET_TOP_PX + CAPSULE_HEIGHT_PX;
+pub const SIDE_LABEL_BOTTOM_PX: f32 = SIDE_LABEL_INSET_TOP_PX + SIDE_LABEL_HEIGHT_PX;
 /// Where the tape's Buy/Sell key starts, below the side's plate.
 pub const TAPE_KEY_TOP_PX: f32 = SIDE_LABEL_BOTTOM_PX + 4.0;
 
@@ -31,8 +36,6 @@ const SEPARATOR: &str = " · ";
 /// How a run of a label's text is inked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabelInk {
-    /// The side's name.
-    Mark,
     Muted,
     Amber,
     /// Faint, breathing while an attempt runs; still under reduced motion.
@@ -57,7 +60,7 @@ pub fn status_of(link: Link) -> Option<(&'static str, LabelInk)> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabelFit {
     Whole,
-    /// The clock goes first: the side's name and status still read.
+    /// The clock goes first: the status still reads.
     NoClock,
     None,
 }
@@ -79,7 +82,6 @@ impl LabelFit {
 /// One side's label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SideLabel {
-    head: &'static str,
     clock: String,
     status: Option<(&'static str, LabelInk)>,
 }
@@ -109,7 +111,6 @@ impl SideLabel {
     #[must_use]
     pub fn trail(last_ms: Option<i64>, tz: TzOffset) -> Self {
         Self {
-            head: "TRAIL",
             clock: clock("bars", last_ms, tz),
             status: None,
         }
@@ -119,7 +120,6 @@ impl SideLabel {
     #[must_use]
     pub fn tape(last_ms: Option<i64>, tz: TzOffset, link: Option<Link>) -> Self {
         Self {
-            head: "TAPE",
             clock: clock("prints", last_ms, tz),
             status: link.and_then(status_of),
         }
@@ -128,13 +128,12 @@ impl SideLabel {
     /// The label's runs at this fit, left to right.
     pub fn runs(&self, fit: LabelFit) -> impl Iterator<Item = (&str, LabelInk)> {
         let whole = fit == LabelFit::Whole;
-        let any = fit != LabelFit::None;
-        let status = self.status.filter(|_| any);
+        let status = self.status.filter(|_| fit != LabelFit::None);
         [
-            any.then_some((self.head, LabelInk::Mark)),
-            whole.then_some((SEPARATOR, LabelInk::Muted)),
             whole.then_some((self.clock.as_str(), LabelInk::Muted)),
-            status.map(|_| (SEPARATOR, LabelInk::Muted)),
+            status
+                .filter(|_| whole)
+                .map(|_| (SEPARATOR, LabelInk::Muted)),
             status,
         ]
         .into_iter()
@@ -164,14 +163,14 @@ mod tests {
     const AT: Option<i64> = Some(3_723_000);
 
     #[test]
-    fn the_trail_label_names_its_side_and_its_clock() {
+    fn the_trail_label_says_its_clock() {
         assert_eq!(
             SideLabel::trail(AT, UTC).text(LabelFit::Whole),
-            "TRAIL · bars to 01:02:03"
+            "bars to 01:02:03"
         );
         assert_eq!(
             SideLabel::trail(AT, TzOffset::new(-180)).text(LabelFit::Whole),
-            "TRAIL · bars to 22:02:03",
+            "bars to 22:02:03",
             "in the chart's own timezone"
         );
     }
@@ -183,25 +182,25 @@ mod tests {
         for (link, text, ink) in [
             (
                 Link::Live,
-                "TAPE · prints to 01:02:03 · live",
+                "prints to 01:02:03 · live",
                 Some(LabelInk::Muted),
             ),
             (
                 Link::Quiet,
-                "TAPE · prints to 01:02:03 · quiet",
+                "prints to 01:02:03 · quiet",
                 Some(LabelInk::Amber),
             ),
             (
                 Link::Attempting,
-                "TAPE · prints to 01:02:03 · reconnecting",
+                "prints to 01:02:03 · reconnecting",
                 Some(LabelInk::FaintPulse),
             ),
             (
                 Link::Offline,
-                "TAPE · prints to 01:02:03 · offline",
+                "prints to 01:02:03 · offline",
                 Some(LabelInk::Warn),
             ),
-            (Link::NoTransport, "TAPE · prints to 01:02:03", None),
+            (Link::NoTransport, "prints to 01:02:03", None),
         ] {
             let label = SideLabel::tape(AT, UTC, Some(link));
             assert_eq!(label.text(LabelFit::Whole), text);
@@ -215,19 +214,16 @@ mod tests {
     fn the_label_invents_nothing() {
         assert_eq!(
             SideLabel::tape(AT, UTC, None).text(LabelFit::Whole),
-            "TAPE · prints to 01:02:03"
+            "prints to 01:02:03"
         );
         assert_eq!(
             SideLabel::tape(None, UTC, Some(Link::Quiet)).text(LabelFit::Whole),
-            "TAPE · no prints · quiet"
+            "no prints · quiet"
         );
-        assert_eq!(
-            SideLabel::trail(None, UTC).text(LabelFit::Whole),
-            "TRAIL · no bars"
-        );
+        assert_eq!(SideLabel::trail(None, UTC).text(LabelFit::Whole), "no bars");
     }
 
-    /// The clock goes before the status, and the name before nothing.
+    /// The clock goes before the status, and the status last.
     #[test]
     fn a_narrow_side_drops_the_clock_then_the_label() {
         assert_eq!(LabelFit::of(200.0, 90.0, 200.0), LabelFit::Whole);
@@ -235,7 +231,7 @@ mod tests {
         assert_eq!(LabelFit::of(200.0, 90.0, 90.0), LabelFit::NoClock);
         assert_eq!(LabelFit::of(200.0, 90.0, 89.0), LabelFit::None);
         let label = SideLabel::tape(AT, UTC, Some(Link::Offline));
-        assert_eq!(label.text(LabelFit::NoClock), "TAPE · offline");
+        assert_eq!(label.text(LabelFit::NoClock), "offline");
         assert_eq!(label.text(LabelFit::None), "");
     }
 }

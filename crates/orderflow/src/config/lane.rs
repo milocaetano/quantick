@@ -55,7 +55,7 @@ pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 1_800_000;
 /// range: the point of a preset is that it is chosen without reading a number.
 /// Anything else is reachable through the custom entry, which accepts the
 /// whole [`MIN_LIVE_LANE_WINDOW_MS`]..=[`MAX_LIVE_LANE_WINDOW_MS`] band.
-pub const LANE_WINDOW_PRESETS_MS: [i64; 5] = [15_000, 30_000, 60_000, 120_000, 300_000];
+pub const LANE_WINDOW_PRESETS_MS: [i64; 5] = [10_000, 30_000, 60_000, 120_000, 300_000];
 /// Default multiplier applied to the bubble radii inside the live lane.
 pub const DEFAULT_LIVE_LANE_RADIUS_SCALE: f32 = 1.0;
 /// Bounds accepted for the live lane's radius multiplier.
@@ -327,6 +327,18 @@ pub fn lane_window_label(window: LaneWindow, reference_ms: Option<i64>) -> Strin
         ),
         LaneWindow::Fixed { ms } => format_window_ms(ms),
     }
+}
+
+/// The windows a hand picks from, in the order every picker lists them: following
+/// the bars, then the presets. One list, so the tape's header and its menu cannot
+/// disagree.
+#[must_use]
+pub fn lane_window_options() -> [LaneWindow; LANE_WINDOW_PRESETS_MS.len() + 1] {
+    let mut options = [LaneWindow::default(); LANE_WINDOW_PRESETS_MS.len() + 1];
+    for (option, ms) in options[1..].iter_mut().zip(LANE_WINDOW_PRESETS_MS) {
+        *option = LaneWindow::Fixed { ms };
+    }
+    options
 }
 
 /// Whether a menu entry names the window already in force.

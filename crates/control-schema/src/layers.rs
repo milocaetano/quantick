@@ -1,5 +1,8 @@
 //! Layer discovery and visibility actions over the same catalog used by pane menus.
 
+use quantick_control::id::ModuleId;
+use quantick_control::registry::CapabilityDescriptor;
+use quantick_control::schema::generated_schema;
 use quantick_control::wire::WireU64;
 
 use schemars::JsonSchema;
@@ -9,6 +12,21 @@ use quantick_control::registry::IdempotencyPolicy::Optional;
 use serde::{Deserialize, Serialize};
 
 pub const SCOPE_ID: &str = "layers.visibility";
+
+/// The visibility call as the registry lists it.
+#[must_use]
+pub fn set_visibility_descriptor() -> CapabilityDescriptor {
+    let mut descriptor = crate::layout::descriptor(
+        SET_VISIBILITY_CAPABILITY_ID,
+        "Set chart layer visibility",
+        "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
+        generated_schema::<SetVisibilityInput>(),
+    );
+    descriptor.module = ModuleId::new(MODULE_ID).expect("static module ID");
+    descriptor.output_schema = generated_schema::<VisibilityResult>();
+    descriptor.stale_input_safety = Some("Stable tab and pane IDs are resolved before mutation; a stale requested visibility affects display only, and the result names its actual scope.".to_owned());
+    descriptor
+}
 
 pub const SET_VISIBILITY_CAPABILITY_ID: &str = "layers.visibility.set";
 

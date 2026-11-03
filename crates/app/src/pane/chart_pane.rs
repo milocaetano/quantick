@@ -3,12 +3,15 @@
 
 use eframe::egui;
 
+use quantick_chart::flow_band::side_headers;
 use quantick_chart::pane_header::{
     BubbleSample, Capsule, CapsuleSide, FlowHeaderState, HeaderIntent, LayerGlyph, LayerToggle,
     flow_sides,
 };
-use quantick_chart::side_label::SideLabel;
+use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
+use quantick_chart::side_label::{LabelFit, SideLabel};
 use quantick_control_handlers::bubble_scale::{BubbleScalePane, sample_target as target};
+use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_layers::{ChartLayer, LayerActions};
 
 use crate::bands;
@@ -1086,8 +1089,8 @@ impl ChartPane {
         glyph.blocked.is_none().then_some(glyph)
     }
 
-    /// Paint this pane's capsules and side labels, one of each per chart side on
-    /// screen, over the chart just drawn; answers what a press on a capsule asked
+    /// Paint what this pane wears over the chart just drawn: a time chart's capsule,
+    /// or the flow tape's seam and label. Answers what a press on the capsule asked
     /// for.
     pub(crate) fn draw_capsules(
         &mut self,
@@ -1095,7 +1098,6 @@ impl ChartPane {
         side: PaneSide,
         chrome: &SideChrome<'_>,
     ) -> Option<HeaderIntent> {
-        let (style, capabilities) = (chrome.style, chrome.capabilities);
         self.frame.capsules = [None; 2];
         // Nothing on the chart, nothing to switch: the overlay owns it.
         if self.slots() == 0 {
@@ -1103,63 +1105,114 @@ impl ChartPane {
         }
         let chart = self.frame.chart_rect?;
         let top = self.frame.area.map_or(chart.top(), |area| area.top());
-        let state = self.flow_header_state();
-        let (left, right) = (chart.left(), chart.right());
-        let sides = match (side, state) {
-            (PaneSide::Time(_), _) => [Some((CapsuleSide::Time, left, right)), None],
-            (PaneSide::Flow, Some(state)) => {
-                flow_sides(state.shown_view, left, right, self.frame.candles_right)
-            }
-            (PaneSide::Flow, None) => [None, None],
+        if side == PaneSide::Flow {
+            self.draw_tape_marks(ui, chart, top, chrome);
+            return None;
+        }
+        let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
+        let capsule = Capsule::of(CapsuleSide::Time, glyph, None);
+        let corner = capsule
+            .place(chart.left(), chart.right(), top, chart.bottom())
+            .filter(|_| !capsule.is_empty())?;
+        let spot = crate::pane_header::CapsuleSpot {
+            corner,
+            side_rect: chart.with_min_y(top),
+            pane_focused: chrome.focused,
         };
         let mut intent = None;
-        for (slot, (side, left, right)) in sides
-            .into_iter()
-            .enumerate()
-            .filter_map(|(slot, side)| side.map(|side| (slot, side)))
-        {
-            let scale = state.and_then(|state| state.sample_of(side));
-            let glyph = |toggle| self.header_glyph(toggle, style, capabilities);
-            let capsule = Capsule::of(side, glyph, scale);
-            let corner = capsule
-                .place(left, right, top, chart.bottom())
-                .filter(|_| !capsule.is_empty());
-            let side_rect = egui::Rect::from_x_y_ranges(left..=right, top..=chart.bottom());
-            if side == CapsuleSide::Tape
-                && let Some(x) = state.and_then(|state| self.seam_x(&state, chrome, side_rect))
-            {
-                let held = self
-                    .orderflow
-                    .as_ref()
-                    .and_then(|tape| tape.book_held_at_ms());
-                let line = chrome.seam_words.as_deref();
-                let words = quantick_chart::market_fold::seam_words(line, held, chrome.tz);
-                crate::pane_header::draw_tape_seam(ui, side_rect, x, words.lines());
-            }
-            if let Some(label) = SideLabel::of(side, &self.state, chrome.tz, chrome.link) {
-                let capsule_left = corner.map_or(right, |corner| corner.0);
-                crate::pane_header::draw_side_label(ui, &label, side_rect, capsule_left);
-            }
-            let Some(corner) = corner else {
-                continue;
-            };
-            let spot = crate::pane_header::CapsuleSpot {
-                corner,
-                side,
-                side_rect,
-                pane_focused: chrome.focused,
-            };
-            let rect = crate::pane_header::draw_capsule(
-                ui,
-                &capsule,
-                &spot,
-                self.id,
-                &mut self.frame.header_controls,
-                &mut intent,
-            );
-            self.frame.capsules[slot] = Some(rect);
-        }
+        let rect = crate::pane_header::draw_capsule(
+            ui,
+            &capsule,
+            &spot,
+            self.id,
+            &mut self.frame.header_controls,
+            &mut intent,
+        );
+        self.frame.capsules[0] = Some(rect);
         intent
+    }
+
+    /// The tape's seam and its `prints to` label, over the tape just drawn.
+    fn draw_tape_marks(&self, ui: &egui::Ui, chart: egui::Rect, top: f32, chrome: &SideChrome<'_>) {
+        let Some(state) = self.flow_header_state() else {
+            return;
+        };
+        let (left, right) = (chart.left(), chart.right());
+        let sides = flow_sides(state.shown_view, left, right, self.frame.candles_right);
+        let Some((_, left, right)) = sides
+            .into_iter()
+            .flatten()
+            .find(|(side, ..)| *side == CapsuleSide::Tape)
+        else {
+            return;
+        };
+        let side_rect = egui::Rect::from_x_y_ranges(left..=right, top..=chart.bottom());
+        if let Some(x) = self.seam_x(&state, chrome, side_rect) {
+            let held = self
+                .orderflow
+                .as_ref()
+                .and_then(|tape| tape.book_held_at_ms());
+            let line = chrome.seam_words.as_deref();
+            let words = quantick_chart::market_fold::seam_words(line, held, chrome.tz);
+            crate::pane_header::draw_tape_seam(ui, side_rect, x, words.lines());
+        }
+        let label = SideLabel::of(CapsuleSide::Tape, &self.state, chrome.tz, chrome.link);
+        if let Some(label) = label {
+            crate::pane_header::draw_side_label(ui, &label, side_rect);
+        }
+    }
+
+    /// The row of side headers under the band, split where this frame's chart split:
+    /// it paints after the chart so the two can never disagree, even under a drag.
+    /// Answers what a press on it asked for and whether the indicators were clicked.
+    pub(crate) fn draw_flow_sides(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: egui::Rect,
+        inputs: BarInputAvailability,
+        rebuilding: bool,
+        chrome: &SideChrome<'_>,
+    ) -> (Option<HeaderIntent>, bool) {
+        use crate::pane_header::{TrailSide, draw_tape_side, draw_trail_side};
+        // An open settings panel takes the end of the row with the end of the chart.
+        let row = self
+            .frame
+            .area
+            .map_or(row, |area| row.with_max_x(area.right()));
+        crate::pane_header::paint_side_row(ui, row);
+        let state = self.flow_header_state();
+        let shown = state.map(|state| state.shown_view);
+        let split = self.frame.candles_right;
+        let headers = side_headers(shown, row.left(), row.right(), split);
+        let (mut intent, mut indicators) = (None, false);
+        for (side, left, right) in headers.into_iter().flatten() {
+            let rect = egui::Rect::from_x_y_ranges(left..=right, row.y_range());
+            let scale = state.and_then(|state| state.sample_of(side));
+            let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
+            let capsule = Some(Capsule::of(side, glyph, scale))
+                .filter(|capsule| self.slots() > 0 && !capsule.is_empty());
+            if let (CapsuleSide::Tape, Some(state)) = (side, state) {
+                let painted = &mut self.frame.header_controls;
+                draw_tape_side(ui, rect, self.id, &state, capsule, painted, &mut intent);
+                continue;
+            }
+            let clock = SideLabel::of(CapsuleSide::Candles, &self.state, chrome.tz, None)
+                .map_or_else(String::new, |label| label.text(LabelFit::Whole));
+            let header = PaneHeader::of(PaneIdentity::OrderFlow, self.spec.spec());
+            let trail = TrailSide {
+                header: &header,
+                salt: self.id,
+                selection: &mut self.spec,
+                inputs,
+                rebuilding,
+                capsule,
+                clock,
+            };
+            let painted = &mut self.frame.header_controls;
+            indicators |= draw_trail_side(ui, rect, trail, painted, &mut intent);
+        }
+        super::lane_rail::paint_flow_divider(self, ui, row.top(), state, chrome.capabilities);
+        (intent, indicators)
     }
 
     /// Where the tape's seam stands, on a live tape with nothing coming.
@@ -1203,6 +1256,7 @@ impl ChartPane {
             &owner.cached_config().live_lane,
             scale(BubbleSample::Candle),
             scale(BubbleSample::Tape),
+            self.frame.lane_reference_ms,
         ))
     }
 
@@ -1220,6 +1274,11 @@ impl ChartPane {
                 actions.open_layer_tab = Some(toggle.layer());
             }
             HeaderIntent::ToggleSettings => actions.toggle_settings = true,
+            HeaderIntent::SetLaneWindow(window) => {
+                if let Some(owner) = self.orderflow.as_mut() {
+                    owner.set_live_lane_window(window);
+                }
+            }
             HeaderIntent::SetView(view) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_lane_view(view);

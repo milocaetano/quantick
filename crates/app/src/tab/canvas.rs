@@ -18,7 +18,7 @@ use crate::config::FeedCapabilities;
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
-    SharedPick, clamp_pane_fraction, split_pane_header, split_pane_layout_strip,
+    SharedPick, clamp_pane_fraction, split_flow_pane, split_pane_header, split_pane_layout_strip,
 };
 use crate::state::BarKind;
 use crate::style::ChartStyle;
@@ -114,6 +114,8 @@ struct PaneRects {
     context_charts: SmallVec<[Option<(egui::Rect, egui::Rect)>; MAX_CONTEXT_PANES]>,
     context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
     flow_areas: Option<PaneAreas>,
+    /// The row of the flow pane's side headers, painted after its chart.
+    flow_side_row: Option<egui::Rect>,
 }
 
 impl Tab {
@@ -148,6 +150,7 @@ impl Tab {
         // the guarantee that a foreign mark can only be looked at.
         self.paint_shared_drawings(ui.painter());
         self.draw_layer_capsules(ui, chrome);
+        self.draw_flow_sides(ui, rects.flow_side_row, chrome);
 
         // A chart menu's object ask applies on the chart it was opened on.
         if let Some(pane) = chrome.drawing_chrome.menu_target() {
@@ -260,6 +263,7 @@ impl Tab {
             context_charts: SmallVec::new(),
             context_dividers: SmallVec::new(),
             flow_areas: None,
+            flow_side_row: None,
         };
         #[cfg(test)]
         self.context_dividers.clear();
@@ -321,8 +325,11 @@ impl Tab {
         }
         rects.flow_areas = frame.show_flow.then(|| {
             let pane_areas = split_pane_layout_strip(frame.flow_band);
-            let areas = split_pane_header(pane_areas.body);
-            self.draw_flow_header(ui, areas.header, bar_inputs, chrome);
+            let areas = split_flow_pane(pane_areas.body);
+            ui.painter()
+                .rect_filled(pane_areas.body, egui::Rounding::ZERO, theme::FLOW_SURFACE);
+            self.draw_flow_header(ui, areas.band, chrome);
+            rects.flow_side_row = Some(areas.side_row);
             PaneAreas {
                 body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
                 layout_strip: pane_areas.layout_strip,
@@ -432,48 +439,66 @@ impl Tab {
         }
     }
 
-    /// The flow pane's header line: its mark, its own bars, its indicators
-    /// button, its side switches and its strip, read and changed here wherever
-    /// focus sits.
+    /// The flow pane's band: its mark, its side switches and its strip, read and
+    /// changed here wherever focus sits.
     fn draw_flow_header(
         &mut self,
         ui: &mut egui::Ui,
         strip: egui::Rect,
-        bar_inputs: BarInputAvailability,
         chrome: &mut CanvasChrome<'_>,
     ) {
         let chip = self.connection.chip();
         let slot = self.connection.slot(self.session.history_note());
-        let rebuilding = self
-            .loading
-            .is_active(crate::loading::LoadingTask::BarRebuild);
         let pane = &mut self.flow_pane;
-        let identity = PaneIdentity::OrderFlow;
-        let header = PaneHeader::of(identity, pane.spec.spec());
+        let header = PaneHeader::of(PaneIdentity::OrderFlow, pane.spec.spec());
         let row = crate::pane_header::FlowRow {
             strip: pane.strip_glyph(chrome.style, chrome.capabilities),
             state: pane.flow_header_state(),
             chip,
             slot,
-            rebuilding,
             settings_open: pane
                 .orderflow
                 .as_ref()
                 .is_some_and(|tape| tape.settings_panel.is_open()),
         };
-        let (intent, indicators) = crate::pane_header::draw_marked(
-            ui,
-            strip,
-            &header,
-            pane.id,
-            &mut pane.spec,
-            bar_inputs,
-            row,
-            &mut pane.frame.header_controls,
+        let painted = &mut pane.frame.header_controls;
+        let intent = crate::pane_header::draw_marked(ui, strip, &header, pane.id, row, painted);
+        self.apply_flow_intent(intent, chrome);
+    }
+
+    /// The flow pane's side headers: its own bars and indicators button, its layer
+    /// capsules and its tape window, split where this frame's chart split.
+    fn draw_flow_sides(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: Option<egui::Rect>,
+        chrome: &mut CanvasChrome<'_>,
+    ) {
+        let Some(row) = row else { return };
+        let inputs = crate::toolbar::available_bar_inputs(
+            chrome.capabilities,
+            self.deal_recording_view().as_ref(),
         );
+        let rebuilding = self
+            .loading
+            .is_active(crate::loading::LoadingTask::BarRebuild);
+        let sides = crate::pane::SideChrome {
+            style: chrome.style,
+            capabilities: chrome.capabilities,
+            focused: false,
+            tz: chrome.tz,
+            link: None,
+            seam_words: None,
+        };
+        let pane = &mut self.flow_pane;
+        let (intent, indicators) = pane.draw_flow_sides(ui, row, inputs, rebuilding, &sides);
         if indicators {
             pane.request_indicator_picker();
         }
+        self.apply_flow_intent(intent, chrome);
+    }
+
+    fn apply_flow_intent(&mut self, intent: Option<HeaderIntent>, chrome: &mut CanvasChrome<'_>) {
         if let Some(intent) = intent {
             // A settings window edits the focused chart, and this is the one
             // the hand asked about.
@@ -895,7 +920,8 @@ impl Tab {
         // A header line governs its own pane wherever focus sits: changing a
         // pane's bars from there never moves focus. Only the chart below takes it.
         let on_header = |band: &egui::Rect| split_pane_header(*band).header.contains(position);
-        if context_bands.iter().chain([&flow_area]).any(on_header) {
+        let on_flow_header = split_flow_pane(flow_area).header.contains(position);
+        if on_flow_header || context_bands.iter().any(on_header) {
             return;
         }
         // A capsule governs its own pane the same way.

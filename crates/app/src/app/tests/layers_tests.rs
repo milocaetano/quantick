@@ -1284,6 +1284,7 @@ fn the_header_controls_are_listed_the_way_the_trader_reads_them() {
             "layer.bubbles",
             "layer.heatmap",
             "layer.footprint",
+            "tape.window",
             "layer.tape_bubbles",
             "layer.tape_heatmap",
         ]

@@ -36,7 +36,8 @@ pub use config::{
     MarketHold, OldTapeFold, TickBubbleStyle, TickLook, TickReferenceMode, ViewportBubbleScale,
     VolumeDotStyle, admitted_bubble_display_scale, bubble_halo_padding, bubble_impact_ring_padding,
     bubble_radius, format_window_ms, lane_lag_label, lane_time_ticks, lane_window_label,
-    same_lane_window, sane_bubble_display_scale, sane_volume_dot_full_quantity, side_offset_y,
+    lane_window_options, same_lane_window, sane_bubble_display_scale,
+    sane_volume_dot_full_quantity, side_offset_y,
 };
 #[allow(unused_imports)]
 pub use grouping::{

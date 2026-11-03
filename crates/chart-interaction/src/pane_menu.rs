@@ -3,8 +3,8 @@ use crate::drawing_model::{ChartPoint, DrawingId};
 use crate::pane::{DrawingFact, MenuIntent, Model, ObjectAction};
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
-    LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
-    lane_window_label, same_lane_window,
+    LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS, lane_window_label,
+    lane_window_options, same_lane_window,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -332,12 +332,9 @@ fn tape_entries(facts: &Facts, tape: &TapeFact) -> Vec<Entry> {
         )
         .trace(Trace::Button("Tape window"))
     };
-    let mut windows = vec![option(LaneWindow::default()), separator()];
-    windows.extend(
-        LANE_WINDOW_PRESETS_MS
-            .into_iter()
-            .map(|ms| option(LaneWindow::Fixed { ms })),
-    );
+    let [auto, presets @ ..] = lane_window_options();
+    let mut windows = vec![option(auto), separator()];
+    windows.extend(presets.map(option));
     windows.push(separator());
     let ms = match tape.window {
         LaneWindow::Fixed { ms } => ms,

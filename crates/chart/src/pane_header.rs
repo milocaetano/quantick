@@ -8,7 +8,7 @@
 
 use quantick_engine::bar_registry::BarConfiguration;
 use quantick_layers::{ChartLayer, LayerBlock};
-use quantick_orderflow::{DEFAULT_BUBBLE_DISPLAY_SCALE, LaneSide, LaneView};
+use quantick_orderflow::{DEFAULT_BUBBLE_DISPLAY_SCALE, LaneSide, LaneView, LaneWindow};
 use quantick_orderflow::{MAX_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_DISPLAY_SCALE};
 use quantick_workspace::orderflow_panel::{OrderFlowPanel, PanelControl, PanelSection};
 
@@ -44,7 +44,7 @@ pub const CAPSULE_INSET_TOP_PX: f32 = 14.0;
 /// How far a capsule stands off its side's right edge.
 pub const CAPSULE_INSET_RIGHT_PX: f32 = 28.0;
 /// The capsule's padding plus its 1 px border, across and along.
-const CAPSULE_FRAME_X_PX: f32 = 5.0;
+pub(crate) const CAPSULE_FRAME_X_PX: f32 = 5.0;
 const CAPSULE_FRAME_Y_PX: f32 = 4.0;
 /// A capsule's slots are this tall.
 pub const CAPSULE_SLOT_HEIGHT_PX: f32 = 20.0;
@@ -146,6 +146,8 @@ pub enum HeaderControl {
     Sample(BubbleSample),
     /// The gear at the line's right end, or a control of the panel it opens.
     Settings(PanelControl),
+    /// The tape header's window selector.
+    TapeWindow,
 }
 
 impl HeaderControl {
@@ -160,6 +162,7 @@ impl HeaderControl {
             Self::Sample(BubbleSample::Candle) => "sample.candle".to_owned(),
             Self::Sample(BubbleSample::Tape) => "sample.tape".to_owned(),
             Self::Settings(control) => control.id_in_header(),
+            Self::TapeWindow => "tape.window".to_owned(),
         }
     }
 }
@@ -174,6 +177,8 @@ pub enum HeaderIntent {
     SetSample(BubbleSample, f32),
     /// The gear's left click: the panel opens or closes.
     ToggleSettings,
+    /// The selector's pick, the same write as the tape menu's.
+    SetLaneWindow(LaneWindow),
 }
 
 /// One layer glyph this frame: drawn or not, and what blocks it if anything. A
@@ -445,6 +450,10 @@ pub struct FlowHeaderState {
     pub market_held: bool,
     pub candle_sample: Option<f32>,
     pub tape_sample: Option<f32>,
+    /// How much market time the tape shows, and what following the bars works
+    /// out to while the frame knows.
+    pub window: LaneWindow,
+    pub window_reference_ms: Option<i64>,
 }
 
 impl FlowHeaderState {
@@ -464,6 +473,7 @@ impl FlowHeaderState {
         lane: &quantick_orderflow::LiveLaneStyle,
         candle_sample: Option<f32>,
         tape_sample: Option<f32>,
+        window_reference_ms: Option<i64>,
     ) -> Self {
         Self {
             view: lane.view(),
@@ -471,6 +481,8 @@ impl FlowHeaderState {
             market_held: lane.market_held(),
             candle_sample,
             tape_sample,
+            window: lane.window,
+            window_reference_ms,
         }
     }
 }
@@ -487,8 +499,6 @@ pub struct HeaderFit {
     pub chip_words: bool,
     /// The words beside the view control's glyphs.
     pub side_words: bool,
-    /// The word beside the indicators icon. The icon itself always stays.
-    pub indicators_words: bool,
 }
 
 /// Width of the header's right end at its barest: the two segments in their
@@ -548,16 +558,12 @@ pub fn layer_section(layer: ChartLayer) -> PanelSection {
         _ => PanelSection::L2,
     }
 }
-/// The gap the mark leaves before the bars.
-const MARK_GAP_PX: f32 = GROUP_GAP_PX;
 
-/// The widths a flow pane's header line has to fit. An absent item is zero.
+/// The widths a flow pane's band has to fit. An absent item is zero.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct HeaderWidths {
     pub strip: f32,
     pub mark: f32,
-    pub bars: f32,
-    pub indicators: f32,
     /// The right end at its barest, its own gap included; zero without a tape.
     pub controls: f32,
     /// What the words beside the view control's glyphs add to the right end.
@@ -569,16 +575,12 @@ pub struct HeaderWidths {
     pub market_held: bool,
 }
 
-/// The narrow rule of a flow pane's header, in the order things go: the slot,
-/// then the words beside the view control's glyphs, then the mark, then the
-/// chip's words, then the chip's dots. What still does not fit is the bars text,
-/// clipped short of the indicators button, and when the button itself no longer
-/// fits beside the right end it gives up its word and keeps its icon. While the
-/// market holds the tape its words outlast the status, the bars' text clipping for
-/// them: "Market closed" is all that says where the tape went.
+/// The narrow rule of a flow pane's band, in the order things go: the slot, then
+/// the words beside the view control's glyphs, then the mark, then the chip's
+/// words, then the chip's dots. While the market holds the tape its words outlast
+/// the status: "Market closed" is all that says where the tape went.
 #[must_use]
 pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
-    let core = widths.bars + GROUP_GAP_PX + widths.indicators + widths.controls;
     let item = |width: f32| {
         if width > 0.0 {
             width + GROUP_GAP_PX
@@ -586,12 +588,12 @@ pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
             0.0
         }
     };
-    let mark = item(widths.mark).max(widths.mark + MARK_GAP_PX) * f32::from(widths.mark > 0.0);
-    let fits = |extra: f32| core + extra <= widths.strip;
+    let mark = item(widths.mark);
+    let fits = |extra: f32| widths.controls + extra <= widths.strip;
     let (full_chip, dots) = (item(widths.chip_with_words), item(widths.chip_dots));
     let slot = fits(widths.side_words + mark + full_chip + item(widths.slot));
     let (side_words, kept) = if widths.market_held {
-        let keep = widths.indicators + widths.controls + widths.side_words <= widths.strip;
+        let keep = fits(widths.side_words);
         (keep, if keep { widths.side_words } else { 0.0 })
     } else {
         (fits(widths.side_words + mark + full_chip), 0.0)
@@ -607,7 +609,6 @@ pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
         chip: chip && widths.chip_dots > 0.0,
         chip_words: chip_words && widths.chip_with_words > 0.0,
         side_words: side_words && widths.side_words > 0.0,
-        indicators_words: widths.indicators + widths.controls <= widths.strip,
     }
 }
 
@@ -1014,8 +1015,6 @@ mod tests {
         HeaderWidths {
             strip,
             mark: 70.0,
-            bars: 80.0,
-            indicators: 90.0,
             controls: FLOW_CONTROLS_PX + GROUP_GAP_PX,
             side_words: 0.0,
             slot: 120.0,
@@ -1025,7 +1024,7 @@ mod tests {
         }
     }
 
-    /// Only the mark goes; the right end and the indicators button never do.
+    /// Only the mark goes; the right end never does.
     #[test]
     fn a_narrow_strip_with_no_chip_drops_only_the_mark() {
         let line = |strip| HeaderWidths {
@@ -1035,7 +1034,7 @@ mod tests {
             ..widths(strip)
         };
         let w = line(0.0);
-        let everything = w.mark + MARK_GAP_PX + w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let everything = w.mark + GROUP_GAP_PX + w.controls;
         let fit = flow_fit(&line(everything));
         assert!(fit.mark);
         assert!(!fit.chip && !fit.slot && !fit.chip_words);
@@ -1047,7 +1046,7 @@ mod tests {
     #[test]
     fn a_narrowing_strip_gives_things_up_in_order() {
         let w = widths(0.0);
-        let core = w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let core = w.controls;
         let gap = GROUP_GAP_PX;
         let mark = w.mark + gap;
         let words = w.chip_with_words + gap;
@@ -1064,7 +1063,7 @@ mod tests {
         assert_eq!(keeps(core + dots - 1.0), (false, false, false, false));
     }
 
-    /// The words go before the mark, the chip and the bars: the control keeps
+    /// The words go before the mark and the chip: the control keeps
     /// working on its glyphs alone.
     #[test]
     fn a_narrowing_strip_drops_the_side_words_before_the_mark() {
@@ -1076,7 +1075,7 @@ mod tests {
             ..widths(strip)
         };
         let w = line(0.0);
-        let without = w.mark + MARK_GAP_PX + w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let without = w.mark + GROUP_GAP_PX + w.controls;
         let keeps = |strip| {
             let fit = flow_fit(&line(strip));
             (fit.side_words, fit.mark)
@@ -1089,7 +1088,7 @@ mod tests {
     }
 
     /// Held by the market the order turns over: the pills and the mark go first and
-    /// the words "Market closed" last, with the bars clipping for them.
+    /// the words "Market closed" last.
     #[test]
     fn a_held_tape_keeps_its_words_after_the_status_is_gone() {
         let words = 100.0;
@@ -1099,7 +1098,7 @@ mod tests {
             ..widths(strip)
         };
         let w = line(0.0);
-        let core = w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let core = w.controls;
         let gap = GROUP_GAP_PX;
         let (mark, pills, dots) = (w.mark + gap, w.chip_with_words + gap, w.chip_dots + gap);
         let keeps = |strip: f32| {
@@ -1110,31 +1109,13 @@ mod tests {
         assert_eq!(keeps(core + words + pills), (false, true, true, true));
         assert_eq!(keeps(core + words + dots), (false, false, true, true));
         assert_eq!(keeps(core + words), (false, false, false, true));
-        assert_eq!(
-            keeps(w.indicators + w.controls + words),
-            (false, false, false, true),
-            "the bars clip for the words"
-        );
-        assert!(
-            !keeps(w.indicators + w.controls + words - 1.0).3,
-            "and only then the dot"
-        );
+        assert!(!keeps(core + words - 1.0).3, "and only then the dot");
         let unheld = HeaderWidths {
             market_held: false,
             ..line(core + words)
         };
         let fit = flow_fit(&unheld);
         assert!(fit.chip && !fit.side_words, "an ordinary word goes first");
-    }
-
-    /// The bars clip away first; only then does the button lose its word, so it
-    /// never stands under the switches.
-    #[test]
-    fn the_indicators_button_keeps_its_icon_when_its_word_cannot_fit() {
-        let w = widths(0.0);
-        let least = w.indicators + w.controls;
-        assert!(flow_fit(&widths(least)).indicators_words);
-        assert!(!flow_fit(&widths(least - 1.0)).indicators_words);
     }
 
     fn state(view: LaneView) -> FlowHeaderState {
@@ -1144,6 +1125,8 @@ mod tests {
             market_held: false,
             candle_sample: None,
             tape_sample: None,
+            window: LaneWindow::default(),
+            window_reference_ms: None,
         }
     }
 

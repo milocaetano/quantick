@@ -56,6 +56,25 @@ pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
 /// than [`AMBER`], so it reads at a glance and never as the not-live warning.
 pub const PANE_MARK: Color32 = Color32::from_rgba_premultiplied(190, 156, 63, 217);
 
+/// `flow/surface` — the order-flow pane's band and frame: one step above the
+/// chrome, what tells that pane from a time pane at a glance.
+pub const FLOW_SURFACE: Color32 = Color32::from_rgb(0x1E, 0x24, 0x33);
+
+/// `flow/divider` — the grip bar between the flow pane's trail and tape.
+pub const FLOW_DIVIDER: Color32 = Color32::from_rgb(0x3A, 0x43, 0x57);
+
+/// `flow/ink` — the mark and a lit control on the flow surface.
+pub const FLOW_INK: Color32 = Color32::from_rgb(0xE8, 0xEC, 0xF2);
+
+/// `flow/ink-muted` — a control at rest on the flow surface.
+pub const FLOW_INK_MUTED: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
+
+/// `flow/line` — white at 22 %: a frame or hairline on the flow surface.
+pub const FLOW_LINE: Color32 = Color32::from_rgba_premultiplied(56, 56, 56, 56);
+
+/// `flow/lit` — white at 16 %: the fill of a lit segment on the flow surface.
+pub const FLOW_LIT: Color32 = Color32::from_rgba_premultiplied(41, 41, 41, 41);
+
 /// `pane/action` — a word on a header line that does something: quieter than the
 /// bars it follows, louder than muted text.
 pub const PANE_ACTION: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);

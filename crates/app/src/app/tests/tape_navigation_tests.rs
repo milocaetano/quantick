@@ -1498,3 +1498,91 @@ fn the_tape_view_is_named_retry_safe_refused_without_a_lane_and_read_back() {
         "to beside is the default width"
     );
 }
+
+fn header_rect(
+    app: &QuantickApp,
+    control: quantick_chart::pane_header::HeaderControl,
+) -> egui::Rect {
+    app.active_tab()
+        .flow_pane
+        .frame
+        .header_controls
+        .iter()
+        .find_map(|(painted, rect)| (*painted == control).then_some(*rect))
+        .expect("the header painted it")
+}
+
+/// The selector and the named call are one setting: a press reads back through
+/// the call's scope, the call's write shows on the selector, and `auto` follows.
+#[test]
+fn the_tape_window_selector_and_the_call_are_one_setting() {
+    use quantick_chart::pane_header::HeaderControl;
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    let directory = gateway_test_directory("tape-window-selector");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+
+    let selector = header_rect(&app, HeaderControl::TapeWindow);
+    click_chart(&mut app, &ctx, selector.center());
+    let open = run_frame(&mut app, &ctx);
+    let row = painted_text_center(&open, "30 s").expect("the list offers the presets");
+    click_chart(&mut app, &ctx, row);
+    run_frame(&mut app, &ctx);
+    let tape = read_tape(&mut app, &mut client);
+    assert_eq!(tape["window_ms"], 30_000);
+
+    let payload = input(&app, json!({"window": {"kind":"fixed","ms":120_000}}));
+    keyed_call(&mut app, &mut client, "two", CAPABILITY, payload, "two");
+    let texts = painted_text(&run_frame(&mut app, &ctx));
+    assert!(
+        texts.iter().any(|text| text.starts_with("2 min")),
+        "the selector says what the call wrote: {texts:?}"
+    );
+
+    let payload = input(&app, json!({"window": {"kind":"auto"}}));
+    keyed_call(&mut app, &mut client, "auto", CAPABILITY, payload, "auto");
+    let texts = painted_text(&run_frame(&mut app, &ctx));
+    assert!(
+        texts.iter().any(|text| text.starts_with("auto")),
+        "auto reads the label's words: {texts:?}"
+    );
+}
+
+/// The bar reaches up through the side headers and takes the hand there too, the
+/// headers following within the frame; a drag elsewhere on a header moves nothing.
+#[test]
+fn the_divider_drags_from_its_header_part_and_a_header_never_pans() {
+    use quantick_chart::flow_band::SIDE_HEADER_HEIGHT_PX;
+    use quantick_chart::pane_header::{HeaderControl, LayerToggle};
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    let area = app.active_tab().flow_pane.frame.area.unwrap();
+    let divider = app.active_tab().flow_pane.frame.candles_right.unwrap();
+    let y = area.top() - SIDE_HEADER_HEIGHT_PX / 2.0;
+    assert!(area.top() - SIDE_HEADER_HEIGHT_PX < y);
+
+    let view = candles_view(&app);
+    let empty = egui::pos2(divider - 300.0, y);
+    primary_drag(&mut app, &ctx, empty, egui::pos2(divider - 200.0, y));
+    assert_eq!(candles_view(&app), view, "a header starts no pan");
+    assert_eq!(
+        app.active_tab().flow_pane.frame.candles_right,
+        Some(divider)
+    );
+
+    // The same grab through the header folds at the edge as it does on the chart.
+    let chart = app.active_tab().flow_pane.frame.chart_rect.unwrap();
+    let edge = egui::pos2(chart.right() - 30.0, y);
+    primary_drag(&mut app, &ctx, egui::pos2(divider, y), edge);
+    assert_eq!(view_of(&app), quantick_orderflow::LaneView::CandlesOnly);
+    let footprint = header_rect(&app, HeaderControl::Layer(LayerToggle::Footprint));
+    assert!(
+        footprint.right() > divider,
+        "one header runs the full width"
+    );
+}

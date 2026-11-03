@@ -302,6 +302,18 @@ mod tests {
     /// operator reading the matrix finds the capability behind the combos, and
     /// is not told the picker is the only door to a market.
     #[test]
+    fn the_tape_window_selector_maps_to_the_tape_view_call() {
+        let window = UI_BEHAVIOURS
+            .iter()
+            .find(|behaviour| behaviour.id == "chart.tape.window")
+            .expect("the selector has a row");
+        assert!(
+            matches!(window.mapping, Mapping::Capabilities(ids) if ids == ["chart.tape_view.set"])
+        );
+        assert!(window.reach.contains("selector"), "{}", window.reach);
+    }
+
+    #[test]
     fn the_source_combos_map_to_the_source_capability() {
         let source = UI_BEHAVIOURS
             .iter()

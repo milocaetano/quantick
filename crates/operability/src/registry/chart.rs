@@ -81,6 +81,16 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         mapping: capability!("chart.tape_view.set"),
     },
     UiBehaviour {
+        id: "chart.tape.window",
+        title: "Choose how much market time the tape shows",
+        reach: "the window selector in the tape's header; its window menu",
+        keys: &[(
+            Source::Authored,
+            "a selector in the tape's header the canvas handles directly; no key names it",
+        )],
+        mapping: capability!("chart.tape_view.set"),
+    },
+    UiBehaviour {
         id: "chart.zoom",
         title: "Zoom the chart's time window in or out",
         reach: "wheel on the canvas; drag on the time axis",

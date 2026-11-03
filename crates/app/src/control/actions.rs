@@ -35,8 +35,7 @@ pub(crate) type ActionRegistry =
 
 /// The annotate tier's identifiers the mark docks into (contract §7).
 pub(crate) use quantick_control_host::authority::{
-    ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, CAPABILITY_VERSION, NO_CONFIRMATION_ID,
-    UI_BOUNDED_COST_ID,
+    ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, CAPABILITY_VERSION,
 };
 
 /// The actions every instance registers. A later module adds one descriptor

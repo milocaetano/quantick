@@ -1,12 +1,20 @@
 //! The tape lane divider's pointer, and the rail a closed side leaves; the
 //! decisions are [`quantick_orderflow::LaneDividerDrag`]'s.
 use eframe::egui;
+use quantick_chart::flow_band::{
+    DIVIDER_WIDTH_PX, GRIP_DOT_PX, SIDE_HEADER_HEIGHT_PX, grip_dots, side_headers,
+};
+use quantick_chart::pane_header::FlowHeaderState;
 use quantick_chart_interaction::{pane::Intent, pane_axis::AxisGesture};
 use quantick_orderflow::{FoldRail, LaneFold, LaneSide, LiveLaneStyle};
 
 use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX};
 use crate::canvas_layout as canvas;
 use crate::plot_area::split_time_strip;
+use crate::theme;
+
+/// How strongly the divider's trace shows through the indicator panes.
+const FAINT_TRACE: f32 = 0.5;
 
 // One feel for both folds: the lane's numbers are the canvas pane's.
 const _: () = assert!(quantick_orderflow::LANE_FOLD_RAIL_PX == canvas::COLLAPSED_PANE_WIDTH_PX);
@@ -47,7 +55,13 @@ pub(super) fn live_chip(pane: &ChartPane, strip: egui::Rect) -> Option<egui::Rec
 pub(super) fn lane_handle(pane: &ChartPane, chart: egui::Rect) -> Option<egui::Rect> {
     pane.frame.candles_right?;
     let hit = lane(pane)?.divider_hit(chart.width(), LANE_HANDLE_HALF_WIDTH_PX)?;
-    Some(span(chart, hit))
+    let rect = span(chart, hit);
+    // An open divider takes the hand all the way up through its side headers.
+    let header = crate::plot_area::PLOT_PADDING_PX + SIDE_HEADER_HEIGHT_PX;
+    Some(match rail(pane, chart) {
+        Some(_) => rect,
+        None => rect.with_min_y(chart.top() - header),
+    })
 }
 
 /// Drag the divider to move it or close a side; click a rail to reopen at the
@@ -80,6 +94,39 @@ pub(super) fn handle_lane_divider(pane: &mut ChartPane, ui: &egui::Ui, chart: eg
         let (delta, width) = (handle.drag_delta().x, chart.width());
         let resize = Intent::Axis(AxisGesture::ResizeTape { delta, width });
         super::canvas_gestures::navigate(pane, resize);
+    }
+}
+
+/// The bar between two open sides, from their headers to the chart's bottom, with
+/// its grip, and its faint trace through the indicator panes below.
+pub(super) fn paint_flow_divider(
+    pane: &ChartPane,
+    ui: &egui::Ui,
+    top: f32,
+    state: Option<FlowHeaderState>,
+    capabilities: crate::config::FeedCapabilities,
+) {
+    let shown = state.map(|state| state.shown_view);
+    let (Some(chart), Some(area)) = (pane.frame.chart_rect, pane.frame.area) else {
+        return;
+    };
+    let headers = side_headers(shown, area.left(), area.right(), pane.frame.candles_right);
+    let [_, Some((_, x, _))] = headers else {
+        return;
+    };
+    let painter = ui.painter();
+    let half = DIVIDER_WIDTH_PX / 2.0;
+    let bar = egui::Rect::from_x_y_ranges(x - half..=x + half, top..=chart.bottom());
+    painter.rect_filled(bar, egui::Rounding::ZERO, theme::FLOW_DIVIDER);
+    let dot = GRIP_DOT_PX / 2.0;
+    for y in grip_dots(top, chart.bottom()) {
+        let at = egui::Rect::from_x_y_ranges(x - dot..=x + dot, y..=y + GRIP_DOT_PX);
+        painter.rect_filled(at, egui::Rounding::ZERO, theme::TEXT_PRIMARY);
+    }
+    let panes = pane.plot_areas(area, capabilities).indicator_panes;
+    if let Some(last) = panes.last() {
+        let faint = egui::Stroke::new(1.0_f32, theme::FLOW_DIVIDER.gamma_multiply(FAINT_TRACE));
+        painter.vline(x, chart.bottom()..=last.rect.bottom(), faint);
     }
 }
 

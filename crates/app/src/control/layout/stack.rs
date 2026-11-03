@@ -2,47 +2,14 @@
 
 use crate::app::{TabsMutPort, TabsPort};
 use eframe::egui;
-use quantick_control::wire::CanonicalDecimal;
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 
 use super::super::{types::canonical_f32, workspace::SPLIT_FRACTION_DECIMAL_PLACES};
 use super::*;
 use crate::tab::context_resize::ResizeContextPair;
 
-pub(crate) use quantick_control_schema::layout::RESIZE_PAIR_CAPABILITY_ID;
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct ResizePairInput {
-    #[serde(flatten)]
-    target: TabTarget,
-    /// Stable pane IDs from workspace.summary, in upper/lower order.
-    upper_pane_id: WireU64,
-    lower_pane_id: WireU64,
-    /// Divider position in the whole context column, top=0 and bottom=1.
-    /// At most six decimal places. The applied position obeys both neighbor floors.
-    fraction: CanonicalDecimal,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-struct ResizePairResult {
-    tab_id: WireU64,
-    upper_pane_id: WireU64,
-    lower_pane_id: WireU64,
-    /// Applied divider position, including any floor clamp.
-    fraction: CanonicalDecimal,
-    changed: bool,
-}
-
 pub(super) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    let mut descriptor = super::descriptor(
-        RESIZE_PAIR_CAPABILITY_ID,
-        "Resize adjacent context charts",
-        "Moves the divider between the named upper and lower context panes. Uses the same neighbor floors as a pointer drag, keeps other boundaries and column width unchanged, and returns the applied position. The current stack must have been drawn.",
-        generated_schema::<ResizePairInput>(),
-    );
-    descriptor.output_schema = generated_schema::<ResizePairResult>();
-    descriptor.stale_input_safety = Some("Stable pane IDs must still name adjacent visible charts; otherwise the request is refused before any height changes.".to_owned());
-    registry.register(descriptor, resize)
+    registry.register(resize_pair_descriptor(), resize)
 }
 
 fn resize<P: TabsPort + TabsMutPort + ?Sized>(
