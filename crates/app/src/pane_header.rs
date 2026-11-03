@@ -61,9 +61,8 @@ const INDICATORS_ICON_GAP_PX: f32 = 5.0;
 const INDICATORS_PADDING_X: f32 = 7.0;
 const INDICATORS_HEIGHT: f32 = 22.0;
 
-/// Corner radii: the capsule's, and a control's hover patch.
-const CAPSULE_ROUNDING: f32 = 6.0;
-const HOVER_ROUNDING: f32 = 4.0;
+/// A control's hover patch's corner radius.
+pub(crate) const HOVER_ROUNDING: f32 = 4.0;
 /// Side of a layer glyph's drawing box, the unit its shapes are written in.
 const GLYPH_BOX: f32 = 16.0;
 /// The slash through a glyph switched off by hand, corner to corner.
@@ -451,7 +450,7 @@ pub fn close_unseen_window_list(ctx: &egui::Context) {
 
 /// A capsule at a header's far end, `header` spanning the header: fixed in the
 /// row, so it neither fades nor lifts. The chart's divider keeps its own grab band
-/// clear of it. A time pane's is cased; a flow side's icons stand bare on the header.
+/// clear of it. Its icons stand bare on the header, with no case behind them.
 /// Answers where it stands; `None` in a header too short to hold it.
 pub fn draw_docked_capsule(
     ui: &mut egui::Ui,
@@ -468,12 +467,6 @@ pub fn draw_docked_capsule(
         egui::vec2(width, DOCKED_CAPSULE_HEIGHT_PX),
     );
     let ui = clipped_child(ui, rect, rect, ("pane_docked_capsule", salt, which as u8));
-    if which == CapsuleSide::Time {
-        let stroke = egui::Stroke::new(1.0_f32, theme::CAPSULE_BORDER);
-        let rounding = egui::Rounding::same(CAPSULE_ROUNDING);
-        ui.painter()
-            .rect(rect, rounding, theme::CAPSULE_FILL, stroke);
-    }
     let origin = docked_slot_origin(corner);
     capsule_slots(&ui, capsule, origin, salt, painted, intent);
     Some(rect)

@@ -34,13 +34,15 @@ pub enum PaneIdentity {
 pub const GLYPH_SLOT_PX: f32 = 20.0;
 /// Width of a sample bubble's slot: the largest sample fits inside it.
 pub const SAMPLE_SLOT_PX: f32 = 24.0;
-/// The gap between neighbouring slots.
-pub const SLOT_GAP_PX: f32 = 2.0;
+/// The gap between neighbouring slots: the clear air bare icons stand in, a 26 px
+/// pitch between glyph slots on every docked capsule, flow and time alike.
+pub const SLOT_GAP_PX: f32 = 6.0;
 /// The gap between the header's groups.
 pub const GROUP_GAP_PX: f32 = 8.0;
 
-/// The capsule's padding plus its 1 px border, across and along.
-pub(crate) const CAPSULE_FRAME_X_PX: f32 = 5.0;
+/// The capsule's room across each end: the same clear air as between its icons,
+/// so the first one has a lead-in as wide as the gaps that follow it.
+pub(crate) const CAPSULE_FRAME_X_PX: f32 = SLOT_GAP_PX;
 const CAPSULE_FRAME_Y_PX: f32 = 4.0;
 /// A floating capsule's slots were this tall; the tape's seam plates keep its
 /// height.
@@ -1213,12 +1215,15 @@ mod tests {
         );
     }
 
-    /// The trail's capsule holds four glyphs and the sample, frame included.
+    /// The trail's capsule holds four glyphs and the sample with clear air between
+    /// them, and a lead-in as wide at either end: 20 px glyph slots on a 26 px pitch.
     #[test]
     fn a_capsule_measures_its_slots() {
         let on = |toggle| glyph(toggle, true, None);
         let capsule = Capsule::of(CapsuleSide::Candles, on, Some(1.0));
-        let width = 4.0 * GLYPH_SLOT_PX + SAMPLE_SLOT_PX + 4.0 * SLOT_GAP_PX + 10.0;
+        let width = 4.0 * GLYPH_SLOT_PX + SAMPLE_SLOT_PX + 6.0 * SLOT_GAP_PX;
         assert_eq!(capsule.width_px(), width);
+        assert_eq!(GLYPH_SLOT_PX + SLOT_GAP_PX, 26.0, "the pitch");
+        assert_eq!(capsule.width_px(), 140.0);
     }
 }

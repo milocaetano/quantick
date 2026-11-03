@@ -609,7 +609,11 @@ mod flow_band_tests {
     fn a_docked_capsule_stands_against_its_sides_end() {
         let corner = docked_capsule_corner(500.0, 40.0, 40.0 + SIDE_HEADER_HEIGHT_PX, 100.0);
         assert_eq!(corner, Some((392.0, 43.5)));
-        assert_eq!(docked_slot_origin((392.0, 43.5)), (397.0, 44.5));
+        assert_eq!(
+            docked_slot_origin((392.0, 43.5)),
+            (392.0 + crate::pane_header::SLOT_GAP_PX, 44.5),
+            "the first icon's lead-in is the gap between icons"
+        );
         assert_eq!(DOCKED_CAPSULE_HEIGHT_PX, 20.0);
         let time = docked_capsule_corner(500.0, 0.0, 34.0, 100.0);
         assert_eq!(

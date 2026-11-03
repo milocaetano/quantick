@@ -82,10 +82,6 @@ pub const PANE_ACTION: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
 /// `layer/off` — a layer switched off by hand. Not in the heatmap, not a side.
 pub const OFF: Color32 = Color32::from_rgb(0xF2, 0x9A, 0x4B);
 
-/// `capsule/*` — the backdrop of the layer capsule docked in a header:
-/// `rgba(11,14,20,.74)` and a 9% white hairline.
-pub const CAPSULE_FILL: Color32 = Color32::from_rgba_premultiplied(8, 10, 15, 189);
-pub const CAPSULE_BORDER: Color32 = Color32::from_rgba_premultiplied(23, 23, 23, 23);
 /// `control/hover` — the 6% white under a bare control the pointer is on.
 pub const BARE_HOVER: Color32 = Color32::from_rgba_premultiplied(15, 15, 15, 15);
 

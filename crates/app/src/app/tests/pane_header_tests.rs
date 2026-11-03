@@ -2492,7 +2492,7 @@ fn a_closed_side_leaves_one_header_at_full_width() {
     let footprint = flow_control(&app, HeaderControl::Layer(LayerToggle::Footprint));
     let area = app.active_tab().flow_pane.frame.area.expect("flow chart");
     assert!(
-        area.right() - footprint.right() < 40.0,
+        area.right() - footprint.right() < 50.0,
         "at the pane's far end"
     );
 
@@ -2603,11 +2603,11 @@ fn the_flow_time_axis_stands_on_the_frame_tone() {
     );
 }
 
-/// On the flow pane the docked capsules and the Trail | Tape switch stand bare: no
-/// fill and no casing around their icons, a lit segment told by its ink alone. A
-/// time pane's capsule keeps its case.
+/// The docked capsules, on the flow pane's sides and on a time pane alike, and the
+/// Trail | Tape switch stand bare: no case encloses their icons, a lit segment is
+/// told by its ink alone, and neighbouring icons keep clear air between them.
 #[test]
-fn the_flow_headers_paint_no_wrapper_behind_their_icons() {
+fn the_headers_paint_no_wrapper_behind_their_icons() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
     let output = run_frame(&mut app, &ctx);
@@ -2623,46 +2623,55 @@ fn the_flow_headers_paint_no_wrapper_behind_their_icons() {
         .shapes
         .iter()
         .for_each(|clipped| rects(&clipped.shape, &mut painted));
+    let trail = [
+        LayerToggle::Bubbles,
+        LayerToggle::Heatmap,
+        LayerToggle::Footprint,
+        LayerToggle::LiveStrip,
+    ];
+    let tape = [LayerToggle::TapeBubbles, LayerToggle::TapeHeatmap];
+    let capsules: [(PaneSide, &[LayerToggle]); 3] = [
+        (PaneSide::Flow, &trail),
+        (PaneSide::Flow, &tape),
+        (PaneSide::Time(0), &[LayerToggle::Footprint]),
+    ];
+    for (side, toggles) in capsules {
+        let mut icons: Vec<_> = toggles
+            .iter()
+            .filter_map(|toggle| control_rect(&app, side, HeaderControl::Layer(*toggle)))
+            .collect();
+        assert_eq!(icons.len(), toggles.len(), "{side:?} docks {toggles:?}");
+        icons.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        let all = icons
+            .iter()
+            .fold(egui::Rect::NOTHING, |all, icon| all.union(*icon));
+        // A row or band fill is taller than a docked capsule; a case is not.
+        let case = painted.iter().find(|shape| {
+            shape.rect.height() <= quantick_chart::flow_band::DOCKED_CAPSULE_HEIGHT_PX + 1.0
+                && shape.rect.contains_rect(all)
+        });
+        assert!(
+            case.is_none(),
+            "{side:?}: a case around the icons: {case:?}"
+        );
+        for pair in icons.windows(2) {
+            assert!(
+                pair[1].left() - pair[0].right() >= 6.0,
+                "{side:?}: {pair:?}"
+            );
+        }
+    }
     let row = app
         .active_tab()
         .flow_pane
         .frame
         .side_row
         .expect("the side row");
-    // The band above the row and the row itself: everything the flow headers own.
-    let flow = row.with_min_y(row.top() - quantick_chart::flow_band::BAND_HEIGHT_PX);
-    let cased = |shape: &egui::epaint::RectShape| {
-        shape.fill == crate::theme::CAPSULE_FILL
-            || shape.stroke.color == crate::theme::CAPSULE_BORDER
-    };
-    let in_flow = |shape: &&egui::epaint::RectShape| flow.contains_rect(shape.rect);
-    let wrappers: Vec<_> = painted
-        .iter()
-        .filter(in_flow)
-        .filter(|shape| cased(shape))
-        .collect();
-    assert!(
-        wrappers.is_empty(),
-        "no case on the flow headers: {wrappers:?}"
-    );
+    let band = row.with_min_y(row.top() - quantick_chart::flow_band::BAND_HEIGHT_PX);
     let lit = painted
         .iter()
-        .filter(in_flow)
-        .find(|shape| shape.fill == crate::theme::FLOW_LIT);
+        .find(|shape| band.contains_rect(shape.rect) && shape.fill == crate::theme::FLOW_LIT);
     assert!(lit.is_none(), "a lit segment is its ink: {lit:?}");
-    let time = app
-        .active_tab()
-        .pane(PaneSide::Time(0))
-        .frame
-        .area
-        .expect("a time pane");
-    let header = time.with_max_y(time.top()).with_min_y(time.top() - 40.0);
-    assert!(
-        painted
-            .iter()
-            .any(|shape| header.contains_rect(shape.rect) && cased(shape)),
-        "the time pane's capsule keeps its case"
-    );
 }
 
 /// The scene lists what the row paints: beside the tape the flow pane's bars and
