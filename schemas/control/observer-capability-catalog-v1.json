@@ -19806,7 +19806,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Makes a workspace of an empty recipe: the tab's canvas, context intervals and layers, with no indicators and the panes at their own sizes. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason.",
+      "description": "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",

@@ -244,7 +244,7 @@ pub fn workspace_new_descriptor() -> CapabilityDescriptor {
             WORKSPACE_NEW_CAPABILITY_ID,
             MODULE_ID,
             "Make a new, empty workspace for a tab",
-            "Makes a workspace of an empty recipe: the tab's canvas, context intervals and layers, with no indicators and the panes at their own sizes. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason.",
+            "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable.",
             "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
         ),
     )
