@@ -306,7 +306,7 @@ impl Surface for MarketPaletteSurface {
                 focus_stop(palette, &field, PaletteFocus::Field);
                 palette.settle_query(&before);
                 if let Some(target) = palette.switch_target() {
-                    ui.label(faint(target.caption()));
+                    ui.label(RichText::new(target.caption()).color(theme::TEXT_FAINT));
                 }
                 if let Some(reason) = palette.refusal() {
                     ui.label(RichText::new(reason).small().color(theme::SELL));
