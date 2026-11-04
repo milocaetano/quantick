@@ -140,6 +140,9 @@ pub const GAP_LINE: Color32 = Color32::from_rgba_premultiplied(0x78, 0x5C, 0x0A,
 /// was. Readable without competing with price.
 pub const GAP_LABEL: Color32 = Color32::from_rgb(0x9A, 0x82, 0x3A);
 
+/// The logo's teal, sampled from `assets/icon.png`: the "tick" of the wordmark.
+pub const BRAND: Color32 = Color32::from_rgb(0x3A, 0xF0, 0xB2);
+
 /// `tag/bg` — tooltips and the axis price tag.
 pub const TAG_BG: Color32 = Color32::from_rgb(0x37, 0x3F, 0x50);
 

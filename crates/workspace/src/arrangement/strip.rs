@@ -48,20 +48,6 @@ pub fn chip_parts(label: &str) -> (&str, &str) {
     label.split_once(" · ").unwrap_or((label, ""))
 }
 
-/// How opaque the Home logo is while another surface is on screen.
-const HOME_LOGO_INACTIVE_OPACITY: f32 = 0.65;
-
-/// How opaque the Home logo is. Hover is deliberately not an input: pointing at
-/// the tab changes its text and nothing else.
-#[must_use]
-pub const fn home_logo_opacity(active: bool) -> f32 {
-    if active {
-        1.0
-    } else {
-        HOME_LOGO_INACTIVE_OPACITY
-    }
-}
-
 /// The tab shortcuts pressed this frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TabKeys {
@@ -306,11 +292,5 @@ mod tests {
             ("WINV26", "MetaTrader 5 — B3")
         );
         assert_eq!(chip_parts("WINV26"), ("WINV26", ""));
-    }
-
-    #[test]
-    fn hover_cannot_reach_the_logo_opacity() {
-        assert!((home_logo_opacity(true) - 1.0).abs() < f32::EPSILON);
-        assert!((home_logo_opacity(false) - 0.65).abs() < f32::EPSILON);
     }
 }

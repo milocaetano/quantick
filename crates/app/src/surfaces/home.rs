@@ -12,9 +12,9 @@ const PAGE_LOGO_PX: f32 = 48.0;
 /// The one logo, `assets/icon.png`, only ever scaled.
 const LOGO_PNG: &[u8] = include_bytes!("../../assets/icon.png");
 
-/// Paint the logo into `rect` at `opacity`. The tint is the only opacity control;
-/// mipmaps keep the large raster sharp at tab size.
-pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, opacity: f32) {
+/// Paint the logo into `rect`, untinted, so it matches the taskbar icon in every
+/// state; mipmaps keep the large raster sharp at tab size.
+pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect) {
     let id = egui::Id::new("Quantick logo");
     let texture = ui
         .ctx()
@@ -37,7 +37,7 @@ pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, opacity: f32) {
         texture.id(),
         ui.painter().round_rect_to_pixels(rect),
         egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE.gamma_multiply(opacity),
+        egui::Color32::WHITE,
     );
 }
 
@@ -48,7 +48,7 @@ pub(crate) fn draw_page(ui: &mut egui::Ui) -> bool {
         ui.add_space((ui.available_height() / 2.0 - PAGE_LOGO_PX).max(0.0));
         let (logo, _) =
             ui.allocate_exact_size(egui::Vec2::splat(PAGE_LOGO_PX), egui::Sense::hover());
-        paint_logo(ui, logo, 1.0);
+        paint_logo(ui, logo);
         ui.add_space(12.0);
         ui.label(egui::RichText::new("Market Shelf not built yet").color(theme::TEXT_MUTED));
         ui.add_space(12.0);
