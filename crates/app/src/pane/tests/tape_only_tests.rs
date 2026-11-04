@@ -1,5 +1,5 @@
-//! A pane in tape-only mode fits its price axis to the tape, never to the
-//! candles it no longer draws.
+//! A pane in tape-only mode fits its price axis to the tape and the candles
+//! the beside view would show, never to the rest of the candles.
 
 use eframe::egui;
 use quantick_engine::Bar;
@@ -26,10 +26,11 @@ fn bar(low: i64, high: i64, close: i64) -> Bar {
 }
 
 /// The candles span 400..1600; the tape traded 995..1015 and last printed
-/// at 1005. Tape only, the axis is the tape's range plus the fit's margin;
-/// otherwise the candles still decide it.
+/// at 1005. Tape only, beside the tape there would stand only the 990..1010
+/// candle: the axis is that and the tape plus the fit's margin; otherwise
+/// every candle in view still decides it.
 #[test]
-fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
+fn a_tape_only_pane_fits_the_tape_and_the_candles_beside_it() {
     let pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
     let areas = pane.plot_areas(rect, crate::config::FeedCapabilities::none());
@@ -51,6 +52,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
         closed_total: bars.len(),
         start: 0,
         end: bars.len(),
+        fit_slots: if tape_only { (1, 2) } else { (0, bars.len()) },
         view: crate::viewport::Viewport::new(),
         cw: 8.0,
         indicator_guide_x: None,
@@ -81,8 +83,8 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
     };
     let tape_range = Some((995.0, 1_015.0));
     let (lo, hi) = fitted(true, &PriceView::new(), tape_range).range();
-    assert!((lo - 994.0).abs() < 1e-9, "{lo}");
-    assert!((hi - 1_016.0).abs() < 1e-9, "{hi}");
+    assert!((lo - 988.75).abs() < 1e-9, "{lo}");
+    assert!((hi - 1_016.25).abs() < 1e-9, "{hi}");
     let (lo, hi) = fitted(false, &PriceView::new(), tape_range).range();
     assert!(
         lo < 400.0 && hi > 1_600.0,
@@ -117,7 +119,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
     candle_price_view.reset();
     assert_eq!(
         fitted(true, &candle_price_view, tape_range).range(),
-        (994.0, 1_016.0)
+        (988.75, 1_016.25)
     );
 }
 
