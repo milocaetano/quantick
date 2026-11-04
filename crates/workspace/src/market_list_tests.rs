@@ -850,14 +850,31 @@ mod palette_tests {
             ("binance", "SOLUSDT")
         );
         palette.refuse("Binance does not list SOLUSDT".to_owned());
-        palette.set_query("solusd");
-        assert_eq!(
-            palette.refusal(),
-            Some("Binance does not list SOLUSDT"),
-            "typing a fix keeps the reason on screen"
-        );
-        let _ = palette.submit(&fixture.list("solusd"), false);
-        assert_eq!(palette.refusal(), None);
+        assert_eq!(palette.refusal(), Some("Binance does not list SOLUSDT"));
+        let _ = palette.submit(&fixture.list("SOLUSDT"), false);
+        assert_eq!(palette.refusal(), None, "the next submit clears it");
+    }
+
+    /// A refusal speaks of one query and one row: it goes when either
+    /// changes, and stays while neither does.
+    #[test]
+    fn a_refusal_goes_when_the_query_or_the_selection_changes() {
+        let fixture = Fixture::new();
+        let listing = fixture.list("eth");
+        let mut palette = MarketPalette::default();
+        palette.set_query("eth");
+        palette.refuse("no".to_owned());
+        palette.move_selection(0, &listing);
+        assert_eq!(palette.refusal(), Some("no"), "the same row keeps it");
+        palette.move_selection(1, &listing);
+        assert_eq!(palette.refusal(), None, "another row drops it");
+        palette.refuse("no".to_owned());
+        palette.set_query("et");
+        assert_eq!(palette.refusal(), None, "another query drops it");
+        palette.refuse("no".to_owned());
+        palette.query_mut().push('h');
+        palette.settle_query("et");
+        assert_eq!(palette.refusal(), None, "an edit in the field drops it");
     }
 
     #[test]
@@ -915,13 +932,47 @@ mod palette_tests {
         assert_eq!(palette.primary_label(&fixture.list("> ")), "Run");
     }
 
+    /// Delete on a market the config declares still asks, so the refusal
+    /// says why; a replay row is no venue's market and asks nothing.
     #[test]
-    fn delete_leaves_a_market_the_config_declares() {
-        let fixture = Fixture::new();
+    fn delete_asks_for_a_config_market_so_its_refusal_is_shown() {
+        let mut fixture = Fixture::new();
         let listing = fixture.list("btcusdt");
         let mut palette = MarketPalette::default();
         palette.set_query("btcusdt");
+        assert_eq!(
+            palette.remove_selected(&listing),
+            Some(PaletteIntent::Remove {
+                feed_id: "binance".to_owned(),
+                symbol: "BTCUSDT".to_owned(),
+            })
+        );
+        let mut replay = open(4, 1, "b3", "WINZ26");
+        replay.replay = true;
+        fixture.open = vec![replay];
+        let listing = fixture.list("winz26");
+        palette.set_query("winz26");
+        palette.move_selection(1, &listing);
+        assert_eq!(
+            palette.selected_row(&listing).map(|row| row.kind),
+            Some(VenueKind::Replay)
+        );
         assert_eq!(palette.remove_selected(&listing), None);
+    }
+
+    #[test]
+    fn a_new_tab_arrives_on_a_chosen_workspace_and_joins_default_by_itself() {
+        let mut choice = OpenChoice {
+            feed_id: "binance".to_owned(),
+            symbol: "SOLUSDT".to_owned(),
+            bar: "tick:50".to_owned(),
+            inherit_bar: false,
+            workspace: DEFAULT_WORKSPACE.to_owned(),
+            background: false,
+        };
+        assert_eq!(choice.arrival(), None);
+        choice.workspace = "from BTCUSDT".to_owned();
+        assert_eq!(choice.arrival().as_deref(), Some("from BTCUSDT"));
     }
 
     #[test]

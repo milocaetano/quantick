@@ -4,7 +4,7 @@
 //! doors cannot decide differently. The host lends primitives only.
 use crate::dock::ActionDock;
 use crate::notify::NotifyAccess;
-use crate::workspace_book::{WorkspaceBookHost, set_tab_workspace};
+use crate::workspace_book::WorkspaceBookHost;
 use quantick_control::wire::WireU64;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 use quantick_control_host::authority::MARKET_MODULE_ID;
@@ -17,8 +17,8 @@ use quantick_control_schema::market_palette::{
 };
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_stores::market_list::{
-    DEFAULT_WORKSPACE, MarketSnapshot, OpenChoice, PaletteIntent, focus_target, focus_toast,
-    open_toast, removal_refusal,
+    MarketSnapshot, OpenChoice, PaletteIntent, focus_target, focus_toast, open_toast,
+    removal_refusal,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -35,14 +35,10 @@ pub trait MarketPaletteHost {
     }
     /// Bring the market tab at this zero-based place forward.
     fn focus_tab(&mut self, _index: usize) {}
-    /// Open a tab on the market and bar and answer its id; `behind` keeps
-    /// the tab on screen. No bar: the tab takes the one any new tab takes.
-    fn open_tab(
-        &mut self,
-        _market: (&str, &str),
-        _bar: Option<BarConfiguration>,
-        _behind: bool,
-    ) -> TabOpening {
+    /// Open a tab on the choice's market, on `bar` (none: the one any new
+    /// tab takes), joining the choice's workspace ([`OpenChoice::arrival`]),
+    /// and answer its id; a background choice keeps the tab on screen.
+    fn open_tab(&mut self, _choice: &OpenChoice, _bar: Option<BarConfiguration>) -> TabOpening {
         Err(UNAVAILABLE.to_owned())
     }
     /// Add a symbol to a feed's list, or with `add` false take it out.
@@ -91,10 +87,7 @@ pub fn open<H: MarketPaletteHost + WorkspaceBookHost + ?Sized>(
             focused,
         });
     }
-    let tab = app.open_tab((feed, symbol), named_bar(&choice)?, choice.background)?;
-    if choice.workspace != DEFAULT_WORKSPACE {
-        set_tab_workspace(app, tab, &choice.workspace).map_err(|error| error.message)?;
-    }
+    let tab = app.open_tab(&choice, named_bar(&choice)?)?;
     Ok(Opened {
         choice,
         tab,

@@ -161,15 +161,14 @@ pub(super) fn focus_tab(app: &mut QuantickApp, index: usize) {
     app.chrome.title_bar.surface.show_market();
 }
 
-/// Open a tab on the market and bar (none: `adopt_tab`'s), and answer its
-/// id; `behind` keeps the tab on screen.
-pub(super) fn open(app: &mut QuantickApp, market: (&str, &str), bar: Spec, behind: bool) -> u64 {
+/// Open `choice` on `bar` (none: `adopt_tab`'s), its workspace left as the tab's arrival.
+pub(super) fn open(app: &mut QuantickApp, choice: &list::OpenChoice, bar: Option<Bars>) -> u64 {
     let shown = app.runtime.tabs.active_index();
-    (app.arrangement_adapter()).open_tab(market.0.to_owned(), market.1.to_owned(), bar);
+    (app.arrangement_adapter()).open_tab(choice.feed_id.clone(), choice.symbol.clone(), bar);
     let tab = app.runtime.tabs.active_id();
-    if behind {
-        app.runtime.tabs.select(shown);
-    }
+    let sync = app.runtime.workspace.book.sync_mut();
+    sync.join(tab, choice.arrival());
+    (choice.background).then(|| app.runtime.tabs.select(shown));
     tab
 }
 
@@ -194,7 +193,6 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: list::PaletteI
 }
 
 type Refusable = Result<(), String>;
-type Spec = Option<Bars>;
 
 fn last_price(tab: &crate::tab::Tab) -> Option<String> {
     let bar = tab.flow_pane.state.bars().last()?;

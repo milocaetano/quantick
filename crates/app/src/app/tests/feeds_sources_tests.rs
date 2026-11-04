@@ -2453,6 +2453,63 @@ fn a_hook_opened_palette_draws_on_its_first_frame() {
     assert_eq!(ctx.memory(|memory| memory.focused()), Some(field));
 }
 
+/// Enter with another workspace picked opens the tab on that workspace once
+/// the book adopts it, against the window's real book: no refusal, no tab
+/// left on Default. It used to set the workspace on a tab the book did not
+/// hold yet, refuse "no open tab has id", and leave the tab open anyway.
+#[test]
+fn a_market_opened_on_another_workspace_lands_on_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let first = app.runtime.tabs.active_id();
+    (app.runtime.workspace.book.book_mut())
+        .save_as(first, "Swing")
+        .expect("the first tab saves a workspace");
+    type_into_palette(&mut app, &ctx, "ETHUSDT");
+    (app.surfaces.market_palette.open.as_mut())
+        .expect("open")
+        .set_workspace("Swing");
+    press_in_palette(&mut app, &ctx, egui::Key::Enter);
+    assert!(
+        !app.surfaces.market_palette.is_open(),
+        "the open was not refused: {:?}",
+        app.surfaces
+            .market_palette
+            .open
+            .as_ref()
+            .and_then(|p| p.refusal())
+    );
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let tab = app.runtime.tabs.active_id();
+    assert_ne!(tab, first);
+    assert_eq!(app.active_tab().symbol, "ETHUSDT");
+    let book = app.runtime.workspace.book.book();
+    assert_eq!(
+        book.tab_state(tab).map(|state| state.workspace),
+        Some("Swing")
+    );
+}
+
+/// Delete on a market the config declares is refused where the trader reads
+/// it, under the field, and the market stays.
+#[test]
+fn delete_on_a_config_market_shows_why_it_stays() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    type_into_palette(&mut app, &ctx, "ETHUSDT");
+    press_in_palette(&mut app, &ctx, egui::Key::Delete);
+    let refusal = (app.surfaces.market_palette.open.as_ref()).and_then(|p| p.refusal());
+    assert_eq!(
+        refusal,
+        Some("ETHUSDT comes from the config file; only a market you added can be removed")
+    );
+}
+
 /// Open the palette the way `+` does and put `query` in its field.
 fn type_into_palette(app: &mut QuantickApp, ctx: &egui::Context, query: &str) {
     app.apply_tab_action(TabAction::New);

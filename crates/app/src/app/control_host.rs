@@ -27,6 +27,7 @@ use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
 use quantick_control_handlers::market_palette::TabOpening;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_workspace::market_list::OpenChoice;
 
 use crate::config::AppConfig;
 use crate::dock::Dock;
@@ -760,8 +761,8 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
     fn focus_tab(&mut self, index: usize) {
         super::tabs::focus_tab(self, index);
     }
-    fn open_tab(&mut self, market: (&str, &str), bar: Option<Bars>, behind: bool) -> TabOpening {
-        Ok(super::tabs::open(self, market, bar, behind))
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<Bars>) -> TabOpening {
+        Ok(super::tabs::open(self, choice, bar))
     }
     fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
         super::tabs::edit_catalog(self, (feed, symbol), add)

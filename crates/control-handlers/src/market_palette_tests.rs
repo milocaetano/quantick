@@ -10,6 +10,8 @@ struct Host {
     book: WorkspaceBook,
     focused: Vec<usize>,
     opened: Vec<(String, String, String, bool)>,
+    /// The workspace each opened tab is to join, by tab id.
+    arrivals: Vec<(u64, Option<String>)>,
     catalog: Vec<(String, bool)>,
     palette: Option<String>,
 }
@@ -52,12 +54,14 @@ impl Host {
         let mut book = WorkspaceBook::default();
         book.open_tab(1);
         book.save_as(1, "Swing").unwrap();
-        book.open_tab(9);
+        // Tab 9 is the one an open makes: the book does not hold it yet, as
+        // the window's book adopts a tab only once its panes stand.
         Self {
             snapshot,
             book,
             focused: Vec::new(),
             opened: Vec::new(),
+            arrivals: Vec::new(),
             catalog: Vec::new(),
             palette: None,
         }
@@ -79,15 +83,11 @@ impl MarketPaletteHost for Host {
         self.focused.push(index);
     }
 
-    fn open_tab(
-        &mut self,
-        market: (&str, &str),
-        bar: Option<BarConfiguration>,
-        behind: bool,
-    ) -> TabOpening {
-        let (feed, symbol) = (market.0.to_owned(), market.1.to_owned());
+    fn open_tab(&mut self, choice: &OpenChoice, bar: Option<BarConfiguration>) -> TabOpening {
+        let (feed, symbol) = (choice.feed_id.clone(), choice.symbol.clone());
         let bar = bar.map_or_else(|| INHERITED.to_owned(), |bar| bar.to_config_string());
-        self.opened.push((feed, symbol, bar, behind));
+        self.opened.push((feed, symbol, bar, choice.background));
+        self.arrivals.push((9, choice.arrival()));
         Ok(9)
     }
 
@@ -160,10 +160,30 @@ fn another_bar_or_workspace_opens_a_second_tab_and_puts_it_on_the_workspace() {
             true
         )]
     );
+    assert_eq!(answer["workspace"], "Swing");
     assert_eq!(
-        host.book.tab_state(9).map(|state| state.workspace),
-        Some("Swing")
+        host.arrivals,
+        [(9, Some("Swing".to_owned()))],
+        "the new tab joins Swing when the book adopts it"
     );
+    assert!(
+        host.book.tab_state(9).is_none(),
+        "the open never sets a workspace on a tab the book does not hold yet"
+    );
+}
+
+/// A workspace the open cannot take is refused before any tab exists: a
+/// refused call opens nothing.
+#[test]
+fn a_refused_workspace_opens_no_tab() {
+    let mut host = Host::new();
+    let refused = call(
+        open_call,
+        &mut host,
+        serde_json::json!({"feed": "binance", "symbol": "PEPEUSDT", "workspace": "Gone"}),
+    );
+    assert!(refused.is_err());
+    assert!(host.opened.is_empty() && host.arrivals.is_empty());
 }
 
 #[test]

@@ -19,6 +19,7 @@ const ROW_PX: f32 = 36.0;
 const CHIP: egui::Vec2 = egui::Vec2::splat(20.0);
 const LIST_MAX_PX: f32 = 380.0;
 const SCRIM: Color32 = Color32::from_black_alpha(150);
+const RETURN: &str = egui_phosphor::regular::KEY_RETURN;
 const FOCUS_RING: egui::Stroke = egui::Stroke {
     width: 1.0,
     color: theme::ACCENT,
@@ -244,10 +245,10 @@ fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing
             if let Some(name) = picked.inner {
                 palette.set_workspace(&name);
             }
-            ui.label(faint("Ctrl \u{21b5} background"));
+            ui.label(faint(format!("Ctrl {RETURN} background")));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(format!("{}  \u{21b5}", palette.primary_label(listing)));
+            ui.label(format!("{}  {RETURN}", palette.primary_label(listing)));
         });
     });
 }
@@ -625,6 +626,30 @@ mod market_palette_surface_tests {
         assert!(!painted(&after.output, "Scalp"));
         click(&mut surface, &ctx, OUTSIDE);
         assert!(!surface.is_open());
+    }
+
+    /// The key hints are drawn in glyphs the window's fonts carry (egui's
+    /// own plus the bundled Phosphor font, as boot installs them); the
+    /// return arrow U+21B5 was not one of them and painted as a box.
+    #[test]
+    fn the_key_hints_use_glyphs_the_window_fonts_have() {
+        let ctx = egui::Context::default();
+        let mut fonts = egui::FontDefinitions::default();
+        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+        ctx.set_fonts(fonts);
+        let mut surface = MarketPaletteSurface::default();
+        surface.open("");
+        let shown = settle(&mut surface, &ctx);
+        let font = FontId::proportional(12.0);
+        let has = |text: &str| ctx.fonts(|fonts| fonts.has_glyphs(&font, text));
+        assert!(!has("\u{21b5}"), "the control: that glyph is missing");
+        for hint in [
+            format!("Ctrl {RETURN} background"),
+            format!("Open  {RETURN}"),
+        ] {
+            assert!(painted(&shown.output, &hint), "{hint} is painted");
+            assert!(has(&hint), "{hint} has every glyph");
+        }
     }
 
     /// The frame Enter asks for something still paints the list under it.

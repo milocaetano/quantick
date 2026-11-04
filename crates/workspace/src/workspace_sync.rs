@@ -71,6 +71,14 @@ impl TabRecipeSync {
         self.arrivals.insert(tab, (workspace, copy));
     }
 
+    /// A new tab is to join `workspace` when the book adopts it; `None`
+    /// leaves it to join Default the way every new tab does.
+    pub fn join(&mut self, tab: u64, workspace: Option<String>) {
+        if workspace.is_some() {
+            self.arrive(tab, workspace, None);
+        }
+    }
+
     /// Whether a desk's word on this tab is still to be read.
     #[must_use]
     pub fn has_arrival(&self, tab: u64) -> bool {

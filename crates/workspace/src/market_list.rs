@@ -684,6 +684,17 @@ pub struct OpenChoice {
     pub background: bool,
 }
 
+impl OpenChoice {
+    /// The workspace a new tab is to join, when it is not Default (which a
+    /// new tab joins by itself). The window's book adopts a tab only once
+    /// its panes stand, so the open leaves this as the tab's arrival rather
+    /// than setting it on a tab the book does not hold yet.
+    #[must_use]
+    pub fn arrival(&self) -> Option<String> {
+        (self.workspace != DEFAULT_WORKSPACE).then(|| self.workspace.clone())
+    }
+}
+
 /// The toast after a focus: `Focused WINZ26 · tab 1`.
 #[must_use]
 pub fn focus_toast(symbol: &str, position: usize) -> String {
@@ -766,11 +777,12 @@ impl MarketPalette {
         &self.query
     }
 
-    /// Replace the query; the selection goes back to the first row.
+    /// Replace the query; the selection goes back to the first row, and a
+    /// refusal about the old query goes.
     pub fn set_query(&mut self, query: &str) {
         if self.query != query {
             query.clone_into(&mut self.query);
-            self.selected = 0;
+            (self.selected, self.refusal) = (0, None);
         }
     }
 
@@ -780,10 +792,11 @@ impl MarketPalette {
         &mut self.query
     }
 
-    /// After the field edited the query: a changed query selects the first row.
+    /// After the field edited the query: a changed query selects the first
+    /// row and drops the refusal about the old one.
     pub fn settle_query(&mut self, before: &str) {
         if self.query != before {
-            self.selected = 0;
+            (self.selected, self.refusal) = (0, None);
         }
     }
 
@@ -810,7 +823,14 @@ impl MarketPalette {
         }
         let current = self.selected.min(count - 1);
         let step = delta.rem_euclid(count as isize) as usize;
-        self.selected = (current + step) % count;
+        self.choose((current + step) % count);
+    }
+
+    /// Select the selectable row at `index`; a refusal about another row goes.
+    fn choose(&mut self, index: usize) {
+        if self.selected != index {
+            (self.selected, self.refusal) = (index, None);
+        }
     }
 
     /// Select `row`, as a hover or click does.
@@ -819,7 +839,7 @@ impl MarketPalette {
             .selectable()
             .position(|candidate| std::ptr::eq(candidate, row))
         {
-            self.selected = index;
+            self.choose(index);
         }
     }
 
@@ -946,10 +966,13 @@ impl MarketPalette {
     }
 
     /// Delete on the selected row: take that market out of its venue's list.
+    /// Asked for any listed market, so one the config declares (or a tab
+    /// shows) is refused where the trader can read why, not ignored.
     #[must_use]
     pub fn remove_selected(&self, listing: &MarketListing) -> Option<PaletteIntent> {
         let row = self.selected_row(listing)?;
-        (row.user_added && row.status != MarketStatus::Add).then(|| PaletteIntent::Remove {
+        let listed = row.kind == VenueKind::Live && row.status != MarketStatus::Add;
+        listed.then(|| PaletteIntent::Remove {
             feed_id: row.feed_id.clone(),
             symbol: row.symbol.clone(),
         })
