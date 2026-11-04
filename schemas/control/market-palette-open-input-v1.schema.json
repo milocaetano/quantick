@@ -7,6 +7,11 @@
       "default": "",
       "description": "What the field starts with; `>` lists commands.",
       "type": "string"
+    },
+    "switch": {
+      "default": false,
+      "description": "Switch mode: Enter puts the active tab on the chosen market (through\n`tab.market.set`) instead of opening a tab, as the toolbar's market\nbutton does.",
+      "type": "boolean"
     }
   },
   "title": "MarketPaletteOpenInput",

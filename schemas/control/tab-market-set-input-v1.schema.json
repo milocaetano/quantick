@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Put a tab on another configured market: the toolbar's market button and\nthe palette's switch mode, as one call.",
+  "properties": {
+    "feed": {
+      "description": "A feed id from `feed.status.sources`.",
+      "type": "string"
+    },
+    "symbol": {
+      "description": "A symbol that feed offers.",
+      "type": "string"
+    },
+    "tab": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab's id, as `feed.status` reports it."
+    }
+  },
+  "required": [
+    "tab",
+    "feed",
+    "symbol"
+  ],
+  "title": "TabMarketSetInput",
+  "type": "object"
+}

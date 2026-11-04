@@ -4,14 +4,9 @@ use super::*;
 use quantick_workspace::market_list::{PaletteIntent, SwitchChoice};
 
 pub(super) fn painted_starting(output: &egui::FullOutput, prefix: &str) -> Vec<String> {
-    (output.shapes.iter())
-        .filter_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text) if text.galley.text().starts_with(prefix) => {
-                Some(text.galley.text().to_owned())
-            }
-            _ => None,
-        })
-        .collect()
+    let mut found = painted_text(output);
+    found.retain(|text| text.starts_with(prefix));
+    found
 }
 
 fn switch_to(app: &QuantickApp, symbol: &str) -> PaletteIntent {
@@ -97,10 +92,13 @@ fn the_market_button_opens_the_palette_in_switch_mode_with_the_roll() {
         target.roll.as_ref().map(|roll| roll.target.as_str()),
         Some("ETHUSDT")
     );
+    run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
+    assert!(app.surfaces.market_palette.is_open());
     assert!(
         !painted_starting(&output, "Switching TESTUSDT \u{b7} Binance on this tab").is_empty(),
-        "the caption names the tab's market"
+        "the caption names the tab's market: {:?}",
+        painted_text(&output)
     );
 }
 
