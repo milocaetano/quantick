@@ -64,7 +64,7 @@ fn drawing_env<'a>(
         chart_area: facts.chart_area,
         automatic_bar_area,
         focused_chart_area: facts.focused_chart_area,
-        lane_divider_x: facts.lane_divider_x,
+        candles_right: facts.candles_right,
         legends: facts.legends,
         auto_range: facts.auto_range,
         selected_bbox: read.selected_bbox,

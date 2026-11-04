@@ -3,6 +3,7 @@ use super::{
     ArrangementError, ArrangementLifecycle, Command, Effect, RestoreMode, RestoreStep, TabFacts,
     TabId, Topology, Transition,
 };
+use crate::orderflow_panel::AssetFolds;
 use std::ops::Index;
 mod windows;
 
@@ -39,6 +40,7 @@ pub struct Arrangement<R> {
     lifecycle: ArrangementLifecycle,
     runtimes: Vec<TabEntry<R>>,
     windows: super::windows::TabWindows,
+    panel_folds: AssetFolds,
 }
 impl<R> Arrangement<R> {
     pub fn new(owner: crate::lifetime::WorkspaceId, id: TabId, runtime: R) -> Self {
@@ -46,6 +48,7 @@ impl<R> Arrangement<R> {
             lifecycle: ArrangementLifecycle::new(owner, id),
             runtimes: vec![TabEntry { id, runtime }],
             windows: super::windows::TabWindows::new(owner, id),
+            panel_folds: AssetFolds::default(),
         }
     }
     #[cfg(any(test, feature = "test-support"))]
@@ -119,6 +122,20 @@ impl<R> Arrangement<R> {
     pub fn by_id_mut(&mut self, id: u64) -> Option<&mut R> {
         self.position(id)
             .map(|index| &mut self.runtimes[index].runtime)
+    }
+    /// Which order-flow panel sections are open, per asset: the window's, so two
+    /// tabs on one asset read the same.
+    pub const fn panel_folds(&self) -> &AssetFolds {
+        &self.panel_folds
+    }
+    /// Replace them, from a workspace being restored.
+    pub fn set_panel_folds(&mut self, folds: AssetFolds) {
+        self.panel_folds = folds;
+    }
+    /// One tab beside the folds its panel reads.
+    pub fn with_panel_folds(&mut self, index: usize) -> Option<(&mut R, &mut AssetFolds)> {
+        let entry = self.runtimes.get_mut(index)?;
+        Some((&mut entry.runtime, &mut self.panel_folds))
     }
 }
 /// Lifecycle commands read the runtimes' market facts.

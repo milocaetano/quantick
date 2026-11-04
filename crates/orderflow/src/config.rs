@@ -37,12 +37,13 @@ pub use lane::{
     MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
     MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WIDTH_PX,
     MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_lag_label, lane_time_ticks,
-    lane_window_label, same_lane_window,
+    lane_window_label, lane_window_options, lane_window_pick, same_lane_window,
 };
 pub use lane_fold::{
     FoldRail, LANE_FOLD_AT_PX, LANE_FOLD_HIT_PX, LANE_FOLD_RAIL_PX, LaneDividerDrag, LaneFold,
+    MarketHold, OldTapeFold,
 };
-pub use lane_view::LaneView;
+pub use lane_view::{LaneSide, LaneView};
 
 /// Contracts a volume dot holds at the largest radius, by default: a dot
 /// sums many prints, so it is drawn on a scale of its own, not on the
@@ -565,6 +566,13 @@ impl HeatmapConfig {
         self.lane_enabled() && self.live_lane.tape_only
     }
 
+    /// Whether the pane shows the tape alone this frame: [`Self::tape_only`], or a
+    /// drag past the candles' threshold, which writes it only at the release.
+    #[must_use]
+    pub fn shows_tape_alone(&self) -> bool {
+        self.live_lane.shown_view() == LaneView::TapeOnly
+    }
+
     /// Whether the tape on the canvas is the native tape: execution
     /// coordinates, the market clock, the whole window and a price axis
     /// fitted by its prints, beside the candles or alone. Every processing
@@ -884,7 +892,10 @@ mod tests {
                 forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
-                fold: LaneFold::Open,
+                fold_market_closed: true,
+                market_hold: MarketHold::default(),
+                old_tape_fold: OldTapeFold::default(),
+                drag_close: None,
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,

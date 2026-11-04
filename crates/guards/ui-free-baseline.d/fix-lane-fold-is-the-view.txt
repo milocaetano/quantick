@@ -1,0 +1,4 @@
+# Inherited, not this branch's: #744 and #745 reached main without signing their UI-free lines;
+# origin/main 5db58843 measures 18734 against the ceiling 18708, and this merge adds none.
+crates/app +26
+!budget +26

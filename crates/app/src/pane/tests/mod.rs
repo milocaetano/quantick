@@ -1002,7 +1002,7 @@ fn a_band_scale_is_the_range_its_curve_was_drawn_with() {
     let bands = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }
@@ -2075,7 +2075,7 @@ fn hit_testing_never_crosses_bands() {
     let bands = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }
@@ -2136,7 +2136,7 @@ fn a_time_only_object_is_one_item_that_every_band_paints() {
     let bands = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }
@@ -2250,7 +2250,7 @@ fn a_parked_drawing_belongs_to_no_band_on_screen() {
     let carved = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }
@@ -2272,7 +2272,7 @@ fn a_parked_drawing_belongs_to_no_band_on_screen() {
     let carved = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }
@@ -2304,7 +2304,7 @@ fn the_price_band_scale_turns_over_with_the_chart() {
     let upright = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }
@@ -2317,7 +2317,7 @@ fn the_price_band_scale_turns_over_with_the_chart() {
     let scale = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }

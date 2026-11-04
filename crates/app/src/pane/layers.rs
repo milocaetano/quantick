@@ -147,6 +147,9 @@ impl ChartPane {
     pub fn apply_layer_states(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
         let facts = self.layer_facts(None);
         let mut discarded = LayerActions::default();
+        if let (Some(tape), Some(&on)) = (&mut self.orderflow, states.get(&ChartLayer::TapeChart)) {
+            tape.edit_lane(|lane| lane.restore_enabled(on));
+        }
         for (&layer, &visible) in states {
             if LayerState::restorable(layer, facts) {
                 self.set_layer_visible(layer, visible, &mut discarded);

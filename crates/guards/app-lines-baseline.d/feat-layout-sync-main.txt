@@ -1,0 +1,7 @@
+# Not growth: both parents took credit for the same moves. Layout and main each
+# moved the live-envelope tests (~800 lines) out of the counted tree and each moved
+# the observer schema list (~160 lines) out of control/schema_catalog.rs, and each
+# tightened for it; merged, the lines leave once but both cuts stay. Per-file counts
+# match layout + main - base.
+crates/app +943
+!budget +943

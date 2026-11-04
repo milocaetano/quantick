@@ -39,6 +39,8 @@ use crate::indicators::state_file::SavedKind;
 #[cfg(any(feature = "scenario-harness", test))]
 use crate::tab::CanvasLayout;
 #[cfg(any(feature = "scenario-harness", test))]
+use crate::{orderflow_panel::open_on, ui_state::PanelSection};
+#[cfg(any(feature = "scenario-harness", test))]
 use quantick_feed::history_reach;
 
 use super::LayoutPort;
@@ -229,7 +231,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
             pane.price_view.set_inverted(true);
         }
     }
-    // The view button on the pane's header — the one control
+    // The Tape switch on the pane's header — the one control
     // that decides whether there is a band at all. The switch that view
     // reads, so a capture shows what a click shows. Anything but `on`/`off`
     // leaves the tape alone rather than guessing.
@@ -640,17 +642,13 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
     // Same convenience for the dock: open a named tab, so a scripted
     // validation run shows a panel without a click.
     if let Some(name) = env.var("QUANTICK_DOCK_TAB") {
-        let tab = match name.trim() {
-            "l2" => Some(DockTab::L2),
-            "bubbles" => Some(DockTab::Bubbles),
-            "session" => Some(DockTab::Session),
-            "trading" => Some(DockTab::Trading),
-            "trades" => Some(DockTab::Trades),
-            _ => None,
-        };
-        match tab {
-            Some(tab) => app.dock.open_tab(tab),
-            None => tracing::warn!(
+        match name.trim() {
+            "l2" => open_on(app.active_tab_mut(), PanelSection::L2),
+            "bubbles" => open_on(app.active_tab_mut(), PanelSection::Bubbles),
+            "session" => app.dock.open_tab(DockTab::Session),
+            "trading" => app.dock.open_tab(DockTab::Trading),
+            "trades" => app.dock.open_tab(DockTab::Trades),
+            _ => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "DOCK_TAB_AUTOSTART_UNKNOWN",

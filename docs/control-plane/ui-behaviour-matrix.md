@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 100 |
+| Reachable by capability | 105 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **154** |
+| **Total** | **159** |
 
-94 of the 154 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 60 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+95 of the 159 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 64 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -82,6 +82,7 @@ The three exclusion classes are closed:
 | `chart.time_axis.reset` | Reset a time axis to where it opened, or the candles to a live overview | double-click the candles' time strip, or the tape's; double-click open canvas | `chart.time_axis.reset` | — |
 | `chart.tape.pan` | Drag the tape beside the candles through time and price | primary or middle drag over the native tape; double-click it to return to live | `chart.tape_view.set`, `chart.price_axis.set` | — |
 | `chart.tape.zoom` | Zoom the tape's time window in or out | wheel over the native tape; drag or wheel on its time strip; its window menu | `chart.tape_view.set` | — |
+| `chart.tape.window` | Choose how much market time the tape shows | the window selector in the tape's header and its window menu, both the call with `file` set | `chart.tape_view.set` | — |
 | `chart.zoom` | Zoom the chart's time window in or out | wheel on the canvas; drag on the time axis | — | `pending_capability` — `chart.window.read` reports the time window; no capability changes its zoom. Price-axis zoom has its own capability above. Tracked in issue 401 |
 | `layout.context.collapse` | Put the context charts away, or bring them back | window menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
 | `layout.flow.collapse` | Put the flow chart away, or bring it back | drag the vertical canvas divider toward the right edge or drag its rail left | `layout.flow.collapse`, `layout.flow.expand` | — |
@@ -89,9 +90,9 @@ The three exclusion classes are closed:
 | `layout.pane.move` | Move a context chart up or down the column | window menu, Workspace, Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
 | `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, window menu, Workspace, Layout, Ctrl+Shift+1 … Ctrl+Shift+9 | `layout.preset.apply` | — |
-| `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | window menu, Panels, the dock's own strip, a capsule glyph's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `dock.tab.open` | Open a panel — session, trading or trades | window menu, Panels, the dock's own strip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, window menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `layer.bubbles.toggle` | Switch the aggression bubbles on or off | candles capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
+| `layer.bubbles.toggle` | Switch the aggression bubbles on or off | trail capsule glyph, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
 | `layer.footprint.settings.open` | Open the footprint's settings window | right-click the capsule's footprint glyph; the pane's footprint menu | `chart.settings.set` | — |
 | `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu, off until switched on | `layers.visibility.set` | — |
 | `layer.footprint.toggle` | Switch the candle footprint on or off | pane capsule glyph, pane right-click layer menu, Ctrl+F | `layers.visibility.set` | — |
@@ -99,10 +100,14 @@ The three exclusion classes are closed:
 | `layer.live_strip.toggle` | Switch the live depth strip on or off | pane header glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_bubbles.toggle` | Switch the bubbles on the tape on or off | tape capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.tape_heatmap.toggle` | Switch the book on the tape on or off | tape capsule glyph, pane right-click layer menu | `layers.visibility.set` | — |
-| `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide candles) | `layers.visibility.set` | — |
+| `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide trail) | `layers.visibility.set` | — |
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
-| `orderflow.tape.fold.set` | Fold the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click the rail it leaves | `orderflow.tape.fold.set` | — |
-| `orderflow.tape.view.set` | Show the candles and tape, the candles alone or the tape alone | pane header's view button; Ctrl+Shift+T on a focused flow pane | `orderflow.tape.view.set` | — |
+| `orderflow.tape.fold.set` | Close the candles or the tape to a rail, or bring it back | drag the tape lane's divider to the left or right edge of the pane; click or drag the rail either single view keeps | `orderflow.tape.fold.set` | — |
+| `orderflow.tape.market_fold.set` | Fold the tape while the market is closed | the checkbox in the tape section of the Bubbles settings | `orderflow.tape.market_fold.set` | — |
+| `orderflow.settings.open` | Open the order-flow panel, on the L2 or the Bubbles section if one is named | the flow pane's gear and its right-click menu; window menu, Panels; a capsule glyph's right-click; Ctrl+Shift+O | `orderflow.settings.open` | — |
+| `orderflow.settings.close` | Close the order-flow panel | the panel's ×; the gear's left click; Ctrl+Shift+O | `orderflow.settings.close` | — |
+| `orderflow.settings.section.set` | Fold or open a section of the order-flow panel, for the asset on screen | a click on the section's header in the panel | `orderflow.settings.section.set` | — |
+| `orderflow.tape.view.set` | Show the trail and tape, the trail alone or the tape alone | pane header's Trail and Tape switches; Ctrl+Shift+R and Ctrl+Shift+T on a focused flow pane | `orderflow.tape.view.set` | — |
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
 | `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
 | `orderflow.bubbles.size.set` | Adjust Tape and tick-chart bubble size independently | drag a sample bubble on the flow pane's header; double-click it for 1x | `orderflow.bubbles.size.set` | — |
@@ -220,17 +225,17 @@ matrix fails the build.
 | `toolbar_action` | 19 |
 | `strip_action` | 6 |
 | `tab_action` | 5 |
-| `dock_tab` | 5 |
+| `dock_tab` | 3 |
 | `layer_toggle` | 6 |
 | `drawing_tool` | 22 |
 | `rail_tool` | 2 |
 | `toolbox_dock` | 3 |
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
-| `hotkey` | 22 |
+| `hotkey` | 24 |
 | `menu_entry` | 44 |
 | `scripted_menu` | 0 |
-| `authored` | 60 |
+| `authored` | 64 |
 
 ## Appendix: rows no registry stands behind
 
@@ -257,6 +262,7 @@ declares nothing here is a guard failure.
 | `chart.time_axis.reset` | a time-strip double-click the canvas handles directly |
 | `chart.tape.pan` | a pointer drag over the tape the canvas handles directly; no registry names it |
 | `chart.tape.zoom` | a wheel over the tape and its time strip the canvas handles directly |
+| `chart.tape.window` | a selector in the tape's header the canvas handles directly; no key names it. A pick files the window as the asset's, which is `chart.tape_view.set` with `file`; without `file` the call navigates as the wheel does |
 | `chart.zoom` | a wheel and an axis drag the canvas handles directly; no registry names it |
 | `layout.flow.collapse` | the right-side canvas rail and divider |
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
@@ -266,6 +272,9 @@ declares nothing here is a guard failure.
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries |
 | `orderflow.tape.fold.set` | the tape lane's divider and rail the pane handles directly |
+| `orderflow.tape.market_fold.set` | the per-asset checkbox in the Bubbles settings is not a pane header control |
+| `orderflow.settings.close` | the panel's close button is drawn by the panel, not a pane header entry |
+| `orderflow.settings.section.set` | the panel's collapsible headers are drawn by the panel, not a pane header entry |
 | `orderflow.tape.opening_scale.set` | opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu |
 | `orderflow.bubbles.save_changes.set` | the per-asset save switch is a checkbox under the bubble preset picker |
 | `orderflow.bubbles.size.set` | independent sample bubbles appear while their bubble display is active |

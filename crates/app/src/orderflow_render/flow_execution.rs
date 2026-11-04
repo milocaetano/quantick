@@ -2,7 +2,7 @@
 use super::bubbles::{BubbleColors, SPHERE_LIGHT_OFFSET, SphereShading, add_sector};
 use super::{bubbles, constants, palette_for_theme, premultiplied};
 use crate::orderflow_render::constants::{
-    FLOW_BUY, FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX, FLOW_SELL,
+    FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX,
     LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, PIE_START_ANGLE,
 };
 use eframe::egui;
@@ -13,7 +13,7 @@ use quantick_chart::flow_execution::{self as flow, FlowPresentation, FlowQuantit
 use quantick_orderflow::HeatmapConfig;
 #[cfg(test)]
 use quantick_orderflow::projection::flow_tape::FlowTapeDot;
-use quantick_orderflow::projection::flow_tape::{CaptionInk, FlowProgress, FlowTapeFrame};
+use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeFrame};
 #[cfg(test)]
 use rust_decimal::Decimal;
 use std::sync::Arc;
@@ -167,30 +167,20 @@ pub(super) fn flow_colors(backing: Option<egui::Color32>, oversized: bool) -> [e
     .map(|[r, g, b, a]| egui::Color32::from_rgba_premultiplied(r, g, b, a))
 }
 
-/// Regional chrome is docked after the native legend, including incomplete first frames.
+/// The notes a FLOW caption may never drop, under whatever stands above them;
+/// nothing without notes.
 pub(crate) fn flow_caption(
     painter: &egui::Painter,
     history: egui::Rect,
     top: f32,
     frame: Option<&FlowTapeFrame>,
     progress: FlowProgress,
-    legend_visible: bool,
-    spheres: Option<flow::SphereChrome<'_>>,
 ) -> Option<egui::Rect> {
-    use quantick_orderflow::projection::flow_tape::{caption_segments, notes_segments};
-    let segments = caption_segments(frame, progress, legend_visible, spheres.map(|s| s.unit));
+    let notes = quantick_orderflow::projection::flow_tape::notes_caption(frame, progress)?;
     let at = egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top);
-    let mut galley = caption_galley(painter, history, &segments, spheres);
-    if let Some(chrome) = spheres {
-        let rect = egui::Rect::from_min_size(at, galley.size());
-        let area = [history.min.into(), history.max.into()];
-        let panel = [rect.min.into(), rect.max.into()];
-        // A caption that cannot be placed stands down, but its honesty notes
-        // never vanish with it: they take its place, over a sphere if they must.
-        if flow::place_flow_chrome(area, panel, chrome.regions).is_none() {
-            galley = caption_galley(painter, history, &notes_segments(frame, progress)?, spheres);
-        }
-    }
+    let wrap = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
+    let font = egui::FontId::proportional(FLOW_CAPTION_FONT_PX);
+    let galley = painter.layout(notes, font, crate::theme::TEXT_MUTED, wrap);
     let rect = egui::Rect::from_min_size(at, galley.size());
     painter
         .with_clip_rect(history)
@@ -198,32 +188,6 @@ pub(crate) fn flow_caption(
     Some(rect)
 }
 
-/// Lay caption `segments` out at the caption font and wrap; tick spheres key
-/// their Buy / Sell in the pane theme, regional FLOW in its own colours.
-fn caption_galley(
-    painter: &egui::Painter,
-    history: egui::Rect,
-    segments: &[(String, CaptionInk)],
-    spheres: Option<flow::SphereChrome<'_>>,
-) -> Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::default();
-    let wrap = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
-    let chrome = flow::FLOW_CHROME_MAX_WIDTH_PX;
-    job.wrap.max_width = spheres.map_or(wrap, |_| wrap.min(chrome));
-    let palette = spheres.map(|spheres| super::palette_for_theme(spheres.theme));
-    for (text, ink) in segments {
-        let color = match (ink, &palette) {
-            (CaptionInk::Buy, Some(palette)) => palette.buy,
-            (CaptionInk::Sell, Some(palette)) => palette.sell,
-            (CaptionInk::Buy, None) => FLOW_BUY,
-            (CaptionInk::Sell, None) => FLOW_SELL,
-            (CaptionInk::Muted, _) => crate::theme::TEXT_MUTED,
-        };
-        let font = egui::FontId::proportional(FLOW_CAPTION_FONT_PX);
-        job.append(text, 0.0, egui::TextFormat::simple(font, color));
-    }
-    painter.layout_job(job)
-}
 mod flow_labels;
 mod flow_runs;
 #[cfg(test)]

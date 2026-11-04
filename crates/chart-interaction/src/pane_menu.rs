@@ -3,8 +3,8 @@ use crate::drawing_model::{ChartPoint, DrawingId};
 use crate::pane::{DrawingFact, MenuIntent, Model, ObjectAction};
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
-    LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
-    lane_window_label, same_lane_window,
+    LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS, lane_window_label,
+    lane_window_options, lane_window_pick, same_lane_window,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,7 +43,9 @@ pub enum Kind {
     },
     Select {
         selected: bool,
-        choice: MenuIntent,
+        /// What a click asks for; `None` when the line already names what is in
+        /// force and a click must change nothing.
+        choice: Option<MenuIntent>,
         weak: bool,
     },
     Label {
@@ -164,6 +166,8 @@ pub fn inverted_entry(inverted: bool) -> Entry {
 pub struct TapeFact {
     pub window: LaneWindow,
     pub reference_ms: Option<i64>,
+    /// The asset's filed window, which a pick is judged against.
+    pub window_setting: LaneWindow,
 }
 pub struct PlaceFact {
     pub tool: &'static str,
@@ -326,18 +330,16 @@ fn tape_entries(facts: &Facts, tape: &TapeFact) -> Vec<Entry> {
             lane_window_label(window, tape.reference_ms),
             Kind::Select {
                 selected: same_lane_window(tape.window, window),
-                choice: MenuIntent::SetLaneWindow(window),
+                choice: lane_window_pick(tape.window, tape.window_setting, window)
+                    .map(MenuIntent::SetLaneWindow),
                 weak: false,
             },
         )
         .trace(Trace::Button("Tape window"))
     };
-    let mut windows = vec![option(LaneWindow::default()), separator()];
-    windows.extend(
-        LANE_WINDOW_PRESETS_MS
-            .into_iter()
-            .map(|ms| option(LaneWindow::Fixed { ms })),
-    );
+    let [auto, presets @ ..] = lane_window_options();
+    let mut windows = vec![option(auto), separator()];
+    windows.extend(presets.map(option));
     windows.push(separator());
     let ms = match tape.window {
         LaneWindow::Fixed { ms } => ms,
@@ -429,7 +431,7 @@ pub fn object_entries(objects: &[ObjectFact]) -> Vec<Entry> {
                 &object.name,
                 Kind::Select {
                     selected: object.selected,
-                    choice: MenuIntent::ObjectsAsk(ObjectAction::Select(id)),
+                    choice: Some(MenuIntent::ObjectsAsk(ObjectAction::Select(id))),
                     weak: object.hidden,
                 },
             )];

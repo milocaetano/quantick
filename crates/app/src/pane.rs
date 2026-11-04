@@ -52,7 +52,7 @@ mod frame_layout;
 mod frame_stages;
 mod gesture_input;
 mod history_worker;
-mod lane_rail;
+pub(crate) mod lane_rail;
 mod layer_painters;
 mod layers;
 mod render_registry;
@@ -81,7 +81,7 @@ pub(crate) use canvas_split::split_pane_layout_strip;
 /// here: the tab, the layouts and the control plane name them as `pane::`.
 pub use canvas_split::{
     CANVAS_DIVIDER_HANDLE_PX, DEFAULT_PANE_FRACTION, PaneSide, clamp_pane_fraction,
-    split_pane_header,
+    split_flow_pane, split_pane_header,
 };
 pub(crate) use pointer_hit::PaneHitTest;
 pub(crate) use pointer_hit::{ControlDrawingHit, ControlPointerHit};
@@ -103,6 +103,7 @@ mod price_axis;
 
 pub use chart_pane::ChartPane;
 use chart_pane::DrawPass;
+pub(crate) use chart_pane::{SideChrome, SideRowChrome};
 pub use chrome::PaneChrome;
 use drag::region_pause;
 use hint::paint_placement_hint;

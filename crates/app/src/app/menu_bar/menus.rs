@@ -17,6 +17,7 @@ use crate::dock::DockTab;
 use crate::layout_strip::StripAction;
 use crate::tab::Tab;
 use crate::toolrail::{ToolRail, ToolboxDock};
+use crate::ui_state::PanelSection;
 
 use super::super::layout_wiring::LayoutRead;
 use super::commands::MenuCommand;
@@ -327,6 +328,10 @@ impl WindowMenu<'_> {
     }
 
     fn push_row_commands(&self, id: RowId, commands: &mut Vec<MenuCommand>) {
+        if let Some(section) = panel_section_of(id) {
+            commands.push(MenuCommand::OpenOrderFlowPanel(section));
+            return;
+        }
         if let Some(tab) = dock_tab_of(id) {
             commands.push(MenuCommand::OpenDockTab(tab));
             return;
@@ -585,10 +590,17 @@ fn shortcut_of(id: RowId) -> Option<egui::KeyboardShortcut> {
     }
 }
 
+/// L2 and Bubbles open their section of the order-flow panel, not a dock tab.
+const fn panel_section_of(id: RowId) -> Option<PanelSection> {
+    match id {
+        RowId::DockL2 => Some(PanelSection::L2),
+        RowId::DockBubbles => Some(PanelSection::Bubbles),
+        _ => None,
+    }
+}
+
 const fn dock_tab_of(id: RowId) -> Option<DockTab> {
     match id {
-        RowId::DockL2 => Some(DockTab::L2),
-        RowId::DockBubbles => Some(DockTab::Bubbles),
         RowId::DockSession => Some(DockTab::Session),
         RowId::DockPaperTrading => Some(DockTab::Trading),
         RowId::DockTrades => Some(DockTab::Trades),

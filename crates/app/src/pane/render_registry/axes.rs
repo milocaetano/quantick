@@ -243,7 +243,7 @@ pub(in crate::pane) struct TimeStripPass<'a> {
     pub chip: Option<pointer_compass::TimeChip>,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
-    pub divider_x: Option<f32>,
+    pub candles_right: Option<f32>,
     pub viewport: &'a crate::viewport::Viewport,
     pub series: quantick_drawings::gesture::PaneSeriesRead<'a>,
     /// Spans the day separator wrote dates or ticks on; labels stand aside.
@@ -275,7 +275,7 @@ impl TimeStripPass<'_> {
         if visible == 0 {
             return;
         }
-        let (history_strip, _) = split_time_strip(strip, self.divider_x);
+        let (history_strip, _) = split_time_strip(strip, self.candles_right);
 
         // Measured, not counted. One layout per format per frame — monospace,
         // so a format's sample answers for every label written in it — and the

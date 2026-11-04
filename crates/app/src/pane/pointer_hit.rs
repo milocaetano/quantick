@@ -127,9 +127,9 @@ impl PaneHitTest<'_> {
             self.frame.chart_top,
             self.frame.chart_top + self.frame.chart_height,
         );
-        let history_right = self.frame.lane_divider_x.unwrap_or(chart.right());
+        let history_right = self.frame.candles_right.unwrap_or(chart.right());
         Some((
-            crate::bands::drawing_area(chart, self.frame.lane_divider_x),
+            crate::bands::drawing_area(chart, self.frame.candles_right),
             history_right,
             self.projection.series.slots(),
             scale,
@@ -150,7 +150,7 @@ impl PaneHitTest<'_> {
             return None;
         }
         let band = bands::band_at(&self.frame.bands, px(position))?;
-        let history_right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+        let history_right = self.frame.candles_right.unwrap_or_else(|| chart.right());
         let total = self.projection.series.slots();
 
         // The same question the axis compass paints the answer to, asked
@@ -194,13 +194,12 @@ impl PaneHitTest<'_> {
             })
         });
 
-        let lane_width_px = (chart.right() - history_right).max(0.0);
         let flow_cell = self.orderflow.and_then(|orderflow| {
             orderflow.control_flow_cell_at(
                 chart,
                 self.projection.viewport,
                 total,
-                lane_width_px,
+                history_right,
                 self.price_view.is_inverted(),
                 position,
             )
@@ -225,11 +224,11 @@ impl PaneHitTest<'_> {
     /// it. Runs on a double click only.
     pub(super) fn canvas_hit(&self, pos: egui::Pos2) -> Option<CanvasHit> {
         let chart = self.frame.chart_area.filter(|chart| chart.contains(pos))?;
-        if !bands::drawing_area(chart, self.frame.lane_divider_x).contains(pos) {
+        if !bands::drawing_area(chart, self.frame.candles_right).contains(pos) {
             return None;
         }
         let band = bands::band_at(&self.frame.bands, px(pos))?;
-        let right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+        let right = self.frame.candles_right.unwrap_or_else(|| chart.right());
         let total = self.projection.series.slots();
         self.projection
             .canvas_hit(self.drawings, px(pos), band, right, total)

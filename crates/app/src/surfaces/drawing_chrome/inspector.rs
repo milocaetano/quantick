@@ -268,14 +268,14 @@ pub(crate) fn placement(
 
 /// Where a freshly opened floating inspector should sit, and how wide it may
 /// be there: the farthest chart corner that clears the object, then a gutter
-/// beside it narrowed to fit. The chart pane already excludes both axes and
-/// the live lane, so the popup can never cover them or leave the view.
+/// beside it narrowed to fit. Measured in the candles' area, which an object's span
+/// is computed from, so the popup leaves the axes, lane and rail clear.
 fn target_placement(
     inspector: &Inspector,
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> Option<InspectorPlacement> {
-    let chart = env.chart_area?;
+    let chart = crate::bands::drawing_area(env.chart_area?, env.candles_right);
     let bbox = env.selected_bbox?;
     Some(placement(chart, bbox, inspector.size(ctx)))
 }
@@ -692,6 +692,24 @@ mod tests {
             egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
         ]
         .map(|candidate| clamp_into_chart(candidate, size, chart))
+    }
+
+    /// A closed tape's rail narrows what an object spans by its width, and the
+    /// area it is placed in by the same: the choice of corner does not move.
+    #[test]
+    fn a_closed_tapes_rail_moves_no_corner_for_an_object_spanning_the_candles() {
+        let whole = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
+        let size = egui::vec2(220.0, 160.0);
+        let at = |candles_right: Option<f32>| {
+            let chart = crate::bands::drawing_area(whole, candles_right);
+            let bbox = egui::Rect::from_min_max(
+                egui::pos2(chart.left(), 280.0),
+                egui::pos2(chart.right(), 320.0),
+            );
+            placement(chart, bbox, size).position
+        };
+        let rail = whole.right() - quantick_orderflow::LANE_FOLD_RAIL_PX;
+        assert_eq!(at(Some(rail)), at(None));
     }
 
     #[test]

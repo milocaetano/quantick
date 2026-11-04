@@ -21,6 +21,23 @@ fn an_unchanged_config_keeps_the_engine_revision_key() {
     assert_eq!(key(&config), key(&config.clone()));
 }
 
+/// What the heatmap scope reports of the book moves the key: a gap's reason, and
+/// a hold stopping the heat.
+#[test]
+fn the_books_gaps_and_a_held_book_move_the_engine_revision_key() {
+    let gap = quantick_orderflow::projection::GapPrimitive {
+        from_generation: None,
+        to_generation: None,
+        x0: 0.0,
+        x1: 0.1,
+        reason: "sequence_gap".to_owned(),
+    };
+    let config = HeatmapConfig::default();
+    assert_eq!(key(&config).with_book(&[], None), key(&config));
+    assert_ne!(key(&config).with_book(&[gap], None), key(&config));
+    assert_ne!(key(&config).with_book(&[], Some(5)), key(&config));
+}
+
 #[test]
 fn every_kind_of_config_change_moves_the_engine_revision_key() {
     let base = HeatmapConfig {

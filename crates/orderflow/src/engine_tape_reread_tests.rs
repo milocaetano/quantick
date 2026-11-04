@@ -85,6 +85,7 @@ fn a_wide_tape_rereads_in_about_linear_time() {
         on_newest_bar: true,
         lane_reference_ms: Some(6_000),
         lane_now_ms: Some(now_ms),
+        lane_end_cap_ms: None,
         price_range: (low - 10.0, high + 10.0),
         dot_zoom: Some(DotZoom {
             native_tape: true,

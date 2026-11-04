@@ -8,7 +8,7 @@
 //! rule, the collapsed rail and the divider between the columns.
 
 use eframe::egui;
-use quantick_chart::pane_header::{HeaderIntent, PaneHeader, PaneIdentity};
+use quantick_chart::pane_header::{CapsuleSide, HeaderIntent, PaneHeader, PaneIdentity};
 use quantick_engine::bar_selection::BarInputAvailability;
 use smallvec::SmallVec;
 
@@ -18,7 +18,7 @@ use crate::config::FeedCapabilities;
 use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
-    SharedPick, clamp_pane_fraction, split_pane_header, split_pane_layout_strip,
+    SharedPick, clamp_pane_fraction, split_flow_pane, split_pane_header, split_pane_layout_strip,
 };
 use crate::state::BarKind;
 use crate::style::ChartStyle;
@@ -46,6 +46,8 @@ pub struct CanvasChrome<'a> {
     pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
     pub layers: &'a mut quantick_layers::LayerActions,
+    /// Which order-flow panel sections are open, per asset.
+    pub panel_folds: &'a mut crate::ui_state::AssetFolds,
 }
 
 /// Which pane order entry belongs to this frame.
@@ -112,6 +114,9 @@ struct PaneRects {
     context_charts: SmallVec<[Option<(egui::Rect, egui::Rect)>; MAX_CONTEXT_PANES]>,
     context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
     flow_areas: Option<PaneAreas>,
+    /// The row of the flow pane's side headers, painted after its chart, and the
+    /// bar inputs its bars control offers.
+    flow_side_row: Option<(egui::Rect, BarInputAvailability)>,
 }
 
 impl Tab {
@@ -151,6 +156,7 @@ impl Tab {
         // the guarantee that a foreign mark can only be looked at.
         self.paint_shared_drawings(ui.painter());
         self.draw_layer_capsules(ui, chrome);
+        self.draw_flow_sides(ui, rects.flow_side_row, chrome);
 
         // A chart menu's object ask applies on the chart it was opened on.
         if let Some(pane) = chrome.drawing_chrome.menu_target() {
@@ -263,6 +269,7 @@ impl Tab {
             context_charts: SmallVec::new(),
             context_dividers: SmallVec::new(),
             flow_areas: None,
+            flow_side_row: None,
         };
         #[cfg(test)]
         self.context_dividers.clear();
@@ -324,10 +331,14 @@ impl Tab {
         }
         rects.flow_areas = frame.show_flow.then(|| {
             let pane_areas = split_pane_layout_strip(frame.flow_band);
-            let areas = split_pane_header(pane_areas.body);
-            self.draw_flow_header(ui, areas.header, bar_inputs, chrome);
+            let areas = split_flow_pane(pane_areas.body);
+            ui.painter()
+                .rect_filled(pane_areas.body, egui::Rounding::ZERO, theme::FLOW_SURFACE);
+            self.draw_flow_header(ui, areas.band, chrome);
+            rects.flow_side_row = Some((areas.side_row, bar_inputs));
+            self.flow_pane.frame.side_row = Some(areas.side_row);
             PaneAreas {
-                body: areas.chart,
+                body: crate::orderflow_panel::draw(self, ui, areas.chart, chrome.panel_folds),
                 layout_strip: pane_areas.layout_strip,
             }
         });
@@ -383,6 +394,12 @@ impl Tab {
             fraction: None,
         };
         self.connection.observe(&facts, &self.loading);
+        let feed = self.connection.state();
+        self.tape_mut().observe_market(feed);
+        let spoken = self.connection.spoken_link(now_ms);
+        let (view, state) = (self.flow_pane.orderflow.as_mut(), &self.flow_pane.state);
+        view.expect("the flow pane keeps a tape")
+            .hold_tape_window(spoken, state);
     }
 
     /// The pane whose header asked for the indicator library this frame. Taken in
@@ -397,12 +414,22 @@ impl Tab {
             })
     }
 
-    /// Each chart side's floating capsule, after the charts and their shared
-    /// marks, so it wins the press and nothing strokes across it.
+    /// Each time pane's capsule, docked in its header, and the tape's seam, after
+    /// the charts and their shared marks, so nothing strokes across them.
     fn draw_layer_capsules(&mut self, ui: &mut egui::Ui, chrome: &mut CanvasChrome<'_>) {
         let mut focus = None;
+        let now_ms = crate::metrics::wall_clock_ms();
+        let seam_words = self.connection.seam_line(&self.symbol, now_ms);
+        let link = self.connection.spoken_link(now_ms);
         for (pane, side) in self.panes_with_sides_mut() {
-            let intent = pane.draw_capsules(ui, side, chrome.style, chrome.capabilities);
+            let sides = crate::pane::SideChrome {
+                style: chrome.style,
+                capabilities: chrome.capabilities,
+                tz: chrome.tz,
+                link,
+                seam_words: seam_words.clone(),
+            };
+            let intent = pane.draw_capsules(ui, side, &sides);
             if let Some(intent) = intent {
                 // A settings window edits the focused chart, and this is the
                 // one the hand asked about.
@@ -417,43 +444,61 @@ impl Tab {
         }
     }
 
-    /// The flow pane's header line: its mark, its own bars, its indicators
-    /// button, its view and its strip, read and changed here wherever focus sits.
+    /// The flow pane's band: its mark, its side switches and its strip, read and
+    /// changed here wherever focus sits.
     fn draw_flow_header(
         &mut self,
         ui: &mut egui::Ui,
         strip: egui::Rect,
-        bar_inputs: BarInputAvailability,
         chrome: &mut CanvasChrome<'_>,
     ) {
         let chip = self.connection.chip();
         let slot = self.connection.slot(self.session.history_note());
-        let rebuilding = self
-            .loading
-            .is_active(crate::loading::LoadingTask::BarRebuild);
         let pane = &mut self.flow_pane;
-        let identity = PaneIdentity::OrderFlow;
-        let header = PaneHeader::of(identity, pane.spec.spec());
+        let header = PaneHeader::of(PaneIdentity::OrderFlow, pane.spec.spec());
         let row = crate::pane_header::FlowRow {
-            strip: pane.strip_glyph(chrome.style, chrome.capabilities),
             state: pane.flow_header_state(),
             chip,
             slot,
-            rebuilding,
+            settings_open: pane
+                .orderflow
+                .as_ref()
+                .is_some_and(|tape| tape.settings_panel.is_open()),
         };
-        let (intent, indicators) = crate::pane_header::draw_marked(
-            ui,
-            strip,
-            &header,
-            pane.id,
-            &mut pane.spec,
-            bar_inputs,
-            row,
-            &mut pane.frame.header_controls,
-        );
-        if indicators {
-            pane.request_indicator_picker();
+        let painted = &mut pane.frame.header_controls;
+        let intent = crate::pane_header::draw_marked(ui, strip, &header, pane.id, row, painted);
+        self.apply_flow_intent(intent, chrome);
+    }
+
+    /// The flow pane's side headers: its own bars and indicators button, its layer
+    /// capsules and its tape window, split where this frame's chart split. A window
+    /// list whose selector did not draw, the row absent or not, is closed.
+    fn draw_flow_sides(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: Option<(egui::Rect, BarInputAvailability)>,
+        chrome: &mut CanvasChrome<'_>,
+    ) {
+        if let Some((row, inputs)) = row {
+            let sides = crate::pane::SideRowChrome {
+                style: chrome.style,
+                capabilities: chrome.capabilities,
+                tz: chrome.tz,
+                inputs,
+                rebuilding: (self.loading).is_active(crate::loading::LoadingTask::BarRebuild),
+                link: self.connection.spoken_link(crate::metrics::wall_clock_ms()),
+            };
+            let pane = &mut self.flow_pane;
+            let (intent, indicators) = pane.draw_flow_sides(ui, row, &sides);
+            if indicators {
+                pane.request_indicator_picker();
+            }
+            self.apply_flow_intent(intent, chrome);
         }
+        crate::pane_header::close_unseen_window_list(ui.ctx());
+    }
+
+    fn apply_flow_intent(&mut self, intent: Option<HeaderIntent>, chrome: &mut CanvasChrome<'_>) {
         if let Some(intent) = intent {
             // A settings window edits the focused chart, and this is the one
             // the hand asked about.
@@ -480,9 +525,13 @@ impl Tab {
         let job_slot = job_slot
             .as_ref()
             .map(|(text, job)| crate::loading::Slot { job: *job, text });
-        let reserve_px = job_slot.as_ref().map_or(0.0, |slot| {
-            crate::loading::slot_width(ui, slot) + quantick_chart::pane_header::GROUP_GAP_PX
-        });
+        // The capsule docks at the right end after the chart draws; the slot stands
+        // left of it.
+        let capsule_px = quantick_chart::flow_band::docked_reserve_px(CapsuleSide::Time);
+        let reserve_px = capsule_px
+            + job_slot.as_ref().map_or(0.0, |slot| {
+                crate::loading::slot_width(ui, slot) + quantick_chart::pane_header::GROUP_GAP_PX
+            });
         let pane = &mut self.time_panes[slot];
         let header = PaneHeader::of(PaneIdentity::Time, pane.spec.spec());
         let mut interval_ms = pane
@@ -504,7 +553,7 @@ impl Tab {
             },
         );
         if let Some(job_slot) = &job_slot {
-            let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right();
+            let right = strip.shrink2(crate::pane_header::CONTENT_PADDING).right() - capsule_px;
             crate::loading::draw_slot(ui, right, strip, job_slot);
         }
         #[cfg(test)]
@@ -696,15 +745,16 @@ impl Tab {
         if frame.flow_rail.is_none() {
             self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
         }
-        // §11: a 1 px accent under the focused pane's top edge — no border
-        // boxes around market data.
+        // §11: a 1 px accent under the focused time pane's header — no border
+        // boxes around market data. The flow pane's side headers keep their own
+        // faint rule, focused or not: its band and frame already name the pane.
         let focused = match self.focused_side() {
             PaneSide::Time(slot) => rects
                 .context_charts
                 .get(slot)
                 .and_then(|areas| areas.map(|(chart, _)| chart))
                 .unwrap_or(time_area),
-            PaneSide::Flow => rects.flow_areas.map_or(frame.flow_band, |areas| areas.body),
+            PaneSide::Flow => return,
         };
         ui.painter().line_segment(
             [
@@ -892,7 +942,8 @@ impl Tab {
         // A header line governs its own pane wherever focus sits: changing a
         // pane's bars from there never moves focus. Only the chart below takes it.
         let on_header = |band: &egui::Rect| split_pane_header(*band).header.contains(position);
-        if context_bands.iter().chain([&flow_area]).any(on_header) {
+        let on_flow_header = split_flow_pane(flow_area).header.contains(position);
+        if on_flow_header || context_bands.iter().any(on_header) {
             return;
         }
         // A capsule governs its own pane the same way.

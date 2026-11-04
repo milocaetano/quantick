@@ -6,12 +6,16 @@
 //! already-built frame so a dense book never blocks the UI.
 
 use eframe::egui;
+use quantick_chart::{connection_state::Link, state::ChartState};
 use quantick_engine::{Bar, Trade};
 use quantick_orderbook::DepthEvent;
 pub(crate) use quantick_orderflow::FlowCellHit;
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::pane_tape::PaneTape;
-use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
+use quantick_orderflow::projection::GapPrimitive;
+use quantick_orderflow::{
+    HeatmapConfig, LaneWindow, LiveLaneStyle, lane_window_pick, reserved_span_ms,
+};
 use quantick_stores::bubble_asset_store::AssetBinding;
 use quantick_stores::bubble_asset_store::SaveSwitch;
 use quantick_stores::bubble_assets::AssetBubbles;
@@ -20,7 +24,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
-use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout, RenderContext};
+use crate::orderflow_render::{OrderflowRenderStyle, RenderContext};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
@@ -82,6 +86,8 @@ pub struct LiveLane {
 
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
+    /// The panel that edits this view's settings, attached to its flow pane.
+    pub(crate) settings_panel: quantick_workspace::orderflow_panel::OrderFlowPanel,
     flow_execution: flow_execution::FlowExecutionView,
     flow_paint: std::cell::RefCell<quantick_chart::flow_execution::FlowPaintState>,
     symbol: String,
@@ -124,6 +130,8 @@ pub struct OrderflowView {
     past_heat: std::cell::RefCell<quantick_orderflow::projection::PlacedPastHeat>,
     /// The lane divider's drag in progress, from press to release.
     lane_drag: Option<quantick_orderflow::LaneDividerDrag>,
+    /// The live strip's width left of the divider, as the pane's last frame carved it.
+    pub(crate) trail_strip_px: f32,
 }
 
 impl OrderflowView {
@@ -141,6 +149,7 @@ impl OrderflowView {
             worker: BookWorker::spawn(&symbol),
             symbol,
             config,
+            settings_panel: Default::default(),
             published: BookPublished::initial(),
             last_seen_base: base_grouping,
             last_tape_price_grid: None,
@@ -157,6 +166,7 @@ impl OrderflowView {
             past_dots: Default::default(),
             past_heat: Default::default(),
             lane_drag: None,
+            trail_strip_px: 0.0,
         }
     }
 
@@ -172,11 +182,21 @@ impl OrderflowView {
     /// contract as [`Self::cached_health`]. The ladder is `None` while capture is off or the book
     /// has no snapshot yet: an honest absence, never an empty book.
     #[must_use]
-    pub(crate) fn cached_book(&self) -> (&CaptureStatus, Option<&BookLadder>, Decimal) {
+    pub(crate) fn cached_book(
+        &self,
+    ) -> (
+        &CaptureStatus,
+        Option<&BookLadder>,
+        Decimal,
+        &[GapPrimitive],
+    ) {
         (
             &self.published.status,
             self.published.ladder.as_deref(),
             self.published.base_price_grouping,
+            self.pane_tape
+                .drawn(self.published.frame.as_ref())
+                .map_or(&[], |frame| frame.projection.gaps.as_slice()),
         )
     }
 
@@ -185,7 +205,9 @@ impl OrderflowView {
     /// with no lane has no edge to report.
     #[must_use]
     pub(crate) fn cached_live_end_ms(&self) -> Option<i64> {
-        self.lane_now_ms().or(self.published.live_end_ms)
+        let cap = self.pane_tape.window_cap_ms().unwrap_or(i64::MAX);
+        self.lane_now_ms()
+            .or(self.published.live_end_ms.map(|end| end.min(cap)))
     }
 
     /// Snapshot only published tape state; capturing never wakes the worker.
@@ -253,28 +275,23 @@ impl OrderflowView {
     }
 
     /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart
-    /// most recently painted ([`PaneTape::drawn`]). Projection and hit testing share
-    /// [`ProjectedLayout`]; the lookup is O(visible cells), only for a cursor snapshot.
+    /// most recently painted ([`PaneTape::drawn`]), the candles ending at `history_right` and
+    /// the tape right of them and of the strip, as painted. Projection and hit testing share
+    /// [`Self::projected`]; the lookup is O(visible cells), only for a cursor snapshot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_flow_cell_at(
         &self,
         chart_rect: egui::Rect,
         viewport: &Viewport,
         total_bars: usize,
-        lane_width_px: f32,
+        history_right: f32,
         inverted: bool,
         position: egui::Pos2,
     ) -> Option<FlowCellHit> {
         let frame = &**self.pane_tape.drawn(self.published.frame.as_ref())?;
-        let layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        )
-        .with_inverted(inverted);
+        let lane_px = (chart_rect.right() - history_right - self.trail_strip_px).max(0.0);
+        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_px);
+        let layout = layout.with_inverted(inverted);
         let in_lane = layout
             .lane_left_x()
             .is_some_and(|divider| position.x >= divider);
@@ -453,26 +470,62 @@ impl OrderflowView {
 
     /// Put the tape on the canvas, or take it off. Off, the lane reserves no width and asks for no
     /// projection; its two layer switches stay as they were, so switching it back on returns the
-    /// same tape, opened if it was folded ([`quantick_orderflow::LiveLaneStyle::set_enabled`]).
+    /// same tape, beside the candles at the default width ([`quantick_orderflow::LiveLaneStyle::set_enabled`]).
     pub fn set_lane_enabled(&mut self, enabled: bool) {
-        if self.config.live_lane.enabled == enabled {
-            return;
-        }
-        let before = self.config.clone();
-        self.config.live_lane.set_enabled(enabled);
-        self.commit_lane_switch(before);
+        self.edit_lane(|lane| lane.set_enabled(enabled));
     }
 
-    /// Show `view`, from any view, through the one write every door shares
-    /// (the header's button, its key, the named call); a fold stays as it was.
-    /// Answers whether it changed.
-    pub fn set_lane_view(&mut self, view: quantick_orderflow::LaneView) -> bool {
+    /// One write to the lane's switches, committed if it moved anything.
+    pub(crate) fn edit_lane(&mut self, edit: impl FnOnce(&mut LiveLaneStyle) -> bool) -> bool {
         let before = self.config.clone();
-        let changed = self.config.live_lane.set_view(view);
+        let changed = edit(&mut self.config.live_lane);
         if changed {
             self.commit_lane_switch(before);
         }
         changed
+    }
+
+    /// Show `view`, from any view, through the one write every door shares
+    /// (the header's switches, their keys, the named call). Answers whether it changed.
+    pub fn set_lane_view(&mut self, view: quantick_orderflow::LaneView) -> bool {
+        self.edit_lane(|lane| lane.set_view(view))
+    }
+
+    /// The view by the side it closes, with the market's hold standing down: the
+    /// rail's click and `orderflow.tape.fold.set`. Answers whether it changed.
+    pub fn set_lane_fold(&mut self, fold: quantick_orderflow::LaneFold) -> bool {
+        self.edit_lane(|lane| lane.set_fold(fold))
+    }
+
+    /// One step of the market-closed fold: only a hold that moves is news.
+    pub(crate) fn observe_market(
+        &mut self,
+        feed: quantick_chart::connection_state::ConnectionState,
+    ) {
+        let next = quantick_chart::market_fold::next_for(&self.config.live_lane, feed);
+        let before = (next != self.config.live_lane.market_hold).then(|| self.config.clone());
+        self.config.live_lane.market_hold = next;
+        before.map(|before| self.apply_config(before));
+    }
+
+    /// Stop the tape's window short of the clock while nothing is coming.
+    pub(crate) fn hold_tape_window(&mut self, spoken: Option<Link>, state: &ChartState) {
+        let hold = quantick_chart::market_fold::tape_hold(spoken, state, || {
+            self.live_lane_window_ms(state.bars())
+        });
+        self.pane_tape.set_hold(hold);
+    }
+
+    /// Where a hold has stopped this pane's heat while its book goes on arriving.
+    pub(crate) fn book_held_at_ms(&self) -> Option<i64> {
+        use quantick_chart::{connection_state::Book, market_fold::book_held_at};
+        let drawn = self.config.depth_visible_anywhere();
+        let book = Book::when_drawn(drawn, &self.published.status);
+        book_held_at(
+            self.pane_tape.window_cap_ms(),
+            self.published.live_end_ms,
+            book,
+        )
     }
 
     fn commit_lane_switch(&mut self, before: HeatmapConfig) {
@@ -639,24 +692,26 @@ impl OrderflowView {
 
     /// Widen or narrow the lane by a pixel drag on its divider. Dragging left
     /// (negative `delta_px`) gives the tape more room, at the expense of the
-    /// history beside it; near either edge that side folds
+    /// history beside it; near either edge that side closes
     /// ([`HeatmapConfig::drag_lane_divider`]).
     pub fn resize_live_lane(&mut self, delta_px: f32, chart_width: f32) {
         let before = self.config.clone();
-        let step = self
+        let moved = self
             .config
             .drag_lane_divider(&mut self.lane_drag, delta_px, chart_width);
-        // The width is navigation; a fold is a setting the asset keeps.
-        match step {
-            Some(true) => self.commit_config_changes(before),
-            Some(false) => self.apply_config(before),
-            None => false,
-        };
+        // The width is navigation; a view is a setting.
+        if moved {
+            self.commit_lane_switch(before);
+        } else {
+            self.apply_config(before);
+        }
     }
 
-    /// The divider let go, or taken again: the next drag starts afresh.
+    /// The divider let go, or taken again: a close only shown is written, once.
     pub fn release_lane_drag(&mut self) {
-        self.lane_drag = None;
+        if self.lane_drag.take().is_some() {
+            self.edit_lane(LiveLaneStyle::release_drag_close);
+        }
     }
 
     /// Zoom the lane's time window by a multiplicative factor: `> 1` shows less market time in the
@@ -687,10 +742,27 @@ impl OrderflowView {
         self.look.note_lane_set(&self.config);
     }
 
-    /// The tape's window back to its setting ([`BubbleLook::lane_window_setting`]):
-    /// navigation undone, the asset untouched.
+    /// The tape's window as the asset files it ([`BubbleLook::lane_window_setting`]).
+    #[must_use]
+    pub fn lane_window_setting(&self) -> LaneWindow {
+        self.look.lane_window_setting()
+    }
+
+    /// The tape's window back to its setting: navigation undone, the asset untouched.
     pub fn reset_live_lane_window(&mut self) {
-        self.navigate_live_lane_window(self.look.lane_window_setting());
+        self.navigate_live_lane_window(self.lane_window_setting());
+    }
+
+    /// The window a call names: filed as the asset's under the selector's own rule
+    /// ([`lane_window_pick`]), or navigation, as the wheel's.
+    pub fn move_live_lane_window(&mut self, window: LaneWindow, file: bool) {
+        if !file {
+            return self.navigate_live_lane_window(window);
+        }
+        let shown = self.live_lane_window();
+        if let Some(window) = lane_window_pick(shown, self.lane_window_setting(), window) {
+            self.set_live_lane_window(window);
+        }
     }
 
     /// Move the tape's window as the wheel does: the view, not the asset.
@@ -735,41 +807,6 @@ impl OrderflowView {
         self.published.health.tape_age
     }
 
-    /// Name of the preset the panel currently wears.
-    #[cfg(test)]
-    pub(crate) fn active_preset_for_test(&self) -> &str {
-        self.look.look_name()
-    }
-
-    /// Read-only view of the heatmap config, for app-level assertions.
-    #[cfg(test)]
-    pub(crate) fn config_for_test(&self) -> &HeatmapConfig {
-        &self.config
-    }
-
-    #[cfg(test)]
-    pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
-        let before = self.config.clone();
-        self.config.price_grouping = grouping;
-        self.capture_grouping_draft = grouping.to_f64().unwrap_or(self.capture_grouping_draft);
-        self.commit_config_changes(before)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn base_capture_grouping_for_test(&mut self) -> Decimal {
-        self.flush_for_test();
-        self.published.base_price_grouping
-    }
-
-    /// Wait until the worker has applied and published everything sent so
-    /// far, then adopt the result. Makes the async pipeline deterministic in
-    /// tests; production code never blocks on the worker.
-    #[cfg(test)]
-    pub(crate) fn flush_for_test(&mut self) {
-        self.worker.flush();
-        self.sync_published();
-    }
-
     /// Reset market-specific history while preserving visual/retention
     /// settings. Capture deliberately returns to off; the app starts a fresh
     /// provider task only after the new feed handle is installed.
@@ -778,6 +815,12 @@ impl OrderflowView {
         self.symbol = symbol.into();
         self.pane_tape.reset_clock();
         self.config.enabled = false;
+        // A hold and a hand's stand-down are about the market being left. Here and not
+        // in a preset's `apply_to`, which keeps them: a look chosen mid-spell is no
+        // new market. Through the door, as the worker lays its frames out by it.
+        let before = self.config.clone();
+        self.config.live_lane.market_hold = Default::default();
+        self.apply_config(before);
         self.pending_capture_grouping_previous = None;
         // The send-once cache is keyed on what was sent, so a new market printing on the same grid
         // would be suppressed, and a grid the engine refused after a manual bucket would never be
@@ -969,12 +1012,8 @@ impl OrderflowView {
     /// The book as the connection state reads it: off when nobody asked to see it.
     #[must_use]
     pub fn connection_book(&self) -> quantick_chart::connection_state::Book {
-        use quantick_chart::connection_state::Book;
-        if self.config.depth_visible() {
-            Book::of(&self.published.status)
-        } else {
-            Book::Off
-        }
+        let drawn = self.config.depth_visible();
+        quantick_chart::connection_state::Book::when_drawn(drawn, &self.published.status)
     }
 
     /// A setting changed: the asset on screen files it at the next frame.
@@ -1139,11 +1178,19 @@ impl OrderflowView {
         self.wear_asset(settings, false);
     }
 
+    /// The layer mask observes this view's tab ([`BubbleLook::settle_old_tape_fold`]).
+    pub(crate) fn settle_old_tape_fold(&mut self) -> bool {
+        self.look.settle_old_tape_fold(&self.config)
+    }
+
     /// Take the presets another view reloaded, file what this one changed,
     /// then wear what another view filed since ([`BubbleLook::sync`]).
     /// Returns the candle aggression to put on the flow pane when it adopted.
     pub(crate) fn sync_asset(&mut self, candle_aggression: bool) -> Option<bool> {
         self.look.asset()?;
+        if self.look.take_old_tape_fold(&self.config) {
+            self.set_lane_enabled(false);
+        }
         if self.look.take_reloaded_presets() {
             self.follow_declared_look(false);
         }
@@ -1188,6 +1235,36 @@ impl OrderflowView {
     pub(crate) fn apply_preset(&mut self, name: &str, spheres: bool) -> bool {
         self.look.apply_preset(name, &mut self.config, spheres)
     }
+
+    /// Name of the preset the panel currently wears.
+    pub(crate) fn active_preset_for_test(&self) -> &str {
+        self.look.look_name()
+    }
+
+    /// Read-only view of the heatmap config, for app-level assertions.
+    pub(crate) fn config_for_test(&self) -> &HeatmapConfig {
+        &self.config
+    }
+
+    pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
+        let before = self.config.clone();
+        self.config.price_grouping = grouping;
+        self.capture_grouping_draft = grouping.to_f64().unwrap_or(self.capture_grouping_draft);
+        self.commit_config_changes(before)
+    }
+
+    pub(crate) fn base_capture_grouping_for_test(&mut self) -> Decimal {
+        self.flush_for_test();
+        self.published.base_price_grouping
+    }
+
+    /// Wait until the worker has applied and published everything sent so
+    /// far, then adopt the result. Makes the async pipeline deterministic in
+    /// tests; production code never blocks on the worker.
+    pub(crate) fn flush_for_test(&mut self) {
+        self.worker.flush();
+        self.sync_published();
+    }
 }
 
 #[cfg(test)]
@@ -1195,13 +1272,14 @@ mod tests {
     use super::*;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
     use quantick_orderflow::{
-        BubbleSizeReference, BubbleStyle, ConsumptionMark, LaneFold, MAX_LIVE_LANE_WINDOW_MS,
+        BubbleSizeReference, BubbleStyle, ConsumptionMark, LaneView, MAX_LIVE_LANE_WINDOW_MS,
         MAX_LIVE_LANE_ZOOM, MIN_LIVE_LANE_ZOOM,
     };
 
     use crate::bubble_presets::{BubblePreset, PresetSource, embedded};
     use crate::chart::PriceScale;
     use crate::live_strip;
+    use crate::orderflow_render::ProjectedLayout;
 
     impl OrderflowView {
         pub(crate) fn published_capture_grouping_for_test(&self) -> Decimal {
@@ -1580,7 +1658,10 @@ mod tests {
                 forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
-                fold: LaneFold::Open,
+                fold_market_closed: true,
+                market_hold: Default::default(),
+                old_tape_fold: Default::default(),
+                drag_close: None,
             },
         });
         view.look = BubbleLook::open(
@@ -1771,7 +1852,7 @@ mod tests {
             .center();
 
         let hit = view
-            .control_flow_cell_at(chart, &viewport, 1, 0.0, false, position)
+            .control_flow_cell_at(chart, &viewport, 1, chart.right(), false, position)
             .expect("the painted cell is semantically resolved");
         assert_eq!(hit.generation, cell.generation);
         assert_eq!(hit.side, cell.side);
@@ -1837,7 +1918,7 @@ mod tests {
                 .with_inverted(inverted);
                 let position = layout.current_book_preview_rect(cell.y0, cell.y1).center();
                 let hit = view
-                    .control_flow_cell_at(chart, &viewport, 1, 300.0, inverted, position)
+                    .control_flow_cell_at(chart, &viewport, 1, 700.0, inverted, position)
                     .unwrap();
                 assert!(hit.current_book_preview, "averaging {averaging}");
                 assert!(!hit.time_averaged);
@@ -1905,7 +1986,7 @@ mod tests {
                     });
                     let painted = format!("{:?}", output.shapes).contains("Current book preview");
                     let read = view
-                        .control_flow_cell_at(chart, &viewport, 1, 300.0, false, preview.center())
+                        .control_flow_cell_at(chart, &viewport, 1, 700.0, false, preview.center())
                         .is_some_and(|hit| hit.current_book_preview);
                     (painted, read)
                 };
@@ -1926,10 +2007,45 @@ mod tests {
         }
     }
 
-    /// Dragging the divider is the width slider by another route, and past
-    /// either edge's threshold it folds that side instead of squeezing it.
+    impl OrderflowView {
+        /// Open on `loaded`, as a launch does, without a process-global presets file.
+        pub(crate) fn open_look_for_test(&mut self, loaded: LoadedPresets) {
+            self.look = BubbleLook::open(loaded, &mut self.config);
+        }
+    }
+
+    /// Crossing a close threshold mid-drag tears nothing down, and asks nothing of
+    /// the asset; the release writes the view once. Beside on a held pane releases
+    /// it, the call `orderflow.tape.fold.set` open makes.
     #[test]
-    fn dragging_the_divider_resizes_the_lane_and_folds_at_the_edges() {
+    fn a_drag_past_the_threshold_commits_only_at_the_release() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.config.live_lane.width_share = 0.42;
+        let before = view.config.clone();
+        for delta in [10_000.0, -10_000.0, 10_000.0] {
+            view.resize_live_lane(delta, 1_000.0);
+            assert!(view.config.same_tape_grouping(&before), "{delta}");
+            assert!(view.config.live_lane.enabled && !view.config.live_lane.tape_only);
+        }
+        view.release_lane_drag();
+        assert_eq!(view.config.live_lane.view(), LaneView::CandlesOnly);
+        assert_eq!(view.config.live_lane.drag_close, None);
+
+        let mut held = OrderflowView::new("BTCUSDT");
+        held.config.live_lane.width_share = 0.42;
+        held.config.live_lane.market_hold.held = true;
+        assert!(held.set_lane_view(LaneView::Beside), "changed");
+        assert!(!held.config.live_lane.market_held());
+        assert_eq!(
+            held.config.live_lane.width_share,
+            quantick_orderflow::config::DEFAULT_LIVE_LANE_SHARE
+        );
+    }
+
+    /// Dragging the divider is the width slider by another route, and past
+    /// either edge's threshold it closes that side instead of squeezing it.
+    #[test]
+    fn dragging_the_divider_resizes_the_lane_and_closes_at_the_edges() {
         let mut view = OrderflowView::new("BTCUSDT");
         let chart = 1_000.0;
         let before = view.config.live_lane.resolved_width_px(chart);
@@ -1941,20 +2057,26 @@ mod tests {
         view.resize_live_lane(60.0, chart);
         assert!((view.config.live_lane.resolved_width_px(chart) - before).abs() < 0.01);
 
-        // Past either edge a side folds, and the share it opens at is kept.
+        // Past either edge a side closes, and the share it started from is kept.
         let share = view.config.live_lane.width_share;
         view.resize_live_lane(-10_000.0, chart);
-        assert_eq!(view.config.live_lane.fold, LaneFold::Candles);
+        assert_eq!(view.config.live_lane.shown_view(), LaneView::TapeOnly);
+        assert_eq!(view.config.live_lane.view(), LaneView::Beside, "only shown");
         view.resize_live_lane(10_000.0, chart);
         assert_eq!(
-            view.config.live_lane.fold,
-            LaneFold::Open,
+            view.config.live_lane.view(),
+            LaneView::Beside,
             "back under the hand"
         );
         view.resize_live_lane(10_000.0, chart);
-        assert_eq!(view.config.live_lane.fold, LaneFold::Tape);
+        assert_eq!(view.config.live_lane.shown_view(), LaneView::CandlesOnly);
         assert_eq!(view.config.live_lane.width_share, share);
         view.release_lane_drag();
+        assert_eq!(
+            view.config.live_lane.view(),
+            LaneView::CandlesOnly,
+            "written"
+        );
 
         // A degenerate chart or a lost pointer changes nothing at all.
         let steady = view.config.live_lane.clone();
@@ -2217,6 +2339,39 @@ mod tests {
             2,
             "the new market's tape opened starved"
         );
+    }
+
+    /// A hold short of a book that went on says so while that book is drawn and
+    /// synced, and the lane's edge reads the cap it really stops at.
+    #[test]
+    fn a_hold_short_of_a_book_that_went_on_is_said() {
+        let mut view = OrderflowView::new("WINV26");
+        let cap_ms = 10_000;
+        view.config.enabled = true;
+        view.config.show_depth = true;
+        view.published.status = CaptureStatus::Live {
+            generation: 1,
+            last_update_id: 1,
+        };
+        view.published.live_end_ms = Some(cap_ms + 5_000);
+        assert_eq!(view.book_held_at_ms(), None, "no hold");
+        assert_eq!(view.cached_live_end_ms(), Some(cap_ms + 5_000));
+        view.pane_tape
+            .set_hold(Some(quantick_orderflow::tape_clock::TapeHold {
+                last_print_ms: cap_ms,
+                window_ms: 0,
+            }));
+        assert_eq!(view.book_held_at_ms(), Some(cap_ms));
+        assert_eq!(
+            view.cached_live_end_ms(),
+            Some(cap_ms),
+            "the edge stops there"
+        );
+        (view.config.show_depth, view.config.live_lane.show_depth) = (false, false);
+        assert_eq!(view.book_held_at_ms(), None, "no heat, nothing held");
+        view.config.show_depth = true;
+        view.published.live_end_ms = Some(cap_ms);
+        assert_eq!(view.book_held_at_ms(), None, "a book that stopped with it");
     }
 
     #[test]

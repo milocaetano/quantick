@@ -2,23 +2,6 @@ use super::*;
 use crate::config::dressing::flow::{CONTEXT_OPACITY, PEAK_OPACITY, ordinary_colors};
 
 #[test]
-fn caption_reports_current_reference() {
-    let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
-    frame.effective_reference = Some(32100.into());
-    let text = caption_text(Some(&frame), FlowProgress::default(), true).unwrap();
-    assert!(text.contains("scale 32.1K"));
-    assert!(text.contains("brightness rises with regional volume"));
-    assert!(text.contains("area = regional gross volume"));
-    frame.effective_reference = Some(450.into());
-    assert!(
-        caption_text(Some(&frame), FlowProgress::default(), true)
-            .unwrap()
-            .contains("scale 450")
-    );
-    assert!(caption_text(Some(&frame), FlowProgress::default(), false).is_none());
-}
-
-#[test]
 fn placement_threshold_is_exact_and_absent_without_a_positive_reference() {
     let mut frame = frame(&[trade(1000, 100, 13, Side::Buy)], 200.0);
     frame.effective_reference = Some(13.into());
@@ -128,7 +111,7 @@ fn oversized_region_caption_remains_visible_and_separates_total_from_opening() {
     frame.view.reference = FlowReference::VisibleRegions;
     frame.dots[0].opening_oversized = true;
     frame.dots[0].opening_quantity = 31000.into();
-    let text = caption_text(Some(&frame), FlowProgress::default(), false).unwrap();
+    let text = caption_qualifications(Some(&frame), FlowProgress::default()).unwrap();
     assert!(text.contains("total 32100, recorded opening 31000"));
     assert!(text.contains("first daily regions"));
     assert!(text.contains("area proportional"));
@@ -169,7 +152,7 @@ fn an_oversized_openings_note_says_whether_its_area_was_capped() {
         );
         let opening = frame.dots.iter().find(|dot| dot.opening_anchor).unwrap();
         assert!(opening.opening_oversized);
-        let text = caption_text(Some(&frame), FlowProgress::default(), false).unwrap();
+        let text = caption_qualifications(Some(&frame), FlowProgress::default()).unwrap();
         (opening.radius, text)
     };
     let first_daily = "1 first daily regions: total 40, recorded opening 40";
@@ -193,16 +176,6 @@ fn an_oversized_openings_note_says_whether_its_area_was_capped() {
     assert!(!regions.contains("capped"), "{regions}");
 }
 
-/// The caption says where its discs are drawn: regional FLOW keeps its
-/// offset from the candle, tick spheres stand on their executions.
-#[test]
-fn the_caption_says_where_the_discs_are_drawn() {
-    assert_eq!(placement_note(false), " \u{00b7} offset \u{2196}");
-    let spheres = placement_note(true);
-    assert!(!spheres.contains("offset"), "{spheres}");
-    assert!(spheres.contains("at executions"), "{spheres}");
-}
-
 /// Review #8: the notes a caption may never drop stand apart from its key,
 /// so a caption that cannot be placed can still show them.
 #[test]
@@ -224,54 +197,18 @@ fn qualifications_stand_apart_from_the_key() {
         !notes.contains("area ="),
         "the key is not a qualification: {notes}"
     );
-    let full = caption_text(Some(&frame), pending, true).unwrap();
-    assert!(full.ends_with(&notes), "{full}");
 }
 
-/// Review #18: the sphere caption counts in the unit the asset's config mode
-/// names, and claims no unit without one.
+/// The caption is the notes or nothing: no name on its own, no key.
 #[test]
-fn the_sphere_caption_names_the_configured_unit_or_none() {
-    let frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
-    let quiet = FlowProgress::default();
-    let eth = styled_caption_text(Some(&frame), quiet, true, true, Some("ETH")).unwrap();
-    assert!(
-        eth.contains("quantity in ETH; sphere area follows gross volume"),
-        "{eth}"
-    );
-    let bare = styled_caption_text(Some(&frame), quiet, true, true, None).unwrap();
-    assert!(bare.contains("sphere area follows gross volume"), "{bare}");
-    assert!(!bare.contains("quantity in"), "{bare}");
-    let regional = styled_caption_text(Some(&frame), quiet, true, false, None).unwrap();
-    assert!(regional.contains("brightness rises with regional volume"));
-}
-
-/// The caption reads name, key, placement and detail in that order, the key
-/// inked by side; a caption that cannot be placed keeps its notes alone.
-#[test]
-fn caption_segments_keep_their_order_inks_and_notes() {
+fn the_caption_is_its_notes_or_nothing() {
     let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
     let quiet = FlowProgress::default();
-    let words = |segments: &[(String, CaptionInk)]| {
-        segments
-            .iter()
-            .map(|(text, _)| text.as_str())
-            .collect::<String>()
-    };
-    let spheres = caption_segments(Some(&frame), quiet, true, Some(Some("BTC")));
-    assert_eq!(spheres[0], ("FLOW".to_owned(), CaptionInk::Muted));
-    assert_eq!(spheres[2], ("Buy".to_owned(), CaptionInk::Buy));
-    assert_eq!(spheres[4], ("Sell".to_owned(), CaptionInk::Sell));
-    let text = words(&spheres);
-    assert!(text.contains(placement_note(true)), "{text}");
-    assert!(text.contains("quantity in BTC"), "{text}");
-    let regional = words(&caption_segments(Some(&frame), quiet, false, None));
-    assert!(
-        regional.starts_with(&format!("FLOW{}", placement_note(false))),
-        "{regional}"
-    );
-    assert!(notes_segments(Some(&frame), quiet).is_none());
+    assert_eq!(notes_caption(Some(&frame), quiet), None);
+    assert_eq!(notes_caption(None, quiet), None);
     frame.ineligible_executions = 4;
-    let notes = notes_segments(Some(&frame), quiet).unwrap();
-    assert_eq!(words(&notes), "FLOW | 4 records excluded");
+    assert_eq!(
+        notes_caption(Some(&frame), quiet).as_deref(),
+        Some("FLOW | 4 records excluded")
+    );
 }

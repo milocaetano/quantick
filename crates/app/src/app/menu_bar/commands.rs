@@ -60,6 +60,8 @@ pub(in crate::app) enum MenuCommand {
     SetToolboxDock(ToolboxDock),
     ToggleToolbox,
     OpenDockTab(DockTab),
+    /// Open the order-flow panel on a section.
+    OpenOrderFlowPanel(crate::ui_state::PanelSection),
     SetShowPerf(bool),
     SetProgressiveHistory(bool),
     SetVenueLeadIn(bool),

@@ -47,7 +47,7 @@ impl LayerWiring<'_> {
             visible,
             &mut self.workspace.layers_mut().actions,
         );
-        let _ = self.apply_actions();
+        self.apply_actions();
     }
 
     /// The control plane's `chart.settings.set`: the same window and the
@@ -141,10 +141,7 @@ impl LayerWiring<'_> {
     /// Drained right after the canvas, so the frame that clicked the entry is
     /// the frame that applies it. Both wishes reach the real owner — the shared
     /// style, the indicator state file — instead of a second copy on the pane.
-    ///
-    /// Answers the dock tab a pane header's glyph asked for: the dock is not
-    /// this wiring's to open.
-    pub(crate) fn apply_actions(&mut self) -> Option<crate::dock::DockTab> {
+    pub(crate) fn apply_actions(&mut self) {
         let actions = std::mem::take(&mut self.workspace.layers_mut().actions);
         if let Some(visible) = actions.grid {
             self.style.canvas.grid_enabled = visible;
@@ -172,14 +169,8 @@ impl LayerWiring<'_> {
         if actions.open_chart_settings {
             self.open_settings(ChartSettingsTab::Candles);
         }
-        // The strip reads the same book the depth map draws, so one tab
-        // configures both.
-        actions.open_layer_tab.map(|layer| {
-            match layer == crate::chart_layers::ChartLayer::Bubbles {
-                true => crate::dock::DockTab::Bubbles,
-                false => crate::dock::DockTab::L2,
-            }
-        })
+        let tab = self.tabs.runtime_mut(self.tabs.active_index());
+        quantick_chart::pane_header::settings_actions(&mut tab.tape_mut().settings_panel, &actions);
     }
 
     /// Apply what the footprint settings window settled on.
@@ -215,8 +206,12 @@ impl LayerWiring<'_> {
     /// then write them, once per change.
     pub(crate) fn maintain(&mut self, ctx: &egui::Context) {
         let tab_id = self.tabs.id_at(self.tabs.active_index());
-        let tab = &self.tabs[self.tabs.active_index()];
+        let tab = self.tabs.runtime_mut(self.tabs.active_index());
         chart_layers::maintain(self.workspace, tab_id, &tab.flow_pane, self.style);
+        if tab.tape_mut().settle_old_tape_fold() {
+            let states = tab.flow_pane.layer_states(self.style);
+            chart_layers::save(self.workspace.chart_layers_path(), &states);
+        }
         if !ctx.input(|input| input.pointer.any_down()) {
             self.tabs.iter_mut().for_each(Tab::sync_asset_bubbles);
         }

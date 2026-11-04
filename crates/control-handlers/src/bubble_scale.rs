@@ -24,7 +24,28 @@ pub struct BubbleScalePane {
     pub tape_bubbles: bool,
 }
 
+/// What a header sample sizes.
+#[must_use]
+pub fn sample_target(sample: quantick_chart::pane_header::BubbleSample) -> BubbleScaleTarget {
+    use quantick_chart::pane_header::BubbleSample;
+    match sample {
+        BubbleSample::Candle => BubbleScaleTarget::Candle,
+        BubbleSample::Tape => BubbleScaleTarget::Tape,
+    }
+}
+
 impl BubbleScalePane {
+    /// The facts this config gives a pane; `tick_chart` says its bars are ticks.
+    #[must_use]
+    pub fn of(config: &quantick_orderflow::HeatmapConfig, tick_chart: bool) -> Self {
+        Self {
+            tick_chart,
+            candle_bubbles: config.show_aggressions,
+            tape_only: config.tape_only(),
+            tape_bubbles: config.lane_aggressions_drawn(),
+        }
+    }
+
     /// The one rule for sizing bubbles: candle bubbles on a tick chart that
     /// draws them beside its candles, Tape bubbles wherever the tape draws
     /// them.

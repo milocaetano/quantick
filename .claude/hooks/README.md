@@ -599,7 +599,11 @@ is deliberate: the tier exists to make a goal cheap in tokens, and what protects
 `main` past the review is CI on the PR and the user's own merge. Into an
 `origin/feature/*` base whose parent issue carries `<!-- quantick-feature:v1 -->`,
 the same marker suffices for ready and merge, beside full CI at the exact head
-and the persisted grant; `campaign/*` keeps the mission reviews.
+and the persisted grant; `campaign/*` keeps the mission reviews. A plain
+`/implement` PR into a `feat/*` or `feature/*` branch records
+`<branch> origin/<target> none none` in `mission-base`: the review and its key
+measure against that target, `gh pr create` must name `--base <target>`, and the
+merge stays the user's.
 
 ## Tests
 

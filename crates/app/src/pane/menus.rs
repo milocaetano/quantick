@@ -39,6 +39,7 @@ pub(crate) struct LayerRow {
 pub(crate) struct TapeMenuView {
     pub(crate) window: LaneWindow,
     pub(crate) reference_ms: Option<i64>,
+    pub(crate) window_setting: LaneWindow,
 }
 
 /// The pane, read-only, as the layer menu sees it.
@@ -164,6 +165,7 @@ impl PaneMenuView<'_> {
             tape: self.tape.as_ref().map(|tape| TapeFact {
                 window: tape.window,
                 reference_ms: tape.reference_ms,
+                window_setting: tape.window_setting,
             }),
             drawing,
             places: model

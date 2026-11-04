@@ -85,6 +85,7 @@ fn inferred_grid_does_not_tombstone_the_initial_native_tape_window() {
                 on_newest_bar: true,
                 lane_reference_ms: Some(30_000),
                 lane_now_ms: Some(20_700),
+                lane_end_cap_ms: None,
                 price_range: (186_500.0, 187_300.0),
                 dot_zoom: Some(DotZoom {
                     native_tape: true,

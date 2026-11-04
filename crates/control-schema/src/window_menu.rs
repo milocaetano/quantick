@@ -118,6 +118,8 @@ const fn row(id: RowId, label: &'static str, behaviour: &'static str) -> Row {
 }
 
 const DOCK_BEHAVIOUR: &str = "dock.tab.open";
+/// L2 and Bubbles are sections of the order-flow panel, no longer dock tabs.
+const ORDERFLOW_PANEL_BEHAVIOUR: &str = crate::orderflow_settings::OPEN_CAPABILITY_ID;
 const TOOLBAR_BEHAVIOUR: &str = "toolrail.dock.set";
 const HELP_BEHAVIOUR: &str = "window.help.open";
 const NO_EDITS_HOVER: &str = "This tab holds no edits";
@@ -180,8 +182,8 @@ pub const ROWS: &[Row] = &[
         )
     },
     row(RowId::Settings, "Settings…", "settings.open"),
-    row(RowId::DockL2, "L2", DOCK_BEHAVIOUR),
-    row(RowId::DockBubbles, "Bubbles", DOCK_BEHAVIOUR),
+    row(RowId::DockL2, "L2", ORDERFLOW_PANEL_BEHAVIOUR),
+    row(RowId::DockBubbles, "Bubbles", ORDERFLOW_PANEL_BEHAVIOUR),
     row(RowId::DockSession, "Session", DOCK_BEHAVIOUR),
     row(RowId::DockPaperTrading, "Paper trading", DOCK_BEHAVIOUR),
     row(RowId::DockTrades, "Trades", DOCK_BEHAVIOUR),

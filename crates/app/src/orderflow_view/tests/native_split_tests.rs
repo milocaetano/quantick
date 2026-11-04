@@ -281,11 +281,12 @@ fn the_mini_index_preset_keeps_candles_beside_a_resizable_native_tape() {
     let before = view.config.clone();
     view.config.live_lane.tape_only = true;
     view.commit_config_changes(before);
+    view.release_lane_drag();
     view.resize_live_lane(-100.0, 1_000.0);
     assert_eq!(
         view.lane_width_px(1_000.0),
         1_000.0,
-        "tape only has no divider"
+        "a hand on tape only's rail, toward its own edge, moves nothing"
     );
 }
 

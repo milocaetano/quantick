@@ -46,6 +46,7 @@ pub fn reconcile_startup(
                 time_legend_collapsed: false,
                 workspace: None,
                 workspace_copy: None,
+                orderflow_panel: Default::default(),
             }
         },
         |index| workspace.tabs.remove(index),

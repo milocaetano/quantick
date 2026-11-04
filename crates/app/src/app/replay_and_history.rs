@@ -197,7 +197,7 @@ impl Harness {
     /// one would park the pointer somewhere the author did not ask for.
     pub(crate) fn scripted_pointer_pos(&self, flow: &ChartPane) -> Option<egui::Pos2> {
         let fraction = self.pointer()?;
-        let candles = crate::bands::drawing_area(flow.frame.chart_rect?, flow.frame.lane_divider_x);
+        let candles = crate::bands::drawing_area(flow.frame.chart_rect?, flow.frame.candles_right);
         Some(egui::pos2(
             candles.left() + fraction.x * candles.width(),
             candles.top() + fraction.y * candles.height(),

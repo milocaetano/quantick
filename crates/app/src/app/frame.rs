@@ -497,7 +497,7 @@ impl QuantickApp {
                 &mut *self.audio.alerts,
                 ctx,
                 now,
-                self.dock.holds_pointer(ctx),
+                crate::dock::holds_pointer(&self.dock, ctx),
             );
             effects.apply(&mut self.surfaces.toast, &mut self.toolrail);
         }
@@ -650,9 +650,6 @@ impl QuantickApp {
             self.paper_settings()
                 .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
         }
-        if response.restart_book_capture {
-            self.active_tab_mut().restart_book_capture();
-        }
         if let Some(action) = response.replay_action {
             // A click that lost its slot has the trader's next click behind
             // it; only the one-shot hook cares about the answer.
@@ -737,6 +734,10 @@ impl QuantickApp {
             .frame(egui::Frame::none().fill(background))
             .show(ctx, |ui| {
                 let area = ui.available_rect_before_wrap();
+                let tab_id = self.runtime.tabs.active_id();
+                let active = self.runtime.tabs.active_index();
+                let (tab, panel_folds) =
+                    self.runtime.tabs.with_panel_folds(active).expect("active");
                 let mut chrome = CanvasChrome {
                     toolrail: &mut self.toolrail,
                     presets: &self.drawings.presets,
@@ -748,12 +749,9 @@ impl QuantickApp {
                     side_inferred,
                     footprint: &mut self.runtime.footprint_config,
                     layers: &mut self.runtime.workspace.layers_mut().actions,
+                    panel_folds,
                 };
-                let tab_id = self.runtime.tabs.active_id();
-                self.runtime
-                    .tabs
-                    .runtime_mut(self.runtime.tabs.active_index())
-                    .draw_canvas(tab_id, ui, area, &mut chrome);
+                tab.draw_canvas(tab_id, ui, area, &mut chrome);
                 if let Some(side) = self.active_tab_mut().take_indicator_picker_request() {
                     self.open_indicator_picker_on(side);
                 }
@@ -763,9 +761,7 @@ impl QuantickApp {
                 self.layout_adapter().draw_layout_strips(ui);
                 // The grid and the indicator state belong to the window, not
                 // to the pane whose menu switched them.
-                if let Some(tab) = self.layer_wiring().apply_actions() {
-                    self.dock.open_tab(tab);
-                }
+                self.layer_wiring().apply_actions();
                 let tab = self.active_tab();
                 canvas::overlays(ui, area, tab, &self.config, stall, now_ms, &mut answers);
             });

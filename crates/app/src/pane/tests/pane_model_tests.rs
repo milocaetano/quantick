@@ -16,12 +16,12 @@ fn the_axis_tag_and_the_control_cursor_name_one_bar() {
     pane.frame.bands = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }
     .bands(&areas);
-    let right = pane.frame.lane_divider_x.unwrap_or(areas.chart.right());
+    let right = pane.frame.candles_right.unwrap_or(areas.chart.right());
     let total = pane.slots();
     // Deliberately in the left half of a candle, the half that used to
     // answer with its neighbour.
@@ -53,7 +53,7 @@ fn lay_out_bands(pane: &mut ChartPane) -> PlotAreas {
     pane.frame.bands = crate::bands::BandGeometry {
         auto_range: pane.frame.auto_range,
         price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
+        candles_right: pane.frame.candles_right,
         indicators: &pane.indicators,
         price_label: &pane.price_band_label,
     }
@@ -72,6 +72,7 @@ fn the_bare_candles_end_at_the_lane_divider() {
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let divider = TEST_PLOT.center().x;
     pane.frame.lane_divider_x = Some(divider);
+    pane.frame.candles_right = Some(divider);
     let areas = lay_out_bands(&mut pane);
     let y = areas.chart.center().y;
     let hit = pane.hit_test();

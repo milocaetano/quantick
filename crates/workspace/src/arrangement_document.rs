@@ -1,4 +1,5 @@
 //! Stable saved arrangement vocabulary; runtime conversion stays in the app.
+use crate::orderflow_panel::{AssetFolds, OrderFlowPanel, PanelSection};
 pub use crate::workspace_recipe::DeclaredLayout;
 use crate::workspace_recipe::WorkspaceRecipe;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,10 @@ pub enum SavedRailDock {
 
 /// Which dock tab was open, in the file's vocabulary. Absent means the dock
 /// was collapsed to its strip, which is a state in its own right.
+///
+/// `L2` and `Bubbles` survive as a *reading* vocabulary only: those settings left
+/// the dock for the order-flow panel, and a file that still names one opens that
+/// panel on that section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SavedDockTab {
@@ -45,6 +50,18 @@ pub enum SavedDockTab {
     Session,
     Trading,
     Trades,
+}
+
+impl SavedDockTab {
+    /// The order-flow panel section this old tab's settings moved to.
+    #[must_use]
+    pub const fn panel_section(self) -> Option<PanelSection> {
+        match self {
+            Self::L2 => Some(PanelSection::L2),
+            Self::Bubbles => Some(PanelSection::Bubbles),
+            Self::Session | Self::Trading | Self::Trades => None,
+        }
+    }
 }
 
 /// One remembered market and how its canvas was arranged.
@@ -142,6 +159,9 @@ pub struct SavedTab {
     /// an edited tab comes back still marked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_copy: Option<WorkspaceRecipe>,
+    /// The tab's order-flow panel: open or not, and how wide.
+    #[serde(default, skip_serializing_if = "OrderFlowPanel::is_default")]
+    pub orderflow_panel: OrderFlowPanel,
 }
 
 impl SavedTab {
@@ -152,6 +172,21 @@ impl SavedTab {
             .chain(self.context_layouts.iter().copied())
             .filter(|id| *id != LAYOUT_UNRECORDED)
             .map(crate::layout_document::LayoutId)
+    }
+
+    /// The panel this tab opens with: its own, or, on the tab that was active and
+    /// is `showing` its flow pane when an old file left an L2 or Bubbles dock tab
+    /// on screen, opened on that section. A hidden dock showed no tab.
+    #[must_use]
+    pub fn restored_panel(&self, chrome: Option<&SavedChrome>, showing: bool) -> OrderFlowPanel {
+        let mut panel = self.orderflow_panel.clone();
+        let old_tab = chrome
+            .filter(|chrome| chrome.dock_visible && showing)
+            .and_then(|chrome| chrome.dock_tab);
+        if let Some(section) = old_tab.and_then(SavedDockTab::panel_section) {
+            panel.open_on(Some(section));
+        }
+        panel
     }
 }
 
@@ -241,6 +276,9 @@ pub struct SavedChrome {
     /// screen decides what is still possible.
     #[serde(default)]
     pub inspector_position: Option<[f32; 2]>,
+    /// Which order-flow panel sections are open, per asset.
+    #[serde(default, skip_serializing_if = "AssetFolds::is_empty")]
+    pub orderflow_folds: AssetFolds,
 }
 
 pub const LAYOUT_UNRECORDED: u64 = 0;

@@ -66,6 +66,21 @@ impl PendingPlace {
     }
 }
 
+impl ProjectionRequest {
+    /// Where the lane ends with `latest_ms` the newest recorded event: a native
+    /// tape on the caller's clock, any other at that event, and either no later
+    /// than a held window's cap.
+    #[must_use]
+    pub(super) fn lane_end_ms(&self, native_tape: bool, latest_ms: i64) -> i64 {
+        let now_ms = if native_tape {
+            self.lane_now_ms.unwrap_or(latest_ms).max(latest_ms)
+        } else {
+            latest_ms
+        };
+        self.lane_end_cap_ms.map_or(now_ms, |cap| now_ms.min(cap))
+    }
+}
+
 impl VisibleOrderflow {
     /// Complete the tape without waiting for the book worker. Its next frame
     /// replaces the provisional attribution while preserving execution facts.

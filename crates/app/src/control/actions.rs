@@ -35,8 +35,7 @@ pub(crate) type ActionRegistry =
 
 /// The annotate tier's identifiers the mark docks into (contract §7).
 pub(crate) use quantick_control_host::authority::{
-    ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, CAPABILITY_VERSION, NO_CONFIRMATION_ID,
-    UI_BOUNDED_COST_ID,
+    ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, CAPABILITY_VERSION,
 };
 
 /// The actions every instance registers. A later module adds one descriptor
@@ -61,6 +60,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::bubble_save::register(&mut registry)?;
     quantick_control_handlers::bubble_scale::register(&mut registry)?;
     quantick_control_handlers::tape_fold::register(&mut registry)?;
+    quantick_control_handlers::orderflow_settings::register(&mut registry)?;
     quantick_control_handlers::tape_view_set::register(&mut registry)?;
     quantick_control_handlers::recovery::register(&mut registry)?;
     quantick_control_handlers::feed_source::register(&mut registry)?;

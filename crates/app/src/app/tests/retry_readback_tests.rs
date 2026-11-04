@@ -676,6 +676,20 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("orderflow.tape.view.set", 1, Value::Null, Readback::Moves),
         ("orderflow.tape.fold.set", 1, Value::Null, Readback::Moves),
         (
+            "orderflow.tape.market_fold.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
+        ("orderflow.settings.open", 1, Value::Null, Readback::Moves),
+        (
+            "orderflow.settings.section.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
+        ("orderflow.settings.close", 1, Value::Null, Readback::Moves),
+        (
             "orderflow.bubbles.save_changes.set",
             1,
             Value::Null,
@@ -1028,6 +1042,26 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "fold": "candles",
+            }),
+            "orderflow.tape.market_fold.set" => json!({
+                "tab_id": app.runtime.tabs.active_id().to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "enabled": false,
+            }),
+            "orderflow.settings.open" => {
+                run_frame(&mut app, &ctx);
+                json!({
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
+                    "section": "bubbles",
+                })
+            }
+            "orderflow.settings.section.set" => json!({
+                "tab_id": app.runtime.tabs.active_id().to_string(),
+                "section": "l2",
+                "open": false,
+            }),
+            "orderflow.settings.close" => json!({
+                "tab_id": app.runtime.tabs.active_id().to_string(),
             }),
             "orderflow.bubbles.save_changes.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),

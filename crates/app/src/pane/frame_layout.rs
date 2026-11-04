@@ -92,6 +92,9 @@ pub(super) struct FrameLayout {
     pub(super) closed_total: usize,
     pub(super) start: usize,
     pub(super) end: usize,
+    /// The slots the price axis fits: `start..end`, or in tape only the ones
+    /// the candles would show beside the tape, so both views fit one window.
+    pub(super) fit_slots: (usize, usize),
     /// The candle view this frame reads ([`super::ChartPane::shown_viewport`]).
     pub(super) view: crate::viewport::Viewport,
     /// One slot's width in pixels, read after the clamp.
@@ -101,8 +104,6 @@ pub(super) struct FrameLayout {
     pub(super) indicator_guide_x: Option<f32>,
     /// The pane shows the tape alone: no candles, the tape full width.
     pub(super) tape_only: bool,
-    /// The price axis fits the tape alone: tape only, or candles folded.
-    pub(super) fits_tape: bool,
     /// The native tape fits the one price axis, padded by `tape_padding_px`.
     pub(super) native_tape: bool,
     pub(super) tape_padding_px: f32,
@@ -133,9 +134,8 @@ impl FrameLayout {
     /// The visible slices and the price scale, as the [`DrawFrame`] every
     /// painter reads, plus the auto-fitted range the next frame's input
     /// handler converts pixels with and the span its gutter drag flips
-    /// against. `None` when nothing yields a scale.
-    /// The native tape and visible candles share a fit; tape only fits its
-    /// prints, and ordinary charts fit their own bars.
+    /// against. `None` when nothing yields a scale. The native tape fits its
+    /// prints with the `fit_slots` candles; ordinary charts fit their own bars.
     pub(super) fn resolve<'a>(
         &'a self,
         painter: &'a egui::Painter,
@@ -160,19 +160,12 @@ impl FrameLayout {
             cw,
             ..
         } = *self;
-        // The visible closed bars, plus the partial if it falls in view. With
-        // a venue prefix the window can straddle both series, so it is two
-        // slices — chained where they are read rather than copied into one.
-        // Copying was 24-48 KB every frame for the life of the pane, including
-        // the common case of following the live edge, where the seam is three
-        // months off screen and the prefix half of the window is empty.
+        use quantick_chart::price_axis_fit::window_slices;
         let closed_start = start.min(closed_total);
-        let closed_end = end.min(closed_total);
-        let visible_prefix = &prefix[closed_start.min(prefix.len())..closed_end.min(prefix.len())];
-        let visible_state = &closed[closed_start.saturating_sub(prefix.len())
-            ..closed_end.saturating_sub(prefix.len()).min(closed.len())];
-        let partial_visible = partial.filter(|_| closed_total >= start && closed_total < end);
-
+        let shown = window_slices((prefix, closed, partial), (start, end));
+        let (visible_prefix, visible_state, partial_visible) = shown;
+        let (fit_prefix, fit_state, fit_partial) =
+            window_slices((prefix, closed, partial), self.fit_slots);
         // Auto-fit the pane's own source, then apply explicit price pan/zoom. A
         // window with no bars in it still gets a scale (the last one, then the
         // newest bar), because a chart that draws nothing at all is
@@ -181,17 +174,12 @@ impl FrameLayout {
         let newest = partial.or_else(|| closed.last());
         let (auto_range, flip_span) = quantick_chart::price_axis_fit::PriceAxisFit {
             native_tape: self.native_tape,
-            tape_only: self.fits_tape,
             tape_range,
             previous_auto: last_auto_range,
             bounds: (chart_rect.top(), chart_rect.bottom()),
             tape_padding_px: self.tape_padding_px,
         }
-        .resolve(
-            visible_prefix.iter().chain(visible_state),
-            partial_visible,
-            newest,
-        )?;
+        .resolve(fit_prefix.iter().chain(fit_state), fit_partial, newest)?;
         let scale = price_view.scale(auto_range, chart_rect.top(), chart_rect.bottom());
         let frame = DrawFrame {
             painter,
