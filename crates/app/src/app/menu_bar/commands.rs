@@ -90,6 +90,7 @@ impl MenuCommand {
                 | Self::Strip(_)
                 | Self::MoveContextChart { .. }
                 | Self::ToggleLegend
+                | Self::OpenOrderFlowPanel(_)
                 | Self::PaperMarket(_)
                 | Self::PaperReverse
                 | Self::PaperFlatten

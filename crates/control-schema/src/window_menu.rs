@@ -5,6 +5,8 @@
 //! names the behaviour it reaches, so a row without a named command cannot be
 //! written and a menu cannot quietly become mouse-only.
 
+use crate::orderflow_settings::{AssetFolds, OrderFlowPanel, PanelSection};
+
 /// One command row of the window menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RowId {
@@ -514,6 +516,45 @@ pub const VENUE_LEAD_IN_HOVER: &str = "A tick, volume, dollar or imbalance chart
              and an indicator running across the seam is averaging both \
              kinds.";
 
+/// Why a chart row is greyed while Home covers the canvas.
+pub const HOME_SHOWN_HOVER: &str = "Home is on screen: pick a market first";
+
+/// The section of the order-flow panel a row opens: L2 and Bubbles, which were
+/// dock tabs.
+#[must_use]
+pub const fn panel_section_of(id: RowId) -> Option<PanelSection> {
+    match id {
+        RowId::DockL2 => Some(PanelSection::L2),
+        RowId::DockBubbles => Some(PanelSection::Bubbles),
+        _ => None,
+    }
+}
+
+/// Why a row that opens a section of the order-flow panel cannot now, if it
+/// cannot: the panel rides on the flow pane, so with none on screen, or Home
+/// over the chart, opening it would do nothing a trader can see.
+#[must_use]
+pub const fn panel_row_blocked(chart_shown: bool, flow_pane_shown: bool) -> Option<&'static str> {
+    if !chart_shown {
+        Some(HOME_SHOWN_HOVER)
+    } else if !flow_pane_shown {
+        Some("No flow pane on screen")
+    } else {
+        None
+    }
+}
+
+/// Whether a panel row reads selected: the panel is open and its section shows.
+#[must_use]
+pub fn panel_row_selected(
+    panel: &OrderFlowPanel,
+    folds: &AssetFolds,
+    asset: &str,
+    section: PanelSection,
+) -> bool {
+    panel.is_open() && folds.section_open(asset, section)
+}
+
 /// The legend row's tooltip.
 pub const LEGEND_HOVER: &str = "Folds the healthy rows to a count on the focused chart. Errored \
      and stale indicators stay on it.";
@@ -636,6 +677,44 @@ mod tests {
             "Deleted Scalp; WINV26, WDOV26 keep their edits as Default \u{2022}"
         );
         assert_eq!(deleted_toast("Scalp", &[], &[]), "Deleted Scalp");
+    }
+
+    #[test]
+    fn the_panel_rows_open_their_section_only_on_a_shown_flow_pane() {
+        assert_eq!(panel_section_of(RowId::DockL2), Some(PanelSection::L2));
+        assert_eq!(
+            panel_section_of(RowId::DockBubbles),
+            Some(PanelSection::Bubbles)
+        );
+        assert_eq!(panel_section_of(RowId::DockSession), None);
+        assert_eq!(panel_row_blocked(true, true), None);
+        assert_eq!(panel_row_blocked(false, true), Some(HOME_SHOWN_HOVER));
+        assert_eq!(panel_row_blocked(false, false), Some(HOME_SHOWN_HOVER));
+        assert_eq!(
+            panel_row_blocked(true, false),
+            Some("No flow pane on screen")
+        );
+    }
+
+    #[test]
+    fn a_panel_row_reads_selected_while_the_open_panel_shows_its_section() {
+        let (mut panel, mut folds) = (OrderFlowPanel::default(), AssetFolds::default());
+        let l2 = PanelSection::L2;
+        assert!(!panel_row_selected(&panel, &folds, "BTCUSDT", l2), "closed");
+        panel.open_on(Some(l2));
+        assert!(panel_row_selected(&panel, &folds, "BTCUSDT", l2));
+        folds.set("BTCUSDT", l2, false);
+        assert!(!panel_row_selected(&panel, &folds, "BTCUSDT", l2), "folded");
+        assert!(panel_row_selected(
+            &panel,
+            &folds,
+            "BTCUSDT",
+            PanelSection::Bubbles
+        ));
+        assert!(
+            panel_row_selected(&panel, &folds, "ETHUSDT", l2),
+            "per asset"
+        );
     }
 
     #[test]

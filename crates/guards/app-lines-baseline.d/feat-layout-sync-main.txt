@@ -1,7 +1,12 @@
-# Not growth: both parents took credit for the same moves. Layout and main each
-# moved the live-envelope tests (~800 lines) out of the counted tree and each moved
-# the observer schema list (~160 lines) out of control/schema_catalog.rs, and each
-# tightened for it; merged, the lines leave once but both cuts stay. Per-file counts
-# match layout + main - base.
-crates/app +943
-!budget +943
+# Mostly not growth: both parents took credit for the same moves. Layout and main
+# each moved the live-envelope tests (797 lines) out of the counted tree and each
+# moved the observer schema list (158 lines) out of control/schema_catalog.rs,
+# and each tightened its own ceiling for them; merged, the lines leave once but
+# both cuts stay: 955 lines. The parents' unused headroom gives back 16.
+# Merge-only app lines, 10: the merge's +4 (menus.rs routing the L2 and Bubbles
+# rows to the order-flow panel, read_view_keys keeping its Home gate) and +6
+# from gating those rows like the panel key (needs_chart, greyed off Home or
+# without a flow pane, selected while the panel shows their section); the row
+# decisions, panel_section_of included, live in control-schema's window_menu.
+crates/app +949
+!budget +949

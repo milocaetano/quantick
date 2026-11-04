@@ -579,6 +579,7 @@ fn a_source_change_behind_home_still_relabels_the_chip_and_leaves_home() {
 #[test]
 fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     use super::super::menu_bar::MenuCommand;
+    use crate::ui_state::PanelSection;
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     let _second = two_tabs(&mut app, &ctx);
@@ -593,6 +594,7 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     app.apply_menu_command(MenuCommand::ToggleLegend);
     app.apply_menu_command(MenuCommand::ToggleContextCharts);
     app.apply_menu_command(MenuCommand::PaperMarket(quantick_engine::Side::Buy));
+    app.apply_menu_command(MenuCommand::OpenOrderFlowPanel(PanelSection::L2));
     frame(&mut app, &ctx);
     assert!(on_home(&app));
     assert_eq!(app.runtime.tabs.len(), 2);
@@ -601,6 +603,7 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
     assert_eq!(tab.focused_pane().legend_collapsed, legend);
     assert_eq!(tab.context_collapsed, context);
     assert!(tab.paper.is_flat());
+    assert!(!tab.tape().settings_panel.is_open(), "as Ctrl+Shift+O");
 
     // What is not the chart's still works, and the window stays on Home.
     let dock = app.dock.visible();

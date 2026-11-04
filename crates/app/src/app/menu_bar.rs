@@ -338,6 +338,7 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
         dock_visible: app.dock.visible(),
         dock_tab: app.dock.tab(),
         toolrail: &app.toolrail,
+        panel_folds: app.runtime.tabs.panel_folds(),
         startup_saved: app.runtime.workspace.session().saved(),
         save_on_exit: app.runtime.workspace.session().save_on_exit(),
         recent: app.runtime.workspace.recent_on_disk(),
