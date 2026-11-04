@@ -95,7 +95,10 @@ impl QuantickApp {
             None => (0, bars.len()),
         };
         let note = self.active_tab().side_note(&self.config);
+        let row = (self.runtime.workspace.book).tab_row(self.runtime.tabs.active_id());
         statusbar::StatusModel {
+            workspace: (!self.chrome.title_bar.surface.is_home()).then_some(row.0),
+            modified: row.1,
             venue: if self.active_tab().replay.is_some() {
                 "recording".to_owned()
             } else {

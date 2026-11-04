@@ -20127,7 +20127,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Lists every saved workspace with the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+      "description": "Lists every saved workspace with a one-line summary (panes, intervals, indicator count) and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "observe",
@@ -20158,6 +20158,10 @@
               "name": {
                 "type": "string"
               },
+              "summary": {
+                "description": "One line: the panes, each context pane's interval and the indicator\ncount, e.g. `Time 1m · Flow · 3 ind`.",
+                "type": "string"
+              },
               "tabs": {
                 "items": {
                   "$ref": "#/$defs/WireU64"
@@ -20167,6 +20171,7 @@
             },
             "required": [
               "name",
+              "summary",
               "tabs"
             ],
             "type": "object"
@@ -20200,6 +20205,98 @@
       "risk_flags": [],
       "risk_reducing": false,
       "title": "List the workspaces",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Makes a workspace of an empty recipe: what the tab shows, its canvas, pane sizes, context intervals, layers and footprint style, with every indicator removed. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason; a tab still opening is refused with workspace.tab_not_ready, retryable.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.new",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Make a new, empty workspace and put a tab on it.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceNewInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The new workspace as stored, and whether the tab's edits were dropped.",
+        "properties": {
+          "dropped_edits": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "workspace",
+          "dropped_edits"
+        ],
+        "title": "WorkspaceNewResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
+      "title": "Make a new, empty workspace for a tab",
       "version": 1
     },
     {

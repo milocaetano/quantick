@@ -128,7 +128,7 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     let (mut host, mut access, actor) = parts();
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let mut menu = WorkspaceMenuState::default();
-    menu.open_rename("Scalp");
+    menu.open_rename(1, "Scalp");
     menu.dialog.as_mut().unwrap().name = "  The   open ".to_owned();
     let note = apply_row_command(
         &mut host,
@@ -140,7 +140,7 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     );
     assert_eq!(note, Some(text::renamed_toast("Scalp", "The open")));
     assert!(menu.dialog.is_none());
-    menu.open_rename("The open");
+    menu.open_rename(1, "The open");
     menu.dialog.as_mut().unwrap().name = " The open".to_owned();
     let note = apply_row_command(
         &mut host,
@@ -391,15 +391,16 @@ fn rename_answers_the_cleaned_name_and_revert_drops_edits_once() {
 }
 
 #[test]
-fn list_names_every_workspace_with_its_tabs() {
+fn list_names_every_workspace_with_its_summary_and_tabs() {
     let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let rows = list(&mut host, &mut access, &actor, &json!({})).unwrap();
     assert_eq!(
         rows["workspaces"],
         json!([
-            { "name": "Default", "tabs": ["2"] },
-            { "name": "Scalp", "tabs": ["1"] },
+            { "name": "Default", "summary": "as the feed opens", "tabs": ["2"] },
+            { "name": "Scalp", "summary": "Flow", "tabs": ["1"] },
         ])
     );
 }
@@ -418,6 +419,8 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     let value = json!({ "name": "Scalp", "to": "Open" });
     rename(&mut host, &mut access, &actor, &value).unwrap();
     delete(&mut host, &mut access, &actor, &json!({ "name": "Open" })).unwrap();
+    edit(&mut host, 1);
+    new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
     for row in READBACKS {
         let kind = row.event.unwrap();
         assert!(
@@ -436,4 +439,113 @@ fn every_journal_row_reads_a_field_the_event_carries() {
             "{kind} was never journaled"
         );
     }
+}
+
+/// New workspace asks the name first: the row opens the dialog and nothing
+/// else, and Esc closes it with the book, the disk, the charts and the journal
+/// as they were.
+#[test]
+fn new_workspace_esc_leaves_the_chart_untouched() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    let before = host.book.clone();
+    let mut menu = WorkspaceMenuState::default();
+    let note = apply_row_command(
+        &mut host,
+        Some((&mut access, &actor)),
+        &mut menu,
+        1,
+        "WINV26",
+        WorkspaceCommand::BeginNew,
+    );
+    assert_eq!(note, None);
+    assert_eq!(menu.dialog.as_ref().unwrap().mode, NameDialogMode::New);
+    menu.dialog.as_mut().unwrap().name = "Blank".to_owned();
+    menu.close_dialog();
+    assert_eq!(host.book, before, "the tab keeps its edits");
+    assert!(host.shown.is_empty(), "no chart was redrawn");
+    assert_eq!((host.writes, access.events.len()), (0, 0));
+}
+
+/// Enter makes the empty recipe, moves only that tab and says so; a refused
+/// name keeps the dialog and changes nothing.
+#[test]
+fn new_workspace_applies_on_enter_and_a_taken_name_stays_in_the_dialog() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let mut menu = WorkspaceMenuState::default();
+    let mut submit = |host: &mut FakeHost, menu: &mut WorkspaceMenuState, name: &str| {
+        apply_row_command(
+            host,
+            Some((&mut access, &actor)),
+            menu,
+            1,
+            "WINV26",
+            WorkspaceCommand::BeginNew,
+        );
+        menu.dialog.as_mut().unwrap().name = name.to_owned();
+        apply_row_command(
+            host,
+            Some((&mut access, &actor)),
+            menu,
+            1,
+            "WINV26",
+            WorkspaceCommand::SubmitDialog,
+        )
+    };
+    let before = host.book.clone();
+    assert_eq!(submit(&mut host, &mut menu, "scalp"), None);
+    assert!(menu.dialog.as_ref().unwrap().refusal.is_some());
+    assert_eq!(host.book, before);
+    menu.close_dialog();
+    let note = submit(&mut host, &mut menu, "Blank");
+    assert_eq!(note, Some(text::created_toast("WINV26", "Blank")));
+    assert!(menu.dialog.is_none());
+    assert_eq!(
+        host.book
+            .tab_state(1)
+            .map(|state| (state.workspace, state.modified)),
+        Some(("Blank", false))
+    );
+    assert_eq!(host.book.tab_state(2).unwrap().workspace, DEFAULT_WORKSPACE);
+    assert_eq!(host.shown, [1]);
+}
+
+/// `workspace.new` is not `workspace.save_as`: it copies no indicators, and a
+/// repeat is refused with the name taken.
+#[test]
+fn the_new_call_makes_an_empty_recipe_and_a_repeat_is_refused() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    let made = new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
+    assert_eq!(
+        made,
+        json!({ "tab_id": "1", "workspace": "Blank", "dropped_edits": true })
+    );
+    assert!(
+        host.book
+            .recipe("Blank")
+            .unwrap()
+            .flow_indicators
+            .is_empty()
+    );
+    assert_eq!(host.writes, 1);
+    let again = new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap_err();
+    assert_eq!(detail(&again), "workspace.name_taken");
+    assert_eq!((host.writes, access.events.len()), (1, 1));
+}
+
+/// A tab still opening has no arrangement to empty: the call is refused as
+/// retryable, the way a tab the book has not met is.
+#[test]
+fn the_new_call_on_a_tab_still_opening_is_refused_retryably() {
+    let (mut host, mut access, actor) = parts();
+    let before = host.book.clone();
+    let error = new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap_err();
+    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+    assert!(error.retryable);
+    assert_eq!(detail(&error), TAB_NOT_READY_CODE);
+    assert_eq!(host.book, before);
+    assert_eq!((host.writes, access.events.len()), (0, 0));
 }

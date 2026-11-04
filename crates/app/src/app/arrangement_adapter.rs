@@ -302,8 +302,6 @@ impl ArrangementAdapter<'_> {
                 }
             }
             TabAction::New => return true,
-            // Carried out by the window menu's owner, which holds its state.
-            TabAction::WorkspaceMenu => {}
             TabAction::Home => super::home_wiring::show_home(self.tabs, self.surface),
         }
         false

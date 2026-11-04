@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 105 |
+| Reachable by capability | 106 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **159** |
+| **Total** | **160** |
 
-95 of the 159 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 64 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+96 of the 160 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 64 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -199,9 +199,10 @@ The three exclusion classes are closed:
 | `desk.save` | Remember this arrangement as what quantick opens on | window menu, Save desk, Ctrl+Shift+S | `desk.save` | — |
 | `desk.reopen_on_launch.set` | Keep the arrangement automatically when the window closes | window menu, Desk | `desk.reopen_on_launch.set` | — |
 | `desk.forget` | Forget the saved workspace and open on the configured default | window menu, Desk, Reset startup desk | `desk.forget` | — |
-| `tab.workspace.set` | Put a tab on a saved workspace | the active tab's workspace button | `tab.workspace.set` | — |
+| `tab.workspace.set` | Put a tab on a saved workspace | the status bar's workspace cell | `tab.workspace.set` | — |
 | `workspace.save_to` | Save a tab's edits to its workspace | window menu, Save to | `workspace.save_to` | — |
 | `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new | `workspace.save_as` | — |
+| `workspace.new` | Make a new, empty workspace for a tab | the status bar's workspace cell, New workspace | `workspace.new` | — |
 | `workspace.revert` | Drop a tab's unsaved edits | window menu, Workspace, Revert | `workspace.revert` | — |
 | `workspace.rename` | Rename a workspace | window menu, Workspace, Rename | `workspace.rename` | — |
 | `workspace.delete` | Delete a workspace, moving its tabs to Default | window menu, Workspace, Delete | `workspace.delete` | — |
@@ -224,7 +225,7 @@ matrix fails the build.
 | --- | --- |
 | `toolbar_action` | 19 |
 | `strip_action` | 6 |
-| `tab_action` | 5 |
+| `tab_action` | 4 |
 | `dock_tab` | 3 |
 | `layer_toggle` | 6 |
 | `drawing_tool` | 22 |
@@ -232,8 +233,8 @@ matrix fails the build.
 | `toolbox_dock` | 3 |
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
-| `hotkey` | 24 |
-| `menu_entry` | 44 |
+| `hotkey` | 25 |
+| `menu_entry` | 45 |
 | `scripted_menu` | 0 |
 | `authored` | 64 |
 

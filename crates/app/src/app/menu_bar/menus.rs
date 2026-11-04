@@ -396,7 +396,7 @@ impl WindowMenu<'_> {
             LiveRows::Legend => self.legend_entry(ui, commands),
             LiveRows::ChartMoves => self.chart_moves(ui, commands),
             LiveRows::RecentFiles => self.recent_files(ui, commands),
-            LiveRows::WorkspaceList => self.workspace.list(ui, commands),
+            LiveRows::WorkspaceList => self.workspace.list(ui, commands, false),
         }
         if wants_focus && !self.focus_live_row.get() {
             state.focus_pane = None;

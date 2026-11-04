@@ -1,5 +1,5 @@
-//! Paints the workspace rows of the `⋮` menu, the menu under the active chip's
-//! button and the name dialog. The words are `window_menu`'s, the state is
+//! Paints the workspace rows of the `⋮` menu, the menu above the status bar's
+//! workspace cell and the name dialog. The words are `window_menu`'s, the state is
 //! `workspace_menu`'s and what a row does is [`WorkspaceCommand`]'s.
 
 use eframe::egui;
@@ -25,7 +25,17 @@ pub(super) struct WorkspaceRows<'a> {
     pub(super) symbol: &'a str,
 }
 
-impl WorkspaceRows<'_> {
+impl<'a> WorkspaceRows<'a> {
+    /// The rows of the window's presented tab.
+    pub(super) fn of(app: &'a QuantickApp) -> Self {
+        Self {
+            book: app.runtime.workspace.book.book(),
+            tabs: &app.runtime.tabs,
+            tab: app.runtime.tabs.active_id(),
+            symbol: app.active_tab().symbol.as_str(),
+        }
+    }
+
     fn state(&self) -> (&str, bool) {
         self.book
             .tab_state(self.tab)
@@ -68,15 +78,20 @@ impl WorkspaceRows<'_> {
         response
     }
 
-    /// Every workspace, with the tabs on it; the active tab's is lit.
-    pub(super) fn list(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>) {
+    /// Every workspace, the active tab's lit, beside the tabs on it or, in the
+    /// cell's menu, its one-line summary.
+    pub(super) fn list(self, ui: &mut egui::Ui, commands: &mut Vec<MenuCommand>, summary: bool) {
         let (current, _) = self.state();
         for row in self.book.list() {
-            let on_it = self.symbols(&row.tabs).join(", ");
+            let beside = if summary {
+                self.book.summary(&row.name)
+            } else {
+                self.symbols(&row.tabs).join(", ")
+            };
             let response = ui.add(
                 egui::Button::new(row.name.as_str())
                     .selected(row.name == current)
-                    .shortcut_text(on_it),
+                    .shortcut_text(beside),
             );
             if response.clicked() {
                 Self::push(commands, WorkspaceCommand::Set(row.name));
@@ -100,6 +115,12 @@ impl WorkspaceRows<'_> {
             RowId::WorkspaceSaveAsNew => {
                 if ui.button(row.label).clicked() {
                     Self::push(commands, WorkspaceCommand::BeginSaveAs);
+                }
+            }
+            RowId::WorkspaceNew => {
+                let hover = row.hover.unwrap_or_default();
+                if ui.button(row.label).on_hover_text(hover).clicked() {
+                    Self::push(commands, WorkspaceCommand::BeginNew);
                 }
             }
             RowId::WorkspaceRename => {
@@ -156,7 +177,8 @@ impl WorkspaceRows<'_> {
         }
     }
 
-    /// The menu under the active chip's button. Opens with `WINV26 uses`.
+    /// The menu above the status bar's workspace cell, opening upward from its
+    /// top-left. Opens with `WINV26 uses`.
     pub(super) fn chip_menu(
         self,
         ctx: &egui::Context,
@@ -165,13 +187,14 @@ impl WorkspaceRows<'_> {
         keys: String,
         commands: &mut Vec<MenuCommand>,
     ) {
-        if !menu.chip_menu {
+        if !menu.chip_menu_on(self.tab) {
             return;
         }
         let recorded = commands.len();
         let area = egui::Area::new(egui::Id::new("tab_workspace_menu"))
             .order(egui::Order::Foreground)
-            .fixed_pos(anchor.left_bottom())
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .fixed_pos(anchor.left_top())
             .constrain(true)
             .show(ctx, |ui| {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
@@ -179,16 +202,11 @@ impl WorkspaceRows<'_> {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                         super::menus::flat_rows(ui);
                         ui.weak(text::uses_caption(self.symbol));
-                        self.list(ui, commands);
+                        self.list(ui, commands, true);
                         ui.separator();
                         self.save_to_row(ui, keys, commands);
-                        for id in [
-                            RowId::WorkspaceSaveAsNew,
-                            RowId::WorkspaceRename,
-                            RowId::WorkspaceRevert,
-                            RowId::WorkspaceDelete,
-                        ] {
-                            self.action_row(ui, id, menu, commands);
+                        for id in text::CELL_MENU_ROWS {
+                            self.action_row(ui, *id, menu, commands);
                         }
                     });
                 });
@@ -215,12 +233,14 @@ pub(super) fn name_dialog(
     ctx: &egui::Context,
     commands: &mut Vec<MenuCommand>,
 ) {
+    let tab = app.runtime.tabs.active_id();
     let state = &mut app.chrome.window_menu.tab_workspace;
-    let Some(dialog) = state.dialog.as_mut() else {
+    let Some(dialog) = state.dialog.as_mut().filter(|dialog| dialog.tab == tab) else {
         return;
     };
     let title = match &dialog.mode {
         NameDialogMode::SaveAsNew => text::SAVE_AS_DIALOG_TITLE,
+        NameDialogMode::New => text::NEW_DIALOG_TITLE,
         NameDialogMode::Rename { .. } => text::RENAME_DIALOG_TITLE,
     };
     let mut cancelled = false;

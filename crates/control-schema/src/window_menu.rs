@@ -12,6 +12,7 @@ use crate::orderflow_settings::{AssetFolds, OrderFlowPanel, PanelSection};
 pub enum RowId {
     SaveToWorkspace,
     WorkspaceSaveAsNew,
+    WorkspaceNew,
     WorkspaceRename,
     WorkspaceRevert,
     WorkspaceDelete,
@@ -142,6 +143,14 @@ pub const ROWS: &[Row] = &[
         "Save as new\u{2026}",
         "workspace.save_as",
     ),
+    Row {
+        hover: Some("An empty workspace: no indicators. Asks its name first"),
+        ..row(
+            RowId::WorkspaceNew,
+            "New workspace\u{2026}",
+            "workspace.new",
+        )
+    },
     Row {
         disabled_hover: Some(DEFAULT_PROTECTED_HOVER),
         ..row(
@@ -278,6 +287,7 @@ pub const fn submenu(id: SubmenuId) -> (&'static str, &'static [Item]) {
             &[
                 Item::Live(LiveRows::WorkspaceList),
                 Item::Row(RowId::WorkspaceSaveAsNew),
+                Item::Row(RowId::WorkspaceNew),
                 Item::Row(RowId::WorkspaceRename),
                 Item::Row(RowId::WorkspaceRevert),
                 Item::Row(RowId::WorkspaceDelete),
@@ -379,6 +389,8 @@ pub fn legend_label(collapsed: bool, split: Option<&str>) -> String {
 
 /// The name dialog's title when it makes a new workspace.
 pub const SAVE_AS_DIALOG_TITLE: &str = "Save as new workspace";
+/// The name dialog's title when it makes an empty one.
+pub const NEW_DIALOG_TITLE: &str = "New workspace";
 /// The name dialog's title when it renames one.
 pub const RENAME_DIALOG_TITLE: &str = "Rename workspace";
 pub const DIALOG_SAVE: &str = "Save";
@@ -402,7 +414,20 @@ pub fn save_to_short_label(workspace: &str) -> String {
     format!("Save to {workspace}")
 }
 
-/// The first line of the chip's menu: `WINV26 uses`.
+/// The status bar cell's menu, under its caption, the workspace list and
+/// `Save to`, top to bottom.
+pub const CELL_MENU_ROWS: &[RowId] = &[
+    RowId::WorkspaceSaveAsNew,
+    RowId::WorkspaceNew,
+    RowId::WorkspaceRename,
+    RowId::WorkspaceRevert,
+    RowId::WorkspaceDelete,
+];
+
+/// The cell's hover.
+pub const CELL_HOVER: &str = "Workspace of this tab \u{b7} click to switch or create";
+
+/// The first line of the cell's menu: `WINV26 uses`.
 #[must_use]
 pub fn uses_caption(symbol: &str) -> String {
     format!("{symbol} uses")
@@ -451,6 +476,11 @@ pub fn saved_toast(workspace: &str, followers: &[String]) -> String {
 #[must_use]
 pub fn saved_as_toast(symbol: &str, workspace: &str) -> String {
     format!("{symbol} now uses the new workspace {workspace}")
+}
+
+#[must_use]
+pub fn created_toast(symbol: &str, workspace: &str) -> String {
+    format!("{symbol} now uses the new, empty workspace {workspace}")
 }
 
 #[must_use]
@@ -580,6 +610,32 @@ mod tests {
                 Item::Submenu(id) => walk(submenu(*id).1, depth + 1, rows, deepest),
                 Item::Live(_) | Item::Caption(_) | Item::Separator => {}
             }
+        }
+    }
+
+    #[test]
+    fn the_cell_menu_lists_the_workspace_rows_with_new_after_save_as() {
+        assert_eq!(
+            CELL_MENU_ROWS,
+            [
+                RowId::WorkspaceSaveAsNew,
+                RowId::WorkspaceNew,
+                RowId::WorkspaceRename,
+                RowId::WorkspaceRevert,
+                RowId::WorkspaceDelete,
+            ]
+        );
+        let new = row_of(RowId::WorkspaceNew);
+        assert_eq!(
+            (new.label, new.behaviour),
+            ("New workspace\u{2026}", "workspace.new")
+        );
+        let (_, workspace) = submenu(SubmenuId::Workspace);
+        for id in CELL_MENU_ROWS {
+            assert!(
+                workspace.contains(&Item::Row(*id)),
+                "the window menu's Workspace lists {id:?} too"
+            );
         }
     }
 
