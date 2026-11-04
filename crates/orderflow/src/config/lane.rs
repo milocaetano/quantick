@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::bubbles::{
     BubbleStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
-use super::lane_fold::{LaneFold, MarketHold, OldTapeFold, rail_px};
+use super::lane_fold::{LaneFold, MarketHold, OldTapeFold, beside_width_px, rail_px};
 use super::lane_view::LaneView;
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
@@ -675,14 +675,19 @@ impl LiveLaneStyle {
             return 0.0;
         }
         match self.shown_view() {
-            LaneView::TapeOnly => return chart_width,
-            LaneView::CandlesOnly => return rail_px(chart_width),
-            LaneView::Beside => {}
+            LaneView::TapeOnly => chart_width,
+            LaneView::CandlesOnly => rail_px(chart_width),
+            LaneView::Beside => beside_width_px(chart_width, self.open_share()),
         }
-        // The floor yields on a narrow window: half a small chart beats a
-        // fixed band that would eat all of it.
-        let floor = MIN_LIVE_LANE_WIDTH_PX.min(chart_width / 2.0);
-        (chart_width * self.open_share()).max(floor)
+    }
+
+    /// The band the tape takes once it reopens beside the candles on a chart
+    /// this wide: every way back opens at the default share
+    /// ([`Self::open_beside`]), whatever share it had before. What tape only
+    /// measures the beside view it returns to against.
+    #[must_use]
+    pub fn reopened_beside_px(chart_width: f32) -> f32 {
+        beside_width_px(chart_width, DEFAULT_LIVE_LANE_SHARE)
     }
 
     /// Market time the lane shows, given the automatic reference window (the

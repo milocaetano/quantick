@@ -32,6 +32,7 @@ use crate::orderflow_view::{LiveLane, OrderflowView};
 use crate::plot_area::split_time_strip;
 use crate::theme;
 use quantick_chart::flow_band::trail_strip;
+use quantick_chart::price_axis_fit::{beside_candles_right, tape_only_candles_px};
 use quantick_layers::ChartLayer;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::{LaneView, reserved_span_ms};
@@ -368,7 +369,8 @@ impl ChartPane {
         if let Some((left, right)) = trail {
             let rows = chart_rect.top()..=areas.time_strip.top();
             areas.live_strip = Some(egui::Rect::from_x_y_ranges(left..=right, rows));
-            self.frame.candles_right = Some(left);
+            let candles_right = beside_candles_right(chart_rect.left(), right, width);
+            self.frame.candles_right = Some(candles_right);
         }
         if total == 0 {
             return None;
@@ -397,7 +399,13 @@ impl ChartPane {
         }
         let view = self.shown_viewport();
         let (start, end) = view.visible_range(width, total);
+        let strip = self.beside_strip_width(chrome.capabilities);
+        let fit_width = match tape_only {
+            true => tape_only_candles_px(chart_rect.width(), strip),
+            false => width,
+        };
         Some(FrameLayout {
+            fit_slots: view.visible_range(fit_width, total),
             areas,
             chart_rect,
             history_rect,

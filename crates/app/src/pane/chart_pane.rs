@@ -447,13 +447,16 @@ impl ChartPane {
         // `layer_blocked` states: the running feed is resolved once per frame by the caller, and a
         // copy here would be one more thing to keep in step when MetaTrader narrows its
         // capabilities mid-session.
-        if !self.tape_modes().0
-            && quantick_layers::LayerState::effective(
-                ChartLayer::LiveStrip,
-                self.layers.requested(ChartLayer::LiveStrip),
-                self.layer_facts(Some(capabilities)),
-            )
-        {
+        let beside = self.beside_strip_width(capabilities);
+        if self.tape_modes().0 { 0.0 } else { beside }
+    }
+
+    /// The strip the trail carries beside the tape in either view: tape only measures the
+    /// beside view it returns to with it.
+    pub(super) fn beside_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
+        let (layer, facts) = (ChartLayer::LiveStrip, self.layer_facts(Some(capabilities)));
+        let on = quantick_layers::LayerState::effective(layer, self.layers.requested(layer), facts);
+        if on {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
             0.0
