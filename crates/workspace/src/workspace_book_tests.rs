@@ -457,3 +457,104 @@ context_bars = [\"time:1m\", \"time:1h\"]
         "a pane the window did not read leaves its layers open"
     );
 }
+
+#[test]
+fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
+    let mut book = two_tabs_on_scalp();
+    book.open_tab(3);
+    let mut held = recipe(DeclaredLayout::TimeTimeAndFlow);
+    held.context_bars = vec!["time:1m".to_owned(), "tick:200".to_owned()];
+    held.flow_indicators = vec![ema(), ema()];
+    held.context_panes = vec![
+        ContextPaneRecipe {
+            indicators: vec![ema()],
+            layers: BTreeMap::new(),
+        };
+        2
+    ];
+    book.observe(3, &held).unwrap();
+    book.save_as(3, "Swing").unwrap();
+    let rows: Vec<_> = book
+        .list()
+        .into_iter()
+        .map(|row| {
+            let summary = book.summary(&row.name);
+            (row.name, summary)
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("Default".to_owned(), "as the feed opens".to_owned()),
+            ("Scalp".to_owned(), "Time · Flow".to_owned()),
+            (
+                "Swing".to_owned(),
+                "Time 1m · Tick 200 · Flow · 4 ind".to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn create_puts_the_tab_on_an_empty_recipe_and_no_other_tab_moves() {
+    let mut book = two_tabs_on_scalp();
+    let mut held = recipe(DeclaredLayout::TimeAndFlow);
+    held.context_bars = vec!["time:5m".to_owned()];
+    held.flow_indicators = vec![ema()];
+    held.split_fraction = Some(0.3);
+    held.layers.insert("bubbles".to_owned(), true);
+    book.observe(1, &held).unwrap();
+    let made = book.create(1, " Blank ").unwrap();
+    assert_eq!(
+        made,
+        CreateOutcome {
+            workspace: "Blank".to_owned(),
+            dropped_edits: true
+        }
+    );
+    assert_eq!(state(&book, 1), ("Blank".to_owned(), false));
+    assert_eq!(state(&book, 2), ("Scalp".to_owned(), false));
+    let empty = book.recipe("Blank").unwrap();
+    assert!(empty.flow_indicators.is_empty());
+    assert_eq!(
+        empty.split_fraction,
+        Some(0.3),
+        "the sizes the tab reads back"
+    );
+    assert_eq!(empty.context_bars, ["time:5m"]);
+    assert_eq!(empty.layers.get("bubbles"), Some(&true));
+    assert_eq!(book.tab_copy(1), Some(empty));
+    let shown = empty.clone();
+    assert!(
+        !book.observe(1, &shown).unwrap(),
+        "the tab reads back what it was given"
+    );
+    assert_eq!(state(&book, 1), ("Blank".to_owned(), false));
+}
+
+/// A tab still opening holds the factory `Default`, which names no
+/// arrangement: an empty recipe read from it would be that recipe again.
+#[test]
+fn create_refuses_a_tab_still_opening() {
+    let mut book = WorkspaceBook::default();
+    book.open_tab(1);
+    let before = book.clone();
+    assert_eq!(
+        book.create(1, "Blank"),
+        Err(WorkspaceRefusal::TabOpening(1))
+    );
+    assert_eq!(book, before);
+}
+
+#[test]
+fn create_refuses_a_taken_or_empty_name_and_changes_nothing() {
+    let mut book = two_tabs_on_scalp();
+    let before = book.clone();
+    assert!(matches!(
+        book.create(1, "scalp"),
+        Err(WorkspaceRefusal::DuplicateName(_))
+    ));
+    assert!(book.create(1, "  ").is_err());
+    assert!(book.create(9, "Fresh").is_err(), "no such tab");
+    assert_eq!(book, before);
+}

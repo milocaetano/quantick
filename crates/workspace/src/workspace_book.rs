@@ -12,7 +12,7 @@
 use crate::arrangement_document::{LAYOUT_UNRECORDED, SavedTab};
 use crate::indicator_document::SavedIndicator;
 use crate::layout_document::{LayoutBook, LayoutId};
-use crate::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
+use crate::workspace_recipe::{ContextPaneRecipe, FACTORY_SUMMARY, WorkspaceRecipe};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -37,6 +37,9 @@ pub enum WorkspaceRefusal {
     UnknownWorkspace(String),
     DefaultProtected,
     UnknownTab(u64),
+    /// The tab's panes are still being built, so there is nothing to read an
+    /// empty recipe from yet.
+    TabOpening(u64),
 }
 
 impl WorkspaceRefusal {
@@ -50,6 +53,7 @@ impl WorkspaceRefusal {
             Self::UnknownWorkspace(_) => "workspace.unknown",
             Self::DefaultProtected => "workspace.default_protected",
             Self::UnknownTab(_) => "workspace.unknown_tab",
+            Self::TabOpening(_) => "workspace.tab_not_ready",
         }
     }
 }
@@ -68,6 +72,9 @@ impl std::fmt::Display for WorkspaceRefusal {
                 write!(f, "{DEFAULT_WORKSPACE} cannot be deleted or renamed")
             }
             Self::UnknownTab(tab) => write!(f, "no open tab has id {tab}"),
+            Self::TabOpening(tab) => {
+                write!(f, "tab {tab} is still opening; retry once its charts stand")
+            }
         }
     }
 }
@@ -170,6 +177,16 @@ pub struct DeleteOutcome {
 pub struct WorkspaceListing {
     pub name: String,
     pub tabs: Vec<u64>,
+}
+
+/// What making a new, empty workspace did. It always changes the book: a
+/// repeat finds the name taken and is refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateOutcome {
+    /// The name as cleaned and stored.
+    pub workspace: String,
+    /// Whether the tab held unsaved edits, dropped by the move.
+    pub dropped_edits: bool,
 }
 
 /// One open tab a first run seeds a workspace from.
@@ -297,6 +314,15 @@ impl WorkspaceBook {
                     .map(|name| row(name)),
             )
             .collect()
+    }
+
+    /// What a workspace holds, in the one line the menu and `workspace.list`
+    /// show beside its name: [`WorkspaceRecipe::summary`].
+    #[must_use]
+    pub fn summary(&self, name: &str) -> String {
+        self.recipes
+            .get(name)
+            .map_or_else(|| FACTORY_SUMMARY.to_owned(), WorkspaceRecipe::summary)
     }
 
     fn tabs_on(&self, name: &str) -> Vec<u64> {
@@ -550,6 +576,28 @@ impl WorkspaceBook {
             workspace: cleaned,
             changed: true,
             tabs_changed: Vec::new(),
+        })
+    }
+
+    /// Make a new workspace of an empty recipe ([`WorkspaceRecipe::emptied`]
+    /// of what the tab holds) and put the tab on it. No other tab changes.
+    ///
+    /// # Errors
+    /// No such tab; a tab still opening, whose copy is the factory `Default`
+    /// that names no arrangement; the name is empty, too long or taken.
+    pub fn create(&mut self, tab: u64, name: &str) -> Result<CreateOutcome, WorkspaceRefusal> {
+        let state = self.state(tab)?;
+        if state.copy.is_factory() {
+            return Err(WorkspaceRefusal::TabOpening(tab));
+        }
+        let cleaned = self.validate_new_name(name)?;
+        let dropped_edits = self.is_modified(state);
+        let recipe = state.copy.emptied();
+        self.recipes.insert(cleaned.clone(), recipe.clone());
+        self.tabs.insert(tab, TabWorkspace::on(&cleaned, recipe));
+        Ok(CreateOutcome {
+            workspace: cleaned,
+            dropped_edits,
         })
     }
 

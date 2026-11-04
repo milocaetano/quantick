@@ -13,6 +13,24 @@ use crate::indicator_document::SavedIndicator;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// What the factory `Default`'s summary says: it opens as the feed declares.
+pub const FACTORY_SUMMARY: &str = "as the feed opens";
+const SUMMARY_SEPARATOR: &str = " \u{b7} ";
+
+/// A context pane's interval as the menu reads it: `time:1m` is `Time 1m`,
+/// `tick:200` is `Tick 200`, a pane with none recorded is `Time`.
+fn interval_label(bars: Option<&str>) -> String {
+    let Some((kind, parameter)) = bars.and_then(|bars| bars.split_once(':')) else {
+        return "Time".to_owned();
+    };
+    let mut letters = kind.chars();
+    let word: String = letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default();
+    format!("{word} {parameter}")
+}
+
 /// The canvas layout a feed declares its tabs open on (`default_layout` in
 /// the TOML), named for what each layout shows.
 ///
@@ -160,6 +178,50 @@ impl WorkspaceRecipe {
                 .get(slot)
                 .map_or((&[], &NOTHING), |pane| (&pane.indicators, &pane.layers)),
         }
+    }
+
+    /// What a new workspace starts from: this recipe with every pane bare of
+    /// indicators. The canvas, its sizes and folds, the context intervals, the
+    /// layer switches and the footprint style stay as the tab reads them back,
+    /// so the tab on it reads clean once its panes stand again.
+    #[must_use]
+    pub fn emptied(&self) -> Self {
+        let bare = |pane: &ContextPaneRecipe| ContextPaneRecipe {
+            indicators: Vec::new(),
+            layers: pane.layers.clone(),
+        };
+        Self {
+            flow_indicators: Vec::new(),
+            context_panes: self.context_panes.iter().map(bare).collect(),
+            ..self.clone()
+        }
+    }
+
+    /// One line the workspace menu shows beside the name: the panes, each
+    /// context pane with its interval, then the indicator count when there is
+    /// one, e.g. `Time 1m · Flow · 3 ind`. The factory `Default` names no
+    /// arrangement, so it says what it means instead.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        if self.is_factory() {
+            return FACTORY_SUMMARY.to_owned();
+        }
+        let mut parts: Vec<String> = (0..self.layout.context_panes())
+            .map(|slot| interval_label(self.context_bars.get(slot).map(String::as_str)))
+            .collect();
+        if self.layout != DeclaredLayout::Time {
+            parts.push("Flow".to_owned());
+        }
+        let indicators = self.flow_indicators.len()
+            + self
+                .context_panes
+                .iter()
+                .map(|pane| pane.indicators.len())
+                .sum::<usize>();
+        if indicators > 0 {
+            parts.push(format!("{indicators} ind"));
+        }
+        parts.join(SUMMARY_SEPARATOR)
     }
 
     /// What the factory `Default` amounts to on a tab whose feed declares

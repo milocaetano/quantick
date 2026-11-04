@@ -94,6 +94,12 @@ const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::
 /// Saves the active tab's edits to its workspace; with none it does nothing.
 const SAVE_TO_WORKSPACE_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
+/// Opens the status bar cell's workspace menu. Not Alt: Alt is the sell
+/// modifier.
+const WORKSPACE_MENU_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
+    egui::Key::O,
+);
 /// Opens the source picker for a new tab (§10).
 pub(super) const NEW_TAB_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::T);
@@ -195,9 +201,6 @@ impl QuantickApp {
             &self.runtime.workspace.book,
             &mut self.chrome.title_bar,
         );
-        if action == Some(crate::tabstrip::TabAction::WorkspaceMenu) {
-            self.chrome.window_menu.tab_workspace.toggle_chip_menu();
-        }
         super::native_windows::apply_tab_action(self, action);
         if std::mem::take(&mut self.chrome.title_bar.kebab_clicked) {
             self.chrome.window_menu.toggle(ctx.viewport_id(), false);
@@ -317,12 +320,7 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
         return;
     };
     let mut state = std::mem::take(&mut app.chrome.window_menu);
-    let workspace = workspace_rows::WorkspaceRows {
-        book: app.runtime.workspace.book.book(),
-        tabs: &app.runtime.tabs,
-        tab: app.runtime.tabs.active_id(),
-        symbol: app.active_tab().symbol.as_str(),
-    };
+    let workspace = workspace_rows::WorkspaceRows::of(app);
     menus::WindowMenu {
         workspace,
         chart_shown: !app.chrome.title_bar.surface.is_home(),
@@ -338,11 +336,35 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
         focus_live_row: std::cell::Cell::new(false),
     }
     .show(ctx, &mut state, kebab, commands);
-    if let Some(anchor) = app.chrome.title_bar.strip.workspace_button {
-        let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
-        workspace.chip_menu(ctx, anchor, &mut state.tab_workspace, keys, commands);
-    }
     app.chrome.window_menu = state;
+}
+
+/// The status bar's workspace cell: a click, or Ctrl+Shift+O from anywhere in
+/// the window, opens its menu upward from the cell on this window's tab. A
+/// torn-off window's cell reaches its own tab and no other.
+pub(super) fn workspace_cell(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    status: &crate::statusbar::StatusResponse,
+) {
+    let (tab, window) = (
+        app.runtime.tabs.active_id(),
+        app.runtime.tabs.presented_window_ids(),
+    );
+    let pressed = ctx.input_mut(|input| input.consume_shortcut(&WORKSPACE_MENU_SHORTCUT));
+    let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
+    let shown = status.workspace_cell.is_some();
+    let open = menu.follow_cell(tab, shown, &window, status.workspace_clicked || pressed);
+    let mut commands = Vec::new();
+    if let Some(cell) = status.workspace_cell.filter(|_| open) {
+        let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
+        let rows = workspace_rows::WorkspaceRows::of(app);
+        rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands);
+    }
+    app.chrome.window_menu.tab_workspace = menu;
+    for command in commands {
+        apply_menu_command_on(app, ctx, command);
+    }
 }
 
 /// The commands that need to know which window asked, then all the others.

@@ -1,5 +1,5 @@
-//! The workspace menus' state, apart from their pixels: the chip's menu, the
-//! delete that asks twice and the dialog that asks for a name.
+//! The workspace menus' state, apart from their pixels: the status bar cell's
+//! menu, the delete that asks twice and the dialog that asks for a name.
 
 /// What a workspace row or the dialog asked the window to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,6 +11,8 @@ pub enum WorkspaceCommand {
     /// Drop the active tab's edits.
     Revert,
     BeginSaveAs,
+    /// Ask the name of a new, empty workspace. Nothing changes before Enter.
+    BeginNew,
     /// Ask a new name for this workspace.
     BeginRename(String),
     Delete(String),
@@ -22,12 +24,19 @@ pub enum WorkspaceCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NameDialogMode {
     SaveAsNew,
-    Rename { from: String },
+    /// An empty recipe, made and applied only on Enter.
+    New,
+    Rename {
+        from: String,
+    },
 }
 
 /// The dialog that asks for a workspace name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NameDialog {
+    /// The tab whose menu asked: the dialog shows in that tab's window and
+    /// Enter acts on that tab, whichever window has the focus.
+    pub tab: u64,
     pub mode: NameDialogMode,
     pub name: String,
     /// Why the last Enter was refused, shown under the field.
@@ -49,20 +58,56 @@ pub enum DeleteClick {
 /// The menus' state across frames.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspaceMenuState {
-    pub chip_menu: bool,
+    /// The tab whose cell opened the menu, while it is open. The menu shows
+    /// and acts in the window presenting that tab, so a torn-off window's
+    /// cell never reaches another window's tab.
+    pub chip_menu: Option<u64>,
     pub armed_delete: Option<String>,
     pub dialog: Option<NameDialog>,
 }
 
 impl WorkspaceMenuState {
-    pub fn toggle_chip_menu(&mut self) {
-        self.chip_menu = !self.chip_menu;
+    /// The cell of `tab` was clicked, or its shortcut pressed: open the menu
+    /// on that tab, or close it when it was already open there.
+    pub fn toggle_chip_menu(&mut self, tab: u64) {
+        self.chip_menu = (self.chip_menu != Some(tab)).then_some(tab);
         self.armed_delete = None;
     }
 
     pub fn close_chip_menu(&mut self) {
-        self.chip_menu = false;
+        self.chip_menu = None;
         self.armed_delete = None;
+    }
+
+    /// The window presenting `presented` (`None` on Home) holds `window`'s
+    /// tabs. A menu open on one of them that is no longer the one presented
+    /// closes, so it never pops back open when its tab returns. A menu on
+    /// another window's tab is that window's business.
+    pub fn follow_window(&mut self, presented: Option<u64>, window: &[u64]) {
+        if let Some(open) = self.chip_menu
+            && window.contains(&open)
+            && presented != Some(open)
+        {
+            self.close_chip_menu();
+        }
+    }
+
+    /// One frame of the cell in the window presenting `tab` among `window`'s
+    /// tabs; `shown` is false on Home, where the cell is absent. A click or
+    /// the shortcut (`toggled`) counts only where the cell stands. Answers
+    /// whether the menu is open on `tab`.
+    pub fn follow_cell(&mut self, tab: u64, shown: bool, window: &[u64], toggled: bool) -> bool {
+        self.follow_window(shown.then_some(tab), window);
+        if shown && toggled {
+            self.toggle_chip_menu(tab);
+        }
+        self.chip_menu_on(tab)
+    }
+
+    /// Whether the menu is open on `tab`.
+    #[must_use]
+    pub fn chip_menu_on(&self, tab: u64) -> bool {
+        self.chip_menu == Some(tab)
     }
 
     /// A click on the delete row of `name`. Arming another workspace disarms
@@ -76,8 +121,9 @@ impl WorkspaceMenuState {
         DeleteClick::Armed
     }
 
-    fn open_dialog(&mut self, mode: NameDialogMode, name: String) {
+    fn open_dialog(&mut self, tab: u64, mode: NameDialogMode, name: String) {
         self.dialog = Some(NameDialog {
+            tab,
             mode,
             name,
             refusal: None,
@@ -85,13 +131,19 @@ impl WorkspaceMenuState {
         });
     }
 
-    pub fn open_save_as(&mut self) {
-        self.open_dialog(NameDialogMode::SaveAsNew, String::new());
+    pub fn open_save_as(&mut self, tab: u64) {
+        self.open_dialog(tab, NameDialogMode::SaveAsNew, String::new());
+    }
+
+    /// Asks the new workspace's name first; Esc closes it with nothing made.
+    pub fn open_new(&mut self, tab: u64) {
+        self.open_dialog(tab, NameDialogMode::New, String::new());
     }
 
     /// Opened on the current name, which is what a rename edits.
-    pub fn open_rename(&mut self, from: &str) {
+    pub fn open_rename(&mut self, tab: u64, from: &str) {
         self.open_dialog(
+            tab,
             NameDialogMode::Rename {
                 from: from.to_owned(),
             },
@@ -135,17 +187,65 @@ mod tests {
     #[test]
     fn closing_the_chip_menu_disarms_the_delete() {
         let mut state = WorkspaceMenuState::default();
-        state.toggle_chip_menu();
+        state.toggle_chip_menu(7);
         state.click_delete("Scalp");
         state.close_chip_menu();
-        assert!(!state.chip_menu);
+        assert_eq!(state.chip_menu, None);
         assert_eq!(state.armed_delete, None);
+    }
+
+    #[test]
+    fn the_menu_belongs_to_the_tab_whose_cell_opened_it() {
+        let mut state = WorkspaceMenuState::default();
+        state.toggle_chip_menu(7);
+        assert!(state.chip_menu_on(7));
+        assert!(!state.chip_menu_on(8), "another window's tab");
+        state.toggle_chip_menu(8);
+        assert!(state.chip_menu_on(8), "the other cell moves it");
+        state.toggle_chip_menu(8);
+        assert_eq!(state.chip_menu, None, "the same cell closes it");
+    }
+
+    #[test]
+    fn a_menu_whose_tab_leaves_the_screen_closes_and_another_windows_stays() {
+        let mut state = WorkspaceMenuState::default();
+        state.toggle_chip_menu(7);
+        state.follow_window(Some(9), &[9]);
+        assert!(state.chip_menu_on(7), "tab 7 lives in another window");
+        state.follow_window(Some(7), &[7, 8]);
+        assert!(state.chip_menu_on(7), "still presented");
+        state.follow_window(Some(8), &[7, 8]);
+        assert_eq!(state.chip_menu, None, "its window moved to tab 8");
+        state.toggle_chip_menu(7);
+        state.follow_window(None, &[7, 8]);
+        assert_eq!(state.chip_menu, None, "Home shows no cell");
+    }
+
+    #[test]
+    fn the_cell_opens_only_where_it_stands() {
+        let mut state = WorkspaceMenuState::default();
+        assert!(!state.follow_cell(7, false, &[7], true), "Home");
+        assert!(state.follow_cell(7, true, &[7], true));
+        assert!(state.follow_cell(7, true, &[7], false), "stays open");
+        assert!(!state.follow_cell(7, true, &[7], true), "a second press");
+    }
+
+    #[test]
+    fn new_workspace_asks_an_empty_name_and_esc_leaves_no_dialog() {
+        let mut state = WorkspaceMenuState::default();
+        state.open_new(7);
+        let dialog = state.dialog.as_ref().unwrap();
+        assert_eq!(dialog.mode, NameDialogMode::New);
+        assert!(dialog.name.is_empty());
+        assert!(dialog.wants_focus);
+        state.close_dialog();
+        assert_eq!(state.dialog, None);
     }
 
     #[test]
     fn a_refusal_keeps_the_dialog_the_name_typed_and_the_focus() {
         let mut state = WorkspaceMenuState::default();
-        state.open_save_as();
+        state.open_save_as(7);
         let dialog = state.dialog.as_mut().unwrap();
         dialog.name = "Scalp".to_owned();
         dialog.wants_focus = false;
@@ -159,9 +259,9 @@ mod tests {
     #[test]
     fn rename_opens_on_the_current_name() {
         let mut state = WorkspaceMenuState::default();
-        state.open_rename("Scalp");
+        state.open_rename(7, "Scalp");
         let dialog = state.dialog.as_ref().unwrap();
-        assert_eq!(dialog.name, "Scalp");
+        assert_eq!((dialog.tab, dialog.name.as_str()), (7, "Scalp"));
         assert_eq!(
             dialog.mode,
             NameDialogMode::Rename {

@@ -611,3 +611,100 @@ fn a_menu_switch_and_delete_journal_what_the_control_calls_do() {
     assert_eq!(deletes[1], deletes[0], "the menu's delete is the call's");
     assert_eq!(app.runtime.workspace.book.tab_row(tab).0, "Default");
 }
+
+/// The tab chip and the status bar's workspace cell read one row: the same
+/// name and the same edited mark, on a clean tab and on an edited one. Home
+/// shows no cell.
+#[test]
+fn chip_and_status_cell_read_one_state() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-cell-state", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    edit_split(&mut app, first, 0.31);
+    let chips: Vec<_> =
+        crate::app::title_bar::chips_of(&app.runtime.tabs, &app.runtime.workspace.book, &[0, 1])
+            .into_iter()
+            .map(|chip| (Some(chip.workspace), chip.modified))
+            .collect();
+    for (index, tab) in [first, second].into_iter().enumerate() {
+        app.runtime.tabs.select(index);
+        assert_eq!(app.runtime.tabs.active_id(), tab);
+        let status = app.status_model();
+        assert_eq!((status.workspace, status.modified), chips[index]);
+    }
+    assert!(chips[0].1 && !chips[1].1);
+    let surface = &mut app.chrome.title_bar.surface;
+    super::super::home_wiring::show_home(&app.runtime.tabs, surface);
+    assert_eq!(app.status_model().workspace, None, "no cell on Home");
+}
+
+/// A torn-off window's cell opens the menu on its own tab, the main window's
+/// tab never sees it, and a row chosen there changes only that tab.
+#[test]
+fn the_cell_menu_in_a_torn_off_window_acts_on_that_windows_tab() {
+    use quantick_session::workspace_menu::WorkspaceCommand;
+    use quantick_workspace::arrangement::{TabId, windows::TransferTarget};
+    let layouts = crate::scratch::ScratchFile::new("workspace-cell-window", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let first_before = app.runtime.workspace.book.tab_row(first);
+    let tabs = &mut app.runtime.tabs;
+    let child = tabs
+        .transfer_tab(TabId(second), TransferTarget::NewWindow, 0)
+        .unwrap()
+        .destination;
+    tabs.focus_window(child).unwrap();
+    tabs.present_window(child).unwrap();
+    assert_eq!(app.runtime.tabs.active_id(), second);
+    let clicked = crate::statusbar::StatusResponse {
+        workspace_cell: Some(egui::Rect::from_min_size(
+            egui::pos2(10.0, 700.0),
+            egui::vec2(90.0, 20.0),
+        )),
+        workspace_clicked: true,
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        crate::app::menu_bar::workspace_cell(&mut app, ctx, &clicked);
+    });
+    let menu = &app.chrome.window_menu.tab_workspace;
+    assert!(menu.chip_menu_on(second));
+    assert!(!menu.chip_menu_on(first), "the main window's tab");
+
+    let menu = crate::app::tab_workspaces::apply_workspace_command;
+    menu(&mut app, WorkspaceCommand::BeginNew);
+    let dialog = app.chrome.window_menu.tab_workspace.dialog.as_mut();
+    dialog.expect("the name comes first").name = "Blank".to_owned();
+    menu(&mut app, WorkspaceCommand::SubmitDialog);
+    let book = &app.runtime.workspace.book;
+    assert_eq!(book.tab_row(second), ("Blank".to_owned(), false));
+    assert_eq!(book.tab_row(first), first_before);
+}
+
+/// A new workspace reads clean once the tab's panes stand on it again: the
+/// empty recipe keeps the sizes the tab reads back.
+#[test]
+fn a_new_workspace_reads_clean_after_real_frames() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-new-clean", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    edit_split(&mut app, first, 0.37);
+    let input = serde_json::json!({ "name": "Blank" });
+    app.control_action(
+        "workspace.new",
+        1,
+        crate::control::ActionOrigin::Human,
+        input,
+    )
+    .expect("workspace.new");
+    frames(&mut app, 4);
+    let store = &app.runtime.workspace.book;
+    assert_eq!(store.tab_row(first), ("Blank".to_owned(), false));
+    let recipe = store.book().recipe("Blank").expect("stored");
+    assert!(recipe.flow_indicators.is_empty());
+    assert!(
+        recipe
+            .context_panes
+            .iter()
+            .all(|pane| pane.indicators.is_empty())
+    );
+}

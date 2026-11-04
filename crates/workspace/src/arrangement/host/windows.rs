@@ -55,6 +55,16 @@ impl<R> Arrangement<R> {
             })
     }
 
+    /// The tab ids of the presented window, in strip order.
+    pub fn presented_window_ids(&self) -> Vec<u64> {
+        self.windows
+            .window(self.windows.presented())
+            .into_iter()
+            .flat_map(|window| window.tabs())
+            .map(|tab| tab.0)
+            .collect()
+    }
+
     pub fn presented_index(&self) -> usize {
         let window = self
             .windows

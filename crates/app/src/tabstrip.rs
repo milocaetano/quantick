@@ -5,11 +5,7 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
-use egui_phosphor::regular as icons;
-use quantick_session::tab_chip::{
-    ChipMeasure, CloseSlot, TabButtonGesture, TabButtonRelease, close_slot, fit_chip,
-    shortened_name,
-};
+use quantick_session::tab_chip::{ChipMeasure, CloseSlot, close_slot, fit_chip, shortened_name};
 use quantick_workspace::arrangement::strip::{
     StripSurface, TabFeedDot, chip_parts, market_slots, visible_tabs,
 };
@@ -38,11 +34,8 @@ const ADD_WIDTH_PX: f32 = 30.0;
 const CHIP_PADDING_LEFT_PX: f32 = 10.0;
 const CHIP_DOT_RADIUS_PX: f32 = 3.0;
 const CHIP_DOT_GAP_PX: f32 = 7.0;
-/// The workspace button on the active chip, shorter than the chip it sits on.
-const WORKSPACE_BUTTON_HEIGHT_PT: f32 = 22.0;
-const WORKSPACE_BUTTON_PADDING_PT: f32 = 4.0;
-const WORKSPACE_BUTTON_ROUNDING_PT: f32 = 4.0;
-const WORKSPACE_ARROW_GAP_PT: f32 = 3.0;
+/// The gap between the workspace name and the edited mark.
+const NAME_MARK_GAP_PT: f32 = 3.0;
 /// What marks a tab holding edits.
 const EDITED_MARK: &str = "\u{2022}";
 /// How far a second strike of the symbol sits from the first. The bundled face
@@ -89,8 +82,6 @@ pub enum TabAction {
     New,
     /// The first tab: show Home over the canvas.
     Home,
-    /// The active chip's workspace button was released on.
-    WorkspaceMenu,
 }
 
 /// Draw the strip and report the one action it produced.
@@ -110,10 +101,6 @@ pub(crate) struct StripDrawn {
     pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
     pub(crate) add: Option<egui::Rect>,
     pub(crate) overflow: Option<egui::Rect>,
-    /// Where the active chip's workspace button is, for its menu to open under.
-    pub(crate) workspace_button: Option<egui::Rect>,
-    /// The press on that button, across frames.
-    pub(crate) workspace_gesture: TabButtonGesture,
 }
 
 pub(crate) fn draw(
@@ -130,11 +117,6 @@ pub(crate) fn draw(
     drawn.tab_ids.clear();
     drawn.add = None;
     drawn.overflow = None;
-    drawn.workspace_button = None;
-    // A press whose chip went away under it must not hold the strip for ever.
-    if ui.input(|input| !input.pointer.any_down() && !input.pointer.any_released()) {
-        drawn.workspace_gesture = TabButtonGesture::default();
-    }
     let compact = ui.available_width() < 240.0;
     ui.spacing_mut().item_spacing.x = if compact { 2.0 } else { 4.0 };
     ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 4.0);
@@ -196,7 +178,7 @@ pub(crate) fn draw(
             if response.clicked() && !selected {
                 action = Some(TabAction::Activate(index));
             }
-            if response.drag_started() && !drawn.workspace_gesture.holds_pointer() {
+            if response.drag_started() {
                 drawn.drag_started = Some(chip.id);
             }
             let bounds = response.rect.intersect(ui.clip_rect());
@@ -204,12 +186,7 @@ pub(crate) fn draw(
                 drawn.tabs.push((index, bounds));
             }
             let lit = selected || response.hovered();
-            if let Some(button) = paint_chip_face(ui, chip, body, selected, lit) {
-                drawn.workspace_button = Some(button);
-                if workspace_button(ui, button, &mut drawn.workspace_gesture) {
-                    action = Some(TabAction::WorkspaceMenu);
-                }
-            }
+            paint_chip_face(ui, chip, body, selected, lit);
             // Reserve a stable close target so hover never shifts adjacent controls.
             {
                 let close_target = egui::Rect::from_min_size(
@@ -305,16 +282,10 @@ pub(crate) fn draw(
     action
 }
 
-/// The dot, the symbol in its heavier strike and the workspace: a button on the
-/// active chip, `Scalp • ⌄` with the amber mark while edited; grey words on any
-/// other. Answers where the active chip's button is, when it kept any of its face.
-fn paint_chip_face(
-    ui: &egui::Ui,
-    chip: &TabChip<'_>,
-    body: egui::Rect,
-    selected: bool,
-    lit: bool,
-) -> Option<egui::Rect> {
+/// The dot, the symbol in its heavier strike and the workspace in muted ink,
+/// `Scalp •` with the amber mark while edited. The name is paint, never a
+/// control: the status bar's cell switches the workspace.
+fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected: bool, lit: bool) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let center_y = body.center().y;
     let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
@@ -348,17 +319,10 @@ fn paint_chip_face(
     let mark = chip
         .modified
         .then(|| laid(EDITED_MARK.to_owned(), SUFFIX_TEXT_PX, theme::AMBER));
-    let arrow = selected.then(|| {
-        laid(
-            icons::CARET_DOWN.to_owned(),
-            SUFFIX_TEXT_PX,
-            theme::TEXT_MUTED,
-        )
-    });
     let gapped = |galley: &Option<std::sync::Arc<egui::Galley>>| {
         galley
             .as_ref()
-            .map_or(0.0, |galley| galley.size().x + WORKSPACE_ARROW_GAP_PT)
+            .map_or(0.0, |galley| galley.size().x + NAME_MARK_GAP_PT)
     };
     let name_ink = theme::TEXT_MUTED;
     let name_width = |letters: usize| {
@@ -370,7 +334,6 @@ fn paint_chip_face(
         symbol: text_x - body.left() + symbol_width + CHIP_DOT_GAP_PX,
         mark: gapped(&mark),
         active: selected,
-        arrow: gapped(&arrow),
         close: 0.0,
         name_letters: chip.workspace.chars().count(),
         name_width: &name_width,
@@ -383,60 +346,11 @@ fn paint_chip_face(
             name_ink,
         )
     });
-    // Name, mark, arrow: `Scalp • ⌄`, one button on the active chip.
-    let pieces: Vec<_> = [name, mark.filter(|_| fit.mark), arrow.filter(|_| fit.arrow)]
-        .into_iter()
-        .flatten()
-        .collect();
-    let width = pieces
-        .iter()
-        .map(|galley| galley.size().x + WORKSPACE_ARROW_GAP_PT)
-        .sum::<f32>()
-        - WORKSPACE_ARROW_GAP_PT;
-    let button = (selected && width > 0.0).then(|| {
-        egui::Rect::from_center_size(
-            egui::pos2(x + width / 2.0, center_y),
-            egui::vec2(
-                width + 2.0 * WORKSPACE_BUTTON_PADDING_PT,
-                WORKSPACE_BUTTON_HEIGHT_PT,
-            ),
-        )
-    });
-    if let Some(rect) = button.filter(|rect| ui.rect_contains_pointer(*rect)) {
-        painter.rect_filled(rect, WORKSPACE_BUTTON_ROUNDING_PT, theme::BARE_HOVER);
-    }
-    for galley in pieces {
+    for galley in [name, mark.filter(|_| fit.mark)].into_iter().flatten() {
         let at = egui::pos2(x, center_y - galley.size().y / 2.0);
-        x += galley.size().x + WORKSPACE_ARROW_GAP_PT;
+        x += galley.size().x + NAME_MARK_GAP_PT;
         painter.galley(at, galley, theme::TEXT_MUTED);
     }
-    button
-}
-
-/// The active chip's workspace button: opens on release, cancels once the pointer
-/// has travelled. Answers whether the menu should open.
-fn workspace_button(ui: &mut egui::Ui, rect: egui::Rect, gesture: &mut TabButtonGesture) -> bool {
-    let response = ui.interact(
-        rect,
-        ui.id().with("tab_workspace_button"),
-        egui::Sense::click_and_drag(),
-    );
-    let pointer = ui
-        .input(|input| input.pointer.interact_pos())
-        .map(|at| [at.x, at.y]);
-    if response.is_pointer_button_down_on()
-        && !gesture.holds_pointer()
-        && let Some(at) = pointer
-    {
-        gesture.press(at);
-    }
-    if !gesture.holds_pointer() {
-        return false;
-    }
-    if let Some(at) = pointer {
-        gesture.moved(at);
-    }
-    ui.input(|input| input.pointer.any_released()) && gesture.release() == TabButtonRelease::Open
 }
 
 /// The Home text's colour. Hover reaches this and nothing else on the tab.

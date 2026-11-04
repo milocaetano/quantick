@@ -3,6 +3,8 @@ use super::*;
 
 fn model(replaying: bool) -> StatusModel {
     StatusModel {
+        workspace: Some("Scalp".to_owned()),
+        modified: true,
         venue: if replaying {
             "Recorded session"
         } else {
