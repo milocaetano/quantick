@@ -18,18 +18,19 @@ use quantick_control_schema::window_menu as text;
 use quantick_control_schema::workspace::MODULE_ID;
 use quantick_control_schema::workspace_book::{
     TAB_NOT_READY_CODE, TAB_WORKSPACE_SET_EVENT_KIND, TabWorkspaceSetInput, TabWorkspaceSetResult,
-    WORKSPACE_DELETED_EVENT_KIND, WORKSPACE_RENAMED_EVENT_KIND, WORKSPACE_REVERTED_EVENT_KIND,
-    WORKSPACE_SAVED_EVENT_KIND, WRITE_FAILED_CODE, WorkspaceDeleteInput, WorkspaceDeleteResult,
-    WorkspaceEntry, WorkspaceListInput, WorkspaceListResult, WorkspaceRenameInput,
+    WORKSPACE_CREATED_EVENT_KIND, WORKSPACE_DELETED_EVENT_KIND, WORKSPACE_RENAMED_EVENT_KIND,
+    WORKSPACE_REVERTED_EVENT_KIND, WORKSPACE_SAVED_EVENT_KIND, WRITE_FAILED_CODE,
+    WorkspaceDeleteInput, WorkspaceDeleteResult, WorkspaceEntry, WorkspaceListInput,
+    WorkspaceListResult, WorkspaceNewInput, WorkspaceNewResult, WorkspaceRenameInput,
     WorkspaceRenameResult, WorkspaceRevertResult, WorkspaceSaveAsInput, WorkspaceSaveResult,
     WorkspaceTabInput, tab_workspace_set_descriptor, workspace_delete_descriptor,
-    workspace_list_descriptor, workspace_rename_descriptor, workspace_revert_descriptor,
-    workspace_save_as_descriptor, workspace_save_to_descriptor,
+    workspace_list_descriptor, workspace_new_descriptor, workspace_rename_descriptor,
+    workspace_revert_descriptor, workspace_save_as_descriptor, workspace_save_to_descriptor,
 };
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::{
-    DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome, SaveOutcome, SetOutcome, WorkspaceBook,
-    WorkspaceRecipe, WorkspaceRefusal,
+    CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome, SaveOutcome, SetOutcome,
+    WorkspaceBook, WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -86,6 +87,10 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
             menu.open_save_as();
             return None;
         }
+        WorkspaceCommand::BeginNew => {
+            menu.open_new();
+            return None;
+        }
         WorkspaceCommand::BeginRename(from) => {
             menu.open_rename(&from);
             return None;
@@ -130,6 +135,8 @@ fn submit_name_dialog<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     let outcome = match &dialog.mode {
         NameDialogMode::SaveAsNew => save_as_journaled(host, to, tab, &dialog.name)
             .map(|saved| Some(text::saved_as_toast(symbol, &saved.workspace))),
+        NameDialogMode::New => new_journaled(host, to, tab, &dialog.name)
+            .map(|made| Some(text::created_toast(symbol, &made.workspace))),
         NameDialogMode::Rename { from } => {
             rename_journaled(host, to, from, &dialog.name).map(|moved| {
                 moved
@@ -161,6 +168,7 @@ where
     registry.register_outside_replay(tab_workspace_set_descriptor(), set)?;
     registry.register_outside_replay(workspace_save_to_descriptor(), save_to)?;
     registry.register_outside_replay(workspace_save_as_descriptor(), save_as)?;
+    registry.register_outside_replay(workspace_new_descriptor(), new)?;
     registry.register_outside_replay(workspace_revert_descriptor(), revert)?;
     registry.register_outside_replay(workspace_rename_descriptor(), rename)?;
     registry.register_outside_replay(workspace_delete_descriptor(), delete)?;
@@ -318,6 +326,20 @@ pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
     written(app, |book| book.save_as(tab, name), |saved| saved.changed)
 }
 
+/// Make a new, empty workspace, put the tab on it and redraw the tab.
+///
+/// # Errors
+/// The name is refused, no such tab, no book, or the write failed.
+pub fn new_tab_workspace<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+    name: &str,
+) -> Result<CreateOutcome, ControlError> {
+    let outcome = written(app, |book| book.create(tab, name), |_| true)?;
+    show(app, &[tab])?;
+    Ok(outcome)
+}
+
 /// Drop a tab's edits and redraw it. Answers whether there were any.
 ///
 /// # Errors
@@ -414,6 +436,19 @@ fn save_as_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
+fn new_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    tab: u64,
+    name: &str,
+) -> Result<CreateOutcome, ControlError> {
+    let outcome = new_tab_workspace(app, tab, name)?;
+    let payload = json!({ "tab_id": WireU64::new(tab), "workspace": outcome.workspace,
+        "dropped_edits": outcome.dropped_edits });
+    journal(to, WORKSPACE_CREATED_EVENT_KIND, payload);
+    Ok(outcome)
+}
+
 /// Whether there were edits to drop, and the workspace the tab is on.
 fn revert_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
@@ -506,6 +541,22 @@ fn save_as<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     })
 }
 
+fn new<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let WorkspaceNewInput { tab_id, name } = input(value)?;
+    let tab = tab_on_book(app, tab_id)?;
+    let outcome = new_journaled(app, &mut Some((access, actor)), tab, &name)?;
+    answer(&WorkspaceNewResult {
+        tab_id: WireU64::new(tab),
+        workspace: outcome.workspace,
+        dropped_edits: outcome.dropped_edits,
+    })
+}
+
 fn revert<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
@@ -562,6 +613,7 @@ fn list<H: WorkspaceBookHost + ?Sized, A>(
         .map(|row| WorkspaceEntry {
             tabs: wires(&row.tabs),
             name: row.name,
+            summary: row.summary,
         })
         .collect();
     answer(&WorkspaceListResult { workspaces })

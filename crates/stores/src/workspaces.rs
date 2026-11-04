@@ -4,7 +4,7 @@ use quantick_workspace::write_refusal::guard_write;
 use std::path::{Path, PathBuf};
 
 pub use quantick_workspace::workspace_book::{
-    BookParseError, DEFAULT_WORKSPACE, DeleteOutcome, MAX_WORKSPACE_NAME, RenameOutcome,
+    BookParseError, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, MAX_WORKSPACE_NAME, RenameOutcome,
     SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, WORKSPACES_FILE, WorkspaceBook,
     WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
 };

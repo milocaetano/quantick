@@ -26,6 +26,7 @@ use crate::workspace::MODULE_ID;
 pub const TAB_WORKSPACE_SET_CAPABILITY_ID: &str = "tab.workspace.set";
 pub const WORKSPACE_SAVE_TO_CAPABILITY_ID: &str = "workspace.save_to";
 pub const WORKSPACE_SAVE_AS_CAPABILITY_ID: &str = "workspace.save_as";
+pub const WORKSPACE_NEW_CAPABILITY_ID: &str = "workspace.new";
 pub const WORKSPACE_REVERT_CAPABILITY_ID: &str = "workspace.revert";
 pub const WORKSPACE_RENAME_CAPABILITY_ID: &str = "workspace.rename";
 pub const WORKSPACE_DELETE_CAPABILITY_ID: &str = "workspace.delete";
@@ -35,6 +36,8 @@ pub const WORKSPACE_LIST_CAPABILITY_ID: &str = "workspace.list";
 pub const TAB_WORKSPACE_SET_EVENT_KIND: &str = "workspace.tab_set";
 /// A recipe reached the disk, by Save to or Save as.
 pub const WORKSPACE_SAVED_EVENT_KIND: &str = "workspace.saved";
+/// A new, empty workspace reached the disk and a tab moved onto it.
+pub const WORKSPACE_CREATED_EVENT_KIND: &str = "workspace.created";
 /// A tab's edits were dropped.
 pub const WORKSPACE_REVERTED_EVENT_KIND: &str = "workspace.reverted";
 /// A new name reached the disk.
@@ -87,6 +90,24 @@ pub struct WorkspaceSaveAsInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<WireU64>,
     pub name: String,
+}
+
+/// Make a new, empty workspace and put a tab on it.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceNewInput {
+    /// The tab. Left out, the one on screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<WireU64>,
+    pub name: String,
+}
+
+/// The new workspace as stored, and whether the tab's edits were dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub struct WorkspaceNewResult {
+    pub tab_id: WireU64,
+    pub workspace: String,
+    pub dropped_edits: bool,
 }
 
 /// What a save did.
@@ -152,6 +173,9 @@ pub struct WorkspaceListInput {}
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct WorkspaceEntry {
     pub name: String,
+    /// One line: the panes, each context pane's interval and the indicator
+    /// count, e.g. `Time 1m · Flow · 3 ind`.
+    pub summary: String,
     pub tabs: Vec<WireU64>,
 }
 
@@ -214,6 +238,16 @@ pub fn workspace_save_as_descriptor() -> CapabilityDescriptor {
     ))
 }
 
+pub fn workspace_new_descriptor() -> CapabilityDescriptor {
+    writes_the_book(transient_descriptor::<WorkspaceNewInput, WorkspaceNewResult>(
+        WORKSPACE_NEW_CAPABILITY_ID,
+        MODULE_ID,
+        "Make a new, empty workspace for a tab",
+        "Makes a workspace of an empty recipe: the tab's canvas, context intervals and layers, with no indicators and the panes at their own sizes. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason.",
+        "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
+    ))
+}
+
 pub fn workspace_revert_descriptor() -> CapabilityDescriptor {
     bounded(transient_descriptor::<
         WorkspaceTabInput,
@@ -258,7 +292,7 @@ pub fn workspace_list_descriptor() -> CapabilityDescriptor {
         id: WORKSPACE_LIST_CAPABILITY_ID,
         module: MODULE_ID,
         title: "List the workspaces",
-        description: "Lists every saved workspace with the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
+        description: "Lists every saved workspace with a one-line summary (panes, intervals, indicator count) and the open tabs using it, Default first. Which workspace a tab uses and whether it holds edits is also on each tab in workspace.summary.",
         permissions: &[OBSERVE_PERMISSION_ID, "observe.workspace"],
         pagination: None,
     })
@@ -286,6 +320,14 @@ pub const READBACKS: &[Readback] = &[
         WORKSPACE_SAVE_AS_CAPABILITY_ID,
         IdempotencyPolicy::Optional,
         WORKSPACE_SAVED_EVENT_KIND,
+        "payload.workspace",
+        "an event after the pre-call cursor names the new workspace",
+        &[EVERY_OPTIONAL_TEST],
+    ),
+    journal(
+        WORKSPACE_NEW_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        WORKSPACE_CREATED_EVENT_KIND,
         "payload.workspace",
         "an event after the pre-call cursor names the new workspace",
         &[EVERY_OPTIONAL_TEST],
@@ -327,5 +369,8 @@ mod tests {
         assert_eq!(input.tab_id, None);
         assert!(serde_json::from_value::<WorkspaceTabInput>(json!({"tab": 1})).is_err());
         assert!(serde_json::from_value::<WorkspaceSaveAsInput>(json!({})).is_err());
+        assert!(serde_json::from_value::<WorkspaceNewInput>(json!({})).is_err());
+        let new: WorkspaceNewInput = serde_json::from_value(json!({"name": "Blank"})).unwrap();
+        assert_eq!((new.tab_id, new.name.as_str()), (None, "Blank"));
     }
 }
