@@ -8,10 +8,12 @@
 // be right enough that folding starts before clipping does.
 /// Margins, separators and inter-group spacing.
 const W_SLACK: f32 = 90.0;
-/// SOURCE with the full feed name.
-const W_SOURCE_FULL: f32 = 350.0;
-/// SOURCE with the feed shrunk to its initial.
-const W_SOURCE_SHRUNK: f32 = 260.0;
+/// SOURCE: the market button (venue letter, symbol, `· venue`, caret) with
+/// the venue's full name. Measured 21 px under the eyebrow and two menus it
+/// replaced, at both widths.
+const W_SOURCE_FULL: f32 = 330.0;
+/// SOURCE with the venue shrunk to its initial.
+const W_SOURCE_SHRUNK: f32 = 240.0;
 /// The `History: <target> ▾` split button.
 const W_HISTORY: f32 = 150.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
@@ -171,6 +173,18 @@ mod tests {
         let plan = collapse_plan(full_width - 1.0, FLAT_TRADE_W);
         assert_eq!(stage(plan), Some(1));
         assert!(plan.overflow_needed());
+    }
+
+    /// The plan's budget at both venue widths: one market button, so a
+    /// re-estimate is a deliberate change here.
+    #[test]
+    fn the_market_button_is_budgeted_at_both_venue_widths() {
+        let shrunk = CollapsePlan {
+            feed_full_name: false,
+            ..CollapsePlan::FULL
+        };
+        assert_eq!(CollapsePlan::FULL.width(FLAT_TRADE_W), 764.0);
+        assert_eq!(shrunk.width(FLAT_TRADE_W), 674.0);
     }
 
     #[test]

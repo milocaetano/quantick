@@ -740,7 +740,7 @@ mod tests {
 
     /// With bars, indicators and layers gone from the row, every group fits a
     /// 1280 px window at TRADE's reserved width. REC needs more: beside it, 1280 px
-    /// folds LOOK and PANELS into the overflow, and 1920 px folds nothing.
+    /// folds LOOK into the overflow, and 1920 px folds nothing.
     #[test]
     fn nothing_folds_at_the_common_window_widths() {
         let rec = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX;
@@ -749,7 +749,7 @@ mod tests {
             assert_eq!(collapse_plan(available, W_TRADE), CollapsePlan::FULL);
         }
         let with_rec = collapse_plan(1280.0 - margins - rec, W_TRADE);
-        assert!(!with_rec.look_inline && !with_rec.panels_inline);
+        assert!(!with_rec.look_inline && with_rec.panels_inline);
         assert!(with_rec.history_inline && with_rec.trade_inline);
     }
 

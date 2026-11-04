@@ -115,8 +115,6 @@ impl QuantickApp {
         drop(model);
         self.chrome.layout_picker_open = layout_picker_open;
         self.chrome.history_menu_rect = history_menu_rect;
-        let (tab, config) = self.active_with_config();
-        tab.settle_source(config);
         for action in actions {
             self.apply_toolbar_action(action);
         }

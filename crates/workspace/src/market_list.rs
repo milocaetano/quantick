@@ -228,9 +228,11 @@ pub enum MarketStatus {
     Add,
     /// Switch mode: the market the tab being switched shows now.
     ThisTab,
-    /// Switch mode: the contract the feed config names after `from`.
+    /// Switch mode: the contract the feed config names after `from`;
+    /// `refused` while the roll's own rule refuses it (greyed, unselectable).
     Roll {
         from: String,
+        refused: bool,
     },
 }
 
@@ -256,7 +258,7 @@ impl MarketStatus {
             Self::ComingSoon => "coming soon".to_owned(),
             Self::Add => "add to My markets and open".to_owned(),
             Self::ThisTab => "this tab".to_owned(),
-            Self::Roll { from } => format!("Roll from {from}"),
+            Self::Roll { from, .. } => format!("Roll from {from}"),
         }
     }
 
@@ -298,7 +300,14 @@ pub struct MarketRow {
 impl MarketRow {
     #[must_use]
     pub fn selectable(&self) -> bool {
-        self.kind != VenueKind::ComingSoon && self.status != MarketStatus::ThisTab
+        let refused = matches!(self.status, MarketStatus::Roll { refused: true, .. });
+        self.kind != VenueKind::ComingSoon && self.status != MarketStatus::ThisTab && !refused
+    }
+
+    /// The switch palette's roll row, which Enter never lands on by default.
+    #[must_use]
+    pub fn is_roll(&self) -> bool {
+        matches!(self.status, MarketStatus::Roll { .. })
     }
 
     #[must_use]
@@ -355,18 +364,12 @@ fn list_groups(world: &MarketWorld<'_>, query: &str) -> Vec<MarketGroup> {
         return browse(world);
     }
     let needle = query.to_lowercase();
-    let matches = |row: &MarketRow| {
-        [&row.symbol, &row.venue, &row.asset]
-            .into_iter()
-            .any(|text| text.to_lowercase().contains(&needle))
-            || alias_hit(world, &row.asset, &needle)
-    };
     let mut found: Vec<MarketRow> = world
         .markets
         .iter()
         .filter_map(|market| catalog_row(world, market))
         .chain(replay_rows(world))
-        .filter(|row| matches(row))
+        .filter(|row| row_matches(world, row, &needle))
         .collect();
     if found.is_empty() {
         let adds = world
@@ -547,24 +550,27 @@ impl SwitchTarget {
         )
     }
 
-    /// The roll's row, when there is a roll and `query` (lower-cased) names
-    /// either contract or nothing.
-    fn roll_row(&self, needle: &str) -> Option<MarketRow> {
+    /// The roll's row, when there is a roll and `needle` (lower-cased) finds
+    /// it as it finds any row (symbol, venue, asset, aliases) or names the
+    /// contract it rolls from. A refused roll stays on show, greyed.
+    fn roll_row(&self, world: &MarketWorld<'_>, needle: &str) -> Option<MarketRow> {
         let roll = self.roll.as_ref()?;
-        let named = [&roll.target, &self.symbol]
+        let asset = [&roll.target, &self.symbol]
             .into_iter()
-            .any(|symbol| symbol.to_lowercase().contains(needle));
-        named.then(|| MarketRow {
+            .find_map(|symbol| find_market(world, &self.feed_id, symbol))
+            .map_or_else(|| roll.target.clone(), |market| market.asset.clone());
+        let row = MarketRow {
             feed_id: self.feed_id.clone(),
             venue: self.venue.clone(),
             chip: self.chip,
             kind: VenueKind::Live,
             symbol: roll.target.clone(),
-            asset: roll.target.clone(),
+            asset,
             user_added: false,
             bar: None,
             status: MarketStatus::Roll {
                 from: self.symbol.clone(),
+                refused: roll.refusal.is_some(),
             },
             price: None,
             price_dim: false,
@@ -575,14 +581,31 @@ impl SwitchTarget {
                     .clone()
                     .unwrap_or_else(|| ROLL_KEEPS.to_owned()),
             ),
-        })
+        };
+        let named = row_matches(world, &row, needle) || self.symbol.to_lowercase().contains(needle);
+        named.then_some(row)
     }
 
     /// The list as switch mode shows it: no recordings, the tab's own market
-    /// marked "this tab", and the roll first when there is one.
-    fn listing(&self, mut listing: MarketListing, query: &str) -> MarketListing {
+    /// marked "this tab", and the roll first when there is one, in place of
+    /// the plain row for the same contract.
+    fn listing(
+        &self,
+        world: &MarketWorld<'_>,
+        mut listing: MarketListing,
+        query: &str,
+    ) -> MarketListing {
+        let query = query.trim();
+        let roll = (!query.starts_with(COMMAND_PREFIX))
+            .then(|| self.roll_row(world, &query.to_lowercase()))
+            .flatten();
         for group in &mut listing.groups {
-            group.rows.retain(|row| row.kind != VenueKind::Replay);
+            group.rows.retain(|row| {
+                let rolled = (roll.as_ref()).is_some_and(|roll| {
+                    (&row.feed_id, &row.symbol) == (&roll.feed_id, &roll.symbol)
+                });
+                row.kind != VenueKind::Replay && !rolled
+            });
             for row in &mut group.rows {
                 let own = (&row.feed_id, &row.symbol) == (&self.feed_id, &self.symbol);
                 if own && row.status != MarketStatus::Add {
@@ -590,13 +613,10 @@ impl SwitchTarget {
                 }
             }
         }
-        let query = query.trim();
         listing
             .groups
             .retain(|group| !group.rows.is_empty() || query.starts_with(COMMAND_PREFIX));
-        if !query.starts_with(COMMAND_PREFIX)
-            && let Some(row) = self.roll_row(&query.to_lowercase())
-        {
+        if let Some(row) = roll {
             listing.groups.insert(0, group(ROLL_GROUP, vec![row]));
         }
         listing
@@ -661,6 +681,15 @@ fn group(heading: &str, rows: Vec<MarketRow>) -> MarketGroup {
         heading: heading.to_owned(),
         rows,
     }
+}
+
+/// Whether a row answers `needle` (lower-cased): its symbol, venue or asset,
+/// or one of its asset's aliases. Every row the query filters asks this.
+fn row_matches(world: &MarketWorld<'_>, row: &MarketRow, needle: &str) -> bool {
+    [&row.symbol, &row.venue, &row.asset]
+        .into_iter()
+        .any(|text| text.to_lowercase().contains(needle))
+        || alias_hit(world, &row.asset, needle)
 }
 
 fn alias_hit(world: &MarketWorld<'_>, asset: &str, needle: &str) -> bool {
@@ -940,8 +969,9 @@ pub enum PaletteIntent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketPalette {
     query: String,
-    /// Index among the selectable rows.
-    selected: usize,
+    /// Index among the selectable rows; `None` until the trader moves it,
+    /// which reads as the first selectable row that is not a roll.
+    selected: Option<usize>,
     focus: PaletteFocus,
     /// The stop whose widget should take the keyboard, once: set when the
     /// palette opens and on Tab, so a click elsewhere is not pulled back.
@@ -958,7 +988,7 @@ impl Default for MarketPalette {
     fn default() -> Self {
         Self {
             query: String::new(),
-            selected: 0,
+            selected: None,
             focus: PaletteFocus::Field,
             focus_request: Some(PaletteFocus::Field),
             bar: None,
@@ -999,7 +1029,7 @@ impl MarketPalette {
     pub fn listing(&self, world: &MarketWorld<'_>) -> MarketListing {
         let listing = list_markets(world, &self.query);
         match &self.switching {
-            Some(target) => target.listing(listing, &self.query),
+            Some(target) => target.listing(world, listing, &self.query),
             None => listing,
         }
     }
@@ -1022,7 +1052,7 @@ impl MarketPalette {
     pub fn set_query(&mut self, query: &str) {
         if self.query != query {
             query.clone_into(&mut self.query);
-            (self.selected, self.refusal) = (0, None);
+            (self.selected, self.refusal) = (None, None);
         }
     }
 
@@ -1036,16 +1066,23 @@ impl MarketPalette {
     /// row and drops the refusal about the old one.
     pub fn settle_query(&mut self, before: &str) {
         if self.query != before {
-            (self.selected, self.refusal) = (0, None);
+            (self.selected, self.refusal) = (None, None);
         }
     }
 
+    /// The row Enter acts on: the one the trader moved to, else the first
+    /// selectable row that is not a roll. A reflex Enter never rolls.
     #[must_use]
     pub fn selected_row<'l>(&self, listing: &'l MarketListing) -> Option<&'l MarketRow> {
-        listing
-            .selectable()
-            .nth(self.selected)
-            .or_else(|| listing.selectable().next())
+        (self.selected)
+            .and_then(|index| listing.selectable().nth(index))
+            .or_else(|| listing.selectable().find(|row| !row.is_roll()))
+    }
+
+    /// The selected row's index among the selectable rows.
+    fn selected_index(&self, listing: &MarketListing) -> Option<usize> {
+        let row = self.selected_row(listing)?;
+        (listing.selectable()).position(|candidate| std::ptr::eq(candidate, row))
     }
 
     /// Whether `row` is the selected one.
@@ -1061,16 +1098,20 @@ impl MarketPalette {
         if count == 0 {
             return;
         }
-        let current = self.selected.min(count - 1);
-        let step = delta.rem_euclid(count as isize) as usize;
-        self.choose((current + step) % count);
+        // Nothing selected (only a roll is left): Down lands on the first
+        // row, Up on the last.
+        let from =
+            (self.selected_index(listing)).map_or(isize::from(delta < 0) - 1, |at| at as isize);
+        let index = (from + delta).rem_euclid(count as isize) as usize;
+        self.choose(index, listing);
     }
 
     /// Select the selectable row at `index`; a refusal about another row goes.
-    fn choose(&mut self, index: usize) {
-        if self.selected != index {
-            (self.selected, self.refusal) = (index, None);
+    fn choose(&mut self, index: usize, listing: &MarketListing) {
+        if self.selected_index(listing) != Some(index) {
+            self.refusal = None;
         }
+        self.selected = Some(index);
     }
 
     /// Select `row`, as a hover or click does.
@@ -1079,7 +1120,7 @@ impl MarketPalette {
             .selectable()
             .position(|candidate| std::ptr::eq(candidate, row))
         {
-            self.choose(index);
+            self.choose(index, listing);
         }
     }
 

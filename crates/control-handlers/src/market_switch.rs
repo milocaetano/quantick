@@ -4,11 +4,12 @@
 //! `feed.contract.roll` runs. The trader's hand journals nothing, as the
 //! window's other source changes do.
 use crate::contract_roll::{self, ContractRollPort};
-use crate::feed_source::set_source;
+use crate::feed_source::{check_source, set_source};
 use crate::market_palette::MarketPaletteHost;
 use crate::workspace_book::{WorkspaceBookHost, set_tab_workspace};
 use quantick_control::wire::WireU64;
-use quantick_engine::bar_registry::BUILTIN_BARS;
+use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
+use quantick_engine::bar_selection::BarInputAvailability;
 use quantick_stores::market_list::{
     RollOffer, SwitchChoice, SwitchTarget, roll_toast, switch_toast,
 };
@@ -35,9 +36,16 @@ pub fn target<H: SwitchHost + ?Sized>(app: &H) -> Result<SwitchTarget, String> {
         .ok_or_else(|| "A recorded session has no market to switch".to_owned())
 }
 
+/// What a flow pane can cut bars from the moment its tab lands on another
+/// market: the prints every provider declares at spawn, and no deal count,
+/// as the timeline starts afresh. The bar is asked against this before the
+/// switch, so the refusal the pane would give after it comes first instead.
+const ON_ARRIVAL: BarInputAvailability = BarInputAvailability::PRINTS;
+
 /// Put the tab on `choice`'s market, then on the bar and workspace the
-/// trader picked, if any. Everything that could refuse is asked before the
-/// tab or the catalog changes. Answers the toast.
+/// trader picked, if any. Everything that could refuse (the tab, the pair,
+/// the bar against [`ON_ARRIVAL`], the workspace) is asked before the tab or
+/// the catalog changes. Answers the toast.
 ///
 /// # Errors
 /// The refusal the palette shows under its field.
@@ -45,16 +53,16 @@ pub fn switch<H: SwitchHost + ?Sized>(
     app: &mut H,
     choice: &SwitchChoice,
 ) -> Result<String, String> {
-    let bar = (choice.bar.as_deref())
-        .map(|bar| (BUILTIN_BARS.parse(bar)).map_err(|error| format!("Bars {bar}: {error}")))
-        .transpose()?;
+    let bar = choice.bar.as_deref().map(arrival_bar).transpose()?;
     if let Some(name) = &choice.workspace {
         app.market_snapshot().check_workspace(name)?;
     }
+    let tab = WireU64::new(choice.tab_id);
+    let listed = (!choice.add).then_some(choice.symbol.as_str());
+    check_source(&*app, tab, &choice.feed_id, listed).map_err(|error| error.message)?;
     if choice.add {
         app.edit_catalog(&choice.feed_id, &choice.symbol, true)?;
     }
-    let tab = WireU64::new(choice.tab_id);
     set_source(app, tab, &choice.feed_id, &choice.symbol).map_err(|error| error.message)?;
     if let Some(name) = &choice.workspace {
         set_tab_workspace(app, choice.tab_id, name).map_err(|error| error.message)?;
@@ -63,6 +71,17 @@ pub fn switch<H: SwitchHost + ?Sized>(
         app.set_flow_bar(choice.tab_id, bar)?;
     }
     Ok(switch_toast(&choice.symbol))
+}
+
+/// `text` as a bar the pane takes on arrival.
+fn arrival_bar(text: &str) -> Result<BarConfiguration, String> {
+    let bar = BUILTIN_BARS
+        .parse(text)
+        .map_err(|error| format!("Bars {text}: {error}"))?;
+    match ON_ARRIVAL.refusal(bar.requirements()) {
+        Some(unavailable) => Err(format!("Bars {text}: {}", unavailable.reason())),
+        None => Ok(bar),
+    }
 }
 
 /// Roll tab `tab_id` from `from_symbol` to the contract its feed names next,

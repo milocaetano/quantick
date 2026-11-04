@@ -100,7 +100,7 @@ fn row(symbol: &str, status: &str, label: Option<&str>) -> (String, String, Opti
 }
 
 #[test]
-fn switch_mode_labels_skips_the_tab_and_offers_the_roll_first() {
+fn switch_mode_labels_skips_the_tab_and_shows_the_roll_first_without_selecting_it() {
     let (snapshot, mut palette) = palette(roll(None));
     let shown = listing(&snapshot, &mut palette, "");
     assert_eq!(shown.groups[0].heading, ROLL_GROUP, "the roll leads");
@@ -110,29 +110,98 @@ fn switch_mode_labels_skips_the_tab_and_offers_the_roll_first() {
             row("WINF27", "Roll from WINZ26", Some("Roll to WINF27")),
             row("WINZ26", "this tab", None),
             row(
-                "WINF27",
-                "live",
-                Some("Switch to WINF27 \u{b7} MetaTrader 5 \u{b7} B3")
-            ),
-            row(
                 "WDOZ26",
                 "live",
                 Some("Switch to WDOZ26 \u{b7} MetaTrader 5 \u{b7} B3")
             ),
             row("BTC", "live", Some("Switch to BTC \u{b7} Hyperliquid")),
         ],
-        "no recording is offered: a live tab cannot switch onto one"
-    );
-    assert_eq!(palette.primary_label(&shown), "Roll to WINF27");
-    palette.move_selection(1, &shown);
-    assert_eq!(
-        palette.selected_row(&shown).map(|row| row.symbol.as_str()),
-        Some("WINF27"),
-        "selection skips the tab's own market"
+        "no recording, and no plain row for the contract the roll offers"
     );
     assert_eq!(
         palette.primary_label(&shown),
-        "Switch to WINF27 \u{b7} MetaTrader 5 \u{b7} B3"
+        "Switch to WDOZ26 \u{b7} MetaTrader 5 \u{b7} B3",
+        "the default is the first venue row: a reflex Enter never rolls"
+    );
+    palette.move_selection(1, &shown);
+    assert_eq!(
+        palette.primary_label(&shown),
+        "Switch to BTC \u{b7} Hyperliquid"
+    );
+    palette.move_selection(-2, &shown);
+    assert_eq!(
+        palette.primary_label(&shown),
+        "Roll to WINF27",
+        "the roll is one deliberate move away, and selection skips the tab"
+    );
+}
+
+#[test]
+fn with_only_the_roll_left_nothing_is_selected_until_the_trader_moves() {
+    let (snapshot, mut palette) = palette(roll(None));
+    let shown = listing(&snapshot, &mut palette, "winz");
+    assert_eq!(
+        table(&shown),
+        [
+            row("WINF27", "Roll from WINZ26", Some("Roll to WINF27")),
+            row("WINZ26", "this tab", None),
+        ]
+    );
+    assert_eq!(palette.selected_row(&shown), None);
+    assert_eq!(palette.submit(&shown, false), None, "Enter does not roll");
+    palette.move_selection(1, &shown);
+    assert_eq!(
+        palette.submit(&shown, false),
+        Some(PaletteIntent::Roll {
+            tab_id: 1,
+            from_symbol: "WINZ26".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn a_refused_roll_is_shown_greyed_and_cannot_be_selected() {
+    let (snapshot, mut palette) = palette(roll(Some("Close the paper position first")));
+    let shown = listing(&snapshot, &mut palette, "");
+    let rolled = &shown.groups[0].rows[0];
+    assert!(rolled.is_roll() && !rolled.selectable());
+    assert_eq!(switch_action(rolled), None);
+    for step in [1, 1, 1, -1, -1, -1, -1] {
+        palette.move_selection(step, &shown);
+        assert!(
+            palette
+                .selected_row(&shown)
+                .is_some_and(|row| !row.is_roll()),
+            "no move lands on a refused roll"
+        );
+    }
+    palette.select(&shown, rolled);
+    assert!(!palette.is_selected(&shown, rolled), "nor does a hover");
+}
+
+#[test]
+fn the_roll_row_is_found_as_any_row_is() {
+    let mut snapshot = snapshot();
+    for market in &mut snapshot.markets {
+        if market.symbol.starts_with("WIN") {
+            market.asset = "WIN".to_owned();
+            market.aliases = vec!["Mini indice".to_owned()];
+        }
+    }
+    let target = SwitchTarget::of(&snapshot, 1, roll(None)).expect("tab 1 is live");
+    let mut palette = MarketPalette::switching(target);
+    for query in ["winf", "winz", "metatrader", "WIN", "mini"] {
+        assert!(
+            listing(&snapshot, &mut palette, query)
+                .rows()
+                .any(MarketRow::is_roll),
+            "{query} finds the roll as it finds the plain rows"
+        );
+    }
+    assert!(
+        !listing(&snapshot, &mut palette, "hyper")
+            .rows()
+            .any(MarketRow::is_roll)
     );
 }
 
@@ -157,6 +226,11 @@ fn the_roll_row_follows_the_query_and_carries_its_refusal() {
     assert_eq!(
         rolled.hover.as_deref(),
         Some("Close the paper position first")
+    );
+    assert_eq!(
+        win.rows().filter(|row| row.symbol == "WINF27").count(),
+        1,
+        "the roll target is listed once"
     );
     assert!(
         listing(&snapshot, &mut palette, "btc")
@@ -229,6 +303,7 @@ fn enter_switches_with_only_what_the_trader_changed_and_ctrl_enter_is_inert() {
 fn enter_on_the_roll_row_rolls_from_the_tab_s_contract() {
     let (snapshot, mut palette) = palette(roll(None));
     let shown = listing(&snapshot, &mut palette, "");
+    palette.move_selection(-1, &shown);
     assert_eq!(
         palette.submit(&shown, false),
         Some(PaletteIntent::Roll {

@@ -58,21 +58,7 @@ pub fn set_source<H: FeedSourcePort + ?Sized>(
     feed_id: &str,
     symbol: &str,
 ) -> Result<FeedSourceResult, ControlError> {
-    let index = tab_index(host, Some(tab_id))?;
-    let current = host.feed_selection(index).ok_or_else(tab_closed)?;
-    if current.replay {
-        return Err(ControlError::invalid_request(
-            "Close the recorded session before selecting a live source",
-        ));
-    }
-    let valid = host.feed_choices().iter().any(|feed| {
-        feed.feed_id == feed_id && feed.symbols.iter().any(|offered| offered == symbol)
-    });
-    if !valid {
-        return Err(ControlError::invalid_request(
-            "Select a configured feed_id and symbol pair from feed.status.sources",
-        ));
-    }
+    let (index, current) = check_source(host, tab_id, feed_id, Some(symbol))?;
     let changed = current.feed_id != feed_id || current.symbol != symbol;
     let (from_feed_id, from_symbol) = (current.feed_id.clone(), current.symbol.clone());
     let selected = if changed {
@@ -90,6 +76,37 @@ pub fn set_source<H: FeedSourcePort + ?Sized>(
         changed,
         timeline_kept: !changed,
     })
+}
+
+/// Everything [`set_source`] refuses, asked without moving anything: the
+/// tab's place and pair when tab `tab_id` is open and live and `feed_id` is
+/// configured, offering `symbol` (`None`: a symbol about to be added).
+///
+/// # Errors
+/// An unknown tab, a recording, or a pair the config does not list.
+pub fn check_source<H: FeedSourcePort + ?Sized>(
+    host: &H,
+    tab_id: WireU64,
+    feed_id: &str,
+    symbol: Option<&str>,
+) -> Result<(usize, FeedSelection), ControlError> {
+    let index = tab_index(host, Some(tab_id))?;
+    let current = host.feed_selection(index).ok_or_else(tab_closed)?;
+    if current.replay {
+        return Err(ControlError::invalid_request(
+            "Close the recorded session before selecting a live source",
+        ));
+    }
+    let valid = host.feed_choices().iter().any(|feed| {
+        feed.feed_id == feed_id
+            && symbol.is_none_or(|symbol| feed.symbols.iter().any(|offered| offered == symbol))
+    });
+    if !valid {
+        return Err(ControlError::invalid_request(
+            "Select a configured feed_id and symbol pair from feed.status.sources",
+        ));
+    }
+    Ok((index, current))
 }
 
 /// Journal a changed source under the caller's name.

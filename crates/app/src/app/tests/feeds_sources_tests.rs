@@ -1015,9 +1015,9 @@ fn each_symbol_of_a_feed_keeps_its_own_panel_look() {
 fn replay_keeps_the_recorded_symbol_out_of_the_live_feed_snap() {
     // A recorded instrument no configured live feed offers must survive
     // the toolbar frame untouched — snapping it away would relabel the
-    // whole session on the status bar and in the logs. The live path,
-    // drawn through the very same frame, must keep snapping an invalid
-    // selection back to the feed's list.
+    // whole session on the status bar and in the logs. (The toolbar no
+    // longer writes the source: a live switch goes through `select_feed`,
+    // which validates the pair before the tab moves.)
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     let text = "# quantick,csv,1\n# symbol=WINJ26\n# timezone=-03:00\n\
                     Date,Time,Price,Volume,Side\n\
@@ -1048,16 +1048,6 @@ fn replay_keeps_the_recorded_symbol_out_of_the_live_feed_snap() {
         app.active_tab().symbol,
         "WINJ26",
         "a toolbar frame during replay must not relabel the session"
-    );
-
-    // The same frame path with the replay closed: validation still works.
-    app.active_tab_mut().replay = None;
-    app.active_tab_mut().symbol = "NOT-A-SYMBOL".to_owned();
-    let _ = ctx.run(egui::RawInput::default(), |ctx| app.draw_toolbar(ctx));
-    assert_eq!(
-        app.active_tab().symbol,
-        "TESTUSDT",
-        "live selections keep snapping to the feed's symbol list"
     );
 }
 

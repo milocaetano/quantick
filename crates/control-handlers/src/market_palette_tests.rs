@@ -485,6 +485,58 @@ fn the_palette_switches_the_tab_through_the_source_switch() {
     assert!(host.catalog.is_empty());
 }
 
+/// A bar the pane would refuse once on the new market (a deal bar: the fresh
+/// timeline holds no deal count) is refused before the tab moves, so the
+/// switch is never half done.
+#[test]
+fn a_bar_the_new_market_refuses_is_refused_before_the_switch() {
+    let mut host = Host::new();
+    host.book.open_tab(5);
+    let refused = SwitchChoice {
+        bar: Some("trades:2000".to_owned()),
+        workspace: Some("Swing".to_owned()),
+        ..switch_to("PEPEUSDT")
+    };
+    let reason = settle(&mut host, PaletteIntent::Switch(refused)).unwrap_err();
+    assert!(reason.starts_with("Bars trades:2000: "), "{reason}");
+    assert!(host.switches.is_empty(), "the tab stays where it was");
+    assert!(host.flow_bars.is_empty());
+    assert_eq!(host.book.tab_state(5).unwrap().workspace, "Default");
+}
+
+/// What the switch would refuse is asked before the add: a refused switch
+/// lists nothing.
+#[test]
+fn a_refused_add_and_switch_adds_nothing() {
+    let mut host = Host::new();
+    for refused in [
+        SwitchChoice {
+            tab_id: 77,
+            ..switch_to("SOLUSDT")
+        },
+        SwitchChoice {
+            feed_id: "nowhere".to_owned(),
+            ..switch_to("SOLUSDT")
+        },
+        SwitchChoice {
+            bar: Some("trades:2000".to_owned()),
+            ..switch_to("SOLUSDT")
+        },
+        SwitchChoice {
+            workspace: Some("Nowhere".to_owned()),
+            ..switch_to("SOLUSDT")
+        },
+    ] {
+        let add = SwitchChoice {
+            add: true,
+            ..refused
+        };
+        assert!(settle(&mut host, PaletteIntent::Switch(add)).is_err());
+    }
+    assert!(host.catalog.is_empty(), "nothing was added");
+    assert!(host.switches.is_empty());
+}
+
 #[test]
 fn an_add_and_switch_adds_first_and_a_refused_add_switches_nothing() {
     let mut host = Host::new();
