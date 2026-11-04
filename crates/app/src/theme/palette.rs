@@ -66,11 +66,19 @@ pub const FLOW_DIVIDER: Color32 = Color32::from_rgb(0x3A, 0x43, 0x57);
 /// `flow/ink` — the mark and a lit control on the flow surface.
 pub const FLOW_INK: Color32 = Color32::from_rgb(0xE8, 0xEC, 0xF2);
 
-/// `flow/ink-muted` — a control at rest on the flow surface.
-pub const FLOW_INK_MUTED: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
-
-/// `flow/lit` — white at 16 %: the fill of a lit segment on the flow surface.
-pub const FLOW_LIT: Color32 = Color32::from_rgba_premultiplied(41, 41, 41, 41);
+/// `flow/key-*` — the band's keys. Unlit: a dark cut-out, shaded under its top
+/// edge and rimmed in black, with muted ink. Lit: a body graded top to bottom, a
+/// white lip along its top, a 1 px black under-edge, a 2 px shadow, white ink.
+pub const FLOW_KEY_DOWN: Color32 = Color32::from_rgb(0x14, 0x19, 0x24);
+pub const FLOW_KEY_DOWN_SHADE: Color32 = Color32::from_black_alpha(179);
+pub const FLOW_KEY_DOWN_RIM: Color32 = Color32::from_black_alpha(102);
+pub const FLOW_KEY_DOWN_INK: Color32 = Color32::from_rgb(0x7E, 0x87, 0x99);
+pub const FLOW_KEY_UP_TOP: Color32 = Color32::from_rgb(0x3D, 0x48, 0x5E);
+pub const FLOW_KEY_UP_BOTTOM: Color32 = Color32::from_rgb(0x2E, 0x37, 0x49);
+pub const FLOW_KEY_UP_LIP: Color32 = Color32::from_rgba_premultiplied(56, 56, 56, 56);
+pub const FLOW_KEY_UP_EDGE: Color32 = Color32::from_black_alpha(153);
+pub const FLOW_KEY_UP_SHADOW: Color32 = Color32::from_black_alpha(128);
+pub const FLOW_KEY_UP_INK: Color32 = Color32::WHITE;
 
 /// `flow/band-rule` — the 1 px under the band, closing it against the side headers.
 pub const FLOW_BAND_RULE: Color32 = Color32::from_rgb(0x2E, 0x36, 0x48);

@@ -2386,7 +2386,7 @@ fn a_market_hold_refuses_both_segments_and_both_keys() {
 }
 
 /// The numbers of the approved mock, as the trader cut them: the 26 px band holds
-/// the view controls 14 tall, the 28 px row under it the capsules, docked 18 tall
+/// the view keys 20 tall, the 28 px row under it the capsules, docked 18 tall
 /// clear of the band, and the selector, and the 3 px frame closes the chart on the
 /// other three sides.
 #[test]
@@ -2603,9 +2603,9 @@ fn the_flow_time_axis_stands_on_the_frame_tone() {
     );
 }
 
-/// The docked capsules, on the flow pane's sides and on a time pane alike, and the
-/// Trail | Tape switch stand bare: no case encloses their icons, a lit segment is
-/// told by its ink alone, and neighbouring icons keep clear air between them.
+/// The docked capsules, on the flow pane's sides and on a time pane alike, stand
+/// bare: no case encloses their icons, and neighbouring icons keep clear air
+/// between them. The band's keys are not icons: they wear bodies (below).
 #[test]
 fn the_headers_paint_no_wrapper_behind_their_icons() {
     let ctx = egui::Context::default();
@@ -2661,17 +2661,112 @@ fn the_headers_paint_no_wrapper_behind_their_icons() {
             );
         }
     }
-    let row = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .side_row
-        .expect("the side row");
-    let band = row.with_min_y(row.top() - quantick_chart::flow_band::BAND_HEIGHT_PX);
-    let lit = painted
+}
+
+/// What a key on the band wears, read off the shapes a frame painted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum KeyBody {
+    /// Raised: a 2 px shadow, the body graded top to bottom, a light lip on top.
+    Lit,
+    /// A dark cut-out sunk into the band, inside a rim of this colour.
+    Sunk(egui::Color32),
+}
+
+fn key_body(output: &egui::FullOutput, key: egui::Rect) -> Option<KeyBody> {
+    use crate::theme::{FLOW_KEY_DOWN, FLOW_KEY_UP_BOTTOM, FLOW_KEY_UP_LIP, FLOW_KEY_UP_TOP};
+    fn flat(shape: &egui::Shape, found: &mut Vec<egui::Shape>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| flat(shape, found)),
+            shape => found.push(shape.clone()),
+        }
+    }
+    let mut shapes = Vec::new();
+    output
+        .shapes
         .iter()
-        .find(|shape| band.contains_rect(shape.rect) && shape.fill == crate::theme::FLOW_LIT);
-    assert!(lit.is_none(), "a lit segment is its ink: {lit:?}");
+        .for_each(|clipped| flat(&clipped.shape, &mut shapes));
+    let filled = |rect: egui::Rect, fill| {
+        shapes.iter().any(|shape| {
+            matches!(shape, egui::Shape::Rect(seen) if seen.rect == rect && seen.fill == fill)
+        })
+    };
+    let graded = shapes.iter().any(|shape| match shape {
+        egui::Shape::Mesh(mesh) => {
+            let tones = [FLOW_KEY_UP_TOP, FLOW_KEY_UP_BOTTOM];
+            key.expand(0.01).contains_rect(mesh.calc_bounds())
+                && tones.map(|tone| mesh.vertices.iter().any(|at| at.color == tone)) == [true; 2]
+        }
+        _ => false,
+    });
+    let lip = shapes.iter().any(|shape| match shape {
+        egui::Shape::LineSegment { points, stroke } => {
+            points[0].y == key.top() + 0.5
+                && stroke.color == egui::epaint::ColorMode::Solid(FLOW_KEY_UP_LIP)
+        }
+        _ => false,
+    });
+    let shadow = key.translate(egui::vec2(0.0, 2.0));
+    if filled(shadow, crate::theme::FLOW_KEY_UP_SHADOW) && filled(key, FLOW_KEY_UP_BOTTOM) {
+        return (graded && lip).then_some(KeyBody::Lit);
+    }
+    let rim = shapes.iter().find_map(|shape| match shape {
+        egui::Shape::Rect(seen) if seen.rect == key.shrink(0.5) => Some(seen.stroke.color),
+        _ => None,
+    });
+    rim.filter(|_| filled(key, FLOW_KEY_DOWN))
+        .map(KeyBody::Sunk)
+}
+
+/// The band's keys wear the two bodies the trader chose: a shown side's key raised
+/// and lit, the other a dark cut-out sunk into the band; the gear raised only while
+/// its panel is open; and a market hold sinks the tape's key inside a red rim.
+#[test]
+fn the_band_keys_are_raised_when_lit_and_sunk_when_not() {
+    let ctx = egui::Context::default();
+    let (mut app, _ends) = flow_fixture(&ctx);
+    // No pointer on the band, for a whole frame: a hovered key is brighter.
+    let bodies = |app: &mut QuantickApp| {
+        run_frame_with_events(app, &ctx, vec![egui::Event::PointerGone]);
+        let output = run_frame(app, &ctx);
+        [TRAIL, TAPE, GEAR].map(|control| key_body(&output, flow_control(app, control)))
+    };
+    let (lit, sunk) = (
+        Some(KeyBody::Lit),
+        Some(KeyBody::Sunk(crate::theme::FLOW_KEY_DOWN_RIM)),
+    );
+    assert_eq!(
+        bodies(&mut app),
+        [lit, lit, sunk],
+        "both sides, the panel shut"
+    );
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::CandlesOnly);
+    assert_eq!(bodies(&mut app), [lit, sunk, sunk], "the tape put away");
+    let gear = flow_control(&app, GEAR).center();
+    click_chart(&mut app, &ctx, gear);
+    run_frame(&mut app, &ctx);
+    assert!(panel_open(&app));
+    assert_eq!(
+        bodies(&mut app),
+        [lit, sunk, lit],
+        "the open panel lights the gear"
+    );
+
+    app.active_tab_mut()
+        .tape_mut()
+        .set_lane_view(LaneView::Beside);
+    let quiet = quantick_chart::connection_state::ConnectionState {
+        link: quantick_chart::connection_state::Link::Quiet,
+        ..app.active_tab().connection.state()
+    };
+    app.active_tab_mut().tape_mut().observe_market(quiet);
+    let [_, tape, _] = bodies(&mut app);
+    assert_eq!(
+        tape,
+        Some(KeyBody::Sunk(crate::theme::WARN)),
+        "held by the market"
+    );
 }
 
 /// The scene lists what the row paints: beside the tape the flow pane's bars and

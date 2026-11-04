@@ -14,12 +14,11 @@ use quantick_chart::flow_band::{
 };
 use quantick_chart::pane_header::{
     BubbleSample, CAPSULE_HEIGHT_PX, Capsule, CapsuleItem, CapsuleSide, FLOW_CONTROLS_PX,
-    FlowHeaderState, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk, HeaderControl, HeaderIntent,
-    HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle, PaneHeader,
-    SAMPLE_RESET_SCALE, SEGMENT_FRAME_HEIGHT_PX, SEGMENT_FRAME_PAD_PX, SEGMENT_GAP_PX,
-    SEGMENT_GLYPH_PX, SEGMENT_HEIGHT_PX, SEGMENT_PAD_WORDS_PX, SEGMENT_WORD_GAP_PX, SLOT_GAP_PX,
-    SegmentInk, SideSegment, dragged_scale, flow_fit, sample_diameter_px, sample_value_text,
-    section_layer, segment_px, side_word, side_words_px,
+    FlowHeaderState, GEAR_KEY_PX, GLYPH_SLOT_PX, GROUP_GAP_PX, GlyphInk, HeaderControl,
+    HeaderIntent, HeaderWidths, INDICATORS_GLYPH, INDICATORS_LABEL, LayerGlyph, LayerToggle,
+    PaneHeader, SAMPLE_RESET_SCALE, SEGMENT_GAP_PX, SEGMENT_GLYPH_PX, SEGMENT_HEIGHT_PX,
+    SEGMENT_WORD_GAP_PX, SLOT_GAP_PX, SegmentInk, SideSegment, dragged_scale, flow_fit,
+    sample_diameter_px, sample_value_text, section_layer, segment_px, side_word, side_words_px,
 };
 use quantick_chart::side_label::SIDE_LABEL_PADDING_PX;
 use quantick_engine::bar_selection::{BarInputAvailability, BarSelection};
@@ -72,7 +71,7 @@ const SAMPLE_OFF_DIAMETER_PX: f32 = 12.0;
 const SAMPLE_OFF_STROKE_PX: f32 = 1.2;
 /// The trail glyph's drawing box.
 const TRAIL_BOX: f32 = 20.0;
-/// A segment's word, and the corners of a segment's hover patch.
+/// A key's word, and a key's corners.
 const SEGMENT_WORD_SIZE: f32 = 11.5;
 const SEGMENT_ROUNDING: f32 = 3.0;
 /// The dot a closed market's segment wears where its glyph stands.
@@ -234,11 +233,9 @@ pub fn draw_marked(
     if let Some(state) = row.state {
         let room = inner.with_min_x(inner.right() - (controls_px - GROUP_GAP_PX));
         let right = clipped_child(ui, room, strip, ("pane_header_right", salt));
-        let height = inner.y_range();
         let words = fit.side_words.then_some(word_widths);
         side_control(&right, room, salt, &state, words, painted, &mut intent);
-        let gear =
-            egui::Rect::from_x_y_ranges(inner.right() - GLYPH_SLOT_PX..=inner.right(), height);
+        let gear = key_rect(inner.right() - GEAR_KEY_PX, GEAR_KEY_PX, inner);
         settings_gear(&right, gear, salt, row.settings_open, painted, &mut intent);
     }
     intent
@@ -472,8 +469,8 @@ pub fn draw_docked_capsule(
     Some(rect)
 }
 
-/// The gear, bare like the indicators button, pressed while the panel is open.
-/// Left click opens or closes; right click is the two-item menu.
+/// The gear's key, lit while the panel is open. Left click opens or closes;
+/// right click is the two-item menu.
 fn settings_gear(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -487,31 +484,12 @@ fn settings_gear(
     if response.clicked() {
         *intent = Some(HeaderIntent::ToggleSettings);
     }
-    let patch = egui::Rect::from_center_size(
-        rect.center(),
-        egui::Vec2::splat(GLYPH_SLOT_PX.min(rect.height())),
-    );
-    let rounding = egui::Rounding::same(HOVER_ROUNDING);
-    if open {
-        ui.painter().rect_filled(patch, rounding, theme::FLOW_LIT);
-    } else if response.hovered() {
-        ui.painter().rect_filled(patch, rounding, theme::BARE_HOVER);
-    }
-    let colour = if open || response.hovered() {
-        theme::FLOW_INK
-    } else {
-        theme::FLOW_INK_MUTED
-    };
+    let (key, ink) = paint_key(ui.painter(), rect, &response, open, None);
     let font = egui::FontId::proportional(SEGMENT_GLYPH_PX);
     let at = egui::Align2::CENTER_CENTER;
-    ui.painter()
-        .text(rect.center(), at, icons::GEAR, font, colour);
-    record(
-        ui,
-        HeaderControl::Settings(PanelControl::Gear),
-        rect,
-        painted,
-    );
+    ui.painter().text(key.center(), at, icons::GEAR, font, ink);
+    let control = HeaderControl::Settings(PanelControl::Gear);
+    record(ui, control, rect, painted);
     let key = Some(shortcuts::ORDERFLOW_SETTINGS_SHORTCUT);
     let response = response.on_hover_ui(|ui| {
         ui.label(with_key(ui.ctx(), "Order flow settings", key));
@@ -731,8 +709,14 @@ fn segment_word_widths(ui: &egui::Ui, state: Option<&FlowHeaderState>) -> [f32; 
     })
 }
 
-/// The Trail and Tape switches in their frame, from `room`'s left edge. `words`
-/// holds their widths while the line has room for them.
+/// A key `width` wide from `left`, centred on `line`'s height.
+fn key_rect(left: f32, width: f32, line: egui::Rect) -> egui::Rect {
+    let min = egui::pos2(left, line.center().y - SEGMENT_HEIGHT_PX / 2.0);
+    egui::Rect::from_min_size(min, egui::vec2(width, SEGMENT_HEIGHT_PX))
+}
+
+/// The Trail and Tape keys, 1 px apart from `room`'s left edge, in no frame.
+/// `words` holds their widths while the line has room for them.
 fn side_control(
     ui: &egui::Ui,
     room: egui::Rect,
@@ -742,31 +726,59 @@ fn side_control(
     painted: &mut PaintedControls,
     intent: &mut Option<HeaderIntent>,
 ) {
-    let widths = [0, 1].map(|at| segment_px(words.map(|words| words[at])));
-    let inner_px = widths[0] + SEGMENT_GAP_PX + widths[1];
-    let frame = egui::Rect::from_center_size(
-        egui::pos2(
-            room.left() + SEGMENT_FRAME_PAD_PX + inner_px / 2.0,
-            room.center().y,
-        ),
-        egui::vec2(
-            inner_px + 2.0 * SEGMENT_FRAME_PAD_PX,
-            SEGMENT_FRAME_HEIGHT_PX.min(room.height()),
-        ),
-    );
-    let mut left = frame.left() + SEGMENT_FRAME_PAD_PX;
-    for (segment, width) in SideSegment::pair(state).into_iter().zip(widths) {
-        let rect = egui::Rect::from_center_size(
-            egui::pos2(left + width / 2.0, frame.center().y),
-            egui::vec2(width, SEGMENT_HEIGHT_PX.min(frame.height())),
-        );
+    let mut left = room.left();
+    for (at, segment) in SideSegment::pair(state).into_iter().enumerate() {
+        let rect = key_rect(left, segment_px(words.map(|words| words[at])), room);
         side_segment(ui, rect, salt, segment, words.is_some(), painted, intent);
         left = rect.right() + SEGMENT_GAP_PX;
     }
 }
 
-/// One switch, bare on the band: lit ink, or faint with a hover patch under the
-/// pointer. A refusing segment takes the click and does nothing; its tooltip says why.
+/// A key's body where `rect` rests. Lit: raised on a 2 px shadow and a 1 px
+/// under-edge, graded top to bottom, a light lip along its top. Unlit: a dark
+/// cut-out shaded under its top edge, rimmed in `warn` while the market holds
+/// the tape. The pointer brightens it 12 %, a press sinks it 1 px. Answers where
+/// it stands and the ink it takes.
+fn paint_key(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    response: &egui::Response,
+    lit: bool,
+    warn: Option<egui::Color32>,
+) -> (egui::Rect, egui::Color32) {
+    let down = |px: f32| egui::vec2(0.0, px);
+    let pressed = response.is_pointer_button_down_on();
+    let key = rect.translate(down(f32::from(u8::from(pressed))));
+    let gain = if response.hovered() { 1.12 } else { 1.0 };
+    let rounding = egui::Rounding::same(SEGMENT_ROUNDING);
+    let lip = key.x_range().shrink(SEGMENT_ROUNDING);
+    if lit {
+        let [shadow, edge] = [2.0, 1.0].map(|px| key.translate(down(px)));
+        painter.rect_filled(shadow, rounding, theme::FLOW_KEY_UP_SHADOW);
+        painter.rect_filled(edge, rounding, theme::FLOW_KEY_UP_EDGE);
+        let [top, bottom] = [theme::FLOW_KEY_UP_TOP, theme::FLOW_KEY_UP_BOTTOM];
+        painter.rect_filled(key, rounding, bottom.gamma_multiply(gain));
+        let mut mesh = egui::Mesh::default();
+        let mut outline = Vec::new();
+        egui::epaint::tessellator::path::rounded_rectangle(&mut outline, key, rounding);
+        for at in &outline {
+            let tone = top.lerp_to_gamma(bottom, (at.y - key.top()) / key.height());
+            mesh.colored_vertex(*at, tone.gamma_multiply(gain));
+        }
+        (2..outline.len() as u32).for_each(|at| mesh.add_triangle(0, at - 1, at));
+        painter.add(mesh);
+        painter.hline(lip, key.top() + 0.5, (1.0, theme::FLOW_KEY_UP_LIP));
+        return (key, theme::FLOW_KEY_UP_INK);
+    }
+    painter.rect_filled(key, rounding, theme::FLOW_KEY_DOWN.gamma_multiply(gain));
+    painter.hline(lip, key.top() + 1.5, (1.0, theme::FLOW_KEY_DOWN_SHADE));
+    let rim = warn.unwrap_or(theme::FLOW_KEY_DOWN_RIM);
+    painter.rect_stroke(key.shrink(0.5), rounding, (1.0, rim));
+    (key, theme::FLOW_KEY_DOWN_INK)
+}
+
+/// One key on the band: lit, unlit, or held by the market with red ink and a dot.
+/// A refusing key takes the click and does nothing; its tooltip says why.
 fn side_segment(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -785,34 +797,12 @@ fn side_segment(
     }
     let lit = segment.ink == SegmentInk::Lit;
     let closed = segment.ink == SegmentInk::MarketClosed;
-    let colour = match segment.ink {
-        SegmentInk::Lit => theme::FLOW_INK,
-        SegmentInk::MarketClosed => theme::WARN,
-        SegmentInk::Unlit => theme::FLOW_INK_MUTED,
-    };
+    let warn = closed.then_some(theme::WARN);
     let painter = ui.painter();
-    if response.hovered() && !lit {
-        painter.rect_filled(
-            rect,
-            egui::Rounding::same(SEGMENT_ROUNDING),
-            theme::BARE_HOVER,
-        );
-    }
-    if closed {
-        painter.rect_stroke(
-            rect,
-            egui::Rounding::same(SEGMENT_ROUNDING),
-            (1.0, theme::WARN),
-        );
-    }
-    let glyph_center = if words {
-        egui::pos2(
-            rect.left() + SEGMENT_PAD_WORDS_PX + SEGMENT_GLYPH_PX / 2.0,
-            rect.center().y,
-        )
-    } else {
-        rect.center()
-    };
+    let (key, ink) = paint_key(painter, rect, &response, lit, warn);
+    let colour = warn.unwrap_or(ink);
+    // Where a key without its word would centre it, so the word never moves it.
+    let glyph_center = key.left_center() + egui::vec2(segment_px(None) / 2.0, 0.0);
     match segment.side {
         _ if closed => _ = painter.circle_filled(glyph_center, MARKET_DOT_RADIUS, theme::WARN),
         LaneSide::Trail => paint_trail(painter, glyph_center, colour, lit),
@@ -828,10 +818,7 @@ fn side_segment(
     }
     if words {
         painter.text(
-            egui::pos2(
-                glyph_center.x + SEGMENT_GLYPH_PX / 2.0 + SEGMENT_WORD_GAP_PX,
-                rect.center().y,
-            ),
+            glyph_center + egui::vec2(SEGMENT_GLYPH_PX / 2.0 + SEGMENT_WORD_GAP_PX, 0.0),
             egui::Align2::LEFT_CENTER,
             segment.word(),
             egui::FontId::proportional(SEGMENT_WORD_SIZE),

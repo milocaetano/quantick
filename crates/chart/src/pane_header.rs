@@ -235,12 +235,12 @@ pub fn side_word(side: LaneSide) -> &'static str {
 /// How a segment of the view control is inked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentInk {
-    /// Its side is chosen: primary text on the control fill.
+    /// Its side is chosen: white ink on a key raised off the band.
     Lit,
-    /// Its side is not chosen: faint, on the frame's own fill.
+    /// Its side is not chosen: muted ink on a dark key sunk into the band.
     Unlit,
-    /// The tape's, while the market holds it folded: the one red control, an
-    /// outline with a dot and no fill.
+    /// The tape's, while the market holds it folded: the one red control, a sunk
+    /// key with a red rim, red ink and a dot.
     MarketClosed,
 }
 
@@ -370,31 +370,28 @@ pub const MARKET_FOLD_SETTING_HOVER: &str = "beside the candles, while the feed 
 /// What the tape's segment reads while the market holds it away.
 pub const MARKET_CLOSED_WORD: &str = "Market closed";
 
-/// Width of a segment's glyph.
-pub const SEGMENT_GLYPH_PX: f32 = 13.0;
-/// A segment's height inside its frame.
-pub const SEGMENT_HEIGHT_PX: f32 = 14.0;
-/// The frame's height around its segments: 3 pt clear of the band's edges.
-pub const SEGMENT_FRAME_HEIGHT_PX: f32 = SEGMENT_HEIGHT_PX + 2.0 * SEGMENT_FRAME_PAD_PX;
-/// The frame's padding plus its 1 px border.
-pub const SEGMENT_FRAME_PAD_PX: f32 = 3.0;
-/// The gap between the two segments.
-pub const SEGMENT_GAP_PX: f32 = 2.0;
-/// A segment's padding without its word, and with it.
-const SEGMENT_PAD_BARE_PX: f32 = 7.0;
-pub const SEGMENT_PAD_WORDS_PX: f32 = 10.0;
-/// The gap between a segment's glyph and its word.
-pub const SEGMENT_WORD_GAP_PX: f32 = 7.0;
+/// Width of a key's glyph.
+pub const SEGMENT_GLYPH_PX: f32 = 14.0;
+/// A key's height on the band: the Trail and Tape keys and the gear alike.
+pub const SEGMENT_HEIGHT_PX: f32 = 20.0;
+/// The gap between the Trail and Tape keys; no frame encloses the pair.
+pub const SEGMENT_GAP_PX: f32 = 1.0;
+/// A key's padding either side of its glyph, with its word or without it.
+const SEGMENT_PAD_PX: f32 = 10.0;
+/// The gap between a key's glyph and its word.
+pub const SEGMENT_WORD_GAP_PX: f32 = 5.0;
+/// The gear's key: its glyph and 5 px either side.
+pub const GEAR_KEY_PX: f32 = 2.0 * 5.0 + SEGMENT_GLYPH_PX;
 
-/// A segment's width: bare, or with a word this wide beside its glyph.
+/// A key's width: its glyph alone, or with a word this wide beside it.
 #[must_use]
 pub fn segment_px(word_px: Option<f32>) -> f32 {
     word_px.map_or(SEGMENT_BARE_PX, |word| {
-        2.0 * SEGMENT_PAD_WORDS_PX + SEGMENT_GLYPH_PX + SEGMENT_WORD_GAP_PX + word
+        SEGMENT_BARE_PX + SEGMENT_WORD_GAP_PX + word
     })
 }
 
-const SEGMENT_BARE_PX: f32 = 2.0 * SEGMENT_PAD_BARE_PX + SEGMENT_GLYPH_PX;
+const SEGMENT_BARE_PX: f32 = 2.0 * SEGMENT_PAD_PX + SEGMENT_GLYPH_PX;
 
 /// What the words beside the glyphs add to the right end, these words being
 /// this wide.
@@ -499,14 +496,11 @@ pub struct HeaderFit {
     pub side_words: bool,
 }
 
-/// Width of the header's right end at its barest: the two segments in their
-/// frame without their words, and the gear. The strip glyph lives in the trail's
-/// capsule, the one side it draws on.
-pub const FLOW_CONTROLS_PX: f32 = 2.0 * SEGMENT_BARE_PX
-    + SEGMENT_GAP_PX
-    + 2.0 * SEGMENT_FRAME_PAD_PX
-    + GROUP_GAP_PX
-    + GLYPH_SLOT_PX;
+/// Width of the header's right end at its barest: the two keys without their
+/// words, and the gear's. The strip glyph lives in the trail's capsule, the one
+/// side it draws on.
+pub const FLOW_CONTROLS_PX: f32 =
+    2.0 * SEGMENT_BARE_PX + SEGMENT_GAP_PX + GROUP_GAP_PX + GEAR_KEY_PX;
 
 impl HeaderControl {
     /// A section's header, as the flow pane's line lists it, on screen or not.
@@ -1101,15 +1095,15 @@ mod tests {
         assert_eq!(BubbleSample::Candle.name(), "Bubble size on the trail");
     }
 
-    /// The bare right end is what the words add to: the segments in their frame,
-    /// then the gear, and no strip glyph.
+    /// The bare right end is what the words add to: the two keys 1 px apart with
+    /// no frame, then the gear's key, and no strip glyph. A key is padded 3 x 10.
     #[test]
     fn the_right_end_measures_its_parts() {
-        assert_eq!(segment_px(None), 27.0);
-        assert_eq!(segment_px(Some(30.0)), 70.0);
-        assert_eq!(side_words_px([30.0, 40.0]), 43.0 + 53.0);
-        assert_eq!(FLOW_CONTROLS_PX, 54.0 + 2.0 + 6.0 + 8.0 + 20.0);
-        assert_eq!(SEGMENT_FRAME_HEIGHT_PX, 20.0);
+        assert_eq!(segment_px(None), 10.0 + 14.0 + 10.0);
+        assert_eq!(segment_px(Some(30.0)), 34.0 + 5.0 + 30.0);
+        assert_eq!(side_words_px([30.0, 40.0]), 35.0 + 45.0);
+        assert_eq!(FLOW_CONTROLS_PX, 68.0 + 1.0 + 8.0 + 24.0);
+        assert_eq!(SEGMENT_HEIGHT_PX, 3.0 + 14.0 + 3.0);
     }
 
     fn glyph(toggle: LayerToggle, on: bool, blocked: Option<LayerBlock>) -> LayerGlyph {
