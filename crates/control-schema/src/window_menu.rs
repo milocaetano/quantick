@@ -420,12 +420,6 @@ pub const CELL_MENU_ROWS: &[RowId] = &[
     RowId::WorkspaceDelete,
 ];
 
-/// The status bar cell: `▦ Scalp`, the mark and the caret painted beside it.
-#[must_use]
-pub fn cell_label(workspace: &str) -> String {
-    format!("\u{25a6} {workspace}")
-}
-
 /// The cell's hover.
 pub const CELL_HOVER: &str = "Workspace of this tab \u{b7} click to switch or create";
 
@@ -600,7 +594,6 @@ mod tests {
                 "the window menu's Workspace lists {id:?} too"
             );
         }
-        assert_eq!(cell_label("Scalp"), "\u{25a6} Scalp");
     }
 
     #[test]

@@ -311,7 +311,7 @@ pub fn draw(
     response
 }
 
-/// `▦ Scalp • ▴`: the tab's workspace, the amber mark while it holds edits and
+/// `⊞ Scalp • ▴`: the tab's workspace, the amber mark while it holds edits and
 /// a caret pointing where the menu opens.
 fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusResponse) {
     use quantick_control_schema::window_menu as text;
@@ -321,11 +321,9 @@ fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusR
     let font = egui::TextStyle::Body.resolve(ui.style());
     let piece = |color| egui::TextFormat::simple(font.clone(), color);
     let mut job = egui::text::LayoutJob::default();
-    job.append(
-        &text::cell_label(workspace),
-        0.0,
-        piece(theme::TEXT_PRIMARY),
-    );
+    // A Phosphor glyph: the Body face has no U+25A6, which drew as a box.
+    job.append(icons::SQUARES_FOUR, 0.0, piece(theme::TEXT_MUTED));
+    job.append(workspace, WORKSPACE_GAP_PX, piece(theme::TEXT_PRIMARY));
     if model.modified {
         job.append(EDITED_MARK, WORKSPACE_GAP_PX, piece(theme::AMBER));
     }
