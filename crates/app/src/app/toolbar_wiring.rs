@@ -7,11 +7,9 @@
 //! what a toolbar looks like.
 
 use eframe::egui;
-use quantick_control_handlers::contract_roll;
 use quantick_engine::Side;
 use quantick_session::workspace_menu::WorkspaceCommand;
 
-use super::control_host::ControlPort;
 use super::tab_workspaces::apply_workspace_command as workspace_command;
 use crate::indicator_worker::SlotId;
 use crate::surfaces::ChartSettingsTab::Candles;
@@ -36,11 +34,7 @@ impl QuantickApp {
     /// out whatever it asked (§6 — the toolbar module owns grouping and the
     /// overflow rule; this method owns the side effects).
     pub(super) fn draw_toolbar(&mut self, ctx: &egui::Context) {
-        let feeds = self.config.feed_choices();
-        let symbols = self
-            .config
-            .feed(&self.active_tab().feed_id)
-            .map_or_else(Vec::new, |feed| feed.symbols.clone());
+        let chip = self.config.venue_chip(&self.active_tab().feed_id);
         let replay = self
             .active_tab()
             .replay
@@ -60,7 +54,6 @@ impl QuantickApp {
         let capabilities = toolbar_caps(self.active_tab(), &self.config);
         let candles_held = self.active_tab().session.venue_candles_held();
         let older_candles = self.active_tab().older_candles(capabilities);
-        let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
         let dock_visible = self.dock.visible();
         let show_style = self.surfaces.chart_settings.is_open_on(Candles);
         // The History button names this tab's target and run.
@@ -79,7 +72,6 @@ impl QuantickApp {
         let layout_picker_autostart = self.chrome.harness.take_layout_picker_autostart();
         #[cfg(not(any(feature = "scenario-harness", test)))]
         let layout_picker_autostart = false;
-        let contract_roll = contract_roll::offer(self as &dyn ControlPort);
         let deal_recording = self.active_tab().deal_recording_view();
         #[cfg(any(feature = "scenario-harness", test))]
         let deal_recording_menu =
@@ -99,12 +91,7 @@ impl QuantickApp {
             layout_picker_open: &mut layout_picker_open,
             layout_picker_request_open: layout_picker_autostart,
             workspace_edits,
-            feeds,
-            feed_id: &mut tab.feed_id,
-            feed_display_name,
-            symbols,
-            contract_roll,
-            symbol: &mut tab.symbol,
+            market: (chip, tab.chip_label()),
             replay,
             deal_recording,
             deal_recording_menu,
@@ -170,7 +157,7 @@ impl QuantickApp {
                 self.tabs_mut().press_history(active, reach);
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
-            ToolbarAction::RollContract => contract_roll::roll_active(self as &mut dyn ControlPort),
+            ToolbarAction::SwitchMarket => _ = super::tabs::open_palette(self, "", true),
             ToolbarAction::SaveToWorkspace => workspace_command(self, WorkspaceCommand::SaveTo),
             ToolbarAction::RevertWorkspace => workspace_command(self, WorkspaceCommand::Revert),
             ToolbarAction::DealRecording(action) => {

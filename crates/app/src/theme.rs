@@ -40,6 +40,10 @@ pub use palette::{
     SEAM_LABEL, SEAM_LINE, SELL, TAG_BG, TEXT_FAINT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SUPPORT, WARN,
 };
 
+/// The toolbar's market button: bare at rest (border and fill on hover) when
+/// true, bordered like History when false. Kept for a side-by-side look.
+pub const MARKET_BUTTON_QUIET: bool = false;
+
 #[cfg(test)]
 use eframe::egui::Color32;
 

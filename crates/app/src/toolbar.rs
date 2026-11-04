@@ -1,8 +1,8 @@
 //! The context toolbar: *what am I looking at* on the left, *what is drawn
 //! on it* on the right (`docs/ux/ui-design-model.md` §6).
 //!
-//! Left: THIS TAB (the tab's market as a label that opens its own lists, or the
-//! amber session label while replaying),
+//! Left: the tab's market as a dropdown button that opens the palette in
+//! switch mode (or the amber session label while replaying),
 //! HISTORY (a `+ older ▾` split button whose menu holds the page size). Right:
 //! LOOK (appearance dialog), PANELS (dock show/hide). Between HISTORY and the right groups sits TRADE — the
 //! simulated BUY/SELL market buttons (`docs/ux/paper-trading.md`). The
@@ -78,19 +78,9 @@ pub struct ToolbarModel<'a> {
     pub layout_picker_open: &'a mut bool,
     /// Open the layout popover this frame (the `QUANTICK_LAYOUT_PICKER` hook).
     pub layout_picker_request_open: bool,
-    /// `(id, display label)` for every configured feed.
-    pub feeds: Vec<(String, String)>,
-    /// The selected feed id.
-    pub feed_id: &'a mut String,
-    /// Display name of the tab's feed.
-    pub feed_display_name: String,
-    /// Symbols offered by the selected feed.
-    pub symbols: Vec<String>,
-    /// The tab's symbol.
-    pub symbol: &'a mut String,
-    /// The roll on offer: the target, and why it is greyed when it is. Absent
-    /// when the config names no next contract.
-    pub contract_roll: Option<(String, Option<&'static str>)>,
+    /// The market button: the venue's letter and the tab chip's own
+    /// `SYMBOL · venue`, so the two cannot disagree.
+    pub market: (char, &'a str),
     /// The workspace this tab holds unsaved edits against, while it holds any.
     pub workspace_edits: Option<String>,
     /// Present while a recording is the source; replaces the market label.
@@ -165,8 +155,8 @@ pub enum ToolbarAction {
     LoadHistory(HistoryReach),
     /// Stop the history run in flight and keep what arrived.
     CancelHistory,
-    /// Roll the tab to the contract the config names next.
-    RollContract,
+    /// Open the palette in switch mode on this tab (the market button).
+    SwitchMarket,
     /// Write this tab's edits into its workspace.
     SaveToWorkspace,
     /// Drop this tab's edits.
@@ -276,8 +266,8 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
     actions
 }
 
-/// THIS TAB: the market as a label whose words open the feed and symbol lists,
-/// or the amber session label during replay.
+/// The market button (venue letter, symbol, muted venue, caret) whose click
+/// opens the palette in switch mode, or the amber session label during replay.
 fn draw_source(
     ui: &mut egui::Ui,
     model: &mut ToolbarModel,
@@ -294,61 +284,9 @@ fn draw_source(
         .on_hover_text(&replay.hover);
         return;
     }
-
-    let feed_text = if plan.feed_full_name {
-        model.feed_display_name.clone()
-    } else {
-        model
-            .feed_display_name
-            .chars()
-            .next()
-            .map(String::from)
-            .unwrap_or_default()
-    };
-    ui.label(egui::RichText::new("this tab").color(theme::TEXT_MUTED));
-    ui.scope(|ui| {
-        // Words until the pointer is on them: the row reads as a label.
-        let idle = &mut ui.visuals_mut().widgets.inactive;
-        idle.weak_bg_fill = egui::Color32::TRANSPARENT;
-        idle.bg_stroke = egui::Stroke::NONE;
-        let symbol = egui::RichText::new(model.symbol.as_str()).color(theme::TEXT_PRIMARY);
-        ui.menu_button(symbol, |ui| {
-            if let Some((target, refusal)) = &model.contract_roll {
-                let label = format!("Roll to {target}");
-                let row = ui.add_enabled(refusal.is_none(), egui::Button::new(label));
-                let row = match refusal {
-                    Some(reason) => row.on_disabled_hover_text(*reason),
-                    None => row.on_hover_text("Keeps this tab's workspace and drawings"),
-                };
-                if row.clicked() {
-                    actions.push(ToolbarAction::RollContract);
-                    ui.close_menu();
-                }
-                ui.separator();
-            }
-            for symbol in &model.symbols {
-                let row = ui.selectable_value(model.symbol, symbol.clone(), symbol);
-                if row.clicked() {
-                    ui.close_menu();
-                }
-            }
-        })
-        .response
-        .on_hover_text("Switch this tab's symbol");
-        let feed = egui::RichText::new(format!("· {feed_text}")).color(theme::TEXT_MUTED);
-        ui.menu_button(feed, |ui| {
-            for (id, name) in &model.feeds {
-                if ui
-                    .selectable_value(model.feed_id, id.clone(), name)
-                    .clicked()
-                {
-                    ui.close_menu();
-                }
-            }
-        })
-        .response
-        .on_hover_text("Switch this tab's feed");
-    });
+    if draw_market(ui, model.market, plan.feed_full_name).clicked() {
+        actions.push(ToolbarAction::SwitchMarket);
+    }
     if let Some(workspace) = &model.workspace_edits {
         let save = quantick_control_schema::window_menu::save_to_short_label(workspace);
         if ui.button(save).clicked() {
@@ -371,6 +309,55 @@ fn draw_source(
     {
         actions.push(ToolbarAction::DealRecording(action));
     }
+}
+
+/// The market button's hover.
+const MARKET_HOVER: &str = "Switch this tab's market \u{b7} Ctrl+T opens a new tab instead";
+/// Room the venue letter's box takes before the symbol.
+const MARKET_CHIP_PX: f32 = 16.0;
+
+/// The market as one dropdown button, bordered at rest like History (bare
+/// until hovered under [`theme::MARKET_BUTTON_QUIET`]); the venue shrinks to
+/// its initial when the row is short.
+fn draw_market(ui: &mut egui::Ui, (chip, label): (char, &str), full: bool) -> egui::Response {
+    let (symbol, venue) = quantick_workspace::arrangement::strip::chip_parts(label);
+    let initial = venue.chars().next().map_or(0, char::len_utf8);
+    let venue = if full { venue } else { &venue[..initial] };
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let format = |color| egui::TextFormat::simple(font.clone(), color);
+    let mut job = egui::text::LayoutJob::default();
+    job.append(symbol, MARKET_CHIP_PX + 6.0, format(theme::TEXT_PRIMARY));
+    job.append(&format!(" \u{b7} {venue}"), 0.0, format(theme::TEXT_MUTED));
+    job.append(icons::CARET_DOWN, 6.0, format(theme::TEXT_FAINT));
+    let response = ui
+        .scope(|ui| {
+            if theme::MARKET_BUTTON_QUIET {
+                let idle = &mut ui.visuals_mut().widgets.inactive;
+                (idle.weak_bg_fill, idle.bg_stroke) =
+                    (egui::Color32::TRANSPARENT, egui::Stroke::NONE);
+            }
+            ui.add(egui::Button::new(job))
+        })
+        .inner;
+    let left = response.rect.left() + ui.spacing().button_padding.x;
+    let size = egui::Vec2::splat(MARKET_CHIP_PX);
+    let mark = egui::Rect::from_min_size(egui::pos2(left, response.rect.center().y - 8.0), size);
+    let painter = ui.painter();
+    painter.rect(
+        mark,
+        4.0,
+        theme::INSET,
+        egui::Stroke::new(1.0_f32, theme::BORDER),
+    );
+    let letter = egui::FontId::proportional(9.5);
+    painter.text(
+        mark.center(),
+        egui::Align2::CENTER_CENTER,
+        chip,
+        letter,
+        theme::TEXT_MUTED,
+    );
+    response.on_hover_text(MARKET_HOVER)
 }
 
 /// What the running source can build bars from: the one answer each pane
@@ -803,12 +790,7 @@ mod tests {
                         layout_picker_open: &mut layout_picker_open,
                         layout_picker_request_open: false,
                         workspace_edits: None,
-                        feed_display_name: "Binance".to_owned(),
-                        feeds: Vec::new(),
-                        feed_id: &mut String::new(),
-                        symbols: vec!["BTCUSDT".to_owned()],
-                        contract_roll: None,
-                        symbol: &mut "BTCUSDT".to_owned(),
+                        market: ('B', "BTCUSDT \u{b7} Binance"),
                         replay: replaying.then(|| ReplaySource {
                             label: "BTCUSDT · 2026-03-16".to_owned(),
                             hover: "Replaying a recorded session".to_owned(),
@@ -862,12 +844,7 @@ mod tests {
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
                     workspace_edits: None,
-                    feed_display_name: "MetaTrader 5".to_owned(),
-                    feeds: Vec::new(),
-                    feed_id: &mut String::new(),
-                    symbols: vec!["US500".to_owned()],
-                    contract_roll: None,
-                    symbol: &mut "US500".to_owned(),
+                    market: ('B', "US500 \u{b7} MetaTrader 5"),
                     replay: None,
                     deal_recording: None,
                     deal_recording_menu: false,
@@ -968,12 +945,7 @@ mod tests {
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
                     workspace_edits: None,
-                    feed_display_name: "Binance".to_owned(),
-                    feeds: Vec::new(),
-                    feed_id: &mut String::new(),
-                    symbols: vec!["BTCUSDT".to_owned()],
-                    contract_roll: None,
-                    symbol: &mut "BTCUSDT".to_owned(),
+                    market: ('B', "BTCUSDT \u{b7} Binance"),
                     replay: None,
                     deal_recording: None,
                     deal_recording_menu: false,

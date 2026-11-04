@@ -67,6 +67,18 @@ impl AppConfig {
             .unwrap_or_else(|| self.plain_bubble_asset(venue, symbol).key)
     }
 
+    /// The letter a venue's markets wear (B, H, 5): the palette's rows and
+    /// the toolbar's market button read this one answer.
+    #[must_use]
+    pub fn venue_chip(&self, feed_id: &str) -> char {
+        match self.feed(feed_id).map(|feed| feed.provider) {
+            Some(ProviderKind::Binance | ProviderKind::BinanceFutures) => 'B',
+            Some(ProviderKind::Hyperliquid) => 'H',
+            Some(ProviderKind::MetaTrader) => '5',
+            None => '?',
+        }
+    }
+
     /// The venues and markets "Open a market" lists, in config order.
     #[must_use]
     pub fn market_catalog(&self, added: &AddedSymbols) -> (Vec<Venue>, Vec<CatalogMarket>) {
@@ -76,11 +88,7 @@ impl AppConfig {
             .map(|feed| Venue {
                 feed_id: feed.id.clone(),
                 name: feed.name.clone(),
-                chip: match feed.provider {
-                    ProviderKind::Binance | ProviderKind::BinanceFutures => 'B',
-                    ProviderKind::Hyperliquid => 'H',
-                    ProviderKind::MetaTrader => '5',
-                },
+                chip: self.venue_chip(&feed.id),
                 kind: if feed.provider.is_implemented() {
                     VenueKind::Live
                 } else {

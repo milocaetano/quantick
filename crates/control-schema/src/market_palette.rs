@@ -62,11 +62,17 @@ pub struct MarketPaletteOpenInput {
     /// What the field starts with; `>` lists commands.
     #[serde(default)]
     pub query: String,
+    /// Switch mode: Enter puts the active tab on the chosen market (through
+    /// `tab.market.set`) instead of opening a tab, as the toolbar's market
+    /// button does.
+    #[serde(default)]
+    pub switch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct MarketPaletteOpenResult {
     pub query: String,
+    pub switch: bool,
 }
 
 /// Take a market the trader added out of its venue's list.
@@ -106,7 +112,7 @@ pub fn market_palette_open_descriptor() -> CapabilityDescriptor {
         MARKET_PALETTE_OPEN_CAPABILITY_ID,
         MARKET_MODULE_ID,
         "Show the Open a market palette",
-        "Puts the Open a market palette over the chart, as + and Ctrl+T do, with the field holding query, and journals market.palette.opened. Nothing opens until Enter or market.open.",
+        "Puts the Open a market palette over the chart, as + and Ctrl+T do, with the field holding query, and journals market.palette.opened. Nothing opens until Enter or market.open. With switch true it opens in switch mode, as the toolbar's market button does: Enter switches the active tab (tab.market.set) or rolls it to its next contract (feed.contract.roll); refused when the active tab is a recording.",
         "Showing the palette twice is the same state, with the field reset to query.",
     ))
 }
@@ -144,7 +150,7 @@ pub const READBACKS: &[Readback] = &[
         IdempotencyPolicy::Optional,
         PALETTE_OPENED_EVENT_KIND,
         "payload.query",
-        "an event after the pre-call cursor names the query",
+        "an event after the pre-call cursor names the query and the mode",
         &[EVERY_OPTIONAL_TEST],
     ),
     snapshot(

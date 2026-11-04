@@ -137,8 +137,8 @@ pub fn apply<H: ContractRollPort + ?Sized>(
     Some(carried)
 }
 
-/// The roll the active tab's symbol list offers: the configured target, and
-/// why it is greyed when it is. `None` when there is nothing to offer.
+/// The roll the switch palette offers the active tab: the configured target,
+/// and why it is greyed when it is. `None` when there is nothing to offer.
 pub fn offer<H: ContractRollPort + ?Sized>(host: &H) -> Option<(String, Option<&'static str>)> {
     let index = host.active_tab_index();
     let current = host.feed_selection(index)?;
@@ -150,15 +150,6 @@ pub fn offer<H: ContractRollPort + ?Sized>(host: &H) -> Option<(String, Option<&
         .err()
         .map(RollRefusal::reason);
     Some((next, refusal))
-}
-
-/// The toolbar's act: the rule [`target`] asks, then the same [`apply`] the
-/// capability runs. A refused roll changes nothing; the entry was greyed.
-pub fn roll_active<H: ContractRollPort + ?Sized>(host: &mut H) {
-    let index = host.active_tab_index();
-    if let Some(Ok(next)) = target(&*host, index) {
-        apply(host, index, &next);
-    }
 }
 
 /// Dock the capability.

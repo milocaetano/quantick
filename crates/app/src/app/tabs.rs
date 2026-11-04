@@ -120,7 +120,7 @@ fn settle_strip(app: &mut QuantickApp, (palette, closed): super::arrangement_ada
         app.surfaces.market_palette.recent.closed(closed);
     }
     if palette {
-        app.surfaces.market_palette.open("");
+        app.surfaces.market_palette.open("", None);
     }
 }
 
@@ -180,9 +180,18 @@ pub(super) fn edit_catalog(app: &mut QuantickApp, market: (&str, &str), add: boo
     }
 }
 
+/// Show the palette; `switch` puts it in switch mode on the active tab.
+pub(super) fn open_palette(app: &mut QuantickApp, query: &str, switch: bool) -> Refusable {
+    let port = app as &dyn super::control_host::ControlPort;
+    let target = switch.then(|| quantick_control_handlers::market_switch::target(port));
+    app.surfaces.market_palette.open(query, target.transpose()?);
+    Ok(())
+}
+
 /// Do what the palette asked. A refusal stays under its field.
 pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: list::PaletteIntent) {
-    match quantick_control_handlers::market_palette::settle(app, intent) {
+    let port = app as &mut dyn super::control_host::ControlPort;
+    match quantick_control_handlers::market_palette::settle(port, intent) {
         Ok(None) => {}
         Ok(Some(note)) => {
             app.surfaces.market_palette.close();

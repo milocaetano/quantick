@@ -156,6 +156,14 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
             schema::<crate::feed_source::FeedSourceResult>(),
         ),
         (
+            "tab-market-set-input-v1.schema.json",
+            schema::<crate::feed_source::TabMarketSetInput>(),
+        ),
+        (
+            "tab-market-set-result-v1.schema.json",
+            schema::<crate::feed_source::TabMarketSetResult>(),
+        ),
+        (
             "feed-history-load-result-v1.schema.json",
             schema::<crate::history::HistoryLoadResult>(),
         ),

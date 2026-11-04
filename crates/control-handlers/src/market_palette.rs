@@ -45,8 +45,13 @@ pub trait MarketPaletteHost {
     fn edit_catalog(&mut self, _feed: &str, _symbol: &str, _add: bool) -> Result<(), String> {
         Err(UNAVAILABLE.to_owned())
     }
-    fn open_market_palette(&mut self, _query: &str) -> Result<(), ControlError> {
+    /// Show the palette; with `switch`, in switch mode on the active tab.
+    fn open_market_palette(&mut self, _query: &str, _switch: bool) -> Result<(), ControlError> {
         Err(ControlError::invalid_request(UNAVAILABLE))
+    }
+    /// Put tab `tab`'s flow pane on `bar`, as its bars menu does.
+    fn set_flow_bar(&mut self, _tab: u64, _bar: BarConfiguration) -> Result<(), String> {
+        Err(UNAVAILABLE.to_owned())
     }
 }
 
@@ -141,7 +146,7 @@ pub fn remove<H: MarketPaletteHost + ?Sized>(
 ///
 /// # Errors
 /// The refusal the palette shows under its field.
-pub fn settle<H: MarketPaletteHost + WorkspaceBookHost + ?Sized>(
+pub fn settle<H: crate::market_switch::SwitchHost + ?Sized>(
     app: &mut H,
     intent: PaletteIntent,
 ) -> Result<Option<String>, String> {
@@ -159,6 +164,13 @@ pub fn settle<H: MarketPaletteHost + WorkspaceBookHost + ?Sized>(
         PaletteIntent::Remove { feed_id, symbol } => {
             return remove(app, &feed_id, &symbol).map(|()| None);
         }
+        PaletteIntent::Switch(choice) => {
+            return crate::market_switch::switch(app, &choice).map(Some);
+        }
+        PaletteIntent::Roll {
+            tab_id,
+            from_symbol,
+        } => return crate::market_switch::roll(app, tab_id, &from_symbol).map(Some),
     };
     let opened = open(app, &choice)?;
     Ok(Some(open_toast(&opened.choice, opened.focused)))
@@ -227,16 +239,16 @@ fn palette_call<H: MarketPaletteHost + ?Sized, A: NotifyAccess>(
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
-    let MarketPaletteOpenInput { query } = input(value)?;
-    app.open_market_palette(&query)?;
-    let payload = serde_json::json!({ "query": query });
+    let MarketPaletteOpenInput { query, switch } = input(value)?;
+    app.open_market_palette(&query, switch)?;
+    let payload = serde_json::json!({ "query": query, "switch": switch });
     access.record_event(NewEvent::by(
         MARKET_MODULE_ID,
         PALETTE_OPENED_EVENT_KIND,
         actor,
         payload,
     ));
-    answer(&MarketPaletteOpenResult { query })
+    answer(&MarketPaletteOpenResult { query, switch })
 }
 
 fn remove_call<H: MarketPaletteHost + ?Sized, A>(

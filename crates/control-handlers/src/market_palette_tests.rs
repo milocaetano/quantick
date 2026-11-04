@@ -1,6 +1,8 @@
 use super::*;
 use crate::test_support::{FakeAccess, FakeWindow};
-use quantick_stores::market_list::{CatalogMarket, OpenMarket, Venue, VenueKind};
+use quantick_stores::market_list::{
+    CatalogMarket, OpenMarket, SwitchChoice, Venue, VenueKind, roll_toast, switch_toast,
+};
 use quantick_stores::workspaces::WorkspaceBook;
 
 /// Binance with BTCUSDT from the config and PEPEUSDT the trader added; tab 5
@@ -13,7 +15,12 @@ struct Host {
     /// The workspace each opened tab is to join, by tab id.
     arrivals: Vec<(u64, Option<String>)>,
     catalog: Vec<(String, bool)>,
-    palette: Option<String>,
+    palette: Option<(String, bool)>,
+    /// What tab 5 shows, and every switch, flow bar and paper state asked of it.
+    market: (String, String),
+    switches: Vec<(String, String)>,
+    flow_bars: Vec<(u64, String)>,
+    paper_open: bool,
 }
 
 impl Host {
@@ -64,6 +71,10 @@ impl Host {
             arrivals: Vec::new(),
             catalog: Vec::new(),
             palette: None,
+            market: ("binance".to_owned(), "BTCUSDT".to_owned()),
+            switches: Vec::new(),
+            flow_bars: Vec::new(),
+            paper_open: false,
         }
     }
 }
@@ -99,9 +110,83 @@ impl MarketPaletteHost for Host {
         Ok(())
     }
 
-    fn open_market_palette(&mut self, query: &str) -> Result<(), ControlError> {
-        self.palette = Some(query.to_owned());
+    fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
+        self.palette = Some((query.to_owned(), switch));
         Ok(())
+    }
+
+    fn set_flow_bar(&mut self, tab: u64, bar: BarConfiguration) -> Result<(), String> {
+        self.flow_bars.push((tab, bar.to_config_string()));
+        Ok(())
+    }
+}
+
+/// Tab 5 is the only market tab.
+impl crate::TabDirectory for Host {
+    fn active_tab_index(&self) -> usize {
+        0
+    }
+    fn tab_position(&self, tab_id: u64) -> Option<usize> {
+        (tab_id == 5).then_some(0)
+    }
+    fn tab_id_at(&self, _index: usize) -> u64 {
+        5
+    }
+}
+
+/// The feed offers what the palette lists; the config rolls BTCUSDT on to
+/// PEPEUSDT.
+impl crate::feed_source::FeedSourcePort for Host {
+    fn feed_choices(&self) -> Vec<quantick_control_schema::feed_source::FeedSourceChoice> {
+        let symbols = self
+            .snapshot
+            .markets
+            .iter()
+            .map(|market| market.symbol.clone());
+        vec![quantick_control_schema::feed_source::FeedSourceChoice {
+            feed_id: "binance".to_owned(),
+            display_name: "Binance".to_owned(),
+            symbols: symbols.collect(),
+            contract_rolls: [("BTCUSDT".to_owned(), "PEPEUSDT".to_owned())].into(),
+        }]
+    }
+    fn feed_selection(&self, _index: usize) -> Option<crate::feed_source::FeedSelection> {
+        Some(crate::feed_source::FeedSelection {
+            feed_id: self.market.0.clone(),
+            symbol: self.market.1.clone(),
+            replay: false,
+        })
+    }
+    fn select_feed(
+        &mut self,
+        index: usize,
+        feed_id: &str,
+        symbol: &str,
+    ) -> Option<crate::feed_source::FeedSelection> {
+        self.market = (feed_id.to_owned(), symbol.to_owned());
+        self.switches.push(self.market.clone());
+        self.feed_selection(index)
+    }
+}
+
+impl crate::contract_roll::ContractRollPort for Host {
+    fn next_contract(&self, _feed_id: &str, symbol: &str) -> Option<String> {
+        (symbol == "BTCUSDT").then(|| "PEPEUSDT".to_owned())
+    }
+    fn feed_offers(&self, _feed_id: &str, symbol: &str) -> bool {
+        self.snapshot
+            .markets
+            .iter()
+            .any(|market| market.symbol == symbol)
+    }
+    fn paper_not_flat(&self, _index: usize) -> bool {
+        self.paper_open
+    }
+    fn drawing_gesture_on(&self, _feed_id: &str, _from: &str, _to: &str) -> bool {
+        false
+    }
+    fn carry_market_drawings(&mut self, _feed_id: &str, _from: &str, _to: &str) -> usize {
+        0
     }
 }
 
@@ -229,8 +314,14 @@ fn the_palette_opens_with_its_query() {
     let value = serde_json::json!({"query": "> "});
     let answer = palette_call(&mut host, &mut access, &FakeWindow::assistant(), &value).unwrap();
     assert_eq!(answer["query"], "> ");
-    assert_eq!(host.palette.as_deref(), Some("> "));
+    assert_eq!(answer["switch"], false);
+    assert_eq!(host.palette, Some(("> ".to_owned(), false)));
     assert_eq!(access.events.len(), 1, "the palette coming up is journaled");
+    let value = serde_json::json!({"switch": true});
+    let answer = palette_call(&mut host, &mut access, &FakeWindow::assistant(), &value).unwrap();
+    assert_eq!(answer["switch"], true);
+    assert_eq!(host.palette, Some((String::new(), true)), "switch mode");
+    assert_eq!(access.events[1].payload["switch"], true);
 }
 
 #[test]
@@ -335,4 +426,96 @@ fn a_picked_bar_kind_opens_on_its_registry_default() {
         );
     }
     assert_eq!(default_bar_size("no-such-kind"), "");
+}
+
+fn switch_to(symbol: &str) -> SwitchChoice {
+    SwitchChoice {
+        tab_id: 5,
+        feed_id: "binance".to_owned(),
+        symbol: symbol.to_owned(),
+        bar: None,
+        workspace: None,
+        add: false,
+    }
+}
+
+/// A switch goes through the source switch; the bar and workspace move only
+/// when the trader changed them, and a refusal leaves the tab where it was.
+#[test]
+fn the_palette_switches_the_tab_through_the_source_switch() {
+    let mut host = Host::new();
+    host.book.open_tab(5);
+    let toast = settle(&mut host, PaletteIntent::Switch(switch_to("PEPEUSDT"))).unwrap();
+    assert_eq!(toast.as_deref(), Some(switch_toast("PEPEUSDT").as_str()));
+    assert_eq!(
+        host.switches,
+        [("binance".to_owned(), "PEPEUSDT".to_owned())]
+    );
+    assert!(host.flow_bars.is_empty(), "the tab keeps its bar");
+    assert_eq!(
+        host.book.tab_state(5).unwrap().workspace,
+        "Default",
+        "and its workspace"
+    );
+
+    let mut changed = switch_to("BTCUSDT");
+    (changed.bar, changed.workspace) = (Some("tick:500".to_owned()), Some("Swing".to_owned()));
+    settle(&mut host, PaletteIntent::Switch(changed)).unwrap();
+    assert_eq!(host.flow_bars, [(5, "tick:500".to_owned())]);
+    assert_eq!(host.book.tab_state(5).unwrap().workspace, "Swing");
+
+    for refused in [
+        SwitchChoice {
+            bar: Some("tick:nope".to_owned()),
+            ..switch_to("PEPEUSDT")
+        },
+        SwitchChoice {
+            workspace: Some("Nowhere".to_owned()),
+            ..switch_to("PEPEUSDT")
+        },
+        switch_to("NOTLISTED"),
+        SwitchChoice {
+            tab_id: 77,
+            ..switch_to("PEPEUSDT")
+        },
+    ] {
+        assert!(settle(&mut host, PaletteIntent::Switch(refused)).is_err());
+    }
+    assert_eq!(host.switches.len(), 2, "no refusal switched");
+    assert!(host.catalog.is_empty());
+}
+
+#[test]
+fn an_add_and_switch_adds_first_and_a_refused_add_switches_nothing() {
+    let mut host = Host::new();
+    let add = |symbol: &str| SwitchChoice {
+        add: true,
+        ..switch_to(symbol)
+    };
+    assert!(settle(&mut host, PaletteIntent::Switch(add("NOPE"))).is_err());
+    assert!(host.switches.is_empty());
+    settle(&mut host, PaletteIntent::Switch(add("PEPEUSDT"))).unwrap();
+    assert_eq!(host.catalog, [("PEPEUSDT".to_owned(), true)]);
+    assert_eq!(host.switches.len(), 1);
+}
+
+/// The roll row runs the roll's own rule and act: refused with a position
+/// open or once the tab moved on, rolled when flat.
+#[test]
+fn the_palette_rolls_through_the_roll_rule() {
+    let mut host = Host::new();
+    let roll = || PaletteIntent::Roll {
+        tab_id: 5,
+        from_symbol: "BTCUSDT".to_owned(),
+    };
+    host.paper_open = true;
+    let refused = settle(&mut host, roll()).unwrap_err();
+    assert!(refused.contains("paper position"), "{refused}");
+    assert!(host.switches.is_empty());
+    host.paper_open = false;
+    let toast = settle(&mut host, roll()).unwrap();
+    assert_eq!(toast.as_deref(), Some(roll_toast("PEPEUSDT").as_str()));
+    assert_eq!(host.market.1, "PEPEUSDT");
+    let stale = settle(&mut host, roll()).unwrap_err();
+    assert!(stale.contains("no longer shows BTCUSDT"), "{stale}");
 }

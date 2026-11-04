@@ -313,20 +313,20 @@ mod tests {
         assert!(window.reach.contains("`file`"), "{}", window.reach);
     }
 
-    /// The toolbar's SOURCE combos and `feed.source.set` are one act: an
-    /// operator reading the matrix finds the capability behind the combos, and
+    /// The toolbar's market button and `tab.market.set` are one act: an
+    /// operator reading the matrix finds the capability behind the button, and
     /// is not told the picker is the only door to a market.
     #[test]
-    fn the_source_combos_map_to_the_source_capability() {
+    fn the_market_button_maps_to_the_switch_capability() {
         let source = UI_BEHAVIOURS
             .iter()
             .find(|behaviour| {
-                matches!(behaviour.mapping, Mapping::Capabilities(ids) if ids.contains(&"feed.source.set"))
+                matches!(behaviour.mapping, Mapping::Capabilities(ids) if ids.contains(&"tab.market.set"))
             })
-            .expect("a row maps feed.source.set");
+            .expect("a row maps tab.market.set");
         assert!(
-            source.reach.contains("SOURCE"),
-            "{} names the SOURCE combos: {}",
+            source.reach.contains("market button"),
+            "{} names the market button: {}",
             source.id,
             source.reach
         );
