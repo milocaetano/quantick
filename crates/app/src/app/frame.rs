@@ -594,10 +594,10 @@ impl QuantickApp {
         let stall = scratch.stall.as_ref();
         panels::observe_connections(ctx, &mut self.runtime.tabs, &self.config, now_ms, stall);
         let open = self.chrome.feed_popup_tab == Some(self.runtime.tabs.active_id());
-        let status = self.status_model();
         let tab = &self.runtime.tabs[self.runtime.tabs.active_index()];
         let lead = statusbar::StatusLead::of(tab, stall, now_ms, open);
-        scratch.status = statusbar::draw(ctx, &status, self.runtime.tz, &lead);
+        scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
+        super::menu_bar::workspace_cell(self, ctx, &scratch.status);
         if scratch.status.open_display_settings {
             super::desk_wiring::open_settings_on(self, ctx);
         }

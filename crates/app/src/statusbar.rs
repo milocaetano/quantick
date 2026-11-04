@@ -8,16 +8,18 @@
 //! timezone picker). A reading that breaches its threshold turns
 //! [`theme::WARN`]; narrow windows wrap cells without hiding their facts.
 //!
-//! The timezone picker is the bar's only control. It briefly had company —
-//! a `Reconnect`/`Reload` pair in the provenance section — because the notice
-//! card refused to cover a working chart, and a terminal that froze
-//! mid-session left the trader nothing to press anywhere in the window. The
-//! offline chip in the chart's bottom-right corner answers that better: it is
-//! in one place whatever the chart holds, so the pair went back out rather
-//! than stand as a second way to do the same two things.
+//! The bar has two controls, both with the same raised hover: the workspace
+//! cell at the left end, which opens the tab's workspace menu upward, and the
+//! timezone picker at the right. A `Reconnect`/`Reload` pair once stood in the
+//! provenance section, because the notice card refused to cover a working
+//! chart, and a terminal that froze mid-session left the trader nothing to
+//! press anywhere in the window. The offline chip in the chart's bottom-right
+//! corner answers that better: it is in one place whatever the chart holds, so
+//! the pair went back out rather than stand as a second way to do the same two
+//! things.
 //!
-//! The first cell is the window's one word on the feed's global state, in grey,
-//! and it is the recovery popup's door: see
+//! After the workspace cell comes the window's one word on the feed's global
+//! state, in grey, and it is the recovery popup's door: see
 //! [`quantick_chart::connection_state`] for what it says and [`crate::feed_notice`]
 //! for what it opens.
 //!
@@ -44,6 +46,10 @@ const STATE_DOT_DIAMETER_PX: f32 = 8.0;
 const CELL_SPACING_PX: f32 = 8.0;
 /// Gap between the state dot and its word, in pixels.
 const DOT_WORD_GAP_PX: f32 = 4.0;
+/// Gap between the workspace cell's name, mark and caret, in pixels.
+const WORKSPACE_GAP_PX: f32 = 4.0;
+/// The mark of a tab holding unsaved workspace edits, as on its chip.
+const EDITED_MARK: &str = "\u{2022}";
 
 /// Replay figures for the provenance section, read from the transport link.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,6 +65,11 @@ pub const SAVES_OFF_LABEL: &str = "SAVES OFF";
 
 /// Everything the bar shows this frame, precomputed by the app.
 pub struct StatusModel {
+    /// The tab's workspace, the row its chip reads; `None` on Home, where
+    /// the cell is absent.
+    pub workspace: Option<String>,
+    /// Whether the tab holds unsaved workspace edits: the amber mark.
+    pub modified: bool,
     /// Display name of the venue (or the session, while replaying).
     pub venue: String,
     /// The streamed symbol.
@@ -230,6 +241,10 @@ pub struct StatusResponse {
     pub word_rect: Option<egui::Rect>,
     /// The one-click Reconnect beside the word was pressed.
     pub reconnect: bool,
+    /// The workspace cell, while shown: its menu opens upward from it.
+    pub workspace_cell: Option<egui::Rect>,
+    /// The workspace cell was clicked: it opens and closes its menu.
+    pub workspace_clicked: bool,
 }
 
 /// What the status bar's first cell shows this frame.
@@ -285,6 +300,7 @@ pub fn draw(
                 // Wrap whole facts as cells, keeping their words together.
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
+                draw_workspace(ui, model, &mut response);
                 draw_lead(ui, lead, &mut response);
                 draw_provenance(ui, model);
                 ui.separator();
@@ -293,6 +309,34 @@ pub fn draw(
             });
         });
     response
+}
+
+/// `▦ Scalp • ▴`: the tab's workspace, the amber mark while it holds edits and
+/// a caret pointing where the menu opens.
+fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusResponse) {
+    use quantick_control_schema::window_menu as text;
+    let Some(workspace) = &model.workspace else {
+        return;
+    };
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let piece = |color| egui::TextFormat::simple(font.clone(), color);
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &text::cell_label(workspace),
+        0.0,
+        piece(theme::TEXT_PRIMARY),
+    );
+    if model.modified {
+        job.append(EDITED_MARK, WORKSPACE_GAP_PX, piece(theme::AMBER));
+    }
+    job.append(icons::CARET_UP, WORKSPACE_GAP_PX, piece(theme::TEXT_MUTED));
+    let cell = ui
+        .add(egui::Button::new(job).frame(false))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(text::CELL_HOVER);
+    response.workspace_cell = Some(cell.rect);
+    response.workspace_clicked = cell.clicked();
+    ui.separator();
 }
 
 /// The word: a grey dot and what is true of the feed. Only an attempt pulses.
@@ -738,6 +782,8 @@ mod tests {
         let tz = TzOffset::default();
         for replaying in [false, true] {
             let model = StatusModel {
+                workspace: None,
+                modified: false,
                 venue: "Binance".to_owned(),
                 symbol: "BTCUSDT".to_owned(),
                 replay: replaying.then_some(ReplayFigures {
@@ -840,6 +886,8 @@ mod tests {
         let ctx = egui::Context::default();
         let tz = TzOffset::default();
         let model = StatusModel {
+            workspace: None,
+            modified: false,
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,

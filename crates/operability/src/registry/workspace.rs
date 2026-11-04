@@ -76,8 +76,8 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.workspace.set",
         title: "Put a tab on a saved workspace",
-        reach: "the active tab's workspace button",
-        keys: &[(Source::TabAction, "WorkspaceMenu")],
+        reach: "the status bar's workspace cell",
+        keys: &[(Source::Hotkey, "WORKSPACE_MENU_SHORTCUT")],
         mapping: Mapping::Capabilities(&["tab.workspace.set"]),
     },
     UiBehaviour {
@@ -97,6 +97,13 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         reach: "window menu, Workspace, Save as new",
         keys: &[(Source::MenuEntry, "Save as new\u{2026}")],
         mapping: Mapping::Capabilities(&["workspace.save_as"]),
+    },
+    UiBehaviour {
+        id: "workspace.new",
+        title: "Make a new, empty workspace for a tab",
+        reach: "the status bar's workspace cell, New workspace",
+        keys: &[(Source::MenuEntry, "New workspace\u{2026}")],
+        mapping: Mapping::Capabilities(&["workspace.new"]),
     },
     UiBehaviour {
         id: "workspace.revert",

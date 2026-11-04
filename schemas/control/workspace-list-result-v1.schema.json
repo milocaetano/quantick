@@ -10,6 +10,10 @@
         "name": {
           "type": "string"
         },
+        "summary": {
+          "description": "One line: the panes, each context pane's interval and the indicator\ncount, e.g. `Time 1m · Flow · 3 ind`.",
+          "type": "string"
+        },
         "tabs": {
           "items": {
             "$ref": "#/$defs/WireU64"
@@ -19,6 +23,7 @@
       },
       "required": [
         "name",
+        "summary",
         "tabs"
       ],
       "type": "object"

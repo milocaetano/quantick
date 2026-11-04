@@ -129,9 +129,10 @@ capability that cannot change application state.
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 | `workspace.delete` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.list` | 1 | `workspace` | yes | `observe`, `observe.workspace` |
+| `workspace.new` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.rename` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.revert` | 1 | `workspace` | no | `cockpit`, `cockpit.layout` |
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-109 capabilities registered.
+110 capabilities registered.
