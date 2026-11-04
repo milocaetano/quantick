@@ -40,10 +40,10 @@ const EDITED_MARK: &str = "\u{2022}";
 /// has one weight, and this is what reads as 600 at 13 pt.
 const SEMIBOLD_STRIKE_PX: f32 = 0.35;
 
-/// The logo, filling a 30 pt tab inside its 36 pt slot.
+/// The logo, filling a 30 pt tab.
 const HOME_LOGO_PX: f32 = 28.0;
 const HOME_TEXT_PX: f32 = 12.0;
-/// The window edge to the first tab, then the tab edge to the logo.
+// Window edge to the Home tab, tab edge to logo, logo to text, text to edge.
 pub(crate) const STRIP_EDGE_PX: f32 = 10.0;
 pub(crate) const HOME_PADDING_LEFT_PX: f32 = 10.0;
 pub(crate) const HOME_LOGO_GAP_PX: f32 = 10.0;
@@ -355,12 +355,11 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
 
 type HomeLabel = [std::sync::Arc<egui::Galley>; 2];
 
-/// The wordmark: "Quan" lifts on hover and while active, "tick" never changes.
+/// The wordmark: "Quan" lifts when the tab is lit or active; "tick" never changes.
 fn home_label(ui: &egui::Ui) -> HomeLabel {
     let font = egui::FontId::proportional(HOME_TEXT_PX);
-    ["Quan", "tick"].map(|part| {
-        ui.fonts(|f| f.layout_no_wrap(part.to_owned(), font.clone(), egui::Color32::PLACEHOLDER))
-    })
+    let ink = egui::Color32::PLACEHOLDER;
+    ui.fonts(|f| ["Quan", "tick"].map(|part| f.layout_no_wrap(part.into(), font.clone(), ink)))
 }
 
 /// The first tab: logo and the "Quantick" wordmark, or the logo alone and
@@ -383,8 +382,8 @@ fn draw_home_tab(
     let response = response.on_hover_text("Home · Ctrl+1");
     let bounds = rect.intersect(ui.clip_rect());
     drawn.home = bounds.is_positive().then_some(bounds);
-    let hovered = response.hovered();
-    paint_tab_surface(ui, surface, rect, active, hovered, response.has_focus());
+    let (hovered, focused) = (response.hovered(), response.has_focus());
+    paint_tab_surface(ui, surface, rect, active, hovered, focused);
     let logo_x = if label.is_some() {
         rect.left() + HOME_PADDING_LEFT_PX + HOME_LOGO_PX / 2.0
     } else {
@@ -397,7 +396,7 @@ fn draw_home_tab(
     crate::surfaces::home::paint_logo(ui, logo);
     if let Some(([quan, tick], _)) = label {
         let mut x = logo.right() + HOME_LOGO_GAP_PX;
-        let ink = if active || hovered {
+        let ink = if active || hovered || focused {
             theme::TEXT_PRIMARY
         } else {
             theme::TEXT_MUTED
