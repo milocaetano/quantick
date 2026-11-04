@@ -339,9 +339,9 @@ impl Surfaces {
     /// *inside* [`Self::draw_all`], which is after those slices were
     /// gathered, so on that one frame "is it open" is the wrong question —
     /// the right one is "is it about to be". Without it a hook-opened market
-    /// dialog draws its first frame against an empty open-markets list and
-    /// photographs Remove buttons that should have been greyed out: a capture
-    /// of a state the application would never reach on its own.
+    /// palette has no snapshot on its first frame and draws nothing, so a
+    /// capture of that frame shows a window the palette was meant to cover:
+    /// a state the application would never reach on its own.
     pub fn hooks_pending(&self) -> bool {
         #[cfg(any(feature = "scenario-harness", test))]
         {

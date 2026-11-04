@@ -35,7 +35,7 @@ type Intent = list::PaletteIntent;
 
 #[derive(Default)]
 pub(crate) struct MarketPaletteSurface {
-    open: Option<MarketPalette>,
+    pub open: Option<MarketPalette>,
     /// The markets the trader closed lately, for Recent.
     pub recent: RecentMarkets,
 }
@@ -60,11 +60,6 @@ impl MarketPaletteSurface {
         if let Some(palette) = self.open.as_mut() {
             palette.refuse(reason);
         }
-    }
-
-    #[cfg(test)]
-    pub fn palette_mut(&mut self) -> Option<&mut MarketPalette> {
-        self.open.as_mut()
     }
 }
 
@@ -279,12 +274,15 @@ impl Surface for MarketPaletteSurface {
         let cursor = cursor.map(|range| (range.primary.index, range.secondary.index));
         let at_end = list::delete_removes_row(palette.query(), cursor);
         let (escape, keys) = read_keys(ctx, palette.focus() == PaletteFocus::Field && at_end);
-        let screen = ctx.available_rect();
-        // Modal: a click on the scrim closes the palette as Escape does.
+        let (screen, window) = (ctx.available_rect(), ctx.screen_rect());
+        // A click that only dismisses a footer dropdown leaves the palette up.
+        let dropdown_open = ctx.memory(|memory| memory.any_popup_open());
+        // Modal over the whole window, chrome included: a click on the scrim
+        // closes the palette as Escape does.
         let scrim = egui::Area::new(id.with("scrim")).order(egui::Order::Foreground);
-        let scrim = scrim.fixed_pos(screen.min).show(ctx, |ui| {
+        let scrim = scrim.fixed_pos(window.min).show(ctx, |ui| {
             let sense = egui::Sense::click_and_drag();
-            let (rect, response) = ui.allocate_exact_size(screen.size(), sense);
+            let (rect, response) = ui.allocate_exact_size(window.size(), sense);
             ui.painter().rect_filled(rect, 0.0, SCRIM);
             response
         });
@@ -313,7 +311,8 @@ impl Surface for MarketPaletteSurface {
                 let pressed = keys.into_iter().fold(None, |asked, key| {
                     asked.or(palette.press(key, &listing, &data.workspaces, default_size))
                 });
-                market = pressed.or_else(|| draw_list(ui, palette, &listing));
+                let clicked = draw_list(ui, palette, &listing);
+                market = pressed.or(clicked);
                 ui.separator();
                 let names: Vec<&str> = data.workspaces.iter().map(String::as_str).collect();
                 draw_footer(ui, palette, &listing, &names);
@@ -321,7 +320,7 @@ impl Surface for MarketPaletteSurface {
         });
         // Right above its scrim, whichever was pressed; dropdowns open above.
         ctx.set_sublayer(scrim.response.layer_id, shown.response.layer_id);
-        if escape || scrim.inner.clicked() {
+        if escape || (scrim.inner.clicked() && !dropdown_open) {
             self.open = None;
             return SurfaceResponse::default();
         }
@@ -376,9 +375,13 @@ mod market_palette_surface_tests {
         response: SurfaceResponse,
         /// A press reached the chart drawn under the palette.
         chart_pressed: bool,
+        /// A press reached the tab strip above the chart, as the window's
+        /// chrome draws it before the surfaces.
+        strip_pressed: bool,
     }
 
-    /// One frame: a chart-sized button under everything, then the palette.
+    /// One frame: a tab strip panel and a chart-sized button under
+    /// everything, as the window draws them, then the palette.
     fn frame(
         surface: &mut MarketPaletteSurface,
         ctx: &egui::Context,
@@ -386,12 +389,17 @@ mod market_palette_surface_tests {
     ) -> Frame {
         let markets = snapshot();
         let (mut response, mut chart_pressed) = (SurfaceResponse::default(), false);
+        let mut strip_pressed = false;
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SCREEN)),
             events,
             ..Default::default()
         };
         let output = ctx.run(input, |ctx| {
+            egui::TopBottomPanel::top("strip").show(ctx, |ui| {
+                let tab = ui.button("BTCUSDT tab");
+                strip_pressed = tab.clicked() || tab.is_pointer_button_down_on();
+            });
             egui::CentralPanel::default().show(ctx, |ui| {
                 let chart = ui.add_sized(ui.available_size(), egui::Button::new("chart"));
                 chart_pressed = chart.clicked() || chart.is_pointer_button_down_on();
@@ -404,7 +412,14 @@ mod market_palette_surface_tests {
             output,
             response,
             chart_pressed,
+            strip_pressed,
         }
+    }
+
+    fn painted(output: &egui::FullOutput, needle: &str) -> bool {
+        (output.shapes.iter()).any(|shape| {
+            matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.text() == needle)
+        })
     }
 
     fn settle(surface: &mut MarketPaletteSurface, ctx: &egui::Context) -> Frame {
@@ -457,7 +472,7 @@ mod market_palette_surface_tests {
 
     fn selected(surface: &mut MarketPaletteSurface) -> String {
         let markets = snapshot();
-        let palette = surface.palette_mut().expect("open");
+        let palette = surface.open.as_mut().expect("open");
         let listing = list::list_markets(&markets.world(), palette.query());
         palette
             .selected_row(&listing)
@@ -532,7 +547,7 @@ mod market_palette_surface_tests {
     }
 
     fn surface_focus(surface: &mut MarketPaletteSurface) -> PaletteFocus {
-        surface.palette_mut().expect("open").focus()
+        surface.open.as_mut().expect("open").focus()
     }
 
     /// Delete edits the query while there is text after the cursor; at the
@@ -546,7 +561,7 @@ mod market_palette_surface_tests {
         frame(&mut surface, &ctx, key(Key::ArrowLeft));
         let edited = frame(&mut surface, &ctx, key(Key::Delete));
         assert_eq!(edited.response.market, None);
-        assert_eq!(surface.palette_mut().expect("open").query(), "pep");
+        assert_eq!(surface.open.as_mut().expect("open").query(), "pep");
         frame(&mut surface, &ctx, key(Key::End));
         let removed = frame(&mut surface, &ctx, key(Key::Delete));
         assert_eq!(
@@ -558,26 +573,72 @@ mod market_palette_surface_tests {
         );
     }
 
-    /// The scrim is modal: a click on it never reaches the chart under it,
-    /// and closes the palette as Escape does, asking for nothing.
+    /// The scrim is modal over the whole window: a click on it never reaches
+    /// the chart or the tab strip under it, and closes the palette as Escape
+    /// does, asking for nothing.
     #[test]
-    fn a_click_on_the_scrim_closes_the_palette_and_never_reaches_the_chart() {
+    fn a_click_on_the_scrim_closes_the_palette_and_never_reaches_the_window() {
+        for target in ["chart", "strip"] {
+            let ctx = egui::Context::default();
+            let mut surface = MarketPaletteSurface::default();
+            surface.open("");
+            let shown = settle(&mut surface, &ctx);
+            let at = match target {
+                "chart" => OUTSIDE,
+                _ => text_rect(&shown.output, "BTCUSDT tab").center(),
+            };
+            let reached = |frame: &Frame| frame.chart_pressed || frame.strip_pressed;
+            let [down, up] = click(&mut surface, &ctx, at);
+            assert!(
+                !reached(&down) && !reached(&up),
+                "the {target} saw the click"
+            );
+            assert_eq!(up.response.market, None);
+            assert!(!surface.is_open(), "a click on the {target}'s scrim closes");
+            settle(&mut surface, &ctx);
+            let after = click(&mut surface, &ctx, at);
+            assert!(
+                after.iter().any(reached),
+                "closed, the {target} is reachable"
+            );
+        }
+    }
+
+    /// A click that dismisses an open footer dropdown closes only the
+    /// dropdown; the next one on the scrim closes the palette.
+    #[test]
+    fn a_click_off_an_open_dropdown_closes_only_the_dropdown() {
+        let ctx = egui::Context::default();
+        let mut surface = MarketPaletteSurface::default();
+        surface.open("");
+        let shown = settle(&mut surface, &ctx);
+        click(
+            &mut surface,
+            &ctx,
+            text_rect(&shown.output, "Default").center(),
+        );
+        let listed = settle(&mut surface, &ctx);
+        assert!(painted(&listed.output, "Scalp"), "the dropdown is open");
+        click(&mut surface, &ctx, OUTSIDE);
+        let after = settle(&mut surface, &ctx);
+        assert!(surface.is_open(), "only the dropdown closed");
+        assert!(!painted(&after.output, "Scalp"));
+        click(&mut surface, &ctx, OUTSIDE);
+        assert!(!surface.is_open());
+    }
+
+    /// The frame Enter asks for something still paints the list under it.
+    #[test]
+    fn the_list_is_drawn_on_the_frame_a_key_asks_for_something() {
         let ctx = egui::Context::default();
         let mut surface = MarketPaletteSurface::default();
         surface.open("");
         settle(&mut surface, &ctx);
-        let [down, up] = click(&mut surface, &ctx, OUTSIDE);
-        assert!(
-            !down.chart_pressed && !up.chart_pressed,
-            "the chart saw the click"
-        );
-        assert_eq!(up.response.market, None);
-        assert!(!surface.is_open());
-        settle(&mut surface, &ctx);
-        let after = click(&mut surface, &ctx, OUTSIDE);
-        assert!(
-            after.iter().any(|frame| frame.chart_pressed),
-            "closed, the chart is reachable"
-        );
+        let entered = frame(&mut surface, &ctx, key(Key::Enter));
+        assert!(matches!(
+            entered.response.market,
+            Some(PaletteIntent::Open(_))
+        ));
+        assert!(painted(&entered.output, "BTCUSDT"), "the rows are painted");
     }
 }

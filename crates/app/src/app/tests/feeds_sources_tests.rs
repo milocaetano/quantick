@@ -2257,7 +2257,7 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
     // stays open around the reason.
     type_into_palette(&mut app, &ctx, "winq26");
     press_in_palette(&mut app, &ctx, egui::Key::Delete);
-    let refusal = (app.surfaces.market_palette.palette_mut())
+    let refusal = (app.surfaces.market_palette.open.as_mut())
         .and_then(|palette| palette.refusal().map(str::to_owned));
     assert_eq!(
         refusal.as_deref(),
@@ -2324,7 +2324,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     let add = quantick_workspace::market_list::PaletteIntent::Add(choice);
     super::super::tabs::apply_palette_intent(&mut app, add);
     let palette =
-        (app.surfaces.market_palette.palette_mut()).expect("the palette stays open on a refusal");
+        (app.surfaces.market_palette.open.as_mut()).expect("the palette stays open on a refusal");
     assert!(
         palette
             .refusal()
@@ -2393,7 +2393,7 @@ fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
     type_into_palette(&mut app, &ctx, "ETHUSDT");
     let snapshot = super::super::tabs::market_snapshot(&app);
     let listing = quantick_workspace::market_list::list_markets(&snapshot.world(), "ETHUSDT");
-    let palette = (app.surfaces.market_palette.palette_mut()).expect("open");
+    let palette = (app.surfaces.market_palette.open.as_mut()).expect("open");
     assert_eq!(
         palette.bar(&listing),
         "volume:13",
@@ -2407,11 +2407,57 @@ fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
     );
 }
 
+/// While the palette is up, no tab shortcut acts on the tabs behind it,
+/// whichever widget holds the keyboard: here none yet, on the frame it opens.
+#[test]
+fn tab_shortcuts_leave_the_tabs_behind_an_open_palette_alone() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    let market = ("binance".to_owned(), "ETHUSDT".to_owned());
+    (app.arrangement_adapter()).open_tab(market.0, market.1, None);
+    let active = app.runtime.tabs.active_index();
+    let shortcuts = [
+        (egui::Key::W, egui::Modifiers::COMMAND),
+        (egui::Key::Tab, egui::Modifiers::CTRL),
+        (egui::Key::T, egui::Modifiers::COMMAND),
+    ];
+    for (key, modifiers) in shortcuts {
+        app.surfaces.market_palette.close();
+        run_frame(&mut app, &ctx);
+        app.apply_tab_action(TabAction::New);
+        let press = vec![key_press_with(key, modifiers)];
+        run_frame_sized(&mut app, &ctx, egui::vec2(1400.0, 760.0), press, modifiers);
+        assert_eq!(app.runtime.tabs.len(), 2, "{key:?} closed nothing");
+        assert_eq!(
+            app.runtime.tabs.active_index(),
+            active,
+            "{key:?} moved nothing"
+        );
+        assert!(app.surfaces.market_palette.is_open(), "{key:?}");
+        assert!(!app.chrome.title_bar.surface.is_home());
+    }
+}
+
+/// A palette the capture hook opens draws on that very frame: the snapshot
+/// is built for it before the hook has run, so its field already asks for
+/// the keyboard.
+#[test]
+fn a_hook_opened_palette_draws_on_its_first_frame() {
+    let ctx = egui::Context::default();
+    crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_MARKET_PALETTE", "1")]));
+    let (mut app, _cmd_rx) = app_with_history(50);
+    run_frame(&mut app, &ctx);
+    crate::hooks::captured::set_on_this_thread(None);
+    assert!(app.surfaces.market_palette.is_open());
+    let field = egui::Id::new("market_palette").with("query");
+    assert_eq!(ctx.memory(|memory| memory.focused()), Some(field));
+}
+
 /// Open the palette the way `+` does and put `query` in its field.
 fn type_into_palette(app: &mut QuantickApp, ctx: &egui::Context, query: &str) {
     app.apply_tab_action(TabAction::New);
     run_frame(app, ctx);
-    (app.surfaces.market_palette.palette_mut())
+    (app.surfaces.market_palette.open.as_mut())
         .expect("the + opened the palette")
         .set_query(query);
     run_frame(app, ctx);

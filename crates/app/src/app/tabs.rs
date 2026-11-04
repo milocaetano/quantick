@@ -16,7 +16,6 @@ use eframe::egui;
 use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
 use crate::tabstrip::TabAction;
-use crate::timezone::TzOffset;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_workspace::market_list as list;
 
@@ -89,20 +88,39 @@ impl QuantickApp {
         self.health.trades_since_summary += trades;
     }
 
-    /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.
+    /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle; none under the palette.
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
         self.read_view_keys(ctx);
         let keys = super::home_wiring::read_tab_keys(ctx);
-        if self.arrangement_adapter().apply_tab_keys(keys) {
-            self.surfaces.market_palette.open("");
+        if !self.surfaces.market_palette.is_open() {
+            let asked = self.arrangement_adapter().apply_tab_keys(keys);
+            settle_strip(self, asked);
         }
     }
 
     /// Carry out what the tab strip asked for.
     pub(super) fn apply_tab_action(&mut self, action: TabAction) {
-        if self.arrangement_adapter().apply_tab_action(action) {
-            self.surfaces.market_palette.open("");
-        }
+        let asked = self.arrangement_adapter().apply_tab_action(action);
+        settle_strip(self, asked);
+    }
+}
+
+/// A live market a close took goes to Recent with its bar; `+` opens the palette.
+fn settle_strip(app: &mut QuantickApp, (palette, closed): super::arrangement_adapter::StripAsk) {
+    if let Some(tab) = closed.filter(|tab| tab.replay.is_none()) {
+        let now = crate::metrics::wall_clock_ms();
+        let stamp = quantick_civil::fmt_offset_minute(now, app.runtime.tz);
+        let closed = list::ClosedMarket {
+            feed_id: tab.feed_id.clone(),
+            symbol: tab.symbol.clone(),
+            at: stamp.get(11..).unwrap_or_default().to_owned(),
+            price: last_price(&tab),
+            bar: tab.flow_pane.state.spec().to_config_string(),
+        };
+        app.surfaces.market_palette.recent.closed(closed);
+    }
+    if palette {
+        app.surfaces.market_palette.open("");
     }
 }
 
@@ -175,21 +193,7 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: list::PaletteI
     }
 }
 
-/// What the live market in tab `index` leaves for Recent when it closes now.
-pub(super) fn closed_market(tabs: &super::ArrangementHost, index: usize, tz: TzOffset) -> Closed {
-    let tab = (tabs.iter().nth(index)).filter(|tab| tab.replay.is_none())?;
-    let stamp = quantick_civil::fmt_offset_minute(crate::metrics::wall_clock_ms(), tz);
-    Some(list::ClosedMarket {
-        feed_id: tab.feed_id.clone(),
-        symbol: tab.symbol.clone(),
-        at: stamp.get(11..).unwrap_or_default().to_owned(),
-        price: last_price(tab),
-        bar: tab.flow_pane.state.spec().to_config_string(),
-    })
-}
-
 type Refusable = Result<(), String>;
-type Closed = Option<list::ClosedMarket>;
 type Spec = Option<Bars>;
 
 fn last_price(tab: &crate::tab::Tab) -> Option<String> {

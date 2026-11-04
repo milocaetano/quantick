@@ -273,7 +273,6 @@ macro_rules! arrangement_adapter {
             drawing_chrome: &mut $app.drawings.chrome,
             toast: &mut $app.surfaces.toast,
             surface: &mut $app.chrome.title_bar.surface,
-            recent: &mut $app.surfaces.market_palette.recent,
         }
     }};
 }
