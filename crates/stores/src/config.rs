@@ -99,6 +99,10 @@ pub struct FeedConfig {
     /// of the keys above: `"WDO*"`. A family here moves no saved bubble look.
     #[serde(default)]
     pub asset_families: Vec<String>,
+    /// Other names an asset is searched by in "Open a market", keyed like
+    /// the tables above: `"WIN*" = ["mini índice", "ibovespa"]`.
+    #[serde(default)]
+    pub asset_aliases: BTreeMap<String, Vec<String>>,
     /// Per-asset modes, keyed like [`symbol_bubble_presets`](Self::symbol_bubble_presets):
     /// what an asset gets only because the config switches it on
     /// ([`AssetMode`]). Keys must match a symbol this feed offers.
@@ -724,6 +728,7 @@ impl AppConfig {
             // empty preset name is a config typo. Whether the name resolves
             // stays the presets file's business.
             feed.validate_asset_modes()?;
+            feed.validate_asset_aliases()?;
             feed.validate_contract_rolls()?;
             for (symbol, preset) in &feed.symbol_bubble_presets {
                 if !feed

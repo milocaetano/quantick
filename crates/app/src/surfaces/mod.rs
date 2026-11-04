@@ -48,7 +48,7 @@ pub(crate) mod drawing_chrome;
 pub(crate) mod home;
 pub(crate) mod indicator_picker;
 pub(crate) mod indicator_preview;
-pub(crate) mod source_picker;
+pub(crate) mod market_palette;
 pub(crate) mod strategy_popup;
 pub(crate) mod toast;
 
@@ -61,7 +61,7 @@ pub(crate) use bar_switch::{BarSwitchRequest, BarSwitchSurface};
 pub(crate) use chart_settings::{ChartSettingsSurface, ChartSettingsTab};
 pub(crate) use drawing_chrome::{DrawingChromeSurface, DrawingEnv};
 pub(crate) use indicator_preview::IndicatorPreviewSurface;
-pub(crate) use source_picker::SourcePickerSurface;
+pub(crate) use market_palette::MarketPaletteSurface;
 pub(crate) use strategy_popup::StrategyPopupSurface;
 pub(crate) use toast::ToastSurface;
 
@@ -98,18 +98,9 @@ pub(crate) struct SurfaceEnv<'a> {
     /// Which pane has focus, so a window editing "the focused chart" can say
     /// in its title which chart that is.
     pub focused_side: crate::pane::PaneSide,
-    /// The market catalog: which feeds exist and what each one offers.
-    pub config: &'a crate::config::AppConfig,
-    /// The symbols the trader added by hand, so the dialog can mark which
-    /// rows it is allowed to take back out.
-    pub added_symbols: &'a crate::symbols_file::AddedSymbols,
-    /// The markets already open in a tab, as `(feed id, symbol)`.
-    ///
-    /// Owned strings, so the host builds this **only while the dialog that
-    /// reads it is open** — an empty slice otherwise. A per-frame allocation
-    /// for a surface nobody can see is exactly the cost this port was
-    /// supposed to make visible rather than hide.
-    pub open_markets: &'a [(String, String)],
+    /// What "Open a market" lists. Built by the host **only while the
+    /// palette is open**; `None` otherwise.
+    pub markets: Option<&'a quantick_workspace::market_list::MarketSnapshot>,
     /// The **stable id** of the tab on screen. The arming dialog speaks for
     /// one drawing on one tab, and drawing ids are per-pane counters — the
     /// same id over there names an unrelated object — so it closes when this
@@ -148,23 +139,6 @@ impl SurfaceEnv<'static> {
         /// The footprint setup a test that does not care about it gets.
         static QUIET_FOOTPRINT: std::sync::LazyLock<crate::footprint_config::FootprintConfig> =
             std::sync::LazyLock::new(crate::footprint_config::FootprintConfig::default);
-        /// An empty catalog, for the tests that never open the market
-        /// dialog. Written out rather than derived: `AppConfig` has no
-        /// `Default`, and giving a production type one so a test can skip
-        /// six fields is the tail wagging the dog.
-        static QUIET_CONFIG: std::sync::LazyLock<crate::config::AppConfig> =
-            std::sync::LazyLock::new(|| crate::config::AppConfig {
-                default_feed: String::new(),
-                default_symbol: String::new(),
-                feeds: Vec::new(),
-                metatrader: Default::default(),
-                paper: Default::default(),
-                deals: Default::default(),
-                history: Default::default(),
-            });
-        /// No hand-added symbols, likewise.
-        static QUIET_SYMBOLS: std::sync::LazyLock<crate::symbols_file::AddedSymbols> =
-            std::sync::LazyLock::new(crate::symbols_file::AddedSymbols::default);
         Self {
             picker_pane_id: 0,
             picker_indicators: &[],
@@ -176,9 +150,7 @@ impl SurfaceEnv<'static> {
             footprint: &QUIET_FOOTPRINT,
             footprint_customized: false,
             focused_side: crate::pane::PaneSide::Flow,
-            config: &QUIET_CONFIG,
-            added_symbols: &QUIET_SYMBOLS,
-            open_markets: &[],
+            markets: None,
             active_tab: 0,
             counted_bar_sides: &[],
             alert_failure: None,
@@ -210,8 +182,8 @@ pub(crate) struct SurfaceResponse {
     /// The footprint window settled on a setup, or asked for the chart's
     /// override to be dropped.
     pub footprint: Option<FootprintChange>,
-    /// The market dialog settled on something only the application can do.
-    pub market: Option<MarketRequest>,
+    /// The market palette asked for something only the application can do.
+    pub market: Option<quantick_workspace::market_list::PaletteIntent>,
     /// The arming dialog's **Arm** was pressed. The host answers through
     /// `StrategyPopupSurface::settle_arm`, because the answer decides whether
     /// the dialog closes or shows a refusal.
@@ -238,25 +210,6 @@ pub(crate) struct ArmRequest {
     /// What the badge will call this instance — the preset it came from, the
     /// name in the save field, or "custom".
     pub label: String,
-}
-
-/// What the "Open market" dialog asked the host to do.
-///
-/// Exclusive answers to one question — a frame cannot both add a symbol and
-/// remove one — so they share a field. Each carries the market it is about
-/// rather than leaving the host to read it back off the dialog, which is what
-/// keeps the ask true even if the dialog changes underneath.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MarketRequest {
-    /// Open this market in a new tab.
-    Open { feed_id: String, symbol: String },
-    /// Put this symbol in the feed's catalog, remember it across restarts,
-    /// and open it. May be refused: the rule is the whole config's, so the
-    /// answer comes back through [`source_picker::SourcePickerSurface::refuse`].
-    Add { feed_id: String, symbol: String },
-    /// Drop this hand-added symbol from the catalog. Never closes a tab —
-    /// leaving the catalog is not leaving the market.
-    Remove { feed_id: String, symbol: String },
 }
 
 /// What the footprint window asked the host to do with the focused chart's
@@ -370,8 +323,8 @@ pub(crate) struct Surfaces {
     /// by a double click on the candles, the toolbar, the menus and a pane's
     /// layer menu.
     pub chart_settings: ChartSettingsSurface,
-    /// The "Open market" dialog, opened by the `+` and by Ctrl+T.
-    pub source_picker: SourcePickerSurface,
+    /// "Open a market", opened by the `+`, Ctrl+T and Home.
+    pub market_palette: MarketPaletteSurface,
     /// The "Arm strategy" dialog, opened by right-clicking a drawn region.
     pub strategy_popup: StrategyPopupSurface,
     /// The window's acknowledgement channel, with Undo where the act has one.
@@ -426,7 +379,7 @@ impl Surfaces {
             self.bar_switch.apply_env_hook(env);
             self.chart_settings.apply_env_hook(env);
             self.indicator_preview.apply_env_hook(env);
-            self.source_picker.apply_env_hook(env);
+            self.market_palette.apply_env_hook(env);
             self.strategy_popup.apply_env_hook(env);
             self.toast.apply_env_hook(env);
         }
@@ -436,7 +389,7 @@ impl Surfaces {
         response.merge(self.bar_switch.draw(ctx, env));
         response.merge(self.chart_settings.draw(ctx, env));
         response.merge(self.indicator_preview.draw(ctx, env));
-        response.merge(self.source_picker.draw(ctx, env));
+        response.merge(self.market_palette.draw(ctx, env));
         response.merge(self.strategy_popup.draw(ctx, env));
         response.merge(self.toast.draw(ctx, env));
         // Deliberately not `self.drawing_chrome` — see the field's own note.
@@ -447,6 +400,7 @@ impl Surfaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_workspace::market_list::PaletteIntent;
 
     /// The second implementation of the port, which is what proves it is a
     /// port at all: a surface written entirely outside this module, wired in
@@ -559,7 +513,7 @@ mod tests {
                 applied_preset: None,
             }),
             footprint: Some(FootprintChange::ResetToDefault),
-            market: Some(MarketRequest::Open {
+            market: Some(PaletteIntent::Remove {
                 feed_id: "first".to_owned(),
                 symbol: "FIRST".to_owned(),
             }),
@@ -575,7 +529,7 @@ mod tests {
                 applied_preset: Some(crate::style::CandlePreset::Classic),
             }),
             footprint: Some(FootprintChange::Applied(Box::default())),
-            market: Some(MarketRequest::Remove {
+            market: Some(PaletteIntent::Remove {
                 feed_id: "second".to_owned(),
                 symbol: "SECOND".to_owned(),
             }),
@@ -590,7 +544,7 @@ mod tests {
         assert_eq!(first.footprint, Some(FootprintChange::ResetToDefault));
         assert_eq!(
             first.market,
-            Some(MarketRequest::Open {
+            Some(PaletteIntent::Remove {
                 feed_id: "first".to_owned(),
                 symbol: "FIRST".to_owned(),
             })

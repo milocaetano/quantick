@@ -914,6 +914,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
                 asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
@@ -928,6 +929,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
                 asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
@@ -2228,28 +2230,14 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
     app.runtime.workspace.set_symbols_path(path.clone());
     let tabs_before = app.runtime.tabs.len();
 
-    // The real dialog: open it, type the contract, press Add.
-    app.apply_tab_action(TabAction::New);
-    run_frame(&mut app, &ctx);
-    app.surfaces
-        .source_picker
-        .picker_mut()
-        .expect("the + opened the picker")
-        .set_draft_symbol("  WINQ26 ");
-    run_frame(&mut app, &ctx);
-    let add = app
-        .surfaces
-        .source_picker
-        .picker()
-        .expect("still open")
-        .add_button_rect()
-        .expect("the Add button was laid out");
-    click_chart(&mut app, &ctx, add.center());
-    run_frame(&mut app, &ctx);
+    // The real palette: open it, type the contract, press Enter on the
+    // first venue's add row.
+    type_into_palette(&mut app, &ctx, "  winq26 ");
+    press_in_palette(&mut app, &ctx, egui::Key::Enter);
 
     assert!(
-        !app.surfaces.source_picker.is_open(),
-        "adding closes the dialog, because it opened the market"
+        !app.surfaces.market_palette.is_open(),
+        "adding closes the palette, because it opened the market"
     );
     assert_eq!(app.runtime.tabs.len(), tabs_before + 1);
     assert_eq!(app.active_tab().symbol, "WINQ26", "and it is what opened");
@@ -2262,6 +2250,18 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
             .symbols
             .iter()
             .any(|symbol| symbol == "WINQ26")
+    );
+    assert!(app.added_symbols.contains("binance", "WINQ26"));
+
+    // Delete on its row is refused while a tab shows it, and the palette
+    // stays open around the reason.
+    type_into_palette(&mut app, &ctx, "winq26");
+    press_in_palette(&mut app, &ctx, egui::Key::Delete);
+    let refusal = (app.surfaces.market_palette.palette_mut())
+        .and_then(|palette| palette.refusal().map(str::to_owned));
+    assert_eq!(
+        refusal.as_deref(),
+        Some("A tab is showing WINQ26 \u{2014} close it first")
     );
     assert!(app.added_symbols.contains("binance", "WINQ26"));
 
@@ -2310,40 +2310,26 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     app.runtime.workspace.set_symbols_path(path.clone());
     let tabs_before = app.runtime.tabs.len();
 
-    // The real dialog, on the B3 feed, typing the Tickmill instrument.
-    app.apply_tab_action(TabAction::New);
-    run_frame(&mut app, &ctx);
-    {
-        let picker = app
-            .surfaces
-            .source_picker
-            .picker_mut()
-            .expect("the picker is open");
-        picker.feed_id = "b3".to_string();
-        picker.set_draft_symbol("US500");
-    }
-    run_frame(&mut app, &ctx);
-    let add = app
-        .surfaces
-        .source_picker
-        .picker()
-        .expect("still open")
-        .add_button_rect()
-        .expect("the Add button was laid out");
-    click_chart(&mut app, &ctx, add.center());
-    run_frame(&mut app, &ctx);
-
-    let picker = app
-        .surfaces
-        .source_picker
-        .picker()
-        .expect("the dialog stays open on a refusal");
+    // The palette's add row on the B3 feed, asking for the Tickmill
+    // instrument.
+    type_into_palette(&mut app, &ctx, "US500");
+    let choice = quantick_workspace::market_list::OpenChoice {
+        feed_id: "b3".to_owned(),
+        symbol: "US500".to_owned(),
+        bar: "tick:50".to_owned(),
+        workspace: "Default".to_owned(),
+        background: false,
+    };
+    let add = quantick_workspace::market_list::PaletteIntent::Add(choice);
+    super::super::tabs::apply_palette_intent(&mut app, add);
+    let palette =
+        (app.surfaces.market_palette.palette_mut()).expect("the palette stays open on a refusal");
     assert!(
-        picker
+        palette
             .refusal()
             .is_some_and(|reason| reason.contains("US500")),
-        "the reason is shown where the symbol was typed: {:?}",
-        picker.refusal()
+        "the reason is shown under the field: {:?}",
+        palette.refusal()
     );
     assert_eq!(
         app.runtime.tabs.len(),
@@ -2366,6 +2352,28 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     // The same symbol on the feed that *does* own it is still fine.
     assert!(app.symbol_catalog().add("tickmill", "WINQ26").is_ok());
     let _ = std::fs::remove_file(&path);
+}
+
+/// Open the palette the way `+` does and put `query` in its field.
+fn type_into_palette(app: &mut QuantickApp, ctx: &egui::Context, query: &str) {
+    app.apply_tab_action(TabAction::New);
+    run_frame(app, ctx);
+    (app.surfaces.market_palette.palette_mut())
+        .expect("the + opened the palette")
+        .set_query(query);
+    run_frame(app, ctx);
+}
+
+fn press_in_palette(app: &mut QuantickApp, ctx: &egui::Context, key: egui::Key) {
+    let press = vec![key_press_with(key, egui::Modifiers::NONE)];
+    run_frame_sized(
+        app,
+        ctx,
+        egui::vec2(1400.0, 760.0),
+        press,
+        egui::Modifiers::NONE,
+    );
+    run_frame(app, ctx);
 }
 
 /// (b) The point of writing it: the next launch has it. Proven without

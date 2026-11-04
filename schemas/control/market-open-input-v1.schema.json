@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Open a configured market, or focus the tab that already shows it so.",
+  "properties": {
+    "background": {
+      "default": false,
+      "description": "Open without leaving the tab on screen.",
+      "type": "boolean"
+    },
+    "bar": {
+      "description": "The flow pane's bar as `kind:size` (`tick:50`, `time:1m`). Left out,\nthe market's own: an open tab's, else the feed's `default_bars`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "feed": {
+      "description": "A feed id from `feed.status.sources`.",
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "workspace": {
+      "description": "A name from `workspace.list`. Left out, `Default`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "feed",
+    "symbol"
+  ],
+  "title": "MarketOpenInput",
+  "type": "object"
+}

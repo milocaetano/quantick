@@ -251,7 +251,7 @@ fn opening_a_market_or_a_new_route_leaves_home_and_the_picker_opens_from_the_pag
     let open = painted_text_center(&output, "Open a market").expect("the page offers a market");
     assert!(painted_text_center(&output, "Market Shelf not built yet").is_some());
     click_sized(&mut app, &ctx, WINDOW, open);
-    assert!(app.surfaces.source_picker.is_open());
+    assert!(app.surfaces.market_palette.is_open());
     assert!(on_home(&app), "the picker alone does not leave Home");
 
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
@@ -475,18 +475,8 @@ fn a_text_field_keeps_both_home_shortcuts() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
-    app.surfaces.source_picker.open(&app.config);
+    app.surfaces.market_palette.open("");
     frame(&mut app, &ctx);
-    frame(&mut app, &ctx);
-    let add = app
-        .surfaces
-        .source_picker
-        .picker()
-        .expect("the picker is open")
-        .add_button_rect()
-        .expect("the picker drew its Add button");
-    let field = add.left_center() - egui::vec2(30.0, 0.0);
-    click_sized(&mut app, &ctx, WINDOW, field);
     frame(&mut app, &ctx);
     assert!(ctx.memory(|memory| memory.focused().is_some()), "the field");
 

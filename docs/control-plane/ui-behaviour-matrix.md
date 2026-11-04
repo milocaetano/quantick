@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 106 |
+| Reachable by capability | 109 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **160** |
+| **Total** | **163** |
 
-96 of the 160 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 64 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+96 of the 163 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 67 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -65,7 +65,10 @@ The three exclusion classes are closed:
 | `tab.market.drag.cancel` | Cancel a staged market-tab drag | Escape while dragging a market chip | `layout.market_tab.drag.begin`, `layout.market_tab.drag.cancel` | — |
 | `window.close_preserving_tabs` | Close one native window and retain every market in a sibling | native window close while sibling windows exist | `layout.window.close` | — |
 | `tab.market.close` | Close the active market tab | tab strip chip, Ctrl+W | — | `pending_capability` — closing a tab discards its drawings and its paper position, and the control contract admits no destructive effect yet — the same ceiling `layout.tab.delete` sits under. Tracked in issue 401 |
-| `tab.market.open` | Open a new market tab | tab strip +, Ctrl+T | — | `pending_capability` — no capability opens a second market tab. `feed.source.set` switches the feed and symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401 |
+| `tab.market.open` | Open the Open a market palette | tab strip +, Ctrl+T, Home's Open a market | `market.palette.open` | — |
+| `market.palette.choose` | Open or focus the market chosen in the palette | Enter or Ctrl+Enter on a palette row, with its Bars and Workspace selectors | `market.open` | — |
+| `market.palette.add` | Add a symbol to a venue and open it | Enter on a palette no-match row | — | `pending_capability` — no capability adds a symbol to a venue's list yet; `market.open` opens what the config and the added-symbols file already offer. Tracked in issue 401 |
+| `market.palette.remove` | Remove a market the trader added | Delete on a palette row the trader added | `catalog.remove` | — |
 | `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's SOURCE feed and symbol combos | `feed.source.set` | — |
 | `tab.market.roll` | Roll the active tab to its next configured contract | the symbol list on the toolbar's market label | `feed.contract.roll` | — |
 | `replay.browser.open` | Open the market replay browser | window menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -236,7 +239,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 45 |
 | `scripted_menu` | 0 |
-| `authored` | 64 |
+| `authored` | 67 |
 
 ## Appendix: rows no registry stands behind
 
@@ -256,6 +259,9 @@ declares nothing here is a guard failure.
 | `tab.market.transfer` | native market-tab drag and insertion marker |
 | `tab.market.drag.cancel` | native market-tab staged gesture and Escape |
 | `window.close_preserving_tabs` | native close-to-survivor lifecycle |
+| `market.palette.choose` | palette rows are drawn from the headless market list, not an action enum |
+| `market.palette.add` | the no-match row is drawn from the headless market list |
+| `market.palette.remove` | the row is drawn from the headless market list |
 | `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |
 | `chart.bars.set_spec` | the bar-kind and size controls are pane header widgets, not entries in an action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |

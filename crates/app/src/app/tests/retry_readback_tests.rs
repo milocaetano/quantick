@@ -772,6 +772,16 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "fraction": "0.5" }),
             Readback::Moves,
         ),
+        // The market on screen, on its own bar and workspace: focused, so
+        // no tab is added.
+        ("market.open", 1, Value::Null, Readback::Stays),
+        (
+            "market.palette.open",
+            1,
+            json!({ "query": "btc" }),
+            Readback::Moves,
+        ),
+        ("catalog.remove", 1, Value::Null, Readback::Moves),
         ("home.show", 1, json!({}), Readback::Moves),
         (
             "settings.open",
@@ -965,6 +975,17 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "market.open" => json!({
+                "feed": app.active_tab().feed_id,
+                "symbol": app.active_tab().symbol,
+                "bar": app.active_tab().flow_pane.state.spec().to_config_string(),
+                "workspace": app.runtime.workspace.book.tab_row(app.runtime.tabs.active_id()).0,
+            }),
+            "catalog.remove" => {
+                let feed = app.active_tab().feed_id.clone();
+                app.symbol_catalog().add(&feed, "RETRYUSDT").unwrap();
+                json!({ "feed": feed, "symbol": "RETRYUSDT" })
+            }
             "orderflow.bubbles.tick.set" | "orderflow.bubbles.preset.apply" => {
                 let config: crate::config::AppConfig =
                     toml::from_str(quantick_stores::config::EMBEDDED_DEFAULT).unwrap();

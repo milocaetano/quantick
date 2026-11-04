@@ -452,6 +452,38 @@ fn the_window_and_the_palette_focus_the_same_tab() {
 }
 
 #[test]
+fn a_market_opens_on_its_tab_bar_else_its_venue_bar() {
+    let mut fixture = Fixture::new();
+    let mut win = open(3, 1, "b3", "WINZ26");
+    win.bar = "tick:3000".to_owned();
+    fixture.open = vec![win];
+    let world = fixture.world();
+    assert_eq!(
+        market_bar(&world, "b3", "WINZ26").as_deref(),
+        Some("tick:3000")
+    );
+    assert_eq!(
+        market_bar(&world, "b3", "WIN$N").as_deref(),
+        Some("tick:2000")
+    );
+    assert_eq!(market_bar(&world, "b3", "NOPE"), None);
+    let snapshot = MarketSnapshot {
+        venues: fixture.venues.clone(),
+        markets: fixture.markets.clone(),
+        starter_feed: "binance".to_owned(),
+        ..MarketSnapshot::default()
+    };
+    assert_eq!(
+        list_markets(&snapshot.world(), ""),
+        fixture_without_tabs().list("")
+    );
+}
+
+fn fixture_without_tabs() -> Fixture {
+    Fixture::new()
+}
+
+#[test]
 fn recent_markets_keep_the_newest_close_once_and_stop_at_the_limit() {
     let mut recent = RecentMarkets::default();
     let closed = |symbol: &str, at: &str| ClosedMarket {
@@ -501,6 +533,27 @@ fn removal_takes_only_a_market_the_trader_added_and_no_tab_shows() {
 
 mod palette_tests {
     use super::*;
+
+    #[test]
+    fn the_toast_names_what_opened_or_which_tab_came_forward() {
+        let mut choice = OpenChoice {
+            feed_id: "binance".to_owned(),
+            symbol: "BTCUSDT".to_owned(),
+            bar: "tick:50".to_owned(),
+            workspace: "Swing".to_owned(),
+            background: false,
+        };
+        assert_eq!(
+            open_toast(&choice, None),
+            "Opened BTCUSDT \u{b7} tick 50 \u{b7} Swing"
+        );
+        choice.background = true;
+        assert_eq!(
+            open_toast(&choice, None),
+            "Opened in the background \u{b7} BTCUSDT \u{b7} tick 50 \u{b7} Swing"
+        );
+        assert_eq!(open_toast(&choice, Some(1)), "Focused BTCUSDT \u{b7} tab 1");
+    }
 
     #[test]
     fn it_opens_empty_on_default_with_the_field_focused() {
@@ -655,6 +708,76 @@ mod palette_tests {
         );
         palette.set_query("solusdt");
         assert_eq!(palette.remove_selected(&fixture.list("solusdt")), None);
+    }
+
+    #[test]
+    fn up_and_down_move_whatever_has_focus() {
+        let fixture = Fixture::new();
+        let listing = fixture.list("eth");
+        let workspaces = ["Default".to_owned(), "Scalp".to_owned()];
+        let size = |kind: &str| {
+            if kind == "volume" {
+                "5".to_owned()
+            } else {
+                "1".to_owned()
+            }
+        };
+        let mut palette = MarketPalette::default();
+        palette.set_query("eth");
+        assert_eq!(palette.primary_label(&listing), "Open");
+        palette.press(PaletteKey::Down, &listing, &workspaces, size);
+        assert_eq!(palette.selected_row(&listing).unwrap().symbol, "ETH");
+        palette.press(PaletteKey::Tab, &listing, &workspaces, size);
+        palette.press(PaletteKey::Down, &listing, &workspaces, size);
+        assert_eq!(
+            palette.bar_parts(&listing),
+            ("volume".to_owned(), "5".to_owned())
+        );
+        palette.press(PaletteKey::Tab, &listing, &workspaces, size);
+        palette.press(PaletteKey::Up, &listing, &workspaces, size);
+        assert_eq!(palette.workspace(), "Scalp");
+        let enter = palette.press(
+            PaletteKey::Enter { background: false },
+            &listing,
+            &workspaces,
+            size,
+        );
+        assert!(matches!(enter, Some(PaletteIntent::Open(choice)) if choice.bar == "volume:5"));
+        palette.set_query("> ");
+        assert!(palette.commands_mode());
+        assert_eq!(palette.primary_label(&fixture.list("> ")), "Run");
+    }
+
+    #[test]
+    fn delete_leaves_a_market_the_config_declares() {
+        let fixture = Fixture::new();
+        let listing = fixture.list("btcusdt");
+        let mut palette = MarketPalette::default();
+        palette.set_query("btcusdt");
+        assert_eq!(palette.remove_selected(&listing), None);
+    }
+
+    #[test]
+    fn a_choice_fills_in_the_market_bar_and_default_and_refuses_strangers() {
+        let fixture = Fixture::new();
+        let snapshot = MarketSnapshot {
+            venues: fixture.venues.clone(),
+            markets: fixture.markets.clone(),
+            workspaces: vec!["Default".to_owned()],
+            ..MarketSnapshot::default()
+        };
+        let choice = snapshot.choice(("b3", "WINZ26"), None, None, true).unwrap();
+        assert_eq!(
+            (
+                choice.bar.as_str(),
+                choice.workspace.as_str(),
+                choice.background
+            ),
+            ("tick:2000", "Default", true)
+        );
+        assert!(snapshot.choice(("b3", "NOPE"), None, None, false).is_err());
+        let unknown = snapshot.choice(("b3", "WINZ26"), None, Some("Swing".to_owned()), false);
+        assert_eq!(unknown.unwrap_err(), "No workspace is named Swing");
     }
 
     #[test]

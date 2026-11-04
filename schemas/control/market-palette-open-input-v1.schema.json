@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Put the palette on screen.",
+  "properties": {
+    "query": {
+      "default": "",
+      "description": "What the field starts with; `>` lists commands.",
+      "type": "string"
+    }
+  },
+  "title": "MarketPaletteOpenInput",
+  "type": "object"
+}

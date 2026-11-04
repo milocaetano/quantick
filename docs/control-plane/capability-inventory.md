@@ -39,6 +39,7 @@ capability that cannot change application state.
 | `annotate.trend_line.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
+| `catalog.remove` | 1 | `catalog` | no | `cockpit`, `cockpit.desk` |
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.settings.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.tape_view.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
@@ -102,6 +103,8 @@ capability that cannot change application state.
 | `layout.window.close` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.window.placement.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.window.state.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `market.open` | 1 | `market` | no | `cockpit`, `cockpit.layout` |
+| `market.palette.open` | 1 | `market` | no | `cockpit`, `cockpit.layout` |
 | `notify.popup` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `notify.sound` | 1 | `notify` | no | `annotate`, `annotate.sound` |
 | `notify.toast` | 1 | `notify` | no | `annotate`, `annotate.notification` |
@@ -139,4 +142,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-114 capabilities registered.
+117 capabilities registered.

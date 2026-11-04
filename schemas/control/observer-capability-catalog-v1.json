@@ -5033,6 +5033,74 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Takes a symbol the trader added back out of its feed's list and out of the added-symbols file, as Delete on its palette row does. Refused with the reason for a symbol the config file declares and for one a tab is showing; close the tab first.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 1024
+      },
+      "id": "catalog.remove",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Take a market the trader added out of its venue's list.",
+        "properties": {
+          "feed": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "feed",
+          "symbol"
+        ],
+        "title": "CatalogRemoveInput",
+        "type": "object"
+      },
+      "module": "catalog",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "feed": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "feed",
+          "symbol"
+        ],
+        "title": "CatalogRemoveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A repeat finds the symbol gone and is refused; nothing changes.",
+      "title": "Remove a market you added",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Sets an explicit manual price range or resumes the pane's own automatic fit. Applies to the chart or independent tape without changing its time window or other panes.",
       "destructive": false,
       "dry_run_supported": false,
@@ -15388,6 +15456,181 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Opens a configured feed and symbol in a new tab on a bar and a workspace, as the Open a market palette's Enter does. A tab already showing that market on the same bar and workspace is focused instead and the answer says focused true; the other tab is never changed. With background true the tab on screen stays. An unknown feed or symbol, a bar that does not parse or that the feed cannot build, and an unknown workspace are refused before anything opens.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 1024
+      },
+      "id": "market.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Open a configured market, or focus the tab that already shows it so.",
+        "properties": {
+          "background": {
+            "default": false,
+            "description": "Open without leaving the tab on screen.",
+            "type": "boolean"
+          },
+          "bar": {
+            "description": "The flow pane's bar as `kind:size` (`tick:50`, `time:1m`). Left out,\nthe market's own: an open tab's, else the feed's `default_bars`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "feed": {
+            "description": "A feed id from `feed.status.sources`.",
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "workspace": {
+            "description": "A name from `workspace.list`. Left out, `Default`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "feed",
+          "symbol"
+        ],
+        "title": "MarketOpenInput",
+        "type": "object"
+      },
+      "module": "market",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The tab that shows the market now.",
+        "properties": {
+          "background": {
+            "type": "boolean"
+          },
+          "bar": {
+            "type": "string"
+          },
+          "feed": {
+            "type": "string"
+          },
+          "focused": {
+            "description": "True when a tab already showed this market on this bar and workspace\nand was focused; nothing new opened.",
+            "type": "boolean"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab_id",
+          "focused",
+          "feed",
+          "symbol",
+          "bar",
+          "workspace",
+          "background"
+        ],
+        "title": "MarketOpenResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A keyed repeat replays the first answer. An unkeyed repeat finds the tab the first call opened and focuses it.",
+      "title": "Open a market in a tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Puts the Open a market palette over the chart, as + and Ctrl+T do, with the field holding query, and journals market.palette.opened. Nothing opens until Enter or market.open.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 1024
+      },
+      "id": "market.palette.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Put the palette on screen.",
+        "properties": {
+          "query": {
+            "default": "",
+            "description": "What the field starts with; `>` lists commands.",
+            "type": "string"
+          }
+        },
+        "title": "MarketPaletteOpenInput",
+        "type": "object"
+      },
+      "module": "market",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "MarketPaletteOpenResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Showing the palette twice is the same state, with the field reset to query.",
+      "title": "Show the Open a market palette",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Opens a small window over the chart carrying one message, attributed to whoever asked for it, dismissed by the trader.",
       "destructive": false,
       "dry_run_supported": false,
@@ -20677,6 +20920,11 @@
       "title": "Attention"
     },
     {
+      "description": "The markets each venue lists, and the ones the trader added.",
+      "id": "catalog",
+      "title": "Catalog"
+    },
+    {
       "description": "Pane framing, bar construction, and visible market coverage.",
       "id": "chart",
       "title": "Chart"
@@ -20735,6 +20983,11 @@
       "description": "The canvas: which charts are on screen, where they sit, and how wide.",
       "id": "layout",
       "title": "Layout"
+    },
+    {
+      "description": "Opening a market in a tab, and the palette that finds one.",
+      "id": "market",
+      "title": "Market"
     },
     {
       "description": "Interruptions: a popup, a toast, a sound.",

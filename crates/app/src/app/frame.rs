@@ -520,6 +520,8 @@ impl QuantickApp {
     /// chip that says the same thing. Two surfaces the trader reads as one is
     /// this repo's own bug class.
     fn draw_surface_stage(&mut self, ctx: &egui::Context, now: Instant) {
+        let markets = (self.surfaces.hooks_pending() || self.surfaces.market_palette.is_open())
+            .then(|| super::tabs::market_snapshot(self));
         let asks = surfaces::draw_surfaces(
             ctx,
             now,
@@ -530,8 +532,7 @@ impl QuantickApp {
                 style: &self.runtime.style,
                 footprint_config: &self.runtime.footprint_config,
                 tabs: &mut self.runtime.tabs,
-                config: &self.config,
-                added_symbols: &self.added_symbols,
+                markets: markets.as_ref(),
             },
         );
         for action in asks.indicator_actions {
@@ -573,7 +574,7 @@ impl QuantickApp {
             self.surfaces.strategy_popup.settle_arm(outcome);
         }
         if let Some(request) = asks.market {
-            self.apply_market_request(request);
+            super::tabs::apply_palette_intent(self, request);
         }
         if let Some(change) = asks.footprint {
             self.layer_wiring().apply_footprint_change(change);
@@ -726,7 +727,7 @@ impl QuantickApp {
         if self.chrome.title_bar.surface.is_home() {
             scratch.canvas = answers;
             if super::home_wiring::draw_stage(ctx, self.active_tab_mut(), background) {
-                self.surfaces.source_picker.open(&self.config);
+                self.surfaces.market_palette.open("");
             }
             return;
         }

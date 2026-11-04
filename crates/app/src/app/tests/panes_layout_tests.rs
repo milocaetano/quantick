@@ -1944,6 +1944,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         bubble_preset: None,
         symbol_bubble_presets: Default::default(),
         asset_families: Vec::new(),
+        asset_aliases: Default::default(),
         symbol_asset_modes: Default::default(),
         contract_rolls: Default::default(),
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
@@ -3436,7 +3437,7 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
     run_frame(&mut app, &ctx);
     let open_tabs = app.runtime.tabs.len();
 
-    app.symbol_catalog().remove("binance", "WINQ26");
+    app.symbol_catalog().remove("binance", "WINQ26").unwrap();
 
     assert!(
         !app.config
@@ -3498,7 +3499,7 @@ fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
     // The app-side rule holds even if the affordance were clicked: the
     // catalog edit is refused for the last symbol and allowed otherwise,
     // and the tab is never touched either way.
-    app.symbol_catalog().remove("binance", "WINQ26");
+    app.symbol_catalog().remove("binance", "WINQ26").unwrap();
     assert_eq!(
         app.active_tab().symbol,
         "WINQ26",
@@ -3776,7 +3777,7 @@ fn the_tab_shortcuts_open_and_close() {
         egui::Modifiers::CTRL,
     );
     assert!(
-        app.surfaces.source_picker.is_open(),
+        app.surfaces.market_palette.is_open(),
         "Ctrl+T opens the picker"
     );
 }

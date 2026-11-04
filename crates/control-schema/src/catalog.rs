@@ -214,6 +214,7 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
     ];
     documents.extend(crate::contract_roll::documents());
     documents.extend(crate::market_windows::documents());
+    documents.extend(crate::market_palette::documents());
     documents.extend(crate::bubble_preset::documents());
     documents
 }

@@ -41,6 +41,8 @@ default_symbol = "BTCUSDT"
 #   asset_families — optional: dated-contract families that are one market for
 #                   their drawings and anchored studies ("WDO*"), on top of the
 #                   symbol_bubble_presets keys. Moves no saved bubble look.
+#   asset_aliases — optional: other names "Open a market" finds an asset by,
+#                   keyed like symbol_bubble_presets ("WIN*" = ["ibovespa"]).
 #   symbol_asset_modes — optional: per asset, keyed like symbol_bubble_presets,
 #                   behaviour the asset gets only because this file switches
 #                   it on, never because of its name. A mode is a table:
@@ -175,6 +177,7 @@ bubble_preset = "live lane pie"
 # symbol is its own asset and opens on its own look.
 symbol_bubble_presets = { "WIN*" = "mini index regions" }
 asset_families = ["WDO*"]
+asset_aliases = { "WIN*" = ["mini índice", "ibovespa"], "WDO*" = ["mini dólar"] }
 # The mini index wears the tick-chart spheres its preset carries; a quantity
 # on it counts contracts. The look key stays `WIN*`, the key its saved look
 # has always used.

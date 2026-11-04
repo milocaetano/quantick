@@ -23,7 +23,10 @@
 //! fields cannot be.
 
 use eframe::egui;
+use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
+use quantick_control_handlers::market_palette::TabOpening;
+use quantick_engine::bar_registry::BarConfiguration as Bars;
 
 use crate::config::AppConfig;
 use crate::dock::Dock;
@@ -110,6 +113,7 @@ pub(crate) trait TabsMutPort {
 pub(crate) trait ChromePort:
     quantick_control_handlers::native_window::NativeWindowHost
     + quantick_control_handlers::home_tab::HomeTabHost
+    + quantick_control_handlers::market_palette::MarketPaletteHost
     + quantick_control_handlers::desk::DeskHost
     + quantick_control_handlers::workspace_book::WorkspaceBookHost
 {
@@ -746,6 +750,25 @@ impl quantick_control_handlers::home_tab::HomeTabHost for QuantickApp {
 impl quantick_control_handlers::desk::DeskHost for QuantickApp {
     fn desk(&mut self, act: DeskAct) -> Result<bool, quantick_control::error::ControlError> {
         Ok(super::desk_wiring::apply(self, act))
+    }
+}
+
+impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickApp {
+    fn market_snapshot(&self) -> quantick_stores::market_list::MarketSnapshot {
+        super::tabs::market_snapshot(self)
+    }
+    fn focus_tab(&mut self, index: usize) {
+        super::tabs::focus_tab(self, index);
+    }
+    fn open_tab(&mut self, market: (&str, &str), bar: Bars, behind: bool) -> TabOpening {
+        Ok(super::tabs::open(self, market, bar, behind))
+    }
+    fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
+        super::tabs::edit_catalog(self, (feed, symbol), add)
+    }
+    fn open_market_palette(&mut self, query: &str) -> Result<(), ControlError> {
+        self.surfaces.market_palette.open(query);
+        Ok(())
     }
 }
 

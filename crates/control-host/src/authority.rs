@@ -188,6 +188,10 @@ pub const SETTINGS_MODULE_ID: &str = "settings";
 pub const DESK_MODULE_ID: &str = "desk";
 /// Calls on one open tab.
 pub const TAB_MODULE_ID: &str = "tab";
+/// Opening a market, and the palette that finds one.
+pub const MARKET_MODULE_ID: &str = "market";
+/// The venues' lists of markets.
+pub const CATALOG_MODULE_ID: &str = "catalog";
 
 /// Evidence bundles: one hashed, redacted capture of a running session.
 pub const EVIDENCE_MODULE_ID: &str = "evidence";
@@ -641,6 +645,16 @@ pub fn modules() -> Vec<ModuleDescriptor> {
             title: "Tab".to_owned(),
             description: "What one open tab uses: the workspace it reads its market with."
                 .to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(MARKET_MODULE_ID),
+            title: "Market".to_owned(),
+            description: "Opening a market in a tab, and the palette that finds one.".to_owned(),
+        },
+        ModuleDescriptor {
+            id: module(CATALOG_MODULE_ID),
+            title: "Catalog".to_owned(),
+            description: "The markets each venue lists, and the ones the trader added.".to_owned(),
         },
         ModuleDescriptor {
             id: module(NOTIFY_MODULE_ID),

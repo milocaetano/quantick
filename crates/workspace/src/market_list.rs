@@ -9,7 +9,7 @@
 //! Rows are grouped only through the explicit `asset` key the config gives a
 //! symbol; nothing is merged by guessing at a symbol's text.
 
-use crate::workspace_book::DEFAULT_WORKSPACE;
+pub use crate::workspace_book::DEFAULT_WORKSPACE;
 
 pub const PLACEHOLDER: &str = "Search markets, or > for commands";
 pub const RECENT_GROUP: &str = "Recent";
@@ -122,6 +122,70 @@ pub struct MarketWorld<'a> {
     pub recent: &'a RecentMarkets,
     /// The feed whose markets are shown under Start here.
     pub starter_feed: &'a str,
+}
+
+/// The same, owned: what the window hands the palette while it is open.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MarketSnapshot {
+    pub venues: Vec<Venue>,
+    pub markets: Vec<CatalogMarket>,
+    pub open: Vec<OpenMarket>,
+    pub recent: RecentMarkets,
+    pub starter_feed: String,
+    /// The Workspace selector's names, Default first.
+    pub workspaces: Vec<String>,
+}
+
+impl MarketSnapshot {
+    #[must_use]
+    pub fn world(&self) -> MarketWorld<'_> {
+        MarketWorld {
+            venues: &self.venues,
+            markets: &self.markets,
+            open: &self.open,
+            recent: &self.recent,
+            starter_feed: &self.starter_feed,
+        }
+    }
+
+    /// What `market.open` and Enter open: the market's own bar and Default
+    /// when left out. Refuses a market the config does not offer and a
+    /// workspace with no such name.
+    pub fn choice(
+        &self,
+        market: (&str, &str),
+        bar: Option<String>,
+        workspace: Option<String>,
+        background: bool,
+    ) -> Result<OpenChoice, String> {
+        let (feed_id, symbol) = market;
+        let own = market_bar(&self.world(), feed_id, symbol)
+            .ok_or_else(|| format!("{symbol} is not in the {feed_id} list"))?;
+        let workspace = workspace.unwrap_or_else(|| DEFAULT_WORKSPACE.to_owned());
+        if !self.workspaces.contains(&workspace) {
+            return Err(format!("No workspace is named {workspace}"));
+        }
+        Ok(OpenChoice {
+            feed_id: feed_id.to_owned(),
+            symbol: symbol.to_owned(),
+            bar: bar.unwrap_or(own),
+            workspace,
+            background,
+        })
+    }
+}
+
+/// The bar a market opens on when nobody names one: the first open tab's,
+/// else its venue's. `None` for a market the config does not offer.
+#[must_use]
+pub fn market_bar(world: &MarketWorld<'_>, feed_id: &str, symbol: &str) -> Option<String> {
+    find_market(world, feed_id, symbol)?;
+    let venue = world.venues.iter().find(|venue| venue.feed_id == feed_id)?;
+    let tab = world
+        .open
+        .iter()
+        .find(|tab| !tab.replay && tab.feed_id == feed_id && tab.symbol == symbol);
+    Some(tab.map_or_else(|| venue.bar.clone(), |tab| tab.bar.clone()))
 }
 
 /// What a row says about its market.
@@ -588,6 +652,26 @@ pub struct OpenChoice {
     pub background: bool,
 }
 
+/// The toast after an open: `Opened BTCUSDT · tick 50 · Swing`, or
+/// `Focused WINZ26 · tab 1` when `focused` names the tab.
+#[must_use]
+pub fn open_toast(choice: &OpenChoice, focused: Option<usize>) -> String {
+    if let Some(position) = focused {
+        return format!("Focused {} \u{b7} tab {position}", choice.symbol);
+    }
+    let lead = if choice.background {
+        "Opened in the background \u{b7}"
+    } else {
+        "Opened"
+    };
+    format!(
+        "{lead} {} \u{b7} {} \u{b7} {}",
+        choice.symbol,
+        choice.bar.replacen(':', " ", 1),
+        choice.workspace
+    )
+}
+
 /// What a key in the palette asks the window to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteIntent {
@@ -777,13 +861,92 @@ impl MarketPalette {
     #[must_use]
     pub fn remove_selected(&self, listing: &MarketListing) -> Option<PaletteIntent> {
         let row = self.selected_row(listing)?;
-        (row.kind == VenueKind::Live && row.status != MarketStatus::Add).then(|| {
-            PaletteIntent::Remove {
-                feed_id: row.feed_id.clone(),
-                symbol: row.symbol.clone(),
-            }
+        (row.user_added && row.status != MarketStatus::Add).then(|| PaletteIntent::Remove {
+            feed_id: row.feed_id.clone(),
+            symbol: row.symbol.clone(),
         })
     }
+
+    /// The query starts with `>`: commands, not markets.
+    #[must_use]
+    pub fn commands_mode(&self) -> bool {
+        self.query.trim_start().starts_with(COMMAND_PREFIX)
+    }
+
+    /// The Bars selector's kind and size.
+    #[must_use]
+    pub fn bar_parts(&self, listing: &MarketListing) -> (String, String) {
+        let bar = self.bar(listing);
+        let (kind, size) = bar.split_once(':').unwrap_or((&bar, ""));
+        (kind.to_owned(), size.to_owned())
+    }
+
+    /// What the primary label says Enter does.
+    #[must_use]
+    pub fn primary_label(&self, listing: &MarketListing) -> String {
+        if self.commands_mode() {
+            return PrimaryAction::Run.label();
+        }
+        let bar = self.bar(listing);
+        self.selected_row(listing)
+            .and_then(|row| primary_action(row, &bar, &self.workspace))
+            .unwrap_or(PrimaryAction::Open)
+            .label()
+    }
+
+    /// Answer a key. Up and Down move what has focus: the selection, the bar
+    /// kind (opening on `default_size`'s size for it) or the workspace.
+    pub fn press(
+        &mut self,
+        key: PaletteKey,
+        listing: &MarketListing,
+        workspaces: &[String],
+        default_size: impl Fn(&str) -> String,
+    ) -> Option<PaletteIntent> {
+        let step = match key {
+            PaletteKey::Tab => {
+                self.cycle_focus();
+                return None;
+            }
+            PaletteKey::Enter { background } => return self.submit(listing, background),
+            PaletteKey::Delete => return self.remove_selected(listing),
+            PaletteKey::Up => -1,
+            PaletteKey::Down => 1,
+        };
+        match self.focus {
+            PaletteFocus::Field => self.move_selection(step, listing),
+            PaletteFocus::Bars => {
+                let (kind, _) = self.bar_parts(listing);
+                let next = stepped(&BAR_KINDS, &kind, step);
+                self.set_bar_kind(next, &default_size(next));
+            }
+            PaletteFocus::Workspace => {
+                let names: Vec<&str> = workspaces.iter().map(String::as_str).collect();
+                let next = stepped(&names, &self.workspace, step).to_owned();
+                self.set_workspace(&next);
+            }
+        }
+        None
+    }
+}
+
+/// A key the palette answers; Escape is the window's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteKey {
+    Up,
+    Down,
+    Tab,
+    Enter { background: bool },
+    Delete,
+}
+
+fn stepped<'a>(options: &[&'a str], current: &str, step: isize) -> &'a str {
+    let Some(last) = options.len().checked_sub(1) else {
+        return "";
+    };
+    let at = options.iter().position(|option| *option == current);
+    let next = at.map_or(0, |at| (at as isize + step).rem_euclid(last as isize + 1));
+    options[next as usize]
 }
 
 #[cfg(test)]

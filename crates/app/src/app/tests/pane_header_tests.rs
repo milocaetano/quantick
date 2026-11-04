@@ -447,7 +447,7 @@ fn the_tape_key_toggles_tape_only_and_never_opens_a_tab() {
     assert_eq!(view_of(&app), LaneView::Beside, "a time pane has no tape");
     assert_eq!(app.runtime.tabs.len(), tabs, "it never opened a tab");
     assert!(
-        !app.surfaces.source_picker.is_open(),
+        !app.surfaces.market_palette.is_open(),
         "and never reached the source picker"
     );
 }
@@ -1480,7 +1480,7 @@ fn a_held_tape_key_acts_once_and_never_opens_a_tab() {
         assert_eq!(view_of(&app), LaneView::TapeOnly, "a repeat moved the view");
     }
     assert_eq!(app.runtime.tabs.len(), tabs, "a repeat opened a tab");
-    assert!(!app.surfaces.source_picker.is_open());
+    assert!(!app.surfaces.market_palette.is_open());
 }
 
 fn glyph_of(app: &QuantickApp, ctx: &egui::Context, side: PaneSide) -> egui::Rect {
