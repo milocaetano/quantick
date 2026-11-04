@@ -200,15 +200,9 @@ fn hover_lifts_quan_only_and_the_logo_is_never_dimmed() {
         assert_eq!(logo_tint(output), egui::Color32::WHITE, "{state}");
     }
     let brand = crate::theme::BRAND;
-    assert_eq!(wordmark_colors(&idle), (crate::theme::TEXT_MUTED, brand));
-    assert_eq!(
-        wordmark_colors(&hovered),
-        (crate::theme::TEXT_PRIMARY, brand)
-    );
-    assert_eq!(
-        wordmark_colors(&active),
-        (crate::theme::TEXT_PRIMARY, brand)
-    );
+    assert_eq!(wordmark_colors(&idle), (crate::theme::TEXT_PRIMARY, brand));
+    assert_eq!(wordmark_colors(&hovered), (egui::Color32::WHITE, brand));
+    assert_eq!(wordmark_colors(&active), (egui::Color32::WHITE, brand));
 }
 
 #[test]
@@ -671,18 +665,24 @@ fn the_menu_seam_refuses_chart_commands_on_home_and_keeps_the_rest() {
 }
 
 #[test]
-fn one_market_keeps_the_label_in_a_narrow_strip_and_a_hidden_chip_costs_it() {
+fn a_narrow_strip_gives_the_label_room_to_the_market_chip() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
-    let narrow = egui::vec2(300.0, 760.0);
-    let sized = |app: &mut QuantickApp| {
-        run_frame_sized(app, &ctx, narrow, Vec::new(), egui::Modifiers::NONE)
+    let at = |width: f32| egui::vec2(width, 760.0);
+    let sized = |app: &mut QuantickApp, size: egui::Vec2| {
+        run_frame_sized(app, &ctx, size, Vec::new(), egui::Modifiers::NONE)
     };
-    sized(&mut app);
-    let output = sized(&mut app);
-    assert!(painted_text_center(&output, "Quan").is_some());
-    assert!(home_rect(&app).width() > crate::tabstrip::HOME_MIN_WIDTH_PX);
+    sized(&mut app, at(400.0));
+    let output = sized(&mut app, at(400.0));
+    assert!(painted_text_center(&output, "Quan").is_none());
+    assert!(
+        chip_rect(&app, 0).width() >= 90.0,
+        "the lone chip keeps room for its symbol: {:?}",
+        chip_rect(&app, 0)
+    );
     assert!(app.chrome.title_bar.strip.overflow.is_none());
+    let narrow = at(300.0);
+    let sized = |app: &mut QuantickApp| sized(app, narrow);
 
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
     sized(&mut app);

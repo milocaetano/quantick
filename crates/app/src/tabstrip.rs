@@ -7,7 +7,7 @@
 use eframe::egui;
 use quantick_session::tab_chip::{ChipMeasure, CloseSlot, close_slot, fit_chip, shortened_name};
 use quantick_workspace::arrangement::strip::{
-    StripSurface, TabFeedDot, chip_parts, market_slots, visible_tabs,
+    StripSurface, TabFeedDot, chip_parts, home_label_fits, market_slots, visible_tabs,
 };
 
 use crate::theme;
@@ -42,7 +42,7 @@ const SEMIBOLD_STRIKE_PX: f32 = 0.35;
 
 /// The logo, filling a 30 pt tab.
 const HOME_LOGO_PX: f32 = 28.0;
-const HOME_TEXT_PX: f32 = 12.0;
+const HOME_TEXT_PX: f32 = 14.0;
 // Window edge to the Home tab, tab edge to logo, logo to text, text to edge.
 pub(crate) const STRIP_EDGE_PX: f32 = 10.0;
 pub(crate) const HOME_PADDING_LEFT_PX: f32 = 10.0;
@@ -130,7 +130,8 @@ pub(crate) fn draw(
     let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
     let slots = market_slots(room, labelled, CHIP_PREFERRED_WIDTH_PX);
     let visible = visible_tabs(chips.len(), drawn.reveal.unwrap_or(active), slots);
-    let shown = (visible.len() == chips.len()).then_some((label, labelled));
+    let fits = home_label_fits(chips.len(), room, labelled, CHIP_PREFERRED_WIDTH_PX);
+    let shown = fits.then_some((label, labelled));
     // A compact strip has no room for the margins: the logo fills the tab.
     let bare = if compact {
         CHIP_HEIGHT
@@ -397,9 +398,9 @@ fn draw_home_tab(
     if let Some(([quan, tick], _)) = label {
         let mut x = logo.right() + HOME_LOGO_GAP_PX;
         let ink = if active || hovered || focused {
-            theme::TEXT_PRIMARY
+            egui::Color32::WHITE
         } else {
-            theme::TEXT_MUTED
+            theme::TEXT_PRIMARY
         };
         for (galley, color) in [(quan, ink), (tick, theme::BRAND)] {
             let at = egui::pos2(x, rect.center().y - galley.size().y / 2.0);

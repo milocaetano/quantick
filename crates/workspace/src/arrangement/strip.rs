@@ -18,10 +18,12 @@ pub fn market_slots(room: f32, labelled_width: f32, chip_width: f32) -> usize {
     (((room - labelled_width).max(0.0) / chip_width).floor() as usize).max(1)
 }
 
-/// Whether Home keeps its label beside `markets` chips: until one is hidden.
+/// Whether Home keeps its label beside `markets` chips: while every one of them
+/// fits at `chip_width`. A lone market is never hidden, but it would be crushed
+/// to its close target, so it too costs Home its label.
 #[must_use]
 pub fn home_label_fits(markets: usize, room: f32, labelled_width: f32, chip_width: f32) -> bool {
-    markets <= market_slots(room, labelled_width, chip_width)
+    markets as f32 * chip_width <= room - labelled_width
 }
 
 /// What a market tab's dot says: the feed's state, never the selection.
@@ -256,11 +258,13 @@ mod tests {
         assert!(home_label_fits(2, room + 1.0, labelled, 200.0));
     }
 
-    /// One market is always on screen, so it never costs Home its label however
-    /// narrow the window: the logo stands alone exactly when a chip is hidden.
+    /// The logo stands alone exactly when a chip is hidden, or when the one
+    /// market left would no longer fit beside the label.
     #[test]
-    fn home_is_logo_only_exactly_when_a_chip_is_hidden() {
-        assert!(home_label_fits(1, 10.0, 70.0, 200.0), "no room at all");
+    fn home_is_logo_only_exactly_when_a_chip_is_hidden_or_crushed() {
+        assert!(!home_label_fits(1, 10.0, 70.0, 200.0), "no room at all");
+        assert!(!home_label_fits(1, 269.0, 70.0, 200.0));
+        assert!(home_label_fits(1, 270.0, 70.0, 200.0));
         assert!(!home_label_fits(2, 10.0, 70.0, 200.0));
         for room in [0.0, 10.0, 269.0, 270.0, 469.0, 470.0, 1130.0] {
             let slots = market_slots(room, 70.0, 200.0);
@@ -269,7 +273,7 @@ mod tests {
                     let shown = visible_tabs(markets, active, slots).len();
                     assert_eq!(
                         home_label_fits(markets, room, 70.0, 200.0),
-                        shown == markets,
+                        shown == markets && room >= 270.0,
                         "{markets} markets in {room} px"
                     );
                 }
