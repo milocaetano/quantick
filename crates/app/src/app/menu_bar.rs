@@ -320,12 +320,7 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
         return;
     };
     let mut state = std::mem::take(&mut app.chrome.window_menu);
-    let workspace = workspace_rows::WorkspaceRows {
-        book: app.runtime.workspace.book.book(),
-        tabs: &app.runtime.tabs,
-        tab: app.runtime.tabs.active_id(),
-        symbol: app.active_tab().symbol.as_str(),
-    };
+    let workspace = workspace_rows::WorkspaceRows::of(app);
     menus::WindowMenu {
         workspace,
         chart_shown: !app.chrome.title_bar.surface.is_home(),
@@ -352,25 +347,19 @@ pub(super) fn workspace_cell(
     ctx: &egui::Context,
     status: &crate::statusbar::StatusResponse,
 ) {
-    let Some(cell) = status.workspace_cell else {
-        return;
-    };
-    let tab = app.runtime.tabs.active_id();
+    let (tab, window) = (
+        app.runtime.tabs.active_id(),
+        app.runtime.tabs.presented_window_ids(),
+    );
     let pressed = ctx.input_mut(|input| input.consume_shortcut(&WORKSPACE_MENU_SHORTCUT));
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
-    if status.workspace_clicked || pressed {
-        menu.toggle_chip_menu(tab);
-    }
+    let shown = status.workspace_cell.is_some();
+    let open = menu.follow_cell(tab, shown, &window, status.workspace_clicked || pressed);
     let mut commands = Vec::new();
-    if menu.chip_menu_on(tab) {
+    if let Some(cell) = status.workspace_cell.filter(|_| open) {
         let keys = shortcut_text(ctx, &SAVE_TO_WORKSPACE_SHORTCUT);
-        workspace_rows::WorkspaceRows {
-            book: app.runtime.workspace.book.book(),
-            tabs: &app.runtime.tabs,
-            tab,
-            symbol: app.active_tab().symbol.as_str(),
-        }
-        .chip_menu(ctx, cell, &mut menu, keys, &mut commands);
+        let rows = workspace_rows::WorkspaceRows::of(app);
+        rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands);
     }
     app.chrome.window_menu.tab_workspace = menu;
     for command in commands {

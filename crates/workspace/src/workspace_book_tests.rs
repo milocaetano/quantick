@@ -45,7 +45,6 @@ fn a_new_tab_opens_on_default_clean_and_default_is_always_listed() {
         book.list(),
         [WorkspaceListing {
             name: "Default".to_owned(),
-            summary: crate::workspace_recipe::FACTORY_SUMMARY.to_owned(),
             tabs: vec![1]
         }]
     );
@@ -478,7 +477,10 @@ fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
     let rows: Vec<_> = book
         .list()
         .into_iter()
-        .map(|row| (row.name, row.summary))
+        .map(|row| {
+            let summary = book.summary(&row.name);
+            (row.name, summary)
+        })
         .collect();
     assert_eq!(
         rows,
@@ -487,7 +489,7 @@ fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
             ("Scalp".to_owned(), "Time · Flow".to_owned()),
             (
                 "Swing".to_owned(),
-                "Time 1m · tick 200 · Flow · 4 ind".to_owned()
+                "Time 1m · Tick 200 · Flow · 4 ind".to_owned()
             ),
         ]
     );
@@ -515,12 +517,33 @@ fn create_puts_the_tab_on_an_empty_recipe_and_no_other_tab_moves() {
     let empty = book.recipe("Blank").unwrap();
     assert!(empty.flow_indicators.is_empty());
     assert_eq!(
-        empty.split_fraction, None,
-        "the panes start at their own sizes"
+        empty.split_fraction,
+        Some(0.3),
+        "the sizes the tab reads back"
     );
     assert_eq!(empty.context_bars, ["time:5m"]);
     assert_eq!(empty.layers.get("bubbles"), Some(&true));
     assert_eq!(book.tab_copy(1), Some(empty));
+    let shown = empty.clone();
+    assert!(
+        !book.observe(1, &shown).unwrap(),
+        "the tab reads back what it was given"
+    );
+    assert_eq!(state(&book, 1), ("Blank".to_owned(), false));
+}
+
+/// A tab still opening holds the factory `Default`, which names no
+/// arrangement: an empty recipe read from it would be that recipe again.
+#[test]
+fn create_refuses_a_tab_still_opening() {
+    let mut book = WorkspaceBook::default();
+    book.open_tab(1);
+    let before = book.clone();
+    assert_eq!(
+        book.create(1, "Blank"),
+        Err(WorkspaceRefusal::TabOpening(1))
+    );
+    assert_eq!(book, before);
 }
 
 #[test]

@@ -141,7 +141,11 @@ pub const ROWS: &[Row] = &[
     ),
     Row {
         hover: Some("An empty workspace: no indicators. Asks its name first"),
-        ..row(RowId::WorkspaceNew, "New workspace\u{2026}", "workspace.new")
+        ..row(
+            RowId::WorkspaceNew,
+            "New workspace\u{2026}",
+            "workspace.new",
+        )
     },
     Row {
         disabled_hover: Some(DEFAULT_PROTECTED_HOVER),

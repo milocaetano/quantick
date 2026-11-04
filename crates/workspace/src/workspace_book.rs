@@ -37,6 +37,9 @@ pub enum WorkspaceRefusal {
     UnknownWorkspace(String),
     DefaultProtected,
     UnknownTab(u64),
+    /// The tab's panes are still being built, so there is nothing to read an
+    /// empty recipe from yet.
+    TabOpening(u64),
 }
 
 impl WorkspaceRefusal {
@@ -50,6 +53,7 @@ impl WorkspaceRefusal {
             Self::UnknownWorkspace(_) => "workspace.unknown",
             Self::DefaultProtected => "workspace.default_protected",
             Self::UnknownTab(_) => "workspace.unknown_tab",
+            Self::TabOpening(_) => "workspace.tab_not_ready",
         }
     }
 }
@@ -68,6 +72,9 @@ impl std::fmt::Display for WorkspaceRefusal {
                 write!(f, "{DEFAULT_WORKSPACE} cannot be deleted or renamed")
             }
             Self::UnknownTab(tab) => write!(f, "no open tab has id {tab}"),
+            Self::TabOpening(tab) => {
+                write!(f, "tab {tab} is still opening; retry once its charts stand")
+            }
         }
     }
 }
@@ -165,12 +172,10 @@ pub struct DeleteOutcome {
     pub kept_edits: Vec<u64>,
 }
 
-/// One row of the list: a name, what it holds in one line and the tabs using it.
+/// One row of the list: a name and the tabs using it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceListing {
     pub name: String,
-    /// [`WorkspaceRecipe::summary`] of the saved recipe.
-    pub summary: String,
     pub tabs: Vec<u64>,
 }
 
@@ -299,10 +304,6 @@ impl WorkspaceBook {
     pub fn list(&self) -> Vec<WorkspaceListing> {
         let row = |name: &str| WorkspaceListing {
             name: name.to_owned(),
-            summary: self
-                .recipes
-                .get(name)
-                .map_or_else(|| FACTORY_SUMMARY.to_owned(), WorkspaceRecipe::summary),
             tabs: self.tabs_on(name),
         };
         std::iter::once(row(DEFAULT_WORKSPACE))
@@ -313,6 +314,15 @@ impl WorkspaceBook {
                     .map(|name| row(name)),
             )
             .collect()
+    }
+
+    /// What a workspace holds, in the one line the menu and `workspace.list`
+    /// show beside its name: [`WorkspaceRecipe::summary`].
+    #[must_use]
+    pub fn summary(&self, name: &str) -> String {
+        self.recipes
+            .get(name)
+            .map_or_else(|| FACTORY_SUMMARY.to_owned(), WorkspaceRecipe::summary)
     }
 
     fn tabs_on(&self, name: &str) -> Vec<u64> {
@@ -573,9 +583,13 @@ impl WorkspaceBook {
     /// of what the tab holds) and put the tab on it. No other tab changes.
     ///
     /// # Errors
-    /// No such tab; the name is empty, too long or taken.
+    /// No such tab; a tab still opening, whose copy is the factory `Default`
+    /// that names no arrangement; the name is empty, too long or taken.
     pub fn create(&mut self, tab: u64, name: &str) -> Result<CreateOutcome, WorkspaceRefusal> {
         let state = self.state(tab)?;
+        if state.copy.is_factory() {
+            return Err(WorkspaceRefusal::TabOpening(tab));
+        }
         let cleaned = self.validate_new_name(name)?;
         let dropped_edits = self.is_modified(state);
         let recipe = state.copy.emptied();

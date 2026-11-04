@@ -128,7 +128,7 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     let (mut host, mut access, actor) = parts();
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let mut menu = WorkspaceMenuState::default();
-    menu.open_rename("Scalp");
+    menu.open_rename(1, "Scalp");
     menu.dialog.as_mut().unwrap().name = "  The   open ".to_owned();
     let note = apply_row_command(
         &mut host,
@@ -140,7 +140,7 @@ fn the_rename_dialog_toasts_the_stored_name_and_nothing_for_a_no_op() {
     );
     assert_eq!(note, Some(text::renamed_toast("Scalp", "The open")));
     assert!(menu.dialog.is_none());
-    menu.open_rename("The open");
+    menu.open_rename(1, "The open");
     menu.dialog.as_mut().unwrap().name = " The open".to_owned();
     let note = apply_row_command(
         &mut host,
@@ -419,6 +419,7 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     let value = json!({ "name": "Scalp", "to": "Open" });
     rename(&mut host, &mut access, &actor, &value).unwrap();
     delete(&mut host, &mut access, &actor, &json!({ "name": "Open" })).unwrap();
+    edit(&mut host, 1);
     new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
     for row in READBACKS {
         let kind = row.event.unwrap();
@@ -471,6 +472,7 @@ fn new_workspace_esc_leaves_the_chart_untouched() {
 #[test]
 fn new_workspace_applies_on_enter_and_a_taken_name_stays_in_the_dialog() {
     let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let mut menu = WorkspaceMenuState::default();
     let mut submit = |host: &mut FakeHost, menu: &mut WorkspaceMenuState, name: &str| {
@@ -532,4 +534,18 @@ fn the_new_call_makes_an_empty_recipe_and_a_repeat_is_refused() {
     let again = new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap_err();
     assert_eq!(detail(&again), "workspace.name_taken");
     assert_eq!((host.writes, access.events.len()), (1, 1));
+}
+
+/// A tab still opening has no arrangement to empty: the call is refused as
+/// retryable, the way a tab the book has not met is.
+#[test]
+fn the_new_call_on_a_tab_still_opening_is_refused_retryably() {
+    let (mut host, mut access, actor) = parts();
+    let before = host.book.clone();
+    let error = new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap_err();
+    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+    assert!(error.retryable);
+    assert_eq!(detail(&error), TAB_NOT_READY_CODE);
+    assert_eq!(host.book, before);
+    assert_eq!((host.writes, access.events.len()), (0, 0));
 }

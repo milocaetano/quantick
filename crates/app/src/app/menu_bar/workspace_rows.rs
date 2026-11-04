@@ -25,7 +25,17 @@ pub(super) struct WorkspaceRows<'a> {
     pub(super) symbol: &'a str,
 }
 
-impl WorkspaceRows<'_> {
+impl<'a> WorkspaceRows<'a> {
+    /// The rows of the window's presented tab.
+    pub(super) fn of(app: &'a QuantickApp) -> Self {
+        Self {
+            book: app.runtime.workspace.book.book(),
+            tabs: &app.runtime.tabs,
+            tab: app.runtime.tabs.active_id(),
+            symbol: app.active_tab().symbol.as_str(),
+        }
+    }
+
     fn state(&self) -> (&str, bool) {
         self.book
             .tab_state(self.tab)
@@ -74,7 +84,7 @@ impl WorkspaceRows<'_> {
         let (current, _) = self.state();
         for row in self.book.list() {
             let beside = if summary {
-                row.summary
+                self.book.summary(&row.name)
             } else {
                 self.symbols(&row.tabs).join(", ")
             };
@@ -223,8 +233,9 @@ pub(super) fn name_dialog(
     ctx: &egui::Context,
     commands: &mut Vec<MenuCommand>,
 ) {
+    let tab = app.runtime.tabs.active_id();
     let state = &mut app.chrome.window_menu.tab_workspace;
-    let Some(dialog) = state.dialog.as_mut() else {
+    let Some(dialog) = state.dialog.as_mut().filter(|dialog| dialog.tab == tab) else {
         return;
     };
     let title = match &dialog.mode {

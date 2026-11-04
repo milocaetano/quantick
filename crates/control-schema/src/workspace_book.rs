@@ -239,13 +239,15 @@ pub fn workspace_save_as_descriptor() -> CapabilityDescriptor {
 }
 
 pub fn workspace_new_descriptor() -> CapabilityDescriptor {
-    writes_the_book(transient_descriptor::<WorkspaceNewInput, WorkspaceNewResult>(
-        WORKSPACE_NEW_CAPABILITY_ID,
-        MODULE_ID,
-        "Make a new, empty workspace for a tab",
-        "Makes a workspace of an empty recipe: the tab's canvas, context intervals and layers, with no indicators and the panes at their own sizes. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason.",
-        "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
-    ))
+    writes_the_book(
+        transient_descriptor::<WorkspaceNewInput, WorkspaceNewResult>(
+            WORKSPACE_NEW_CAPABILITY_ID,
+            MODULE_ID,
+            "Make a new, empty workspace for a tab",
+            "Makes a workspace of an empty recipe: the tab's canvas, context intervals and layers, with no indicators and the panes at their own sizes. The tab moves onto it and its unsaved edits are dropped; the answer says so. No other tab changes. Unlike workspace.save_as, it copies no indicators. An empty or taken name is refused with the reason.",
+            "A repeat finds the name taken and is refused with workspace.name_taken; nothing changes.",
+        ),
+    )
 }
 
 pub fn workspace_revert_descriptor() -> CapabilityDescriptor {

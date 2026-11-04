@@ -679,3 +679,32 @@ fn the_cell_menu_in_a_torn_off_window_acts_on_that_windows_tab() {
     assert_eq!(book.tab_row(second), ("Blank".to_owned(), false));
     assert_eq!(book.tab_row(first), first_before);
 }
+
+/// A new workspace reads clean once the tab's panes stand on it again: the
+/// empty recipe keeps the sizes the tab reads back.
+#[test]
+fn a_new_workspace_reads_clean_after_real_frames() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-new-clean", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.tabs.select(0);
+    edit_split(&mut app, first, 0.37);
+    let input = serde_json::json!({ "name": "Blank" });
+    app.control_action(
+        "workspace.new",
+        1,
+        crate::control::ActionOrigin::Human,
+        input,
+    )
+    .expect("workspace.new");
+    frames(&mut app, 4);
+    let store = &app.runtime.workspace.book;
+    assert_eq!(store.tab_row(first), ("Blank".to_owned(), false));
+    let recipe = store.book().recipe("Blank").expect("stored");
+    assert!(recipe.flow_indicators.is_empty());
+    assert!(
+        recipe
+            .context_panes
+            .iter()
+            .all(|pane| pane.indicators.is_empty())
+    );
+}

@@ -247,7 +247,7 @@ pub struct StatusResponse {
     pub workspace_clicked: bool,
 }
 
-/// What the status bar's first cell shows this frame.
+/// What the feed-state cell, after the workspace cell, shows this frame.
 #[derive(Debug, Clone, Default)]
 pub struct StatusLead<'a> {
     pub word: Option<StatusWord>,
@@ -260,7 +260,7 @@ pub struct StatusLead<'a> {
 }
 
 impl<'a> StatusLead<'a> {
-    /// What the first cell shows for this tab, and the reason behind the word.
+    /// What the feed-state cell shows for this tab, and the reason behind the word.
     #[must_use]
     pub fn of(
         tab: &'a crate::tab::Tab,

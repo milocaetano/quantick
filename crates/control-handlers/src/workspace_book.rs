@@ -84,19 +84,19 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 ) -> Option<String> {
     let note = match command {
         WorkspaceCommand::BeginSaveAs => {
-            menu.open_save_as();
+            menu.open_save_as(tab);
             return None;
         }
         WorkspaceCommand::BeginNew => {
-            menu.open_new();
+            menu.open_new(tab);
             return None;
         }
         WorkspaceCommand::BeginRename(from) => {
-            menu.open_rename(&from);
+            menu.open_rename(tab, &from);
             return None;
         }
         WorkspaceCommand::SubmitDialog => {
-            return submit_name_dialog(host, &mut to, menu, tab, symbol);
+            return submit_name_dialog(host, &mut to, menu, symbol);
         }
         WorkspaceCommand::Set(name) => set_journaled(host, &mut to, tab, &name).map(|set| {
             set.changed
@@ -128,10 +128,10 @@ fn submit_name_dialog<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     host: &mut H,
     to: &mut Journal<'_, A>,
     menu: &mut WorkspaceMenuState,
-    tab: u64,
     symbol: &str,
 ) -> Option<String> {
     let dialog = menu.dialog.clone()?;
+    let tab = dialog.tab;
     let outcome = match &dialog.mode {
         NameDialogMode::SaveAsNew => save_as_journaled(host, to, tab, &dialog.name)
             .map(|saved| Some(text::saved_as_toast(symbol, &saved.workspace))),
@@ -184,8 +184,12 @@ fn answer<T: Serialize>(result: &T) -> Result<Value, ControlError> {
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-/// The reason, and the code a caller branches on.
+/// The reason, and the code a caller branches on. A tab still opening is
+/// worth a retry, as [`tab_on_book`] answers it.
 fn refused(refusal: &WorkspaceRefusal) -> ControlError {
+    if let WorkspaceRefusal::TabOpening(tab) = refusal {
+        return not_ready(*tab);
+    }
     let mut error = ControlError::invalid_request(refusal.to_string());
     error.context.details = Some(json!({ "code": refusal.code() }));
     error
@@ -227,13 +231,17 @@ fn tab_on_book<H: WorkspaceBookHost + TabDirectory + ?Sized>(
     if book(app)?.tab_state(tab).is_some() {
         return Ok(tab);
     }
+    Err(not_ready(tab))
+}
+
+fn not_ready(tab: u64) -> ControlError {
     let mut error = ControlError::new(
         ErrorCode::new(codes::CAPABILITY_UNAVAILABLE).expect("static error code is valid"),
-        format!("tab {tab} is still opening; retry once its charts stand"),
+        WorkspaceRefusal::TabOpening(tab).to_string(),
         true,
     );
     error.context.details = Some(json!({ "code": TAB_NOT_READY_CODE }));
-    Err(error)
+    error
 }
 
 /// Run `change` on the book and write the result when it says it changed;
@@ -607,13 +615,14 @@ fn list<H: WorkspaceBookHost + ?Sized, A>(
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceListInput {} = input(value)?;
-    let workspaces = book(app)?
+    let book_ref = book(app)?;
+    let workspaces = book_ref
         .list()
         .into_iter()
         .map(|row| WorkspaceEntry {
             tabs: wires(&row.tabs),
+            summary: book_ref.summary(&row.name),
             name: row.name,
-            summary: row.summary,
         })
         .collect();
     answer(&WorkspaceListResult { workspaces })

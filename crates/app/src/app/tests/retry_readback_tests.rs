@@ -820,14 +820,14 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
-        // Last: deleting a workspace lays its tab out as a new tab, and the rows
-        // above work on the charts the earlier rows opened.
         (
             "workspace.new",
             1,
             json!({ "name": "Blank" }),
             Readback::Moves,
         ),
+        // Last: deleting a workspace lays its tab out as a new tab, and the rows
+        // above work on the charts the earlier rows opened.
         (
             "workspace.save_as",
             1,

@@ -18,13 +18,17 @@ pub const FACTORY_SUMMARY: &str = "as the feed opens";
 const SUMMARY_SEPARATOR: &str = " \u{b7} ";
 
 /// A context pane's interval as the menu reads it: `time:1m` is `Time 1m`,
-/// another kind keeps its own word, a pane with none recorded is `Time`.
+/// `tick:200` is `Tick 200`, a pane with none recorded is `Time`.
 fn interval_label(bars: Option<&str>) -> String {
-    match bars.and_then(|bars| bars.split_once(':')) {
-        Some(("time", parameter)) => format!("Time {parameter}"),
-        Some((kind, parameter)) => format!("{kind} {parameter}"),
-        None => "Time".to_owned(),
-    }
+    let Some((kind, parameter)) = bars.and_then(|bars| bars.split_once(':')) else {
+        return "Time".to_owned();
+    };
+    let mut letters = kind.chars();
+    let word: String = letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default();
+    format!("{word} {parameter}")
 }
 
 /// The canvas layout a feed declares its tabs open on (`default_layout` in
@@ -176,9 +180,10 @@ impl WorkspaceRecipe {
         }
     }
 
-    /// What a new workspace starts from: this recipe's canvas and context
-    /// intervals, its layer switches and footprint style, every pane bare of
-    /// indicators and the pane sizes back to the canvas's own.
+    /// What a new workspace starts from: this recipe with every pane bare of
+    /// indicators. The canvas, its sizes and folds, the context intervals, the
+    /// layer switches and the footprint style stay as the tab reads them back,
+    /// so the tab on it reads clean once its panes stand again.
     #[must_use]
     pub fn emptied(&self) -> Self {
         let bare = |pane: &ContextPaneRecipe| ContextPaneRecipe {
@@ -186,12 +191,9 @@ impl WorkspaceRecipe {
             layers: pane.layers.clone(),
         };
         Self {
-            layout: self.layout,
-            context_bars: self.context_bars.clone(),
+            flow_indicators: Vec::new(),
             context_panes: self.context_panes.iter().map(bare).collect(),
-            layers: self.layers.clone(),
-            footprint_style: self.footprint_style.clone(),
-            ..Self::default()
+            ..self.clone()
         }
     }
 
