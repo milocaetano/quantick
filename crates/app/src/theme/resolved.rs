@@ -81,8 +81,7 @@ impl Palette {
         rendered_font(self.resolved.typography.get(role))
     }
     pub fn font_at(&self, role: FontRole, reference_size: f32) -> egui::FontId {
-        let font = self.resolved.typography.at_size(role, reference_size);
-        rendered_font(font)
+        rendered_font(self.resolved.typography.at_size(role, reference_size))
     }
 }
 
@@ -96,57 +95,37 @@ fn rendered_font(font: quantick_appearance::FontSpec) -> egui::FontId {
     )
 }
 
-fn rendered(color: PremultipliedRgba) -> egui::Color32 {
+pub(super) fn rendered(color: PremultipliedRgba) -> egui::Color32 {
     let [r, g, b, a] = color.to_array();
     egui::Color32::from_rgba_premultiplied(r, g, b, a)
 }
 
-#[derive(Clone)]
-struct Installed {
-    revision: u64,
-    palette: Arc<Palette>,
-}
+type Installed = quantick_appearance::RenderCache<Arc<Palette>>;
 fn key() -> egui::Id {
     egui::Id::new("quantick.resolved_appearance")
 }
-
-/// One context lock at the render boundary, never inside a cell or token lookup.
-pub fn get(ctx: &egui::Context) -> Arc<Palette> {
+fn cached(ctx: &egui::Context) -> Installed {
     ctx.data_mut(|data| {
-        data.get_temp_mut_or_insert_with(key(), || Installed {
-            revision: u64::MAX,
-            palette: Arc::new(Palette::new(ResolvedTheme::bundled_dark())),
+        data.get_temp_mut_or_insert_with(key(), || {
+            Installed::new(Arc::new(Palette::new(ResolvedTheme::bundled_dark())))
         })
-        .palette
         .clone()
     })
 }
 
-/// Called once per frame; conversion and style changes happen only on revision.
-/// Font definitions (including Phosphor and fallback registrations) stay intact.
+/// One context lock per boundary. Warm frames reuse converted colors and fonts.
+pub fn get(ctx: &egui::Context) -> Arc<Palette> {
+    cached(ctx).value
+}
+
 pub fn sync(ctx: &egui::Context, state: &Appearance) {
-    let installed = ctx.data(|data| data.get_temp::<Installed>(key()));
-    if installed
-        .as_ref()
-        .is_some_and(|cached| cached.revision == state.revision())
+    let mut installed = cached(ctx);
+    if let Some(typography_changed) =
+        installed.refresh(state, |theme| Arc::new(Palette::new(theme)))
     {
-        return;
+        super::chrome::apply_palette(ctx, &installed.value, typography_changed);
+        ctx.data_mut(|data| data.insert_temp(key(), installed));
     }
-    let palette = Arc::new(Palette::new(state.resolved()));
-    let typography_changed = installed.as_ref().is_none_or(|prior| {
-        prior.revision == u64::MAX
-            || prior.palette.resolved.typography != palette.resolved.typography
-    });
-    super::chrome::apply_palette(ctx, &palette, typography_changed);
-    ctx.data_mut(|data| {
-        data.insert_temp(
-            key(),
-            Installed {
-                revision: state.revision(),
-                palette,
-            },
-        )
-    });
 }
 
 #[cfg(test)]
@@ -237,12 +216,12 @@ mod tests {
         let original = get(&ctx);
         state
             .apply(
-                "version = 1\nname = 'Larger'\n[typography.body]\nsize = 18\nfamily = 'monospace'",
+                "version = 1\nname = 'Modest'\n[typography.body]\nsize = 13.5\nfamily = 'monospace'",
             )
             .unwrap();
         sync(&ctx, &state);
         assert!(!Arc::ptr_eq(&original, &get(&ctx)));
-        assert_eq!(ctx.style().text_styles[&egui::TextStyle::Body].size, 18.0);
+        assert_eq!(ctx.style().text_styles[&egui::TextStyle::Body].size, 13.5);
         // No set_fonts call is made by the adapter; this named fallback remains registered.
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {

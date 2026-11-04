@@ -18,7 +18,13 @@ pub struct ApplyInput {
     /// Versioned TOML; schema maxLength is 65536 Unicode characters.
     /// Runtime additionally caps UTF-8 bytes at 65536 before parsing.
     #[schemars(length(max = 65536))]
-    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Select dark or light instead of source. Exactly one is required.
+    /// Durable choices preserve the original file using a sibling choice store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = "^(dark|light)$"))]
+    pub builtin: Option<String>,
     /// False is session-only. True writes the selected store before publication.
     #[serde(default)]
     pub persist: bool,
@@ -26,6 +32,8 @@ pub struct ApplyInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct AppearanceSnapshot {
+    /// dark, light, or custom; exact bundled source identity, never RGB matching.
+    pub choice: String,
     /// Paint revision: semantic equality does not invalidate rendering caches.
     pub revision: WireU64,
     /// bundled_dark, session, or selected_store; never a local path.
@@ -51,7 +59,7 @@ pub fn descriptor() -> CapabilityDescriptor {
     let mut value = crate::recovery::descriptor(
         APPEARANCE_CAPABILITY_ID,
         "Apply appearance configuration",
-        "Validate and atomically apply a bounded version 1 TOML theme. Session-only by default; persist=true writes the host-selected appearance store before publication and is refused when saves are disabled. Input never selects a path. Invalid candidates or write failures preserve live state. Read appearance.state before/after; keyed retries replay the original answer without another write within the connection's idempotency window. External file changes are not polled.",
+        "Apply exactly one of source (version 1 TOML) or builtin (dark/light). Session-only by default. persist=true saves before publication; builtin choices preserve the original file in a sibling choice store, which becomes the active persistence destination. Saves-off refuses persistent changes. Input never selects a path. Invalid candidates/write failures preserve state. Inspect appearance.state; keyed retries replay without another write. External files are not polled.",
         false,
         generated_schema::<ApplyInput>(),
     );

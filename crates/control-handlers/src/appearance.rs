@@ -51,6 +51,7 @@ fn project<H: AppearancePort + ?Sized>(host: &H, _: CaptureContext) -> Appearanc
 pub fn snapshot<H: AppearancePort + ?Sized>(host: &H) -> AppearanceSnapshot {
     let store = host.appearance_store();
     AppearanceSnapshot {
+        choice: store.builtin().map_or("custom", |value| value.key()).into(),
         revision: WireU64::new(store.revision()),
         origin: store.origin().into(),
         source: store
@@ -71,15 +72,36 @@ fn apply<H: AppearancePort + ?Sized, A>(
     let input: ApplyInput = serde_json::from_value(value.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let before = host.appearance_store().revision();
-    host.appearance_store_mut()
-        .apply_candidate(&input.source, input.persist)
-        .map_err(refusal)?;
+    apply_input(host, input)?;
     host.publish_appearance();
     serde_json::to_value(ApplyResult {
         changed: host.appearance_store().revision() != before,
         state: snapshot(host),
     })
     .map_err(|error| ControlError::invalid_request(error.to_string()))
+}
+pub fn apply_input<H: AppearancePort + ?Sized>(
+    host: &mut H,
+    input: ApplyInput,
+) -> Result<(), ControlError> {
+    match (input.source, input.builtin) {
+        (Some(source), None) => host
+            .appearance_store_mut()
+            .apply_candidate(&source, input.persist),
+        (None, Some(key)) => {
+            let builtin = quantick_stores::appearance::Builtin::parse(&key)
+                .ok_or_else(|| ControlError::invalid_request("builtin must be dark or light"))?;
+            host.appearance_store_mut()
+                .apply_builtin(builtin, input.persist)
+        }
+        _ => {
+            return Err(ControlError::invalid_request(
+                "exactly one of source or builtin is required",
+            ));
+        }
+    }
+    .map_err(refusal)?;
+    Ok(())
 }
 fn refusal(error: AppearanceError) -> ControlError {
     let (code, field, message) = match error {

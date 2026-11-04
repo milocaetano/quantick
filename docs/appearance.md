@@ -4,7 +4,7 @@ Quantick's appearance contract is versioned TOML. The bundled
 [Dark](../crates/appearance/themes/dark.toml) and
 [Light](../crates/appearance/themes/light.toml) documents use the same parser and
 resolver as an authored theme. Start with either file when writing a community
-theme. Installation, distribution and a theme picker are outside this foundation.
+theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
 ## Document
 
@@ -157,13 +157,27 @@ immutable fallback through the same resolver used by authored documents.
 At startup the host reads `QUANTICK_THEME=<toml>` when set, otherwise
 `appearance.toml` from the normal cockpit directory. The explicit path also
 isolates appearance state during harness runs and is excluded from cockpit rescue.
-The override selects the appearance store path for both startup reads and an
-explicit `appearance.apply` with `persist: true`. Otherwise the destination is
-`appearance.toml` in the normal cockpit directory. Remote callers never choose
+Before a builtin choice is saved, the override selects the appearance store for
+both startup reads and an explicit source apply with `persist: true`; otherwise
+that store is `appearance.toml` in the normal cockpit directory.
+
+Tools > Theme and `appearance.apply` with `builtin` save the complete bundled
+source to a sibling named `<selected filename>.choice.toml`. Startup prefers this
+sibling when present, and subsequent durable source applies write that active
+choice store. The original selected document is preserved, including an authored
+`QUANTICK_THEME` file. A session-only builtin choice creates no file. Removing the
+choice sibling while the app is closed restores startup from the original source.
+Invalid or unwritable candidates leave the previous source and destination intact.
+The choice shows Dark or Light only for the exact bundled source (or initial Dark
+fallback); authored copies, even with the same name or colors, show Custom theme.
+Custom source remains available through the existing API; the native menu only
+selects the two builtins. Both builtins keep the established fonts, sizes, layout
+and spacing; Light changes the colors. Font overrides remain an authoring feature,
+with modest variations supported and verified, rather than a new typography UI. Remote callers never choose
 a path. Session applies write nothing; no automatic writes or external file
-polling occur. Appearance remains excluded from workspace bundles. A durable
-apply intentionally replaces the selected file, so use a scratch theme copy for
-harness runs that exercise persistence.
+polling occur. Appearance remains excluded from workspace bundles. A durable source
+apply intentionally replaces the active destination. Use an isolated selected
+path for harness runs; its choice sibling is also part of that isolated store.
 The application owns its active state, and each egui context caches converted
 colors and typography by revision. Repeated frames reuse that cache. Typography
 changes update text roles without replacing font definitions, so Phosphor icons
@@ -273,12 +287,22 @@ request envelope). Read first with `snapshot.read`, version 1:
 ```
 
 The scope value contains `revision`, `origin`, `source`, `durable`,
-`writes_enabled` and `load_failed`. `source` is the active original TOML, or the
+`writes_enabled`, `load_failed` and `choice` (`dark`, `light`, or `custom`). `source` is the active original TOML, or the
 complete bundled Dark TOML at fallback. `origin` is `bundled_dark`, `session`, or
 `selected_store`; no selected filesystem path is disclosed. `durable` means the
 last successful load/save established this source, not that an external file
 watcher has confirmed it still exists. `load_failed` records startup fallback
 from an invalid/unreadable file and clears on a successful explicit save.
+
+Choose and remember a builtin with `appearance.apply`, version 1:
+
+```json
+{"builtin":"light","persist":true}
+```
+
+`builtin` accepts `dark` or `light`. Exactly one of `builtin` and `source` is
+required. The default `persist: false` remains session-only for either input.
+A persistent builtin selection uses the same protected sibling as Tools > Theme.
 
 Apply a session candidate with `appearance.apply`, version 1:
 

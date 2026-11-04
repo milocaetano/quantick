@@ -3,7 +3,11 @@
 //! A caller resolves TOML at its configuration boundary, then retains the
 //! resulting immutable palette. No file access or ambient theme state lives here.
 
+mod builtin;
 pub mod color;
+pub use builtin::Builtin;
+mod cache;
+pub use cache::RenderCache;
 pub mod contrast;
 mod document;
 mod error;

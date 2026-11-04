@@ -3,6 +3,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
+pub use quantick_appearance::Builtin;
 use quantick_appearance::{Appearance, ApplyOutcome, ResolvedTheme, ThemeError};
 
 pub const DEFAULT_SOURCE: &str = quantick_appearance::DARK;
@@ -118,6 +119,7 @@ pub struct AppearanceStore {
     durable: bool,
     load_failed: bool,
     inspection_revision: u64,
+    choice_path: std::path::PathBuf,
 }
 
 impl std::ops::Deref for AppearanceStore {
@@ -129,6 +131,15 @@ impl std::ops::Deref for AppearanceStore {
 
 impl AppearanceStore {
     pub fn open(path: std::path::PathBuf) -> Self {
+        let choice_path = path.with_file_name(format!(
+            "{}.choice.toml",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        let path = if choice_path.exists() {
+            choice_path.clone()
+        } else {
+            path
+        };
         let (state, load_failed) = match load(&path) {
             Ok(state) => (state, false),
             Err(error) => {
@@ -148,6 +159,7 @@ impl AppearanceStore {
             durable,
             load_failed,
             inspection_revision: 0,
+            choice_path,
         }
     }
     /// Source and persistence change independently of paint. Inspection keys must
@@ -167,6 +179,23 @@ impl AppearanceStore {
     }
     pub fn writes_enabled(&self) -> bool {
         quantick_workspace::write_refusal::writes_refused().is_none()
+    }
+    /// A native choice never overwrites an authored input file. Once selected,
+    /// the sibling becomes the active store for subsequent explicit saves too.
+    pub fn apply_builtin(
+        &mut self,
+        builtin: quantick_appearance::Builtin,
+        persist: bool,
+    ) -> Result<ApplyOutcome, AppearanceError> {
+        if !persist {
+            return self.apply_candidate(builtin.source(), false);
+        }
+        let previous = std::mem::replace(&mut self.path, self.choice_path.clone());
+        let result = self.apply_candidate(builtin.source(), true);
+        if result.is_err() {
+            self.path = previous;
+        }
+        result
     }
     pub fn apply_candidate(
         &mut self,
@@ -201,6 +230,77 @@ mod tests {
     use super::*;
     use crate::scratch::ScratchDir;
     use quantick_appearance::{DARK, LIGHT};
+
+    #[test]
+    fn builtin_choice_preserves_authored_source_and_roundtrips_active_destination() {
+        let scratch = ScratchDir::new("appearance-choice");
+        let path = scratch.path().join("community.toml");
+        let authored = "version=1\nname='Light'\n[colors]\naccent='#AABBCC'";
+        std::fs::write(&path, authored).unwrap();
+        let mut store = AppearanceStore::open(path.clone());
+        assert_eq!(
+            store.builtin(),
+            None,
+            "names never establish builtin identity"
+        );
+        store.apply_builtin(Builtin::Light, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), authored);
+        let mut reopened = AppearanceStore::open(path.clone());
+        assert_eq!(reopened.builtin(), Some(Builtin::Light));
+        assert!(reopened.durable());
+        reopened.apply_builtin(Builtin::Dark, true).unwrap();
+        assert_eq!(
+            AppearanceStore::open(path.clone()).builtin(),
+            Some(Builtin::Dark)
+        );
+        let custom = format!("# authored copy\n{LIGHT}");
+        reopened.apply_candidate(&custom, true).unwrap();
+        let final_state = AppearanceStore::open(path.clone());
+        assert_eq!(final_state.builtin(), None);
+        assert_eq!(final_state.source(), Some(custom.as_str()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), authored);
+    }
+
+    #[test]
+    fn failed_builtin_save_preserves_source_destination_and_inspection() {
+        let scratch = ScratchDir::new("appearance-choice-failure");
+        let path = scratch.path().join(THEME_FILE);
+        let mut store = AppearanceStore::open(path.clone());
+        std::fs::create_dir(&store.choice_path).unwrap();
+        assert!(store.apply_builtin(Builtin::Light, true).is_err());
+        assert_eq!(store.builtin(), Some(Builtin::Dark));
+        assert_eq!(store.inspection_revision(), 0);
+        assert!(!store.durable());
+        store.apply_candidate(LIGHT, true).unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), LIGHT);
+    }
+
+    #[test]
+    fn builtin_session_choice_never_creates_saved_preference() {
+        let scratch = ScratchDir::new("appearance-choice-session");
+        let path = scratch.path().join(THEME_FILE);
+        let mut store = AppearanceStore::open(path.clone());
+        store.apply_builtin(Builtin::Light, false).unwrap();
+        assert_eq!(store.builtin(), Some(Builtin::Light));
+        assert!(!store.choice_path.exists());
+        assert_eq!(AppearanceStore::open(path).builtin(), Some(Builtin::Dark));
+    }
+
+    #[test]
+    fn saves_off_refuses_builtin_preference_before_publication() {
+        use quantick_workspace::write_refusal::{WritesRefused, refuse_writes_on_this_thread};
+        let scratch = ScratchDir::new("appearance-choice-refused");
+        let mut store = AppearanceStore::open(scratch.path().join(THEME_FILE));
+        refuse_writes_on_this_thread(Some(WritesRefused {
+            hooks: vec!["QUANTICK_UNKNOWN_TEST".into()],
+        }));
+        let result = store.apply_builtin(Builtin::Light, true);
+        refuse_writes_on_this_thread(None);
+        assert!(result.is_err());
+        assert_eq!(store.builtin(), Some(Builtin::Dark));
+        assert!(!store.choice_path.exists());
+        assert_eq!(store.inspection_revision(), 0);
+    }
 
     #[test]
     fn utf8_byte_boundary_is_shared_by_load_session_and_durable_apply() {

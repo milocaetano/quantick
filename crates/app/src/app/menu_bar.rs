@@ -210,7 +210,7 @@ impl QuantickApp {
         menus::show_tools_menu(
             ui,
             access_label,
-            |ui| super::deal_recording_wiring::draw_toggle(self, ui),
+            |ui| menus::draw_tools_content(self, ui),
             commands,
         );
         menus::show_help_menu(ui, commands);

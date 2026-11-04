@@ -74,6 +74,18 @@ pub(super) fn apply_palette(ctx: &egui::Context, palette: &Palette, typography_c
 mod tests {
     use super::*;
     #[test]
+    fn builtins_preserve_main_default_typography_and_spacing() {
+        let historical = egui::Style::default();
+        for builtin in quantick_appearance::Builtin::ALL {
+            let ctx = egui::Context::default();
+            let mut state = quantick_appearance::Appearance::default();
+            state.apply(builtin.source()).unwrap();
+            super::super::sync(&ctx, &state);
+            assert_eq!(ctx.style().text_styles, historical.text_styles);
+            assert_eq!(ctx.style().spacing, historical.spacing);
+        }
+    }
+    #[test]
     fn dark_widget_colors_match_historical_toolkit_defaults_and_custom_colors_apply() {
         let ctx = egui::Context::default();
         apply(&ctx);

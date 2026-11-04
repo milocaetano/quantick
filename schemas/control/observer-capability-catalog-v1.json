@@ -4056,7 +4056,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Validate and atomically apply a bounded version 1 TOML theme. Session-only by default; persist=true writes the host-selected appearance store before publication and is refused when saves are disabled. Input never selects a path. Invalid candidates or write failures preserve live state. Read appearance.state before/after; keyed retries replay the original answer without another write within the connection's idempotency window. External file changes are not polled.",
+      "description": "Apply exactly one of source (version 1 TOML) or builtin (dark/light). Session-only by default. persist=true saves before publication; builtin choices preserve the original file in a sibling choice store, which becomes the active persistence destination. Saves-off refuses persistent changes. Input never selects a path. Invalid candidates/write failures preserve state. Inspect appearance.state; keyed retries replay without another write. External files are not polled.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -4071,6 +4071,14 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "builtin": {
+            "description": "Select dark or light instead of source. Exactly one is required.\nDurable choices preserve the original file using a sibling choice store.",
+            "pattern": "^(dark|light)$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "persist": {
             "default": false,
             "description": "False is session-only. True writes the selected store before publication.",
@@ -4079,12 +4087,12 @@
           "source": {
             "description": "Versioned TOML; schema maxLength is 65536 Unicode characters.\nRuntime additionally caps UTF-8 bytes at 65536 before parsing.",
             "maxLength": 65536,
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
-        "required": [
-          "source"
-        ],
         "title": "ApplyInput",
         "type": "object"
       },
@@ -4093,6 +4101,10 @@
         "$defs": {
           "AppearanceSnapshot": {
             "properties": {
+              "choice": {
+                "description": "dark, light, or custom; exact bundled source identity, never RGB matching.",
+                "type": "string"
+              },
               "durable": {
                 "description": "Last successful load/save. Files are not polled for external edits.",
                 "type": "boolean"
@@ -4119,6 +4131,7 @@
               }
             },
             "required": [
+              "choice",
               "revision",
               "origin",
               "source",
@@ -19000,6 +19013,10 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "choice": {
+            "description": "dark, light, or custom; exact bundled source identity, never RGB matching.",
+            "type": "string"
+          },
           "durable": {
             "description": "Last successful load/save. Files are not polled for external edits.",
             "type": "boolean"
@@ -19026,6 +19043,7 @@
           }
         },
         "required": [
+          "choice",
           "revision",
           "origin",
           "source",

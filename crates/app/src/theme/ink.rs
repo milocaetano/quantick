@@ -1,5 +1,6 @@
 //! Renderer adapters for the headless contrast rules.
 
+use super::resolved::rendered;
 #[cfg(test)]
 use super::{BUY, SELL};
 use eframe::egui::Color32;
@@ -7,11 +8,6 @@ use quantick_appearance::{PremultipliedRgba, contrast};
 
 fn headless(color: Color32) -> PremultipliedRgba {
     PremultipliedRgba::from_premultiplied(color.to_array())
-}
-
-fn rendered(color: PremultipliedRgba) -> Color32 {
-    let [r, g, b, a] = color.to_array();
-    Color32::from_rgba_premultiplied(r, g, b, a)
 }
 
 #[cfg(test)]

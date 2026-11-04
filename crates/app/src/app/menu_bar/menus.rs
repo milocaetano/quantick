@@ -579,3 +579,8 @@ pub(super) fn show_agent_access_indicator(
         commands.push(MenuCommand::OpenAgentAccess);
     }
 }
+
+pub(super) fn draw_tools_content(app: &mut super::QuantickApp, ui: &mut egui::Ui) {
+    crate::theme::choice::show(ui, app);
+    super::super::deal_recording_wiring::draw_toggle(app, ui);
+}

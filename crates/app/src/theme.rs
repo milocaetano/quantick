@@ -1,4 +1,5 @@
 //! Context-local appearance adapters. Retain a palette at each rendering boundary.
+pub(crate) mod choice;
 mod chrome;
 mod ink;
 #[cfg(test)]

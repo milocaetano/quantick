@@ -89,6 +89,6 @@ production matches in app and drawings fall into the following classes:
 The complete Dark contract and explicit Light core-key inventory are tested.
 Owner coverage pins preview alpha parity, palette legacy/snapshot preservation,
 font-aware pane allocation, narrow enlarged ledger geometry and drawing scenes.
-Independent Dark/Light/enlarged-family screenshots, glyph checks and matched
+Independent normal Dark/Light and modest font-family/size screenshots, glyph checks and matched
 hot-path performance evidence remain required for delivery. Unit/scene tests
 establish source behavior, not visual acceptance.

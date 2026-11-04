@@ -10,11 +10,8 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.configuration",
         title: "Apply a complete appearance configuration",
-        reach: "versioned TOML through the local control plane; startup selected appearance store",
-        keys: &[(
-            Source::Authored,
-            "configuration-driven appearance has no theme picker",
-        )],
+        reach: "Tools > Theme > Dark/Light; versioned TOML or builtin choice through the local control plane",
+        keys: &[(Source::MenuEntry, "Theme")],
         mapping: capability!("appearance.apply"),
     },
     UiBehaviour {

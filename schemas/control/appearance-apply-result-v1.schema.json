@@ -2,6 +2,10 @@
   "$defs": {
     "AppearanceSnapshot": {
       "properties": {
+        "choice": {
+          "description": "dark, light, or custom; exact bundled source identity, never RGB matching.",
+          "type": "string"
+        },
         "durable": {
           "description": "Last successful load/save. Files are not polled for external edits.",
           "type": "boolean"
@@ -28,6 +32,7 @@
         }
       },
       "required": [
+        "choice",
         "revision",
         "origin",
         "source",

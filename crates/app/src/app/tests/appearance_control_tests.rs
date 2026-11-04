@@ -124,6 +124,32 @@ fn appearance_gateway_publishes_every_owner_atomically_and_replays_durable_retry
     assert!(std::sync::Arc::ptr_eq(&palette, &crate::theme::get(&ctx)));
     assert_eq!(ctx.style().text_styles, fonts);
     assert_eq!(app.runtime.style_revision, revision);
+    for input in [
+        json!({}),
+        json!({"builtin":"sepia"}),
+        json!({"source":LIGHT,"builtin":"light"}),
+    ] {
+        let (refused, _) = unkeyed_call(&mut app, &mut cockpit, "appearance.apply", input);
+        assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
+        assert_eq!(state(&mut app, &mut observer), before_invalid);
+    }
+    let (chosen, _) = unkeyed_call(
+        &mut app,
+        &mut cockpit,
+        "appearance.apply",
+        json!({"builtin":"dark","persist":true}),
+    );
+    assert_eq!(error_code(&chosen), None);
+    assert_eq!(success_result(&chosen)["state"]["choice"], "dark");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        LIGHT,
+        "native choice preserves authored input"
+    );
+    assert_eq!(
+        quantick_stores::appearance::AppearanceStore::open(path).builtin(),
+        Some(quantick_appearance::Builtin::Dark)
+    );
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }

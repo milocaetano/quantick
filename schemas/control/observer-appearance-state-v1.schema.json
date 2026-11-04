@@ -7,6 +7,10 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "choice": {
+      "description": "dark, light, or custom; exact bundled source identity, never RGB matching.",
+      "type": "string"
+    },
     "durable": {
       "description": "Last successful load/save. Files are not polled for external edits.",
       "type": "boolean"
@@ -33,6 +37,7 @@
     }
   },
   "required": [
+    "choice",
     "revision",
     "origin",
     "source",

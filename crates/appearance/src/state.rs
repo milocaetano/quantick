@@ -48,6 +48,9 @@ impl Appearance {
     pub fn source(&self) -> Option<&str> {
         self.source.as_deref()
     }
+    pub fn builtin(&self) -> Option<crate::Builtin> {
+        crate::Builtin::identify(self.source())
+    }
 
     pub fn apply(&mut self, source: &str) -> Result<ApplyOutcome, ThemeError> {
         if self.source.as_deref() == Some(source) {
