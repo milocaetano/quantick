@@ -1,4 +1,5 @@
 use super::*;
+use crate::orderflow_render::constants::{FLOW_BUY, FLOW_SELL};
 use quantick_chart::flow_execution::FlowRegionRole;
 #[path = "flow_live_bench.rs"]
 mod live_bench;
@@ -283,7 +284,7 @@ fn common_offset_preserves_vectors_and_radii() {
 }
 
 #[test]
-fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
+fn the_caption_keeps_its_exception_facts_and_no_key_or_placement() {
     let (mut frame, _) = painted_region(100, 0);
     // Regional FLOW (WIN) draws the first daily region uncapped; over a typed
     // reference its note says the area is capped at the radius limit.
@@ -299,8 +300,6 @@ fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
             0.0,
             Some(&frame),
             FlowProgress::default(),
-            false,
-            None,
         );
     });
     let texts = output
@@ -314,7 +313,7 @@ fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(texts.contains("offset"));
+    assert!(!texts.contains("offset") && texts.starts_with("FLOW | "));
     assert!(texts.contains("100") && texts.contains("90"));
     assert!(!texts.contains("capped"));
     assert!(!texts.contains("Buy") && !texts.contains("Sell"));

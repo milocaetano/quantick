@@ -111,6 +111,15 @@ pub struct Playhead {
     config: PlaybackConfig,
 }
 
+/// The instant a fraction of the session stands for, `0.0` being the open and
+/// `1.0` the close: where a seek lands, and what a drag previews before it.
+#[must_use]
+pub fn position_at_fraction(start_ms: i64, end_ms: i64, fraction: f32) -> i64 {
+    let span = end_ms.saturating_sub(start_ms) as f64;
+    let offset = (span * f64::from(fraction.clamp(0.0, 1.0))).round() as i64;
+    start_ms.saturating_add(offset)
+}
+
 impl Playhead {
     /// A playhead parked on the first trade of `trades`, paused.
     ///
@@ -235,9 +244,10 @@ impl Playhead {
     /// Seek to a fraction of the session, `0.0` being the open and `1.0` the
     /// close. See [`Playhead::seek_to`] for the backwards case.
     pub fn seek_to_fraction(&mut self, trades: &[Trade], fraction: f32) -> Batch {
-        let span = self.end_ms.saturating_sub(self.start_ms) as f64;
-        let offset = (span * f64::from(fraction.clamp(0.0, 1.0))).round() as i64;
-        self.seek_to(trades, self.start_ms.saturating_add(offset))
+        self.seek_to(
+            trades,
+            position_at_fraction(self.start_ms, self.end_ms, fraction),
+        )
     }
 
     /// Park back on the session's first trade, keeping speed and play state.
@@ -625,6 +635,24 @@ mod tests {
         assert!(head.is_finished());
         assert!(head.advance(&trades, 1_000.0).is_empty());
         assert_eq!(head.progress(), 1.0);
+    }
+
+    /// A drag previews the time a release will land on, so the two must be one
+    /// answer — over the rehearsed day, never the day joined in front of it.
+    #[test]
+    fn the_previewed_time_is_where_a_seek_lands() {
+        let (trades, first) = joined();
+        let mut head = Playhead::opening_at(&trades, PlaybackConfig::default(), first);
+        let (start, end) = (head.start_ms(), head.end_ms());
+        assert_eq!(start, trades[first].timestamp_ms);
+        for fraction in [-1.0, 0.0, 0.1, 0.25, 1.0 / 3.0, 0.5, 0.999, 1.0, 2.0] {
+            head.seek_to_fraction(&trades, fraction);
+            assert_eq!(
+                position_at_fraction(start, end, fraction),
+                head.position_ms(),
+                "at fraction {fraction}"
+            );
+        }
     }
 
     #[test]

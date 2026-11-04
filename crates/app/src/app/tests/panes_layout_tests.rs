@@ -2529,8 +2529,10 @@ fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
             .frame
             .area
             .expect("flow body")
-            .bottom(),
-        flow_strip.top()
+            .bottom()
+            + quantick_chart::flow_band::FRAME_PX,
+        flow_strip.top(),
+        "the frame closes the body above its footer"
     );
     assert_eq!(
         app.active_tab()

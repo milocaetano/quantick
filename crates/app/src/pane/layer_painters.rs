@@ -298,7 +298,7 @@ impl ChartPane {
             chip: time_chip,
             style: chrome.style,
             tz: chrome.tz,
-            divider_x: self.frame.lane_divider_x,
+            candles_right: self.frame.candles_right,
             viewport: &frame.view,
             series: self.series_read(),
         }

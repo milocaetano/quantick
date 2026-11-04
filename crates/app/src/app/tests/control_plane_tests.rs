@@ -1451,7 +1451,7 @@ fn observer_modules_project_headless_state_that_matches_their_schemas() {
         .descriptors()
         .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
         .collect::<Vec<_>>();
-    assert_eq!(descriptors.len(), 19, "every registered scope is projected");
+    assert_eq!(descriptors.len(), 20, "every registered scope is projected");
     let scopes = descriptors
         .iter()
         .map(|(scope_id, _)| scope_id.clone())
@@ -4036,7 +4036,7 @@ fn observer_cursor_resolves_the_exact_bar_under_the_pointer() {
     let position = {
         let pane = &app.active_tab().flow_pane;
         let chart = pane.frame.chart_area.expect("the pane reported its rect");
-        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+        let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
         egui::pos2(
             pane.model
                 .viewport
@@ -5530,7 +5530,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 125);
+    assert_eq!(documents.len(), 126);
     for file_name in [
         "session-journal-delete-input-v1.schema.json",
         "session-journal-input-v1.schema.json",

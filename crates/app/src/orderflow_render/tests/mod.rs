@@ -804,7 +804,8 @@ fn the_legend_starts_below_the_corner_it_was_told_about() {
         let ctx = egui::Context::default();
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             let context = RenderContext::new(&projection, layout, &style);
-            draw_compact_legend(&ctx.layer_painter(egui::LayerId::background()), &context);
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            draw_compact_legend_avoiding(&painter, &context, None);
         });
         let mut top = f32::INFINITY;
         for shape in output.shapes {
@@ -1841,9 +1842,29 @@ fn a_held_book_clamped_to_the_lane_opening_is_drawn_from_the_divider() {
         let output = draw(layout);
         let shapes = format!("{:?}", output.shapes);
         assert!(
-            shapes.contains("L2 unavailable before capture"),
-            "the leading gap is labelled"
+            !shapes.contains("L2 unavailable before capture"),
+            "the leading gap carries no words at rest"
         );
+        // Its reason comes out with the pointer on the mark, and only there: a
+        // pointer in the stretch is reading the chart.
+        let hovered = |x: f32| {
+            let ctx = egui::Context::default();
+            let pointer = egui::Event::PointerMoved(egui::pos2(x, rect.center().y));
+            let input = egui::RawInput {
+                events: vec![pointer],
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                let painter = ctx.layer_painter(egui::LayerId::background());
+                draw_heatmap_background(&painter, &RenderContext::new(&projection, layout, &style));
+            })
+        };
+        let at_mark = (0..=rect.width() as i32).filter(|x| {
+            let shapes = format!("{:?}", hovered(rect.left() + *x as f32).shapes);
+            shapes.contains("L2 unavailable before capture")
+        });
+        let count = at_mark.count();
+        assert!(count > 0 && count <= 7, "{count} px bring out the reason");
         assert_eq!(gap_rects(&output), 1, "the pending stretch is filled");
     }
     let live = ProjectedLayout::new(rect, &panned, 60, 0, 5, 300.0);
@@ -1851,4 +1872,22 @@ fn a_held_book_clamped_to_the_lane_opening_is_drawn_from_the_divider() {
         !live.in_lane(opening),
         "the live frame's own mapping is unchanged"
     );
+}
+
+/// A live strip on the candles' side of the divider: the candles' pane, and every
+/// bar mapped into it, ends where the strip starts; the tape still opens on the
+/// divider, as wide as it was.
+#[test]
+fn a_trail_strip_ends_the_candles_short_of_the_divider() {
+    let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
+    let viewport = Viewport::new();
+    let plain = ProjectedLayout::new(chart, &viewport, 10, 0, 11, 300.0);
+    let mut layout = plain;
+    layout.trail_strip_px = 84.0;
+    assert_eq!(plain.history_rect().right(), 700.0);
+    assert_eq!(layout.history_rect().right(), 616.0);
+    assert_eq!(layout.lane_rect(), plain.lane_rect());
+    assert_eq!(layout.lane_left_x(), Some(700.0));
+    let newest = |layout: ProjectedLayout<'_>| layout.x(9.5 / 11.0);
+    assert!((newest(plain) - newest(layout) - 84.0).abs() < 1e-3);
 }

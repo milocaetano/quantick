@@ -10,7 +10,8 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::{
-    self, HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId, row_of, submenu,
+    self, HOME_SHOWN_HOVER, HelpPage, Item, LEGEND_HOVER, LiveRows, ROOT, RowId, SubmenuId,
+    panel_row_blocked, panel_row_selected, panel_section_of, row_of, submenu,
 };
 
 use crate::dock::DockTab;
@@ -107,6 +108,7 @@ pub(super) struct WindowMenu<'a> {
     pub(super) dock_visible: bool,
     pub(super) dock_tab: Option<DockTab>,
     pub(super) toolrail: &'a ToolRail,
+    pub(super) panel_folds: &'a crate::ui_state::AssetFolds,
     pub(super) startup_saved: bool,
     pub(super) save_on_exit: bool,
     pub(super) recent: &'a [std::path::PathBuf],
@@ -235,7 +237,7 @@ impl WindowMenu<'_> {
             .on_disabled_hover_text(if empty {
                 "No workspace files opened yet"
             } else {
-                "Home is on screen: pick a market first"
+                HOME_SHOWN_HOVER
             });
         take_focus(state, level, &response);
         if response.hovered() || response.clicked() {
@@ -295,11 +297,12 @@ impl WindowMenu<'_> {
         if let Some(shortcut) = shortcut_of(id) {
             button = button.shortcut_text(super::shortcut_text(ui.ctx(), &shortcut));
         }
-        let mut response = ui.add_enabled(self.enabled(id), button);
+        let blocked = self.panel_blocked(id);
+        let mut response = ui.add_enabled(self.enabled(id) && blocked.is_none(), button);
         if let Some(hover) = row.hover {
             response = response.on_hover_text(hover);
         }
-        if let Some(hover) = row.disabled_hover {
+        if let Some(hover) = blocked.or(row.disabled_hover) {
             response = response.on_disabled_hover_text(hover);
         }
         take_focus(state, level, &response);
@@ -316,7 +319,18 @@ impl WindowMenu<'_> {
         }
     }
 
+    /// Why an L2 or Bubbles row cannot open its section now: the panel key's gate.
+    fn panel_blocked(&self, id: RowId) -> Option<&'static str> {
+        let shown = crate::orderflow_panel::flow_pane_shown(self.tab);
+        panel_section_of(id).and(panel_row_blocked(self.chart_shown, shown))
+    }
+
     fn selected(&self, id: RowId) -> bool {
+        if let Some(section) = panel_section_of(id) {
+            let (panel, symbol) = (&self.tab.tape().settings_panel, &self.tab.symbol);
+            return self.panel_blocked(id).is_none()
+                && panel_row_selected(panel, self.panel_folds, symbol, section);
+        }
         if let Some(tab) = dock_tab_of(id) {
             return self.dock_visible && self.dock_tab == Some(tab);
         }
@@ -327,6 +341,10 @@ impl WindowMenu<'_> {
     }
 
     fn push_row_commands(&self, id: RowId, commands: &mut Vec<MenuCommand>) {
+        if let Some(section) = panel_section_of(id) {
+            commands.push(MenuCommand::OpenOrderFlowPanel(section));
+            return;
+        }
         if let Some(tab) = dock_tab_of(id) {
             commands.push(MenuCommand::OpenDockTab(tab));
             return;
@@ -587,8 +605,6 @@ fn shortcut_of(id: RowId) -> Option<egui::KeyboardShortcut> {
 
 const fn dock_tab_of(id: RowId) -> Option<DockTab> {
     match id {
-        RowId::DockL2 => Some(DockTab::L2),
-        RowId::DockBubbles => Some(DockTab::Bubbles),
         RowId::DockSession => Some(DockTab::Session),
         RowId::DockPaperTrading => Some(DockTab::Trading),
         RowId::DockTrades => Some(DockTab::Trades),

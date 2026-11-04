@@ -362,3 +362,29 @@ fn the_top_right_corner_of_a_restored_window_closes_rather_than_resizes() {
         "{commands:?}"
     );
 }
+
+/// L2 and Bubbles open their section of the order-flow panel, which rides on the
+/// flow pane: with none on screen the rows grey out, as the panel's key does nothing.
+#[test]
+fn the_panel_rows_open_the_order_flow_panel_only_on_a_shown_flow_pane() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let ctx = egui::Context::default();
+    let click_l2 = |app: &mut QuantickApp| {
+        let output = open_menu(app, &ctx);
+        click_entry(app, &ctx, &output, "Panels");
+        let output = run_frame(app, &ctx);
+        click_entry(app, &ctx, &output, "L2");
+        run_frame(app, &ctx);
+    };
+    assert!(crate::orderflow_panel::flow_pane_shown(app.active_tab()));
+    app.active_tab_mut().set_flow_collapsed(true);
+    click_l2(&mut app);
+    assert!(app.chrome.window_menu.open, "a greyed row does nothing");
+    assert!(!app.active_tab().tape().settings_panel.is_open());
+
+    app.chrome.window_menu.toggle(egui::ViewportId::ROOT, false);
+    app.active_tab_mut().set_flow_collapsed(false);
+    click_l2(&mut app);
+    assert!(!app.chrome.window_menu.open);
+    assert!(app.active_tab().tape().settings_panel.is_open());
+}

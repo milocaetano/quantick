@@ -221,7 +221,7 @@ impl BandLabel {
 pub(crate) struct BandGeometry<'a> {
     pub auto_range: Option<(f64, f64)>,
     pub price_view: &'a crate::price_view::PriceView,
-    pub lane_divider_x: Option<f32>,
+    pub candles_right: Option<f32>,
     pub indicators: &'a IndicatorViews,
     pub price_label: &'a Arc<str>,
 }
@@ -230,7 +230,7 @@ impl BandGeometry<'_> {
         carve(
             out,
             &PriceBand {
-                rect: drawing_area(areas.chart, self.lane_divider_x),
+                rect: drawing_area(areas.chart, self.candles_right),
                 range: self.auto_range.map(|auto| self.price_view.resolve(auto)),
                 top: areas.chart.top(),
                 bottom: areas.chart.bottom(),
@@ -247,8 +247,8 @@ impl BandGeometry<'_> {
         out
     }
 }
-pub(crate) fn drawing_area(chart: egui::Rect, lane_divider_x: Option<f32>) -> egui::Rect {
-    let right = lane_divider_x
+pub(crate) fn drawing_area(chart: egui::Rect, candles_right: Option<f32>) -> egui::Rect {
+    let right = candles_right
         .unwrap_or(chart.right())
         .clamp(chart.left(), chart.right());
     egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))

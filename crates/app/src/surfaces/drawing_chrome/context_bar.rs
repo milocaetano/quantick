@@ -281,7 +281,7 @@ impl Placement {
         // formed, and `place` has kept clear of it since it was written. A
         // parked bar is placed by a different rule, not held to a different
         // one.
-        let right_limit = env.lane_divider_x.unwrap_or(chart.right());
+        let right_limit = env.candles_right.unwrap_or(chart.right());
         let reachable = bounds(chart, right_limit, size);
         let position = match bar.manual_position() {
             // Repair for drawing, never overwrite — the rule the properties

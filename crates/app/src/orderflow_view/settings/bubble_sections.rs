@@ -4,18 +4,18 @@
 //! `show`; the tab composes them in order and commits whatever changed once.
 
 use eframe::egui;
+use quantick_chart::pane_header::{MARKET_FOLD_SETTING, MARKET_FOLD_SETTING_HOVER};
 use quantick_orderflow::config::labels::{
     cluster_label, consumption_mark_label, dust_label, lane_cluster_label, region_label,
     region_window_label, render_mode_label, size_reference_label,
 };
 use quantick_orderflow::engine::OrderflowHealth;
 use quantick_orderflow::{
-    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig,
-    LANE_WINDOW_PRESETS_MS, LaneFold, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
-    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
-    MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE,
-    MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_window_label,
-    same_lane_window,
+    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig, LaneView,
+    LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE,
+    MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS,
+    MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM,
+    format_window_ms, lane_window_label, lane_window_options, lane_window_pick, same_lane_window,
 };
 use rust_decimal::Decimal;
 
@@ -169,6 +169,8 @@ impl ClusteringSection<'_> {
 /// bar, which has room the compressed history does not.
 pub(super) struct LiveLaneSection<'a> {
     pub(super) lane: &'a mut LiveLaneStyle,
+    /// The asset's filed window, which a pick is judged against.
+    pub(super) window_setting: LaneWindow,
     /// History's cluster window, which "same as history" follows.
     pub(super) inherited_cluster_ms: i64,
     pub(super) volume_dots: bool,
@@ -182,6 +184,7 @@ impl LiveLaneSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) -> bool {
         let Self {
             lane,
+            window_setting,
             inherited_cluster_ms: inherited,
             volume_dots,
             native_block,
@@ -197,14 +200,22 @@ impl LiveLaneSection<'_> {
         {
             lane.native_tape = native;
         }
-        ui.checkbox(&mut lane.tape_only, "Tape only (hide candles)")
-            .on_hover_text(ChartLayer::TapeOnly.hint());
+        let mut tape_only = lane.tape_only;
+        let tape_only_box = ui.checkbox(&mut tape_only, "Tape only (hide trail)");
+        if tape_only_box
+            .on_hover_text(ChartLayer::TapeOnly.hint())
+            .changed()
+        {
+            lane.set_tape_only(tape_only);
+        }
         let native_tape = lane.native() && volume_dots;
         let mut lane_set = false;
         egui::CollapsingHeader::new("live lane")
             .id_salt("bubble_live_lane_section")
             .default_open(false)
             .show(ui, |ui| {
+                let fold_setting = ui.checkbox(&mut lane.fold_market_closed, MARKET_FOLD_SETTING);
+                lane_set |= fold_setting.on_hover_text(MARKET_FOLD_SETTING_HOVER).changed();
                 if !lane.tape_only {
                 let width = ui.horizontal(|ui| {
                     ui.label("width");
@@ -217,16 +228,16 @@ impl LiveLaneSection<'_> {
                     )
                 });
                 if width.inner.changed() {
-                    // The slider sets the open band, so a folded lane opens to show it.
-                    lane.set_fold(LaneFold::Open);
+                    // The slider sets the open band, so a closed tape opens to show it.
+                    lane.show_by_hand(LaneView::Beside);
                     lane_set = true;
                 }
                 width.response
                 .on_hover_text(
-                    "how much of the chart the rolling tape takes, up to nearly all of it. Also set by dragging the divider on the chart, where an edge folds that side to a rail this slider opens again; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
+                    "how much of the chart the rolling tape takes, up to nearly all of it. Also set by dragging the divider on the chart, where an edge closes that side to a rail this slider opens again; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
                 }
-                lane_set |= window_rows(ui, lane, native_tape);
+                lane_set |= window_rows(ui, lane, window_setting, native_tape);
                 if !native_tape {
                 ui.horizontal(|ui| {
                     ui.label("cluster");
@@ -266,37 +277,30 @@ impl LiveLaneSection<'_> {
 
 /// The lane's window picker, and the one row that tunes whichever mode it
 /// is in: the zoom while it follows the bars, the duration while pinned.
-/// Returns whether the trader picked or tuned the window — even the one
-/// already shown.
-fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) -> bool {
+/// Returns whether the trader picked or tuned the window — a fixed one even
+/// when already shown, as every picker files it ([`lane_window_pick`]).
+fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, filed: LaneWindow, tape: bool) -> bool {
     let mut picked = false;
     ui.horizontal(|ui| {
         ui.label("window");
         egui::ComboBox::from_id_salt("bubble_live_lane_window")
             .selected_text(lane_window_label(lane.window, None))
             .show_ui(ui, |ui| {
-                let mut choose = |ui: &mut egui::Ui, option: LaneWindow| {
-                    // Selecting the mode the lane is already in must
-                    // not overwrite the number it is carrying, so
-                    // the entry compares modes and assigns whole
-                    // values only when the mode actually changes.
+                // The tape menu's and the header's list, and their pick rule.
+                for option in lane_window_options() {
                     let selected = same_lane_window(lane.window, option);
-                    let clicked = ui
-                        .selectable_label(selected, lane_window_label(option, None))
-                        .clicked();
-                    picked |= clicked;
-                    if clicked && !selected {
-                        lane.window = option;
+                    let label = lane_window_label(option, None);
+                    let clicked = ui.selectable_label(selected, label).clicked();
+                    let pick = lane_window_pick(lane.window, filed, option);
+                    if let Some(window) = pick.filter(|_| clicked) {
+                        lane.window = window;
+                        picked = true;
                     }
-                };
-                choose(ui, LaneWindow::default());
-                for ms in LANE_WINDOW_PRESETS_MS {
-                    choose(ui, LaneWindow::Fixed { ms });
                 }
             });
     })
     .response
-    .on_hover_text(if native_tape {
+    .on_hover_text(if tape {
         "market time shown on this tape. Auto starts from 15 seconds and applies the zoom; fixed shows the chosen duration. Neither follows candle pan, zoom or bar closes. Native grouping stays at 100 ms and one price tick."
     } else {
         "how much market time fits in the tape. Following the bars keeps roughly one bar's worth of flow in the band whatever the instrument; a fixed window shows that much time however fast the bars are closing, which is what a burst calls for. The clustering window follows either way, so a crowded tape gathers into fewer, bigger bubbles instead of a smear"
@@ -311,7 +315,7 @@ fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) -
                         .suffix("×"),
                 )
             });
-            row.response.on_hover_text(if native_tape {
+            row.response.on_hover_text(if tape {
                 "the tape's 15-second reference, scaled. Zoom in to show less time; zoom out to show more. Also set by dragging the time strip under the tape."
             } else {
                 "the recent bars' typical duration, scaled. Zoom in and prints run across the tape faster and further apart; zoom out and more time crowds in. Also set by dragging the time strip under the tape"

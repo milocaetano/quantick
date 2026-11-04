@@ -11,16 +11,9 @@
 pub(crate) use quantick_control_schema::deal_recording::*;
 
 use crate::app::{RecordingPort, TabsMutPort, TabsPort};
-use std::collections::BTreeSet;
-
 use quantick_control::{
     error::ControlError,
-    id::{CapabilityId, CostClassId, ModuleId, PermissionId, RiskFlagId},
-    registry::{
-        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
-        RegistryError, RevisionPolicy,
-    },
-    schema::generated_schema,
+    registry::RegistryError,
     wire::{ActorContext, WireU64},
 };
 
@@ -30,13 +23,8 @@ use crate::deal_recording::DealRecordingError;
 
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
 
-use super::{
-    actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
-    contract::{COCKPIT_EFFECT_ID, COCKPIT_PERMISSION_ID},
-    gateway::ControlAccess,
-};
+use super::{actions::ActionRegistry, gateway::ControlAccess};
 use quantick_control_handlers::{TabDirectory, tab_index};
-use quantick_control_schema::recovery::RECOVERY_MODULE_ID;
 
 /// The view, on the wire.
 pub(crate) fn snapshot(view: &RecordingView) -> DealRecordingSnapshot {
@@ -75,48 +63,7 @@ pub(crate) fn snapshot(view: &RecordingView) -> DealRecordingSnapshot {
 }
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(
-        CapabilityDescriptor {
-            id: CapabilityId::new(SET_CAPABILITY_ID).expect("static capability ID is valid"),
-            version: CAPABILITY_VERSION,
-            title: "Record the venue's deal counter".to_owned(),
-            description: "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the standing choice the Settings window's checkbox sets, saved with the workspace, and every answer reports it.".to_owned(),
-            module: ModuleId::new(RECOVERY_MODULE_ID).expect("static module ID is valid"),
-            input_schema: generated_schema::<DealRecordingInput>(),
-            output_schema: generated_schema::<DealRecordingResult>(),
-            examples: Vec::new(),
-            effect: quantick_control::id::EffectId::new(COCKPIT_EFFECT_ID)
-                .expect("static effect ID is valid"),
-            risk_flags: BTreeSet::<RiskFlagId>::new(),
-            read_only: false,
-            // Setting the same state twice leaves the recorder where it was;
-            // a client may retry a dropped call.
-            idempotency: IdempotencyPolicy::Optional,
-            revision_policy: RevisionPolicy::OptionalForAdditive,
-            stale_input_safety: Some(
-                "A stale caller can only set a state the recorder is already in, or start a recording a hand just stopped — which the next call undoes. The result names the tab and the recorder's state afterwards, so a caller that guessed wrong can see it did.".to_owned(),
-            ),
-            dry_run_supported: false,
-            persistence: EffectPersistence::Durable,
-            reversible: true,
-            destructive: false,
-            risk_reducing: false,
-            required_permissions: BTreeSet::from([
-                PermissionId::new(COCKPIT_PERMISSION_ID).expect("static permission ID is valid"),
-            ]),
-            preconditions: Vec::new(),
-            confirmation_class: quantick_control::id::ConfirmationClassId::new(NO_CONFIRMATION_ID)
-                .expect("static confirmation class is valid"),
-            availability: Availability::available(),
-            expected_cost: ExpectedCost {
-                class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-                max_items: None,
-                max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-            },
-            pagination: None,
-        },
-        set,
-    )
+    registry.register(descriptor(), set)
 }
 
 fn set<P: TabDirectory + TabsPort + TabsMutPort + RecordingPort + ?Sized>(

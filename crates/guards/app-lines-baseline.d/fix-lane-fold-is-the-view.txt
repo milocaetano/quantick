@@ -1,0 +1,4 @@
+# One view state: the decisions moved to crates/orderflow; what stays is app-only wiring,
+# the rail's scene row over the pane's painted frame and its pointer door.
+crates/app +48
+!budget +48

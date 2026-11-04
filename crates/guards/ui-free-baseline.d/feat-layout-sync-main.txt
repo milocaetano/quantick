@@ -1,0 +1,10 @@
+# Not growth: both parents took credit for the same moves. Layout and main each
+# moved the live-envelope tests (797 lines) out of the counted tree and each
+# moved the observer schema list (158 lines) out of control/schema_catalog.rs,
+# and each tightened its own ceiling for them; merged, the lines leave once but
+# both cuts stay: 955 lines. Each parent also tightened away the base's 31 lines
+# of headroom, which the merge subtracts twice; 7 remain in the parents: +24.
+# Merge-only app lines: the merge's resolution nets -1 here, and gating the L2
+# and Bubbles rows adds none, as menus.rs names egui.
+crates/app +978
+!budget +978

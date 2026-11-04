@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use super::bubbles::{
     BubbleStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
-use super::lane_fold::LaneFold;
+use super::lane_fold::{LaneFold, MarketHold, OldTapeFold, beside_width_px, rail_px};
+use super::lane_view::LaneView;
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
 
@@ -27,7 +28,7 @@ pub const DEFAULT_LIVE_LANE_SHARE: f32 = 0.35;
 pub const MIN_LIVE_LANE_SHARE: f32 = 0.05;
 /// Widest live lane accepted. The divider travels the whole chart, so the
 /// tape may take nearly all of it; a lane that wants the rest folds the
-/// candles to a rail instead ([`LaneFold`]).
+/// candles instead, which is tape only ([`super::lane_view::LaneView`]).
 pub const MAX_LIVE_LANE_SHARE: f32 = 1.0 - MIN_LIVE_LANE_SHARE;
 /// Narrowest lane the layout will draw, in pixels. A floor rather than a
 /// setting: below this the band stops being a tape whatever share was asked
@@ -54,7 +55,7 @@ pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 1_800_000;
 /// range: the point of a preset is that it is chosen without reading a number.
 /// Anything else is reachable through the custom entry, which accepts the
 /// whole [`MIN_LIVE_LANE_WINDOW_MS`]..=[`MAX_LIVE_LANE_WINDOW_MS`] band.
-pub const LANE_WINDOW_PRESETS_MS: [i64; 5] = [15_000, 30_000, 60_000, 120_000, 300_000];
+pub const LANE_WINDOW_PRESETS_MS: [i64; 5] = [10_000, 30_000, 60_000, 120_000, 300_000];
 /// Default multiplier applied to the bubble radii inside the live lane.
 pub const DEFAULT_LIVE_LANE_RADIUS_SCALE: f32 = 1.0;
 /// Bounds accepted for the live lane's radius multiplier.
@@ -328,6 +329,18 @@ pub fn lane_window_label(window: LaneWindow, reference_ms: Option<i64>) -> Strin
     }
 }
 
+/// The windows a hand picks from, in the order every picker lists them: following
+/// the bars, then the presets. One list, so the tape's header and its menu cannot
+/// disagree.
+#[must_use]
+pub fn lane_window_options() -> [LaneWindow; LANE_WINDOW_PRESETS_MS.len() + 1] {
+    let mut options = [LaneWindow::default(); LANE_WINDOW_PRESETS_MS.len() + 1];
+    for (option, ms) in options[1..].iter_mut().zip(LANE_WINDOW_PRESETS_MS) {
+        *option = LaneWindow::Fixed { ms };
+    }
+    options
+}
+
 /// Whether a menu entry names the window already in force.
 ///
 /// Two `Auto`s match whatever their zoom, so selecting the automatic entry
@@ -340,6 +353,24 @@ pub fn same_lane_window(current: LaneWindow, option: LaneWindow) -> bool {
         (LaneWindow::Fixed { ms: current }, LaneWindow::Fixed { ms: option }) => current == option,
         _ => false,
     }
+}
+
+/// What a click on `option` in a window list asks for while `shown` is on screen
+/// and `filed` is the asset's setting (the one a double click returns to): the
+/// option, filed even when it is already in force, so a window the wheel reached
+/// becomes the setting. Only `auto` while the tape already follows the bars *and*
+/// the asset already files following them asks for nothing: there is nothing to
+/// file, and picking it would reset the zoom the trader set. Every picker, the
+/// named call included, answers through this one rule.
+#[must_use]
+pub fn lane_window_pick(
+    shown: LaneWindow,
+    filed: LaneWindow,
+    option: LaneWindow,
+) -> Option<LaneWindow> {
+    let auto = |window| matches!(window, LaneWindow::Auto { .. });
+    let auto_again = auto(option) && auto(shown) && auto(filed);
+    (!auto_again).then_some(option)
 }
 
 /// How the rolling tape past the last bar is drawn.
@@ -427,10 +458,17 @@ pub struct LiveLaneStyle {
     /// only, and always on the native tape. Off by default, so every other
     /// pane keeps its candles.
     pub tape_only: bool,
-    /// Which side the divider folded to a rail, if any. The share stays
-    /// where it was, so unfolding returns the band the lane had; `tape_only`
-    /// and the tape's own switch win over it.
-    pub fold: LaneFold,
+    /// Show the candles alone while the market is closed. The asset's, never a
+    /// preset's.
+    pub fold_market_closed: bool,
+    /// Whether the market holds the tape away now, and what that remembers.
+    /// Runtime only: nothing writes it to a file.
+    pub market_hold: MarketHold,
+    /// A file's old closed tape, waiting for the look to carry it out.
+    pub old_tape_fold: OldTapeFold,
+    /// The side a drag past its threshold would close, shown over the stored view
+    /// until the release writes it. Runtime only, like the hold.
+    pub drag_close: Option<LaneView>,
 }
 
 impl Default for LiveLaneStyle {
@@ -449,7 +487,10 @@ impl Default for LiveLaneStyle {
             forward_book_preview: false,
             stable_size: false,
             tape_only: false,
-            fold: LaneFold::Open,
+            fold_market_closed: true,
+            market_hold: MarketHold::default(),
+            old_tape_fold: OldTapeFold::default(),
+            drag_close: None,
         }
     }
 }
@@ -499,9 +540,13 @@ struct LiveLaneStyleRepr {
     /// Written only when on, like `native_tape`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     tape_only: bool,
-    /// Written only when folded, so an open lane keeps its file.
-    #[serde(skip_serializing_if = "LaneFold::is_open")]
+    /// Read from a file written while a closed side was stored apart from its
+    /// view, and never written ([`LiveLaneStyle::read_old_fold`]).
+    #[serde(skip_serializing)]
     fold: LaneFold,
+    /// Written only when off, so a file from before the setting reads on.
+    #[serde(skip_serializing_if = "std::clone::Clone::clone")]
+    fold_market_closed: bool,
 }
 
 impl Default for LiveLaneStyleRepr {
@@ -512,7 +557,7 @@ impl Default for LiveLaneStyleRepr {
 
 impl From<LiveLaneStyleRepr> for LiveLaneStyle {
     fn from(repr: LiveLaneStyleRepr) -> Self {
-        Self {
+        let mut style = Self {
             width_share: repr.width_share,
             // A pinned window is the explicit choice; without one the file is
             // asking to follow the bars, at whatever zoom it recorded.
@@ -537,8 +582,13 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
                 .unwrap_or(repr.depth_time_averaging),
             stable_size: repr.stable_size,
             tape_only: repr.tape_only,
-            fold: repr.fold,
-        }
+            fold_market_closed: repr.fold_market_closed,
+            market_hold: MarketHold::default(),
+            old_tape_fold: OldTapeFold::default(),
+            drag_close: None,
+        };
+        style.read_old_fold(repr.fold);
+        style
     }
 }
 
@@ -567,7 +617,8 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
                 .then_some(style.forward_book_preview),
             stable_size: style.stable_size,
             tape_only: style.tape_only,
-            fold: style.fold,
+            fold: LaneFold::Open,
+            fold_market_closed: style.fold_market_closed,
         }
     }
 }
@@ -623,16 +674,20 @@ impl LiveLaneStyle {
         if !chart_width.is_finite() || chart_width <= 0.0 {
             return 0.0;
         }
-        if self.tape_only {
-            return chart_width;
+        match self.shown_view() {
+            LaneView::TapeOnly => chart_width,
+            LaneView::CandlesOnly => rail_px(chart_width),
+            LaneView::Beside => beside_width_px(chart_width, self.open_share()),
         }
-        if let Some(folded) = self.folded_width_px(chart_width) {
-            return folded;
-        }
-        // The floor yields on a narrow window: half a small chart beats a
-        // fixed band that would eat all of it.
-        let floor = MIN_LIVE_LANE_WIDTH_PX.min(chart_width / 2.0);
-        (chart_width * self.open_share()).max(floor)
+    }
+
+    /// The band the tape takes once it reopens beside the candles on a chart
+    /// this wide: every way back opens at the default share
+    /// ([`Self::open_beside`]), whatever share it had before. What tape only
+    /// measures the beside view it returns to against.
+    #[must_use]
+    pub fn reopened_beside_px(chart_width: f32) -> f32 {
+        beside_width_px(chart_width, DEFAULT_LIVE_LANE_SHARE)
     }
 
     /// Market time the lane shows, given the automatic reference window (the
@@ -1098,6 +1153,31 @@ mod tests {
             LaneWindow::Fixed { ms: 30_000 }
         ));
         assert!(!same_lane_window(zoomed, LaneWindow::Fixed { ms: 60_000 }));
+    }
+
+    /// `auto` while following the bars and filed so keeps its zoom; a fixed window
+    /// in force is still filed, and a different window is always asked for.
+    #[test]
+    fn only_auto_while_following_the_bars_picks_nothing() {
+        let (auto, zoomed) = (LaneWindow::default(), LaneWindow::Auto { zoom: 4.0 });
+        let minute = LaneWindow::Fixed { ms: 60_000 };
+        assert_eq!(lane_window_pick(zoomed, auto, auto), None);
+        assert_eq!(lane_window_pick(zoomed, zoomed, auto), None);
+        assert_eq!(lane_window_pick(minute, minute, minute), Some(minute));
+        assert_eq!(lane_window_pick(zoomed, auto, minute), Some(minute));
+        assert_eq!(lane_window_pick(minute, minute, auto), Some(auto));
+    }
+
+    /// The setting decides, not the view: a tape the wheel or a call navigated to
+    /// `auto` over a filed fixed window files `auto` when it is picked, and a
+    /// navigated fixed window over a filed `auto` moves back to following the bars.
+    #[test]
+    fn picking_auto_files_it_over_a_filed_fixed_window() {
+        let (auto, zoomed) = (LaneWindow::default(), LaneWindow::Auto { zoom: 2.0 });
+        let minute = LaneWindow::Fixed { ms: 60_000 };
+        assert_eq!(lane_window_pick(zoomed, minute, auto), Some(auto));
+        assert_eq!(lane_window_pick(auto, minute, auto), Some(auto));
+        assert_eq!(lane_window_pick(minute, auto, auto), Some(auto));
     }
 
     /// Every preset written before the tape had a window mode says "follow the

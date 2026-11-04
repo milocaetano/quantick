@@ -159,6 +159,7 @@ impl Chart {
             on_newest_bar: true,
             lane_reference_ms: Some(WINDOW_MS),
             lane_now_ms: Some(self.now_ms),
+            lane_end_cap_ms: None,
             price_range: self.prices,
             dot_zoom: Some(DotZoom {
                 native_tape: true,

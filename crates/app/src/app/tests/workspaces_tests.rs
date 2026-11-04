@@ -126,6 +126,7 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
                 time_legend_collapsed: false,
                 workspace: None,
                 workspace_copy: None,
+                orderflow_panel: Default::default(),
             }],
             None,
         )
@@ -651,6 +652,7 @@ fn a_restored_workspace_puts_the_window_back() {
                 time_legend_collapsed: false,
                 workspace: None,
                 workspace_copy: None,
+                orderflow_panel: Default::default(),
             }],
             Some(ui_state::SavedChrome {
                 timezone_minutes: 330,
@@ -666,6 +668,7 @@ fn a_restored_workspace_puts_the_window_back() {
                 venue_lead_in: false,
                 record_deals: None,
                 inspector_position: Some([260.0, 480.0]),
+                orderflow_folds: Default::default(),
             }),
         ));
     run_frame(&mut app, &ctx);

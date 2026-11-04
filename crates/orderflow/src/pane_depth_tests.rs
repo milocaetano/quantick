@@ -60,6 +60,7 @@ fn fixture(native: bool) -> (HeatmapConfig, LiquidityHistory, ProjectionRequest)
         on_newest_bar: true,
         lane_reference_ms: Some(50),
         lane_now_ms: Some(1_000),
+        lane_end_cap_ms: None,
         price_range: (94.0, 102.0),
         dot_zoom: Some(crate::projection::DotZoom {
             native_tape: native,

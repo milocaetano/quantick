@@ -7,6 +7,8 @@
 //! shortcuts are re-exported to `super` for the tests that name them.
 
 use super::{GatewayPort, LayoutPort};
+use crate::chart_layers::shortcuts;
+use crate::orderflow_panel as panel;
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::KEBAB_CONTROL;
@@ -155,21 +157,24 @@ pub(super) fn shortcut_text(ctx: &egui::Context, shortcut: &egui::KeyboardShortc
 }
 
 impl QuantickApp {
-    /// The tape key, on a focused flow pane: tape only, and from there back
-    /// beside the candles. Consumed whatever the focus, before `Ctrl+T` is read:
-    /// that one would match it too and open a tab.
-    pub(super) fn read_tape_view_key(&mut self, ctx: &egui::Context) {
-        if !crate::chart_layers::shortcuts::take_tape_view_press(ctx)
-            || self.chrome.title_bar.surface.is_home()
-        {
-            return;
+    /// The two view keys, on a focused flow pane: one side alone, and from
+    /// there back beside the other. Consumed whatever the focus, before `Ctrl+T`
+    /// and `Ctrl+R` are read: those would match them too. On Home, with no
+    /// chart shown, they are consumed and do nothing.
+    pub(super) fn read_view_keys(&mut self, ctx: &egui::Context) {
+        let chart_shown = !self.chrome.title_bar.surface.is_home();
+        if shortcuts::take_view_press(ctx, shortcuts::ORDERFLOW_SETTINGS_SHORTCUT) && chart_shown {
+            panel::toggle(self.active_tab_mut());
         }
+        let Some(key) = shortcuts::take_view_key(ctx).filter(|_| chart_shown) else {
+            return;
+        };
         let tab = self.active_tab_mut();
         if tab.focused_side() == crate::pane::PaneSide::Flow
             && let Some(tape) = tab.flow_pane.orderflow.as_mut()
+            && let Some(view) = tape.cached_config().live_lane.keyed_view(key)
         {
-            let view = tape.cached_config().live_lane.view();
-            tape.set_lane_view(view.tape_key());
+            tape.set_lane_view(view);
         }
     }
 
@@ -295,6 +300,7 @@ impl QuantickApp {
             MenuCommand::SetToolboxDock(dock) => self.toolrail.set_dock(dock),
             MenuCommand::ToggleToolbox => self.toolrail.toggle_visible(),
             MenuCommand::OpenDockTab(tab) => self.dock.open_tab(tab),
+            MenuCommand::OpenOrderFlowPanel(s) => panel::open_on(self.active_tab_mut(), s),
             MenuCommand::SetShowPerf(show) => self.health.show_perf = show,
             MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,
             MenuCommand::SetVenueLeadIn(on) => self.runtime.history.venue_lead_in = on,
@@ -330,6 +336,7 @@ fn draw_window_menu(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut V
         dock_visible: app.dock.visible(),
         dock_tab: app.dock.tab(),
         toolrail: &app.toolrail,
+        panel_folds: app.runtime.tabs.panel_folds(),
         startup_saved: app.runtime.workspace.session().saved(),
         save_on_exit: app.runtime.workspace.session().save_on_exit(),
         recent: app.runtime.workspace.recent_on_disk(),

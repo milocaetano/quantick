@@ -14,6 +14,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
 use crate::orderflow_render::{draw_preview, theme_bubble_rgb};
+use crate::ui_state::PanelSection;
 
 use super::OrderflowView;
 use super::frame::status_color;
@@ -138,120 +139,116 @@ impl OrderflowView {
         }
     }
 
-    /// The L2 dock tab's body: everything the depth map owns. Returns
+    /// A section header's state: the status line's first words, or the look.
+    pub(crate) fn panel_section_state(&self, section: PanelSection) -> String {
+        match section {
+            PanelSection::L2 => quantick_chart::pane_header::book_headline(&self.published.status),
+            PanelSection::Bubbles => self.look.look_name().to_owned(),
+        }
+    }
+
+    /// The panel's L2 body: everything the depth map owns. Returns
     /// whether capture must restart because the base capture resolution
     /// changed.
     ///
-    /// The layer's *toggle* lives in the toolbar; this tab is settings only —
+    /// The layer's *toggle* lives in the toolbar; this body is settings only —
     /// opening it never starts capture (looking is not enabling).
     pub fn draw_l2_tab(&mut self, ui: &mut egui::Ui) -> bool {
         self.sync_published();
         let before = self.config.clone();
-        egui::ScrollArea::vertical()
-            .id_salt("orderflow_l2_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(self.published.status.label())
-                        .small()
-                        .color(status_color(&self.published.status)),
-                );
-                ui.small(
-                    "Brightness is resting liquidity. Green/red bubbles are confirmed trades.",
-                );
-                ui.small(
-                    "A bite means a compatible L2 reduction; a violet tail is an unattributed withdrawal.",
-                );
-                draw_preview(ui, &self.config).on_hover_text(
+        ui.label(
+            egui::RichText::new(self.published.status.label())
+                .small()
+                .color(status_color(&self.published.status)),
+        );
+        ui.small("Brightness is resting liquidity. Green/red bubbles are confirmed trades.");
+        ui.small(
+            "A bite means a compatible L2 reduction; a violet tail is an unattributed withdrawal.",
+        );
+        draw_preview(ui, &self.config).on_hover_text(
                     "Deterministic preview: persistent wall, aligned depletion, full withdrawal and clustered trades.",
                 );
-                ui.separator();
+        ui.separator();
 
-                LiquidityRangesSection {
-                    config: &mut self.config,
-                }
-                .show(ui);
-                ui.separator();
-                VisualLayersSection {
-                    config: &mut self.config,
-                }
-                .show(ui);
-                ui.separator();
-                LiquidityResponseSection {
-                    config: &mut self.config,
-                }
-                .show(ui);
-                ui.separator();
-                ScaleHistorySection {
-                    config: &mut self.config,
-                    capture_grouping_draft: &mut self.capture_grouping_draft,
-                }
-                .show(ui);
-                ui.separator();
-                BookHealthSection {
-                    published: &self.published,
-                }
-                .show(ui);
-                if ui.button("reset L2 visuals").clicked() {
-                    self.config.reset_l2_visuals();
-                    self.capture_grouping_draft = self
-                        .config
-                        .price_grouping
-                        .to_f64()
-                        .unwrap_or(self.capture_grouping_draft);
-                }
-            });
+        LiquidityRangesSection {
+            config: &mut self.config,
+        }
+        .show(ui);
+        ui.separator();
+        VisualLayersSection {
+            config: &mut self.config,
+        }
+        .show(ui);
+        ui.separator();
+        LiquidityResponseSection {
+            config: &mut self.config,
+        }
+        .show(ui);
+        ui.separator();
+        ScaleHistorySection {
+            config: &mut self.config,
+            capture_grouping_draft: &mut self.capture_grouping_draft,
+        }
+        .show(ui);
+        ui.separator();
+        BookHealthSection {
+            published: &self.published,
+        }
+        .show(ui);
+        if ui.button("reset L2 visuals").clicked() {
+            self.config.reset_l2_visuals();
+            self.capture_grouping_draft = self
+                .config
+                .price_grouping
+                .to_f64()
+                .unwrap_or(self.capture_grouping_draft);
+        }
         self.commit_config_changes(before)
     }
 
-    /// The Bubbles dock tab's body: the aggression layer's settings.
+    /// The panel's Bubbles body: the aggression layer's settings.
     /// Everything here is independent of L2 capture — bubbles are built from
     /// the aggregate-trade stream. Same return contract as
     /// [`Self::draw_l2_tab`].
     pub fn draw_bubbles_tab(&mut self, ui: &mut egui::Ui, tick_chart: bool) -> bool {
         self.sync_published();
         let before = self.config.clone();
-        egui::ScrollArea::vertical()
-            .id_salt("orderflow_bubbles_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.small(
+        ui.small(
                     "Confirmed executions from the trade stream. Colour is the aggressor side; area is quantity.",
                 );
-                ui.small("This layer is independent: it keeps drawing with L2 capture off.");
-                draw_preview(ui, &self.config).on_hover_text(
+        ui.small("This layer is independent: it keeps drawing with L2 capture off.");
+        draw_preview(ui, &self.config).on_hover_text(
                     "Deterministic preview: every control below shows its effect here, without waiting for a trade.",
                 );
-                ui.separator();
+        ui.separator();
 
-                let rule = TickSpherePane::new(tick_chart, self.look.asset_mode().is_some());
-                self.draw_bubble_presets(ui, rule.may_choose());
-                self.draw_tick_bubbles(ui, rule);
-                ui.separator();
+        let rule = TickSpherePane::new(tick_chart, self.look.asset_mode().is_some());
+        self.draw_bubble_presets(ui, rule.may_choose());
+        self.draw_tick_bubbles(ui, rule);
+        ui.separator();
 
-                ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")
-                    .on_hover_text(
-                        "records and projects confirmed trades; does not start or stop L2 depth capture. \
+        ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")
+            .on_hover_text(
+                "records and projects confirmed trades; does not start or stop L2 depth capture. \
                          The chart layer switch (Ctrl+B), one of this asset's bubble settings",
-                    );
-                ui.add_enabled_ui(self.config.show_aggressions, |ui| {
-                    self.draw_bubble_controls(ui);
-                });
+            );
+        ui.add_enabled_ui(self.config.show_aggressions, |ui| {
+            self.draw_bubble_controls(ui);
+        });
 
-                ui.separator();
-                BubbleHealthSection {
-                    health: &self.published.health,
-                    show_aggressions: self.config.show_aggressions,
-                }
-                .show(ui);
-                if ui
-                    .button("reset bubble visuals")
-                    .on_hover_text("only this tab; L2 and history settings stay as they are")
-                    .clicked()
-                {
-                    self.reset_bubble_visuals();
-                }
-            });
+        ui.separator();
+        BubbleHealthSection {
+            health: &self.published.health,
+            show_aggressions: self.config.show_aggressions,
+        }
+        .show(ui);
+        if ui
+            .button("reset bubble visuals")
+            .on_hover_text("only this tab; L2 and history settings stay as they are")
+            .clicked()
+        {
+            self.reset_bubble_visuals();
+        }
         self.commit_config_changes(before)
     }
 
@@ -268,6 +265,7 @@ impl OrderflowView {
         // Read after the clustering section drew: a history window picked
         // this frame is the one the live lane's "Same as history" inherits.
         let lane_set = LiveLaneSection {
+            window_setting: self.look.lane_window_setting(),
             inherited_cluster_ms: config.bubble_cluster_ms,
             volume_dots: config.volume_dots.enabled,
             native_block: super::layers::native_tape_block(config),

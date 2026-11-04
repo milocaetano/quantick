@@ -340,7 +340,10 @@ fn delete_over_the_dock_never_deletes_the_selected_drawing() {
         run_frame_with_events(app, &ctx, events);
     };
     press_at(&mut app, dock);
-    assert!(app.dock.holds_pointer(&ctx), "the press landed on the dock");
+    assert!(
+        crate::dock::holds_pointer(&app.dock, &ctx),
+        "the press landed on the dock"
+    );
     assert_eq!(
         app.active_tab().flow_pane.drawings.items().len(),
         1,

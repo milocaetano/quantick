@@ -22,6 +22,7 @@ fn request(now_ms: Option<i64>) -> ProjectionRequest {
         on_newest_bar: true,
         lane_reference_ms: Some(10_000),
         lane_now_ms: now_ms,
+        lane_end_cap_ms: None,
         price_range: (90.0, 110.0),
         dot_zoom: None,
     }
@@ -66,6 +67,50 @@ fn ordinary_btc_style_lane_keeps_its_event_anchored_clock() {
         1_000
     );
     assert_eq!(engine.live_edge(&request(None)).unwrap().now_ms, 1_000);
+}
+
+#[test]
+fn a_held_window_stops_the_edge_on_both_kinds_of_lane_and_only_then() {
+    let capped = |now, cap| ProjectionRequest {
+        lane_end_cap_ms: cap,
+        ..request(now)
+    };
+    let tape = engine(true);
+    assert_eq!(
+        tape.live_edge(&capped(Some(2_200), None)).unwrap().now_ms,
+        2_200
+    );
+    assert_eq!(
+        tape.live_edge(&capped(Some(2_200), Some(1_500)))
+            .unwrap()
+            .now_ms,
+        1_500
+    );
+    assert_eq!(
+        tape.live_edge(&capped(Some(1_200), Some(1_500)))
+            .unwrap()
+            .now_ms,
+        1_200,
+        "the window has not walked that far yet"
+    );
+    let mut events_ahead = engine(false);
+    events_ahead.record_trade(&Trade {
+        agg_id: 2,
+        timestamp_ms: 9_000,
+        ..print()
+    });
+    assert_eq!(
+        events_ahead.live_edge(&capped(None, None)).unwrap().now_ms,
+        9_000
+    );
+    assert_eq!(
+        events_ahead
+            .live_edge(&capped(None, Some(1_500)))
+            .unwrap()
+            .now_ms,
+        1_500,
+        "newer events do not walk the retained prints out"
+    );
 }
 
 #[test]

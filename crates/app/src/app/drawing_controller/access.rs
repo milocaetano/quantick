@@ -53,7 +53,7 @@ pub(super) struct ChromeFacts {
     pub pane_id: u64,
     pub chart_area: Option<eframe::egui::Rect>,
     pub focused_chart_area: Option<eframe::egui::Rect>,
-    pub lane_divider_x: Option<f32>,
+    pub candles_right: Option<f32>,
     pub legends: Option<eframe::egui::Rect>,
     pub auto_range: Option<(f64, f64)>,
 }
@@ -68,7 +68,7 @@ impl DrawingReadAccess<'_> {
         self.pane().slots()
     }
     pub(super) fn history_right(&self, chart: eframe::egui::Rect) -> f32 {
-        self.pane().frame.lane_divider_x.unwrap_or(chart.right())
+        self.pane().frame.candles_right.unwrap_or(chart.right())
     }
     pub(super) fn band(&self, drawing: &drawings::Drawing) -> Option<&crate::bands::Band> {
         crate::bands::band_of(self.pane().frame.cached_bands(), drawing)
@@ -98,7 +98,7 @@ impl DrawingReadAccess<'_> {
             pane_id: pane.id,
             chart_area: pane.frame.chart_area,
             focused_chart_area: self.focused().frame.chart_area,
-            lane_divider_x: pane.frame.lane_divider_x,
+            candles_right: pane.frame.candles_right,
             legends: pane
                 .frame
                 .flow_legend

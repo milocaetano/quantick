@@ -31,9 +31,11 @@ use crate::chart::PriceScale;
 use crate::orderflow_view::{LiveLane, OrderflowView};
 use crate::plot_area::split_time_strip;
 use crate::theme;
+use quantick_chart::flow_band::trail_strip;
+use quantick_chart::price_axis_fit::{beside_candles_right, tape_only_candles_px};
 use quantick_layers::ChartLayer;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
-use quantick_orderflow::{LaneFold, reserved_span_ms};
+use quantick_orderflow::{LaneView, reserved_span_ms};
 
 use super::draw_frame::{AxisChips, DrawFrame};
 use super::frame_layout::{
@@ -67,6 +69,11 @@ impl ChartPane {
         let Some(layout) = self.lay_out(area, chrome) else {
             return;
         };
+        // The flow pane's time axis stands on the frame's tone: its chart's dark ends at the plot.
+        if self.orderflow.is_some() {
+            let axis = area.with_min_y(layout.areas.time_strip.top());
+            painter.rect_filled(axis, egui::Rounding::ZERO, theme::FLOW_SURFACE);
+        }
         let tape_range = self
             .orderflow
             .as_ref()
@@ -212,16 +219,7 @@ impl ChartPane {
         let grid = grid_color(chrome.style);
         history.indicator_panes(&mut self.indicators, lane, layout.indicator_guide_x, grid);
         flow.aggressions(self.orderflow.as_ref());
-        self.frame.flow_legend = flow.legend(
-            self.orderflow.as_ref(),
-            self.legend_inset(chrome),
-            layout.tape_only.then(|| {
-                egui::Rect::from_min_max(
-                    egui::pos2(chart_rect.left(), area.top()),
-                    chart_rect.right_top(),
-                )
-            }),
-        );
+        self.frame.flow_legend = flow.legend(self.orderflow.as_ref(), self.legend_inset(chrome));
         flow.strip(
             self.orderflow.as_mut(),
             &frame,
@@ -346,7 +344,7 @@ impl ChartPane {
         self.sync_price_axis_mode();
         let closed_total = self.history_prefix.len() + self.state.bars().len();
         let total = closed_total + usize::from(self.state.partial().is_some());
-        let areas = self.plot_areas(area, chrome.capabilities);
+        let mut areas = self.plot_areas(area, chrome.capabilities);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
@@ -363,12 +361,21 @@ impl ChartPane {
         // it, even before the tape has a live edge to run to. The native tape
         // beside the candles keeps its share and fits the shared price axis.
         let (tape_only, native_tape) = self.tape_modes();
-        let candles_folded = super::lane_rail::shown_fold(self) == LaneFold::Candles;
         let live_lane = self.lay_out_lane(chart_rect);
+        // Beside the tape the strip is the trail's: every candle edge stops at it.
+        let width = self.live_strip_width(chrome.capabilities);
+        let divider = self.frame.lane_divider_x;
+        let trail = trail_strip(self.plot_lane_view(), chart_rect.left(), divider, width);
+        if let Some((left, right)) = trail {
+            let rows = chart_rect.top()..=areas.time_strip.top();
+            areas.live_strip = Some(egui::Rect::from_x_y_ranges(left..=right, rows));
+            let candles_right = beside_candles_right(chart_rect.left(), right, width);
+            self.frame.candles_right = Some(candles_right);
+        }
         if total == 0 {
             return None;
         }
-        let history_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
+        let history_right = self.frame.candles_right.unwrap_or(chart_rect.right());
         let history_rect = egui::Rect::from_min_max(
             chart_rect.min,
             egui::pos2(history_right, chart_rect.bottom()),
@@ -383,20 +390,22 @@ impl ChartPane {
         // rule holds — pushed fully left, the newest bar stops at the left
         // edge and the rest of the window is empty canvas to project into.
         //
-        // Folded to a rail or hidden by tape only, the candles keep the view the
-        // trader left for their return, unclamped, and the frame reads the live
-        // edge instead: the price axis fits the tape, not a stale window.
+        // Hidden by tape only, the candles keep the view the trader left for
+        // their return, unclamped, and the frame reads the live edge instead: the
+        // price axis fits the tape, not a stale window.
         let width = history_rect.width();
-        if !tape_only && !candles_folded {
+        if !tape_only {
             self.model.viewport.clamp_to_window(width, total);
         }
         let view = self.shown_viewport();
-        let mut read_at = view;
-        if candles_folded {
-            read_at.snap_to_live();
-        }
-        let (start, end) = read_at.visible_range(width, total);
+        let (start, end) = view.visible_range(width, total);
+        let strip = self.beside_strip_width(chrome.capabilities);
+        let fit_width = match tape_only {
+            true => tape_only_candles_px(chart_rect.width(), strip),
+            false => width,
+        };
         Some(FrameLayout {
+            fit_slots: view.visible_range(fit_width, total),
             areas,
             chart_rect,
             history_rect,
@@ -409,7 +418,6 @@ impl ChartPane {
             cw: view.candle_width(),
             indicator_guide_x,
             tape_only,
-            fits_tape: tape_only || candles_folded,
             native_tape,
             // The lane setting's band, on screen yet or not.
             tape_padding_px: self.orderflow.as_ref().map_or(0.0, |view| {
@@ -440,21 +448,22 @@ impl ChartPane {
             .orderflow
             .as_mut()
             .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
-        // Tape only and a folded side included: the band is the lane's own.
-        let lane_width_px = self
+        // Tape only included: the band is the lane's own.
+        let lane_px = self
             .orderflow
             .as_ref()
             .map_or(0.0, |view| view.lane_width_px(chart_rect.width()));
-        // Everything left of the divider is the candles' pane. They pan and
-        // zoom inside it exactly as they did when it was the whole chart.
-        self.frame.lane_divider_x =
-            crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
+        // Everything left of the divider is the candles' pane. They pan and zoom
+        // inside it exactly as they did when it was the whole chart. A tape switched
+        // off has no divider, only a rail no candle may stand under.
+        let clear_px = self.orderflow.as_ref().map_or(0.0, |view| {
+            let lane = &view.cached_config().live_lane;
+            lane.candles_clear_px(chart_rect.width())
+        });
+        self.frame.lane_divider_x = crate::orderflow_render::lane_divider_x(chart_rect, lane_px);
+        self.frame.candles_right = crate::orderflow_render::lane_divider_x(chart_rect, clear_px);
         self.frame.chart_rect = Some(chart_rect);
-        let rungs = lane_rungs(
-            self.frame
-                .lane_divider_x
-                .map_or(0.0, |divider| chart_rect.right() - divider),
-        );
+        let rungs = lane_rungs(lane_px);
         if self.lane.set_rungs(rungs) {
             let command = self
                 .lane
@@ -505,7 +514,7 @@ impl ChartPane {
         crate::bands::BandGeometry {
             auto_range: self.frame.auto_range,
             price_view: &self.price_view,
-            lane_divider_x: self.frame.lane_divider_x,
+            candles_right: self.frame.candles_right,
             indicators: &self.indicators,
             price_label: &self.price_band_label,
         }
@@ -634,7 +643,7 @@ impl ChartPane {
         };
         // Tags anchor in the band the input pass tests their ✕ against, so a
         // painted ✕ and its press agree about where it is.
-        let candles = crate::bands::drawing_area(chart_rect, self.frame.lane_divider_x);
+        let candles = crate::bands::drawing_area(chart_rect, self.frame.candles_right);
         let tag_right = crate::paper_trading::tag_band(candles, chart_rect).right();
         // Hover affordances paint only on the pane whose pointer feeds the
         // paper input; the others keep display-only tags. Every pane still
@@ -669,10 +678,10 @@ impl ChartPane {
         clock: Option<(i64, crate::timezone::TzOffset)>,
     ) -> Option<i64> {
         let orderflow = self.orderflow.as_ref()?;
-        // A tape folded to a rail leaves its strip to the rail: no labels.
-        let tape_folded = super::lane_rail::shown_fold(self) == LaneFold::Tape;
+        // A closed tape leaves its strip to the rail: no labels.
+        let closed = orderflow.cached_config().live_lane.shown_view() == LaneView::CandlesOnly;
         let lane_strip = split_time_strip(frame.areas.time_strip, self.frame.lane_divider_x).1;
-        let lane_strip = lane_strip.filter(|_| !tape_folded);
+        let lane_strip = lane_strip.filter(|_| !closed);
         let clock = clock.map(|(end_ms, tz)| {
             let geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
                 lane_strip.map_or(0.0, |strip| strip.width()),

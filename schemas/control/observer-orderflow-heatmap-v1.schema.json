@@ -18,12 +18,47 @@
       ],
       "type": "object"
     },
+    "BookGapSnapshot": {
+      "description": "Why the book is missing over some stretches of the chart: one row per reason,\nsorted by it. The marks on the chart carry no words, so these and their hover\nare what says so.",
+      "properties": {
+        "label": {
+          "description": "The same reason in the words the mark's hover shows.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "The stable reason history recorded, such as `sequence_gap`.",
+          "type": "string"
+        },
+        "stretches": {
+          "description": "How many stretches of the last published frame carry it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "reason",
+        "label",
+        "stretches"
+      ],
+      "type": "object"
+    },
     "CanonicalDecimal": {
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
     },
     "HeatmapStateSnapshot": {
       "properties": {
+        "book_held_at_unix_ms": {
+          "default": null,
+          "description": "Where the heat stops, in venue time, while the book goes on arriving: the\ntape's window is held short of the clock because no print is coming, and\nthe book behind this instant is not drawn. Absent otherwise. The status\ncan read a live book beside it; both are true.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
         "capture_price_grouping": {
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "The bucket the engine is capturing at. The auto-base logic can move it\nwith no user action, so it is mirrored rather than assumed."
@@ -42,6 +77,14 @@
             }
           ],
           "x-unit": "ratio"
+        },
+        "gaps": {
+          "default": [],
+          "description": "Why the book is missing where the last frame marks a gap, if anywhere.",
+          "items": {
+            "$ref": "#/$defs/BookGapSnapshot"
+          },
+          "type": "array"
         },
         "lane_visible": {
           "description": "And over the live lane, which is a separate switch.",

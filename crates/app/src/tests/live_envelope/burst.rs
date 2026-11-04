@@ -198,6 +198,7 @@ impl Rig {
             on_newest_bar: true,
             lane_reference_ms: None,
             lane_now_ms: None,
+            lane_end_cap_ms: None,
             price_range: (90.0, 110.0),
             dot_zoom: None,
         }));

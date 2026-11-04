@@ -22,9 +22,11 @@ use crate::bands::Bands;
 /// neither: a pane is a place, not a value, and the bands it last painted
 /// hold no cheaper copy than the draw that produced them.
 pub struct PaneFrame {
-    /// Where the history pane ended last frame — the lane's divider, and the
-    /// handle that resizes it. The input pass runs before the draw computes it.
+    /// The lane's divider last frame, and the handle that resizes it: `None` means
+    /// no lane. The input pass runs before the draw computes it.
     pub lane_divider_x: Option<f32>,
+    /// Where the candles ended last frame: the divider, or a closed tape's rail.
+    pub candles_right: Option<f32>,
     /// Actual visible legend footprint, published by its painter for chrome placement.
     pub flow_legend: Option<egui::Rect>,
     /// Actual indicator legend footprint, published before floating chrome.
@@ -40,6 +42,8 @@ pub struct PaneFrame {
     /// offline note is placed against it: an explanation belongs on the pane
     /// with nothing in it, which is precisely the pane that has room for one.
     pub area: Option<egui::Rect>,
+    /// A flow pane's row of side headers as [`super::split_flow_pane`] carved it.
+    pub side_row: Option<egui::Rect>,
     /// The pane-local layout strip reserved below [`Self::area`].
     ///
     /// The tab owns the split because it knows which panes are visible; the
@@ -104,10 +108,12 @@ impl Default for PaneFrame {
     fn default() -> Self {
         Self {
             lane_divider_x: None,
+            candles_right: None,
             flow_legend: None,
             indicator_legend: None,
             chart_rect: None,
             area: None,
+            side_row: None,
             layout_strip: None,
             header_controls: Default::default(),
             capsules: [None; 2],
@@ -131,10 +137,12 @@ impl PaneFrame {
     pub(crate) fn clear_hidden(&mut self) {
         self.header_controls.clear();
         self.lane_divider_x = None;
+        self.candles_right = None;
         self.flow_legend = None;
         self.indicator_legend = None;
         self.chart_rect = None;
         self.area = None;
+        self.side_row = None;
         self.layout_strip = None;
         self.price_gutter = None;
         self.time_strip = None;

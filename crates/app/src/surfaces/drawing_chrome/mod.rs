@@ -268,7 +268,7 @@ pub(crate) struct DrawingEnv<'a> {
     pub focused_chart_area: Option<egui::Rect>,
     /// Where the live lane begins. Every popup keeps clear of it: that strip
     /// is where the price the trader is reading is being formed.
-    pub lane_divider_x: Option<f32>,
+    pub candles_right: Option<f32>,
     /// Measured footprint of the stacked flow and indicator legends.
     pub legends: Option<egui::Rect>,
     /// The visible price range, which is what makes a coordinate drag move at

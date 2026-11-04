@@ -55,6 +55,7 @@ mod history_reach_completion_tests;
 mod history_run_edges_tests;
 mod home_tab_tests;
 mod indicator_operations_tests;
+mod indicator_recut_tests;
 mod indicators_tests;
 mod input_ui_tests;
 mod journal_payload_pin_tests;
@@ -80,6 +81,7 @@ mod screenshot_evidence_tests;
 mod session_length_tests;
 mod settled_frame;
 mod tab_workspace_tests;
+mod tape_only_scale_tests;
 mod time_strip_cursor_tests;
 mod title_bar_tests;
 mod toolrail_launch_baselines;
@@ -1133,6 +1135,7 @@ fn chrome_with_popup_at(position: Option<[f32; 2]>) -> ui_state::SavedChrome {
         venue_lead_in: false,
         record_deals: None,
         inspector_position: position,
+        orderflow_folds: Default::default(),
     }
 }
 
@@ -2537,7 +2540,7 @@ fn hover_bar(app: &mut QuantickApp, ctx: &egui::Context, slot: usize) {
     let position = {
         let pane = &app.active_tab().flow_pane;
         let chart = pane.frame.chart_area.expect("the pane reported its rect");
-        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+        let right = pane.frame.candles_right.unwrap_or_else(|| chart.right());
         egui::pos2(
             pane.model.viewport.x_center(slot, right, pane.slots()),
             chart.center().y,

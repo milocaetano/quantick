@@ -7,7 +7,6 @@
 //! the stack from borrowed inputs and hands them to the renderer; nothing
 //! here is retained between frames.
 
-use crate::orderflow_view::constants::TAPE_HEADER_INSET_PX;
 use quantick_orderflow::engine::PENDING_LANE_REFERENCE_MS;
 use std::sync::Arc;
 
@@ -26,8 +25,8 @@ use crate::chart::PriceScale;
 use crate::live_strip;
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
-    draw_compact_legend, draw_compact_legend_avoiding, draw_heatmap_background,
-    draw_liquidity_events, draw_live_lane_marks, theme_bubble_rgb,
+    draw_compact_legend_avoiding, draw_heatmap_background, draw_liquidity_events,
+    draw_live_lane_marks, theme_bubble_rgb,
 };
 use crate::orderflow_worker::BookCommand;
 use crate::viewport::Viewport;
@@ -48,6 +47,21 @@ pub(super) fn status_color(status: &CaptureStatus) -> egui::Color32 {
 }
 
 impl OrderflowView {
+    /// `frame`'s layout over the chart, the strip the pane carved left of the
+    /// divider included: every painter and the cursor's lookup map through it.
+    pub(crate) fn projected<'a>(
+        &self,
+        (chart_rect, viewport, total_bars): (egui::Rect, &'a Viewport, usize),
+        frame: &VisibleOrderflow,
+        lane_px: f32,
+    ) -> ProjectedLayout<'a> {
+        let (first, slots) = (frame.first_bar_index, frame.slot_count);
+        let mut layout =
+            ProjectedLayout::new(chart_rect, viewport, total_bars, first, slots, lane_px);
+        layout.trail_strip_px = self.trail_strip_px;
+        layout
+    }
+
     /// The requested tape boundary remains visible while its worker has no frame.
     pub(crate) fn draw_lane_boundary(
         &self,
@@ -87,6 +101,7 @@ impl OrderflowView {
             on_newest_bar,
             lane_reference_ms,
             lane_now_ms: self.lane_now_ms(),
+            lane_end_cap_ms: self.pane_tape.window_cap_ms(),
             price_range,
             // The tape's level follows its own prints, never the candle axis.
             dot_zoom: pane_geometry.map(|geometry| {
@@ -130,15 +145,8 @@ impl OrderflowView {
         lane_width_px: f32,
         inverted: bool,
     ) {
-        let layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        )
-        .with_inverted(inverted);
+        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
+        let layout = layout.with_inverted(inverted);
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         // The frame's book is today's: a held tape draws its own beside it.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
@@ -177,15 +185,8 @@ impl OrderflowView {
         price_range: (f64, f64),
         tick_chart: bool,
     ) {
-        let layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        )
-        .with_inverted(inverted);
+        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
+        let layout = layout.with_inverted(inverted);
         let mut style =
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         // FLOW owns tick-candle executions even when the Tape lane is hidden.
@@ -332,42 +333,13 @@ impl OrderflowView {
         top_inset_px: f32,
         tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
     ) -> Option<egui::Rect> {
-        let mut layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        );
+        let mut layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
         let mut style =
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         style.legend_top_inset = top_inset_px;
         if self.flow_execution_replaces_history() && !style.live_lane.tape_only {
-            if lane_width_px > 0.0 {
-                let mut tape_style = style.clone();
-                tape_style.live_lane.tape_only = true;
-                // The left half of the Tape header leaves its status and switch clear.
-                let header = egui::Rect::from_min_size(
-                    egui::pos2(
-                        chart_rect.right() - lane_width_px + TAPE_HEADER_INSET_PX,
-                        chart_rect.top(),
-                    ),
-                    egui::vec2(
-                        (lane_width_px * 0.5 - TAPE_HEADER_INSET_PX).max(0.0),
-                        crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
-                    ),
-                );
-                let tape_layout = ProjectedLayout {
-                    chart_rect: header,
-                    ..layout
-                };
-                let _ = draw_compact_legend(
-                    painter,
-                    &RenderContext::new(&frame.projection, tape_layout, &tape_style),
-                );
-            }
             // FLOW has its own unboxed palette key; retain the historical L2 key.
+            // The tape wears no Buy/Sell key: its bubbles' colours say it.
             style.aggression_layer = false;
             style.lane_aggression_layer = false;
         }

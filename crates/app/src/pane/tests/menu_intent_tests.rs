@@ -581,7 +581,7 @@ fn native_tape_menu_real_widgets_emit_layer_preset_and_custom_duration_intents()
         .iter()
         .filter(|(label, _)| *label == "Tape window")
         .nth(1)
-        .expect("15 s preset")
+        .expect("10 s preset")
         .1
         .center();
     let _ = menu_frame(&mut pane, &ctx, pointer_events(preset, true));
@@ -589,7 +589,7 @@ fn native_tape_menu_real_widgets_emit_layer_preset_and_custom_duration_intents()
     assert_eq!(
         intents,
         vec![PaneMenuIntent::SetLaneWindow(LaneWindow::Fixed {
-            ms: 15_000
+            ms: 10_000
         })]
     );
     apply(&mut pane, intents);

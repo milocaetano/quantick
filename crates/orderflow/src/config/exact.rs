@@ -2,8 +2,9 @@
 //! formatting either: floats and decimals compare by representation.
 use super::{
     BubbleDisplayScale, BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark,
-    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, LaneFold, LaneWindow,
-    LiveLaneStyle, TickBubbleStyle, TickReferenceMode, ViewportBubbleScale, VolumeDotStyle,
+    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, LaneView, LaneWindow,
+    LiveLaneStyle, MarketHold, OldTapeFold, TickBubbleStyle, TickReferenceMode,
+    ViewportBubbleScale, VolumeDotStyle,
 };
 use rust_decimal::Decimal;
 
@@ -45,7 +46,9 @@ exact_by_eq!(
     BubbleSizeReference,
     ConsumptionMark,
     TickReferenceMode,
-    LaneFold,
+    MarketHold,
+    OldTapeFold,
+    LaneView,
 );
 
 /// Every field by name: the destructuring has no `..`, so a field added to
@@ -92,7 +95,7 @@ exact_fields! {
     LiveLaneStyle {
         width_share, window, cluster_ms, radius_scale, show_marks, enabled, show_depth,
         show_aggressions, native_tape, depth_time_averaging, forward_book_preview,
-        stable_size, tape_only, fold,
+        stable_size, tape_only, fold_market_closed, market_hold, old_tape_fold, drag_close,
     }
 }
 

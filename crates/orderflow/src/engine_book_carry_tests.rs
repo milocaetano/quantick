@@ -94,6 +94,7 @@ fn request(now_ms: i64) -> ProjectionRequest {
         on_newest_bar: true,
         lane_reference_ms: Some(6_000),
         lane_now_ms: Some(now_ms),
+        lane_end_cap_ms: None,
         price_range: (90.0, 115.0),
         dot_zoom: Some(DotZoom {
             native_tape: true,
@@ -181,6 +182,45 @@ fn run(
             }
         })
         .collect()
+}
+
+/// A trade stall with the book streaming: a held window stops the heat at its cap
+/// though the book has gone on past it, and the published facts show both, which
+/// is what the seam's "book held at" and the heatmap scope are read from.
+#[test]
+fn a_held_window_stops_the_heat_at_its_cap_while_the_book_goes_on() {
+    let mut engine = engine();
+    let cap_ms = PRINT_MS + WINDOW_MS * 45 / 100;
+    let first_id = engine
+        .history
+        .book()
+        .last_update_id()
+        .map_or(11, |id| id + 1);
+    let confirmations = (PRINT_MS + CONFIRM_MS..=3_000).step_by(50);
+    for (update_id, book_ms) in (first_id..).zip(confirmations) {
+        confirm(&mut engine, update_id, book_ms);
+    }
+    let capped = ProjectionRequest {
+        lane_end_cap_ms: Some(cap_ms),
+        ..request(3_000)
+    };
+    let visible = engine
+        .project_at(&capped, Instant::now())
+        .expect("the tape projects");
+    assert_eq!(visible.live_edge.expect("a lane").now_ms, cap_ms);
+    let edge_x = visible.projection.live_now_x.expect("a lane has an edge");
+    let heat_end_x = visible
+        .projection
+        .cells
+        .iter()
+        .map(|cell| cell.x1)
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(heat_end_x <= edge_x + EPSILON, "{heat_end_x} past {edge_x}");
+    assert_eq!(engine.history.latest_book_ms(), Some(3_000));
+    assert!(
+        engine.published().live_end_ms > Some(cap_ms),
+        "the newest event says the book went on"
+    );
 }
 
 /// Trader 2026-10-09, WIN on a 282-408 ms tape: the heat ended 17-152 ms
@@ -436,6 +476,7 @@ fn bench_the_live_book_on_the_worker_and_the_render_thread() {
             on_newest_bar: true,
             lane_reference_ms: Some(BAR_MS),
             lane_now_ms: Some(now_ms),
+            lane_end_cap_ms: None,
             price_range: (59_900.0, 60_100.0),
             dot_zoom: Some(DotZoom {
                 native_tape: true,

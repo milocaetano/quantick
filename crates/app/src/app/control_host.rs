@@ -410,6 +410,14 @@ impl<'a> TabsMut<'a> {
         }
     }
 
+    /// One tab beside the folds its order-flow panel reads, by position.
+    pub(crate) fn tab_with_panel_folds(
+        self,
+        index: usize,
+    ) -> Option<(&'a mut Tab, &'a mut crate::ui_state::AssetFolds)> {
+        self.tabs.with_panel_folds(index)
+    }
+
     /// The mutable twin of [`TabReads::tab_at`].
     pub(crate) fn tab_at_mut(self, index: usize) -> Option<&'a mut Tab> {
         self.tabs.get_mut(index)

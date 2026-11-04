@@ -48,6 +48,9 @@ use crate::config::DeclaredLayout;
 pub use quantick_workspace::arrangement_document::{
     SavedChrome, SavedDockTab, SavedFocus, SavedRailDock, SavedTab,
 };
+pub use quantick_workspace::orderflow_panel::{
+    AssetFolds, OrderFlowPanel, PanelControl, PanelSection,
+};
 
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub const UI_STATE_FILE: &str = "ui-state.toml";
@@ -509,6 +512,7 @@ mod tests {
                     time_legend_collapsed: false,
                     workspace: None,
                     workspace_copy: None,
+                    orderflow_panel: Default::default(),
                 },
                 SavedTab {
                     feed: "binance".to_owned(),
@@ -530,6 +534,7 @@ mod tests {
                     time_legend_collapsed: false,
                     workspace: None,
                     workspace_copy: None,
+                    orderflow_panel: Default::default(),
                 },
             ],
             Some(SavedChrome {
@@ -546,6 +551,7 @@ mod tests {
                 venue_lead_in: false,
                 record_deals: None,
                 inspector_position: Some([412.5, 640.0]),
+                orderflow_folds: Default::default(),
             }),
         )
         .with_replay_folder(Some("D:/tape".to_owned()))
@@ -1015,6 +1021,7 @@ mod tests {
             time_legend_collapsed: false,
             workspace: None,
             workspace_copy: None,
+            orderflow_panel: Default::default(),
         });
         workspace.tabs.push(SavedTab {
             feed: "binance".to_owned(),
@@ -1036,6 +1043,7 @@ mod tests {
             time_legend_collapsed: false,
             workspace: None,
             workspace_copy: None,
+            orderflow_panel: Default::default(),
         });
         let restored = restore(workspace, &catalogue(), clamp);
         assert_eq!(
@@ -1172,6 +1180,7 @@ mod tests {
                     time_legend_collapsed: false,
                     workspace: None,
                     workspace_copy: None,
+                    orderflow_panel: Default::default(),
                 },
                 SavedTab {
                     feed: "binance".to_owned(),
@@ -1193,6 +1202,7 @@ mod tests {
                     time_legend_collapsed: false,
                     workspace: None,
                     workspace_copy: None,
+                    orderflow_panel: Default::default(),
                 },
             ],
             chrome: None,
@@ -1233,6 +1243,7 @@ mod tests {
                 time_legend_collapsed: false,
                 workspace: None,
                 workspace_copy: None,
+                orderflow_panel: Default::default(),
             }],
             chrome: None,
         });
@@ -1424,6 +1435,7 @@ time_bars = "time:60000"
             time_legend_collapsed: false,
             workspace: None,
             workspace_copy: None,
+            orderflow_panel: Default::default(),
         }];
         workspace
     }

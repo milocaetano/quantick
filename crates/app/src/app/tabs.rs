@@ -88,7 +88,7 @@ impl QuantickApp {
 
     /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
-        self.read_tape_view_key(ctx);
+        self.read_view_keys(ctx);
         let keys = super::home_wiring::read_tab_keys(ctx);
         if self.arrangement_adapter().apply_tab_keys(keys) {
             self.surfaces.source_picker.open(&self.config);

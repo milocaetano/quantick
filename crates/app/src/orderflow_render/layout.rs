@@ -45,6 +45,8 @@ pub(crate) struct ProjectedLayout<'a> {
     /// the chart. `0.0` means the frame has no lane and the candles own the
     /// whole chart.
     pub(crate) lane_width_px: f32,
+    /// The live strip left of the divider: the candles' pane ends before it.
+    pub(crate) trail_strip_px: f32,
     /// Whether the chart is upside down. The projection speaks in fractions
     /// of the price window and knows nothing of orientation; the flip happens
     /// here, at the same boundary where the candles' own scale flips, so the
@@ -78,6 +80,7 @@ impl<'a> ProjectedLayout<'a> {
             } else {
                 0.0
             },
+            trail_strip_px: 0.0,
             inverted: false,
             lane_only: false,
             tape_geometry: None,
@@ -135,11 +138,13 @@ impl<'a> ProjectedLayout<'a> {
     }
 
     /// Right edge of the candles' own pane: the divider when a lane is drawn,
-    /// the chart's right edge otherwise.
+    /// less the strip standing left of it; the chart's right edge otherwise.
     #[must_use]
     fn history_right(self) -> f32 {
         self.lane_left_x()
-            .unwrap_or_else(|| self.chart_rect.right())
+            .map_or(self.chart_rect.right(), |divider| {
+                (divider - self.trail_strip_px).max(self.chart_rect.left())
+            })
     }
 
     /// The candles' pane — everything left of the divider.
@@ -154,10 +159,8 @@ impl<'a> ProjectedLayout<'a> {
     /// The tape's pane — everything right of the divider.
     #[must_use]
     pub(super) fn lane_rect(self) -> egui::Rect {
-        egui::Rect::from_min_max(
-            egui::pos2(self.history_right(), self.chart_rect.top()),
-            self.chart_rect.max,
-        )
+        let left = self.lane_left_x().unwrap_or(self.chart_rect.right());
+        egui::Rect::from_min_max(egui::pos2(left, self.chart_rect.top()), self.chart_rect.max)
     }
 
     /// Whether a normalized position belongs to the tape rather than the

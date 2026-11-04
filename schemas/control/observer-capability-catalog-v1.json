@@ -5553,7 +5553,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. Never moves the candles beside it.",
+      "description": "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. Transient by default: the window is navigation, as the wheel's, and nothing is saved. `file: true` is the one exception that saves: the window becomes the asset's setting, as the tape header's window selector and its window menu set it, written to disk while the asset save switch is on. Never moves the candles beside it.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -5661,6 +5661,11 @@
             ],
             "default": null,
             "description": "Where the right edge goes; absent keeps it."
+          },
+          "file": {
+            "default": false,
+            "description": "File the window as the asset's setting, as the tape header's selector\nand its window menu do: a double click on the tape then returns to it.\nTheir rule too: `auto` while the tape follows the bars and the asset\nfiles following them changes nothing, so the zoom stays; the result\nreports the window in force. Without it the window is navigation, as\nthe wheel's, and is never filed. Needs a window.",
+            "type": "boolean"
           },
           "pane_id": {
             "$ref": "#/$defs/WireU64"
@@ -16449,7 +16454,321 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Folds one side of a pane that shows the tape beside its candles to a thin rail, as dragging the divider to that edge does: candles leaves the tape the whole pane, tape leaves the candles it. Open unfolds at the width share the tape had before the fold, which folding never changes. Presentation only: executions, grouping and the tape's own switches (tape on, tape only) are untouched, and tape only wins over a fold while it is on. One of the asset's bubble settings (orderflow.bubbles names it), saved for it while its save switch is on.",
+      "description": "Closes the panel attached to the tab's flow pane, and the chart takes back its width. Presentation only.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.settings.close",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "SettingsCloseInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The panel after a call, whichever one it was.",
+        "properties": {
+          "asset": {
+            "description": "The asset whose sections these are.",
+            "type": "string"
+          },
+          "bubbles_open": {
+            "type": "boolean"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "l2_open": {
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "asset",
+          "open",
+          "l2_open",
+          "bubbles_open",
+          "changed"
+        ],
+        "title": "SettingsResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the orderflow.settings scope report the state.",
+      "title": "Close the order-flow settings panel",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Opens the panel attached to the tab's flow pane, holding the L2 and Bubbles settings. With a section (l2 or bubbles) it also expands that section and scrolls to it. Refused on a tab not showing its flow pane. Presentation only: looking is not enabling, so no layer switches.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.settings.open",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "SettingsSection": {
+            "description": "A section of the panel, as a call names it.",
+            "enum": [
+              "l2",
+              "bubbles"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "section": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SettingsSection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Expand this section and scroll it into view."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "SettingsOpenInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The panel after a call, whichever one it was.",
+        "properties": {
+          "asset": {
+            "description": "The asset whose sections these are.",
+            "type": "string"
+          },
+          "bubbles_open": {
+            "type": "boolean"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "l2_open": {
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "asset",
+          "open",
+          "l2_open",
+          "bubbles_open",
+          "changed"
+        ],
+        "title": "SettingsResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stable tab ID selects the panel; repeating a call has no further effect, and the result and the orderflow.settings scope report the state.",
+      "title": "Open the order-flow settings panel",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Folds or opens the L2 or the Bubbles section for the asset the tab shows; every tab on that asset reads the same. Whether or not the panel is open. Presentation only.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.settings.section.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "SettingsSection": {
+            "description": "A section of the panel, as a call names it.",
+            "enum": [
+              "l2",
+              "bubbles"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "open": {
+            "type": "boolean"
+          },
+          "section": {
+            "$ref": "#/$defs/SettingsSection"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "section",
+          "open"
+        ],
+        "title": "SettingsSectionInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The panel after a call, whichever one it was.",
+        "properties": {
+          "asset": {
+            "description": "The asset whose sections these are.",
+            "type": "string"
+          },
+          "bubbles_open": {
+            "type": "boolean"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "l2_open": {
+            "type": "boolean"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "asset",
+          "open",
+          "l2_open",
+          "bubbles_open",
+          "changed"
+        ],
+        "title": "SettingsResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stable tab ID selects the asset; repeating a value has no further effect, and the result and the orderflow.settings scope report it, the panel open or not.",
+      "title": "Fold or open a section of the order-flow settings panel",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Sets a flow pane's view by the side it closes, as dragging the divider to that edge does, an alias over orderflow.tape.view.set: candles closes the candles, which is tape only, tape closes the tape, which is the candles alone, open shows both at the default width share. Allowed from any view; a side keeps a thin rail at its edge either way. Open also stands down the market-closed hold, as a click on the rail does. Presentation only: executions are untouched.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -16463,21 +16782,21 @@
       "input_schema": {
         "$defs": {
           "TapeFold": {
-            "description": "Which side of the pane is folded to a rail.",
+            "description": "Which side of the pane is closed to a rail.",
             "oneOf": [
               {
                 "const": "open",
-                "description": "Candles and tape side by side at the tape's width share.",
+                "description": "Candles and tape side by side: the view `beside`.",
                 "type": "string"
               },
               {
                 "const": "candles",
-                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "description": "The candles closed to a rail on the left: the view `tape`, tape only.",
                 "type": "string"
               },
               {
                 "const": "tape",
-                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "description": "The tape closed to a rail on the right: the view `candles`, the tape off.",
                 "type": "string"
               }
             ]
@@ -16492,7 +16811,7 @@
         "properties": {
           "fold": {
             "$ref": "#/$defs/TapeFold",
-            "description": "`open` unfolds at the width the tape had before it was folded."
+            "description": "`open` shows both sides at the default width share, from any view."
           },
           "pane_id": {
             "$ref": "#/$defs/WireU64"
@@ -16513,21 +16832,21 @@
       "output_schema": {
         "$defs": {
           "TapeFold": {
-            "description": "Which side of the pane is folded to a rail.",
+            "description": "Which side of the pane is closed to a rail.",
             "oneOf": [
               {
                 "const": "open",
-                "description": "Candles and tape side by side at the tape's width share.",
+                "description": "Candles and tape side by side: the view `beside`.",
                 "type": "string"
               },
               {
                 "const": "candles",
-                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "description": "The candles closed to a rail on the left: the view `tape`, tape only.",
                 "type": "string"
               },
               {
                 "const": "tape",
-                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "description": "The tape closed to a rail on the right: the view `candles`, the tape off.",
                 "type": "string"
               }
             ]
@@ -16562,12 +16881,7 @@
         "type": "object"
       },
       "persistence": "durable",
-      "preconditions": [
-        {
-          "description": "Folding a side needs the tape switched on beside the candles, not off and not tape only.",
-          "id": "orderflow.tape.beside_candles"
-        }
-      ],
+      "preconditions": [],
       "read_only": false,
       "required_permissions": [
         "cockpit",
@@ -16577,8 +16891,100 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a fold has no further effect, and the result and orderflow.bubbles report the fold kept.",
-      "title": "Fold the tape or the candles",
+      "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a word has no further effect, and the result and orderflow.bubbles report the side closed.",
+      "title": "Close the tape or the candles",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Sets whether a pane showing the tape beside its candles folds the tape to its rail by itself while the feed is quiet or offline. The first print brings it back. Turning it off brings it back at once and leaves a retained tape up to a seam at the last print. A replay never folds. Presentation only. One of the asset's bubble settings (orderflow.bubbles names it), saved for it while its save switch is on.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.tape.market_fold.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "description": "On, the tape folds by itself while the feed is quiet or offline.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "enabled"
+        ],
+        "title": "TapeMarketFoldInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "enabled",
+          "changed"
+        ],
+        "title": "TapeMarketFoldResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a value has no further effect, and the result and orderflow.bubbles report the setting kept.",
+      "title": "Fold the tape while the market is closed",
       "version": 1
     },
     {
@@ -16702,7 +17108,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets what a flow pane shows, as its view button and Ctrl+Shift+T do: beside shows candles and tape at the tape's width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view. Presentation only: executions, grouping, the width share and a fold of the divider (orderflow.tape.fold.set) are untouched, and the layer switches keep their state.",
+      "description": "Sets what a flow pane shows, as its Trail and Tape switches, Ctrl+Shift+R and Ctrl+Shift+T do. Trail is the candles side: beside shows candles and tape, arriving at the default width share, candles shows the candles alone, tape shows the tape alone. Allowed from any view, and a side closed by dragging the divider to its edge already is one of these views. Beside on a pane the market holds away releases the hold, as orderflow.tape.fold.set open does. Presentation only: executions are untouched, and the tape's layer switches keep their state.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -16825,7 +17231,7 @@
       "risk_flags": [],
       "risk_reducing": false,
       "stale_input_safety": "Stable tab and pane IDs select the pane; repeating a view has no further effect, and the result and orderflow.bubbles report the view kept.",
-      "title": "Show the candles, the tape, or both",
+      "title": "Show the trail, the tape, or both",
       "version": 1
     },
     {
@@ -23807,6 +24213,11 @@
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
               },
+              "fold_market_closed": {
+                "default": true,
+                "description": "The tape goes away by itself while the market is closed: the asset's\nsetting, set by `orderflow.tape.market_fold.set`. It never writes `tape_view`.",
+                "type": "boolean"
+              },
               "forward_book_preview": {
                 "default": false,
                 "description": "The strip between the last candle and the tape previews the current\nbook, read exactly while it is current. The lane setting\n`forward_book_preview`, one of the asset's bubble settings.",
@@ -23865,7 +24276,12 @@
               "tape_fold": {
                 "$ref": "#/$defs/TapeFold",
                 "default": "open",
-                "description": "Which side of the pane is folded to a rail: `open`, `candles` (the\ntape takes the pane) or `tape` (the candles do). Set by dragging the\ndivider to an edge or by `orderflow.tape.fold.set`; tape only and the\ntape's own switch win over it."
+                "description": "Which side the pane's view closes to a rail: `open`, `candles` (tape only)\nor `tape` (the candles alone). A reading of `tape_view`, the one state:\ndragging the divider to an edge and `orderflow.tape.fold.set` write that."
+              },
+              "tape_fold_held_by_market": {
+                "default": false,
+                "description": "The market holds the tape away right now. Runtime only; the first print,\nthe setting, a hand on the rail or a view change releases it.",
+                "type": "boolean"
               },
               "tape_only": {
                 "default": false,
@@ -23875,7 +24291,7 @@
               "tape_view": {
                 "$ref": "#/$defs/TapeView",
                 "default": "beside",
-                "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's view button, Ctrl+Shift+T or\n`orderflow.tape.view.set`; a fold (`tape_fold`) is apart from it."
+                "description": "Which view the tape's two switches ask for: `beside`, `candles` (alone)\nor `tape` (alone). Set by the pane header's Trail and Tape switches,\nCtrl+Shift+R, Ctrl+Shift+T or `orderflow.tape.view.set`, and by dragging the\ndivider to an edge."
               },
               "tape_viewport_scale": {
                 "anyOf": [
@@ -24385,21 +24801,21 @@
             "type": "object"
           },
           "TapeFold": {
-            "description": "Which side of the pane is folded to a rail.",
+            "description": "Which side of the pane is closed to a rail.",
             "oneOf": [
               {
                 "const": "open",
-                "description": "Candles and tape side by side at the tape's width share.",
+                "description": "Candles and tape side by side: the view `beside`.",
                 "type": "string"
               },
               {
                 "const": "candles",
-                "description": "The candles fold to a rail on the left; the tape takes the pane.",
+                "description": "The candles closed to a rail on the left: the view `tape`, tape only.",
                 "type": "string"
               },
               {
                 "const": "tape",
-                "description": "The tape folds to a rail on the right; the candles take the pane.",
+                "description": "The tape closed to a rail on the right: the view `candles`, the tape off.",
                 "type": "string"
               }
             ]
@@ -24773,12 +25189,47 @@
             ],
             "type": "object"
           },
+          "BookGapSnapshot": {
+            "description": "Why the book is missing over some stretches of the chart: one row per reason,\nsorted by it. The marks on the chart carry no words, so these and their hover\nare what says so.",
+            "properties": {
+              "label": {
+                "description": "The same reason in the words the mark's hover shows.",
+                "type": "string"
+              },
+              "reason": {
+                "description": "The stable reason history recorded, such as `sequence_gap`.",
+                "type": "string"
+              },
+              "stretches": {
+                "description": "How many stretches of the last published frame carry it.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reason",
+              "label",
+              "stretches"
+            ],
+            "type": "object"
+          },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
           },
           "HeatmapStateSnapshot": {
             "properties": {
+              "book_held_at_unix_ms": {
+                "default": null,
+                "description": "Where the heat stops, in venue time, while the book goes on arriving: the\ntape's window is held short of the clock because no print is coming, and\nthe book behind this instant is not drawn. Absent otherwise. The status\ncan read a live book beside it; both are true.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
               "capture_price_grouping": {
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "The bucket the engine is capturing at. The auto-base logic can move it\nwith no user action, so it is mirrored rather than assumed."
@@ -24797,6 +25248,14 @@
                   }
                 ],
                 "x-unit": "ratio"
+              },
+              "gaps": {
+                "default": [],
+                "description": "Why the book is missing where the last frame marks a gap, if anywhere.",
+                "items": {
+                  "$ref": "#/$defs/BookGapSnapshot"
+                },
+                "type": "array"
               },
               "lane_visible": {
                 "description": "And over the live lane, which is a separate switch.",
@@ -25118,6 +25577,69 @@
       },
       "schema_version": 1,
       "title": "Order book"
+    },
+    {
+      "description": "Reports whether each tab's order-flow settings panel is open and which of its sections the tab's asset keeps open, whether or not the panel was painted.",
+      "id": "orderflow.settings",
+      "module_id": "orderflow",
+      "required_permissions": [
+        "observe",
+        "observe.orderflow"
+      ],
+      "schema": {
+        "$defs": {
+          "TabSettingsSnapshot": {
+            "description": "One tab's panel and its asset's folds, whether or not anything painted them.",
+            "properties": {
+              "asset": {
+                "description": "The asset whose sections these are.",
+                "type": "string"
+              },
+              "bubbles_open": {
+                "type": "boolean"
+              },
+              "l2_open": {
+                "type": "boolean"
+              },
+              "open": {
+                "type": "boolean"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "asset",
+              "open",
+              "l2_open",
+              "bubbles_open"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Every tab's panel, as it would save.",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabSettingsSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "SettingsSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Order-flow settings panel"
     },
     {
       "description": "Reports how current each pane's tape is, where its live lane ends, and where its aggressor side comes from.",

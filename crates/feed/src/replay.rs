@@ -24,6 +24,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
+use quantick_replay::clock::position_at_fraction;
+use quantick_replay::format::civil_parts;
 use quantick_replay::{PlaybackConfig, Playhead, Session};
 
 use super::{FeedCommand, FeedEvent, FeedHandle};
@@ -261,6 +263,19 @@ impl ReplayLink {
     #[must_use]
     pub fn label(&self) -> String {
         self.session.label()
+    }
+
+    /// `HH:MM:SS` on the clock the trader watched that day, the session's own
+    /// timezone rather than this machine's: of the playhead, or of the fraction
+    /// a held seek handle stands on, which is the time letting go lands on.
+    #[must_use]
+    pub fn clock_text(&self, held: Option<f32>) -> String {
+        let status = &self.status;
+        let position_ms = held.map_or(status.position_ms(), |fraction| {
+            position_at_fraction(status.start_ms(), status.end_ms(), fraction)
+        });
+        let civil = civil_parts(position_ms, self.session.timezone());
+        format!("{:02}:{:02}:{:02}", civil.hour, civil.minute, civil.second)
     }
 
     /// The instrument being replayed.
@@ -812,6 +827,26 @@ mod tests {
     use quantick_engine::{Side, Trade};
     use quantick_replay::ParseOptions;
     use rust_decimal::Decimal;
+
+    /// The transport's clock reads the recording's timezone, and a held handle
+    /// reads the time under it while the playhead has not moved.
+    #[test]
+    fn the_clock_names_the_held_time_in_the_sessions_own_timezone() {
+        let text = "# symbol=TEST\n# timezone=-03:00\nDate,Time,Price,Volume,Side\n\
+                    2026-03-16,10:00:00.000,100,1,B\n\
+                    2026-03-16,12:00:00.000,101,1,B\n";
+        let session = Session::from_text(
+            &PathBuf::from("replay/TEST/20260316.csv"),
+            text,
+            ParseOptions::default(),
+        )
+        .expect("a valid session");
+        let link = ReplayLink::detached(session);
+        assert_eq!(link.clock_text(None), "10:00:00", "the playhead, unheld");
+        assert_eq!(link.clock_text(Some(0.5)), "11:00:00");
+        assert_eq!(link.clock_text(Some(1.0)), "12:00:00");
+        assert_eq!(link.clock_text(None), "10:00:00", "holding moved nothing");
+    }
 
     /// `count` prints 10 ms apart from 10:00:00, so a session of any length
     /// still moves strictly forward in time — which is what the format demands.
