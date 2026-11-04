@@ -25,6 +25,7 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
     pub(super) surface: &'a mut quantick_workspace::arrangement::strip::StripSurface,
+    pub(super) recent: &'a mut quantick_workspace::market_list::RecentMarkets,
 }
 
 #[derive(Clone, Copy)]
@@ -254,16 +255,15 @@ impl ArrangementAdapter<'_> {
             time_pane.price_view.set_inverted(time_inverted);
         }
     }
-    /// Close the tab at `index`, activating a neighbour.
-    ///
-    /// The last tab stays: a window with no market has nothing to draw. What
-    /// the closed tab owned goes with it — dropping its `FeedHandle` closes
-    /// the receivers its feed thread sends into, and dropping its panes drops
-    /// the indicator worker and book worker handles, whose run loops end when
-    /// their command channels disconnect. No joins, no shutdown protocol.
+    /// Close the tab at `index`, activating a neighbour, and only then put a
+    /// live market in Recent. The last tab stays: a window with no market has
+    /// nothing to draw. Dropping the closed tab's `FeedHandle` and panes ends
+    /// its feed thread and workers as their channels disconnect; no joins.
     pub(super) fn close_tab(&mut self, index: usize) {
         if let Ok(plan) = self.tabs.plan_close(index) {
+            let closed = super::tabs::closed_market(self.tabs, index, *self.tz);
             self.close_planned(plan).expect("fresh closing plan");
+            self.recent.extend(closed);
         }
     }
     /// Land a closing plan; owners beside the host forget the tab before it drops.

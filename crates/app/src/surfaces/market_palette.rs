@@ -4,10 +4,10 @@
 //! keys and paints, and the host answers what they ask.
 
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Ui};
-use quantick_engine::bar_registry::BUILTIN_BARS;
+use quantick_control_handlers::market_palette::default_bar_size as default_size;
 use quantick_workspace::market_list::{
-    self as list, BAR_KINDS, ClosedMarket, MarketListing, MarketPalette, MarketRow, PaletteFocus,
-    PaletteKey, RecentMarkets, StatusTone, VenueKind,
+    self as list, BAR_KINDS, MarketListing, MarketPalette, MarketRow, PaletteFocus, PaletteKey,
+    RecentMarkets, StatusTone, VenueKind,
 };
 
 use super::{Surface, SurfaceEnv, SurfaceResponse};
@@ -23,6 +23,13 @@ const FOCUS_RING: egui::Stroke = egui::Stroke {
     width: 1.0,
     color: theme::ACCENT,
 };
+/// The palette answers Tab and the arrows; egui must not move focus on them.
+const LOCKED: egui::EventFilter = egui::EventFilter {
+    tab: true,
+    horizontal_arrows: true,
+    vertical_arrows: true,
+    escape: false,
+};
 
 type Intent = list::PaletteIntent;
 
@@ -30,7 +37,7 @@ type Intent = list::PaletteIntent;
 pub(crate) struct MarketPaletteSurface {
     open: Option<MarketPalette>,
     /// The markets the trader closed lately, for Recent.
-    recent: RecentMarkets,
+    pub recent: RecentMarkets,
 }
 
 impl MarketPaletteSurface {
@@ -55,25 +62,10 @@ impl MarketPaletteSurface {
         }
     }
 
-    pub fn recent(&self) -> &RecentMarkets {
-        &self.recent
-    }
-
-    pub fn note_closed(&mut self, market: ClosedMarket) {
-        self.recent.closed(market);
-    }
-
     #[cfg(test)]
     pub fn palette_mut(&mut self) -> Option<&mut MarketPalette> {
         self.open.as_mut()
     }
-}
-
-fn default_size(kind: &str) -> String {
-    (BUILTIN_BARS.find(kind)).map_or_else(
-        |_| String::new(),
-        |bar| bar.parameter.format(bar.parameter.default),
-    )
 }
 
 fn either(flag: bool, yes: Color32, no: Color32) -> Color32 {
@@ -94,54 +86,57 @@ fn ink(tone: StatusTone) -> Color32 {
     }
 }
 
-/// Take this frame's keys before the field can see them. Shift+Enter is
-/// reserved for "open in new window": taken, and nothing happens.
+const ENTER: PaletteKey = PaletteKey::Enter { background: false };
+const ENTER_BEHIND: PaletteKey = PaletteKey::Enter { background: true };
+/// The keys the palette takes, in the order it takes them.
+const KEYS: [(Modifiers, Key, PaletteKey); 6] = [
+    (Modifiers::NONE, Key::ArrowUp, PaletteKey::Up),
+    (Modifiers::NONE, Key::ArrowDown, PaletteKey::Down),
+    (Modifiers::NONE, Key::Tab, PaletteKey::Tab),
+    (Modifiers::COMMAND, Key::Enter, ENTER_BEHIND),
+    (Modifiers::NONE, Key::Enter, ENTER),
+    (Modifiers::NONE, Key::Delete, PaletteKey::Delete),
+];
+
+/// Take this frame's keys and Escape before the field sees them, Delete only
+/// when `removable`. Shift+Enter is reserved for "open in new window".
 fn read_keys(ctx: &egui::Context, removable: bool) -> (bool, Vec<PaletteKey>) {
     ctx.input_mut(|input| {
-        let mut take = |modifiers, key| input.consume_key(modifiers, key);
-        let _reserved = take(Modifiers::SHIFT, Key::Enter);
-        let keys = [
-            (take(Modifiers::NONE, Key::ArrowUp), PaletteKey::Up),
-            (take(Modifiers::NONE, Key::ArrowDown), PaletteKey::Down),
-            (take(Modifiers::NONE, Key::Tab), PaletteKey::Tab),
-            (
-                take(Modifiers::COMMAND, Key::Enter),
-                PaletteKey::Enter { background: true },
-            ),
-            (
-                take(Modifiers::NONE, Key::Enter),
-                PaletteKey::Enter { background: false },
-            ),
-            (
-                removable && take(Modifiers::NONE, Key::Delete),
-                PaletteKey::Delete,
-            ),
-        ];
-        let escape = take(Modifiers::NONE, Key::Escape);
-        (
-            escape,
-            keys.into_iter()
-                .filter(|(hit, _)| *hit)
-                .map(|(_, key)| key)
-                .collect(),
-        )
+        let _reserved = input.consume_key(Modifiers::SHIFT, Key::Enter);
+        let keys = (KEYS.into_iter())
+            .filter(|&(modifiers, key, asked)| {
+                (removable || asked != PaletteKey::Delete) && input.consume_key(modifiers, key)
+            })
+            .map(|(_, _, asked)| asked)
+            .collect();
+        (input.consume_key(Modifiers::NONE, Key::Escape), keys)
     })
 }
 
-/// A footer dropdown, amber when the trader changed it.
-fn dropdown(ui: &mut Ui, id: &str, shown: (&str, bool), options: &[&str]) -> Option<String> {
+/// Keep egui's focus and the palette's stop agreeing ([`MarketPalette::settle_focus`]).
+fn focus_stop(palette: &mut MarketPalette, response: &egui::Response, stop: PaletteFocus) {
+    let idle = response.ctx.memory(|memory| memory.focused().is_none());
+    if palette.settle_focus(stop, response.clicked() || response.gained_focus(), idle) {
+        response.request_focus();
+    }
+    (response.ctx).memory_mut(|memory| memory.set_focus_lock_filter(response.id, LOCKED));
+}
+
+type Picked = egui::InnerResponse<Option<String>>;
+
+/// A footer dropdown, amber when the trader changed it: the pick, on its button.
+fn dropdown(ui: &mut Ui, id: &str, shown: (&str, bool), options: &[&str]) -> Picked {
     let text = RichText::new(shown.0).color(either(shown.1, theme::AMBER, theme::TEXT_PRIMARY));
     let mut picked = None;
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(text)
-        .show_ui(ui, |ui| {
-            for option in options {
-                if ui.selectable_label(*option == shown.0, *option).clicked() {
-                    picked = Some((*option).to_owned());
-                }
+    let combo = egui::ComboBox::from_id_salt(id).selected_text(text);
+    let button = combo.show_ui(ui, |ui| {
+        for option in options {
+            if ui.selectable_label(*option == shown.0, *option).clicked() {
+                picked = Some((*option).to_owned());
             }
-        });
-    picked
+        }
+    });
+    egui::InnerResponse::new(picked, button.response)
 }
 
 fn paint_row(ui: &mut Ui, row: &MarketRow, selected: bool) -> egui::Response {
@@ -206,13 +201,14 @@ fn paint_row(ui: &mut Ui, row: &MarketRow, selected: bool) -> egui::Response {
 
 fn draw_list(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing) -> Option<Intent> {
     let mut chosen = None;
+    let moved = ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO);
     let scroll = egui::ScrollArea::vertical().max_height(LIST_MAX_PX);
     scroll.auto_shrink([false, true]).show(ui, |ui| {
         for group in &listing.groups {
             ui.label(faint(group.heading.to_uppercase()));
             for row in &group.rows {
                 let response = paint_row(ui, row, palette.is_selected(listing, row));
-                if row.selectable() && (response.hovered() || response.clicked()) {
+                if row.selectable() && ((response.hovered() && moved) || response.clicked()) {
                     palette.select(listing, row);
                 }
                 if row.selectable() && response.clicked() {
@@ -231,16 +227,14 @@ fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing
         if !palette.commands_mode() {
             let ((kind, size), changed) = (palette.bar_parts(listing), palette.bar_changed());
             ui.label(faint("BARS"));
-            if let Some(kind) = dropdown(ui, "palette_bars", (&kind, changed), &BAR_KINDS) {
+            if let Some(kind) = dropdown(ui, "palette_bars", (&kind, changed), &BAR_KINDS).inner {
                 palette.set_bar_kind(&kind, &default_size(&kind));
             }
             let mut typed = size.clone();
             let color = either(changed, theme::AMBER, theme::TEXT_PRIMARY);
             let field = egui::TextEdit::singleline(&mut typed).desired_width(56.0);
             let field = ui.add(field.text_color(color));
-            if palette.focus() == PaletteFocus::Bars && !field.has_focus() {
-                field.request_focus();
-            }
+            focus_stop(palette, &field, PaletteFocus::Bars);
             if typed != size {
                 palette.set_bar_size(listing, &typed);
             }
@@ -250,7 +244,9 @@ fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing
                 ui.visuals_mut().widgets.inactive.bg_stroke = FOCUS_RING;
             }
             let shown = (palette.workspace().to_owned(), palette.workspace_changed());
-            if let Some(name) = dropdown(ui, "palette_workspace", (&shown.0, shown.1), names) {
+            let picked = dropdown(ui, "palette_workspace", (&shown.0, shown.1), names);
+            focus_stop(palette, &picked.response, PaletteFocus::Workspace);
+            if let Some(name) = picked.inner {
                 palette.set_workspace(&name);
             }
             ui.label(faint("Ctrl \u{21b5} background"));
@@ -278,50 +274,57 @@ impl Surface for MarketPaletteSurface {
         let (Some(palette), Some(data)) = (self.open.as_mut(), env.markets) else {
             return SurfaceResponse::default();
         };
-        let listing = list::list_markets(&data.world(), palette.query());
-        let field = palette.focus() == PaletteFocus::Field;
-        let removable = field && palette.remove_selected(&listing).is_some();
-        let (escape, keys) = read_keys(ctx, removable);
-        if escape {
-            self.open = None;
-            return SurfaceResponse::default();
-        }
-        let mut market = None;
-        for key in keys {
-            market = market.or(palette.press(key, &listing, &data.workspaces, default_size));
-        }
+        let query_id = id.with("query");
+        let cursor = egui::TextEdit::load_state(ctx, query_id).and_then(|s| s.cursor.char_range());
+        let cursor = cursor.map(|range| (range.primary.index, range.secondary.index));
+        let at_end = list::delete_removes_row(palette.query(), cursor);
+        let (escape, keys) = read_keys(ctx, palette.focus() == PaletteFocus::Field && at_end);
         let screen = ctx.available_rect();
-        let width = WIDTH_PX.min(screen.width() - 48.0);
-        let scrim = egui::LayerId::new(egui::Order::Foreground, id.with("scrim"));
-        ctx.layer_painter(scrim).rect_filled(screen, 0.0, SCRIM);
+        // Modal: a click on the scrim closes the palette as Escape does.
+        let scrim = egui::Area::new(id.with("scrim")).order(egui::Order::Foreground);
+        let scrim = scrim.fixed_pos(screen.min).show(ctx, |ui| {
+            let sense = egui::Sense::click_and_drag();
+            let (rect, response) = ui.allocate_exact_size(screen.size(), sense);
+            ui.painter().rect_filled(rect, 0.0, SCRIM);
+            response
+        });
+        let (width, mut market) = (WIDTH_PX.min(screen.width() - 48.0), None);
         let area = egui::Area::new(id).order(egui::Order::Foreground);
         let at = egui::pos2(screen.center().x - width / 2.0, screen.top() + TOP_PX);
-        area.fixed_pos(at).show(ctx, |ui| {
+        let shown = area.fixed_pos(at).show(ctx, |ui| {
             let frame = egui::Frame::popup(ui.style()).fill(theme::CHROME);
             frame.rounding(10.0_f32).show(ui, |ui| {
                 ui.set_width(width);
                 let before = palette.query().to_owned();
                 let field = egui::TextEdit::singleline(palette.query_mut())
+                    .id(query_id)
                     .hint_text(list::PLACEHOLDER)
                     .font(FontId::proportional(15.0))
                     .frame(false)
                     .desired_width(f32::INFINITY);
                 let field = ui.add(field);
-                if palette.focus() == PaletteFocus::Field && !field.has_focus() {
-                    field.request_focus();
-                }
+                focus_stop(palette, &field, PaletteFocus::Field);
                 palette.settle_query(&before);
                 if let Some(reason) = palette.refusal() {
                     ui.label(RichText::new(reason).small().color(theme::SELL));
                 }
                 ui.separator();
                 let listing = list::list_markets(&data.world(), palette.query());
-                market = market.take().or_else(|| draw_list(ui, palette, &listing));
+                let pressed = keys.into_iter().fold(None, |asked, key| {
+                    asked.or(palette.press(key, &listing, &data.workspaces, default_size))
+                });
+                market = pressed.or_else(|| draw_list(ui, palette, &listing));
                 ui.separator();
                 let names: Vec<&str> = data.workspaces.iter().map(String::as_str).collect();
                 draw_footer(ui, palette, &listing, &names);
             });
         });
+        // Right above its scrim, whichever was pressed; dropdowns open above.
+        ctx.set_sublayer(scrim.response.layer_id, shown.response.layer_id);
+        if escape || scrim.inner.clicked() {
+            self.open = None;
+            return SurfaceResponse::default();
+        }
         SurfaceResponse {
             market,
             ..SurfaceResponse::default()
@@ -331,3 +334,250 @@ impl Surface for MarketPaletteSurface {
 
 #[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_MARKET_PALETTE"];
+
+#[cfg(test)]
+mod market_palette_surface_tests {
+    use super::*;
+    use quantick_workspace::market_list::{CatalogMarket, MarketSnapshot, PaletteIntent, Venue};
+    use std::time::Instant;
+
+    const SCREEN: egui::Vec2 = egui::vec2(1000.0, 700.0);
+    /// Off the palette, on the scrim.
+    const OUTSIDE: egui::Pos2 = egui::pos2(20.0, 650.0);
+
+    /// Binance with BTCUSDT and ETHUSDT from the config and PEPEUSDT added by
+    /// the trader; no tab shows any of them.
+    fn snapshot() -> MarketSnapshot {
+        let market = |symbol: &str| CatalogMarket {
+            feed_id: "binance".to_owned(),
+            symbol: symbol.to_owned(),
+            asset: symbol.to_owned(),
+            aliases: Vec::new(),
+            user_added: symbol == "PEPEUSDT",
+        };
+        MarketSnapshot {
+            venues: vec![Venue {
+                feed_id: "binance".to_owned(),
+                name: "Binance".to_owned(),
+                chip: 'B',
+                kind: VenueKind::Live,
+                bar: Some("tick:50".to_owned()),
+                bridged: false,
+            }],
+            markets: ["BTCUSDT", "ETHUSDT", "PEPEUSDT"].map(market).to_vec(),
+            starter_feed: "binance".to_owned(),
+            workspaces: vec!["Default".to_owned(), "Scalp".to_owned()],
+            ..MarketSnapshot::default()
+        }
+    }
+
+    struct Frame {
+        output: egui::FullOutput,
+        response: SurfaceResponse,
+        /// A press reached the chart drawn under the palette.
+        chart_pressed: bool,
+    }
+
+    /// One frame: a chart-sized button under everything, then the palette.
+    fn frame(
+        surface: &mut MarketPaletteSurface,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> Frame {
+        let markets = snapshot();
+        let (mut response, mut chart_pressed) = (SurfaceResponse::default(), false);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SCREEN)),
+            events,
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let chart = ui.add_sized(ui.available_size(), egui::Button::new("chart"));
+                chart_pressed = chart.clicked() || chart.is_pointer_button_down_on();
+            });
+            let mut env = SurfaceEnv::quiet(Instant::now());
+            env.markets = Some(&markets);
+            response = surface.draw(ctx, &env);
+        });
+        Frame {
+            output,
+            response,
+            chart_pressed,
+        }
+    }
+
+    fn settle(surface: &mut MarketPaletteSurface, ctx: &egui::Context) -> Frame {
+        (0..3)
+            .map(|_| frame(surface, ctx, Vec::new()))
+            .last()
+            .expect("three frames")
+    }
+
+    fn text_rect(output: &egui::FullOutput, needle: &str) -> egui::Rect {
+        (output.shapes.iter())
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == needle => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{needle} is painted"))
+    }
+
+    fn press(at: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            },
+        ]
+    }
+
+    fn click(
+        surface: &mut MarketPaletteSurface,
+        ctx: &egui::Context,
+        at: egui::Pos2,
+    ) -> [Frame; 2] {
+        [true, false].map(|pressed| frame(surface, ctx, press(at, pressed)))
+    }
+
+    fn key(key: Key) -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }]
+    }
+
+    fn selected(surface: &mut MarketPaletteSurface) -> String {
+        let markets = snapshot();
+        let palette = surface.palette_mut().expect("open");
+        let listing = list::list_markets(&markets.world(), palette.query());
+        palette
+            .selected_row(&listing)
+            .expect("a row")
+            .symbol
+            .clone()
+    }
+
+    fn focused(ctx: &egui::Context) -> Option<egui::Id> {
+        ctx.memory(|memory| memory.focused())
+    }
+
+    fn query_id() -> egui::Id {
+        egui::Id::new("market_palette").with("query")
+    }
+
+    /// Hovering selects a row only while the pointer moves; a pointer resting
+    /// on a row leaves Up and Down in charge.
+    #[test]
+    fn a_resting_pointer_leaves_the_keyboard_selection_alone() {
+        let ctx = egui::Context::default();
+        let mut surface = MarketPaletteSurface::default();
+        surface.open("");
+        let shown = settle(&mut surface, &ctx);
+        let eth = text_rect(&shown.output, "ETHUSDT").center();
+        frame(
+            &mut surface,
+            &ctx,
+            vec![egui::Event::PointerMoved(eth - egui::vec2(0.0, 4.0))],
+        );
+        frame(&mut surface, &ctx, vec![egui::Event::PointerMoved(eth)]);
+        assert_eq!(
+            selected(&mut surface),
+            "ETHUSDT",
+            "a moving pointer selects"
+        );
+        frame(&mut surface, &ctx, key(Key::ArrowDown));
+        settle(&mut surface, &ctx);
+        assert_eq!(
+            selected(&mut surface),
+            "PEPEUSDT",
+            "the resting pointer does not take it back"
+        );
+    }
+
+    /// The field has the keyboard when the palette opens; a click on the size
+    /// field keeps it there and moves the stop, and Tab moves both together.
+    #[test]
+    fn the_keyboard_and_the_focused_stop_move_together() {
+        let ctx = egui::Context::default();
+        let mut surface = MarketPaletteSurface::default();
+        surface.open("");
+        let shown = settle(&mut surface, &ctx);
+        assert_eq!(focused(&ctx), Some(query_id()));
+        click(&mut surface, &ctx, text_rect(&shown.output, "50").center());
+        settle(&mut surface, &ctx);
+        let size = focused(&ctx);
+        assert_eq!(surface_focus(&mut surface), PaletteFocus::Bars);
+        assert!(
+            size.is_some() && size != Some(query_id()),
+            "the size field kept it: {size:?}"
+        );
+        frame(&mut surface, &ctx, key(Key::Tab));
+        settle(&mut surface, &ctx);
+        assert_eq!(surface_focus(&mut surface), PaletteFocus::Workspace);
+        let workspace = focused(&ctx);
+        assert!(workspace.is_some() && workspace != size && workspace != Some(query_id()));
+        frame(&mut surface, &ctx, key(Key::Tab));
+        settle(&mut surface, &ctx);
+        assert_eq!(surface_focus(&mut surface), PaletteFocus::Field);
+        assert_eq!(focused(&ctx), Some(query_id()));
+    }
+
+    fn surface_focus(surface: &mut MarketPaletteSurface) -> PaletteFocus {
+        surface.palette_mut().expect("open").focus()
+    }
+
+    /// Delete edits the query while there is text after the cursor; at the
+    /// end it takes out the selected market the trader added.
+    #[test]
+    fn delete_edits_the_query_until_the_cursor_is_at_its_end() {
+        let ctx = egui::Context::default();
+        let mut surface = MarketPaletteSurface::default();
+        surface.open("pepe");
+        settle(&mut surface, &ctx);
+        frame(&mut surface, &ctx, key(Key::ArrowLeft));
+        let edited = frame(&mut surface, &ctx, key(Key::Delete));
+        assert_eq!(edited.response.market, None);
+        assert_eq!(surface.palette_mut().expect("open").query(), "pep");
+        frame(&mut surface, &ctx, key(Key::End));
+        let removed = frame(&mut surface, &ctx, key(Key::Delete));
+        assert_eq!(
+            removed.response.market,
+            Some(PaletteIntent::Remove {
+                feed_id: "binance".to_owned(),
+                symbol: "PEPEUSDT".to_owned(),
+            })
+        );
+    }
+
+    /// The scrim is modal: a click on it never reaches the chart under it,
+    /// and closes the palette as Escape does, asking for nothing.
+    #[test]
+    fn a_click_on_the_scrim_closes_the_palette_and_never_reaches_the_chart() {
+        let ctx = egui::Context::default();
+        let mut surface = MarketPaletteSurface::default();
+        surface.open("");
+        settle(&mut surface, &ctx);
+        let [down, up] = click(&mut surface, &ctx, OUTSIDE);
+        assert!(
+            !down.chart_pressed && !up.chart_pressed,
+            "the chart saw the click"
+        );
+        assert_eq!(up.response.market, None);
+        assert!(!surface.is_open());
+        settle(&mut surface, &ctx);
+        let after = click(&mut surface, &ctx, OUTSIDE);
+        assert!(
+            after.iter().any(|frame| frame.chart_pressed),
+            "closed, the chart is reachable"
+        );
+    }
+}

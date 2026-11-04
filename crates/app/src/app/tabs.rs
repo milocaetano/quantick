@@ -16,6 +16,7 @@ use eframe::egui;
 use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
 use crate::tabstrip::TabAction;
+use crate::timezone::TzOffset;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_workspace::market_list as list;
 
@@ -92,8 +93,6 @@ impl QuantickApp {
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
         self.read_view_keys(ctx);
         let keys = super::home_wiring::read_tab_keys(ctx);
-        (keys.close_tab)
-            .then(|| note_closing(self, TabAction::Close(self.runtime.tabs.active_index())));
         if self.arrangement_adapter().apply_tab_keys(keys) {
             self.surfaces.market_palette.open("");
         }
@@ -101,7 +100,6 @@ impl QuantickApp {
 
     /// Carry out what the tab strip asked for.
     pub(super) fn apply_tab_action(&mut self, action: TabAction) {
-        note_closing(self, action);
         if self.arrangement_adapter().apply_tab_action(action) {
             self.surfaces.market_palette.open("");
         }
@@ -132,9 +130,10 @@ pub(super) fn market_snapshot(app: &QuantickApp) -> list::MarketSnapshot {
         venues,
         markets,
         open,
-        recent: app.surfaces.market_palette.recent().clone(),
+        recent: app.surfaces.market_palette.recent.clone(),
         starter_feed: app.config.default_feed.clone(),
         workspaces: workspaces.collect(),
+        inherited_bar: Some(app.active_tab().flow_pane.state.spec().to_config_string()),
     }
 }
 
@@ -144,11 +143,11 @@ pub(super) fn focus_tab(app: &mut QuantickApp, index: usize) {
     app.chrome.title_bar.surface.show_market();
 }
 
-/// Open a tab on the market and bar, and answer its id; `behind` keeps the
-/// tab on screen.
-pub(super) fn open(app: &mut QuantickApp, market: (&str, &str), bar: Bars, behind: bool) -> u64 {
+/// Open a tab on the market and bar (none: `adopt_tab`'s), and answer its
+/// id; `behind` keeps the tab on screen.
+pub(super) fn open(app: &mut QuantickApp, market: (&str, &str), bar: Spec, behind: bool) -> u64 {
     let shown = app.runtime.tabs.active_index();
-    (app.arrangement_adapter()).open_tab(market.0.to_owned(), market.1.to_owned(), Some(bar));
+    (app.arrangement_adapter()).open_tab(market.0.to_owned(), market.1.to_owned(), bar);
     let tab = app.runtime.tabs.active_id();
     if behind {
         app.runtime.tabs.select(shown);
@@ -176,25 +175,22 @@ pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: list::PaletteI
     }
 }
 
-/// Remember the market a close takes, for Recent, before its tab goes.
-fn note_closing(app: &mut QuantickApp, action: TabAction) {
-    let TabAction::Close(index) = action else {
-        return;
-    };
-    let Some(tab) = (app.runtime.tabs.iter().nth(index)).filter(|tab| tab.replay.is_none()) else {
-        return;
-    };
-    let stamp = quantick_civil::fmt_offset_minute(crate::metrics::wall_clock_ms(), app.runtime.tz);
-    let closed = list::ClosedMarket {
+/// What the live market in tab `index` leaves for Recent when it closes now.
+pub(super) fn closed_market(tabs: &super::ArrangementHost, index: usize, tz: TzOffset) -> Closed {
+    let tab = (tabs.iter().nth(index)).filter(|tab| tab.replay.is_none())?;
+    let stamp = quantick_civil::fmt_offset_minute(crate::metrics::wall_clock_ms(), tz);
+    Some(list::ClosedMarket {
         feed_id: tab.feed_id.clone(),
         symbol: tab.symbol.clone(),
         at: stamp.get(11..).unwrap_or_default().to_owned(),
         price: last_price(tab),
-    };
-    app.surfaces.market_palette.note_closed(closed);
+        bar: tab.flow_pane.state.spec().to_config_string(),
+    })
 }
 
 type Refusable = Result<(), String>;
+type Closed = Option<list::ClosedMarket>;
+type Spec = Option<Bars>;
 
 fn last_price(tab: &crate::tab::Tab) -> Option<String> {
     let bar = tab.flow_pane.state.bars().last()?;

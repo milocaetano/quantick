@@ -1235,6 +1235,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 );
             }
         }
+        // The palette is modal: left up, its scrim would take the clicks the
+        // drawing rows after it place on the chart.
+        app.surfaces.market_palette.close();
     }
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();

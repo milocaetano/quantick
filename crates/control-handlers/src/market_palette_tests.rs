@@ -29,7 +29,7 @@ impl Host {
                 name: "Binance".to_owned(),
                 chip: 'B',
                 kind: VenueKind::Live,
-                bar: "tick:50".to_owned(),
+                bar: Some("tick:50".to_owned()),
                 bridged: false,
             }],
             markets: vec![market("BTCUSDT", false), market("PEPEUSDT", true)],
@@ -82,12 +82,12 @@ impl MarketPaletteHost for Host {
     fn open_tab(
         &mut self,
         market: (&str, &str),
-        bar: BarConfiguration,
+        bar: Option<BarConfiguration>,
         behind: bool,
     ) -> TabOpening {
         let (feed, symbol) = (market.0.to_owned(), market.1.to_owned());
-        self.opened
-            .push((feed, symbol, bar.to_config_string(), behind));
+        let bar = bar.map_or_else(|| INHERITED.to_owned(), |bar| bar.to_config_string());
+        self.opened.push((feed, symbol, bar, behind));
         Ok(9)
     }
 
@@ -104,6 +104,9 @@ impl MarketPaletteHost for Host {
         Ok(())
     }
 }
+
+/// What [`Host::open_tab`] records for an open that names no bar.
+const INHERITED: &str = "inherited";
 
 type Handler = fn(&mut Host, &mut FakeAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
 
@@ -217,6 +220,7 @@ fn the_palette_settles_an_add_by_adding_then_opening_and_a_refusal_adds_nothing(
         feed_id: "binance".to_owned(),
         symbol: symbol.to_owned(),
         bar: "tick:50".to_owned(),
+        inherit_bar: false,
         workspace: "Default".to_owned(),
         background: false,
     };
@@ -236,4 +240,79 @@ fn the_palette_settles_an_add_by_adding_then_opening_and_a_refusal_adds_nothing(
         Ok(None),
         "a removal keeps the palette open"
     );
+}
+
+/// An add the open would refuse adds nothing: the bar and the workspace are
+/// checked before the symbol reaches the catalog.
+#[test]
+fn an_add_with_a_bad_bar_or_workspace_adds_nothing() {
+    let mut host = Host::new();
+    let choice = OpenChoice {
+        feed_id: "binance".to_owned(),
+        symbol: "SOLUSDT".to_owned(),
+        bar: "tick".to_owned(),
+        inherit_bar: false,
+        workspace: "Default".to_owned(),
+        background: false,
+    };
+    let refused = settle(&mut host, PaletteIntent::Add(choice.clone()));
+    assert!(refused.unwrap_err().starts_with("Bars tick"));
+    let elsewhere = OpenChoice {
+        bar: "tick:50".to_owned(),
+        workspace: "Nope".to_owned(),
+        ..choice
+    };
+    assert_eq!(
+        settle(&mut host, PaletteIntent::Add(elsewhere)),
+        Err("No workspace is named Nope".to_owned())
+    );
+    assert!(host.catalog.is_empty() && host.opened.is_empty());
+}
+
+/// A replay row's Enter focuses its tab by id and opens nothing; a tab gone
+/// since is refused.
+#[test]
+fn a_focus_brings_the_tab_forward_and_opens_nothing() {
+    let mut host = Host::new();
+    let focus = |tab_id| PaletteIntent::Focus {
+        tab_id,
+        symbol: "BTCUSDT".to_owned(),
+    };
+    assert_eq!(
+        settle(&mut host, focus(5)),
+        Ok(Some("Focused BTCUSDT \u{b7} tab 1".to_owned()))
+    );
+    assert_eq!(host.focused, [0]);
+    assert!(settle(&mut host, focus(77)).is_err());
+    assert!(host.opened.is_empty());
+}
+
+/// A market with no bar of its own opens naming none, so the window's rule
+/// for a new tab decides, and the answer reports the bar that rule gives.
+#[test]
+fn a_market_without_a_bar_opens_on_the_inherited_one() {
+    let mut host = Host::new();
+    host.snapshot.venues[0].bar = None;
+    host.snapshot.inherited_bar = Some("volume:7".to_owned());
+    let answer = call(
+        open_call,
+        &mut host,
+        serde_json::json!({"feed": "binance", "symbol": "PEPEUSDT"}),
+    )
+    .unwrap();
+    assert_eq!(answer["bar"], "volume:7");
+    assert_eq!(host.opened[0].2, INHERITED);
+}
+
+/// Picking a kind in the footer opens it on its registry default.
+#[test]
+fn a_picked_bar_kind_opens_on_its_registry_default() {
+    for kind in ["tick", "volume", "dollar", "imbalance", "time"] {
+        let size = default_bar_size(kind);
+        assert!(
+            BUILTIN_BARS.parse(&format!("{kind}:{size}")).is_ok(),
+            "{kind}:{size}"
+        );
+    }
+    assert_eq!(default_bar_size("no-such-kind"), "");
 }

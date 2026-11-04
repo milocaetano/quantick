@@ -15478,7 +15478,7 @@
             "type": "boolean"
           },
           "bar": {
-            "description": "The flow pane's bar as `kind:size` (`tick:50`, `time:1m`). Left out,\nthe market's own: an open tab's, else the feed's `default_bars`.",
+            "description": "The flow pane's bar as `kind:size` (`tick:50`, `time:1m`). Left out,\nthe market's own: an open tab's, else the one it last closed on, else\nthe feed's `default_bars`, else the active tab's.",
             "type": [
               "string",
               "null"

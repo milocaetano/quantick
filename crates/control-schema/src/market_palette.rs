@@ -29,7 +29,8 @@ pub struct MarketOpenInput {
     pub feed: String,
     pub symbol: String,
     /// The flow pane's bar as `kind:size` (`tick:50`, `time:1m`). Left out,
-    /// the market's own: an open tab's, else the feed's `default_bars`.
+    /// the market's own: an open tab's, else the one it last closed on, else
+    /// the feed's `default_bars`, else the active tab's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bar: Option<String>,
     /// A name from `workspace.list`. Left out, `Default`.

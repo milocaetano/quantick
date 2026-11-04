@@ -2232,7 +2232,7 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
 
     // The real palette: open it, type the contract, press Enter on the
     // first venue's add row.
-    type_into_palette(&mut app, &ctx, "  winq26 ");
+    type_into_palette(&mut app, &ctx, "  WINQ26 ");
     press_in_palette(&mut app, &ctx, egui::Key::Enter);
 
     assert!(
@@ -2317,6 +2317,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         feed_id: "b3".to_owned(),
         symbol: "US500".to_owned(),
         bar: "tick:50".to_owned(),
+        inherit_bar: false,
         workspace: "Default".to_owned(),
         background: false,
     };
@@ -2352,6 +2353,58 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     // The same symbol on the feed that *does* own it is still fine.
     assert!(app.symbol_catalog().add("tickmill", "WINQ26").is_ok());
     let _ = std::fs::remove_file(&path);
+}
+
+/// Recent hears of a close only once the tab is gone: the last tab, which
+/// stays, leaves nothing; a closed tab leaves its market and the bar it
+/// showed, which the palette then offers again.
+#[test]
+fn a_market_enters_recent_only_once_its_tab_has_closed() {
+    let (mut app, _cmd_rx) = app_with_history(50);
+    app.apply_tab_action(TabAction::Close(0));
+    assert_eq!(app.runtime.tabs.len(), 1, "the last tab stays");
+    assert!(app.surfaces.market_palette.recent.entries().is_empty());
+    let spec = quantick_engine::bar_registry::BUILTIN_BARS.parse("tick:77");
+    let market = ("binance".to_owned(), "ETHUSDT".to_owned());
+    (app.arrangement_adapter()).open_tab(market.0, market.1, Some(spec.unwrap()));
+    app.apply_tab_action(TabAction::Close(1));
+    let closed: Vec<(String, String)> = (app.surfaces.market_palette.recent.entries().iter())
+        .map(|closed| (closed.symbol.clone(), closed.bar.clone()))
+        .collect();
+    assert_eq!(closed, [("ETHUSDT".to_owned(), "tick:77".to_owned())]);
+    let snapshot = super::super::tabs::market_snapshot(&app);
+    let world = snapshot.world();
+    assert_eq!(
+        quantick_workspace::market_list::market_bar(&world, "binance", "ETHUSDT").as_deref(),
+        Some("tick:77"),
+        "the palette offers the bar it was last shown on"
+    );
+}
+
+/// A market with no bar of its own opens on the active tab's, the rule
+/// `adopt_tab` keeps for a feed without `default_bars`, and the footer showed
+/// that bar before Enter.
+#[test]
+fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    let active = quantick_engine::bar_registry::BUILTIN_BARS.parse("volume:13");
+    app.active_tab_mut().flow_pane.set_spec(active.unwrap());
+    type_into_palette(&mut app, &ctx, "ETHUSDT");
+    let snapshot = super::super::tabs::market_snapshot(&app);
+    let listing = quantick_workspace::market_list::list_markets(&snapshot.world(), "ETHUSDT");
+    let palette = (app.surfaces.market_palette.palette_mut()).expect("open");
+    assert_eq!(
+        palette.bar(&listing),
+        "volume:13",
+        "the footer shows what opens"
+    );
+    press_in_palette(&mut app, &ctx, egui::Key::Enter);
+    assert_eq!(app.active_tab().symbol, "ETHUSDT");
+    assert_eq!(
+        app.active_tab().flow_pane.state.spec().to_config_string(),
+        "volume:13"
+    );
 }
 
 /// Open the palette the way `+` does and put `query` in its field.

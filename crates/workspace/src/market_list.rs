@@ -43,8 +43,9 @@ pub struct Venue {
     /// The letter on each row: B, H, 5.
     pub chip: char,
     pub kind: VenueKind,
-    /// The bar a new tab on this venue opens on, as `kind:size`.
-    pub bar: String,
+    /// The bar the feed declares its tabs open on (`default_bars`), as
+    /// `kind:size`; `None` when it declares none.
+    pub bar: Option<String>,
     /// Whether a market here waits on a terminal bridge before it streams.
     pub bridged: bool,
 }
@@ -90,6 +91,8 @@ pub struct ClosedMarket {
     pub at: String,
     /// The last price the tab showed.
     pub price: Option<String>,
+    /// The bar the tab showed when it closed, as `kind:size`.
+    pub bar: String,
 }
 
 /// The markets closed lately, newest first.
@@ -113,6 +116,12 @@ impl RecentMarkets {
     }
 }
 
+impl Extend<ClosedMarket> for RecentMarkets {
+    fn extend<I: IntoIterator<Item = ClosedMarket>>(&mut self, closes: I) {
+        closes.into_iter().for_each(|market| self.closed(market));
+    }
+}
+
 /// Everything the list is built from.
 #[derive(Debug, Clone, Copy)]
 pub struct MarketWorld<'a> {
@@ -122,6 +131,9 @@ pub struct MarketWorld<'a> {
     pub recent: &'a RecentMarkets,
     /// The feed whose markets are shown under Start here.
     pub starter_feed: &'a str,
+    /// The bar a new tab takes when its market has none of its own: the
+    /// active tab's.
+    pub inherited_bar: Option<&'a str>,
 }
 
 /// The same, owned: what the window hands the palette while it is open.
@@ -134,6 +146,8 @@ pub struct MarketSnapshot {
     pub starter_feed: String,
     /// The Workspace selector's names, Default first.
     pub workspaces: Vec<String>,
+    /// See [`MarketWorld::inherited_bar`].
+    pub inherited_bar: Option<String>,
 }
 
 impl MarketSnapshot {
@@ -145,12 +159,13 @@ impl MarketSnapshot {
             open: &self.open,
             recent: &self.recent,
             starter_feed: &self.starter_feed,
+            inherited_bar: self.inherited_bar.as_deref(),
         }
     }
 
-    /// What `market.open` and Enter open: the market's own bar and Default
-    /// when left out. Refuses a market the config does not offer and a
-    /// workspace with no such name.
+    /// What `market.open` and Enter open: the market's own bar (see
+    /// [`market_bar`]) and Default when left out. Refuses a market the config
+    /// does not offer and a workspace with no such name.
     pub fn choice(
         &self,
         market: (&str, &str),
@@ -159,33 +174,41 @@ impl MarketSnapshot {
         background: bool,
     ) -> Result<OpenChoice, String> {
         let (feed_id, symbol) = market;
-        let own = market_bar(&self.world(), feed_id, symbol)
+        let world = self.world();
+        let row = find_market(&world, feed_id, symbol)
+            .and_then(|market| catalog_row(&world, market))
             .ok_or_else(|| format!("{symbol} is not in the {feed_id} list"))?;
         let workspace = workspace.unwrap_or_else(|| DEFAULT_WORKSPACE.to_owned());
-        if !self.workspaces.contains(&workspace) {
-            return Err(format!("No workspace is named {workspace}"));
-        }
+        self.check_workspace(&workspace)?;
+        let inherit_bar = bar.is_none() && row.bar.is_none();
+        let bar = bar.or(row.bar).or_else(|| self.inherited_bar.clone());
         Ok(OpenChoice {
             feed_id: feed_id.to_owned(),
             symbol: symbol.to_owned(),
-            bar: bar.unwrap_or(own),
+            bar: bar.unwrap_or_default(),
+            inherit_bar,
             workspace,
             background,
         })
     }
+
+    /// Refuses a workspace with no such name.
+    pub fn check_workspace(&self, name: &str) -> Result<(), String> {
+        if self.workspaces.iter().any(|known| known == name) {
+            Ok(())
+        } else {
+            Err(format!("No workspace is named {name}"))
+        }
+    }
 }
 
-/// The bar a market opens on when nobody names one: the first open tab's,
-/// else its venue's. `None` for a market the config does not offer.
+/// The bar a market remembers: its first open tab's, else the one its tab
+/// last closed on, else its venue's `default_bars`. `None` when it has none
+/// (a new tab then takes the active tab's) or the config does not offer it.
 #[must_use]
 pub fn market_bar(world: &MarketWorld<'_>, feed_id: &str, symbol: &str) -> Option<String> {
-    find_market(world, feed_id, symbol)?;
-    let venue = world.venues.iter().find(|venue| venue.feed_id == feed_id)?;
-    let tab = world
-        .open
-        .iter()
-        .find(|tab| !tab.replay && tab.feed_id == feed_id && tab.symbol == symbol);
-    Some(tab.map_or_else(|| venue.bar.clone(), |tab| tab.bar.clone()))
+    let market = find_market(world, feed_id, symbol)?;
+    catalog_row(world, market)?.bar
 }
 
 /// What a row says about its market.
@@ -249,9 +272,9 @@ pub struct MarketRow {
     pub symbol: String,
     pub asset: String,
     pub user_added: bool,
-    /// The bar a tab opened from here starts on: the open tab's, else the
-    /// venue's.
-    pub bar: String,
+    /// The bar the market remembers, as [`market_bar`] answers; `None` when
+    /// a tab opened from here takes the active tab's.
+    pub bar: Option<String>,
     pub status: MarketStatus,
     pub price: Option<String>,
     /// The price is the last one a closed tab showed.
@@ -285,6 +308,8 @@ pub struct MarketGroup {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MarketListing {
     pub groups: Vec<MarketGroup>,
+    /// See [`MarketWorld::inherited_bar`].
+    pub inherited_bar: Option<String>,
 }
 
 impl MarketListing {
@@ -306,11 +331,15 @@ pub fn no_match_heading(query: &str) -> String {
 /// Build the list for `query`.
 #[must_use]
 pub fn list_markets(world: &MarketWorld<'_>, query: &str) -> MarketListing {
-    let query = query.trim();
+    MarketListing {
+        groups: list_groups(world, query.trim()),
+        inherited_bar: world.inherited_bar.map(str::to_owned),
+    }
+}
+
+fn list_groups(world: &MarketWorld<'_>, query: &str) -> Vec<MarketGroup> {
     if query.starts_with(COMMAND_PREFIX) {
-        return MarketListing {
-            groups: vec![group(COMMANDS_GROUP, Vec::new())],
-        };
+        return vec![group(COMMANDS_GROUP, Vec::new())];
     }
     if query.is_empty() {
         return browse(world);
@@ -334,11 +363,9 @@ pub fn list_markets(world: &MarketWorld<'_>, query: &str) -> MarketListing {
             .venues
             .iter()
             .filter(|venue| venue.kind == VenueKind::Live)
-            .map(|venue| add_row(venue, &query.to_uppercase()))
+            .map(|venue| add_row(venue, query))
             .collect();
-        return MarketListing {
-            groups: vec![group(&no_match_heading(query), adds)],
-        };
+        return vec![group(&no_match_heading(query), adds)];
     }
     let mut assets: Vec<String> = Vec::new();
     for row in &found {
@@ -347,9 +374,7 @@ pub fn list_markets(world: &MarketWorld<'_>, query: &str) -> MarketListing {
         }
     }
     found.sort_by_key(|row| assets.iter().position(|asset| asset == &row.asset));
-    MarketListing {
-        groups: vec![group(MARKETS_GROUP, found)],
-    }
+    vec![group(MARKETS_GROUP, found)]
 }
 
 /// The tab Enter focuses for this market at this bar and workspace, if one
@@ -462,7 +487,7 @@ fn alias_hit(world: &MarketWorld<'_>, asset: &str, needle: &str) -> bool {
 
 /// The empty query: Recent (or Start here), then one group per venue of
 /// what is left.
-fn browse(world: &MarketWorld<'_>) -> MarketListing {
+fn browse(world: &MarketWorld<'_>) -> Vec<MarketGroup> {
     let mut groups = Vec::new();
     let mut recent: Vec<MarketRow> = Vec::new();
     let push = |rows: &mut Vec<MarketRow>, row: MarketRow| {
@@ -517,7 +542,7 @@ fn browse(world: &MarketWorld<'_>) -> MarketListing {
             groups.push(group(&venue.name, rows));
         }
     }
-    MarketListing { groups }
+    groups
 }
 
 fn same_row(one: &MarketRow, other: &MarketRow) -> bool {
@@ -559,7 +584,9 @@ fn catalog_row(world: &MarketWorld<'_>, market: &CatalogMarket) -> Option<Market
         symbol: market.symbol.clone(),
         asset: market.asset.clone(),
         user_added: market.user_added,
-        bar: venue.bar.clone(),
+        bar: (tabs.first().map(|tab| tab.bar.clone()))
+            .or_else(|| closed.map(|closed| closed.bar.clone()))
+            .or_else(|| venue.bar.clone()),
         status: MarketStatus::Live,
         price: None,
         price_dim: false,
@@ -570,7 +597,6 @@ fn catalog_row(world: &MarketWorld<'_>, market: &CatalogMarket) -> Option<Market
     if venue.kind == VenueKind::ComingSoon {
         row.status = MarketStatus::ComingSoon;
     } else if let Some(tab) = tabs.first() {
-        row.bar.clone_from(&tab.bar);
         if venue.bridged && !tab.streaming {
             row.status = MarketStatus::WaitingForBridge;
             row.hover = Some(format!(
@@ -604,7 +630,7 @@ fn replay_row(tab: &OpenMarket) -> MarketRow {
         symbol: tab.symbol.clone(),
         asset: tab.asset.clone(),
         user_added: false,
-        bar: tab.bar.clone(),
+        bar: Some(tab.bar.clone()),
         status: MarketStatus::Replay,
         price: tab.price.clone(),
         price_dim: false,
@@ -614,6 +640,7 @@ fn replay_row(tab: &OpenMarket) -> MarketRow {
     }
 }
 
+/// A row that adds `symbol` to `venue`, spelled exactly as typed.
 fn add_row(venue: &Venue, symbol: &str) -> MarketRow {
     MarketRow {
         feed_id: venue.feed_id.clone(),
@@ -647,17 +674,28 @@ pub enum PaletteFocus {
 pub struct OpenChoice {
     pub feed_id: String,
     pub symbol: String,
+    /// The bar the tab opens on, as `kind:size`.
     pub bar: String,
+    /// The market has no bar of its own and nobody named one: `bar` is the
+    /// active tab's, shown, and the open names none so the new tab takes it
+    /// the way every new tab does.
+    pub inherit_bar: bool,
     pub workspace: String,
     pub background: bool,
 }
 
+/// The toast after a focus: `Focused WINZ26 · tab 1`.
+#[must_use]
+pub fn focus_toast(symbol: &str, position: usize) -> String {
+    format!("Focused {symbol} \u{b7} tab {position}")
+}
+
 /// The toast after an open: `Opened BTCUSDT · tick 50 · Swing`, or
-/// `Focused WINZ26 · tab 1` when `focused` names the tab.
+/// [`focus_toast`] when `focused` names the tab.
 #[must_use]
 pub fn open_toast(choice: &OpenChoice, focused: Option<usize>) -> String {
     if let Some(position) = focused {
-        return format!("Focused {} \u{b7} tab {position}", choice.symbol);
+        return focus_toast(&choice.symbol, position);
     }
     let lead = if choice.background {
         "Opened in the background \u{b7}"
@@ -677,6 +715,12 @@ pub fn open_toast(choice: &OpenChoice, focused: Option<usize>) -> String {
 pub enum PaletteIntent {
     /// Open, or focus the tab that already shows exactly this.
     Open(OpenChoice),
+    /// Bring this tab forward; a replay row's Enter, so it never opens a
+    /// live tab.
+    Focus {
+        tab_id: u64,
+        symbol: String,
+    },
     /// Add the symbol to the venue's list, then open it. May be refused.
     Add(OpenChoice),
     Remove {
@@ -693,6 +737,9 @@ pub struct MarketPalette {
     /// Index among the selectable rows.
     selected: usize,
     focus: PaletteFocus,
+    /// The stop whose widget should take the keyboard, once: set when the
+    /// palette opens and on Tab, so a click elsewhere is not pulled back.
+    focus_request: Option<PaletteFocus>,
     /// The trader's bar, as `kind:size`; `None` follows the selected row.
     bar: Option<String>,
     workspace: String,
@@ -705,6 +752,7 @@ impl Default for MarketPalette {
             query: String::new(),
             selected: 0,
             focus: PaletteFocus::Field,
+            focus_request: Some(PaletteFocus::Field),
             bar: None,
             workspace: DEFAULT_WORKSPACE.to_owned(),
             refusal: None,
@@ -775,14 +823,14 @@ impl MarketPalette {
         }
     }
 
-    /// The bar Enter opens on: the trader's, else the selected row's.
+    /// The bar Enter opens on: the trader's, else the selected row's, else
+    /// the one a new tab inherits.
     #[must_use]
     pub fn bar(&self, listing: &MarketListing) -> String {
-        self.bar.clone().unwrap_or_else(|| {
-            self.selected_row(listing)
-                .map(|row| row.bar.clone())
-                .unwrap_or_default()
-        })
+        (self.bar.clone())
+            .or_else(|| self.selected_row(listing).and_then(|row| row.bar.clone()))
+            .or_else(|| listing.inherited_bar.clone())
+            .unwrap_or_default()
     }
 
     #[must_use]
@@ -827,6 +875,37 @@ impl MarketPalette {
             PaletteFocus::Bars => PaletteFocus::Workspace,
             PaletteFocus::Workspace => PaletteFocus::Field,
         };
+        self.focus_request = Some(self.focus);
+    }
+
+    /// Keep a widget's keyboard focus and `stop` agreeing, as each footer
+    /// stop's widget draws: a click on it (`clicked`) moves the stop there.
+    /// Answers whether the widget should ask for the keyboard now: once when
+    /// its stop changes, after a click, or while it is the stop and nothing
+    /// holds the keyboard (`idle`, as after a press on a row) -- never every
+    /// frame, so a click elsewhere is not pulled back.
+    pub fn settle_focus(&mut self, stop: PaletteFocus, clicked: bool, idle: bool) -> bool {
+        if clicked {
+            self.adopt_focus(stop);
+        }
+        self.take_focus_request(stop) || (self.focus == stop && (idle || clicked))
+    }
+
+    /// A click gave `stop` the keyboard: follow it, and ask nothing back.
+    pub fn adopt_focus(&mut self, stop: PaletteFocus) {
+        if self.focus != stop {
+            (self.focus, self.focus_request) = (stop, None);
+        }
+    }
+
+    /// Whether `stop`'s widget should request the keyboard now; answers
+    /// true once per open or Tab.
+    pub fn take_focus_request(&mut self, stop: PaletteFocus) -> bool {
+        let asked = self.focus_request == Some(stop);
+        if asked {
+            self.focus_request = None;
+        }
+        asked
     }
 
     #[must_use]
@@ -839,22 +918,31 @@ impl MarketPalette {
         self.refusal = Some(reason);
     }
 
-    /// Enter (or Ctrl+Enter with `background`) on the selected row.
+    /// Enter (or Ctrl+Enter with `background`) on the selected row: what
+    /// its [`primary_action`] says. A replay row with no tab has nothing to
+    /// open from here.
     pub fn submit(&mut self, listing: &MarketListing, background: bool) -> Option<PaletteIntent> {
         self.refusal = None;
         let row = self.selected_row(listing)?;
+        let bar = self.bar(listing);
+        let action = primary_action(row, &bar, &self.workspace)?;
         let choice = OpenChoice {
             feed_id: row.feed_id.clone(),
             symbol: row.symbol.clone(),
-            bar: self.bar(listing),
+            bar,
+            inherit_bar: self.bar.is_none() && row.bar.is_none(),
             workspace: self.workspace.clone(),
             background,
         };
-        Some(if row.status == MarketStatus::Add {
-            PaletteIntent::Add(choice)
-        } else {
-            PaletteIntent::Open(choice)
-        })
+        match action {
+            PrimaryAction::Open | PrimaryAction::OpenSecond => Some(PaletteIntent::Open(choice)),
+            PrimaryAction::AddAndOpen { .. } => Some(PaletteIntent::Add(choice)),
+            PrimaryAction::Focus { tab_id, .. } => Some(PaletteIntent::Focus {
+                tab_id,
+                symbol: choice.symbol,
+            }),
+            PrimaryAction::OpenReplay | PrimaryAction::Run => None,
+        }
     }
 
     /// Delete on the selected row: take that market out of its venue's list.
@@ -928,6 +1016,17 @@ impl MarketPalette {
         }
         None
     }
+}
+
+/// Whether Delete in the field takes the selected row out rather than
+/// editing the query: only with the cursor at the end of the text and
+/// nothing selected, where Delete has nothing to delete. `cursor` is the
+/// field's (primary, secondary) character offsets; `None`, no cursor yet,
+/// is the end, where the field puts it.
+#[must_use]
+pub fn delete_removes_row(query: &str, cursor: Option<(usize, usize)>) -> bool {
+    let end = query.chars().count();
+    cursor.is_none_or(|(primary, secondary)| primary == end && secondary == end)
 }
 
 /// A key the palette answers; Escape is the window's.

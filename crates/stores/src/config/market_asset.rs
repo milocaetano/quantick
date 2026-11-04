@@ -86,7 +86,9 @@ impl AppConfig {
                 } else {
                     VenueKind::ComingSoon
                 },
-                bar: self.opening_spec_for(&feed.id).to_config_string(),
+                // Only what the feed declares: a market with no bar of its own
+                // takes the active tab's, as `adopt_tab` decides.
+                bar: (self.startup_spec_for(&feed.id)).map(|spec| spec.to_config_string()),
                 bridged: feed.provider == ProviderKind::MetaTrader,
             })
             .collect();
@@ -161,12 +163,16 @@ mod tests {
         let (venues, markets) = config.market_catalog(&added);
         assert_eq!(venues.len(), config.feeds.len());
         let binance = &venues[0];
-        assert_eq!((binance.chip, binance.bar.as_str()), ('B', "tick:50"));
+        assert_eq!(
+            (binance.chip, binance.bar.as_deref()),
+            ('B', Some("tick:50")),
+            "BTCUSDT reads tick 50 from Binance's default_bars"
+        );
         let b3 = venues
             .iter()
             .find(|venue| venue.feed_id == "metatrader-b3")
             .unwrap();
-        assert_eq!((b3.chip, b3.bridged), ('5', true));
+        assert_eq!((b3.chip, b3.bridged, b3.bar.as_deref()), ('5', true, None));
         let win = markets
             .iter()
             .find(|market| market.symbol == "WINZ26")

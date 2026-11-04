@@ -1,12 +1,12 @@
 use super::*;
 
-fn venue(feed_id: &str, name: &str, chip: char, kind: VenueKind, bar: &str) -> Venue {
+fn venue(feed_id: &str, name: &str, chip: char, kind: VenueKind, bar: Option<&str>) -> Venue {
     Venue {
         feed_id: feed_id.to_owned(),
         name: name.to_owned(),
         chip,
         kind,
-        bar: bar.to_owned(),
+        bar: bar.map(str::to_owned),
         bridged: feed_id == "b3",
     }
 }
@@ -23,16 +23,17 @@ fn market(feed_id: &str, symbol: &str, asset: &str) -> CatalogMarket {
 
 fn venues() -> Vec<Venue> {
     vec![
-        venue("binance", "Binance", 'B', VenueKind::Live, "tick:50"),
+        venue("binance", "Binance", 'B', VenueKind::Live, Some("tick:50")),
         venue(
             "hyperliquid",
             "Hyperliquid",
             'H',
             VenueKind::Live,
-            "tick:50",
+            Some("tick:50"),
         ),
-        venue("b3", "MetaTrader 5 · B3", '5', VenueKind::Live, "tick:2000"),
-        venue("bybit", "Bybit", 'B', VenueKind::ComingSoon, "tick:50"),
+        // B3 declares no `default_bars`, as the shipped config does.
+        venue("b3", "MetaTrader 5 · B3", '5', VenueKind::Live, None),
+        venue("bybit", "Bybit", 'B', VenueKind::ComingSoon, None),
     ]
 }
 
@@ -96,6 +97,7 @@ impl Fixture {
             open: &self.open,
             recent: &self.recent,
             starter_feed: "binance",
+            inherited_bar: None,
         }
     }
 
@@ -156,12 +158,14 @@ fn recent_comes_first_open_tabs_then_recently_closed_and_start_here_goes() {
         symbol: "ETHUSDT".to_owned(),
         at: "10:02".to_owned(),
         price: Some("3,412.8".to_owned()),
+        bar: "tick:50".to_owned(),
     });
     fixture.recent.closed(ClosedMarket {
         feed_id: "b3".to_owned(),
         symbol: "WDOZ26".to_owned(),
         at: "18:29".to_owned(),
         price: Some("5,412.0".to_owned()),
+        bar: "tick:2000".to_owned(),
     });
     let listing = fixture.list("");
     assert_eq!(
@@ -253,10 +257,10 @@ fn a_replay_tab_is_a_replay_row_under_its_own_asset() {
 
 #[test]
 fn no_match_heads_the_query_and_offers_one_add_row_per_venue_that_could_list_it() {
-    let listing = Fixture::new().list("  solusdt ");
+    let listing = Fixture::new().list("  SOLUSDT ");
     assert_eq!(
         headings(&listing),
-        ["No market matches \u{201c}solusdt\u{201d}"]
+        ["No market matches \u{201c}SOLUSDT\u{201d}"]
     );
     let rows = &listing.groups[0].rows;
     assert_eq!(
@@ -270,9 +274,29 @@ fn no_match_heads_the_query_and_offers_one_add_row_per_venue_that_could_list_it(
     );
     assert!(rows.iter().all(|row| row.status == MarketStatus::Add));
     assert_eq!(
-        rows[2].bar, "tick:2000",
-        "an add row opens on its venue's bar"
+        (rows[0].bar.as_deref(), rows[2].bar.as_deref()),
+        (Some("tick:50"), None),
+        "an add row opens on its venue's bar, or none"
     );
+}
+
+/// The symbol is added as typed: the venue decides what it means, so the
+/// palette never rewrites it.
+#[test]
+fn an_add_row_keeps_the_symbol_exactly_as_typed() {
+    let listing = Fixture::new().list(" SolUsdt ");
+    let row = &listing.groups[0].rows[0];
+    assert_eq!(
+        (row.symbol.as_str(), row.asset.as_str()),
+        ("SolUsdt", "SolUsdt")
+    );
+    let mut palette = MarketPalette::default();
+    palette.set_query(" SolUsdt ");
+    assert_eq!(palette.primary_label(&listing), "Add SolUsdt and open");
+    let Some(PaletteIntent::Add(choice)) = palette.submit(&listing, false) else {
+        panic!("an add row adds");
+    };
+    assert_eq!(choice.symbol, "SolUsdt");
 }
 
 #[test]
@@ -326,6 +350,7 @@ fn a_row_reads_its_status_price_and_rate_from_what_the_window_knows() {
         symbol: "WDOZ26".to_owned(),
         at: "18:29".to_owned(),
         price: Some("5,412.0".to_owned()),
+        bar: "tick:2000".to_owned(),
     });
     let listing = fixture.list("");
     let row = |feed: &str, symbol: &str| {
@@ -383,54 +408,145 @@ fn the_primary_label_says_what_enter_does() {
     let mut unopened_replay = row("b3", "WINV26");
     unopened_replay.tabs.clear();
     let add = fixture.list("solusdt").groups[0].rows[0].clone();
-    let table: [(MarketRow, &str, &str, Option<&str>); 9] = [
+    /// What Enter asks for, by kind: open, add, focus tab id, nothing.
+    #[derive(Debug, PartialEq)]
+    enum Asks {
+        Open,
+        Add,
+        Focus(u64),
+        Nothing,
+    }
+    let table: [(MarketRow, &str, &str, Option<&str>, Asks); 9] = [
         (
             row("hyperliquid", "BTC"),
             "tick:50",
             "Default",
             Some("Open"),
+            Asks::Open,
         ),
         (
             row("binance", "BTCUSDT"),
             "tick:50",
             "Default",
             Some("Focus tab 1"),
+            Asks::Focus(5),
         ),
         (
             row("binance", "BTCUSDT"),
             "tick:50",
             "Swing",
             Some("Open second tab"),
+            Asks::Open,
         ),
         (
             row("binance", "BTCUSDT"),
             "tick:200",
             "Default",
             Some("Open second tab"),
+            Asks::Open,
         ),
         (
             row("binance", "ETHUSDT"),
             "tick:50",
             "Scalp",
             Some("Focus tab 2"),
+            Asks::Focus(9),
         ),
-        (row("b3", "WINV26"), "tick:50", "Swing", Some("Focus tab 3")),
-        (unopened_replay, "tick:50", "Default", Some("Open replay")),
-        (add, "tick:50", "Default", Some("Add SOLUSDT and open")),
-        (row("bybit", "BTCUSDT"), "tick:50", "Default", None),
+        (
+            row("b3", "WINV26"),
+            "tick:50",
+            "Swing",
+            Some("Focus tab 3"),
+            Asks::Focus(11),
+        ),
+        (
+            unopened_replay,
+            "tick:50",
+            "Default",
+            Some("Open replay"),
+            Asks::Nothing,
+        ),
+        (
+            add,
+            "tick:50",
+            "Default",
+            Some("Add solusdt and open"),
+            Asks::Add,
+        ),
+        (
+            row("bybit", "BTCUSDT"),
+            "tick:50",
+            "Default",
+            None,
+            Asks::Nothing,
+        ),
     ];
-    for (row, bar, workspace, label) in table {
+    for (row, bar, workspace, label, asks) in table {
+        let case = format!("{} on {} at {bar} / {workspace}", row.symbol, row.feed_id);
         assert_eq!(
             primary_action(&row, bar, workspace)
                 .map(|action| action.label())
                 .as_deref(),
             label,
-            "{} on {} at {bar} / {workspace}",
-            row.symbol,
-            row.feed_id
+            "{case}"
         );
+        // The same row alone in a listing, with the footer at bar/workspace:
+        // what Enter asks for agrees with the label.
+        let listing = MarketListing {
+            groups: vec![MarketGroup {
+                heading: String::new(),
+                rows: vec![row.clone()],
+            }],
+            inherited_bar: None,
+        };
+        let mut palette = MarketPalette::default();
+        let (kind, size) = bar.split_once(':').expect("kind:size");
+        palette.set_bar_kind(kind, size);
+        palette.set_workspace(workspace);
+        let intent = palette.submit(&listing, false);
+        let got = match &intent {
+            Some(PaletteIntent::Open(choice)) => {
+                assert_eq!(
+                    (choice.symbol.as_str(), choice.bar.as_str()),
+                    (row.symbol.as_str(), bar)
+                );
+                Asks::Open
+            }
+            Some(PaletteIntent::Add(choice)) => {
+                assert_eq!(choice.symbol, row.symbol);
+                Asks::Add
+            }
+            Some(PaletteIntent::Focus { tab_id, .. }) => Asks::Focus(*tab_id),
+            Some(PaletteIntent::Remove { .. }) => panic!("Enter never removes: {case}"),
+            None => Asks::Nothing,
+        };
+        assert_eq!(got, asks, "{case}");
     }
     assert_eq!(PrimaryAction::Run.label(), "Run");
+}
+
+/// Enter on a replay row brings the replay tab forward; it never opens a
+/// live tab on the recording's symbol, even one the config offers.
+#[test]
+fn enter_on_a_replay_row_focuses_the_replay_tab() {
+    let mut fixture = Fixture::new();
+    let mut replay = open(4, 1, "b3", "WINZ26");
+    replay.replay = true;
+    fixture.open = vec![replay];
+    let listing = fixture.list("winz26");
+    let mut palette = MarketPalette::default();
+    palette.set_query("winz26");
+    palette.move_selection(1, &listing);
+    let row = palette.selected_row(&listing).expect("a row");
+    assert_eq!(row.kind, VenueKind::Replay);
+    assert_eq!(palette.primary_label(&listing), "Focus tab 1");
+    assert_eq!(
+        palette.submit(&listing, false),
+        Some(PaletteIntent::Focus {
+            tab_id: 4,
+            symbol: "WINZ26".to_owned()
+        })
+    );
 }
 
 #[test]
@@ -463,8 +579,13 @@ fn a_market_opens_on_its_tab_bar_else_its_venue_bar() {
         Some("tick:3000")
     );
     assert_eq!(
-        market_bar(&world, "b3", "WIN$N").as_deref(),
-        Some("tick:2000")
+        market_bar(&world, "binance", "ETHUSDT").as_deref(),
+        Some("tick:50")
+    );
+    assert_eq!(
+        market_bar(&world, "b3", "WIN$N"),
+        None,
+        "a venue without default_bars leaves the bar to the new tab"
     );
     assert_eq!(market_bar(&world, "b3", "NOPE"), None);
     let snapshot = MarketSnapshot {
@@ -483,6 +604,49 @@ fn fixture_without_tabs() -> Fixture {
     Fixture::new()
 }
 
+/// The bar a row offers is the market's own: the bar its tab showed when it
+/// closed outlives the tab, and only a market never seen falls back to its
+/// venue's `default_bars`, then to nothing.
+#[test]
+fn a_closed_market_remembers_the_bar_it_was_last_shown_on() {
+    let mut fixture = Fixture::new();
+    let mut win = open(3, 1, "b3", "WINZ26");
+    win.bar = "tick:2000".to_owned();
+    fixture.open = vec![win.clone()];
+    assert_eq!(
+        market_bar(&fixture.world(), "b3", "WINZ26").as_deref(),
+        Some("tick:2000")
+    );
+    fixture.open.clear();
+    fixture.recent.extend(Some(ClosedMarket {
+        feed_id: "b3".to_owned(),
+        symbol: "WINZ26".to_owned(),
+        at: "18:29".to_owned(),
+        price: None,
+        bar: win.bar.clone(),
+    }));
+    let listing = fixture.list("");
+    let row = |feed: &str, symbol: &str| {
+        listing
+            .rows()
+            .find(|row| row.feed_id == feed && row.symbol == symbol)
+            .expect("listed")
+            .bar
+            .clone()
+    };
+    assert_eq!(row("b3", "WINZ26").as_deref(), Some("tick:2000"));
+    assert_eq!(
+        row("binance", "BTCUSDT").as_deref(),
+        Some("tick:50"),
+        "Binance's default_bars"
+    );
+    assert_eq!(
+        row("b3", "WIN$N"),
+        None,
+        "never shown, and B3 declares none"
+    );
+}
+
 #[test]
 fn recent_markets_keep_the_newest_close_once_and_stop_at_the_limit() {
     let mut recent = RecentMarkets::default();
@@ -491,6 +655,7 @@ fn recent_markets_keep_the_newest_close_once_and_stop_at_the_limit() {
         symbol: symbol.to_owned(),
         at: at.to_owned(),
         price: None,
+        bar: "tick:50".to_owned(),
     };
     for index in 0..RECENT_CLOSED_LIMIT + 3 {
         recent.closed(closed(&format!("S{index}"), "09:00"));
@@ -540,6 +705,7 @@ mod palette_tests {
             feed_id: "binance".to_owned(),
             symbol: "BTCUSDT".to_owned(),
             bar: "tick:50".to_owned(),
+            inherit_bar: false,
             workspace: "Swing".to_owned(),
             background: false,
         };
@@ -660,6 +826,7 @@ mod palette_tests {
             feed_id: "binance".to_owned(),
             symbol: "ETHUSDT".to_owned(),
             bar: "tick:50".to_owned(),
+            inherit_bar: false,
             workspace: "Swing".to_owned(),
             background: true,
         };
@@ -672,9 +839,9 @@ mod palette_tests {
     #[test]
     fn an_add_row_asks_to_add_and_a_refusal_stays_until_the_next_submit() {
         let fixture = Fixture::new();
-        let listing = fixture.list("solusdt");
+        let listing = fixture.list("SOLUSDT");
         let mut palette = MarketPalette::default();
-        palette.set_query("solusdt");
+        palette.set_query("SOLUSDT");
         let Some(PaletteIntent::Add(choice)) = palette.submit(&listing, false) else {
             panic!("an add row adds");
         };
@@ -766,18 +933,101 @@ mod palette_tests {
             workspaces: vec!["Default".to_owned()],
             ..MarketSnapshot::default()
         };
-        let choice = snapshot.choice(("b3", "WINZ26"), None, None, true).unwrap();
+        let choice = snapshot.choice(("binance", "BTCUSDT"), None, None, true);
+        let choice = choice.unwrap();
         assert_eq!(
             (
                 choice.bar.as_str(),
+                choice.inherit_bar,
                 choice.workspace.as_str(),
                 choice.background
             ),
-            ("tick:2000", "Default", true)
+            ("tick:50", false, "Default", true)
         );
         assert!(snapshot.choice(("b3", "NOPE"), None, None, false).is_err());
         let unknown = snapshot.choice(("b3", "WINZ26"), None, Some("Swing".to_owned()), false);
         assert_eq!(unknown.unwrap_err(), "No workspace is named Swing");
+    }
+
+    /// A market with no bar of its own shows the bar a new tab takes, the
+    /// active tab's, and the open names none so the window's rule applies;
+    /// a bar the trader typed always wins.
+    #[test]
+    fn a_market_without_a_bar_shows_and_inherits_the_active_tab_bar() {
+        let fixture = Fixture::new();
+        let snapshot = MarketSnapshot {
+            venues: fixture.venues.clone(),
+            markets: fixture.markets.clone(),
+            workspaces: vec!["Default".to_owned()],
+            inherited_bar: Some("volume:7".to_owned()),
+            ..MarketSnapshot::default()
+        };
+        let choice = snapshot.choice(("b3", "WIN$N"), None, None, false).unwrap();
+        assert_eq!(
+            (choice.bar.as_str(), choice.inherit_bar),
+            ("volume:7", true)
+        );
+        let named = snapshot.choice(("b3", "WIN$N"), Some("tick:9".to_owned()), None, false);
+        assert!(!named.unwrap().inherit_bar);
+        let listing = list_markets(&snapshot.world(), "wdo");
+        let mut palette = MarketPalette::default();
+        palette.set_query("wdo");
+        assert_eq!(
+            palette.bar(&listing),
+            "volume:7",
+            "the footer shows what opens"
+        );
+        let Some(PaletteIntent::Open(choice)) = palette.submit(&listing, false) else {
+            panic!("WDOZ26 opens");
+        };
+        assert_eq!(
+            (choice.bar.as_str(), choice.inherit_bar),
+            ("volume:7", true)
+        );
+        palette.set_bar_size(&listing, "9");
+        let Some(PaletteIntent::Open(choice)) = palette.submit(&listing, false) else {
+            panic!("WDOZ26 opens");
+        };
+        assert_eq!(
+            (choice.bar.as_str(), choice.inherit_bar),
+            ("volume:9", false)
+        );
+    }
+
+    /// The palette asks for the keyboard once when it opens and once per Tab;
+    /// a click that moved it is followed, not pulled back.
+    #[test]
+    fn focus_is_requested_once_per_change_and_a_click_is_followed() {
+        let mut palette = MarketPalette::default();
+        assert!(palette.take_focus_request(PaletteFocus::Field));
+        assert!(
+            !palette.take_focus_request(PaletteFocus::Field),
+            "only once"
+        );
+        palette.adopt_focus(PaletteFocus::Bars);
+        assert_eq!(palette.focus(), PaletteFocus::Bars);
+        assert!(
+            !palette.take_focus_request(PaletteFocus::Bars),
+            "the click has it"
+        );
+        palette.cycle_focus();
+        assert!(!palette.take_focus_request(PaletteFocus::Field));
+        assert!(palette.take_focus_request(PaletteFocus::Workspace));
+    }
+
+    /// Delete edits the query unless the cursor sits at its end with nothing
+    /// selected, where there is nothing to forward-delete.
+    #[test]
+    fn delete_removes_the_row_only_with_the_cursor_at_the_end() {
+        assert!(delete_removes_row("pepe", Some((4, 4))));
+        assert!(delete_removes_row("pepe", None));
+        assert!(delete_removes_row("", Some((0, 0))));
+        assert!(!delete_removes_row("pepe", Some((2, 2))), "mid-text");
+        assert!(!delete_removes_row("pepe", Some((4, 0))), "a selection");
+        assert!(
+            delete_removes_row("p\u{e9}p\u{e9}", Some((4, 4))),
+            "characters, not bytes"
+        );
     }
 
     #[test]

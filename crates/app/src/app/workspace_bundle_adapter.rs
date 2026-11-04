@@ -320,6 +320,7 @@ impl super::arrangement_adapter::ArrangementAdapter<'_> {
             drawing_chrome: self.drawing_chrome,
             toast: self.toast,
             surface: self.surface,
+            recent: self.recent,
         }
     }
 }

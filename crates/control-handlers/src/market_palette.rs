@@ -17,8 +17,8 @@ use quantick_control_schema::market_palette::{
 };
 use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
 use quantick_stores::market_list::{
-    DEFAULT_WORKSPACE, MarketSnapshot, OpenChoice, PaletteIntent, focus_target, open_toast,
-    removal_refusal,
+    DEFAULT_WORKSPACE, MarketSnapshot, OpenChoice, PaletteIntent, focus_target, focus_toast,
+    open_toast, removal_refusal,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -36,11 +36,11 @@ pub trait MarketPaletteHost {
     /// Bring the market tab at this zero-based place forward.
     fn focus_tab(&mut self, _index: usize) {}
     /// Open a tab on the market and bar and answer its id; `behind` keeps
-    /// the tab on screen.
+    /// the tab on screen. No bar: the tab takes the one any new tab takes.
     fn open_tab(
         &mut self,
         _market: (&str, &str),
-        _bar: BarConfiguration,
+        _bar: Option<BarConfiguration>,
         _behind: bool,
     ) -> TabOpening {
         Err(UNAVAILABLE.to_owned())
@@ -73,12 +73,11 @@ pub fn open<H: MarketPaletteHost + WorkspaceBookHost + ?Sized>(
     app: &mut H,
     asked: &OpenChoice,
 ) -> Result<Opened, String> {
-    let spec =
-        (BUILTIN_BARS.parse(&asked.bar)).map_err(|error| format!("Bars {}: {error}", asked.bar))?;
+    let named = named_bar(asked)?;
     let snapshot = app.market_snapshot();
     let choice = snapshot.choice(
         (asked.feed_id.as_str(), asked.symbol.as_str()),
-        Some(spec.to_config_string()),
+        named.map(|spec| spec.to_config_string()),
         Some(asked.workspace.clone()),
         asked.background,
     )?;
@@ -92,7 +91,7 @@ pub fn open<H: MarketPaletteHost + WorkspaceBookHost + ?Sized>(
             focused,
         });
     }
-    let tab = app.open_tab((feed, symbol), spec, choice.background)?;
+    let tab = app.open_tab((feed, symbol), named_bar(&choice)?, choice.background)?;
     if choice.workspace != DEFAULT_WORKSPACE {
         set_tab_workspace(app, tab, &choice.workspace).map_err(|error| error.message)?;
     }
@@ -101,6 +100,31 @@ pub fn open<H: MarketPaletteHost + WorkspaceBookHost + ?Sized>(
         tab,
         focused: None,
     })
+}
+
+/// The bar `asked` names, parsed; `None` when it leaves the bar to the new
+/// tab ([`OpenChoice::inherit_bar`]).
+fn named_bar(asked: &OpenChoice) -> Result<Option<BarConfiguration>, String> {
+    if asked.inherit_bar {
+        return Ok(None);
+    }
+    let spec = BUILTIN_BARS.parse(&asked.bar);
+    spec.map(Some)
+        .map_err(|error| format!("Bars {}: {error}", asked.bar))
+}
+
+/// Bring tab `tab_id` forward, wherever it sits on the strip now.
+fn focus<H: MarketPaletteHost + ?Sized>(
+    app: &mut H,
+    tab_id: u64,
+    symbol: &str,
+) -> Result<String, String> {
+    let snapshot = app.market_snapshot();
+    let tab = (snapshot.open.iter())
+        .find(|tab| tab.tab_id == tab_id)
+        .ok_or_else(|| format!("The tab showing {symbol} has closed"))?;
+    app.focus_tab(tab.position - 1);
+    Ok(focus_toast(symbol, tab.position))
 }
 
 /// Take a symbol the trader added out of its feed's list, unless the market
@@ -130,16 +154,31 @@ pub fn settle<H: MarketPaletteHost + WorkspaceBookHost + ?Sized>(
 ) -> Result<Option<String>, String> {
     let choice = match intent {
         PaletteIntent::Open(choice) => choice,
+        // Everything the open could refuse, before the catalog changes: a
+        // refused add adds nothing.
         PaletteIntent::Add(choice) => {
+            named_bar(&choice)?;
+            app.market_snapshot().check_workspace(&choice.workspace)?;
             app.edit_catalog(&choice.feed_id, &choice.symbol, true)?;
             choice
         }
+        PaletteIntent::Focus { tab_id, symbol } => return focus(app, tab_id, &symbol).map(Some),
         PaletteIntent::Remove { feed_id, symbol } => {
             return remove(app, &feed_id, &symbol).map(|()| None);
         }
     };
     let opened = open(app, &choice)?;
     Ok(Some(open_toast(&opened.choice, opened.focused)))
+}
+
+/// The size a bar kind opens on when the trader picks it: its registry
+/// default, as the config writes it; empty for a kind the registry lacks.
+#[must_use]
+pub fn default_bar_size(kind: &str) -> String {
+    (BUILTIN_BARS.find(kind)).map_or_else(
+        |_| String::new(),
+        |bar| bar.parameter.format(bar.parameter.default),
+    )
 }
 
 /// Outside the replay trace: a recorded call must not open tabs or edit the

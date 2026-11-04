@@ -760,7 +760,7 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
     fn focus_tab(&mut self, index: usize) {
         super::tabs::focus_tab(self, index);
     }
-    fn open_tab(&mut self, market: (&str, &str), bar: Bars, behind: bool) -> TabOpening {
+    fn open_tab(&mut self, market: (&str, &str), bar: Option<Bars>, behind: bool) -> TabOpening {
         Ok(super::tabs::open(self, market, bar, behind))
     }
     fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
