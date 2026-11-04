@@ -306,7 +306,7 @@ fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab_id: u64, 
                 _ => unavailable("the_divider_rectangle_is_not_reportable"),
             },
             bounds: bounds.into_snapshot(),
-            capability_id: Some(super::layout::stack::RESIZE_PAIR_CAPABILITY_ID.to_owned()),
+            capability_id: Some(super::layout::RESIZE_PAIR_CAPABILITY_ID.to_owned()),
         });
     }
 }
@@ -385,6 +385,13 @@ fn push_pane_headers<P: TabsPort + ChromePort + ?Sized>(
                     pane.layer_blocked(toggle.layer(), capabilities)
                         .map(|block| block.code),
                     quantick_control_schema::layers::SET_VISIBILITY_CAPABILITY_ID,
+                ),
+                HeaderControl::TapeWindow => (
+                    quantick_chart::flow_band::WINDOW_SELECTOR_NAME,
+                    SceneRoleDto::Action,
+                    false,
+                    None,
+                    quantick_control_schema::tape_view::TAPE_VIEW_CAPABILITY_ID,
                 ),
                 HeaderControl::Sample(sample) => (
                     sample.name(),
@@ -624,12 +631,12 @@ fn push_panes(
             bounds: bounds.into_snapshot(),
             capability_id: None,
         });
-        controls.extend(pane_header_controls(
-            pane.id,
-            &side.title(),
-            tab_control_id(tab_id),
-            bounds_not_recorded(),
-        ));
+        let shown = pane.flow_header_state().map(|state| state.shown_view);
+        if side != PaneSide::Flow || quantick_chart::flow_band::row_carries_bars(shown) {
+            let (title, owner) = (side.title(), tab_control_id(tab_id));
+            let header = pane_header_controls(pane.id, &title, owner, bounds_not_recorded());
+            controls.extend(header);
+        }
     }
     focused_pane_id
 }

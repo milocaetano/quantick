@@ -56,6 +56,33 @@ pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
 /// than [`AMBER`], so it reads at a glance and never as the not-live warning.
 pub const PANE_MARK: Color32 = Color32::from_rgba_premultiplied(190, 156, 63, 217);
 
+/// `flow/surface` — the order-flow pane's band and frame: one step above the
+/// chrome, what tells that pane from a time pane at a glance.
+pub const FLOW_SURFACE: Color32 = Color32::from_rgb(0x1E, 0x24, 0x33);
+
+/// `flow/divider` — the grip bar between the flow pane's trail and tape.
+pub const FLOW_DIVIDER: Color32 = Color32::from_rgb(0x3A, 0x43, 0x57);
+
+/// `flow/ink` — the mark and a lit control on the flow surface.
+pub const FLOW_INK: Color32 = Color32::from_rgb(0xE8, 0xEC, 0xF2);
+
+/// `flow/key-*` — the band's keys. Unlit: a dark cut-out, shaded under its top
+/// edge and rimmed in black, with muted ink. Lit: a body graded top to bottom, a
+/// white lip along its top, a 1 px black under-edge, a 2 px shadow, white ink.
+pub const FLOW_KEY_DOWN: Color32 = Color32::from_rgb(0x14, 0x19, 0x24);
+pub const FLOW_KEY_DOWN_SHADE: Color32 = Color32::from_black_alpha(179);
+pub const FLOW_KEY_DOWN_RIM: Color32 = Color32::from_black_alpha(102);
+pub const FLOW_KEY_DOWN_INK: Color32 = Color32::from_rgb(0x7E, 0x87, 0x99);
+pub const FLOW_KEY_UP_TOP: Color32 = Color32::from_rgb(0x3D, 0x48, 0x5E);
+pub const FLOW_KEY_UP_BOTTOM: Color32 = Color32::from_rgb(0x2E, 0x37, 0x49);
+pub const FLOW_KEY_UP_LIP: Color32 = Color32::from_rgba_premultiplied(56, 56, 56, 56);
+pub const FLOW_KEY_UP_EDGE: Color32 = Color32::from_black_alpha(153);
+pub const FLOW_KEY_UP_SHADOW: Color32 = Color32::from_black_alpha(128);
+pub const FLOW_KEY_UP_INK: Color32 = Color32::WHITE;
+
+/// `flow/band-rule` — the 1 px under the band, closing it against the side headers.
+pub const FLOW_BAND_RULE: Color32 = Color32::from_rgb(0x2E, 0x36, 0x48);
+
 /// `pane/action` — a word on a header line that does something: quieter than the
 /// bars it follows, louder than muted text.
 pub const PANE_ACTION: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
@@ -63,11 +90,6 @@ pub const PANE_ACTION: Color32 = Color32::from_rgb(0xAA, 0xB0, 0xBF);
 /// `layer/off` — a layer switched off by hand. Not in the heatmap, not a side.
 pub const OFF: Color32 = Color32::from_rgb(0xF2, 0x9A, 0x4B);
 
-/// `capsule/*` — the backdrop of the layer capsule floating over a chart side:
-/// `rgba(11,14,20,.74)`, a 9% white hairline and a soft black shadow.
-pub const CAPSULE_FILL: Color32 = Color32::from_rgba_premultiplied(8, 10, 15, 189);
-pub const CAPSULE_BORDER: Color32 = Color32::from_rgba_premultiplied(23, 23, 23, 23);
-pub const CAPSULE_SHADOW: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 115);
 /// `control/hover` — the 6% white under a bare control the pointer is on.
 pub const BARE_HOVER: Color32 = Color32::from_rgba_premultiplied(15, 15, 15, 15);
 

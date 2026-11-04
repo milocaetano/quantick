@@ -37,7 +37,7 @@ pub use lane::{
     MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
     MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WIDTH_PX,
     MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_lag_label, lane_time_ticks,
-    lane_window_label, same_lane_window,
+    lane_window_label, lane_window_options, lane_window_pick, same_lane_window,
 };
 pub use lane_fold::{
     FoldRail, LANE_FOLD_AT_PX, LANE_FOLD_HIT_PX, LANE_FOLD_RAIL_PX, LaneDividerDrag, LaneFold,

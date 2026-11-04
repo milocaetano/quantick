@@ -96,6 +96,11 @@
       "default": null,
       "description": "Where the right edge goes; absent keeps it."
     },
+    "file": {
+      "default": false,
+      "description": "File the window as the asset's setting, as the tape header's selector\nand its window menu do: a double click on the tape then returns to it.\nTheir rule too: `auto` while the tape follows the bars and the asset\nfiles following them changes nothing, so the zoom stays; the result\nreports the window in force. Without it the window is navigation, as\nthe wheel's, and is never filed. Needs a window.",
+      "type": "boolean"
+    },
     "pane_id": {
       "$ref": "#/$defs/WireU64"
     },

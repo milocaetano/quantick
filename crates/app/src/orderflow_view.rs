@@ -13,7 +13,9 @@ pub(crate) use quantick_orderflow::FlowCellHit;
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::pane_tape::PaneTape;
 use quantick_orderflow::projection::GapPrimitive;
-use quantick_orderflow::{HeatmapConfig, LaneWindow, LiveLaneStyle, reserved_span_ms};
+use quantick_orderflow::{
+    HeatmapConfig, LaneWindow, LiveLaneStyle, lane_window_pick, reserved_span_ms,
+};
 use quantick_stores::bubble_asset_store::AssetBinding;
 use quantick_stores::bubble_asset_store::SaveSwitch;
 use quantick_stores::bubble_assets::AssetBubbles;
@@ -22,7 +24,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
-use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout, RenderContext};
+use crate::orderflow_render::{OrderflowRenderStyle, RenderContext};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
@@ -128,6 +130,8 @@ pub struct OrderflowView {
     past_heat: std::cell::RefCell<quantick_orderflow::projection::PlacedPastHeat>,
     /// The lane divider's drag in progress, from press to release.
     lane_drag: Option<quantick_orderflow::LaneDividerDrag>,
+    /// The live strip's width left of the divider, as the pane's last frame carved it.
+    pub(crate) trail_strip_px: f32,
 }
 
 impl OrderflowView {
@@ -162,6 +166,7 @@ impl OrderflowView {
             past_dots: Default::default(),
             past_heat: Default::default(),
             lane_drag: None,
+            trail_strip_px: 0.0,
         }
     }
 
@@ -270,28 +275,23 @@ impl OrderflowView {
     }
 
     /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart
-    /// most recently painted ([`PaneTape::drawn`]). Projection and hit testing share
-    /// [`ProjectedLayout`]; the lookup is O(visible cells), only for a cursor snapshot.
+    /// most recently painted ([`PaneTape::drawn`]), the candles ending at `history_right` and
+    /// the tape right of them and of the strip, as painted. Projection and hit testing share
+    /// [`Self::projected`]; the lookup is O(visible cells), only for a cursor snapshot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_flow_cell_at(
         &self,
         chart_rect: egui::Rect,
         viewport: &Viewport,
         total_bars: usize,
-        lane_width_px: f32,
+        history_right: f32,
         inverted: bool,
         position: egui::Pos2,
     ) -> Option<FlowCellHit> {
         let frame = &**self.pane_tape.drawn(self.published.frame.as_ref())?;
-        let layout = ProjectedLayout::new(
-            chart_rect,
-            viewport,
-            total_bars,
-            frame.first_bar_index,
-            frame.slot_count,
-            lane_width_px,
-        )
-        .with_inverted(inverted);
+        let lane_px = (chart_rect.right() - history_right - self.trail_strip_px).max(0.0);
+        let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_px);
+        let layout = layout.with_inverted(inverted);
         let in_lane = layout
             .lane_left_x()
             .is_some_and(|divider| position.x >= divider);
@@ -742,10 +742,27 @@ impl OrderflowView {
         self.look.note_lane_set(&self.config);
     }
 
-    /// The tape's window back to its setting ([`BubbleLook::lane_window_setting`]):
-    /// navigation undone, the asset untouched.
+    /// The tape's window as the asset files it ([`BubbleLook::lane_window_setting`]).
+    #[must_use]
+    pub fn lane_window_setting(&self) -> LaneWindow {
+        self.look.lane_window_setting()
+    }
+
+    /// The tape's window back to its setting: navigation undone, the asset untouched.
     pub fn reset_live_lane_window(&mut self) {
-        self.navigate_live_lane_window(self.look.lane_window_setting());
+        self.navigate_live_lane_window(self.lane_window_setting());
+    }
+
+    /// The window a call names: filed as the asset's under the selector's own rule
+    /// ([`lane_window_pick`]), or navigation, as the wheel's.
+    pub fn move_live_lane_window(&mut self, window: LaneWindow, file: bool) {
+        if !file {
+            return self.navigate_live_lane_window(window);
+        }
+        let shown = self.live_lane_window();
+        if let Some(window) = lane_window_pick(shown, self.lane_window_setting(), window) {
+            self.set_live_lane_window(window);
+        }
     }
 
     /// Move the tape's window as the wheel does: the view, not the asset.
@@ -788,41 +805,6 @@ impl OrderflowView {
             return None;
         }
         self.published.health.tape_age
-    }
-
-    /// Name of the preset the panel currently wears.
-    #[cfg(test)]
-    pub(crate) fn active_preset_for_test(&self) -> &str {
-        self.look.look_name()
-    }
-
-    /// Read-only view of the heatmap config, for app-level assertions.
-    #[cfg(test)]
-    pub(crate) fn config_for_test(&self) -> &HeatmapConfig {
-        &self.config
-    }
-
-    #[cfg(test)]
-    pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
-        let before = self.config.clone();
-        self.config.price_grouping = grouping;
-        self.capture_grouping_draft = grouping.to_f64().unwrap_or(self.capture_grouping_draft);
-        self.commit_config_changes(before)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn base_capture_grouping_for_test(&mut self) -> Decimal {
-        self.flush_for_test();
-        self.published.base_price_grouping
-    }
-
-    /// Wait until the worker has applied and published everything sent so
-    /// far, then adopt the result. Makes the async pipeline deterministic in
-    /// tests; production code never blocks on the worker.
-    #[cfg(test)]
-    pub(crate) fn flush_for_test(&mut self) {
-        self.worker.flush();
-        self.sync_published();
     }
 
     /// Reset market-specific history while preserving visual/retention
@@ -1253,6 +1235,36 @@ impl OrderflowView {
     pub(crate) fn apply_preset(&mut self, name: &str, spheres: bool) -> bool {
         self.look.apply_preset(name, &mut self.config, spheres)
     }
+
+    /// Name of the preset the panel currently wears.
+    pub(crate) fn active_preset_for_test(&self) -> &str {
+        self.look.look_name()
+    }
+
+    /// Read-only view of the heatmap config, for app-level assertions.
+    pub(crate) fn config_for_test(&self) -> &HeatmapConfig {
+        &self.config
+    }
+
+    pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
+        let before = self.config.clone();
+        self.config.price_grouping = grouping;
+        self.capture_grouping_draft = grouping.to_f64().unwrap_or(self.capture_grouping_draft);
+        self.commit_config_changes(before)
+    }
+
+    pub(crate) fn base_capture_grouping_for_test(&mut self) -> Decimal {
+        self.flush_for_test();
+        self.published.base_price_grouping
+    }
+
+    /// Wait until the worker has applied and published everything sent so
+    /// far, then adopt the result. Makes the async pipeline deterministic in
+    /// tests; production code never blocks on the worker.
+    pub(crate) fn flush_for_test(&mut self) {
+        self.worker.flush();
+        self.sync_published();
+    }
 }
 
 #[cfg(test)]
@@ -1267,6 +1279,7 @@ mod tests {
     use crate::bubble_presets::{BubblePreset, PresetSource, embedded};
     use crate::chart::PriceScale;
     use crate::live_strip;
+    use crate::orderflow_render::ProjectedLayout;
 
     impl OrderflowView {
         pub(crate) fn published_capture_grouping_for_test(&self) -> Decimal {
@@ -1839,7 +1852,7 @@ mod tests {
             .center();
 
         let hit = view
-            .control_flow_cell_at(chart, &viewport, 1, 0.0, false, position)
+            .control_flow_cell_at(chart, &viewport, 1, chart.right(), false, position)
             .expect("the painted cell is semantically resolved");
         assert_eq!(hit.generation, cell.generation);
         assert_eq!(hit.side, cell.side);
@@ -1905,7 +1918,7 @@ mod tests {
                 .with_inverted(inverted);
                 let position = layout.current_book_preview_rect(cell.y0, cell.y1).center();
                 let hit = view
-                    .control_flow_cell_at(chart, &viewport, 1, 300.0, inverted, position)
+                    .control_flow_cell_at(chart, &viewport, 1, 700.0, inverted, position)
                     .unwrap();
                 assert!(hit.current_book_preview, "averaging {averaging}");
                 assert!(!hit.time_averaged);
@@ -1973,7 +1986,7 @@ mod tests {
                     });
                     let painted = format!("{:?}", output.shapes).contains("Current book preview");
                     let read = view
-                        .control_flow_cell_at(chart, &viewport, 1, 300.0, false, preview.center())
+                        .control_flow_cell_at(chart, &viewport, 1, 700.0, false, preview.center())
                         .is_some_and(|hit| hit.current_book_preview);
                     (painted, read)
                 };

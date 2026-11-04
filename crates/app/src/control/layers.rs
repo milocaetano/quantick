@@ -17,7 +17,6 @@ use quantick_control::{
     error::{ControlError, codes},
     id::{ErrorCode, ModuleId, SnapshotScopeId},
     registry::{ModuleDescriptor, RegistryError},
-    schema::generated_schema,
     wire::{ActorContext, WireU64},
 };
 
@@ -88,16 +87,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 }
 
 pub(crate) fn register_action(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    let mut descriptor = layout::descriptor(
-        SET_VISIBILITY_CAPABILITY_ID,
-        "Set chart layer visibility",
-        "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
-        generated_schema::<SetVisibilityInput>(),
-    );
-    descriptor.module = ModuleId::new(MODULE_ID).expect("static module ID");
-    descriptor.output_schema = generated_schema::<VisibilityResult>();
-    descriptor.stale_input_safety = Some("Stable tab and pane IDs are resolved before mutation; a stale requested visibility affects display only, and the result names its actual scope.".to_owned());
-    registry.register(descriptor, set_visibility)
+    registry.register(set_visibility_descriptor(), set_visibility)
 }
 
 fn set_visibility<P: TabsPort + ChromePort + LayersPort + ?Sized>(

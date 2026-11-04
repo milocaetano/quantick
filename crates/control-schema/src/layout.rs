@@ -301,7 +301,8 @@ pub fn descriptor(
 
 /// A transient cockpit capability another module owns: [`descriptor`]'s
 /// effect, permissions and retry policy, with its own module, output schema
-/// and stale-input note. Nothing it changes is saved.
+/// and stale-input note. Nothing it changes is saved, unless its description
+/// names the one input that saves.
 pub(crate) fn transient_descriptor<Input: schemars::JsonSchema, Output: schemars::JsonSchema>(
     id: &str,
     module: &str,
@@ -317,7 +318,173 @@ pub(crate) fn transient_descriptor<Input: schemars::JsonSchema, Output: schemars
     descriptor
 }
 
+#[must_use]
+pub fn apply_preset_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        APPLY_PRESET_CAPABILITY_ID,
+        "Apply a layout preset",
+        "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
+        generated_schema::<ApplyPresetInput>(),
+    )
+}
+
+#[must_use]
+pub fn move_pane_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        MOVE_PANE_CAPABILITY_ID,
+        "Move a chart within the stack",
+        "Moves one context chart up or down the column beside the heatmap. The flow pane does not move: its column is the one thing every preset agrees on.",
+        generated_schema::<MovePaneInput>(),
+    )
+}
+
+#[must_use]
+pub fn resize_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        RESIZE_CAPABILITY_ID,
+        "Resize the context column",
+        "Sets the context column's share of the canvas, held inside the same floor a divider drag is held to.",
+        generated_schema::<ResizeInput>(),
+    )
+}
+
+#[must_use]
+pub fn collapse_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        COLLAPSE_CAPABILITY_ID,
+        "Collapse the context column",
+        "Puts the context charts away, leaving the rail that brings them back. The width they had is kept, so expanding returns the layout the trader chose.",
+        generated_schema::<TabTarget>(),
+    )
+}
+
+#[must_use]
+pub fn expand_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        EXPAND_CAPABILITY_ID,
+        "Expand the context column",
+        "Brings the context charts back at the width they had before they were collapsed.",
+        generated_schema::<TabTarget>(),
+    )
+}
+
+#[must_use]
+pub fn flow_collapse_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        FLOW_COLLAPSE_CAPABILITY_ID,
+        "Collapse the flow chart",
+        "Folds the right flow chart to a draggable rail and preserves its width for reopening.",
+        generated_schema::<TabTarget>(),
+    )
+}
+
+#[must_use]
+pub fn flow_expand_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        FLOW_EXPAND_CAPABILITY_ID,
+        "Expand the flow chart",
+        "Restores the right flow chart at its previous width.",
+        generated_schema::<TabTarget>(),
+    )
+}
+
+#[must_use]
+pub fn focus_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        FOCUS_CAPABILITY_ID,
+        "Focus a chart",
+        "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on.",
+        generated_schema::<FocusInput>(),
+    )
+}
+
+#[must_use]
+pub fn interval_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        INTERVAL_CAPABILITY_ID,
+        "Set a chart's timeframe",
+        "Sets one context chart's interval, the same value its own header selector writes.",
+        generated_schema::<IntervalInput>(),
+    )
+}
+
+#[must_use]
+pub fn bar_spec_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        BAR_SPEC_CAPABILITY_ID,
+        "Set a chart's bar rule",
+        "Sets one pane's complete alternative-bar rule through the same recut path the toolbar and recording popover use.",
+        generated_schema::<BarSpecInput>(),
+    )
+}
+
+#[must_use]
+pub fn tab_switch_descriptor() -> CapabilityDescriptor {
+    tab_descriptor(
+        TAB_SWITCH_CAPABILITY_ID,
+        "Switch layout tab",
+        "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and the market's drawings under it come out. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
+        generated_schema::<SwitchLayoutTabInput>(),
+    )
+}
+
+#[must_use]
+pub fn tab_create_descriptor() -> CapabilityDescriptor {
+    tab_descriptor(
+        TAB_CREATE_CAPABILITY_ID,
+        "Create layout tab",
+        "Adds an empty layout after the others and puts it on one pane — the focused pane of the active tab, the way the strip's + does. The panes on other layouts are untouched.",
+        generated_schema::<CreateLayoutTabInput>(),
+    )
+}
+
+#[must_use]
+pub fn tab_rename_descriptor() -> CapabilityDescriptor {
+    tab_descriptor(
+        TAB_RENAME_CAPABILITY_ID,
+        "Rename layout tab",
+        "Renames one layout. Names are unique within the workspace and bounded to what a tab can show.",
+        generated_schema::<RenameLayoutTabInput>(),
+    )
+}
+
 pub const RESIZE_PAIR_CAPABILITY_ID: &str = "layout.pane.resize_pair";
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ResizePairInput {
+    #[serde(flatten)]
+    pub target: TabTarget,
+    /// Stable pane IDs from workspace.summary, in upper/lower order.
+    pub upper_pane_id: WireU64,
+    pub lower_pane_id: WireU64,
+    /// Divider position in the whole context column, top=0 and bottom=1.
+    /// At most six decimal places. The applied position obeys both neighbor floors.
+    pub fraction: quantick_control::wire::CanonicalDecimal,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ResizePairResult {
+    pub tab_id: WireU64,
+    pub upper_pane_id: WireU64,
+    pub lower_pane_id: WireU64,
+    /// Applied divider position, including any floor clamp.
+    pub fraction: quantick_control::wire::CanonicalDecimal,
+    pub changed: bool,
+}
+
+/// The adjacent-charts call as the registry lists it.
+#[must_use]
+pub fn resize_pair_descriptor() -> CapabilityDescriptor {
+    let mut descriptor = descriptor(
+        RESIZE_PAIR_CAPABILITY_ID,
+        "Resize adjacent context charts",
+        "Moves the divider between the named upper and lower context panes. Uses the same neighbor floors as a pointer drag, keeps other boundaries and column width unchanged, and returns the applied position. The current stack must have been drawn.",
+        generated_schema::<ResizePairInput>(),
+    );
+    descriptor.output_schema = generated_schema::<ResizePairResult>();
+    descriptor.stale_input_safety = Some("Stable pane IDs must still name adjacent visible charts; otherwise the request is refused before any height changes.".to_owned());
+    descriptor
+}
 
 /// The scene reports the same splitter's current bounds after an uncertain call.
 pub const READBACK: Readback = Readback {

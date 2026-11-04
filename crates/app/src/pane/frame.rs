@@ -42,6 +42,8 @@ pub struct PaneFrame {
     /// offline note is placed against it: an explanation belongs on the pane
     /// with nothing in it, which is precisely the pane that has room for one.
     pub area: Option<egui::Rect>,
+    /// A flow pane's row of side headers as [`super::split_flow_pane`] carved it.
+    pub side_row: Option<egui::Rect>,
     /// The pane-local layout strip reserved below [`Self::area`].
     ///
     /// The tab owns the split because it knows which panes are visible; the
@@ -111,6 +113,7 @@ impl Default for PaneFrame {
             indicator_legend: None,
             chart_rect: None,
             area: None,
+            side_row: None,
             layout_strip: None,
             header_controls: Default::default(),
             capsules: [None; 2],
@@ -139,6 +142,7 @@ impl PaneFrame {
         self.indicator_legend = None;
         self.chart_rect = None;
         self.area = None;
+        self.side_row = None;
         self.layout_strip = None;
         self.price_gutter = None;
         self.time_strip = None;

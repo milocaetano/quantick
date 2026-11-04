@@ -55,7 +55,7 @@ pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 1_800_000;
 /// range: the point of a preset is that it is chosen without reading a number.
 /// Anything else is reachable through the custom entry, which accepts the
 /// whole [`MIN_LIVE_LANE_WINDOW_MS`]..=[`MAX_LIVE_LANE_WINDOW_MS`] band.
-pub const LANE_WINDOW_PRESETS_MS: [i64; 5] = [15_000, 30_000, 60_000, 120_000, 300_000];
+pub const LANE_WINDOW_PRESETS_MS: [i64; 5] = [10_000, 30_000, 60_000, 120_000, 300_000];
 /// Default multiplier applied to the bubble radii inside the live lane.
 pub const DEFAULT_LIVE_LANE_RADIUS_SCALE: f32 = 1.0;
 /// Bounds accepted for the live lane's radius multiplier.
@@ -329,6 +329,18 @@ pub fn lane_window_label(window: LaneWindow, reference_ms: Option<i64>) -> Strin
     }
 }
 
+/// The windows a hand picks from, in the order every picker lists them: following
+/// the bars, then the presets. One list, so the tape's header and its menu cannot
+/// disagree.
+#[must_use]
+pub fn lane_window_options() -> [LaneWindow; LANE_WINDOW_PRESETS_MS.len() + 1] {
+    let mut options = [LaneWindow::default(); LANE_WINDOW_PRESETS_MS.len() + 1];
+    for (option, ms) in options[1..].iter_mut().zip(LANE_WINDOW_PRESETS_MS) {
+        *option = LaneWindow::Fixed { ms };
+    }
+    options
+}
+
 /// Whether a menu entry names the window already in force.
 ///
 /// Two `Auto`s match whatever their zoom, so selecting the automatic entry
@@ -341,6 +353,24 @@ pub fn same_lane_window(current: LaneWindow, option: LaneWindow) -> bool {
         (LaneWindow::Fixed { ms: current }, LaneWindow::Fixed { ms: option }) => current == option,
         _ => false,
     }
+}
+
+/// What a click on `option` in a window list asks for while `shown` is on screen
+/// and `filed` is the asset's setting (the one a double click returns to): the
+/// option, filed even when it is already in force, so a window the wheel reached
+/// becomes the setting. Only `auto` while the tape already follows the bars *and*
+/// the asset already files following them asks for nothing: there is nothing to
+/// file, and picking it would reset the zoom the trader set. Every picker, the
+/// named call included, answers through this one rule.
+#[must_use]
+pub fn lane_window_pick(
+    shown: LaneWindow,
+    filed: LaneWindow,
+    option: LaneWindow,
+) -> Option<LaneWindow> {
+    let auto = |window| matches!(window, LaneWindow::Auto { .. });
+    let auto_again = auto(option) && auto(shown) && auto(filed);
+    (!auto_again).then_some(option)
 }
 
 /// How the rolling tape past the last bar is drawn.
@@ -1118,6 +1148,31 @@ mod tests {
             LaneWindow::Fixed { ms: 30_000 }
         ));
         assert!(!same_lane_window(zoomed, LaneWindow::Fixed { ms: 60_000 }));
+    }
+
+    /// `auto` while following the bars and filed so keeps its zoom; a fixed window
+    /// in force is still filed, and a different window is always asked for.
+    #[test]
+    fn only_auto_while_following_the_bars_picks_nothing() {
+        let (auto, zoomed) = (LaneWindow::default(), LaneWindow::Auto { zoom: 4.0 });
+        let minute = LaneWindow::Fixed { ms: 60_000 };
+        assert_eq!(lane_window_pick(zoomed, auto, auto), None);
+        assert_eq!(lane_window_pick(zoomed, zoomed, auto), None);
+        assert_eq!(lane_window_pick(minute, minute, minute), Some(minute));
+        assert_eq!(lane_window_pick(zoomed, auto, minute), Some(minute));
+        assert_eq!(lane_window_pick(minute, minute, auto), Some(auto));
+    }
+
+    /// The setting decides, not the view: a tape the wheel or a call navigated to
+    /// `auto` over a filed fixed window files `auto` when it is picked, and a
+    /// navigated fixed window over a filed `auto` moves back to following the bars.
+    #[test]
+    fn picking_auto_files_it_over_a_filed_fixed_window() {
+        let (auto, zoomed) = (LaneWindow::default(), LaneWindow::Auto { zoom: 2.0 });
+        let minute = LaneWindow::Fixed { ms: 60_000 };
+        assert_eq!(lane_window_pick(zoomed, minute, auto), Some(auto));
+        assert_eq!(lane_window_pick(auto, minute, auto), Some(auto));
+        assert_eq!(lane_window_pick(minute, auto, auto), Some(auto));
     }
 
     /// Every preset written before the tape had a window mode says "follow the

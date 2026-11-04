@@ -1,6 +1,6 @@
 //! What a pane's header line says about the pane, what it lets a hand do, and
-//! what each chart side's floating capsule holds: identity, bars, view, layers
-//! and bubble sizes.
+//! what each chart side's capsule, docked in its header, holds: identity, bars,
+//! view, layers and bubble sizes.
 //!
 //! Built from that pane's own state and nothing else, so the line reads the
 //! same wherever focus sits. The window only paints the result and hands back
@@ -8,7 +8,7 @@
 
 use quantick_engine::bar_registry::BarConfiguration;
 use quantick_layers::{ChartLayer, LayerBlock};
-use quantick_orderflow::{DEFAULT_BUBBLE_DISPLAY_SCALE, LaneSide, LaneView};
+use quantick_orderflow::{DEFAULT_BUBBLE_DISPLAY_SCALE, LaneSide, LaneView, LaneWindow};
 use quantick_orderflow::{MAX_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_DISPLAY_SCALE};
 use quantick_workspace::orderflow_panel::{OrderFlowPanel, PanelControl, PanelSection};
 
@@ -34,31 +34,26 @@ pub enum PaneIdentity {
 pub const GLYPH_SLOT_PX: f32 = 20.0;
 /// Width of a sample bubble's slot: the largest sample fits inside it.
 pub const SAMPLE_SLOT_PX: f32 = 24.0;
-/// The gap between neighbouring slots.
-pub const SLOT_GAP_PX: f32 = 2.0;
+/// The gap between neighbouring slots: the clear air bare icons stand in, a 26 px
+/// pitch between glyph slots on every docked capsule, flow and time alike.
+pub const SLOT_GAP_PX: f32 = 6.0;
 /// The gap between the header's groups.
 pub const GROUP_GAP_PX: f32 = 8.0;
 
-/// How far a capsule stands below the header.
-pub const CAPSULE_INSET_TOP_PX: f32 = 14.0;
-/// How far a capsule stands off its side's right edge.
-pub const CAPSULE_INSET_RIGHT_PX: f32 = 28.0;
-/// The capsule's padding plus its 1 px border, across and along.
-const CAPSULE_FRAME_X_PX: f32 = 5.0;
+/// The capsule's room across each end: the same clear air as between its icons,
+/// so the first one has a lead-in as wide as the gaps that follow it.
+pub(crate) const CAPSULE_FRAME_X_PX: f32 = SLOT_GAP_PX;
 const CAPSULE_FRAME_Y_PX: f32 = 4.0;
-/// A capsule's slots are this tall.
+/// A floating capsule's slots were this tall; the tape's seam plates keep its
+/// height.
 pub const CAPSULE_SLOT_HEIGHT_PX: f32 = 20.0;
-/// A capsule's height: one row of slots inside its frame.
+/// A floating capsule's height, which the tape's seam plates keep.
 pub const CAPSULE_HEIGHT_PX: f32 = CAPSULE_SLOT_HEIGHT_PX + 2.0 * CAPSULE_FRAME_Y_PX;
-/// The most a capsule holds: a sample and three layers.
-const CAPSULE_MAX_ITEMS: usize = 4;
+/// The most a capsule holds: a sample and four layers.
+const CAPSULE_MAX_ITEMS: usize = 5;
 
 /// The sample's diameter at the smallest scale, in points.
 const SAMPLE_MIN_DIAMETER_PX: f32 = 6.0;
-/// A capsule at rest, with its border kept: it reads as part of the chart.
-const CAPSULE_REST_OPACITY: f32 = 0.65;
-/// A capsule with the pointer somewhere over its side.
-const CAPSULE_NEAR_OPACITY: f32 = 0.85;
 
 /// How much diameter the whole scale range adds, in points.
 const SAMPLE_DIAMETER_RANGE_PX: f32 = 16.0;
@@ -146,6 +141,8 @@ pub enum HeaderControl {
     Sample(BubbleSample),
     /// The gear at the line's right end, or a control of the panel it opens.
     Settings(PanelControl),
+    /// The tape header's window selector.
+    TapeWindow,
 }
 
 impl HeaderControl {
@@ -160,6 +157,7 @@ impl HeaderControl {
             Self::Sample(BubbleSample::Candle) => "sample.candle".to_owned(),
             Self::Sample(BubbleSample::Tape) => "sample.tape".to_owned(),
             Self::Settings(control) => control.id_in_header(),
+            Self::TapeWindow => "tape.window".to_owned(),
         }
     }
 }
@@ -174,6 +172,8 @@ pub enum HeaderIntent {
     SetSample(BubbleSample, f32),
     /// The gear's left click: the panel opens or closes.
     ToggleSettings,
+    /// The selector's pick, the same write as the tape menu's.
+    SetLaneWindow(LaneWindow),
 }
 
 /// One layer glyph this frame: drawn or not, and what blocks it if anything. A
@@ -235,12 +235,12 @@ pub fn side_word(side: LaneSide) -> &'static str {
 /// How a segment of the view control is inked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentInk {
-    /// Its side is chosen: primary text on the control fill.
+    /// Its side is chosen: white ink on a key raised off the band.
     Lit,
-    /// Its side is not chosen: faint, on the frame's own fill.
+    /// Its side is not chosen: muted ink on a dark key sunk into the band.
     Unlit,
-    /// The tape's, while the market holds it folded: the one red control, an
-    /// outline with a dot and no fill.
+    /// The tape's, while the market holds it folded: the one red control, a sunk
+    /// key with a red rim, red ink and a dot.
     MarketClosed,
 }
 
@@ -370,33 +370,28 @@ pub const MARKET_FOLD_SETTING_HOVER: &str = "beside the candles, while the feed 
 /// What the tape's segment reads while the market holds it away.
 pub const MARKET_CLOSED_WORD: &str = "Market closed";
 
-/// Width of a segment's glyph.
-pub const SEGMENT_GLYPH_PX: f32 = 15.0;
-/// A segment's height inside its frame.
+/// Width of a key's glyph.
+pub const SEGMENT_GLYPH_PX: f32 = 14.0;
+/// A key's height on the band: the Trail and Tape keys and the gear alike.
 pub const SEGMENT_HEIGHT_PX: f32 = 20.0;
-/// The frame's height around its segments.
-pub const SEGMENT_FRAME_HEIGHT_PX: f32 = 26.0;
-/// The frame's padding plus its 1 px border.
-pub const SEGMENT_FRAME_PAD_PX: f32 = 3.0;
-/// The gap between the two segments.
-pub const SEGMENT_GAP_PX: f32 = 2.0;
-/// A segment's padding without its word, and with it.
-const SEGMENT_PAD_BARE_PX: f32 = 7.0;
-pub const SEGMENT_PAD_WORDS_PX: f32 = 10.0;
-/// The gap between a segment's glyph and its word.
-pub const SEGMENT_WORD_GAP_PX: f32 = 7.0;
-/// The room either side of the hairline before the strip glyph.
-pub const HAIRLINE_GAP_PX: f32 = 8.0;
+/// The gap between the Trail and Tape keys; no frame encloses the pair.
+pub const SEGMENT_GAP_PX: f32 = 1.0;
+/// A key's padding either side of its glyph, with its word or without it.
+const SEGMENT_PAD_PX: f32 = 10.0;
+/// The gap between a key's glyph and its word.
+pub const SEGMENT_WORD_GAP_PX: f32 = 5.0;
+/// The gear's key: its glyph and 5 px either side.
+pub const GEAR_KEY_PX: f32 = 2.0 * 5.0 + SEGMENT_GLYPH_PX;
 
-/// A segment's width: bare, or with a word this wide beside its glyph.
+/// A key's width: its glyph alone, or with a word this wide beside it.
 #[must_use]
 pub fn segment_px(word_px: Option<f32>) -> f32 {
     word_px.map_or(SEGMENT_BARE_PX, |word| {
-        2.0 * SEGMENT_PAD_WORDS_PX + SEGMENT_GLYPH_PX + SEGMENT_WORD_GAP_PX + word
+        SEGMENT_BARE_PX + SEGMENT_WORD_GAP_PX + word
     })
 }
 
-const SEGMENT_BARE_PX: f32 = 2.0 * SEGMENT_PAD_BARE_PX + SEGMENT_GLYPH_PX;
+const SEGMENT_BARE_PX: f32 = 2.0 * SEGMENT_PAD_PX + SEGMENT_GLYPH_PX;
 
 /// What the words beside the glyphs add to the right end, these words being
 /// this wide.
@@ -445,6 +440,13 @@ pub struct FlowHeaderState {
     pub market_held: bool,
     pub candle_sample: Option<f32>,
     pub tape_sample: Option<f32>,
+    /// How much market time the tape shows, and what following the bars works
+    /// out to while the frame knows.
+    pub window: LaneWindow,
+    pub window_reference_ms: Option<i64>,
+    /// The window the asset files, which a double click returns to and a pick
+    /// is judged against ([`quantick_orderflow::lane_window_pick`]).
+    pub window_setting: LaneWindow,
 }
 
 impl FlowHeaderState {
@@ -464,6 +466,8 @@ impl FlowHeaderState {
         lane: &quantick_orderflow::LiveLaneStyle,
         candle_sample: Option<f32>,
         tape_sample: Option<f32>,
+        window_reference_ms: Option<i64>,
+        window_setting: LaneWindow,
     ) -> Self {
         Self {
             view: lane.view(),
@@ -471,6 +475,9 @@ impl FlowHeaderState {
             market_held: lane.market_held(),
             candle_sample,
             tape_sample,
+            window: lane.window,
+            window_reference_ms,
+            window_setting,
         }
     }
 }
@@ -487,20 +494,13 @@ pub struct HeaderFit {
     pub chip_words: bool,
     /// The words beside the view control's glyphs.
     pub side_words: bool,
-    /// The word beside the indicators icon. The icon itself always stays.
-    pub indicators_words: bool,
 }
 
-/// Width of the header's right end at its barest: the two segments in their
-/// frame without their words, the hairline, the strip glyph and the gear.
-pub const FLOW_CONTROLS_PX: f32 = 2.0 * SEGMENT_BARE_PX
-    + SEGMENT_GAP_PX
-    + 2.0 * SEGMENT_FRAME_PAD_PX
-    + 2.0 * HAIRLINE_GAP_PX
-    + 1.0
-    + GLYPH_SLOT_PX
-    + GROUP_GAP_PX
-    + GLYPH_SLOT_PX;
+/// Width of the header's right end at its barest: the two keys without their
+/// words, and the gear's. The strip glyph lives in the trail's capsule, the one
+/// side it draws on.
+pub const FLOW_CONTROLS_PX: f32 =
+    2.0 * SEGMENT_BARE_PX + SEGMENT_GAP_PX + GROUP_GAP_PX + GEAR_KEY_PX;
 
 impl HeaderControl {
     /// A section's header, as the flow pane's line lists it, on screen or not.
@@ -548,16 +548,12 @@ pub fn layer_section(layer: ChartLayer) -> PanelSection {
         _ => PanelSection::L2,
     }
 }
-/// The gap the mark leaves before the bars.
-const MARK_GAP_PX: f32 = GROUP_GAP_PX;
 
-/// The widths a flow pane's header line has to fit. An absent item is zero.
+/// The widths a flow pane's band has to fit. An absent item is zero.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct HeaderWidths {
     pub strip: f32,
     pub mark: f32,
-    pub bars: f32,
-    pub indicators: f32,
     /// The right end at its barest, its own gap included; zero without a tape.
     pub controls: f32,
     /// What the words beside the view control's glyphs add to the right end.
@@ -569,29 +565,26 @@ pub struct HeaderWidths {
     pub market_held: bool,
 }
 
-/// The narrow rule of a flow pane's header, in the order things go: the slot,
-/// then the words beside the view control's glyphs, then the mark, then the
-/// chip's words, then the chip's dots. What still does not fit is the bars text,
-/// clipped short of the indicators button, and when the button itself no longer
-/// fits beside the right end it gives up its word and keeps its icon. While the
-/// market holds the tape its words outlast the status, the bars' text clipping for
-/// them: "Market closed" is all that says where the tape went.
+/// What an item takes on a line where items stand `gap` apart: its width and the
+/// gap after it, or nothing for an item that is not there.
+#[must_use]
+pub(crate) fn item_px(width: f32, gap: f32) -> f32 {
+    if width > 0.0 { width + gap } else { 0.0 }
+}
+
+/// The narrow rule of a flow pane's band, in the order things go: the slot, then
+/// the words beside the view control's glyphs, then the mark, then the chip's
+/// words, then the chip's dots. While the market holds the tape its words outlast
+/// the status: "Market closed" is all that says where the tape went.
 #[must_use]
 pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
-    let core = widths.bars + GROUP_GAP_PX + widths.indicators + widths.controls;
-    let item = |width: f32| {
-        if width > 0.0 {
-            width + GROUP_GAP_PX
-        } else {
-            0.0
-        }
-    };
-    let mark = item(widths.mark).max(widths.mark + MARK_GAP_PX) * f32::from(widths.mark > 0.0);
-    let fits = |extra: f32| core + extra <= widths.strip;
+    let item = |width: f32| item_px(width, GROUP_GAP_PX);
+    let mark = item(widths.mark);
+    let fits = |extra: f32| widths.controls + extra <= widths.strip;
     let (full_chip, dots) = (item(widths.chip_with_words), item(widths.chip_dots));
     let slot = fits(widths.side_words + mark + full_chip + item(widths.slot));
     let (side_words, kept) = if widths.market_held {
-        let keep = widths.indicators + widths.controls + widths.side_words <= widths.strip;
+        let keep = fits(widths.side_words);
         (keep, if keep { widths.side_words } else { 0.0 })
     } else {
         (fits(widths.side_words + mark + full_chip), 0.0)
@@ -607,7 +600,6 @@ pub fn flow_fit(widths: &HeaderWidths) -> HeaderFit {
         chip: chip && widths.chip_dots > 0.0,
         chip_words: chip_words && widths.chip_with_words > 0.0,
         side_words: side_words && widths.side_words > 0.0,
-        indicators_words: widths.indicators + widths.controls <= widths.strip,
     }
 }
 
@@ -621,7 +613,8 @@ pub enum CapsuleSide {
 }
 
 impl CapsuleSide {
-    /// The layers this side's capsule switches, left to right.
+    /// The layers this side's capsule switches, left to right. The trail's ends
+    /// with the strip, against the divider the strip stands beside.
     #[must_use]
     pub fn toggles(self) -> &'static [LayerToggle] {
         match self {
@@ -629,6 +622,7 @@ impl CapsuleSide {
                 LayerToggle::Bubbles,
                 LayerToggle::Heatmap,
                 LayerToggle::Footprint,
+                LayerToggle::LiveStrip,
             ],
             Self::Tape => &[LayerToggle::TapeBubbles, LayerToggle::TapeHeatmap],
             Self::Time => &[LayerToggle::Footprint],
@@ -673,45 +667,6 @@ impl CapsuleItem {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Capsule {
     items: [Option<CapsuleItem>; CAPSULE_MAX_ITEMS],
-    /// A layer of this side is blocked, so its glyph is left out.
-    blocked: bool,
-}
-
-/// How awake a capsule is. Presentation only: every glyph stays clickable and
-/// scriptable at rest, and the scene does not report this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CapsuleTier {
-    Rest,
-    /// The pointer is over its side.
-    Near,
-    /// The pointer is over it, its pane has focus, or it has something to say.
-    Awake,
-}
-
-impl CapsuleTier {
-    /// The opacity the whole capsule paints at.
-    #[must_use]
-    pub fn opacity(self) -> f32 {
-        match self {
-            Self::Rest => CAPSULE_REST_OPACITY,
-            Self::Near => CAPSULE_NEAR_OPACITY,
-            Self::Awake => 1.0,
-        }
-    }
-
-    /// Only a capsule fully awake lifts off the chart.
-    #[must_use]
-    pub fn shadowed(self) -> bool {
-        self == Self::Awake
-    }
-}
-
-/// What a capsule's tier is decided from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CapsuleAttention {
-    pub pointer_over_capsule: bool,
-    pub pointer_over_side: bool,
-    pub pane_focused: bool,
 }
 
 impl Capsule {
@@ -724,12 +679,10 @@ impl Capsule {
         scale: Option<f32>,
     ) -> Self {
         let mut items = [None; CAPSULE_MAX_ITEMS];
-        let mut blocked = false;
         let mut slots = items.iter_mut();
         for &toggle in side.toggles() {
             let glyph = glyph(toggle);
             if glyph.blocked.is_some() {
-                blocked = true;
                 continue;
             }
             if let Some(slot) = slots.next() {
@@ -748,25 +701,7 @@ impl Capsule {
                 *slot = Some(sample);
             }
         }
-        Self { items, blocked }
-    }
-
-    /// How awake this capsule is. It never rests while a glyph is off or
-    /// blocked, so the off colour keeps its meaning.
-    #[must_use]
-    pub fn tier(&self, attention: CapsuleAttention) -> CapsuleTier {
-        let off = self.items().any(|item| match item {
-            CapsuleItem::Layer(glyph) => glyph.ink() == GlyphInk::Off,
-            CapsuleItem::SampleOff(_) => true,
-            CapsuleItem::Sample(..) => false,
-        });
-        if off || self.blocked || attention.pointer_over_capsule || attention.pane_focused {
-            CapsuleTier::Awake
-        } else if attention.pointer_over_side {
-            CapsuleTier::Near
-        } else {
-            CapsuleTier::Rest
-        }
+        Self { items }
     }
 
     /// The slots, left to right.
@@ -786,42 +721,6 @@ impl Capsule {
         let slots = self.items().map(CapsuleItem::slot_px).sum::<f32>();
         let gaps = self.items().count().saturating_sub(1) as f32 * SLOT_GAP_PX;
         slots + gaps + 2.0 * CAPSULE_FRAME_X_PX
-    }
-
-    /// Where the first slot starts, from the capsule's own corner.
-    #[must_use]
-    pub fn slot_origin(min_x: f32, min_y: f32) -> (f32, f32) {
-        (min_x + CAPSULE_FRAME_X_PX, min_y + CAPSULE_FRAME_Y_PX)
-    }
-
-    /// The capsule's corner over a side spanning `left..right`, with the header's
-    /// rule at `top` and the plot ending at `bottom`; `None` when the side is too
-    /// narrow or short to hold it.
-    #[must_use]
-    pub fn place(&self, left: f32, right: f32, top: f32, bottom: f32) -> Option<(f32, f32)> {
-        let min_x = right - CAPSULE_INSET_RIGHT_PX - self.width_px();
-        let min_y = top + CAPSULE_INSET_TOP_PX;
-        (min_x >= left && min_y + CAPSULE_HEIGHT_PX <= bottom).then_some((min_x, min_y))
-    }
-}
-
-/// The sides on screen for this view over a chart spanning `left..right`, with
-/// the tape's divider if there is one, leftmost first. A hidden side has no
-/// capsule; a pane without a lane is all candles.
-#[must_use]
-pub fn flow_sides(
-    shown: LaneView,
-    left: f32,
-    right: f32,
-    divider: Option<f32>,
-) -> [Option<(CapsuleSide, f32, f32)>; 2] {
-    let candles = |end| Some((CapsuleSide::Candles, left, end));
-    let tape = |start| Some((CapsuleSide::Tape, start, right));
-    match (shown, divider) {
-        (LaneView::Beside, Some(divider)) => [candles(divider), tape(divider)],
-        (LaneView::Beside | LaneView::CandlesOnly, None) => [candles(right), None],
-        (LaneView::CandlesOnly, Some(divider)) => [candles(divider), None],
-        (LaneView::TapeOnly, divider) => [tape(divider.unwrap_or(left)), None],
     }
 }
 
@@ -1014,8 +913,6 @@ mod tests {
         HeaderWidths {
             strip,
             mark: 70.0,
-            bars: 80.0,
-            indicators: 90.0,
             controls: FLOW_CONTROLS_PX + GROUP_GAP_PX,
             side_words: 0.0,
             slot: 120.0,
@@ -1025,7 +922,7 @@ mod tests {
         }
     }
 
-    /// Only the mark goes; the right end and the indicators button never do.
+    /// Only the mark goes; the right end never does.
     #[test]
     fn a_narrow_strip_with_no_chip_drops_only_the_mark() {
         let line = |strip| HeaderWidths {
@@ -1035,7 +932,7 @@ mod tests {
             ..widths(strip)
         };
         let w = line(0.0);
-        let everything = w.mark + MARK_GAP_PX + w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let everything = w.mark + GROUP_GAP_PX + w.controls;
         let fit = flow_fit(&line(everything));
         assert!(fit.mark);
         assert!(!fit.chip && !fit.slot && !fit.chip_words);
@@ -1047,7 +944,7 @@ mod tests {
     #[test]
     fn a_narrowing_strip_gives_things_up_in_order() {
         let w = widths(0.0);
-        let core = w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let core = w.controls;
         let gap = GROUP_GAP_PX;
         let mark = w.mark + gap;
         let words = w.chip_with_words + gap;
@@ -1064,7 +961,7 @@ mod tests {
         assert_eq!(keeps(core + dots - 1.0), (false, false, false, false));
     }
 
-    /// The words go before the mark, the chip and the bars: the control keeps
+    /// The words go before the mark and the chip: the control keeps
     /// working on its glyphs alone.
     #[test]
     fn a_narrowing_strip_drops_the_side_words_before_the_mark() {
@@ -1076,7 +973,7 @@ mod tests {
             ..widths(strip)
         };
         let w = line(0.0);
-        let without = w.mark + MARK_GAP_PX + w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let without = w.mark + GROUP_GAP_PX + w.controls;
         let keeps = |strip| {
             let fit = flow_fit(&line(strip));
             (fit.side_words, fit.mark)
@@ -1089,7 +986,7 @@ mod tests {
     }
 
     /// Held by the market the order turns over: the pills and the mark go first and
-    /// the words "Market closed" last, with the bars clipping for them.
+    /// the words "Market closed" last.
     #[test]
     fn a_held_tape_keeps_its_words_after_the_status_is_gone() {
         let words = 100.0;
@@ -1099,7 +996,7 @@ mod tests {
             ..widths(strip)
         };
         let w = line(0.0);
-        let core = w.bars + GROUP_GAP_PX + w.indicators + w.controls;
+        let core = w.controls;
         let gap = GROUP_GAP_PX;
         let (mark, pills, dots) = (w.mark + gap, w.chip_with_words + gap, w.chip_dots + gap);
         let keeps = |strip: f32| {
@@ -1110,31 +1007,13 @@ mod tests {
         assert_eq!(keeps(core + words + pills), (false, true, true, true));
         assert_eq!(keeps(core + words + dots), (false, false, true, true));
         assert_eq!(keeps(core + words), (false, false, false, true));
-        assert_eq!(
-            keeps(w.indicators + w.controls + words),
-            (false, false, false, true),
-            "the bars clip for the words"
-        );
-        assert!(
-            !keeps(w.indicators + w.controls + words - 1.0).3,
-            "and only then the dot"
-        );
+        assert!(!keeps(core + words - 1.0).3, "and only then the dot");
         let unheld = HeaderWidths {
             market_held: false,
             ..line(core + words)
         };
         let fit = flow_fit(&unheld);
         assert!(fit.chip && !fit.side_words, "an ordinary word goes first");
-    }
-
-    /// The bars clip away first; only then does the button lose its word, so it
-    /// never stands under the switches.
-    #[test]
-    fn the_indicators_button_keeps_its_icon_when_its_word_cannot_fit() {
-        let w = widths(0.0);
-        let least = w.indicators + w.controls;
-        assert!(flow_fit(&widths(least)).indicators_words);
-        assert!(!flow_fit(&widths(least - 1.0)).indicators_words);
     }
 
     fn state(view: LaneView) -> FlowHeaderState {
@@ -1144,6 +1023,9 @@ mod tests {
             market_held: false,
             candle_sample: None,
             tape_sample: None,
+            window: LaneWindow::default(),
+            window_reference_ms: None,
+            window_setting: LaneWindow::default(),
         }
     }
 
@@ -1213,16 +1095,15 @@ mod tests {
         assert_eq!(BubbleSample::Candle.name(), "Bubble size on the trail");
     }
 
-    /// The bare right end is what the words add to.
+    /// The bare right end is what the words add to: the two keys 1 px apart with
+    /// no frame, then the gear's key, and no strip glyph. A key is padded 3 x 10.
     #[test]
     fn the_right_end_measures_its_parts() {
-        assert_eq!(segment_px(None), 29.0);
-        assert_eq!(segment_px(Some(30.0)), 72.0);
-        assert_eq!(side_words_px([30.0, 40.0]), 43.0 + 53.0);
-        assert_eq!(
-            FLOW_CONTROLS_PX,
-            58.0 + 2.0 + 6.0 + 17.0 + 20.0 + 8.0 + 20.0
-        );
+        assert_eq!(segment_px(None), 10.0 + 14.0 + 10.0);
+        assert_eq!(segment_px(Some(30.0)), 34.0 + 5.0 + 30.0);
+        assert_eq!(side_words_px([30.0, 40.0]), 35.0 + 45.0);
+        assert_eq!(FLOW_CONTROLS_PX, 68.0 + 1.0 + 8.0 + 24.0);
+        assert_eq!(SEGMENT_HEIGHT_PX, 3.0 + 14.0 + 3.0);
     }
 
     fn glyph(toggle: LayerToggle, on: bool, blocked: Option<LayerBlock>) -> LayerGlyph {
@@ -1246,7 +1127,8 @@ mod tests {
             .collect()
     }
 
-    /// Each side lists its own layers, with its sample right of its bubbles.
+    /// Each side lists its own layers, with its sample right of its bubbles; the
+    /// trail's ends with the strip, next to the divider.
     #[test]
     fn each_side_holds_its_own_controls() {
         let on = |toggle| glyph(toggle, true, None);
@@ -1257,7 +1139,8 @@ mod tests {
                 "layer.bubbles",
                 "sample.candle",
                 "layer.heatmap",
-                "layer.footprint"
+                "layer.footprint",
+                "layer.live_strip"
             ]
         );
         let tape = Capsule::of(CapsuleSide::Tape, on, Some(1.0));
@@ -1281,7 +1164,12 @@ mod tests {
         };
         assert_eq!(
             ids(&Capsule::of(CapsuleSide::Candles, no_book, Some(1.0))),
-            ["layer.bubbles", "sample.candle", "layer.footprint"]
+            [
+                "layer.bubbles",
+                "sample.candle",
+                "layer.footprint",
+                "layer.live_strip"
+            ]
         );
         let no_volume = |toggle| {
             let l2 = matches!(toggle, LayerToggle::Heatmap | LayerToggle::TapeHeatmap);
@@ -1321,88 +1209,15 @@ mod tests {
         );
     }
 
-    /// Rests at 65 %, 85 % with the pointer over its side, 100 % over it or with
-    /// its pane focused.
+    /// The trail's capsule holds four glyphs and the sample with clear air between
+    /// them, and a lead-in as wide at either end: 20 px glyph slots on a 26 px pitch.
     #[test]
-    fn a_capsule_rests_until_someone_comes_near() {
-        let capsule = Capsule::of(CapsuleSide::Tape, |t| glyph(t, true, None), Some(1.0));
-        let tier = |over_capsule, over_side, focused| {
-            capsule.tier(CapsuleAttention {
-                pointer_over_capsule: over_capsule,
-                pointer_over_side: over_side,
-                pane_focused: focused,
-            })
-        };
-        assert_eq!(tier(false, false, false), CapsuleTier::Rest);
-        assert_eq!(tier(false, true, false), CapsuleTier::Near);
-        assert_eq!(tier(true, true, false), CapsuleTier::Awake);
-        assert_eq!(tier(false, false, true), CapsuleTier::Awake);
-        assert_eq!(tier(false, true, true), CapsuleTier::Awake);
-        assert_eq!(CapsuleTier::Rest.opacity(), 0.65);
-        assert_eq!(CapsuleTier::Near.opacity(), 0.85);
-        assert_eq!(CapsuleTier::Awake.opacity(), 1.0);
-        assert!(CapsuleTier::Awake.shadowed() && !CapsuleTier::Rest.shadowed());
-    }
-
-    /// A glyph off, a sample off or a layer blocked keeps the capsule awake, so
-    /// the off colour is never dimmed into something else.
-    #[test]
-    fn a_capsule_never_rests_while_a_glyph_is_off_or_blocked() {
-        let calm = CapsuleAttention::default();
-        let one_off = Capsule::of(
-            CapsuleSide::Candles,
-            |t| glyph(t, t != LayerToggle::Footprint, None),
-            Some(1.0),
-        );
-        assert_eq!(one_off.tier(calm), CapsuleTier::Awake);
-        let bubbles_off = Capsule::of(
-            CapsuleSide::Tape,
-            |t| glyph(t, t != LayerToggle::TapeBubbles, None),
-            None,
-        );
-        assert_eq!(bubbles_off.tier(calm), CapsuleTier::Awake);
-        let block = quantick_layers::blocks::NO_BOOK;
-        let blocked = Capsule::of(
-            CapsuleSide::Tape,
-            |t| glyph(t, true, (t == LayerToggle::TapeHeatmap).then_some(block)),
-            Some(1.0),
-        );
-        assert_eq!(blocked.tier(calm), CapsuleTier::Awake);
-    }
-
-    /// The capsule stands 14 points below the header and 28 off the side's right
-    /// edge, with its slots inside its frame, and a side too narrow has none.
-    #[test]
-    fn a_capsule_sits_in_its_sides_corner() {
+    fn a_capsule_measures_its_slots() {
         let on = |toggle| glyph(toggle, true, None);
         let capsule = Capsule::of(CapsuleSide::Candles, on, Some(1.0));
-        let width = 3.0 * GLYPH_SLOT_PX + SAMPLE_SLOT_PX + 3.0 * SLOT_GAP_PX + 10.0;
+        let width = 4.0 * GLYPH_SLOT_PX + SAMPLE_SLOT_PX + 6.0 * SLOT_GAP_PX;
         assert_eq!(capsule.width_px(), width);
-        let place = |right, bottom| capsule.place(0.0, right, 40.0, bottom);
-        assert_eq!(place(500.0, 300.0), Some((472.0 - width, 54.0)));
-        assert_eq!(place(width + 28.0, 300.0), Some((0.0, 54.0)));
-        assert_eq!(place(width + 27.0, 300.0), None);
-        assert_eq!(place(500.0, 82.0), Some((472.0 - width, 54.0)));
-        assert_eq!(place(500.0, 81.0), None, "a plot too short holds none");
-    }
-
-    /// A hidden side has no capsule, and a side keeps its own edge.
-    #[test]
-    fn the_view_decides_the_sides() {
-        let candles = |end| Some((CapsuleSide::Candles, 0.0, end));
-        let tape = |start| Some((CapsuleSide::Tape, start, 100.0));
-        let sides = |view, divider| flow_sides(view, 0.0, 100.0, divider);
-        assert_eq!(
-            sides(LaneView::Beside, Some(70.0)),
-            [candles(70.0), tape(70.0)]
-        );
-        assert_eq!(sides(LaneView::Beside, None), [candles(100.0), None]);
-        assert_eq!(sides(LaneView::CandlesOnly, None), [candles(100.0), None]);
-        assert_eq!(
-            sides(LaneView::CandlesOnly, Some(92.0)),
-            [candles(92.0), None]
-        );
-        assert_eq!(sides(LaneView::TapeOnly, Some(0.0)), [tape(0.0), None]);
-        assert_eq!(sides(LaneView::TapeOnly, None), [tape(0.0), None]);
+        assert_eq!(GLYPH_SLOT_PX + SLOT_GAP_PX, 26.0, "the pitch");
+        assert_eq!(capsule.width_px(), 140.0);
     }
 }
