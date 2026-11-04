@@ -121,8 +121,8 @@ pub struct PlotAreas {
     /// The gutter band beside each pane, in the same order: where that pane's
     /// value labels are drawn and where its own zoom gesture lives.
     pub pane_gutters: Vec<egui::Rect>,
-    /// Present only while the strip is shown; sits between `chart` and
-    /// `price_gutter` and is not an input region.
+    /// Present only while the strip is shown: between `chart` and `price_gutter`,
+    /// or beside a tape on the trail, against the divider (`ChartPane::lay_out`).
     pub live_strip: Option<egui::Rect>,
     pub price_gutter: egui::Rect,
     pub time_strip: egui::Rect,

@@ -3,6 +3,20 @@ name = "Light"
 dark = false
 
 [colors]
+flow_surface = "#e0e7ef"
+flow_divider = "#a1aebf"
+flow_ink = "#24354d"
+flow_key_down = "#cbd4e1"
+flow_key_down_shade = { premultiplied = [0, 0, 0, 25] }
+flow_key_down_rim = { premultiplied = [20, 30, 45, 90] }
+flow_key_down_ink = "#46566e"
+flow_key_up_top = "#ffffff"
+flow_key_up_bottom = "#d6e1ef"
+flow_key_up_lip = { premultiplied = [200, 200, 200, 200] }
+flow_key_up_edge = { premultiplied = [25, 35, 50, 100] }
+flow_key_up_shadow = { premultiplied = [0, 0, 0, 35] }
+flow_key_up_ink = "#24354d"
+flow_band_rule = "#abb9ca"
 trade_selection_halo = "#24588740"
 candle_preview_background = "#E7EDF4"
 candle_preview_bid = "#157EAE"

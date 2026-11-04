@@ -197,13 +197,12 @@ impl PaneHitTest<'_> {
             })
         });
 
-        let lane_width_px = (chart.right() - history_right).max(0.0);
         let flow_cell = self.orderflow.and_then(|orderflow| {
             orderflow.control_flow_cell_at(
                 chart,
                 self.projection.viewport,
                 total,
-                lane_width_px,
+                history_right,
                 self.price_view.is_inverted(),
                 position,
             )

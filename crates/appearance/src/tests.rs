@@ -2,6 +2,35 @@ use super::*;
 use color::{RgbaExt, WHITE};
 
 #[test]
+fn flow_identity_dark_parity_and_partial_theme_fallback() {
+    let dark = ResolvedTheme::default();
+    let partial =
+        ResolvedTheme::parse("version=1\nname='Partial'\n[colors]\nflow_surface='#123456'")
+            .unwrap();
+    for (token, bytes) in [
+        (Token::FlowSurface, [30, 36, 51, 255]),
+        (Token::FlowDivider, [58, 67, 87, 255]),
+        (Token::FlowKeyUpLip, [56, 56, 56, 56]),
+        (Token::FlowKeyDownShade, [0, 0, 0, 179]),
+        (Token::FlowKeyUpInk, [255, 255, 255, 255]),
+    ] {
+        assert_eq!(dark.color(token).to_array(), bytes);
+        if token != Token::FlowSurface {
+            assert_eq!(partial.color(token), dark.color(token));
+        }
+    }
+    assert_eq!(
+        partial.color(Token::FlowSurface).to_array(),
+        [18, 52, 86, 255]
+    );
+    assert_eq!(
+        partial.color(Token::CapsuleFill),
+        dark.color(Token::CapsuleFill),
+        "legacy accepted keys remain stable"
+    );
+}
+
+#[test]
 fn bundled_dark_is_complete_and_matches_historical_bytes() {
     let document = ThemeDocument::parse(DARK).unwrap();
     assert_eq!(document.colors.len(), Token::ALL.len());

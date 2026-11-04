@@ -666,6 +666,13 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
     {
         app.active_tab_mut().paper.account_mut().autostart_report();
     }
+    if let Some(value) = env.var("QUANTICK_PAPER_REPORT_SCROLL") {
+        app.active_tab_mut()
+            .paper
+            .account_mut()
+            .report
+            .arm_scroll_probe(&value);
+    }
     // The calendar the report grew: reachable open, on a chosen day or
     // a chosen span, with no clicks at all.
     if let Some(spec) = env.var("QUANTICK_PAPER_CALENDAR") {
@@ -890,6 +897,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_PAPER_CALENDAR",
     "QUANTICK_PAPER_REPORT_AUTOSTART",
     "QUANTICK_PAPER_REPORT_LIST",
+    "QUANTICK_PAPER_REPORT_SCROLL",
     "QUANTICK_PRICE_RANGE",
     "QUANTICK_PROGRESSIVE_HISTORY",
     "QUANTICK_REPLAY_AUTOSTART",

@@ -11,7 +11,6 @@
 //! take a dozen of them.
 
 use crate::pane::constants::{FLOW_CAPTION_GAP_PX, FLOW_CAPTION_TOP_PX, FLOW_PENDING_REPAINT};
-use quantick_chart::side_label::SIDE_LABEL_BOTTOM_PX;
 use std::sync::Arc;
 
 use eframe::egui;
@@ -43,6 +42,8 @@ pub(super) struct FlowFrame<'a> {
     renderers: &'static RenderRegistry,
     painter: &'a egui::Painter,
     rect: egui::Rect,
+    /// The candles' own pane: the one right edge candles and flow layers share.
+    history: egui::Rect,
     viewport: &'a Viewport,
     total: usize,
     prefix_len: usize,
@@ -70,6 +71,7 @@ impl<'a> FlowFrame<'a> {
             renderers,
             painter: frame.painter,
             rect: frame.chart_rect,
+            history: frame.history_rect,
             viewport,
             total: frame.total,
             prefix_len: frame.prefix.len(),
@@ -120,8 +122,7 @@ impl<'a> FlowFrame<'a> {
                 ..frame.end.saturating_sub(frame.prefix.len());
             let right =
                 self.viewport.right_edge_bar(self.total) as f64 + 1.0 - self.prefix_len as f64;
-            let left = right
-                - (self.rect.width() - self.lane_width) as f64 / self.viewport.px_per_bar() as f64;
+            let left = right - self.history.width() as f64 / self.viewport.px_per_bar() as f64;
             orderflow.project_flow_executions(
                 state,
                 slots.clone(),
@@ -137,6 +138,7 @@ impl<'a> FlowFrame<'a> {
                     .ctx()
                     .request_repaint_after(FLOW_PENDING_REPAINT);
             }
+            orderflow.trail_strip_px = self.rect.right() - self.lane_width - self.history.right();
             orderflow.set_projection_demand(demand);
             let window_ms = orderflow.live_lane_window_ms(frame.closed);
             // The tape's automatic window comes from the newest bars of the
@@ -205,18 +207,13 @@ impl<'a> FlowFrame<'a> {
     }
 
     fn execution_geometry(&self) -> Option<quantick_chart::flow_execution::FlowExecutionGeometry> {
-        let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
+        let h = self.history;
         quantick_chart::flow_execution::FlowExecutionGeometry::new(
             *self.viewport,
             self.total,
             self.prefix_len,
             self.price_range,
-            [
-                history.left(),
-                history.top(),
-                history.right(),
-                history.bottom(),
-            ],
+            [h.left(), h.top(), h.right(), h.bottom()],
             self.inverted,
         )
     }
@@ -233,7 +230,7 @@ impl<'a> FlowFrame<'a> {
         {
             let drawing = crate::orderflow_render::cached_flow(
                 self.painter,
-                self.rect.with_max_x(self.rect.right() - self.lane_width),
+                self.history,
                 frame,
                 geometry.with_display_scale(owner.cached_config().bubbles.display_scale.candle),
                 self.background,
@@ -258,10 +255,9 @@ impl<'a> FlowFrame<'a> {
     /// Only the earned inner circumference crosses the configured candles.
     pub(super) fn regional_perimeters(&self) {
         if let Some((frame, drawing)) = &self.regional {
-            let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
             crate::orderflow_render::draw_flow_perimeters(
                 self.painter,
-                history,
+                self.history,
                 frame,
                 &drawing.plan,
             );
@@ -285,7 +281,6 @@ impl<'a> FlowFrame<'a> {
         &self,
         owner: Option<&OrderflowView>,
         legend_inset: f32,
-        header: Option<egui::Rect>,
     ) -> Option<egui::Rect> {
         let mut bounds = None;
         let tick_regions = owner
@@ -304,7 +299,7 @@ impl<'a> FlowFrame<'a> {
             self.renderers.legend(&mut LegendPass {
                 owner,
                 painter: self.painter,
-                rect: header.unwrap_or(self.rect),
+                rect: self.rect,
                 viewport: self.viewport,
                 total: self.total,
                 projection,
@@ -316,16 +311,10 @@ impl<'a> FlowFrame<'a> {
             });
         }
         if let Some(owner) = owner.filter(|owner| owner.flow_execution_replaces_history()) {
-            let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
-            let top = bounds
-                .map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
-                    rect.bottom() + FLOW_CAPTION_GAP_PX
-                })
-                .max(
-                    history.top()
-                        + crate::theme::get(self.painter.ctx()).layout(SIDE_LABEL_BOTTOM_PX)
-                        + FLOW_CAPTION_GAP_PX,
-                );
+            let history = self.history;
+            let top = bounds.map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
+                rect.bottom() + FLOW_CAPTION_GAP_PX
+            });
             if let Some(caption) = crate::orderflow_render::flow_caption(
                 self.painter,
                 history,

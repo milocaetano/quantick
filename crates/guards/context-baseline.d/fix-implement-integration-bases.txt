@@ -1,0 +1,2 @@
+# /implement now targets feat/* and feature/* as well as main: the base record, the review scope and the --base flag. Most is paid when the goal runs.
+.claude/skills/implement/ +150

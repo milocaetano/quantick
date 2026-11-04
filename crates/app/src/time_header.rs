@@ -35,6 +35,9 @@ const PRESET_SIZE: f32 = 12.0;
 
 /// The free interval field's room; narrower, the chips already say enough.
 const MIN_INTERVAL_FIELD_PX: f32 = 44.0;
+/// The field's case, none: it stands bare on the header like the chips.
+const TRANSPARENT: egui::Color32 = egui::Color32::TRANSPARENT;
+const NO_LINE: egui::Stroke = egui::Stroke::NONE;
 
 /// What the header laid out this frame.
 pub struct HeaderLayout {
@@ -133,6 +136,12 @@ pub fn draw(
                 )
                 .frame(false),
             );
+            if chip.hovered() {
+                let patch = egui::Rounding::same(crate::pane_header::HOVER_ROUNDING);
+                content
+                    .painter()
+                    .rect_filled(chip.rect, patch, theme::get(ui.ctx()).bare_hover());
+            }
             #[cfg(test)]
             if let Some(slot) = recorded.next() {
                 *slot = chip.rect;
@@ -146,6 +155,10 @@ pub fn draw(
         // millisecond size would walk into values no chart accepts, and its
         // chip already names it, so nothing stands beside it.
         let fits = content.available_width() >= indicators_px + reserve_px + MIN_INTERVAL_FIELD_PX;
+        let widgets = &mut content.visuals_mut().widgets;
+        (widgets.inactive.weak_bg_fill, widgets.inactive.bg_stroke) = (TRANSPARENT, NO_LINE);
+        (widgets.hovered.weak_bg_fill, widgets.hovered.bg_stroke) =
+            (theme::get(ui.ctx()).bare_hover(), NO_LINE);
         let interval = (fits
             && quantick_engine::time_bucket::calendar_months(*interval_ms).is_none())
         .then(|| {

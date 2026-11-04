@@ -268,7 +268,7 @@ impl<H: ?Sized + 'static> ProjectionRegistry<H> {
         let mut unique_scopes = BTreeSet::new();
         let mut modules = BTreeSet::new();
         for scope_id in requested_scopes {
-            if !unique_scopes.insert(scope_id.clone()) {
+            if !unique_scopes.insert(scope_id) {
                 return Err(ControlError::invalid_request(format!(
                     "snapshot scope `{scope_id}` was requested more than once"
                 )));
@@ -278,7 +278,7 @@ impl<H: ?Sized + 'static> ProjectionRegistry<H> {
                     "snapshot scope `{scope_id}` is not registered"
                 ))
             })?;
-            modules.insert(descriptor.module_id.clone());
+            modules.insert(&descriptor.module_id);
         }
         let omitted_scopes = self
             .scopes
@@ -298,10 +298,10 @@ impl<H: ?Sized + 'static> ProjectionRegistry<H> {
         for module_id in modules {
             let module = self
                 .modules
-                .get(&module_id)
+                .get(module_id)
                 .expect("registered scopes always retain their owner module");
             let key = (module.revision)(app);
-            let revision = match self.observed_revisions.get_mut(&module_id) {
+            let revision = match self.observed_revisions.get_mut(module_id) {
                 Some(observed) if observed.key.equals(key.as_ref()) => observed.revision,
                 Some(observed) => {
                     observed.key = key;
@@ -315,7 +315,7 @@ impl<H: ?Sized + 'static> ProjectionRegistry<H> {
                 }
             };
             module_revisions.push(ModuleRevision {
-                module_id,
+                module_id: module_id.clone(),
                 revision: WireU64::new(revision),
             });
         }
@@ -324,10 +324,10 @@ impl<H: ?Sized + 'static> ProjectionRegistry<H> {
         for scope_id in unique_scopes {
             let descriptor = self
                 .scopes
-                .get(&scope_id)
+                .get(scope_id)
                 .expect("requested scopes were validated above");
             scopes.insert(
-                scope_id,
+                scope_id.clone(),
                 OwnedScope {
                     module_id: descriptor.module_id.clone(),
                     schema_version: descriptor.schema_version,

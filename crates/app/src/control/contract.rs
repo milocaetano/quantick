@@ -14,8 +14,6 @@ use quantick_control_host::{
     authority,
     contract::{AdmittedRoute, CapabilityContract, ReadPreparation, ScopeCatalogue},
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 // The scope-denied error that used it moved to `admission`; the tests below
 // still build their payloads with it through `use super::*`.
@@ -26,7 +24,6 @@ use crate::app::ControlWindow;
 
 use super::{
     actions::ActionRegistry,
-    chart::ChartWindowQuery,
     events::EventsWaitInput,
     evidence::{EvidenceStore, RawScreenshot, SessionIdentity},
     journal::EventJournal,
@@ -46,20 +43,13 @@ pub(crate) use reads::EventsReadInvocation;
 #[cfg(test)]
 pub(crate) use quantick_control_host::authority::DESCRIBE_CAPABILITY_ID;
 pub(crate) use quantick_control_host::authority::{
-    ANALYST_PROFILE_ID, COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID,
-    COCKPIT_PROFILE_ID, DescribeResult, EmptyInput, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID,
-    SnapshotReadInput,
+    ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID, DescribeResult, EmptyInput,
+    OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, SnapshotReadInput,
 };
 #[cfg(test)]
 pub(crate) use quantick_control_host::authority::{SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ChartWindowInput {
-    pub query: ChartWindowQuery,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<quantick_control::cursor::PageCursor>,
-}
+pub(crate) use quantick_control_schema::chart::ChartWindowInput;
 
 pub(crate) enum PreparedDispatch {
     Worker(Box<dyn PreparedWorkerRead>),

@@ -31,6 +31,8 @@ use crate::chart::PriceScale;
 use crate::orderflow_view::{LiveLane, OrderflowView};
 use crate::plot_area::split_time_strip;
 use crate::theme;
+use quantick_chart::flow_band::trail_strip;
+use quantick_chart::price_axis_fit::{beside_candles_right, tape_only_candles_px};
 use quantick_layers::ChartLayer;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::{LaneView, reserved_span_ms};
@@ -70,6 +72,15 @@ impl ChartPane {
         let Some(layout) = self.lay_out(area, chrome) else {
             return;
         };
+        // The flow pane's time axis stands on the frame's tone: its chart's dark ends at the plot.
+        if self.orderflow.is_some() {
+            let axis = area.with_min_y(layout.areas.time_strip.top());
+            painter.rect_filled(
+                axis,
+                egui::Rounding::ZERO,
+                theme::get(painter.ctx()).flow_surface(),
+            );
+        }
         let tape_range = self
             .orderflow
             .as_ref()
@@ -223,17 +234,7 @@ impl ChartPane {
         let grid = grid_color(chrome.style);
         history.indicator_panes(&mut self.indicators, lane, layout.indicator_guide_x, grid);
         flow.aggressions(self.orderflow.as_ref());
-        self.frame.flow_legend = flow.legend(
-            self.orderflow.as_ref(),
-            self.legend_inset(chrome),
-            layout.tape_only.then(|| {
-                use quantick_chart::side_label::{SIDE_LABEL_INSET_LEFT_PX, TAPE_KEY_TOP_PX};
-                let left = chart_rect.left() + SIDE_LABEL_INSET_LEFT_PX;
-                let top = area.top() + crate::theme::get(painter.ctx()).layout(TAPE_KEY_TOP_PX);
-                let height = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX;
-                egui::Rect::from_x_y_ranges(left..=chart_rect.right(), top..=top + height)
-            }),
-        );
+        self.frame.flow_legend = flow.legend(self.orderflow.as_ref(), self.legend_inset(chrome));
         flow.strip(
             self.orderflow.as_mut(),
             &frame,
@@ -358,7 +359,7 @@ impl ChartPane {
         self.sync_price_axis_mode();
         let closed_total = self.history_prefix.len() + self.state.bars().len();
         let total = closed_total + usize::from(self.state.partial().is_some());
-        let areas = self.plot_areas(area, chrome.capabilities);
+        let mut areas = self.plot_areas(area, chrome.capabilities);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
@@ -376,6 +377,16 @@ impl ChartPane {
         // beside the candles keeps its share and fits the shared price axis.
         let (tape_only, native_tape) = self.tape_modes();
         let live_lane = self.lay_out_lane(chart_rect);
+        // Beside the tape the strip is the trail's: every candle edge stops at it.
+        let width = self.live_strip_width(chrome.capabilities);
+        let divider = self.frame.lane_divider_x;
+        let trail = trail_strip(self.plot_lane_view(), chart_rect.left(), divider, width);
+        if let Some((left, right)) = trail {
+            let rows = chart_rect.top()..=areas.time_strip.top();
+            areas.live_strip = Some(egui::Rect::from_x_y_ranges(left..=right, rows));
+            let candles_right = beside_candles_right(chart_rect.left(), right, width);
+            self.frame.candles_right = Some(candles_right);
+        }
         if total == 0 {
             return None;
         }
@@ -403,7 +414,13 @@ impl ChartPane {
         }
         let view = self.shown_viewport();
         let (start, end) = view.visible_range(width, total);
+        let strip = self.beside_strip_width(chrome.capabilities);
+        let fit_width = match tape_only {
+            true => tape_only_candles_px(chart_rect.width(), strip),
+            false => width,
+        };
         Some(FrameLayout {
+            fit_slots: view.visible_range(fit_width, total),
             areas,
             chart_rect,
             history_rect,

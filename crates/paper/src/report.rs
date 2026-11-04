@@ -24,8 +24,10 @@ pub mod fit;
 pub mod layout;
 pub mod ledger_state;
 pub mod readout;
+pub mod scroll_probe;
 pub mod session_edit;
 pub mod sessions;
+pub mod snapshot;
 
 pub use readout::EquityWalk;
 

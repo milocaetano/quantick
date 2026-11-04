@@ -3,6 +3,20 @@ name = "Dark"
 dark = true
 
 [colors]
+flow_surface = "#1e2433"
+flow_divider = "#3a4357"
+flow_ink = "#e8ecf2"
+flow_key_down = "#141924"
+flow_key_down_shade = { premultiplied = [0, 0, 0, 179] }
+flow_key_down_rim = { premultiplied = [0, 0, 0, 102] }
+flow_key_down_ink = "#7e8799"
+flow_key_up_top = "#3d485e"
+flow_key_up_bottom = "#2e3749"
+flow_key_up_lip = { premultiplied = [56, 56, 56, 56] }
+flow_key_up_edge = { premultiplied = [0, 0, 0, 153] }
+flow_key_up_shadow = { premultiplied = [0, 0, 0, 128] }
+flow_key_up_ink = "#ffffff"
+flow_band_rule = "#2e3648"
 trade_selection_halo = { premultiplied = [40, 40, 40, 40] }
 candle_preview_background = "#0C0F16"
 candle_preview_bid = "#14B9E6"

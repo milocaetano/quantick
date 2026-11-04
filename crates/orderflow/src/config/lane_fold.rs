@@ -137,6 +137,14 @@ pub(super) fn rail_px(chart_width: f32) -> f32 {
     LANE_FOLD_RAIL_PX.min(chart_width / 2.0)
 }
 
+/// The band beside the candles at `share` of a chart this wide. The floor
+/// yields on a narrow window: half a small chart beats a fixed band that would
+/// eat all of it.
+pub(super) fn beside_width_px(chart_width: f32, share: f32) -> f32 {
+    let floor = super::lane::MIN_LIVE_LANE_WIDTH_PX.min(chart_width / 2.0);
+    (chart_width * share).max(floor)
+}
+
 /// The closing threshold on a chart this wide: a quarter of a chart too narrow
 /// for the full one, so a small pane still has open widths to drag through.
 fn fold_at_px(chart_width: f32) -> f32 {

@@ -18,6 +18,7 @@
 pub mod connection_state;
 mod constants;
 pub mod day_turn;
+pub mod flow_band;
 pub mod flow_execution;
 pub mod footprint_legend;
 pub mod footprint_lod;

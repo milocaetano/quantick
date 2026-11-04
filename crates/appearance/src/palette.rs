@@ -66,6 +66,21 @@ pub const DRAWING_SWATCHES: [PremultipliedRgba; 8] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(usize)]
 pub enum Token {
+    FlowSurface,
+    FlowDivider,
+    FlowInk,
+    FlowKeyDown,
+    FlowKeyDownShade,
+    FlowKeyDownRim,
+    FlowKeyDownInk,
+    FlowKeyUpTop,
+    FlowKeyUpBottom,
+    FlowKeyUpLip,
+    FlowKeyUpEdge,
+    FlowKeyUpShadow,
+    FlowKeyUpInk,
+    FlowBandRule,
+
     TradeSelectionHalo,
     CandlePreviewBackground,
     CandlePreviewBid,
@@ -147,7 +162,21 @@ pub enum Token {
     QuantityShadow,
 }
 impl Token {
-    pub const ALL: [Self; 79] = [
+    pub const ALL: [Self; 93] = [
+        Self::FlowSurface,
+        Self::FlowDivider,
+        Self::FlowInk,
+        Self::FlowKeyDown,
+        Self::FlowKeyDownShade,
+        Self::FlowKeyDownRim,
+        Self::FlowKeyDownInk,
+        Self::FlowKeyUpTop,
+        Self::FlowKeyUpBottom,
+        Self::FlowKeyUpLip,
+        Self::FlowKeyUpEdge,
+        Self::FlowKeyUpShadow,
+        Self::FlowKeyUpInk,
+        Self::FlowBandRule,
         Self::TradeSelectionHalo,
         Self::CandlePreviewBackground,
         Self::CandlePreviewBid,
@@ -230,6 +259,20 @@ impl Token {
     ];
     pub const fn key(self) -> &'static str {
         match self {
+            Self::FlowSurface => "flow_surface",
+            Self::FlowDivider => "flow_divider",
+            Self::FlowInk => "flow_ink",
+            Self::FlowKeyDown => "flow_key_down",
+            Self::FlowKeyDownShade => "flow_key_down_shade",
+            Self::FlowKeyDownRim => "flow_key_down_rim",
+            Self::FlowKeyDownInk => "flow_key_down_ink",
+            Self::FlowKeyUpTop => "flow_key_up_top",
+            Self::FlowKeyUpBottom => "flow_key_up_bottom",
+            Self::FlowKeyUpLip => "flow_key_up_lip",
+            Self::FlowKeyUpEdge => "flow_key_up_edge",
+            Self::FlowKeyUpShadow => "flow_key_up_shadow",
+            Self::FlowKeyUpInk => "flow_key_up_ink",
+            Self::FlowBandRule => "flow_band_rule",
             Self::DrawingSelectionHalo => "drawing_selection_halo",
             Self::DrawingReadoutPlate => "drawing_readout_plate",
             Self::WidgetCode => "widget_code",

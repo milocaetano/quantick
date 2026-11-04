@@ -23,6 +23,7 @@ use quantick_paper::pnl::PnlReader;
 
 mod ledger_keys_tests;
 mod narrow_ledger_tests;
+mod scroll_tests;
 
 /// A closed trade that netted `pnl` points, closing at `closed_ms`.
 fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {

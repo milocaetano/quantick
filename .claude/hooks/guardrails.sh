@@ -807,18 +807,48 @@ pr_gate() {
 
     # An `implement` branch trades the mission's reviews for one code-review,
     # owed before any PR opens, draft included. Green CI and the user's own
-    # merge are what protect `main` past it. Only against `main`: a campaign
+    # merge are what protect `main` past it. Against `main`, or a feat/* or
+    # feature/* branch recorded with no parent issue; a campaign or /feature
     # base keeps its own authorization and identity checks in the full gate.
+    implement_base=$(review_base "$dir" 2>/dev/null) || implement_base=
     if [ "$(declared_tier "$dir")" = "$IMPLEMENT_TIER" ] &&
-        [ "$(review_base "$dir" 2>/dev/null)" = "origin/$MAIN_BRANCH" ]; then
-        implement_base="origin/$MAIN_BRANCH"
+        { [ "$implement_base" = "origin/$MAIN_BRANCH" ] ||
+            sh "$(dirname "$0")/campaign_context.sh" implement-target "$dir" >/dev/null 2>&1; }; then
+        implement_target=${implement_base#origin/}
+        # `gh pr create` defaults to `main`, which would carry the target's
+        # whole stack into a PR nobody meant to open. Read from the unquoted
+        # words, one value exactly: `gh` takes the last of several, and a title
+        # may name the flag. Whichever verb ranks highest on the line.
+        if [ "$implement_target" != "$MAIN_BRANCH" ] &&
+            runs_command "$(unquoted_arguments "$command")" "gh pr create"; then
+            implement_named=$(unquoted_arguments "$(gh_statement "$command" "gh pr create")" |
+                sed 's/\\[nrt]/ /g' |
+                tr -s ' \t\r\n\\' '\n' |
+                awk 'named { print; named = 0; next }
+                    /^(--base|-B)$/ { named = 1; next }
+                    /^--base=/ { sub(/^--base=/, ""); print; next }
+                    /^-B./ { sub(/^-B/, ""); print }')
+            [ "$implement_named" = "$implement_target" ] ||
+                deny "\"This branch targets $implement_target: run \`gh pr create --base $implement_target\`, once and unquoted, with the text in \`--body-file\`.\""
+        fi
         implement_key=$(review_key "$dir")
-        [ -n "$implement_key" ] || implement_key=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
+        if [ -z "$implement_key" ]; then
+            [ "$implement_target" = "$MAIN_BRANCH" ] ||
+                deny '"Review identity against the target cannot be computed; no fallback approval is available."'
+            implement_key=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
+        fi
         require_marker "$dir" "$implement_key" "$IMPLEMENT_MARKER" \
             "an implement branch opens its PR only after code-review" \
             "Run the code-review skill over \`git diff $implement_base...HEAD\` and fix its valid findings"
         if [ "$gate_action" = merge ]; then
-            deny '"Merge to main is reserved exclusively for the user; do not enable auto-merge or enqueue it."'
+            deny "\"Merge to $implement_target is reserved exclusively for the user; do not enable auto-merge or enqueue it.\""
+        fi
+        # A reused worktree may hold a PR into another base, and this review
+        # covered only the diff against the target.
+        if [ "$gate_action" = ready ] && [ "$implement_target" != "$MAIN_BRANCH" ]; then
+            implement_pr=$(pr_number "$(gh_statement "$command" "gh pr ready")")
+            sh "$(dirname "$0")/campaign_context.sh" check-pr "$dir" "$implement_pr" ready >/dev/null 2>&1 ||
+                deny "\"Name one PR number whose base is $implement_target and whose head is this reviewed branch, after a fetch.\""
         fi
         pass_pr_gate "$dir"
     fi

@@ -1,5 +1,6 @@
 use super::*;
 use crate::pane::{ContextPress, Effect, Intent, update};
+use quantick_orderflow::LANE_WINDOW_PRESETS_MS;
 fn facts() -> Facts {
     Facts {
         layers: vec![],
@@ -42,6 +43,7 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
     facts.tape = Some(TapeFact {
         window: LaneWindow::Fixed { ms: 60_000 },
         reference_ms: Some(20_000),
+        window_setting: LaneWindow::Fixed { ms: 60_000 },
     });
     let entries = describe(&model, &facts);
     assert_eq!(
@@ -80,15 +82,19 @@ fn descriptors_pin_empty_sections_utf8_and_captured_tape_order() {
         })
         .collect();
     assert_eq!(choices.len(), 6);
+    // The fixed window in force is marked and still files itself as the setting,
+    // as `set_live_lane_window` does; every other line picks too.
     for (i, ms) in LANE_WINDOW_PRESETS_MS.into_iter().enumerate() {
-        assert_eq!(
-            choices[i + 1],
-            (
-                ms == 60_000,
-                MenuIntent::SetLaneWindow(LaneWindow::Fixed { ms })
-            )
-        );
+        let pick = MenuIntent::SetLaneWindow(LaneWindow::Fixed { ms });
+        assert_eq!(choices[i + 1], (ms == 60_000, Some(pick)));
     }
+    assert_eq!(
+        choices[0],
+        (
+            false,
+            Some(MenuIntent::SetLaneWindow(LaneWindow::default()))
+        )
+    );
     assert!(matches!(
         windows.last().unwrap().kind,
         Kind::Seconds {
@@ -160,7 +166,7 @@ fn locked_drawing_and_objects_keep_verbs_stable_ids_and_chip_order() {
     assert!(matches!(
         children[0].kind,
         Kind::Select {
-            choice: MenuIntent::ObjectsAsk(ObjectAction::Select(DrawingId(99))),
+            choice: Some(MenuIntent::ObjectsAsk(ObjectAction::Select(DrawingId(99)))),
             ..
         }
     ));
@@ -320,4 +326,73 @@ fn blocked_layer_retains_requested_check_and_explanation() {
             ..
         }
     ));
+}
+
+/// Following the bars at a zoom of its own, the `auto` line is in force: a click
+/// on it asks for nothing, so it cannot reset the zoom. A fixed window in force
+/// still files itself: the wheel may have reached it without filing it.
+#[test]
+fn only_auto_in_force_picks_nothing() {
+    let filed = |window, window_setting| {
+        let mut facts = facts();
+        facts.tape = Some(TapeFact {
+            window,
+            reference_ms: None,
+            window_setting,
+        });
+        window_lines(&facts)
+    };
+    let windows = |window| filed(window, window);
+    let auto = windows(LaneWindow::Auto { zoom: 2.0 });
+    assert_eq!(auto[0], (true, None));
+    // Navigated to `auto` over a filed fixed window: the pick files `auto`.
+    let navigated = filed(
+        LaneWindow::Auto { zoom: 2.0 },
+        LaneWindow::Fixed { ms: 60_000 },
+    );
+    assert_eq!(
+        navigated[0],
+        (true, Some(MenuIntent::SetLaneWindow(LaneWindow::default())))
+    );
+    let minute = LaneWindow::Fixed { ms: 60_000 };
+    let fixed = windows(minute);
+    assert_eq!(fixed[3], (true, Some(MenuIntent::SetLaneWindow(minute))));
+    assert_eq!(
+        fixed[0],
+        (
+            false,
+            Some(MenuIntent::SetLaneWindow(LaneWindow::default()))
+        )
+    );
+}
+
+/// The window submenu's lines: marked or not, and what a click asks for.
+fn window_lines(facts: &Facts) -> Vec<(bool, Option<MenuIntent>)> {
+    let mut model = Model::default();
+    let _ = update(
+        &mut model,
+        Intent::OpenMenu(ContextPress {
+            price: 1.0,
+            on_tape: true,
+            drawing: None,
+            places: vec![],
+        }),
+    );
+    let entries = describe(&model, facts);
+    let windows = entries
+        .iter()
+        .find_map(|entry| match &entry.kind {
+            Kind::Submenu(windows) if entry.label.starts_with("tape window") => Some(windows),
+            _ => None,
+        })
+        .expect("the window submenu");
+    windows
+        .iter()
+        .filter_map(|line| match &line.kind {
+            Kind::Select {
+                selected, choice, ..
+            } => Some((*selected, choice.clone())),
+            _ => None,
+        })
+        .collect()
 }

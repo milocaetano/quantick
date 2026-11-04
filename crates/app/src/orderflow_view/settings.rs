@@ -17,7 +17,7 @@ use crate::orderflow_render::draw_preview;
 use crate::ui_state::PanelSection;
 
 use super::OrderflowView;
-use super::frame::status_color;
+use quantick_orderflow::status_appearance::status_token;
 
 mod bubble_sections;
 mod l2_sections;
@@ -165,7 +165,7 @@ impl OrderflowView {
         ui.label(
             egui::RichText::new(self.published.status.label())
                 .small()
-                .color(status_color(&palette, &self.published.status)),
+                .color(*palette.get(status_token(&self.published.status))),
         );
         ui.small("Brightness is resting liquidity. Green/red bubbles are confirmed trades.");
         ui.small(
@@ -274,6 +274,7 @@ impl OrderflowView {
         // Read after the clustering section drew: a history window picked
         // this frame is the one the live lane's "Same as history" inherits.
         let lane_set = LiveLaneSection {
+            window_setting: self.look.lane_window_setting(),
             inherited_cluster_ms: config.bubble_cluster_ms,
             volume_dots: config.volume_dots.enabled,
             native_block: super::layers::native_tape_block(config),

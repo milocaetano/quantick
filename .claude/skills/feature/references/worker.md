@@ -11,8 +11,8 @@ The issue body is your implement plan. Do not invoke `implement` and never run
 - Cut the branch and worktree named in the parent's claim from
   `origin/feature/<slug>`. In the worktree, record the base for the hooks:
   `printf '%s origin/feature/<slug> <parent URL> <grant URL>\n' "$(git branch --show-current)" > "$(git rev-parse --absolute-git-dir)/mission-base"`.
-  Open the PR with `--base feature/<slug>`; this overrides execute.md's
-  main-only target. Never merge.
+  Open the PR with `--base feature/<slug>`; this record and target override
+  execute.md's. Never merge.
 - `Design:` is binding. Add no public type or trait outside `Touch`. A needed
   deviation returns `BLOCKED`, never a local redesign.
 - Every `C<n>` named test lands in the diff. The PR body says `Closes #<issue>`.

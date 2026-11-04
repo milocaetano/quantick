@@ -1,5 +1,5 @@
-//! A pane in tape-only mode fits its price axis to the tape, never to the
-//! candles it no longer draws.
+//! A pane in tape-only mode fits its price axis to the tape and the candles
+//! the beside view would show, never to the rest of the candles.
 
 use eframe::egui;
 use quantick_engine::Bar;
@@ -26,10 +26,11 @@ fn bar(low: i64, high: i64, close: i64) -> Bar {
 }
 
 /// The candles span 400..1600; the tape traded 995..1015 and last printed
-/// at 1005. Tape only, the axis is the tape's range plus the fit's margin;
-/// otherwise the candles still decide it.
+/// at 1005. Tape only, beside the tape there would stand only the 990..1010
+/// candle: the axis is that and the tape plus the fit's margin; otherwise
+/// every candle in view still decides it.
 #[test]
-fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
+fn a_tape_only_pane_fits_the_tape_and_the_candles_beside_it() {
     let pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
     let areas = pane.plot_areas(rect, crate::config::FeedCapabilities::none());
@@ -51,6 +52,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
         closed_total: bars.len(),
         start: 0,
         end: bars.len(),
+        fit_slots: if tape_only { (1, 2) } else { (0, bars.len()) },
         view: crate::viewport::Viewport::new(),
         cw: 8.0,
         indicator_guide_x: None,
@@ -81,8 +83,8 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
     };
     let tape_range = Some((995.0, 1_015.0));
     let (lo, hi) = fitted(true, &PriceView::new(), tape_range).range();
-    assert!((lo - 994.0).abs() < 1e-9, "{lo}");
-    assert!((hi - 1_016.0).abs() < 1e-9, "{hi}");
+    assert!((lo - 988.75).abs() < 1e-9, "{lo}");
+    assert!((hi - 1_016.25).abs() < 1e-9, "{hi}");
     let (lo, hi) = fitted(false, &PriceView::new(), tape_range).range();
     assert!(
         lo < 400.0 && hi > 1_600.0,
@@ -117,7 +119,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
     candle_price_view.reset();
     assert_eq!(
         fitted(true, &candle_price_view, tape_range).range(),
-        (994.0, 1_016.0)
+        (988.75, 1_016.25)
     );
 }
 
@@ -141,26 +143,25 @@ fn tape_only_reserves_no_forming_candle_volume_profile_strip() {
     pane.set_layer_visible(ChartLayer::TapeOnly, true, &mut effects);
     assert_eq!(
         pane.live_strip_width(capabilities),
-        ordinary_width,
-        "the strip reads the book, so it stays with the candles hidden"
+        0.0,
+        "the strip is the trail's, so the tape alone has none"
     );
     let rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1_000.0, 600.0));
-    assert!(pane.plot_areas(rect, capabilities).live_strip.is_some());
-    pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut effects);
-    assert_eq!(
-        pane.live_strip_width(capabilities),
-        0.0,
-        "and it still answers to its own switch"
+    assert!(pane.plot_areas(rect, capabilities).live_strip.is_none());
+    assert!(
+        pane.layer_switched_on(ChartLayer::LiveStrip, &crate::style::ChartStyle::default()),
+        "its switch is filed as it was"
     );
-    pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut effects);
     pane.set_layer_visible(ChartLayer::TapeOnly, false, &mut effects);
     assert_eq!(pane.live_strip_width(capabilities), ordinary_width);
 }
 
+/// The tape alone wears no Buy/Sell key over its prints: its bubbles' colours are
+/// the key, and nothing covers the high forming dot.
 #[test]
-fn the_key_stays_in_the_header_without_covering_the_live_edge() {
+fn the_tape_alone_wears_no_key() {
     use crate::orderflow_render::{
-        OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_compact_legend,
+        OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_compact_legend_avoiding,
     };
     use quantick_orderflow::{DisplayGrouping, EffectiveGrouping, HeatmapProjection};
 
@@ -170,32 +171,19 @@ fn the_key_stays_in_the_header_without_covering_the_live_edge() {
         EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, Decimal::from(100)),
     );
     let area = egui::Rect::from_min_size(egui::pos2(30.0, 50.0), egui::vec2(281.0, 300.0));
-    let plot = crate::plot_area::plot_split(area, 0.0, &[]).chart;
-    assert_eq!(plot.width(), 185.0);
-    let header = egui::Rect::from_min_max(egui::pos2(plot.left(), area.top()), plot.right_top());
     let mut config = quantick_orderflow::HeatmapConfig::default();
     config.live_lane.tape_only = true;
     config.live_lane.show_aggressions = true;
     config.live_lane.show_depth = false;
     let style = OrderflowRenderStyle::from_config(&config, egui::Color32::BLACK.to_array());
-    let layout = ProjectedLayout::new(header, &pane.model.viewport, 2, 0, 2, header.width());
+    let layout = ProjectedLayout::new(area, &pane.model.viewport, 2, 0, 2, area.width());
     let ctx = egui::Context::default();
-    let mut key = None;
+    let mut key = Some(egui::Rect::NOTHING);
     let output = ctx.run(egui::RawInput::default(), |ctx| {
         let painter = ctx.layer_painter(egui::LayerId::background());
-        key = draw_compact_legend(&painter, &RenderContext::new(&projection, layout, &style));
+        let context = RenderContext::new(&projection, layout, &style);
+        key = draw_compact_legend_avoiding(&painter, &context, None);
     });
-    assert!(key.is_some(), "the buy/sell key remains visible");
-    for shape in &output.shapes {
-        let ink = shape
-            .shape
-            .visual_bounding_rect()
-            .intersect(shape.clip_rect);
-        if ink.is_positive() {
-            assert!(
-                ink.bottom() <= plot.top(),
-                "no header ink can hide the high forming dot"
-            );
-        }
-    }
+    assert_eq!(key, None, "no key on the tape");
+    assert!(output.shapes.is_empty(), "and no ink");
 }

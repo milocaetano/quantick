@@ -227,7 +227,7 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
     // window wider, clipping a number in half, or growing until the metric
     // grids beneath it are out of reach. Row zero is the header, so it
     // rides the same column grid and the same horizontal scroll.
-    egui::ScrollArea::both()
+    let _viewport = egui::ScrollArea::both()
         .id_salt("paper_report_trade_list")
         .max_height(REPORT_LIST_MAX_H_PX)
         // Vertically it shrinks to its content: a five-trade window must
@@ -353,6 +353,13 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
             },
         );
     ui.add_space(6.0);
+    #[cfg(any(feature = "scenario-harness", test))]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new("report_trade_viewport"),
+            _viewport.inner_rect.intersect(ui.clip_rect()),
+        )
+    });
     toggled
 }
 

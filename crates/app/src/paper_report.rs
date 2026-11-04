@@ -37,14 +37,14 @@
 //! where a trader's own results are computed, and a rounding that shifts
 //! during a refactor is the code lying to them about their trading.
 
-use std::path::{Path, PathBuf};
-
-use quantick_sim::{ClosedTrade, PerformanceReport};
-use rust_decimal::Decimal;
+#[cfg(test)]
+use quantick_sim::ClosedTrade;
+#[cfg(test)]
+use quantick_sim::PerformanceReport;
 
 // One date law for every trade surface - see `paper_calendar`.
 use crate::paper_calendar::{CalendarState, DayIndex};
-use crate::paper_chrome::PositionSummary;
+
 use crate::timezone::TzOffset;
 
 mod curve;
@@ -72,58 +72,13 @@ pub(crate) fn report_from_history(history: &LoadedHistory) -> PerformanceReport 
     let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
     PerformanceReport::from_trades(&trades)
 }
-use window::{ReportPeriod, ReportWindow};
+#[cfg(test)]
+use quantick_paper::report::snapshot::ReportWindow;
+use window::ReportPeriod;
 
-/// What the report and the ledger read about the trading session they
-/// belong to, borrowed for one call.
-///
-/// Every field here is something the host already knows and this module
-/// has no way to learn: it holds no venue, opens no folder of its own and
-/// reads no clock. Borrowed rather than copied, for `SurfaceEnv`'s reason
-/// — a reader that kept its own copy of the symbol would answer for the
-/// market the chart used to be on.
-pub(crate) struct ReportEnv<'a> {
-    /// The chart's instrument. Empty before a market is chosen, which is
-    /// why every read of it tests for that rather than assuming a name.
-    pub symbol: &'a str,
-    /// The journal folder every surface here reads from.
-    pub dir: &'a Path,
-    /// Journal files this session is still writing. Excluded from the
-    /// ledger's history load: those trades are already in the simulator,
-    /// and reading them back would list every one of them twice.
-    pub session_journal_paths: &'a [PathBuf],
-    /// This session's closed round trips, oldest first — the ledger's live
-    /// rows, and the only trades whose fills the tape on screen can prove.
-    pub session_trades: &'a [ClosedTrade],
-    /// Where each of those trades was journaled, index-aligned with them.
-    pub session_trade_at: &'a [Option<quantick_paper::report::sessions::JournaledTrade>],
-    /// The source each of those trades closed under, index-aligned.
-    pub session_trade_sources: &'a [quantick_sim::history::SessionSource],
-    /// The position still open, if there is one. Gathered by the host
-    /// because it takes three reads of a venue this module cannot see.
-    pub open: Option<OpenRow>,
-    /// How every P&L figure here is worded: the ticket's own reader.
-    pub pnl: quantick_paper::pnl::PnlReader<'a>,
-}
+pub(crate) use quantick_paper::report::snapshot::ReportEnv;
 
-/// The open position as the ledger's top row needs it: the summary, the
-/// mark it is valued against, and how long it has been held.
-///
-/// One value rather than three reads. The ledger asks "is there a position
-/// and what does its row say"; splitting that into a summary, a mark price
-/// and a timestamp invites a caller to supply two of the three.
-pub(crate) struct OpenRow {
-    pub summary: PositionSummary,
-    /// The price the open points are marked against; `None` before the
-    /// first print.
-    pub mark_price: Option<Decimal>,
-    /// Mark time less open time; `None` when either is unknown. Not read
-    /// from a clock — the tape says how long, so a replay's ages are the
-    /// recording's, not this afternoon's.
-    pub held_ms: Option<i64>,
-    /// The open profit as the ticket words it; `None` before a print.
-    pub pnl: Option<String>,
-}
+pub(crate) use quantick_paper::report::snapshot::OpenRow;
 
 /// What the report asked its host to do.
 ///
@@ -143,31 +98,19 @@ pub(crate) struct ReportResponse {
 }
 
 use quantick_paper::report::layout::*;
-/// The report as data: what is being asked, and what came back. Handed
-/// out by [`ReportState::snapshot`] so an operator that cannot see the
-/// window can still say which trades produced which numbers.
-pub(crate) struct ReportSnapshot<'a> {
-    /// `None` — every symbol folder in scope.
-    pub(crate) symbol: Option<&'a str>,
-    pub(crate) source: SourceFilter,
-    /// What cut this report. One value, not a pair of options: the two
-    /// filters are exclusive, and a pair could spell "both" or "neither" —
-    /// states the report has no meaning for.
-    pub(crate) window: ReportWindow,
-    /// Saved trades the window keeps out, and those the Source filter does.
-    pub(crate) hidden_outside: usize,
-    pub(crate) hidden_by_source: usize,
-    pub(crate) rows: &'a [HistoryRow],
-    pub(crate) report: &'a PerformanceReport,
-}
-
+pub(crate) use quantick_paper::report::snapshot::ReportSnapshot;
 /// The report window's and the trades ledger's whole state.
 ///
 /// Twenty-one fields that used to sit on the trading host, where they made
 /// up better than a quarter of it. They are here because they answer one
 /// question together — "what did the saved journal produce, cut this way?"
 /// — and because none of them is read by an order, a bracket or a fill.
+#[cfg(any(feature = "scenario-harness", test))]
+mod scroll_probe;
+
 pub(crate) struct ReportState {
+    #[cfg(any(feature = "scenario-harness", test))]
+    scroll_probe: scroll_probe::Probe,
     /// An acknowledgement waiting to leave through [`ReportResponse`].
     toast: Option<String>,
     report_open: bool,
@@ -241,6 +184,8 @@ impl Default for ReportState {
     /// ledger starts one page in, and its scope follows the chart.
     fn default() -> Self {
         Self {
+            #[cfg(any(feature = "scenario-harness", test))]
+            scroll_probe: scroll_probe::Probe::default(),
             toast: None,
             report_open: false,
             report_symbol: None,

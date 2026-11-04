@@ -71,9 +71,9 @@ pub(super) fn render(
                     let response =
                         ui.selectable_label(*selected, if *weak { text.weak() } else { text });
                     if response.clicked() {
-                        out.push(choice.clone());
+                        out.extend(choice.clone());
                         if !matches!(entry.trace, Trace::Object { .. })
-                            && !matches!(choice, MenuIntent::ObjectsAsk(_))
+                            && !matches!(choice, Some(MenuIntent::ObjectsAsk(_)))
                         {
                             ui.close_menu();
                         }

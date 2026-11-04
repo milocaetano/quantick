@@ -399,7 +399,7 @@ fn assert_footprint_layering(
 }
 
 #[test]
-fn flow_legend_keeps_native_swatches_in_tape_and_preserves_depth_and_hide_switches() {
+fn flow_legend_puts_no_key_on_the_tape_and_preserves_depth_and_hide_switches() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     native_split(&mut app);
@@ -425,27 +425,13 @@ fn flow_legend_keeps_native_swatches_in_tape_and_preserves_depth_and_hide_switch
             .collect::<Vec<_>>()
     };
     let frame = settled_flow_frame(&mut app, &ctx);
-    let pane = &app.active_tab().flow_pane.frame;
-    let divider = pane.lane_divider_x.unwrap();
-    // Below the tape's plate, never under it.
-    let top = pane.chart_rect.unwrap().top() + quantick_chart::side_label::TAPE_KEY_TOP_PX;
+    let divider = app.active_tab().flow_pane.frame.lane_divider_x.unwrap();
+    // The tape wears no Buy/Sell key: its bubbles' colours are the key.
     let shown: Vec<_> = keys(&frame)
         .into_iter()
         .filter(|(label, _)| label != "liquidity")
         .collect();
-    assert_eq!(
-        shown.len(),
-        2,
-        "only compact native Buy/Sell aggression keys"
-    );
-    assert!(
-        shown
-            .iter()
-            .all(|(label, pos)| ["Buy", "Sell"].contains(&label.as_str())
-                && pos.x > divider
-                && pos.y >= top
-                && pos.y < top + 22.0)
-    );
+    assert!(shown.is_empty(), "no aggression key on the pane: {shown:?}");
     app.active_tab_mut().tape_mut().set_enabled(true, 10);
     let depth = settled_flow_frame(&mut app, &ctx);
     assert!(

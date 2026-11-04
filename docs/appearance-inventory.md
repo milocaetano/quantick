@@ -10,6 +10,7 @@ the source migration. Visual/performance acceptance is recorded separately. The 
 | --- | --- | --- |
 | Standard widgets | app/theme/chrome; appearance | chrome/control/inset/border/text/accent plus widget_code/warn/error/cursor/shadow/noninteractive/active_border/open_border |
 | Header, rail, panels and replay | app painting adapters | body/monospace/small/heading roles, surface/text tokens; replay_well/inset/error and action_ink |
+| Order-flow pane identity | chart/flow_band; app pane/header adapters | flow_surface/divider/ink/band_rule and flow_key_*; measured text and shared scaled band/side-header geometry |
 | Gateway initialization errors | app/control/gateway/panel | error_text |
 | Canvas/candles | chart/style, stores/chart_style | canvas/control/buy/sell/candle contours, explicit field provenance |
 | Plot axes and footprints | appearance/AxisMetrics; chart/footprint_lod; app painters | chart_axis/footprint; row, width, LOD and candle-fade budgets share configured scaling |

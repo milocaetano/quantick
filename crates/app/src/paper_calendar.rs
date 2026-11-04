@@ -24,7 +24,7 @@ use crate::timezone::TzOffset;
 
 // Re-export the shared civil-date types and formatting for app consumers.
 // Selection parsing lives with the calendar policy in `quantick-paper`.
-pub(crate) use quantick_civil::{CivilDate, DateRange, WEEK_DAYS, fmt_offset_minute, weekday_abbr};
+pub(crate) use quantick_civil::{CivilDate, WEEK_DAYS, fmt_offset_minute, weekday_abbr};
 
 /// Rows a month grid always paints. Six is the worst case (a 31-day month
 /// starting on a Sunday), and painting a fixed six keeps the calendar from
@@ -266,3 +266,6 @@ const DAY_TINT_ALPHA: u8 = 46;
 const DAY_NUMBER_BASELINE_PX: f32 = 11.0;
 /// Where the trade count sits, measured up from the cell's bottom.
 const DAY_COUNT_BASELINE_PX: f32 = 7.0;
+
+#[cfg(test)]
+pub(crate) use quantick_civil::DateRange;

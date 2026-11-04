@@ -5667,7 +5667,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. Never moves the candles beside it.",
+      "description": "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. Transient by default: the window is navigation, as the wheel's, and nothing is saved. `file: true` is the one exception that saves: the window becomes the asset's setting, as the tape header's window selector and its window menu set it, written to disk while the asset save switch is on. Never moves the candles beside it.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -5775,6 +5775,11 @@
             ],
             "default": null,
             "description": "Where the right edge goes; absent keeps it."
+          },
+          "file": {
+            "default": false,
+            "description": "File the window as the asset's setting, as the tape header's selector\nand its window menu do: a double click on the tape then returns to it.\nTheir rule too: `auto` while the tape follows the bars and the asset\nfiles following them changes nothing, so the zoom stays; the result\nreports the window in force. Without it the window is navigation, as\nthe wheel's, and is never filed. Needs a window.",
+            "type": "boolean"
           },
           "pane_id": {
             "$ref": "#/$defs/WireU64"
