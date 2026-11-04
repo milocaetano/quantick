@@ -8,6 +8,7 @@ pub mod indicator_document;
 pub mod layout_commit;
 pub mod layout_document;
 pub mod layout_store;
+pub mod market_list;
 pub mod market_settings;
 pub mod market_settings_store;
 pub mod orderflow_panel;

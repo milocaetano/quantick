@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 59 |
+| deduplicated per connection | 62 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **92** |
+| **Total** | **95** |
 
 ## Capabilities
 
@@ -136,6 +136,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `annotate.trend_line.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.zone.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `attention.mark.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `attention.mark.created` | `payload.note` | an event after the pre-call cursor carries the call's own `note`; send a note unique to the call, since an unnoted mark (the trader's shortcut included) matches any other | `an_interrupted_attention_mark_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
+| `catalog.remove` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `sources[].symbols` | the feed's symbols no longer list the symbol | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `chart.price_axis.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport` | The target pane reports manual framing with the requested price_range, or automatic fitting after reset. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane` |
 | `chart.settings.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `chart.settings.changed` | `payload.chart_settings` | an event after the pre-call cursor carries the window and presets the call left | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `chart.tape_view.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport.tape` | The target pane's tape reports the requested end (or live) and window. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back`, `the_tape_window_selector_and_the_filing_call_are_one_setting` |
@@ -182,6 +183,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `layout.window.close` | 1 | required | key required; deduplicated per connection | `cockpit` | `snapshot.read` `workspace.windows` | `windows` | the closed window is absent and all of its tabs survive in the result's survivor; final-window exit is refused | `market_window_operations_validate_authority_preserve_identity_and_replay_safely` |
 | `layout.window.placement.set` | 1 | required | key required; deduplicated per connection | `cockpit` | `snapshot.read` `workspace.windows` | `windows[].observed` | native viewport observations report actual placement after OS handling, independently of request acceptance | `market_window_operations_validate_authority_preserve_identity_and_replay_safely` |
 | `layout.window.state.set` | 1 | required | key required; deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | Read scene.read with window_id from the accepted result. tab_strip.maximize or tab_strip.minimize is selected once that native viewport reports its state; both clear in normal state | `native_window_requests_validate_authority_and_retry_without_repeating_the_effect` |
+| `market.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].tab_id` | a tab with the answer's tab_id shows the market, active unless background | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `market.palette.open` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `market.palette.opened` | `payload.query` | an event after the pre-call cursor names the query | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `notify.popup` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.sound` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.toast` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
@@ -215,4 +218,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-92 mutable capabilities registered, 92 with a readback.
+95 mutable capabilities registered, 95 with a readback.

@@ -914,6 +914,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
                 asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
@@ -928,6 +929,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
                 asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
@@ -2228,28 +2230,14 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
     app.runtime.workspace.set_symbols_path(path.clone());
     let tabs_before = app.runtime.tabs.len();
 
-    // The real dialog: open it, type the contract, press Add.
-    app.apply_tab_action(TabAction::New);
-    run_frame(&mut app, &ctx);
-    app.surfaces
-        .source_picker
-        .picker_mut()
-        .expect("the + opened the picker")
-        .set_draft_symbol("  WINQ26 ");
-    run_frame(&mut app, &ctx);
-    let add = app
-        .surfaces
-        .source_picker
-        .picker()
-        .expect("still open")
-        .add_button_rect()
-        .expect("the Add button was laid out");
-    click_chart(&mut app, &ctx, add.center());
-    run_frame(&mut app, &ctx);
+    // The real palette: open it, type the contract, press Enter on the
+    // first venue's add row.
+    type_into_palette(&mut app, &ctx, "  WINQ26 ");
+    press_in_palette(&mut app, &ctx, egui::Key::Enter);
 
     assert!(
-        !app.surfaces.source_picker.is_open(),
-        "adding closes the dialog, because it opened the market"
+        !app.surfaces.market_palette.is_open(),
+        "adding closes the palette, because it opened the market"
     );
     assert_eq!(app.runtime.tabs.len(), tabs_before + 1);
     assert_eq!(app.active_tab().symbol, "WINQ26", "and it is what opened");
@@ -2262,6 +2250,18 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
             .symbols
             .iter()
             .any(|symbol| symbol == "WINQ26")
+    );
+    assert!(app.added_symbols.contains("binance", "WINQ26"));
+
+    // Delete on its row is refused while a tab shows it, and the palette
+    // stays open around the reason.
+    type_into_palette(&mut app, &ctx, "winq26");
+    press_in_palette(&mut app, &ctx, egui::Key::Delete);
+    let refusal = (app.surfaces.market_palette.open.as_mut())
+        .and_then(|palette| palette.refusal().map(str::to_owned));
+    assert_eq!(
+        refusal.as_deref(),
+        Some("A tab is showing WINQ26 \u{2014} close it first")
     );
     assert!(app.added_symbols.contains("binance", "WINQ26"));
 
@@ -2310,40 +2310,27 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     app.runtime.workspace.set_symbols_path(path.clone());
     let tabs_before = app.runtime.tabs.len();
 
-    // The real dialog, on the B3 feed, typing the Tickmill instrument.
-    app.apply_tab_action(TabAction::New);
-    run_frame(&mut app, &ctx);
-    {
-        let picker = app
-            .surfaces
-            .source_picker
-            .picker_mut()
-            .expect("the picker is open");
-        picker.feed_id = "b3".to_string();
-        picker.set_draft_symbol("US500");
-    }
-    run_frame(&mut app, &ctx);
-    let add = app
-        .surfaces
-        .source_picker
-        .picker()
-        .expect("still open")
-        .add_button_rect()
-        .expect("the Add button was laid out");
-    click_chart(&mut app, &ctx, add.center());
-    run_frame(&mut app, &ctx);
-
-    let picker = app
-        .surfaces
-        .source_picker
-        .picker()
-        .expect("the dialog stays open on a refusal");
+    // The palette's add row on the B3 feed, asking for the Tickmill
+    // instrument.
+    type_into_palette(&mut app, &ctx, "US500");
+    let choice = quantick_workspace::market_list::OpenChoice {
+        feed_id: "b3".to_owned(),
+        symbol: "US500".to_owned(),
+        bar: "tick:50".to_owned(),
+        inherit_bar: false,
+        workspace: "Default".to_owned(),
+        background: false,
+    };
+    let add = quantick_workspace::market_list::PaletteIntent::Add(choice);
+    super::super::tabs::apply_palette_intent(&mut app, add);
+    let palette =
+        (app.surfaces.market_palette.open.as_mut()).expect("the palette stays open on a refusal");
     assert!(
-        picker
+        palette
             .refusal()
             .is_some_and(|reason| reason.contains("US500")),
-        "the reason is shown where the symbol was typed: {:?}",
-        picker.refusal()
+        "the reason is shown under the field: {:?}",
+        palette.refusal()
     );
     assert_eq!(
         app.runtime.tabs.len(),
@@ -2366,6 +2353,183 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     // The same symbol on the feed that *does* own it is still fine.
     assert!(app.symbol_catalog().add("tickmill", "WINQ26").is_ok());
     let _ = std::fs::remove_file(&path);
+}
+
+/// Recent hears of a close only once the tab is gone: the last tab, which
+/// stays, leaves nothing; a closed tab leaves its market and the bar it
+/// showed, which the palette then offers again.
+#[test]
+fn a_market_enters_recent_only_once_its_tab_has_closed() {
+    let (mut app, _cmd_rx) = app_with_history(50);
+    app.apply_tab_action(TabAction::Close(0));
+    assert_eq!(app.runtime.tabs.len(), 1, "the last tab stays");
+    assert!(app.surfaces.market_palette.recent.entries().is_empty());
+    let spec = quantick_engine::bar_registry::BUILTIN_BARS.parse("tick:77");
+    let market = ("binance".to_owned(), "ETHUSDT".to_owned());
+    (app.arrangement_adapter()).open_tab(market.0, market.1, Some(spec.unwrap()));
+    app.apply_tab_action(TabAction::Close(1));
+    let closed: Vec<(String, String)> = (app.surfaces.market_palette.recent.entries().iter())
+        .map(|closed| (closed.symbol.clone(), closed.bar.clone()))
+        .collect();
+    assert_eq!(closed, [("ETHUSDT".to_owned(), "tick:77".to_owned())]);
+    let snapshot = super::super::tabs::market_snapshot(&app);
+    let world = snapshot.world();
+    assert_eq!(
+        quantick_workspace::market_list::market_bar(&world, "binance", "ETHUSDT").as_deref(),
+        Some("tick:77"),
+        "the palette offers the bar it was last shown on"
+    );
+}
+
+/// A market with no bar of its own opens on the active tab's, the rule
+/// `adopt_tab` keeps for a feed without `default_bars`, and the footer showed
+/// that bar before Enter.
+#[test]
+fn a_market_without_a_bar_opens_on_the_active_tab_bar_the_footer_showed() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    let active = quantick_engine::bar_registry::BUILTIN_BARS.parse("volume:13");
+    app.active_tab_mut().flow_pane.set_spec(active.unwrap());
+    type_into_palette(&mut app, &ctx, "ETHUSDT");
+    let snapshot = super::super::tabs::market_snapshot(&app);
+    let listing = quantick_workspace::market_list::list_markets(&snapshot.world(), "ETHUSDT");
+    let palette = (app.surfaces.market_palette.open.as_mut()).expect("open");
+    assert_eq!(
+        palette.bar(&listing),
+        "volume:13",
+        "the footer shows what opens"
+    );
+    press_in_palette(&mut app, &ctx, egui::Key::Enter);
+    assert_eq!(app.active_tab().symbol, "ETHUSDT");
+    assert_eq!(
+        app.active_tab().flow_pane.state.spec().to_config_string(),
+        "volume:13"
+    );
+}
+
+/// While the palette is up, no tab shortcut acts on the tabs behind it,
+/// whichever widget holds the keyboard: here none yet, on the frame it opens.
+#[test]
+fn tab_shortcuts_leave_the_tabs_behind_an_open_palette_alone() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    let market = ("binance".to_owned(), "ETHUSDT".to_owned());
+    (app.arrangement_adapter()).open_tab(market.0, market.1, None);
+    let active = app.runtime.tabs.active_index();
+    let shortcuts = [
+        (egui::Key::W, egui::Modifiers::COMMAND),
+        (egui::Key::Tab, egui::Modifiers::CTRL),
+        (egui::Key::T, egui::Modifiers::COMMAND),
+    ];
+    for (key, modifiers) in shortcuts {
+        app.surfaces.market_palette.close();
+        run_frame(&mut app, &ctx);
+        app.apply_tab_action(TabAction::New);
+        let press = vec![key_press_with(key, modifiers)];
+        run_frame_sized(&mut app, &ctx, egui::vec2(1400.0, 760.0), press, modifiers);
+        assert_eq!(app.runtime.tabs.len(), 2, "{key:?} closed nothing");
+        assert_eq!(
+            app.runtime.tabs.active_index(),
+            active,
+            "{key:?} moved nothing"
+        );
+        assert!(app.surfaces.market_palette.is_open(), "{key:?}");
+        assert!(!app.chrome.title_bar.surface.is_home());
+    }
+}
+
+/// A palette the capture hook opens draws on that very frame: the snapshot
+/// is built for it before the hook has run, so its field already asks for
+/// the keyboard.
+#[test]
+fn a_hook_opened_palette_draws_on_its_first_frame() {
+    let ctx = egui::Context::default();
+    crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_MARKET_PALETTE", "1")]));
+    let (mut app, _cmd_rx) = app_with_history(50);
+    run_frame(&mut app, &ctx);
+    crate::hooks::captured::set_on_this_thread(None);
+    assert!(app.surfaces.market_palette.is_open());
+    let field = egui::Id::new("market_palette").with("query");
+    assert_eq!(ctx.memory(|memory| memory.focused()), Some(field));
+}
+
+/// Enter with another workspace picked opens the tab on that workspace once
+/// the book adopts it, against the window's real book: no refusal, no tab
+/// left on Default. It used to set the workspace on a tab the book did not
+/// hold yet, refuse "no open tab has id", and leave the tab open anyway.
+#[test]
+fn a_market_opened_on_another_workspace_lands_on_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let first = app.runtime.tabs.active_id();
+    (app.runtime.workspace.book.book_mut())
+        .save_as(first, "Swing")
+        .expect("the first tab saves a workspace");
+    type_into_palette(&mut app, &ctx, "ETHUSDT");
+    (app.surfaces.market_palette.open.as_mut())
+        .expect("open")
+        .set_workspace("Swing");
+    press_in_palette(&mut app, &ctx, egui::Key::Enter);
+    assert!(
+        !app.surfaces.market_palette.is_open(),
+        "the open was not refused: {:?}",
+        app.surfaces
+            .market_palette
+            .open
+            .as_ref()
+            .and_then(|p| p.refusal())
+    );
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let tab = app.runtime.tabs.active_id();
+    assert_ne!(tab, first);
+    assert_eq!(app.active_tab().symbol, "ETHUSDT");
+    let book = app.runtime.workspace.book.book();
+    assert_eq!(
+        book.tab_state(tab).map(|state| state.workspace),
+        Some("Swing")
+    );
+}
+
+/// Delete on a market the config declares is refused where the trader reads
+/// it, under the field, and the market stays.
+#[test]
+fn delete_on_a_config_market_shows_why_it_stays() {
+    let ctx = egui::Context::default();
+    let (mut app, _cmd_rx) = app_with_history(50);
+    type_into_palette(&mut app, &ctx, "ETHUSDT");
+    press_in_palette(&mut app, &ctx, egui::Key::Delete);
+    let refusal = (app.surfaces.market_palette.open.as_ref()).and_then(|p| p.refusal());
+    assert_eq!(
+        refusal,
+        Some("ETHUSDT comes from the config file; only a market you added can be removed")
+    );
+}
+
+/// Open the palette the way `+` does and put `query` in its field.
+fn type_into_palette(app: &mut QuantickApp, ctx: &egui::Context, query: &str) {
+    app.apply_tab_action(TabAction::New);
+    run_frame(app, ctx);
+    (app.surfaces.market_palette.open.as_mut())
+        .expect("the + opened the palette")
+        .set_query(query);
+    run_frame(app, ctx);
+}
+
+fn press_in_palette(app: &mut QuantickApp, ctx: &egui::Context, key: egui::Key) {
+    let press = vec![key_press_with(key, egui::Modifiers::NONE)];
+    run_frame_sized(
+        app,
+        ctx,
+        egui::vec2(1400.0, 760.0),
+        press,
+        egui::Modifiers::NONE,
+    );
+    run_frame(app, ctx);
 }
 
 /// (b) The point of writing it: the next launch has it. Proven without

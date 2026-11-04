@@ -334,12 +334,9 @@ mod tests {
             .iter()
             .find(|behaviour| behaviour.id == "tab.market.open")
             .expect("opening a tab has a row");
-        let Mapping::Excluded { reason, .. } = open.mapping else {
-            panic!("no capability opens a market tab yet");
-        };
         assert!(
-            !reason.contains("only door") && reason.contains("feed.source.set"),
-            "tab.market.open points at feed.source.set: {reason}"
+            matches!(open.mapping, Mapping::Capabilities(ids) if ids == ["market.palette.open"]),
+            "+ and Ctrl+T open the palette, the same door market.palette.open opens"
         );
     }
 

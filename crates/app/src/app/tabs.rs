@@ -16,6 +16,8 @@ use eframe::egui;
 use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
 use crate::tabstrip::TabAction;
+use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_workspace::market_list as list;
 
 use super::{QuantickApp, TabSlot};
 
@@ -86,44 +88,113 @@ impl QuantickApp {
         self.health.trades_since_summary += trades;
     }
 
-    /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.
+    /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle; none under the palette.
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
         self.read_view_keys(ctx);
         let keys = super::home_wiring::read_tab_keys(ctx);
-        if self.arrangement_adapter().apply_tab_keys(keys) {
-            self.surfaces.source_picker.open(&self.config);
-        }
-    }
-
-    /// Do what the "Open market" dialog settled on.
-    pub(super) fn apply_market_request(&mut self, request: crate::surfaces::MarketRequest) {
-        use crate::surfaces::MarketRequest;
-        match request {
-            MarketRequest::Open { feed_id, symbol } => {
-                self.arrangement_adapter().open_tab(feed_id, symbol, None)
-            }
-            MarketRequest::Add { feed_id, symbol } => {
-                match self.symbol_catalog().add(&feed_id, &symbol) {
-                    Ok(()) => {
-                        self.surfaces.source_picker.close();
-                        self.arrangement_adapter().open_tab(feed_id, symbol, None);
-                    }
-                    // The dialog stays open carrying the reason: the user is one
-                    // keystroke from a symbol that does fit, and closing would
-                    // make the refusal look like a crash.
-                    Err(reason) => self.surfaces.source_picker.refuse(reason),
-                }
-            }
-            MarketRequest::Remove { feed_id, symbol } => {
-                self.symbol_catalog().remove(&feed_id, &symbol);
-            }
+        if !self.surfaces.market_palette.is_open() {
+            let asked = self.arrangement_adapter().apply_tab_keys(keys);
+            settle_strip(self, asked);
         }
     }
 
     /// Carry out what the tab strip asked for.
     pub(super) fn apply_tab_action(&mut self, action: TabAction) {
-        if self.arrangement_adapter().apply_tab_action(action) {
-            self.surfaces.source_picker.open(&self.config);
-        }
+        let asked = self.arrangement_adapter().apply_tab_action(action);
+        settle_strip(self, asked);
     }
+}
+
+/// A live market a close took goes to Recent with its bar; `+` opens the palette.
+fn settle_strip(app: &mut QuantickApp, (palette, closed): super::arrangement_adapter::StripAsk) {
+    if let Some(tab) = closed.filter(|tab| tab.replay.is_none()) {
+        let now = crate::metrics::wall_clock_ms();
+        let stamp = quantick_civil::fmt_offset_minute(now, app.runtime.tz);
+        let closed = list::ClosedMarket {
+            feed_id: tab.feed_id.clone(),
+            symbol: tab.symbol.clone(),
+            at: stamp.get(11..).unwrap_or_default().to_owned(),
+            price: last_price(&tab),
+            bar: tab.flow_pane.state.spec().to_config_string(),
+        };
+        app.surfaces.market_palette.recent.closed(closed);
+    }
+    if palette {
+        app.surfaces.market_palette.open("");
+    }
+}
+
+/// What "Open a market" lists: the config's markets and this window's tabs.
+pub(super) fn market_snapshot(app: &QuantickApp) -> list::MarketSnapshot {
+    let (venues, markets) = app.config.market_catalog(&app.added_symbols);
+    let (tabs, book) = (&app.runtime.tabs, &app.runtime.workspace.book);
+    let open = (tabs.iter().enumerate())
+        .map(|(index, tab)| list::OpenMarket {
+            tab_id: tabs.id_at(index),
+            position: index + 1,
+            feed_id: tab.feed_id.clone(),
+            symbol: tab.symbol.clone(),
+            asset: app.config.market_asset(&tab.feed_id, &tab.symbol),
+            workspace: book.tab_row(tabs.id_at(index)).0,
+            bar: tab.flow_pane.state.spec().to_config_string(),
+            replay: tab.replay.is_some(),
+            streaming: tab.latest_trade_ms.is_some(),
+            price: last_price(tab),
+            trades_per_s: None,
+        })
+        .collect();
+    let workspaces = book.book().list().into_iter().map(|row| row.name);
+    list::MarketSnapshot {
+        venues,
+        markets,
+        open,
+        recent: app.surfaces.market_palette.recent.clone(),
+        starter_feed: app.config.default_feed.clone(),
+        workspaces: workspaces.collect(),
+        inherited_bar: Some(app.active_tab().flow_pane.state.spec().to_config_string()),
+    }
+}
+
+/// Bring the tab at `index` forward, off Home.
+pub(super) fn focus_tab(app: &mut QuantickApp, index: usize) {
+    app.runtime.tabs.select(index);
+    app.chrome.title_bar.surface.show_market();
+}
+
+/// Open `choice` on `bar` (none: `adopt_tab`'s), its workspace left as the tab's arrival.
+pub(super) fn open(app: &mut QuantickApp, choice: &list::OpenChoice, bar: Option<Bars>) -> u64 {
+    let shown = app.runtime.tabs.active_index();
+    (app.arrangement_adapter()).open_tab(choice.feed_id.clone(), choice.symbol.clone(), bar);
+    let tab = app.runtime.tabs.active_id();
+    let sync = app.runtime.workspace.book.sync_mut();
+    sync.join(tab, choice.arrival());
+    (choice.background).then(|| app.runtime.tabs.select(shown));
+    tab
+}
+
+/// Add a symbol to a feed's list, or take one out.
+pub(super) fn edit_catalog(app: &mut QuantickApp, market: (&str, &str), add: bool) -> Refusable {
+    match add {
+        true => app.symbol_catalog().add(market.0, market.1),
+        false => app.symbol_catalog().remove(market.0, market.1),
+    }
+}
+
+/// Do what the palette asked. A refusal stays under its field.
+pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: list::PaletteIntent) {
+    match quantick_control_handlers::market_palette::settle(app, intent) {
+        Ok(None) => {}
+        Ok(Some(note)) => {
+            app.surfaces.market_palette.close();
+            app.surfaces.toast.note(note, std::time::Instant::now());
+        }
+        Err(reason) => app.surfaces.market_palette.refuse(reason),
+    }
+}
+
+type Refusable = Result<(), String>;
+
+fn last_price(tab: &crate::tab::Tab) -> Option<String> {
+    let bar = tab.flow_pane.state.bars().last()?;
+    Some(bar.close.to_string())
 }

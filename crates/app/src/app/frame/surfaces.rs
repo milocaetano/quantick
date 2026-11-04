@@ -11,13 +11,11 @@ use std::time::Instant;
 use crate::app::arrangement_host::ArrangementHost;
 use crate::app::indicator_manager::IndicatorState;
 use crate::canvas_layout::MAX_CANVAS_PANES;
-use crate::config::AppConfig;
 use crate::footprint_config::FootprintConfig;
 use crate::indicator_panel::SettingsDialog;
 use crate::pane::PaneSide;
 use crate::style::ChartStyle;
 use crate::surfaces::{StrategyPopupSurface, SurfaceEnv, SurfaceResponse, Surfaces};
-use crate::symbols_file::AddedSymbols;
 
 use super::super::TabSlot;
 
@@ -49,8 +47,7 @@ pub(super) struct SurfaceOwners<'a> {
     pub style: &'a ChartStyle,
     pub footprint_config: &'a FootprintConfig,
     pub tabs: &'a mut ArrangementHost,
-    pub config: &'a AppConfig,
-    pub added_symbols: &'a AddedSymbols,
+    pub markets: Option<&'a quantick_workspace::market_list::MarketSnapshot>,
 }
 
 /// Draw every registered surface against this frame's environment and
@@ -67,8 +64,7 @@ pub(super) fn draw_surfaces(
         style,
         footprint_config,
         tabs,
-        config,
-        added_symbols,
+        markets,
     } = owners;
     // `hooks_pending` is the frame a capture hook opens a surface from
     // inside `draw_all`: it is not open yet when this runs, but it is about
@@ -88,18 +84,6 @@ pub(super) fn draw_surfaces(
         } else {
             SmallVec::new()
         };
-    // The markets tabs are showing: the dialog greys out removing one of
-    // those, because a tab left on a symbol the catalog no longer offers
-    // gets silently retargeted by the next SOURCE correction. Built only
-    // while the dialog is open — it is a `String` pair per tab, and no frame
-    // should pay for it to be thrown away.
-    let open_markets: Vec<(String, String)> = if staging || registry.source_picker.is_open() {
-        tabs.iter()
-            .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
-            .collect()
-    } else {
-        Vec::new()
-    };
     // Read once. `focused_pane` resolves the same side internally, and the
     // answer is not a field lookup — it reads the layout, because focus on a
     // collapsed pane is focus on nothing.
@@ -138,9 +122,7 @@ pub(super) fn draw_surfaces(
             footprint: focused_pane.footprint_config(footprint_config),
             footprint_customized: focused_pane.footprint.config.is_own(),
             focused_side,
-            config,
-            added_symbols,
-            open_markets: &open_markets,
+            markets,
             active_tab: tabs.active_id(),
             counted_bar_sides: &counted_bar_sides,
             alert_failure,

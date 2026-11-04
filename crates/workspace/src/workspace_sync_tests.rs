@@ -448,3 +448,17 @@ fn a_layer_moved_on_a_context_pane_is_an_edit_of_that_pane_only() {
     assert!(edit.context_panes[0].layers.is_empty());
     assert_eq!(edit.context_panes[1].layers.get("bubbles"), Some(&false));
 }
+
+/// A tab opened onto a workspace restores onto it when adopted; one left to
+/// Default arrives as nothing, so it joins the way any new tab does.
+#[test]
+fn a_new_tab_joins_its_chosen_workspace_and_none_leaves_it_alone() {
+    let mut sync = TabRecipeSync::default();
+    sync.join(4, None);
+    assert!(!sync.has_arrival(4));
+    sync.join(5, Some("Swing".to_owned()));
+    assert!(matches!(
+        sync.adoption(5, false, false),
+        TabAdoption::Restore { workspace, copy: None } if workspace == "Swing"
+    ));
+}

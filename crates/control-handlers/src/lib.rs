@@ -31,6 +31,7 @@ pub mod feed_source;
 pub mod history;
 pub mod home_tab;
 pub mod journal_sessions;
+pub mod market_palette;
 pub mod market_windows;
 pub mod native_window;
 pub mod notify;

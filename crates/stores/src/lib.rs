@@ -42,4 +42,7 @@ pub mod tab_recipes;
 pub mod ui_state;
 pub mod workspaces;
 
+/// The "Open a market" list, for the handlers that answer its calls.
+pub use quantick_workspace::market_list;
+
 pub mod indicator_picker;

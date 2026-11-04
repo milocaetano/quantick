@@ -63,11 +63,13 @@ impl SymbolCatalog<'_> {
     /// Take a user-added `symbol` back out of feed `feed_id`'s catalog.
     ///
     /// Only ever a catalog edit: a tab already showing that market keeps
-    /// streaming it. The picker will not offer this for a market a tab is on,
+    /// streaming it. The palette refuses this for a market a tab is on,
     /// which is what stops the selection correction from retargeting it.
-    pub fn remove(&mut self, feed_id: &str, symbol: &str) {
+    /// Refused when the feed does not list the symbol.
+    pub fn remove(&mut self, feed_id: &str, symbol: &str) -> Result<(), String> {
         if !self.config.remove_symbol(feed_id, symbol) {
-            return;
+            let feed = self.config.feed_name(feed_id);
+            return Err(format!("{feed} does not list {symbol}"));
         }
         self.added.remove(feed_id, symbol);
         if let Err(error) = symbols_file::save(self.path, self.added) {
@@ -91,5 +93,6 @@ impl SymbolCatalog<'_> {
             action = "leave_open_tabs_alone",
             "a user-added symbol left the catalog"
         );
+        Ok(())
     }
 }

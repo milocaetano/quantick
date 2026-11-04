@@ -463,7 +463,7 @@ chip carries that purple as its label and status dot; an inactive × waits for
 the pointer.
 
 One tab per open market. A tab chip reads `SYMBOL · venue` in monospace type,
-with a close `×` on hover and a trailing `+` that opens the source picker
+with a close `×` on hover and a trailing `+` that opens the Open a market palette
 (feed + symbol, from the config catalog — the same catalog the toolbar's
 SOURCE group reads). Zone 1 already had the horizontal room; the chrome
 budget is unchanged.

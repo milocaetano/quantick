@@ -133,17 +133,47 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "tab.market.open",
-        title: "Open a new market tab",
-        reach: "tab strip +, Ctrl+T",
+        title: "Open the Open a market palette",
+        reach: "tab strip +, Ctrl+T, Home's Open a market",
         keys: &[
             (Source::TabAction, "New"),
             (Source::Hotkey, "NEW_TAB_SHORTCUT"),
         ],
+        mapping: capability!("market.palette.open"),
+    },
+    UiBehaviour {
+        id: "market.palette.choose",
+        title: "Open or focus the market chosen in the palette",
+        reach: "Enter or Ctrl+Enter on a palette row, with its Bars and Workspace selectors",
+        keys: &[(
+            Source::Authored,
+            "palette rows are drawn from the headless market list, not an action enum",
+        )],
+        mapping: capability!("market.open"),
+    },
+    UiBehaviour {
+        id: "market.palette.add",
+        title: "Add a symbol to a venue and open it",
+        reach: "Enter on a palette no-match row",
+        keys: &[(
+            Source::Authored,
+            "the no-match row is drawn from the headless market list",
+        )],
         mapping: excluded!(
             PendingCapability,
-            "no capability opens a second market tab. `feed.source.set` switches the feed and \
-             symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401"
+            "no capability adds a symbol to a venue's list yet; `market.open` opens what the \
+             config and the added-symbols file already offer. Tracked in issue 401"
         ),
+    },
+    UiBehaviour {
+        id: "market.palette.remove",
+        title: "Remove a market the trader added",
+        reach: "Delete on a palette row the trader added",
+        keys: &[(
+            Source::Authored,
+            "the row is drawn from the headless market list",
+        )],
+        mapping: capability!("catalog.remove"),
     },
     UiBehaviour {
         id: "tab.market.source.set",

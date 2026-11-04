@@ -278,6 +278,7 @@ fn test_config() -> AppConfig {
             bubble_preset: None,
             symbol_bubble_presets: Default::default(),
             asset_families: Vec::new(),
+            asset_aliases: Default::default(),
             symbol_asset_modes: Default::default(),
             contract_rolls: Default::default(),
             default_layout: None,
@@ -1494,10 +1495,10 @@ struct TabEnds {
 fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> TabEnds {
     app.apply_tab_action(TabAction::New);
     assert!(
-        app.surfaces.source_picker.is_open(),
+        app.surfaces.market_palette.is_open(),
         "the + opens the picker"
     );
-    app.surfaces.source_picker.close();
+    app.surfaces.market_palette.close();
 
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
@@ -1808,6 +1809,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
                 asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,
@@ -1822,6 +1824,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
                 asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
                 contract_rolls: Default::default(),
                 default_layout: None,

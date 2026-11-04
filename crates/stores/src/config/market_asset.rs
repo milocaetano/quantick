@@ -1,6 +1,8 @@
 //! The asset a market is keyed by: an explicit declaration, never a guess at a
 //! symbol's name.
-use super::{AppConfig, FeedConfig, key_matches};
+use super::{AppConfig, FeedConfig, ProviderKind, key_matches};
+use crate::symbols_file::AddedSymbols;
+use quantick_workspace::market_list::{CatalogMarket, Venue, VenueKind};
 
 impl FeedConfig {
     fn asset_family(&self, symbol: &str) -> Option<&String> {
@@ -8,6 +10,35 @@ impl FeedConfig {
             .iter()
             .filter(|family| key_matches(family, symbol))
             .max_by_key(|family| family.len())
+    }
+
+    /// Every alias a key matching `symbol` declares, in key order.
+    #[must_use]
+    pub fn asset_aliases_of(&self, symbol: &str) -> Vec<String> {
+        self.asset_aliases
+            .iter()
+            .filter(|(key, _)| key_matches(key, symbol))
+            .flat_map(|(_, aliases)| aliases.iter().cloned())
+            .collect()
+    }
+
+    pub(super) fn validate_asset_aliases(&self) -> Result<(), String> {
+        for (key, aliases) in &self.asset_aliases {
+            if !self.symbols.iter().any(|offered| key_matches(key, offered)) {
+                return Err(format!(
+                    "feed '{}' names aliases for '{key}', which matches none of the symbols it \
+                     offers",
+                    self.id
+                ));
+            }
+            if aliases.iter().any(|alias| alias.trim().is_empty()) {
+                return Err(format!(
+                    "feed '{}' names an empty alias for '{key}'",
+                    self.id
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -34,6 +65,46 @@ impl AppConfig {
             .max_by_key(|family| family.len())
             .cloned()
             .unwrap_or_else(|| self.plain_bubble_asset(venue, symbol).key)
+    }
+
+    /// The venues and markets "Open a market" lists, in config order.
+    #[must_use]
+    pub fn market_catalog(&self, added: &AddedSymbols) -> (Vec<Venue>, Vec<CatalogMarket>) {
+        let venues = self
+            .feeds
+            .iter()
+            .map(|feed| Venue {
+                feed_id: feed.id.clone(),
+                name: feed.name.clone(),
+                chip: match feed.provider {
+                    ProviderKind::Binance | ProviderKind::BinanceFutures => 'B',
+                    ProviderKind::Hyperliquid => 'H',
+                    ProviderKind::MetaTrader => '5',
+                },
+                kind: if feed.provider.is_implemented() {
+                    VenueKind::Live
+                } else {
+                    VenueKind::ComingSoon
+                },
+                // Only what the feed declares: a market with no bar of its own
+                // takes the active tab's, as `adopt_tab` decides.
+                bar: (self.startup_spec_for(&feed.id)).map(|spec| spec.to_config_string()),
+                bridged: feed.provider == ProviderKind::MetaTrader,
+            })
+            .collect();
+        let markets = self
+            .feeds
+            .iter()
+            .flat_map(|feed| feed.symbols.iter().map(move |symbol| (feed, symbol)))
+            .map(|(feed, symbol)| CatalogMarket {
+                feed_id: feed.id.clone(),
+                symbol: symbol.clone(),
+                asset: self.market_asset(&feed.id, symbol),
+                aliases: feed.asset_aliases_of(symbol),
+                user_added: added.contains(&feed.id, symbol),
+            })
+            .collect();
+        (venues, markets)
     }
 }
 
@@ -82,6 +153,64 @@ mod tests {
         let config = shipped();
         assert_eq!(config.market_asset("binance", "WINUSDT"), "WINUSDT");
         assert_eq!(config.market_asset("binance", "WDOGE"), "WDOGE");
+    }
+
+    #[test]
+    fn the_catalog_lists_every_venue_and_market_with_its_explicit_asset() {
+        let config = shipped();
+        let mut added = AddedSymbols::default();
+        added.add("binance", "ETHUSDT");
+        let (venues, markets) = config.market_catalog(&added);
+        assert_eq!(venues.len(), config.feeds.len());
+        let binance = &venues[0];
+        assert_eq!(
+            (binance.chip, binance.bar.as_deref()),
+            ('B', Some("tick:50")),
+            "BTCUSDT reads tick 50 from Binance's default_bars"
+        );
+        let b3 = venues
+            .iter()
+            .find(|venue| venue.feed_id == "metatrader-b3")
+            .unwrap();
+        assert_eq!((b3.chip, b3.bridged, b3.bar.as_deref()), ('5', true, None));
+        let win = markets
+            .iter()
+            .find(|market| market.symbol == "WINZ26")
+            .unwrap();
+        assert_eq!(win.asset, "WIN*");
+        assert!(win.aliases.contains(&"ibovespa".to_owned()));
+        let eth = markets
+            .iter()
+            .find(|market| market.symbol == "ETHUSDT")
+            .unwrap();
+        assert!(eth.user_added);
+    }
+
+    #[test]
+    fn aliases_search_every_contract_of_their_key() {
+        let config = shipped();
+        let b3 = config.feed("metatrader-b3").expect("the B3 feed");
+        for symbol in ["WIN$N", "WINZ26"] {
+            assert!(b3.asset_aliases_of(symbol).contains(&"ibovespa".to_owned()));
+        }
+        assert!(
+            !b3.asset_aliases_of("WDO$N")
+                .contains(&"ibovespa".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_alias_key_that_matches_nothing_is_refused() {
+        let mut config = shipped();
+        let feed = config
+            .feeds
+            .iter_mut()
+            .find(|feed| feed.id == "binance")
+            .expect("binance");
+        feed.asset_aliases
+            .insert("GHOST".to_owned(), vec!["ghost".to_owned()]);
+        let error = config.validate().expect_err("an unmatched key is refused");
+        assert!(error.contains("GHOST"), "{error}");
     }
 
     /// The family is for drawings: WDO's saved bubble look keeps its key.

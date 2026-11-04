@@ -27,6 +27,9 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) surface: &'a mut quantick_workspace::arrangement::strip::StripSurface,
 }
 
+/// What the strip asks of the window: the palette opens?, and the tab a close took.
+pub(super) type StripAsk = (bool, Option<Tab>);
+
 #[derive(Clone, Copy)]
 pub(crate) struct ArrangementRead<'a> {
     pub(super) tabs: &'a ArrangementHost,
@@ -254,23 +257,19 @@ impl ArrangementAdapter<'_> {
             time_pane.price_view.set_inverted(time_inverted);
         }
     }
-    /// Close the tab at `index`, activating a neighbour.
-    ///
-    /// The last tab stays: a window with no market has nothing to draw. What
-    /// the closed tab owned goes with it — dropping its `FeedHandle` closes
-    /// the receivers its feed thread sends into, and dropping its panes drops
-    /// the indicator worker and book worker handles, whose run loops end when
-    /// their command channels disconnect. No joins, no shutdown protocol.
-    pub(super) fn close_tab(&mut self, index: usize) {
-        if let Ok(plan) = self.tabs.plan_close(index) {
-            self.close_planned(plan).expect("fresh closing plan");
-        }
+    /// Close the tab at `index`, activating a neighbour, and answer the tab
+    /// it took. The last tab stays: a window with no market has nothing to
+    /// draw. Dropping the closed tab's `FeedHandle` and panes ends its feed
+    /// thread and workers as their channels disconnect; no joins.
+    pub(super) fn close_tab(&mut self, index: usize) -> Option<Tab> {
+        let plan = self.tabs.plan_close(index).ok()?;
+        Some(self.close_planned(plan).expect("fresh closing plan"))
     }
     /// Land a closing plan; owners beside the host forget the tab before it drops.
     pub(super) fn close_planned(
         &mut self,
         plan: quantick_workspace::arrangement::Transition,
-    ) -> Result<(), quantick_workspace::arrangement::ArrangementError> {
+    ) -> Result<Tab, quantick_workspace::arrangement::ArrangementError> {
         let closed = self.tabs.close_planned(plan)?;
         let runtime = &closed.runtime;
         tracing::info!(target: "quantick::app", schema_version = 1_u8, event_code = "TAB_CLOSED", tab = closed.id, feed = %runtime.feed_id, symbol = %runtime.symbol, tabs = self.tabs.len(), action = "drop_feed_and_workers", "closing a market tab");
@@ -280,12 +279,12 @@ impl ArrangementAdapter<'_> {
         for (pane, _) in closed.runtime.panes() {
             layouts.remove_pane(pane.id);
         }
-        Ok(())
+        Ok(closed.runtime)
     }
-    /// Carry out what the tab strip asked for. Answers whether the source
-    /// picker, which this adapter does not own, should open.
-    pub(super) fn apply_tab_action(&mut self, action: crate::tabstrip::TabAction) -> bool {
+    /// Carry out what the tab strip asked for; see [`StripAsk`].
+    pub(super) fn apply_tab_action(&mut self, action: crate::tabstrip::TabAction) -> StripAsk {
         use crate::tabstrip::TabAction;
+        let mut closed = None;
         match action {
             TabAction::Activate(index) => {
                 if index < self.tabs.len() {
@@ -296,35 +295,33 @@ impl ArrangementAdapter<'_> {
             // Closing a chip from Home stays on Home, whichever market went.
             TabAction::Close(index) => {
                 let home = self.surface.is_home();
-                self.close_tab(index);
+                closed = self.close_tab(index);
                 if home {
                     super::home_wiring::show_home(self.tabs, self.surface);
                 }
             }
-            TabAction::New => return true,
+            TabAction::New => return (true, None),
             TabAction::Home => super::home_wiring::show_home(self.tabs, self.surface),
         }
-        false
+        (false, closed)
     }
     /// Carry out the tab shortcuts. Answers as [`Self::apply_tab_action`] does.
     pub(super) fn apply_tab_keys(
         &mut self,
         keys: quantick_workspace::arrangement::strip::TabKeys,
-    ) -> bool {
+    ) -> StripAsk {
         if keys.home {
             super::home_wiring::show_home(self.tabs, self.surface);
         }
         let keys = self.surface.settle_keys(keys);
-        if keys.close_tab {
-            self.close_tab(self.tabs.active_index());
-        }
+        let closed = (keys.close_tab).then(|| self.close_tab(self.tabs.active_index()));
         if keys.next {
             self.cycle_tab(1);
         }
         if keys.previous {
             self.cycle_tab(-1);
         }
-        keys.new_tab
+        (keys.new_tab, closed.flatten())
     }
     /// Move tabs along the strip with the core's existing positional wrap.
     pub(super) fn cycle_tab(&mut self, delta: isize) {

@@ -92,6 +92,7 @@ impl FakeWindow {
                     bubble_preset: None,
                     symbol_bubble_presets: Default::default(),
                     asset_families: Vec::new(),
+                    asset_aliases: Default::default(),
                     symbol_asset_modes: Default::default(),
                     contract_rolls: Default::default(),
                     default_layout: None,
@@ -171,6 +172,7 @@ impl TabsMutPort for FakeWindow {
 
 impl quantick_control_handlers::native_window::NativeWindowHost for FakeWindow {}
 impl quantick_control_handlers::home_tab::HomeTabHost for FakeWindow {}
+impl quantick_control_handlers::market_palette::MarketPaletteHost for FakeWindow {}
 impl quantick_control_handlers::desk::DeskHost for FakeWindow {}
 impl quantick_control_handlers::workspace_book::WorkspaceBookHost for FakeWindow {}
 
