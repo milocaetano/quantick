@@ -12,6 +12,13 @@ fn ema() -> SavedIndicator {
     }
 }
 
+/// A book with autosave off: a tab holds its edits, marked, until Save to.
+fn held_book() -> WorkspaceBook {
+    let mut book = WorkspaceBook::default();
+    book.set_autosave(false);
+    book
+}
+
 fn recipe(layout: DeclaredLayout) -> WorkspaceRecipe {
     WorkspaceRecipe {
         layout,
@@ -21,7 +28,7 @@ fn recipe(layout: DeclaredLayout) -> WorkspaceRecipe {
 
 /// `Scalp` holds the time+flow canvas; tabs 1 and 2 use it, clean.
 fn two_tabs_on_scalp() -> WorkspaceBook {
-    let mut book = WorkspaceBook::default();
+    let mut book = held_book();
     book.open_tab(1);
     book.open_tab(2);
     book.observe(1, &recipe(DeclaredLayout::TimeAndFlow))
@@ -38,7 +45,7 @@ fn state(book: &WorkspaceBook, tab: u64) -> (String, bool) {
 
 #[test]
 fn a_new_tab_opens_on_default_clean_and_default_is_always_listed() {
-    let mut book = WorkspaceBook::default();
+    let mut book = held_book();
     book.open_tab(1);
     assert_eq!(state(&book, 1), ("Default".to_owned(), false));
     assert_eq!(
@@ -148,16 +155,41 @@ fn set_drops_edits_and_says_so_and_a_repeat_keeps_them() {
     assert_eq!(book.set(9, "Scalp"), Err(WorkspaceRefusal::UnknownTab(9)));
 }
 
+/// Autosave on, the opening default: an edit is on its way to the workspace,
+/// so the cell never marks it and closing never asks, though the copy differs.
 #[test]
-fn revert_goes_back_to_the_recipe_once() {
+fn with_autosave_on_an_edit_never_reads_as_held() {
     let mut book = two_tabs_on_scalp();
+    assert!(book.set_autosave(true));
     book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
-    assert!(book.revert(1).unwrap());
+    assert_eq!(state(&book, 1), ("Scalp".to_owned(), false));
+    assert!(book.differs(1));
+    assert_eq!(book.differing_tabs(), vec![1]);
+    assert_eq!(book.unsaved_edits(1), None);
+    let saved = book.save_to(1).unwrap();
+    assert_eq!(saved.tabs_changed, vec![2], "the clean tab follows");
+    assert!(!book.differs(1));
+    assert!(!book.set_autosave(true), "a repeat moves nothing");
+}
+
+/// Autosave off: closing asks, naming the workspace, the tabs a save also
+/// changes and what changed.
+#[test]
+fn with_autosave_off_the_close_prompt_names_what_would_be_lost() {
+    let mut book = two_tabs_on_scalp();
+    let mut held = recipe(DeclaredLayout::Time);
+    held.flow_indicators = vec![ema()];
+    book.observe(1, &held).unwrap();
+    assert_eq!(state(&book, 1), ("Scalp".to_owned(), true));
     assert_eq!(
-        book.tab_copy(1).unwrap().layout,
-        DeclaredLayout::TimeAndFlow
+        book.unsaved_edits(1),
+        Some(UnsavedEdits {
+            workspace: "Scalp".to_owned(),
+            followers: vec![2],
+            changes: vec!["EMA".to_owned(), "panes".to_owned()],
+        })
     );
-    assert!(!book.revert(1).unwrap());
+    assert_eq!(book.unsaved_edits(2), None, "a clean tab closes at once");
 }
 
 #[test]
@@ -238,29 +270,37 @@ fn list_is_default_first_then_by_name_with_each_workspaces_tabs() {
 
 #[test]
 fn the_first_run_seeds_one_workspace_per_tab_deduplicated_and_unmodified() {
-    let mut book = WorkspaceBook::default();
+    let mut book = held_book();
     let live = recipe(DeclaredLayout::TimeTimeAndFlow);
-    let seed = |tab, symbol: &str| SeedTab {
+    let seed = |tab, layout: Option<&str>, symbol: &str| SeedTab {
         tab,
+        layout: layout.map(str::to_owned),
         symbol: symbol.to_owned(),
         live: live.clone(),
     };
-    let seeded = book.seed_first_run(vec![seed(1, "WINV26"), seed(2, "WINV26"), seed(3, "BTC")]);
+    let seeded = book.seed_first_run(vec![
+        seed(1, Some("Fluxo"), "WINV26"),
+        seed(2, Some("Fluxo"), "WINV26"),
+        seed(3, None, "BTC"),
+        seed(4, Some("Default"), "WDOZ26"),
+    ]);
     assert_eq!(
         seeded,
         [
-            (1, "from WINV26".to_owned()),
-            (2, "from WINV26 2".to_owned()),
-            (3, "from BTC".to_owned())
-        ]
+            (1, "Fluxo".to_owned()),
+            (2, "Fluxo 2".to_owned()),
+            (3, "BTC".to_owned()),
+            (4, "WDOZ26".to_owned())
+        ],
+        "the layout's name, else the bare symbol; never `from `"
     );
-    for tab in 1..=3 {
+    for tab in 1..=4 {
         assert!(!book.tab_state(tab).unwrap().modified);
         assert_eq!(book.tab_copy(tab), Some(&live));
     }
-    assert_eq!(book.recipe("from WINV26"), Some(&live));
+    assert_eq!(book.recipe("Fluxo"), Some(&live));
     assert!(
-        book.seed_first_run(vec![seed(1, "WINV26")]).is_empty(),
+        book.seed_first_run(vec![seed(1, None, "WINV26")]).is_empty(),
         "a seeded tab is left alone"
     );
 }
@@ -280,7 +320,7 @@ fn a_seed_from_an_old_desk_tab_copies_the_indicators_and_holds_no_layout_id() {
     assert_eq!(second.0, 2);
     let live = capture_recipe(&tab, &layouts, (BTreeMap::new(), Vec::new()), None);
     assert_eq!(live.layout, DeclaredLayout::TimeAndFlow);
-    assert_eq!(live.context_bars, ["time:1m"]);
+    assert_eq!(live.context_panes.len(), 1, "the interval is the market's");
     assert_eq!(live.split_fraction, Some(0.25));
     assert_eq!(
         live.flow_indicators,
@@ -289,17 +329,18 @@ fn a_seed_from_an_old_desk_tab_copies_the_indicators_and_holds_no_layout_id() {
     );
     assert_eq!(live.context_panes[0].indicators, [ema()]);
 
-    let mut book = WorkspaceBook::default();
+    let mut book = held_book();
     book.seed_first_run(vec![SeedTab {
         tab: 1,
+        layout: None,
         symbol: tab.symbol.clone(),
         live: live.clone(),
     }]);
-    assert_eq!(state(&book, 1), ("from WINV26".to_owned(), false));
+    assert_eq!(state(&book, 1), ("WINV26".to_owned(), false));
 
     layouts.get_mut(LayoutId(1)).unwrap().indicators.clear();
     assert_eq!(
-        book.recipe("from WINV26").unwrap().flow_indicators,
+        book.recipe("WINV26").unwrap().flow_indicators,
         [ema()],
         "an edit on the shared layout does not reach the recipe"
     );
@@ -316,6 +357,7 @@ fn a_restart_follows_a_rename_and_a_lost_workspace_keeps_what_the_tab_shows() {
     book.rename("Tape", "Open").unwrap();
     let text = toml::to_string_pretty(&book).unwrap();
     let mut reopened = parse_book(&text).unwrap();
+    reopened.set_autosave(false);
     reopened.restore_tab(1, "Scalp", None);
     assert_eq!(state(&reopened, 1), ("Open".to_owned(), false));
     assert_eq!(
@@ -345,7 +387,7 @@ fn a_rename_back_and_forth_resolves_without_a_loop() {
 /// what it settled on: undoing an edit by hand clears the mark.
 #[test]
 fn on_the_factory_default_an_edit_undone_by_hand_reads_clean() {
-    let mut book = WorkspaceBook::default();
+    let mut book = held_book();
     book.open_tab(1);
     let opened = recipe(DeclaredLayout::TimeAndFlow);
     book.settle_tab(1, &opened);
@@ -357,9 +399,6 @@ fn on_the_factory_default_an_edit_undone_by_hand_reads_clean() {
     book.observe(1, &opened).unwrap();
     assert_eq!(state(&book, 1), ("Default".to_owned(), false));
 
-    book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
-    assert!(book.revert(1).unwrap());
-    assert_eq!(book.tab_copy(1), Some(&opened), "revert goes back to it");
     assert_eq!(book.saved_fields(1), (Some("Default".to_owned()), None));
 }
 
@@ -374,6 +413,7 @@ fn a_tab_keeps_its_edits_across_a_restart_still_marked() {
     );
     let text = toml::to_string_pretty(&book).unwrap();
     let mut reopened = parse_book(&text).unwrap();
+    reopened.set_autosave(false);
     reopened.restore_tab(2, &name.unwrap(), copy);
     reopened.restore_tab(1, "Scalp", None);
     assert_eq!(state(&reopened, 2), ("Scalp".to_owned(), true));
@@ -384,14 +424,13 @@ fn a_tab_keeps_its_edits_across_a_restart_still_marked() {
 
 #[test]
 fn a_full_recipe_round_trips_through_the_file_exactly() {
-    let mut book = WorkspaceBook::default();
+    let mut book = held_book();
     book.open_tab(1);
     let live = WorkspaceRecipe {
         layout: DeclaredLayout::TimeTimeAndFlow,
         split_fraction: Some(0.1 + 0.2),
         context_heights: vec![0.3, 0.7],
         context_panes_collapsed: vec![false, true],
-        context_bars: vec!["time:1m".to_owned(), "time:1h".to_owned()],
         flow_indicators: vec![ema()],
         context_panes: vec![
             ContextPaneRecipe {
@@ -420,7 +459,7 @@ fn a_full_recipe_round_trips_through_the_file_exactly() {
 
 #[test]
 fn the_factory_default_amounts_to_what_a_new_tab_opens_with_and_no_saved_recipe_reads_as_it() {
-    let book = WorkspaceBook::default();
+    let book = held_book();
     assert!(book.recipe(DEFAULT_WORKSPACE).unwrap().is_factory());
     let opened = WorkspaceRecipe::new_tab_arrangement(DeclaredLayout::TimeTimeAndFlow, &[ema()]);
     assert_eq!(opened.layout, DeclaredLayout::TimeTimeAndFlow);
@@ -463,7 +502,6 @@ fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
     let mut book = two_tabs_on_scalp();
     book.open_tab(3);
     let mut held = recipe(DeclaredLayout::TimeTimeAndFlow);
-    held.context_bars = vec!["time:1m".to_owned(), "tick:200".to_owned()];
     held.flow_indicators = vec![ema(), ema()];
     held.context_panes = vec![
         ContextPaneRecipe {
@@ -489,7 +527,7 @@ fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
             ("Scalp".to_owned(), "Time · Flow".to_owned()),
             (
                 "Swing".to_owned(),
-                "Time 1m · Tick 200 · Flow · 4 ind".to_owned()
+                "Time · Time · Flow · 4 ind".to_owned()
             ),
         ]
     );
@@ -499,7 +537,6 @@ fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
 fn create_puts_the_tab_on_an_empty_recipe_and_no_other_tab_moves() {
     let mut book = two_tabs_on_scalp();
     let mut held = recipe(DeclaredLayout::TimeAndFlow);
-    held.context_bars = vec!["time:5m".to_owned()];
     held.flow_indicators = vec![ema()];
     held.split_fraction = Some(0.3);
     held.layers.insert("bubbles".to_owned(), true);
@@ -521,7 +558,6 @@ fn create_puts_the_tab_on_an_empty_recipe_and_no_other_tab_moves() {
         Some(0.3),
         "the sizes the tab reads back"
     );
-    assert_eq!(empty.context_bars, ["time:5m"]);
     assert_eq!(empty.layers.get("bubbles"), Some(&true));
     assert_eq!(book.tab_copy(1), Some(empty));
     let shown = empty.clone();
@@ -536,7 +572,7 @@ fn create_puts_the_tab_on_an_empty_recipe_and_no_other_tab_moves() {
 /// arrangement: an empty recipe read from it would be that recipe again.
 #[test]
 fn create_refuses_a_tab_still_opening() {
-    let mut book = WorkspaceBook::default();
+    let mut book = held_book();
     book.open_tab(1);
     let before = book.clone();
     assert_eq!(

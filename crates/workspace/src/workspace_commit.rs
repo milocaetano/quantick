@@ -29,6 +29,8 @@ pub enum WritePurpose {
 /// A standing edit never captures the current arrangement.
 pub enum DocumentEdit {
     Bookmarks,
+    /// The desk's `auto_save`, which the workspace book holds in memory.
+    AutoSave(bool),
     ReplayFolder(Option<String>),
     ReplayDayBefore(bool),
     Favorites(Vec<String>),
@@ -187,6 +189,7 @@ impl WorkspaceCommitSession {
         file.save_on_exit = self.save_on_exit;
         match edit {
             DocumentEdit::Bookmarks => file.saved = self.bookmarks.clone(),
+            DocumentEdit::AutoSave(enabled) => file.auto_save = enabled,
             DocumentEdit::ReplayFolder(folder) => file.replay_folder = folder,
             DocumentEdit::ReplayDayBefore(enabled) => file.replay_day_before = Some(enabled),
             DocumentEdit::Favorites(tools) => file.favorite_tools = tools,

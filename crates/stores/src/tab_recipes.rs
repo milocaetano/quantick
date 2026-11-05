@@ -4,6 +4,7 @@
 //! is `quantick_workspace::workspace_sync`'s or the book's.
 
 use crate::workspaces::{SeedTab, TabAdoption, WorkspaceBookStore, WorkspaceRecipe};
+use std::time::Instant;
 
 /// What the window lends the book's upkeep.
 pub trait TabRecipeHost {
@@ -17,6 +18,9 @@ pub trait TabRecipeHost {
     /// What the tab shows now, as a recipe.
     fn live_recipe(&self, tab: u64) -> Option<WorkspaceRecipe>;
     fn recipe_tab_symbol(&self, tab: u64) -> Option<String>;
+    /// The name of the layout the tab shows, which a first run names its
+    /// workspace after.
+    fn recipe_tab_layout(&self, tab: u64) -> Option<String>;
     /// What a new tab on this tab's feed opens with: what the factory
     /// `Default` amounts to here.
     fn new_tab_recipe(&self, tab: u64) -> WorkspaceRecipe;
@@ -37,16 +41,26 @@ pub trait TabRecipeHost {
     fn apply_recipe_indicators(&mut self, tab: u64, recipe: &WorkspaceRecipe);
 }
 
-/// What the frame owes the book, once its panes are built and seeded.
-pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H) {
+/// What the frame owes the book, once its panes are built and seeded. Answers
+/// the tabs autosave writes through now: edits quiet for a second, never while
+/// it is off.
+pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H, now: Instant) -> Vec<u64> {
     adopt_tabs(host);
     apply_pending_recipes(host);
     let active = host.active_recipe_tab();
-    observe_tab(host, active);
     let tabs = host.recipe_tabs();
     let other = host.recipe_store_mut().sync_mut().next_watch(&tabs, active);
-    if let Some(other) = other {
-        observe_tab(host, other);
+    for id in std::iter::once(active).chain(other) {
+        if observe_tab(host, id) {
+            host.recipe_store_mut().sync_mut().note_edit(id, now);
+        }
+    }
+    let store = host.recipe_store_mut();
+    let due = store.sync_mut().take_due(now);
+    if store.book().autosave() {
+        due.into_iter().filter(|tab| store.book().differs(*tab)).collect()
+    } else {
+        Vec::new()
     }
 }
 
@@ -83,6 +97,7 @@ fn adopt_tabs<H: TabRecipeHost + ?Sized>(host: &mut H) {
                 if let (Some(live), Some(symbol)) = (live, symbol) {
                     seeds.push(SeedTab {
                         tab: id,
+                        layout: host.recipe_tab_layout(id),
                         symbol,
                         live,
                     });
@@ -183,40 +198,41 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
 
 /// Read one tab; a change the book has not seen becomes its copy, and only its.
 /// A tab whose change signal has not moved since it was last read is not read.
-pub fn observe_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) {
+/// Answers whether the copy changed.
+pub fn observe_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) -> bool {
     let store = host.recipe_store();
     if store.sync().is_pending(id) || store.book().tab_state(id).is_none() {
-        return;
+        return false;
     }
     if !host.tab_settled(id) {
-        return;
+        return false;
     }
     if !host.recipe_store().sync().is_settled(id) {
         settle(host, id);
-        return;
+        return false;
     }
     let signal = host.recipe_signal(id);
     if host.recipe_store().sync().is_quiet(id, signal) {
-        return;
+        return false;
     }
     let Some(live) = host.live_recipe(id) else {
-        return;
+        return false;
     };
     let (book, sync) = host.recipe_store_mut().parts_mut();
     sync.note_signal(id, signal);
     let Some(copy) = book.tab_copy(id) else {
-        return;
+        return false;
     };
-    if let Some(edit) = sync.observe(id, live, copy) {
-        // The tab was just found in the book, so this cannot refuse.
-        let _ = book.observe(id, &edit);
-    }
+    // The tab was just found in the book, so observe cannot refuse.
+    sync.observe(id, live, copy)
+        .is_some_and(|edit| book.observe(id, &edit).unwrap_or(false))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::workspaces::path_beside;
+    use quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
 
     /// One tab, always settled, whose panes show whatever `shows` says.
     struct OneTab {
@@ -225,6 +241,7 @@ mod tests {
         applied: usize,
         /// How many recipes were built off the tab.
         builds: std::cell::Cell<usize>,
+        layout: Option<String>,
     }
 
     impl TabRecipeHost for OneTab {
@@ -249,6 +266,9 @@ mod tests {
         }
         fn recipe_tab_symbol(&self, _tab: u64) -> Option<String> {
             Some("WINV26".to_owned())
+        }
+        fn recipe_tab_layout(&self, _tab: u64) -> Option<String> {
+            self.layout.clone()
         }
         fn new_tab_recipe(&self, _tab: u64) -> WorkspaceRecipe {
             WorkspaceRecipe::default()
@@ -275,6 +295,7 @@ mod tests {
             shows: WorkspaceRecipe::default(),
             applied: 0,
             builds: std::cell::Cell::new(0),
+            layout: None,
         }
     }
 
@@ -283,17 +304,17 @@ mod tests {
     #[test]
     fn an_idle_frame_builds_no_recipe() {
         let mut host = one_tab("tab-recipes-idle");
-        maintain(&mut host);
-        maintain(&mut host);
+        maintain(&mut host, Instant::now());
+        maintain(&mut host, Instant::now());
         host.builds.set(0);
         for _ in 0..5 {
-            maintain(&mut host);
+            maintain(&mut host, Instant::now());
         }
         assert_eq!(host.builds.get(), 0, "five idle frames");
         host.shows.split_fraction = Some(0.4);
-        maintain(&mut host);
+        maintain(&mut host, Instant::now());
         assert_eq!(host.builds.get(), 1, "an edit is read once");
-        assert!(host.store.book().tab_state(7).unwrap().modified);
+        assert!(host.store.book().differs(7));
     }
 
     /// The desk named a workspace deleted since, and kept no copy because the
@@ -301,6 +322,7 @@ mod tests {
     #[test]
     fn a_tab_whose_workspace_is_gone_keeps_what_it_shows_as_default_marked() {
         let mut host = one_tab("tab-recipes-lost");
+        host.store.book_mut().set_autosave(false);
         let saved = WorkspaceRecipe {
             split_fraction: Some(0.5),
             ..WorkspaceRecipe::default()
@@ -314,7 +336,7 @@ mod tests {
         host.store
             .sync_mut()
             .arrive(7, Some("Deleted since".to_owned()), None);
-        maintain(&mut host);
+        maintain(&mut host, Instant::now());
         assert_eq!(host.applied, 0, "Default's recipe was not laid over it");
         assert_eq!(
             host.store.tab_row(7),
@@ -327,20 +349,61 @@ mod tests {
     #[test]
     fn a_first_run_seeds_the_tab_and_applies_nothing_to_it() {
         let mut host = one_tab("tab-recipes-seed");
-        maintain(&mut host);
+        maintain(&mut host, Instant::now());
         assert_eq!(host.applied, 0, "a seeded tab keeps every pixel it had");
         let state = host.store.book().tab_state(7).expect("the tab was adopted");
-        assert_eq!(state.workspace, "from WINV26");
+        assert_eq!(state.workspace, "WINV26", "the bare symbol, no `from `");
         assert!(!state.modified);
     }
 
     #[test]
     fn an_edit_on_a_seeded_tab_marks_it_modified() {
         let mut host = one_tab("tab-recipes-edit");
-        maintain(&mut host);
+        host.store.book_mut().set_autosave(false);
+        maintain(&mut host, Instant::now());
         host.shows.split_fraction = Some(0.25);
-        maintain(&mut host);
+        maintain(&mut host, Instant::now());
         let state = host.store.book().tab_state(7).expect("the tab was adopted");
         assert!(state.modified, "the edit became this tab's copy");
+    }
+
+    #[test]
+    fn a_first_run_names_the_workspace_after_the_tab_layout() {
+        let mut host = one_tab("tab-recipes-seed-layout");
+        host.layout = Some("Fluxo".to_owned());
+        maintain(&mut host, Instant::now());
+        assert_eq!(host.store.tab_row(7), ("Fluxo".to_owned(), false));
+    }
+
+    /// Autosave on: an edit never reads as held, and is written through once
+    /// it has stood quiet for a second, not before.
+    #[test]
+    fn autosave_writes_an_edit_through_after_a_quiet_second_and_never_marks() {
+        let mut host = one_tab("tab-recipes-autosave");
+        let start = Instant::now();
+        maintain(&mut host, start);
+        maintain(&mut host, start);
+        host.shows.split_fraction = Some(0.3);
+        assert!(maintain(&mut host, start).is_empty(), "not inside the second");
+        assert_eq!(host.store.tab_row(7).1, false, "never marked");
+        let due = maintain(&mut host, start + AUTOSAVE_QUIET);
+        assert_eq!(due, vec![7]);
+        assert!(maintain(&mut host, start + AUTOSAVE_QUIET * 2).is_empty(), "taken once");
+    }
+
+    /// Autosave off: the edit is held, marked, and nothing is due.
+    #[test]
+    fn autosave_off_holds_the_edit_marked_and_writes_nothing() {
+        let mut host = one_tab("tab-recipes-autosave-off");
+        host.store.book_mut().set_autosave(false);
+        let start = Instant::now();
+        maintain(&mut host, start);
+        maintain(&mut host, start);
+        host.shows.split_fraction = Some(0.3);
+        maintain(&mut host, start);
+        assert!(maintain(&mut host, start + AUTOSAVE_QUIET * 3).is_empty());
+        assert_eq!(host.store.tab_row(7).1, true, "the cell's mark");
+        let edits = host.store.book().unsaved_edits(7).expect("closing asks");
+        assert_eq!(edits.changes, vec!["panes".to_owned()]);
     }
 }

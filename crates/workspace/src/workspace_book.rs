@@ -1,9 +1,14 @@
 //! The workspace book: named recipes, and which one each open tab uses.
 //!
-//! Every tab is one market and uses one workspace, and holds its own unsaved
-//! copy of that recipe. An edit changes only the copy, so it reaches no other
-//! tab until [`WorkspaceBook::save_to`]. `modified` is derived by comparing the
-//! copy to the recipe, never stored, so a flag and the truth cannot disagree.
+//! Every tab is one market and uses one workspace, and holds its own copy of
+//! that recipe. An edit changes only the copy, so it reaches no other tab until
+//! [`WorkspaceBook::save_to`]. Whether a copy differs is derived by comparing it
+//! to the recipe, never stored, so a flag and the truth cannot disagree.
+//!
+//! With [`WorkspaceBook::autosave`] on (the default) the window writes every
+//! edit through after a quiet second, so no tab reads as holding edits; with it
+//! off a tab holds them, marked, until Save to. There is no revert: a workspace
+//! switch drops held edits, and closing the tab asks first.
 //!
 //! The recipes persist in their own file; the per-tab state persists on
 //! [`SavedTab`] in the desk, so an edited tab survives a restart still marked.
@@ -22,8 +27,6 @@ pub const WORKSPACES_FILE: &str = "workspaces.toml";
 pub const DEFAULT_WORKSPACE: &str = "Default";
 /// Longest a workspace name may be: it sits on a tab chip.
 pub const MAX_WORKSPACE_NAME: usize = 32;
-/// What a first run calls the workspace seeded from a tab, before the symbol.
-const SEED_PREFIX: &str = "from ";
 /// Bumped on breaking format changes; unknown versions are refused whole.
 const FORMAT_VERSION: u32 = 1;
 
@@ -40,6 +43,8 @@ pub enum WorkspaceRefusal {
     /// The tab's panes are still being built, so there is nothing to read an
     /// empty recipe from yet.
     TabOpening(u64),
+    /// `workspace.revert` is gone: edits are kept by Save to or by autosave.
+    RevertRemoved,
 }
 
 impl WorkspaceRefusal {
@@ -54,6 +59,7 @@ impl WorkspaceRefusal {
             Self::DefaultProtected => "workspace.default_protected",
             Self::UnknownTab(_) => "workspace.unknown_tab",
             Self::TabOpening(_) => "workspace.tab_not_ready",
+            Self::RevertRemoved => "workspace.revert_removed",
         }
     }
 }
@@ -75,6 +81,10 @@ impl std::fmt::Display for WorkspaceRefusal {
             Self::TabOpening(tab) => {
                 write!(f, "tab {tab} is still opening; retry once its charts stand")
             }
+            Self::RevertRemoved => f.write_str(
+                "workspace.revert was removed: keep edits with workspace.save_to, or turn on \
+                 workspace.autosave.set; switching the workspace drops held edits",
+            ),
         }
     }
 }
@@ -130,12 +140,23 @@ pub struct RenameOutcome {
     pub changed: bool,
 }
 
-/// What a chip and the snapshot read for one tab. Both read this, so they
-/// cannot disagree.
+/// What the status cell and the snapshot read for one tab. Both read this, so
+/// they cannot disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TabWorkspaceState<'a> {
     pub workspace: &'a str,
+    /// The tab holds edits it has not saved: never while autosave is on.
     pub modified: bool,
+}
+
+/// What closing a tab would lose, while autosave is off: the prompt's words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsavedEdits {
+    pub workspace: String,
+    /// The clean tabs on the same workspace a save would also change.
+    pub followers: Vec<u64>,
+    /// What changed, as [`WorkspaceRecipe::changes_from`] names it.
+    pub changes: Vec<String>,
 }
 
 /// What `tab.workspace.set` did.
@@ -193,6 +214,8 @@ pub struct CreateOutcome {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SeedTab {
     pub tab: u64,
+    /// The name of the layout the tab shows (`Fluxo`), when it has one.
+    pub layout: Option<String>,
     pub symbol: String,
     pub live: WorkspaceRecipe,
 }
@@ -211,6 +234,14 @@ pub struct WorkspaceBook {
     /// Kept in the desk, on [`SavedTab`], not in this file.
     #[serde(skip)]
     tabs: BTreeMap<u64, TabWorkspace>,
+    /// The desk's `auto_save`, told at launch: not in this file.
+    #[serde(skip, default = "autosave_default")]
+    autosave: bool,
+}
+
+/// Autosave is the opening default.
+const fn autosave_default() -> bool {
+    true
 }
 
 impl Default for WorkspaceBook {
@@ -220,6 +251,7 @@ impl Default for WorkspaceBook {
             recipes: BTreeMap::from([(DEFAULT_WORKSPACE.to_owned(), WorkspaceRecipe::default())]),
             renamed: BTreeMap::new(),
             tabs: BTreeMap::new(),
+            autosave: autosave_default(),
         }
     }
 }
@@ -333,13 +365,62 @@ impl WorkspaceBook {
             .collect()
     }
 
-    /// The tab's workspace and whether it holds unsaved edits.
+    /// The tab's workspace and whether it holds unsaved edits. With autosave
+    /// on an edit is on its way to the workspace, so nothing reads as held.
     #[must_use]
     pub fn tab_state(&self, tab: u64) -> Option<TabWorkspaceState<'_>> {
         let state = self.tabs.get(&tab)?;
         Some(TabWorkspaceState {
             workspace: &state.workspace,
-            modified: self.is_modified(state),
+            modified: !self.autosave && self.is_modified(state),
+        })
+    }
+
+    /// Whether edits are written through as they are made.
+    #[must_use]
+    pub fn autosave(&self) -> bool {
+        self.autosave
+    }
+
+    /// Turn autosave on or off. Answers whether it moved; the caller saves
+    /// [`Self::differing_tabs`] when it turns on.
+    pub fn set_autosave(&mut self, on: bool) -> bool {
+        std::mem::replace(&mut self.autosave, on) != on
+    }
+
+    /// Every tab whose copy differs from its workspace, in id order, whatever
+    /// autosave says: what turning it on or a write-through saves.
+    #[must_use]
+    pub fn differing_tabs(&self) -> Vec<u64> {
+        self.tabs
+            .iter()
+            .filter(|(_, state)| self.is_modified(state))
+            .map(|(tab, _)| *tab)
+            .collect()
+    }
+
+    /// Whether the tab's copy differs from its workspace, whatever autosave says.
+    #[must_use]
+    pub fn differs(&self, tab: u64) -> bool {
+        self.tabs.get(&tab).is_some_and(|state| self.is_modified(state))
+    }
+
+    /// What closing the tab would lose: `None` while autosave is on or the tab
+    /// holds nothing, so closing never asks.
+    #[must_use]
+    pub fn unsaved_edits(&self, tab: u64) -> Option<UnsavedEdits> {
+        let state = self.tabs.get(&tab)?;
+        if self.autosave || !self.is_modified(state) {
+            return None;
+        }
+        let changes = self
+            .baseline(state)
+            .map(|base| state.copy.changes_from(base))
+            .unwrap_or_default();
+        Some(UnsavedEdits {
+            workspace: state.workspace.clone(),
+            followers: self.save_to_preview(tab).unwrap_or_default(),
+            changes,
         })
     }
 
@@ -428,17 +509,27 @@ impl WorkspaceBook {
         self.tabs.insert(tab, TabWorkspace::on(&name, copy));
     }
 
-    /// The first run: one workspace per open tab, named `from <SYMBOL>` and
-    /// deduplicated, with the recipe equal to what the tab shows, so no pixel
-    /// changes and no tab reads as modified. A tab the book holds is left alone.
-    /// Returns each seeded tab and its workspace.
+    /// The first run: one workspace per open tab, named after the layout the
+    /// tab shows (`Fluxo`) or else its bare symbol, deduplicated with a number,
+    /// with the recipe equal to what the tab shows, so no pixel changes and no
+    /// tab reads as modified. A tab the book holds is left alone. Returns each
+    /// seeded tab and its workspace.
     pub fn seed_first_run(&mut self, tabs: Vec<SeedTab>) -> Vec<(u64, String)> {
         let mut seeded = Vec::new();
-        for SeedTab { tab, symbol, live } in tabs {
+        for SeedTab {
+            tab,
+            layout,
+            symbol,
+            live,
+        } in tabs
+        {
             if self.tabs.contains_key(&tab) {
                 continue;
             }
-            let name = self.free_seed_name(&symbol);
+            let named = layout
+                .and_then(|layout| clean(&layout).ok())
+                .filter(|layout| !layout.eq_ignore_ascii_case(DEFAULT_WORKSPACE));
+            let name = self.free_seed_name(&named.unwrap_or(symbol));
             self.recipes.insert(name.clone(), live.clone());
             self.tabs.insert(tab, TabWorkspace::on(&name, live));
             seeded.push((tab, name));
@@ -446,8 +537,8 @@ impl WorkspaceBook {
         seeded
     }
 
-    fn free_seed_name(&self, symbol: &str) -> String {
-        let base = format!("{SEED_PREFIX}{symbol}");
+    fn free_seed_name(&self, base: &str) -> String {
+        let base: String = base.chars().take(MAX_WORKSPACE_NAME - 4).collect();
         std::iter::once(base.clone())
             .chain((2_u32..).map(|n| format!("{base} {n}")))
             .find(|candidate| self.taken(candidate).is_none())
@@ -471,8 +562,8 @@ impl WorkspaceBook {
         Ok(true)
     }
 
-    /// Put the tab on `name`. A repeat is no change and keeps any edits;
-    /// [`Self::revert`] is the call that drops them.
+    /// Put the tab on `name`. A repeat is no change and keeps any edits; a
+    /// switch drops them, and says so.
     ///
     /// # Errors
     /// No such tab or workspace.
@@ -601,22 +692,6 @@ impl WorkspaceBook {
         })
     }
 
-    /// Drop the tab's edits. Answers whether there were any.
-    ///
-    /// # Errors
-    /// No such tab.
-    pub fn revert(&mut self, tab: u64) -> Result<bool, WorkspaceRefusal> {
-        let saver = self.state(tab)?;
-        if !self.is_modified(saver) {
-            return Ok(false);
-        }
-        let recipe = self.baseline(saver).cloned().unwrap_or_default();
-        if let Some(state) = self.tabs.get_mut(&tab) {
-            state.copy = recipe;
-        }
-        Ok(true)
-    }
-
     /// Rename a workspace; its tabs follow, and so does a desk still naming it
     /// the old way. Answers the name as stored and whether it moved.
     ///
@@ -726,12 +801,12 @@ pub fn capture_recipe(
     (layers, context_layers): (BTreeMap<String, bool>, Vec<BTreeMap<String, bool>>),
     footprint_style: Option<String>,
 ) -> WorkspaceRecipe {
-    let context_bars: Vec<String> = if tab.context_bars.is_empty() {
-        tab.time_bars.iter().cloned().collect()
+    let intervals = if tab.context_bars.is_empty() {
+        tab.time_bars.iter().count()
     } else {
-        tab.context_bars.clone()
+        tab.context_bars.len()
     };
-    let panes = tab.context_layouts.len().max(context_bars.len());
+    let panes = tab.context_layouts.len().max(intervals);
     // A pane the stack has not sized yet is automatic and open, which is what
     // a missing entry means: one reading for both, or a fresh pane is an edit.
     let mut context_heights = tab.context_heights.clone();
@@ -745,7 +820,6 @@ pub fn capture_recipe(
         flow_collapsed: tab.flow_collapsed,
         context_heights,
         context_panes_collapsed,
-        context_bars,
         flow_indicators: indicators_of(layouts, tab.flow_layout),
         context_panes: (0..panes)
             .map(|pane| ContextPaneRecipe {

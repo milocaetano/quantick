@@ -5,8 +5,14 @@
 //! recipe is still on its way to a tab whose panes are not built yet, and whether
 //! what a tab shows now is an edit. Headless: the window reads its panes and
 //! carries out the answers.
+use crate::layout_commit::LAYOUTS_SAVE_DEBOUNCE;
 use crate::workspace_recipe::WorkspaceRecipe;
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+
+/// How long a tab's edits stay quiet before autosave writes them through: the
+/// layouts file's debounce, so a drag writes once.
+pub const AUTOSAVE_QUIET: Duration = LAYOUTS_SAVE_DEBOUNCE;
 
 /// Keep in `edit` a layer the copy names, or one that moved since the recipe
 /// settled. The rest stay open.
@@ -63,6 +69,8 @@ pub struct TabRecipeSync {
     seen: BTreeMap<u64, SeenTab>,
     first_pass_done: bool,
     watch: usize,
+    /// When each tab's copy last changed, while autosave has not written it.
+    edited: BTreeMap<u64, Instant>,
 }
 
 impl TabRecipeSync {
@@ -229,12 +237,34 @@ impl TabRecipeSync {
         self.arrivals.remove(&tab);
         self.pending.remove(&tab);
         self.seen.remove(&tab);
+        self.edited.remove(&tab);
     }
 
     /// A store reloaded under the window: recipes in flight were the old book's.
     pub fn restart(&mut self) {
         self.pending.clear();
         self.seen.clear();
+        self.edited.clear();
+    }
+
+    /// The tab's copy changed at `now`: the quiet second starts again.
+    pub fn note_edit(&mut self, tab: u64, now: Instant) {
+        self.edited.insert(tab, now);
+    }
+
+    /// The tabs whose last edit has stood [`AUTOSAVE_QUIET`] by `now`, in id
+    /// order, taken: each is written through once.
+    pub fn take_due(&mut self, now: Instant) -> Vec<u64> {
+        let due: Vec<u64> = self
+            .edited
+            .iter()
+            .filter(|(_, at)| now.saturating_duration_since(**at) >= AUTOSAVE_QUIET)
+            .map(|(tab, _)| *tab)
+            .collect();
+        for tab in &due {
+            self.edited.remove(tab);
+        }
+        due
     }
 
     /// Which background tab is read this frame, one per frame in turn: the
