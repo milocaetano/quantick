@@ -181,21 +181,23 @@ mod tests {
         }
     }
     #[test]
-    fn light_changes_fresh_defaults_while_historical_choices_keep_exact_output() {
-        let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    fn authored_palette_changes_fresh_defaults_while_historical_choices_keep_exact_output() {
+        let authored = quantick_appearance::ResolvedTheme::parse(
+            "version=1\nname='Authored palette'\n[orderflow]\nramp=['#000000','#111111','#222222','#333333','#444444','#555555','#666666','#777777','#888888']\n[orderflow.colors]\nbuy='#007752'\nseparator='#223344AA'",
+        ).unwrap();
         let mut style = OrderflowRenderStyle::default();
-        style.resolve_palette(PaletteChoice::Inherited, &light.orderflow);
+        style.resolve_palette(PaletteChoice::Inherited, &authored.orderflow);
         assert_ne!(
             style.thermal_rgb(0.5),
             super::super::theme::thermal_rgb(HeatmapTheme::Bookmap, 0.5)
         );
-        assert_eq!(style.colors(|c| c).buy, light.orderflow.buy);
+        assert_eq!(style.colors(|c| c).buy, authored.orderflow.buy);
         for theme in [
             HeatmapTheme::Bookmap,
             HeatmapTheme::HighContrast,
             HeatmapTheme::ColorBlind,
         ] {
-            style.resolve_palette(PaletteChoice::Historical(theme), &light.orderflow);
+            style.resolve_palette(PaletteChoice::Historical(theme), &authored.orderflow);
             for i in 0..=100 {
                 assert_eq!(
                     style.thermal_rgb(i as f32 / 100.0),
@@ -211,8 +213,11 @@ mod decoration_tests {
     use super::*;
     #[test]
     fn snapshot_missing_decoration_uses_legacy_bytes_without_discarding_saved_colors() {
-        let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
-        let mut saved = light.orderflow;
+        let authored = quantick_appearance::ResolvedTheme::parse(
+            "version=1\nname='Authored decoration'\n[orderflow.colors]\nseparator='#223344AA'",
+        )
+        .unwrap();
+        let mut saved = authored.orderflow;
         saved.buy = [12, 34, 56, 255];
         let source = toml::to_string(&PaletteChoice::Snapshot(saved)).unwrap();
         let legacy = source
@@ -221,7 +226,7 @@ mod decoration_tests {
             .collect::<Vec<_>>()
             .join("\n");
         let choice: PaletteChoice = toml::from_str(&legacy).unwrap();
-        let restored = choice.resolve(&light.orderflow);
+        let restored = choice.resolve(&authored.orderflow);
         assert_eq!(restored.buy, [12, 34, 56, 255]);
         assert_eq!(restored.crown_backing, [0, 0, 0, 110]);
         assert_eq!(restored.separator, [0, 0, 0, 170]);
@@ -234,12 +239,14 @@ mod decoration_tests {
         );
         assert_eq!(
             PaletteChoice::Historical(HeatmapTheme::Bookmap)
-                .resolve(&light.orderflow)
+                .resolve(&authored.orderflow)
                 .separator,
             [0, 0, 0, 170]
         );
         assert_ne!(
-            PaletteChoice::Inherited.resolve(&light.orderflow).separator,
+            PaletteChoice::Inherited
+                .resolve(&authored.orderflow)
+                .separator,
             [0, 0, 0, 170]
         );
     }

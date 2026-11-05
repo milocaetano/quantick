@@ -646,6 +646,9 @@ impl Tab {
             *paper_drag_pane,
             focused,
         );
+        let chart_style = chrome.style;
+        let mut bookmap_style = *chart_style;
+        bookmap_style.apply_theme(&theme::bookmap(ui.ctx()).resolved);
         let mut chrome = PaneChrome {
             tab: tab_id,
             side: PaneSide::Flow,
@@ -702,7 +705,13 @@ impl Tab {
             chrome.shared_pick = picks.for_pane(side);
             chrome.shared = SharedInteraction::default();
             pane.handle_navigation(ui, rect, &mut chrome);
+            chrome.style = if pane.orderflow.is_some() {
+                &bookmap_style
+            } else {
+                chart_style
+            };
             pane.draw_chart(ui.painter(), rect, &mut chrome);
+            chrome.style = chart_style;
             // Whatever this pane did to the other's marks travels out of the
             // loop: the store it belongs to is the pane that is not borrowed
             // right now.

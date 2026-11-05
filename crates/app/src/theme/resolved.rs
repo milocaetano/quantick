@@ -100,14 +100,30 @@ pub(super) fn rendered(color: PremultipliedRgba) -> egui::Color32 {
     egui::Color32::from_rgba_premultiplied(r, g, b, a)
 }
 
-type Installed = quantick_appearance::RenderCache<Arc<Palette>>;
+#[derive(Clone)]
+struct Palettes {
+    ui: Arc<Palette>,
+    bookmap: Arc<Palette>,
+}
+impl Palettes {
+    fn new(theme: &ResolvedTheme) -> Self {
+        let ui = Arc::new(Palette::new(theme));
+        let bookmap = if std::ptr::eq(theme, theme.bookmap()) {
+            ui.clone()
+        } else {
+            Arc::new(Palette::new(theme.bookmap()))
+        };
+        Self { ui, bookmap }
+    }
+}
+type Installed = quantick_appearance::RenderCache<Palettes>;
 fn key() -> egui::Id {
     egui::Id::new("quantick.resolved_appearance")
 }
 fn cached(ctx: &egui::Context) -> Installed {
     ctx.data_mut(|data| {
         data.get_temp_mut_or_insert_with(key(), || {
-            Installed::new(Arc::new(Palette::new(ResolvedTheme::bundled_dark())))
+            Installed::new(Palettes::new(ResolvedTheme::bundled_dark()))
         })
         .clone()
     })
@@ -115,15 +131,62 @@ fn cached(ctx: &egui::Context) -> Installed {
 
 /// One context lock per boundary. Warm frames reuse converted colors and fonts.
 pub fn get(ctx: &egui::Context) -> Arc<Palette> {
-    cached(ctx).value
+    ctx.data_mut(|data| {
+        data.get_temp::<Arc<Palette>>(surface_key())
+            .unwrap_or_else(|| {
+                data.get_temp_mut_or_insert_with(key(), || {
+                    Installed::new(Palettes::new(ResolvedTheme::bundled_dark()))
+                })
+                .value
+                .ui
+                .clone()
+            })
+    })
+}
+
+fn surface_key() -> egui::Id {
+    egui::Id::new("quantick.paint_surface")
+}
+
+/// Scoped painter colors only: never changes widget visuals, fonts or revisions.
+/// The guard restores the previous scope even on an empty pane's early return.
+pub struct PaintScope {
+    ctx: egui::Context,
+    previous: Option<Arc<Palette>>,
+}
+impl Drop for PaintScope {
+    fn drop(&mut self) {
+        self.ctx.data_mut(|data| {
+            if let Some(previous) = self.previous.take() {
+                data.insert_temp(surface_key(), previous);
+            } else {
+                data.remove::<Arc<Palette>>(surface_key());
+            }
+        });
+    }
+}
+
+pub fn bookmap(ctx: &egui::Context) -> Arc<Palette> {
+    cached(ctx).value.bookmap
+}
+
+pub fn bookmap_scope(ctx: &egui::Context) -> PaintScope {
+    let palette = bookmap(ctx);
+    let previous = ctx.data_mut(|data| {
+        let previous = data.get_temp::<Arc<Palette>>(surface_key());
+        data.insert_temp(surface_key(), palette);
+        previous
+    });
+    PaintScope {
+        ctx: ctx.clone(),
+        previous,
+    }
 }
 
 pub fn sync(ctx: &egui::Context, state: &Appearance) {
     let mut installed = cached(ctx);
-    if let Some(typography_changed) =
-        installed.refresh(state, |theme| Arc::new(Palette::new(theme)))
-    {
-        super::chrome::apply_palette(ctx, &installed.value, typography_changed);
+    if let Some(typography_changed) = installed.refresh(state, Palettes::new) {
+        super::chrome::apply_palette(ctx, &installed.value.ui, typography_changed);
         ctx.data_mut(|data| data.insert_temp(key(), installed));
     }
 }
@@ -234,5 +297,40 @@ mod tests {
                 });
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    #[test]
+    fn nested_paint_scopes_restore_ui_and_do_not_leak_between_contexts() {
+        let ctx = egui::Context::default();
+        let other = egui::Context::default();
+        let mut state = Appearance::default();
+        state.apply(quantick_appearance::LIGHT).unwrap();
+        sync(&ctx, &state);
+        sync(&other, &state);
+        let root = get(&ctx);
+        let surface = bookmap(&ctx);
+        let visuals = ctx.style().visuals.clone();
+        {
+            let _outer = bookmap_scope(&ctx);
+            assert!(Arc::ptr_eq(&get(&ctx), &surface));
+            assert_eq!(get(&other).canvas(), root.canvas());
+            {
+                let _inner = bookmap_scope(&ctx);
+            }
+            assert!(Arc::ptr_eq(&get(&ctx), &surface));
+            assert_eq!(ctx.style().visuals, visuals);
+        }
+        assert!(Arc::ptr_eq(&get(&ctx), &root));
+        sync(&ctx, &state);
+        assert!(Arc::ptr_eq(&bookmap(&ctx), &surface));
+        state.apply(quantick_appearance::DARK).unwrap();
+        sync(&ctx, &state);
+        assert!(!Arc::ptr_eq(&bookmap(&ctx), &surface));
+        assert_eq!(get(&ctx).canvas(), surface.canvas());
     }
 }

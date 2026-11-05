@@ -184,3 +184,40 @@ mod sync_tests {
         assert!(sync.sync(&mut style, &appearance));
     }
 }
+
+#[cfg(test)]
+mod bookmap_tests {
+    use super::*;
+
+    #[test]
+    fn surface_resolution_preserves_explicit_styles_and_saved_snapshots() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let dark = ResolvedTheme::default();
+        let mut shared = ChartStyle::default();
+        shared.apply_theme(&light);
+        let mut flow = shared;
+        flow.apply_theme(light.bookmap());
+        assert_eq!(flow, ChartStyle::default());
+        assert_eq!(shared.candles.fill_opacity, 1.0);
+        let saved = shared.snapshot();
+        let mut explicit = saved;
+        explicit.apply_theme(light.bookmap());
+        assert_eq!(explicit, saved);
+        for preset in CandlePreset::ALL {
+            let mut configured = shared;
+            configured.apply_preset(preset);
+            configured.apply_theme(light.bookmap());
+            assert_eq!(configured.candles, preset.style());
+        }
+        // Explicit fields equal to the current UI defaults are still explicit.
+        shared.ownership.fill_opacity = Inheritance::Explicit;
+        shared.ownership.bull_fill = Inheritance::Explicit;
+        shared.candles.wick_width = 3.0;
+        for surface in [light.bookmap(), &dark, light.bookmap()] {
+            shared.apply_theme(surface);
+            assert_eq!(shared.candles.fill_opacity, 1.0);
+            assert_eq!(shared.candles.bull_fill, [76, 175, 80]);
+            assert_eq!(shared.candles.wick_width, 3.0);
+        }
+    }
+}

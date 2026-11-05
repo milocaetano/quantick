@@ -454,3 +454,61 @@ fn flow_legend_puts_no_key_on_the_tape_and_preserves_depth_and_hide_switches() {
             .all(|(label, _)| label != "Buy" && label != "Sell")
     );
 }
+
+#[test]
+fn light_canvas_keeps_bookmap_candles_translucent_and_time_candles_solid() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(1400);
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    native_split(&mut app);
+    for source in [
+        quantick_appearance::LIGHT,
+        quantick_appearance::DARK,
+        quantick_appearance::LIGHT,
+    ] {
+        app.runtime
+            .appearance
+            .apply_candidate(source, false)
+            .unwrap();
+        run_frame(&mut app, &ctx);
+        let output = settled_flow_frame(&mut app, &ctx);
+        let pane = &app.active_tab().flow_pane;
+        let area = pane.frame.area.unwrap();
+        let dark = crate::style::ChartStyle::default();
+        let rgba = dark.candles.resolved(true, false).fill.unwrap();
+        let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+        assert!(
+            painted_bodies(&output, color)
+                .iter()
+                .any(|(_, body)| area.contains(body.center())),
+            "the real canvas must resolve Bookmap style and palette together"
+        );
+        let theme = app.runtime.appearance.resolved();
+        let background = egui::Color32::from_rgb(
+            dark.canvas.background[0],
+            dark.canvas.background[1],
+            dark.canvas.background[2],
+        );
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Rect(rect) if rect.rect == area && rect.fill == background)));
+        let time = app.active_tab().time_pane().unwrap().frame.area.unwrap();
+        let rgba = app
+            .runtime
+            .style
+            .candles
+            .resolved(true, false)
+            .fill
+            .unwrap();
+        let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+        assert!(
+            painted_bodies(&output, color)
+                .iter()
+                .any(|(_, body)| time.contains(body.center()))
+        );
+        assert_eq!(
+            crate::theme::get(&ctx).resolved,
+            *theme,
+            "Bookmap scope must end before other UI paints"
+        );
+    }
+}

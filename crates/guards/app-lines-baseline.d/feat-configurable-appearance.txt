@@ -1,3 +1,3 @@
-# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
-crates/app -342
-!budget -342
+# Appearance extraction remains a net reduction; retain the Bookmap UI scope adapter.
+crates/app -265
+!budget -265

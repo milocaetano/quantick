@@ -18,7 +18,7 @@ mod state;
 mod typography;
 
 pub use color::PremultipliedRgba;
-pub use document::{ColorValue, PremultipliedValue, ResolvedTheme, ThemeDocument};
+pub use document::{BookmapOverride, ColorValue, PremultipliedValue, ResolvedTheme, ThemeDocument};
 pub use error::ThemeError;
 pub use palette::Token;
 pub use state::{Appearance, ApplyOutcome, Inheritance};

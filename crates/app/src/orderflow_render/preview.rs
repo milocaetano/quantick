@@ -81,7 +81,7 @@ struct PreviewCanvas {
 
 impl PreviewCanvas {
     fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig) -> Self {
-        let appearance = crate::theme::get(ui.ctx());
+        let appearance = crate::theme::bookmap(ui.ctx());
         let mut style =
             OrderflowRenderStyle::from_config(config, appearance.canvas().to_array()).sanitized();
         style.resolve_palette(config.palette, &appearance.resolved.orderflow);
@@ -484,4 +484,34 @@ fn draw_preview_legend(
         font,
         palette.legend_text,
     );
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    #[test]
+    fn preview_uses_bookmap_surface_and_preserves_outer_light_ui() {
+        let ctx = egui::Context::default();
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        crate::theme::sync(&ctx, &appearance);
+        let root = crate::theme::get(&ctx);
+        let surface = crate::theme::bookmap(&ctx);
+        let visuals = ctx.style().visuals.clone();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let canvas = PreviewCanvas::new(ui, ui.max_rect(), &HeatmapConfig::default());
+                assert_eq!(canvas.style.canvas_background, surface.canvas().to_array());
+                assert_ne!(canvas.style.canvas_background, root.canvas().to_array());
+                assert_eq!(
+                    canvas.palette.legend_text,
+                    super::super::premultiplied(surface.resolved.orderflow.legend_text)
+                );
+                canvas.draw_frame();
+                assert_eq!(crate::theme::get(ctx).canvas(), root.canvas());
+                assert_eq!(ctx.style().visuals, visuals);
+            });
+        });
+    }
 }

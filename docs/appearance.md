@@ -6,7 +6,26 @@ Quantick's appearance contract is versioned TOML. The bundled
 resolver as an authored theme. Start with either file when writing a community
 theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
-Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles. Both builtins retain the established typography, spacing and layout.
+Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Bookmap (Trail and Tape) retains the established Dark surface, liquidity ramp, bubbles and translucent candles in both builtins. Typography, spacing and layout are unchanged.
+
+
+## Bookmap surface
+
+The optional `[bookmap]` table separates painted Trail/Tape colors from the
+application interface and conventional charts. `candle_fill_opacity`,
+`[bookmap.colors]` and `[bookmap.footprint_heat]` use the same validated fields as
+their root counterparts. Missing surface fields inherit the resolved parent
+values; omitting the table preserves existing authored themes. Typography is
+shared. The bundled Light document explicitly supplies the historical Dark
+surface colors and `0.20` candle opacity, independently of its name or `dark` flag.
+`[orderflow]` continues to own liquidity and bubble colors and supports explicit
+palette snapshots as before.
+
+Only theme-owned chart fields use the surface values. Global chart settings,
+saved candle presets and scripts remain explicit overrides: saving the global
+settings preview captures that preview, and applying such a preset can override
+both Time and Bookmap. No inheritance is inferred from RGB equality. Paint scopes
+are local to one synchronous pane draw and never modify widget visuals or fonts.
 
 ## Document
 

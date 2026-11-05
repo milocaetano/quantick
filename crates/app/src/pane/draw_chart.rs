@@ -56,6 +56,10 @@ impl ChartPane {
         area: egui::Rect,
         chrome: &mut PaneChrome<'_>,
     ) {
+        let _surface = self
+            .orderflow
+            .as_ref()
+            .map(|_| theme::bookmap_scope(painter.ctx()));
         let renderers = self.layer_renderers;
         let mut start = self.begin_frame(painter, area, chrome);
         let flow_execution = self

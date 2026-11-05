@@ -1,5 +1,8 @@
 //! The versioned authoring contract and all-or-nothing resolution.
 
+mod bookmap;
+pub use bookmap::BookmapOverride;
+
 use std::{collections::BTreeMap, sync::OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -64,6 +67,8 @@ pub struct ThemeDocument {
     pub footprint_heat: crate::heat::HeatOverride,
     #[serde(default)]
     pub orderflow: crate::orderflow::OrderflowOverride,
+    #[serde(default)]
+    pub bookmap: Option<crate::BookmapOverride>,
 }
 
 fn dark_mode() -> bool {
@@ -84,7 +89,10 @@ impl ThemeDocument {
         self.resolve_with(None)
     }
 
-    fn resolve_with(&self, fallback: Option<&ResolvedTheme>) -> Result<ResolvedTheme, ThemeError> {
+    pub(crate) fn resolve_with(
+        &self,
+        fallback: Option<&ResolvedTheme>,
+    ) -> Result<ResolvedTheme, ThemeError> {
         if self.version != 1 {
             return Err(ThemeError::new(
                 "version",
@@ -146,7 +154,7 @@ impl ThemeDocument {
                 "must be finite and between 0 and 1 inclusive",
             ));
         }
-        Ok(ResolvedTheme {
+        let mut resolved = ResolvedTheme {
             name: self.name.clone(),
             dark: self.dark,
             candle_fill_opacity,
@@ -161,7 +169,14 @@ impl ThemeDocument {
             footprint_heat: self
                 .footprint_heat
                 .resolve(fallback.map(|theme| &theme.footprint_heat))?,
-        })
+            bookmap: None,
+        };
+        resolved.bookmap = self
+            .bookmap
+            .as_ref()
+            .map(|surface| surface.resolve(&resolved).map(Box::new))
+            .transpose()?;
+        Ok(resolved)
     }
 }
 
@@ -174,6 +189,7 @@ pub struct ResolvedTheme {
     pub typography: Typography,
     pub footprint_heat: crate::heat::HeatRamp,
     pub orderflow: crate::orderflow::OrderflowAppearance,
+    pub(crate) bookmap: Option<Box<ResolvedTheme>>,
 }
 
 impl ResolvedTheme {
