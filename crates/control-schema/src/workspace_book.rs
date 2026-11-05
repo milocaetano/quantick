@@ -31,6 +31,8 @@ pub const WORKSPACE_REVERT_CAPABILITY_ID: &str = "workspace.revert";
 pub const WORKSPACE_RENAME_CAPABILITY_ID: &str = "workspace.rename";
 pub const WORKSPACE_DELETE_CAPABILITY_ID: &str = "workspace.delete";
 pub const WORKSPACE_LIST_CAPABILITY_ID: &str = "workspace.list";
+pub const WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID: &str = "workspace.autosave.set";
+pub const TAB_CLOSE_CAPABILITY_ID: &str = "tab.close";
 
 /// A tab moved to another workspace.
 pub const TAB_WORKSPACE_SET_EVENT_KIND: &str = "workspace.tab_set";
@@ -44,6 +46,18 @@ pub const WORKSPACE_REVERTED_EVENT_KIND: &str = "workspace.reverted";
 pub const WORKSPACE_RENAMED_EVENT_KIND: &str = "workspace.renamed";
 /// A deletion reached the disk.
 pub const WORKSPACE_DELETED_EVENT_KIND: &str = "workspace.deleted";
+/// Journaled when autosave turns on or off.
+pub const WORKSPACE_AUTOSAVE_SET_EVENT_KIND: &str = "workspace.autosave_set";
+/// Journaled when `tab.close` closes a tab.
+pub const TAB_CLOSED_EVENT_KIND: &str = "workspace.tab_closed";
+/// `tab.close` without `save` on a tab holding edits, autosave off: nothing
+/// closes, and `details` names the workspace, the followers and the changes.
+pub const UNSAVED_EDITS_CODE: &str = "workspace.unsaved_edits";
+/// `workspace.revert` is gone; the refusal names `workspace.save_to` and
+/// `workspace.autosave.set`.
+pub const REVERT_REMOVED_CODE: &str = "workspace.revert_removed";
+/// The last tab of the window cannot close.
+pub const LAST_TAB_CODE: &str = "workspace.last_tab";
 
 /// The `details.code` of a write that did not reach the disk.
 pub const WRITE_FAILED_CODE: &str = "workspace.write_failed";
@@ -121,13 +135,49 @@ pub struct WorkspaceSaveResult {
     pub tabs_changed: Vec<WireU64>,
 }
 
-/// What a revert did.
+/// What the removed revert would have answered; it now always refuses.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct WorkspaceRevertResult {
     pub tab_id: WireU64,
     pub workspace: String,
-    /// `false` when the tab held no edits.
     pub changed: bool,
+}
+
+/// Turn "auto save layout changes" on or off.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceAutosaveInput {
+    pub on: bool,
+}
+
+/// The setting as it now stands, and the saves turning it on made at once.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub struct WorkspaceAutosaveResult {
+    pub auto_save: bool,
+    /// `false` for a repeat, which writes nothing.
+    pub changed: bool,
+    /// One per tab that held edits when autosave turned on.
+    pub saved: Vec<WorkspaceSaveResult>,
+}
+
+/// Close a market tab.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TabCloseInput {
+    /// The tab. Left out, the one on screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<WireU64>,
+    /// What to do with held edits: `true` saves them to the workspace first,
+    /// `false` drops them. Left out on a tab holding edits, nothing closes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub save: Option<bool>,
+}
+
+/// The tab that closed, and the save made first when asked.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub struct TabCloseResult {
+    pub tab_id: WireU64,
+    pub saved: Option<WorkspaceSaveResult>,
 }
 
 /// Rename a workspace.
@@ -257,9 +307,32 @@ pub fn workspace_revert_descriptor() -> CapabilityDescriptor {
     >(
         WORKSPACE_REVERT_CAPABILITY_ID,
         MODULE_ID,
-        "Drop a tab's unsaved edits",
-        "Puts the tab back on its workspace's saved recipe. The edits do not come back.",
-        "A repeat finds no edits and answers changed false.",
+        "Removed: always refuses",
+        "Revert is gone. Every call refuses with workspace.revert_removed, naming workspace.save_to to keep edits and workspace.autosave.set to write them as they are made. A switch with tab.workspace.set drops held edits.",
+        "Always refuses; nothing changes.",
+    ))
+}
+
+pub fn workspace_autosave_set_descriptor() -> CapabilityDescriptor {
+    writes_the_book(transient_descriptor::<
+        WorkspaceAutosaveInput,
+        WorkspaceAutosaveResult,
+    >(
+        WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
+        MODULE_ID,
+        "Turn auto save layout changes on or off",
+        "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; no tab reads as modified. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once and answers each save. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
+        "The call names the state it wants, so a repeat writes nothing and answers changed false.",
+    ))
+}
+
+pub fn tab_close_descriptor() -> CapabilityDescriptor {
+    writes_the_book(transient_descriptor::<TabCloseInput, TabCloseResult>(
+        TAB_CLOSE_CAPABILITY_ID,
+        quantick_control_host::authority::TAB_MODULE_ID,
+        "Close a market tab",
+        "Closes one tab. With autosave on its edits were written already and it closes at once. With autosave off and edits held, a call without save refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and closes nothing; save true writes the edits first, save false drops them. The window's last tab refuses with workspace.last_tab.",
+        "A closed tab is gone, so a repeat names an unknown tab and is refused with workspace.unknown_tab; nothing else closes.",
     ))
 }
 
@@ -335,11 +408,19 @@ pub const READBACKS: &[Readback] = &[
         &[EVERY_OPTIONAL_TEST],
     ),
     journal(
-        WORKSPACE_REVERT_CAPABILITY_ID,
+        WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
         IdempotencyPolicy::Optional,
-        WORKSPACE_REVERTED_EVENT_KIND,
-        "payload.workspace",
-        "an event after the pre-call cursor names the tab's workspace",
+        WORKSPACE_AUTOSAVE_SET_EVENT_KIND,
+        "payload.auto_save",
+        "an event after the pre-call cursor carries the requested state",
+        &[EVERY_OPTIONAL_TEST],
+    ),
+    journal(
+        TAB_CLOSE_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        TAB_CLOSED_EVENT_KIND,
+        "payload.tab_id",
+        "an event after the pre-call cursor names the closed tab",
         &[EVERY_OPTIONAL_TEST],
     ),
     journal(

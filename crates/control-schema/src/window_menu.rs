@@ -14,7 +14,7 @@ pub enum RowId {
     WorkspaceSaveAsNew,
     WorkspaceNew,
     WorkspaceRename,
-    WorkspaceRevert,
+    WorkspaceAutosave,
     WorkspaceDelete,
     SaveDesk,
     TogglePanels,
@@ -159,10 +159,11 @@ pub const ROWS: &[Row] = &[
             "workspace.rename",
         )
     },
-    Row {
-        disabled_hover: Some(NO_EDITS_HOVER),
-        ..row(RowId::WorkspaceRevert, "Revert edits", "workspace.revert")
-    },
+    row(
+        RowId::WorkspaceAutosave,
+        AUTOSAVE_MENU_ROW,
+        "workspace.autosave.set",
+    ),
     Row {
         disabled_hover: Some(DEFAULT_PROTECTED_HOVER),
         ..row(
@@ -289,8 +290,8 @@ pub const fn submenu(id: SubmenuId) -> (&'static str, &'static [Item]) {
                 Item::Row(RowId::WorkspaceSaveAsNew),
                 Item::Row(RowId::WorkspaceNew),
                 Item::Row(RowId::WorkspaceRename),
-                Item::Row(RowId::WorkspaceRevert),
                 Item::Row(RowId::WorkspaceDelete),
+                Item::Row(RowId::WorkspaceAutosave),
                 Item::Separator,
                 Item::Submenu(SubmenuId::Layouts),
                 Item::Submenu(SubmenuId::Layout),
@@ -395,8 +396,51 @@ pub const NEW_DIALOG_TITLE: &str = "New workspace";
 pub const RENAME_DIALOG_TITLE: &str = "Rename workspace";
 pub const DIALOG_SAVE: &str = "Save";
 pub const DIALOG_CANCEL: &str = "Cancel";
-/// The toolbar's Revert, beside its Save to.
-pub const TOOLBAR_REVERT: &str = "Revert";
+/// The autosave check as the menus name it.
+pub const AUTOSAVE_MENU_ROW: &str = "Auto save layout changes";
+/// The status bar's muted check, right after the workspace cell.
+pub const AUTOSAVE_LABEL: &str = "auto save";
+pub const AUTOSAVE_HOVER: &str =
+    "Write this tab's layout changes into its workspace as you make them";
+/// The pill in the cell while the tab holds edits, autosave off.
+pub const SAVE_PILL: &str = "Save";
+/// The close prompt's buttons, Cancel first, the save last and default.
+pub const CLOSE_CANCEL: &str = "Cancel";
+pub const CLOSE_WITHOUT_SAVING: &str = "Close without saving";
+
+/// The pill's hover: `Save to Scalp · Ctrl+S`.
+#[must_use]
+pub fn save_pill_hover(workspace: &str, keys: &str) -> String {
+    format!("Save to {workspace} \u{b7} {keys}")
+}
+
+/// The close prompt's title: `Close WINZ26`.
+#[must_use]
+pub fn close_prompt_title(symbol: &str) -> String {
+    format!("Close {symbol}")
+}
+
+/// The close prompt's body, naming what changed and who follows a save.
+#[must_use]
+pub fn close_prompt_body(workspace: &str, changes: &[String], followers: &[String]) -> String {
+    let what = if changes.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", named(changes))
+    };
+    let mut body = format!("This tab changed its layout since {workspace} was last saved{what}.");
+    if !followers.is_empty() {
+        body.push_str(&format!(" Saving also changes {}.", named(followers)));
+    }
+    body
+}
+
+/// The toast after autosave wrote a tab through: only when other tabs follow.
+#[must_use]
+pub fn autosaved_toast(workspace: &str, followers: &[String]) -> Option<String> {
+    (!followers.is_empty())
+        .then(|| format!("{workspace} saved \u{b7} {} follows", named(followers)))
+}
 
 fn named(symbols: &[String]) -> String {
     symbols.join(", ")
@@ -420,7 +464,6 @@ pub const CELL_MENU_ROWS: &[RowId] = &[
     RowId::WorkspaceSaveAsNew,
     RowId::WorkspaceNew,
     RowId::WorkspaceRename,
-    RowId::WorkspaceRevert,
     RowId::WorkspaceDelete,
 ];
 
@@ -484,11 +527,6 @@ pub fn created_toast(symbol: &str, workspace: &str) -> String {
 }
 
 #[must_use]
-pub fn reverted_toast(symbol: &str) -> String {
-    format!("{symbol} is back on its saved workspace")
-}
-
-#[must_use]
 pub fn renamed_toast(from: &str, to: &str) -> String {
     format!("{from} is now {}", to.trim())
 }
@@ -518,14 +556,15 @@ pub fn deleted_toast(workspace: &str, adopted: &[String], kept_edits: &[String])
 /// describes a control the trader cannot find is a false statement.
 pub const ABOUT_WORKSPACES: &[&str] = &[
     "A workspace is a saved way of reading a market: which charts the tab shows (Flow, Time \
-     or both), the context panes and their intervals, the indicators on each pane, the layer \
-     toggles and the footprint style. Keep one per kind of strategy and switch the tab between \
+     or both), the context panes, the indicators on each pane, the layer toggles and the \
+     footprint style. Keep one per kind of strategy and switch the tab between \
      them: Scalp for the open, Tape for a quiet range, Swing for the daily picture.",
     "Every tab is one market and uses one workspace; a new tab opens on Default. Any number of \
-     tabs can share a workspace. Editing a tab marks only that tab (•); nothing reaches the \
-     other tabs until you choose Save to, and that step names the tabs it will change.",
-    "Drawings, anchored studies, bar size and the paper position belong to the market, never \
-     to the workspace: switching WINV26 from Scalp to Tape keeps its levels.",
+     tabs can share a workspace. With auto save on, an edit is written into the workspace a \
+     second later and the other tabs on it follow. With it off, the tab holds its edits, \
+     marked (•), until you choose Save, and closing the tab asks first.",
+    "Drawings, anchored studies, pane timeframes, bar size and the paper position belong to \
+     the market, never to the workspace: switching WINV26 from Scalp to Tape keeps its levels.",
     "Deleting a workspace moves the tabs on it to Default. A tab with unsaved edits keeps them, \
      marked Default •, so nothing is lost. Default cannot be deleted.",
 ];
@@ -621,7 +660,6 @@ mod tests {
                 RowId::WorkspaceSaveAsNew,
                 RowId::WorkspaceNew,
                 RowId::WorkspaceRename,
-                RowId::WorkspaceRevert,
                 RowId::WorkspaceDelete,
             ]
         );
@@ -700,9 +738,9 @@ mod tests {
         assert_eq!(
             ABOUT_WORKSPACES,
             [
-                "A workspace is a saved way of reading a market: which charts the tab shows (Flow, Time or both), the context panes and their intervals, the indicators on each pane, the layer toggles and the footprint style. Keep one per kind of strategy and switch the tab between them: Scalp for the open, Tape for a quiet range, Swing for the daily picture.",
-                "Every tab is one market and uses one workspace; a new tab opens on Default. Any number of tabs can share a workspace. Editing a tab marks only that tab (•); nothing reaches the other tabs until you choose Save to, and that step names the tabs it will change.",
-                "Drawings, anchored studies, bar size and the paper position belong to the market, never to the workspace: switching WINV26 from Scalp to Tape keeps its levels.",
+                "A workspace is a saved way of reading a market: which charts the tab shows (Flow, Time or both), the context panes, the indicators on each pane, the layer toggles and the footprint style. Keep one per kind of strategy and switch the tab between them: Scalp for the open, Tape for a quiet range, Swing for the daily picture.",
+                "Every tab is one market and uses one workspace; a new tab opens on Default. Any number of tabs can share a workspace. With auto save on, an edit is written into the workspace a second later and the other tabs on it follow. With it off, the tab holds its edits, marked (•), until you choose Save, and closing the tab asks first.",
+                "Drawings, anchored studies, pane timeframes, bar size and the paper position belong to the market, never to the workspace: switching WINV26 from Scalp to Tape keeps its levels.",
                 "Deleting a workspace moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •, so nothing is lost. Default cannot be deleted.",
             ]
         );

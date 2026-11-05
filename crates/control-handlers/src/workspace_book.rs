@@ -17,20 +17,22 @@ use quantick_control_host::journal::NewEvent;
 use quantick_control_schema::window_menu as text;
 use quantick_control_schema::workspace::MODULE_ID;
 use quantick_control_schema::workspace_book::{
-    TAB_NOT_READY_CODE, TAB_WORKSPACE_SET_EVENT_KIND, TabWorkspaceSetInput, TabWorkspaceSetResult,
-    WORKSPACE_CREATED_EVENT_KIND, WORKSPACE_DELETED_EVENT_KIND, WORKSPACE_RENAMED_EVENT_KIND,
-    WORKSPACE_REVERTED_EVENT_KIND, WORKSPACE_SAVED_EVENT_KIND, WRITE_FAILED_CODE,
-    WorkspaceDeleteInput, WorkspaceDeleteResult, WorkspaceEntry, WorkspaceListInput,
-    WorkspaceListResult, WorkspaceNewInput, WorkspaceNewResult, WorkspaceRenameInput,
-    WorkspaceRenameResult, WorkspaceRevertResult, WorkspaceSaveAsInput, WorkspaceSaveResult,
-    WorkspaceTabInput, tab_workspace_set_descriptor, workspace_delete_descriptor,
-    workspace_list_descriptor, workspace_new_descriptor, workspace_rename_descriptor,
-    workspace_revert_descriptor, workspace_save_as_descriptor, workspace_save_to_descriptor,
+    LAST_TAB_CODE, TAB_CLOSED_EVENT_KIND, TAB_NOT_READY_CODE, TAB_WORKSPACE_SET_EVENT_KIND,
+    TabCloseInput, TabCloseResult, TabWorkspaceSetInput, TabWorkspaceSetResult, UNSAVED_EDITS_CODE,
+    WORKSPACE_AUTOSAVE_SET_EVENT_KIND, WORKSPACE_CREATED_EVENT_KIND, WORKSPACE_DELETED_EVENT_KIND,
+    WORKSPACE_RENAMED_EVENT_KIND, WORKSPACE_SAVED_EVENT_KIND, WRITE_FAILED_CODE,
+    WorkspaceAutosaveInput, WorkspaceAutosaveResult, WorkspaceDeleteInput, WorkspaceDeleteResult,
+    WorkspaceEntry, WorkspaceListInput, WorkspaceListResult, WorkspaceNewInput, WorkspaceNewResult,
+    WorkspaceRenameInput, WorkspaceRenameResult, WorkspaceSaveAsInput, WorkspaceSaveResult,
+    WorkspaceTabInput, tab_close_descriptor, tab_workspace_set_descriptor,
+    workspace_autosave_set_descriptor, workspace_delete_descriptor, workspace_list_descriptor,
+    workspace_new_descriptor, workspace_rename_descriptor, workspace_revert_descriptor,
+    workspace_save_as_descriptor, workspace_save_to_descriptor,
 };
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::workspaces::{
     CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome, SaveOutcome, SetOutcome,
-    WorkspaceBook, WorkspaceRecipe, WorkspaceRefusal,
+    UnsavedEdits, WorkspaceBook, WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -60,9 +62,21 @@ pub trait WorkspaceBookHost {
     fn tab_workspace_row(&self, _tab: u64) -> (String, bool) {
         (DEFAULT_WORKSPACE.to_owned(), false)
     }
+    /// Whether layout edits are written through, as the snapshot reads it.
+    fn workspace_autosave(&self) -> bool {
+        true
+    }
     /// The symbols of these tabs, in the order asked.
     fn tab_symbols(&self, _tabs: &[u64]) -> Vec<String> {
         Vec::new()
+    }
+    /// Write the desk's `auto_save`; `Err` is why nothing reached the disk.
+    fn persist_workspace_autosave(&mut self, _on: bool) -> Result<(), String> {
+        Err("the desk is unavailable".to_owned())
+    }
+    /// Close a market tab; `false` when it is its window's last.
+    fn close_market_tab(&mut self, _tab: u64) -> bool {
+        false
     }
 }
 
@@ -107,8 +121,9 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
                 text::saved_toast(&saved.workspace, &host.tab_symbols(&saved.tabs_changed))
             })
         }),
-        WorkspaceCommand::Revert => revert_journaled(host, &mut to, tab)
-            .map(|(changed, _)| changed.then(|| text::reverted_toast(symbol))),
+        WorkspaceCommand::SetAutosave(on) => {
+            autosave_journaled(host, &mut to, on).map(|(_, saved)| saved_notes(host, &saved))
+        }
         WorkspaceCommand::Delete(name) => delete_journaled(host, &mut to, &name).map(|gone| {
             gone.changed.then(|| {
                 text::deleted_toast(
@@ -170,6 +185,8 @@ where
     registry.register_outside_replay(workspace_save_as_descriptor(), save_as)?;
     registry.register_outside_replay(workspace_new_descriptor(), new)?;
     registry.register_outside_replay(workspace_revert_descriptor(), revert)?;
+    registry.register_outside_replay(workspace_autosave_set_descriptor(), autosave_set)?;
+    registry.register_outside_replay(tab_close_descriptor(), close)?;
     registry.register_outside_replay(workspace_rename_descriptor(), rename)?;
     registry.register_outside_replay(workspace_delete_descriptor(), delete)?;
     registry.register_outside_replay(workspace_list_descriptor(), list)
@@ -277,16 +294,6 @@ fn show<H: WorkspaceBookHost + ?Sized>(app: &mut H, tabs: &[u64]) -> Result<(), 
     Ok(())
 }
 
-fn workspace_of<H: WorkspaceBookHost + ?Sized>(
-    app: &mut H,
-    tab: u64,
-) -> Result<String, ControlError> {
-    book(app)?
-        .tab_state(tab)
-        .map(|state| state.workspace.to_owned())
-        .ok_or_else(|| refused(&WorkspaceRefusal::UnknownTab(tab)))
-}
-
 /// Put a tab on a workspace and redraw it, journaling nothing: the call and
 /// the window's rows reach it through one journaled step, so they cannot
 /// disagree.
@@ -348,21 +355,114 @@ pub fn new_tab_workspace<H: WorkspaceBookHost + ?Sized>(
     Ok(outcome)
 }
 
-/// Drop a tab's edits and redraw it. Answers whether there were any.
+/// With autosave on, write a tab's pending edit through before anything moves
+/// it: a switch or a close never drops what autosave was about to save.
+fn flush<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    tab: u64,
+) -> Result<(), ControlError> {
+    let held = book(app)?;
+    if held.autosave() && held.differs(tab) {
+        save_to_journaled(app, to, tab)?;
+    }
+    Ok(())
+}
+
+/// Autosave's write-through for the tabs the frame found quiet, journaled as
+/// the hand that edited. Answers the toasts: one only where other tabs follow,
+/// or why a write failed.
+pub fn write_through<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    mut to: Journal<'_, A>,
+    tabs: &[u64],
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    for tab in tabs {
+        match save_to_journaled(app, &mut to, *tab) {
+            Ok(saved) => notes.extend(saved_notes(app, &[saved])),
+            Err(error) => notes.push(error.message),
+        }
+    }
+    notes
+}
+
+fn saved_notes<H: WorkspaceBookHost + ?Sized>(app: &H, saved: &[SaveOutcome]) -> Option<String> {
+    let notes: Vec<String> = saved
+        .iter()
+        .filter_map(|one| {
+            text::autosaved_toast(&one.workspace, &app.tab_symbols(&one.tabs_changed))
+        })
+        .collect();
+    (!notes.is_empty()).then(|| notes.join("; "))
+}
+
+/// Turn autosave on or off and write the desk; turning it on saves every tab
+/// holding edits at once. A desk write that fails takes the choice back.
 ///
 /// # Errors
-/// No such tab, or no book.
-pub fn revert_tab<H: WorkspaceBookHost + ?Sized>(
+/// No book, the desk write failed, or a save failed.
+pub fn set_autosave<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
-    tab: u64,
-) -> Result<bool, ControlError> {
-    let changed = book(app)?
-        .revert(tab)
-        .map_err(|refusal| refused(&refusal))?;
-    if changed {
-        show(app, &[tab])?;
+    on: bool,
+) -> Result<(bool, Vec<SaveOutcome>), ControlError> {
+    if !book(app)?.set_autosave(on) {
+        return Ok((false, Vec::new()));
     }
-    Ok(changed)
+    if let Err(reason) = app.persist_workspace_autosave(on) {
+        book(app)?.set_autosave(!on);
+        return Err(write_failed(reason));
+    }
+    let mut saved = Vec::new();
+    if on {
+        for tab in book(app)?.differing_tabs() {
+            saved.push(save_tab_to(app, tab)?);
+        }
+    }
+    Ok((true, saved))
+}
+
+/// What closing a tab does with its held edits: `None` asks, and refuses with
+/// [`UNSAVED_EDITS_CODE`] while it holds any; autosave on writes them first.
+///
+/// # Errors
+/// Edits held and no decision, no book, a failed save, or the last tab.
+pub fn close_tab<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    tab: u64,
+    save: Option<bool>,
+) -> Result<Option<SaveOutcome>, ControlError> {
+    flush(app, to, tab)?;
+    let held = book(app)?.unsaved_edits(tab);
+    let saved = match (held, save) {
+        (Some(edits), None) => return Err(unsaved(app, &edits)),
+        (Some(_), Some(true)) => Some(save_to_journaled(app, to, tab)?),
+        _ => None,
+    };
+    if !app.close_market_tab(tab) {
+        let mut error = ControlError::invalid_request("the window's last tab stays open");
+        error.context.details = Some(json!({ "code": LAST_TAB_CODE }));
+        return Err(error);
+    }
+    journal(
+        to,
+        TAB_CLOSED_EVENT_KIND,
+        json!({ "tab_id": WireU64::new(tab) }),
+    );
+    Ok(saved)
+}
+
+fn unsaved<H: WorkspaceBookHost + ?Sized>(app: &H, edits: &UnsavedEdits) -> ControlError {
+    let followers = app.tab_symbols(&edits.followers);
+    let mut error = ControlError::invalid_request(format!(
+        "{} Pass save true to save to {}, or save false to close without saving.",
+        text::close_prompt_body(&edits.workspace, &edits.changes, &followers),
+        edits.workspace
+    ));
+    error.context.details = Some(json!({ "code": UNSAVED_EDITS_CODE,
+        "workspace": edits.workspace, "followers": followers, "changes": edits.changes }));
+    error
 }
 
 /// Rename a workspace. Answers the name as stored and whether it moved.
@@ -407,6 +507,7 @@ fn set_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     tab: u64,
     name: &str,
 ) -> Result<SetOutcome, ControlError> {
+    flush(app, to, tab)?;
     let outcome = set_tab_workspace(app, tab, name)?;
     if outcome.changed {
         let payload = json!({ "tab_id": WireU64::new(tab), "workspace": name,
@@ -450,6 +551,7 @@ fn new_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     tab: u64,
     name: &str,
 ) -> Result<CreateOutcome, ControlError> {
+    flush(app, to, tab)?;
     let outcome = new_tab_workspace(app, tab, name)?;
     let payload = json!({ "tab_id": WireU64::new(tab), "workspace": outcome.workspace,
         "dropped_edits": outcome.dropped_edits });
@@ -457,19 +559,25 @@ fn new_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
-/// Whether there were edits to drop, and the workspace the tab is on.
-fn revert_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn autosave_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
-    tab: u64,
-) -> Result<(bool, String), ControlError> {
-    let changed = revert_tab(app, tab)?;
-    let workspace = workspace_of(app, tab)?;
+    on: bool,
+) -> Result<(bool, Vec<SaveOutcome>), ControlError> {
+    let (changed, saved) = set_autosave(app, on)?;
     if changed {
-        let payload = json!({ "tab_id": WireU64::new(tab), "workspace": workspace });
-        journal(to, WORKSPACE_REVERTED_EVENT_KIND, payload);
+        journal(
+            to,
+            WORKSPACE_AUTOSAVE_SET_EVENT_KIND,
+            json!({ "auto_save": on }),
+        );
     }
-    Ok((changed, workspace))
+    for one in saved.iter().filter(|one| one.changed) {
+        let payload =
+            json!({ "workspace": one.workspace, "tabs_changed": wires(&one.tabs_changed) });
+        journal(to, WORKSPACE_SAVED_EVENT_KIND, payload);
+    }
+    Ok((changed, saved))
 }
 
 fn rename_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
@@ -565,19 +673,52 @@ fn new<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     })
 }
 
-fn revert<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+/// Revert is gone; the refusal names the calls that keep edits instead.
+fn revert<H: WorkspaceBookHost + ?Sized, A>(
+    _: &mut H,
+    _: &mut A,
+    _: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let WorkspaceTabInput { .. } = input(value)?;
+    Err(refused(&WorkspaceRefusal::RevertRemoved))
+}
+
+fn save_result(saved: SaveOutcome) -> WorkspaceSaveResult {
+    WorkspaceSaveResult {
+        workspace: saved.workspace,
+        changed: saved.changed,
+        tabs_changed: wires(&saved.tabs_changed),
+    }
+}
+
+fn autosave_set<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
-    let WorkspaceTabInput { tab_id } = input(value)?;
-    let tab = tab_on_book(app, tab_id)?;
-    let (changed, workspace) = revert_journaled(app, &mut Some((access, actor)), tab)?;
-    answer(&WorkspaceRevertResult {
-        tab_id: WireU64::new(tab),
-        workspace,
+    let WorkspaceAutosaveInput { on } = input(value)?;
+    let (changed, saved) = autosave_journaled(app, &mut Some((access, actor)), on)?;
+    answer(&WorkspaceAutosaveResult {
+        auto_save: on,
         changed,
+        saved: saved.into_iter().map(save_result).collect(),
+    })
+}
+
+fn close<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let TabCloseInput { tab_id, save } = input(value)?;
+    let tab = tab_on_book(app, tab_id)?;
+    let saved = close_tab(app, &mut Some((access, actor)), tab, save)?;
+    answer(&TabCloseResult {
+        tab_id: WireU64::new(tab),
+        saved: saved.map(save_result),
     })
 }
 

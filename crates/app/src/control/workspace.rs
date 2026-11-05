@@ -76,6 +76,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
         timezone_label: timezone.label(),
         layouts: super::layout::layout_tabs(app),
         save_on_exit,
+        auto_save: app.workspace_autosave(),
         performance_readings_visible,
         progressive_venue_history,
         // The frozen v1 field keeps its own vocabulary; the target itself

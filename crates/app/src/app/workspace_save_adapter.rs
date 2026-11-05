@@ -40,6 +40,7 @@ impl WorkspaceRead<'_> {
         // Every write rewrites the whole file, so the bookmarks have to ride
         // along or saving the startup screen would silently delete them.
         .with_saved(self.session.bookmarks().to_vec())
+        .with_auto_save(self.arrangement.workspace_book.autosave())
         // And the recent workspace files, for the same reason: a save that
         // dropped them would empty the Open-recent menu every time the
         // trader saved their layout.
@@ -151,6 +152,10 @@ impl WorkspaceSaveAdapter<'_> {
             "properties popup position"
         );
         saved
+    }
+    /// Write the desk's `auto_save` alone; `true` once it reached the disk.
+    pub(super) fn write_auto_save(&mut self, on: bool) -> bool {
+        self.edit_workspace_file("UI_STATE_AUTOSAVE_WRITTEN", DocumentEdit::AutoSave(on))
     }
     /// Write the file's standing choices, `save_on_exit` among them, leaving the
     /// saved arrangement exactly as it was.

@@ -87,7 +87,6 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         keys: &[
             (Source::MenuEntry, "Save to workspace"),
             (Source::Hotkey, "SAVE_TO_WORKSPACE_SHORTCUT"),
-            (Source::ToolbarAction, "SaveToWorkspace"),
         ],
         mapping: Mapping::Capabilities(&["workspace.save_to"]),
     },
@@ -106,14 +105,11 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: Mapping::Capabilities(&["workspace.new"]),
     },
     UiBehaviour {
-        id: "workspace.revert",
-        title: "Drop a tab's unsaved edits",
-        reach: "window menu, Workspace, Revert",
-        keys: &[
-            (Source::MenuEntry, "Revert edits"),
-            (Source::ToolbarAction, "RevertWorkspace"),
-        ],
-        mapping: Mapping::Capabilities(&["workspace.revert"]),
+        id: "workspace.autosave.set",
+        title: "Turn auto save layout changes on or off",
+        reach: "the status bar's auto save check, or the workspace cell's menu",
+        keys: &[(Source::MenuEntry, "Auto save layout changes")],
+        mapping: Mapping::Capabilities(&["workspace.autosave.set"]),
     },
     UiBehaviour {
         id: "workspace.rename",

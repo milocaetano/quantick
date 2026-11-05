@@ -37,6 +37,10 @@ pub struct WorkspaceSnapshot {
     pub timezone_offset_minutes: i32,
     pub timezone_label: String,
     pub save_on_exit: bool,
+    /// Whether layout edits are written into the tab's workspace as they are
+    /// made (`workspace.autosave.set`). Absent from an older answer: on.
+    #[serde(default = "auto_save_default")]
+    pub auto_save: bool,
     pub performance_readings_visible: bool,
     pub progressive_venue_history: bool,
     /// How far one press of *load older* reaches, in the v1 vocabulary this
@@ -150,4 +154,9 @@ pub struct WorkspacePane {
     #[serde(default)]
     pub collapsed: bool,
     pub focused: bool,
+}
+
+/// An answer from before `auto_save` reads as the opening default.
+const fn auto_save_default() -> bool {
+    true
 }

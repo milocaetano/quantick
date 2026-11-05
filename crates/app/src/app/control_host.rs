@@ -795,6 +795,19 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
     fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
         self.runtime.workspace.book.tab_row(tab)
     }
+    fn workspace_autosave(&self) -> bool {
+        self.runtime.workspace.book.book().autosave()
+    }
+    fn persist_workspace_autosave(&mut self, on: bool) -> Result<(), String> {
+        let written = self.workspace_save_adapter().write_auto_save(on);
+        written
+            .then_some(())
+            .ok_or_else(|| "the desk file was not written".to_owned())
+    }
+    fn close_market_tab(&mut self, tab: u64) -> bool {
+        let index = self.runtime.tabs.position(tab);
+        index.is_some_and(|index| self.arrangement_adapter().close_tab(index).is_some())
+    }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         super::tab_workspaces::symbols_of(self, tabs)
     }

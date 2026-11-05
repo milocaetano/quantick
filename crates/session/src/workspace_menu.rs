@@ -8,8 +8,8 @@ pub enum WorkspaceCommand {
     Set(String),
     /// Write the active tab's edits into its workspace.
     SaveTo,
-    /// Drop the active tab's edits.
-    Revert,
+    /// Turn "auto save layout changes" on or off.
+    SetAutosave(bool),
     BeginSaveAs,
     /// Ask the name of a new, empty workspace. Nothing changes before Enter.
     BeginNew,

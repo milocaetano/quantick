@@ -108,7 +108,7 @@ impl<'a> WorkspaceRows<'a> {
         menu: &mut WorkspaceMenuState,
         commands: &mut Vec<MenuCommand>,
     ) -> bool {
-        let (workspace, modified) = self.state();
+        let (workspace, _) = self.state();
         let on_default = workspace == DEFAULT_WORKSPACE;
         let row = row_of(id);
         match id {
@@ -132,12 +132,10 @@ impl<'a> WorkspaceRows<'a> {
                     Self::push(commands, WorkspaceCommand::BeginRename(from));
                 }
             }
-            RowId::WorkspaceRevert => {
-                let response = ui
-                    .add_enabled(modified, egui::Button::new(row.label))
-                    .on_disabled_hover_text(row.disabled_hover.unwrap_or_default());
-                if response.clicked() {
-                    Self::push(commands, WorkspaceCommand::Revert);
+            RowId::WorkspaceAutosave => {
+                let mut on = self.book.autosave();
+                if ui.checkbox(&mut on, row.label).changed() {
+                    Self::push(commands, WorkspaceCommand::SetAutosave(on));
                 }
             }
             RowId::WorkspaceDelete => self.delete_row(ui, workspace, on_default, menu, commands),
@@ -204,6 +202,7 @@ impl<'a> WorkspaceRows<'a> {
                         ui.weak(text::uses_caption(self.symbol));
                         self.list(ui, commands, true);
                         ui.separator();
+                        self.action_row(ui, RowId::WorkspaceAutosave, menu, commands);
                         self.save_to_row(ui, keys, commands);
                         for id in text::CELL_MENU_ROWS {
                             self.action_row(ui, *id, menu, commands);

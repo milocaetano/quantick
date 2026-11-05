@@ -8,9 +8,7 @@
 
 use eframe::egui;
 use quantick_engine::Side;
-use quantick_session::workspace_menu::WorkspaceCommand;
 
-use super::tab_workspaces::apply_workspace_command as workspace_command;
 use crate::indicator_worker::SlotId;
 use crate::surfaces::ChartSettingsTab::Candles;
 use crate::tab::CanvasLayout;
@@ -83,14 +81,12 @@ impl QuantickApp {
             let popup = crate::pane_header::menu_id(self.focused_pane().id);
             ctx.memory_mut(|memory| memory.open_popup(popup));
         }
-        let workspace_edits = super::tab_workspaces::edits_of_active(self);
         let tab = self.active_tab_mut();
         let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {
             layout_preset: Some(tab.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
             layout_picker_request_open: layout_picker_autostart,
-            workspace_edits,
             market: (chip, tab.chip_label()),
             replay,
             deal_recording,
@@ -156,8 +152,6 @@ impl QuantickApp {
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
             ToolbarAction::SwitchMarket => _ = super::tabs::open_palette(self, "", true),
-            ToolbarAction::SaveToWorkspace => workspace_command(self, WorkspaceCommand::SaveTo),
-            ToolbarAction::RevertWorkspace => workspace_command(self, WorkspaceCommand::Revert),
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
             }
