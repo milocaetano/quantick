@@ -378,7 +378,7 @@ fn the_frame_publishes_chart_and_new_drawing_defaults_together() {
     assert_eq!(app.runtime.style.candles.bull_fill, old_fill);
     assert_eq!(app.runtime.style.candles.wick_width, 3.0);
     let new = crate::drawings::new_drawing_from_defaults(&app.drawings.presets, tool);
-    assert_eq!(new.style.color, theme.color(Token::Accent));
+    assert_eq!(new.style.color, theme.color(Token::DrawingDefault));
     assert_ne!(new.style.color, old.style.color);
     assert_eq!(old.style, tool.default_style());
     let revision = app.runtime.style_revision;

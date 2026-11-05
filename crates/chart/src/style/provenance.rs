@@ -1,10 +1,11 @@
-//! Theme inheritance is a statement of ownership, never a comparison of RGB.
+//! Theme inheritance is a statement of ownership, never a comparison of values.
 use super::{CandlePreset, ChartStyle};
 use quantick_appearance::{Inheritance, ResolvedTheme, Token};
 
 /// Missing legacy markers mean explicit. Only fresh charts start inherited.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChartColorOwnership {
+    pub fill_opacity: Inheritance,
     pub bull_fill: Inheritance,
     pub bear_fill: Inheritance,
     pub bull_outline: Inheritance,
@@ -16,6 +17,7 @@ pub struct ChartColorOwnership {
 impl ChartColorOwnership {
     pub const fn inherited() -> Self {
         Self {
+            fill_opacity: Inheritance::Theme,
             bull_fill: Inheritance::Theme,
             bear_fill: Inheritance::Theme,
             bull_outline: Inheritance::Theme,
@@ -32,7 +34,7 @@ impl ChartStyle {
         self.ownership = ChartColorOwnership::default();
         self
     }
-    /// A built-in preset explicitly owns candle colors, leaving canvas ownership intact.
+    /// A built-in preset owns candle colors and opacity, leaving canvas ownership intact.
     pub fn apply_preset(&mut self, preset: CandlePreset) {
         self.candles = preset.style();
         self.ownership = ChartColorOwnership {
@@ -45,6 +47,10 @@ impl ChartStyle {
     /// guaranteed opaque by the appearance resolver, so no alpha is discarded.
     pub fn apply_theme(&mut self, theme: &ResolvedTheme) -> bool {
         let before = *self;
+        self.candles.fill_opacity = self
+            .ownership
+            .fill_opacity
+            .resolve(self.candles.fill_opacity, || theme.candle_fill_opacity);
         let rgb = |token| {
             let [r, g, b, _] = theme.color(token).to_array();
             [r, g, b]
@@ -84,6 +90,34 @@ impl ChartStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn theme_opacity_changes_fresh_fills_but_preserves_authored_modes_and_presets() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let dark = ResolvedTheme::default();
+        let mut style = ChartStyle::default();
+        style.candles.wick_width = 3.0;
+        style.apply_theme(&light);
+        assert_eq!(
+            style.candles.resolved(true, false).fill,
+            Some([76, 175, 80, 255])
+        );
+        assert_eq!(
+            style.candles.resolved(false, false).fill,
+            Some([0, 0, 0, 255])
+        );
+        assert_eq!(style.candles.wick_width, 3.0);
+        style.apply_theme(&dark);
+        assert_eq!(style.candles.fill_opacity, 0.20);
+        style.candles.body_mode = super::super::CandleBodyMode::OutlineOnly;
+        style.apply_theme(&light);
+        assert_eq!(style.candles.resolved(true, false).fill, None);
+        for preset in CandlePreset::ALL {
+            style.apply_preset(preset);
+            style.apply_theme(&light);
+            assert_eq!(style.candles, preset.style());
+            assert_eq!(style.ownership.fill_opacity, Inheritance::Explicit);
+        }
+    }
     #[test]
     fn width_only_edit_preserves_inheritance_and_equal_default_explicit_survives_switch() {
         let mut style = ChartStyle::default();

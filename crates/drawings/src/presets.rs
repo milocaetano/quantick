@@ -505,6 +505,48 @@ mod appearance_tests {
     use crate::{DrawingPayload, FontFamily, TextPayload, new_drawing_from_defaults};
 
     #[test]
+    fn light_creates_monochrome_drawings_without_recoloring_existing_or_saved_styles() {
+        let path = crate::scratch::thread_dir("light-drawing-defaults").join(PRESETS_FILE);
+        let mut store = PresetStore::load_from(&path);
+        let mut appearance = quantick_appearance::Appearance::default();
+        store.sync_theme(&appearance);
+        let original: Vec<_> = crate::DRAWING_TOOLS
+            .into_iter()
+            .map(|tool| new_drawing_from_defaults(&store, tool))
+            .collect();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        store.sync_theme(&appearance);
+        for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
+            let fresh = new_drawing_from_defaults(&store, tool);
+            let [r, g, b, a] = fresh.style.color.to_array();
+            assert_eq!((r, g, b, a), (r, r, r, 255), "{}", tool.id());
+            assert!(r <= 64, "{}", tool.id());
+            assert_eq!(fresh.style.width_px, existing.style.width_px);
+            assert_eq!(fresh.style.fill_alpha, existing.style.fill_alpha);
+            assert_eq!(existing.style, tool.default_style());
+        }
+        let line = crate::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "trend-line")
+            .unwrap();
+        let legacy: StoredStyle =
+            toml::from_str("color = '#8ab4f8'\nwidth_px = 1.0\nfill_alpha = 20").unwrap();
+        let authored = legacy.to_style().unwrap();
+        store.set_default_style(line.id(), Some(authored));
+        let mut loaded = PresetStore::load_from(&path);
+        loaded.sync_theme(&appearance);
+        assert_eq!(new_drawing_from_defaults(&loaded, line).style, authored);
+        assert_ne!(
+            appearance
+                .resolved()
+                .color(quantick_appearance::Token::Accent),
+            appearance
+                .resolved()
+                .color(quantick_appearance::Token::DrawingDefault)
+        );
+    }
+
+    #[test]
     fn every_registered_tool_keeps_its_historical_dark_default() {
         use crate::ToolCatalog;
         let dark = quantick_appearance::ResolvedTheme::default();
@@ -530,7 +572,7 @@ mod appearance_tests {
             .find(|tool| tool.id() == "text")
             .unwrap();
         let original = new_drawing_from_defaults(&store, text);
-        let source = "version = 1\nname = 'new defaults'\n[colors]\naccent = '#12345680'\n[typography.drawing]\nfamily = 'monospace'\nsize = 32.0";
+        let source = "version = 1\nname = 'new defaults'\n[colors]\ndrawing_default = '#12345680'\n[typography.drawing]\nfamily = 'monospace'\nsize = 32.0";
         appearance.apply(source).unwrap();
         store.sync_theme(&appearance);
         let themed = new_drawing_from_defaults(&store, text);

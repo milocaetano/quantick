@@ -581,8 +581,22 @@ mod inheritance_tests {
         let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
         assert!(!saved.apply_theme(&light));
         assert_eq!(saved.candles.bull_fill, live.candles.bull_fill);
+        assert_eq!(saved.candles.fill_opacity, 0.20);
         assert!(live.apply_theme(&light));
+        assert_eq!(live.candles.fill_opacity, 1.0);
         assert_eq!(live.candles.wick_width, 2.0);
         assert_ne!(live.canvas.background, saved.canvas.background);
+        store.save_as(&path, "solid light", live).unwrap();
+        live.candles.fill_opacity = 0.20;
+        live.ownership.fill_opacity = quantick_appearance::Inheritance::Explicit;
+        store.save_as(&path, "edited opacity", live).unwrap();
+        let loaded = CandlePresetStore::load(&path);
+        for (name, expected) in [("solid light", 1.0), ("edited opacity", 0.20)] {
+            let mut saved = loaded.resolve(name).unwrap().apply_to(&live);
+            assert!(!saved.apply_theme(&quantick_appearance::ResolvedTheme::default()));
+            assert_eq!(saved.candles.fill_opacity, expected);
+            assert!(!saved.apply_theme(&light));
+            assert_eq!(saved.candles.fill_opacity, expected);
+        }
     }
 }

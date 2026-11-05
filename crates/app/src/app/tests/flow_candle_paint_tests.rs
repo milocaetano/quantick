@@ -56,6 +56,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
     );
     app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
     app.runtime.style.candles.fill_opacity = 0.6;
+    app.runtime.style.ownership.fill_opacity = quantick_appearance::Inheritance::Explicit;
     app.runtime.style.candles.forming_opacity = 0.5;
     settled_frame(&mut app, &ctx);
     let pane = &mut app.active_tab_mut().flow_pane;

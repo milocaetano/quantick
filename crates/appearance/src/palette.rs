@@ -160,9 +160,13 @@ pub enum Token {
     TapePath,
     TapeLabel,
     QuantityShadow,
+    DrawingDefault,
+    DrawingBuy,
+    DrawingSell,
+    DrawingVwap,
 }
 impl Token {
-    pub const ALL: [Self; 93] = [
+    pub const ALL: [Self; 97] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -256,9 +260,17 @@ impl Token {
         Self::TapePath,
         Self::TapeLabel,
         Self::QuantityShadow,
+        Self::DrawingDefault,
+        Self::DrawingBuy,
+        Self::DrawingSell,
+        Self::DrawingVwap,
     ];
     pub const fn key(self) -> &'static str {
         match self {
+            Self::DrawingDefault => "drawing_default",
+            Self::DrawingBuy => "drawing_buy",
+            Self::DrawingSell => "drawing_sell",
+            Self::DrawingVwap => "drawing_vwap",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

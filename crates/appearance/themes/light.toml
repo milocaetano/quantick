@@ -1,8 +1,13 @@
 version = 1
 name = "Light"
 dark = false
+candle_fill_opacity = 1.0
 
 [colors]
+drawing_default = "#202020"
+drawing_buy = "#202020"
+drawing_sell = "#202020"
+drawing_vwap = "#404040"
 flow_surface = "#eeeeee"
 flow_divider = "#bdbdbd"
 flow_ink = "#242424"
@@ -39,7 +44,7 @@ widget_cursor = "#00537D"
 widget_error = "#C62828"
 widget_warn = "#B84600"
 widget_code = "#E6E6E6"
-drawing_readout_plate = { premultiplied = [212, 212, 212, 230] }
+drawing_readout_plate = "#FFFFFFE6"
 drawing_selection_halo = { premultiplied = [0, 0, 0, 28] }
 flow_buy = "#1769A5"
 flow_sell = "#9B5B12"

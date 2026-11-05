@@ -55,6 +55,8 @@ pub struct ThemeDocument {
     #[serde(default = "dark_mode")]
     pub dark: bool,
     #[serde(default)]
+    pub candle_fill_opacity: Option<f32>,
+    #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     #[serde(default)]
     pub typography: BTreeMap<String, FontOverride>,
@@ -132,9 +134,22 @@ impl ThemeDocument {
                 ));
             }
         }
+        let candle_fill_opacity = self
+            .candle_fill_opacity
+            .or_else(|| fallback.map(|theme| theme.candle_fill_opacity))
+            .ok_or_else(|| {
+                ThemeError::new("candle_fill_opacity", "required in a complete theme")
+            })?;
+        if !candle_fill_opacity.is_finite() || !(0.0..=1.0).contains(&candle_fill_opacity) {
+            return Err(ThemeError::new(
+                "candle_fill_opacity",
+                "must be finite and between 0 and 1 inclusive",
+            ));
+        }
         Ok(ResolvedTheme {
             name: self.name.clone(),
             dark: self.dark,
+            candle_fill_opacity,
             colors,
             typography: Typography::resolve(
                 &self.typography,
@@ -154,6 +169,7 @@ impl ThemeDocument {
 pub struct ResolvedTheme {
     pub name: String,
     pub dark: bool,
+    pub candle_fill_opacity: f32,
     colors: [PremultipliedRgba; Token::ALL.len()],
     pub typography: Typography,
     pub footprint_heat: crate::heat::HeatRamp,

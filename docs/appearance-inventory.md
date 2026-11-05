@@ -12,12 +12,12 @@ the source migration. Visual/performance acceptance is recorded separately. The 
 | Header, rail, panels and replay | app painting adapters | body/monospace/small/heading roles, surface/text tokens; replay_well/inset/error and action_ink |
 | Order-flow pane identity | chart/flow_band; app pane/header adapters | flow_surface/divider/ink/band_rule and flow_key_*; measured text and shared scaled band/side-header geometry |
 | Gateway initialization errors | app/control/gateway/panel | error_text |
-| Canvas/candles | chart/style, stores/chart_style | canvas/control/buy/sell/candle contours, explicit field provenance |
+| Canvas/candles | chart/style, stores/chart_style | canvas/control/buy/sell/candle contours and candle_fill_opacity, explicit field provenance |
 | Plot axes and footprints | appearance/AxisMetrics; chart/footprint_lod; app painters | chart_axis/footprint; row, width, LOD and candle-fade budgets share configured scaling |
 | Heat/tape/bubbles/FLOW palette | appearance/orderflow; orderflow/render_style; stores | selected inherited/explicit palette, configured ramp, optional authored RGB overrides |
 | FLOW labels/opening text | app/orderflow_render | chart_label, flow_buy/sell, quantity_shadow, text_shadow |
 | Drawing selection and placement | drawings/DrawContext and tool; app scene adapter | drawing_selection_halo, canvas/accent, drawing_readout_plate |
-| Empty note, VWAP anchor | drawings/tools/text, anchored_vwap | text_muted and canvas; object color remains authored |
+| Empty note, VWAP anchor | drawings/tools/text, anchored_vwap | text_muted and canvas; new strokes use drawing_default/drawing_buy/drawing_sell/drawing_vwap; existing object color remains authored |
 | Ruler, Fib and profile annotations | drawings/tools | monospace/body roles, buy/sell/poc/text_muted/casing and drawing_readout_plate |
 | Script object labels/marker captions | app/indicator_render | body role, historical proportional 11-pixel reference; authored object colors remain intact |
 | Candle-style preview | appearance; app/candle_view/style_window | candle_preview_background/bid/ask/buy/sell; authored candle/canvas fields remain explicit |

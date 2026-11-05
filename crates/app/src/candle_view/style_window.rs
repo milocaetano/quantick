@@ -116,7 +116,7 @@ pub fn draw_body_settings(
             ui.end_row();
         });
 
-    *changed |= ui
+    if ui
         .add_enabled(
             style.body_mode == CandleBodyMode::Filled,
             egui::Slider::new(&mut style.fill_opacity, 0.0..=1.0)
@@ -124,7 +124,11 @@ pub fn draw_body_settings(
                 .step_by(0.01),
         )
         .on_hover_text("lower values reveal heatmap liquidity through the candle")
-        .changed();
+        .changed()
+    {
+        ownership.fill_opacity = quantick_appearance::Inheritance::Explicit;
+        *changed = true;
+    }
     *changed |= ui
         .add(
             egui::Slider::new(&mut style.body_width_frac, 0.1..=1.0)

@@ -2,6 +2,50 @@ use super::*;
 use color::{RgbaExt, WHITE};
 
 #[test]
+fn candle_opacity_defaults_boundaries_and_complete_document_requirement() {
+    assert_eq!(ResolvedTheme::default().candle_fill_opacity, 0.20);
+    assert_eq!(
+        ResolvedTheme::parse(LIGHT).unwrap().candle_fill_opacity,
+        1.0
+    );
+    let partial = "version=1\nname='Independent fallback'\ndark=false";
+    assert_eq!(
+        ResolvedTheme::parse(partial).unwrap().candle_fill_opacity,
+        0.20
+    );
+    for value in [0.0, 0.37, 1.0] {
+        let theme =
+            ResolvedTheme::parse(&format!("{partial}\ncandle_fill_opacity={value:?}")).unwrap();
+        assert_eq!(theme.candle_fill_opacity, value);
+    }
+    let mut complete = ThemeDocument::parse(DARK).unwrap();
+    complete.candle_fill_opacity = None;
+    assert_eq!(
+        complete.resolve_complete().unwrap_err().field,
+        "candle_fill_opacity"
+    );
+}
+
+#[test]
+fn invalid_candle_opacity_rejects_the_entire_candidate_atomically() {
+    let mut state = Appearance::default();
+    state.apply(LIGHT).unwrap();
+    let previous = state.clone();
+    for value in ["-0.01", "1.01", "nan", "inf", "-inf"] {
+        let source = format!(
+            "version=1\nname='Invalid opacity'\ncandle_fill_opacity={value}\n[colors]\ncanvas='#123456'"
+        );
+        assert_eq!(
+            state.apply(&source).unwrap_err().field,
+            "candle_fill_opacity"
+        );
+        assert_eq!(state.resolved(), previous.resolved());
+        assert_eq!(state.source(), previous.source());
+        assert_eq!(state.revision(), previous.revision());
+    }
+}
+
+#[test]
 fn flow_identity_dark_parity_and_partial_theme_fallback() {
     let dark = ResolvedTheme::default();
     let partial =

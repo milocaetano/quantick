@@ -6,7 +6,7 @@ Quantick's appearance contract is versioned TOML. The bundled
 resolver as an authored theme. Start with either file when writing a community
 theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
-Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, green bullish candles and black bearish candles. Both builtins retain the established typography, spacing and layout.
+Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles. Both builtins retain the established typography, spacing and layout.
 
 ## Document
 
@@ -15,6 +15,12 @@ cannot contain control characters. `dark` selects the base widget appearance and
 defaults to `true`. Missing colors, heat ramps and typography properties inherit Dark's
 version-1 values independently, even when `dark = false`. A light author should
 start from the complete Light color fixture rather than merely changing `dark`.
+
+Optional `candle_fill_opacity` sets inherited candle body opacity from 0 through 1
+inclusive; nonfinite values are errors. Missing values inherit Dark's `0.20`,
+independently of `dark`. Light sets `1.0` for solid bodies. Explicit candle
+settings, preset body modes, forming-bar dimming and footprint fading retain
+their existing behavior.
 
 Unknown keys, unknown versions, invalid colors and invalid font properties are
 errors. Configuration is resolved as a whole before publishing it; a failed
@@ -54,6 +60,7 @@ groups are:
 | `seam_line`, `seam_label`, `day_rule`, `gap_line`, `gap_label` | Tape provenance, day changes and missing-data marks |
 | `tag_bg`, `chip_ink`, `casing` | Axis/tool tags, chip text and readable underlays |
 | `draw_violet`, `draw_cyan` | Drawing colors distinct from market direction |
+| `drawing_default`, `drawing_buy`, `drawing_sell`, `drawing_vwap` | New drawing stroke/text defaults, independent of UI accent and market colors |
 | `loading_title`, `loading_meta`, `loading_faint`, `loading_border` | Loading text, connection dots and outlines |
 | `loading_logo_low`, `loading_logo_high` | Cached endpoints for the decorative loading logo |
 | `footprint_profile`, `footprint_total_ink`, `footprint_bevel_highlight`, `footprint_bevel_shadow` | Footprint silhouettes, totals and raised cell edges |
@@ -196,6 +203,7 @@ for visual acceptance.
 version = 1
 name = "Ocean"
 dark = true
+candle_fill_opacity = 0.35
 
 [colors]
 canvas = "#101B27"
@@ -230,18 +238,22 @@ explicit. Saved presets, existing drawings and authored script colors are not
 reclassified by comparing their RGB bytes to a theme. Changing the default only
 affects values whose owner records theme inheritance.
 
-Fresh chart candle colors, background and grid inherit independently. Editing
-width, opacity or visibility leaves color ownership unchanged; editing a color
-makes that field explicit. Choosing a built-in candle preset captures its candle
-colors but preserves canvas ownership. Restoring defaults resumes inheritance.
+Fresh chart candle colors, fill opacity, background and grid inherit independently.
+Editing width or visibility leaves ownership unchanged; editing a color or fill
+opacity makes that field explicit. Choosing a built-in candle preset captures its
+candle colors and opacity but preserves canvas ownership. Restoring defaults resumes inheritance.
 Chart edits retain the existing session-only lifetime unless saved as a named
 preset. Saving a named preset captures the whole visible look, including canvas,
 without changing ownership of the live chart. Applying that saved preset restores
 its explicit snapshot. The stored chart document accepts per-field `ownership`
 markers (`theme` or `explicit`); missing legacy markers mean explicit.
 
-New drawings use semantic `accent`, buy/sell marks use `buy`/`sell`, and anchored
-VWAP uses `draw_cyan`. The text tool captures the `drawing` font role when created.
+New drawings use semantic `drawing_default`, buy/sell marks use
+`drawing_buy`/`drawing_sell`, and anchored VWAP uses `drawing_vwap`. Light supplies
+black/charcoal strokes and text, neutral translucent fills derived from those
+strokes, and a white `drawing_readout_plate`. Dark retains historical defaults.
+Missing drawing keys independently inherit Dark; changing UI `accent` does not
+change new drawing colors. The text tool captures the `drawing` font role when created.
 Saved tool style, configuration and named default presets take precedence in that
 order; existing objects never follow subsequent theme changes. Text payloads store
 family and size; a legacy payload without family retains proportional text.

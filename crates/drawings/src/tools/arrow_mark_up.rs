@@ -68,7 +68,7 @@ impl MarkTool for ArrowMarkUp {
     }
     /// Born in the buy colour, not the shared drawing blue: a buy mark that
     /// arrives blue makes the trader repaint it every single time.
-    fn default_color_token(&self) -> quantick_appearance::Token { quantick_appearance::Token::Buy }
+    fn default_color_token(&self) -> quantick_appearance::Token { quantick_appearance::Token::DrawingBuy }
     fn default_color(&self) -> Option<PremultipliedRgba> {
         Some(theme::BUY)
     }

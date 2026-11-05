@@ -168,7 +168,7 @@ pub trait MarkTool: Sync {
     /// trader's own saved default still wins over this, because that one was
     /// chosen rather than assumed.
     fn default_color_token(&self) -> quantick_appearance::Token {
-        quantick_appearance::Token::Accent
+        quantick_appearance::Token::DrawingDefault
     }
     fn default_color(&self) -> Option<PremultipliedRgba> {
         None

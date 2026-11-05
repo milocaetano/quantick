@@ -393,11 +393,13 @@ mod tests {
             "version = 99\nname = 'bad'",
             "version = 1\nname = 'bad'\n[colors]\ncanvas = 'invalid'",
             "version = 1\nname = 'bad'\n[typography.body]\nsize = -1",
+            "version = 1\nname = 'bad'\ncandle_fill_opacity = 1.01",
             "version = 1\nname = 'bad'\n[orderflow.colors]\nbuy = '#ffffff80'",
         ] {
             assert!(store.apply_candidate(source, true).is_err());
             assert_eq!(store.source(), Some(LIGHT));
             assert_eq!(store.revision(), revision);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "old invalid file");
         }
         assert!(
             store

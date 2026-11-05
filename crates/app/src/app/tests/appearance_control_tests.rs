@@ -56,7 +56,11 @@ fn appearance_gateway_publishes_every_owner_atomically_and_replays_durable_retry
     );
     let text = crate::drawings::DrawingTool::by_id("text").unwrap();
     let drawing = crate::drawings::new_drawing_from_defaults(&app.drawings.presets, text);
-    assert_eq!(drawing.style.color, palette.resolved.color(Token::Accent));
+    assert_eq!(
+        drawing.style.color,
+        palette.resolved.color(Token::DrawingDefault)
+    );
+    assert_eq!(app.runtime.style.candles.fill_opacity, 1.0);
     let revision = app.runtime.style_revision;
     let fonts = ctx.style().text_styles.clone();
     let formatted = format!("# same semantics\n{LIGHT}");
@@ -100,6 +104,7 @@ fn appearance_gateway_publishes_every_owner_atomically_and_replays_durable_retry
     let before_invalid = state(&mut app, &mut observer);
     for source in [
         "version = 99\nname = 'bad'",
+        "version = 1\nname = 'bad'\ncandle_fill_opacity = nan",
         "version = 1\nname = 'bad'\n[colors]\ncanvas = 'bad'",
     ] {
         let (refused, _) = unkeyed_call(

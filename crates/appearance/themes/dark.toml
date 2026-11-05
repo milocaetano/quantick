@@ -1,8 +1,13 @@
 version = 1
 name = "Dark"
 dark = true
+candle_fill_opacity = 0.20
 
 [colors]
+drawing_default = "#8AB4F8"
+drawing_buy = "#26A69A"
+drawing_sell = "#EF5350"
+drawing_vwap = "#4DD0E1"
 flow_surface = "#1e2433"
 flow_divider = "#3a4357"
 flow_ink = "#e8ecf2"

@@ -129,6 +129,7 @@ impl From<StyleFile> for ChartStyle {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct OwnershipFile {
+    fill_opacity: Inheritance,
     bull_fill: Inheritance,
     bear_fill: Inheritance,
     bull_outline: Inheritance,
@@ -140,6 +141,7 @@ struct OwnershipFile {
 impl From<ChartColorOwnership> for OwnershipFile {
     fn from(value: ChartColorOwnership) -> Self {
         Self {
+            fill_opacity: value.fill_opacity,
             bull_fill: value.bull_fill,
             bear_fill: value.bear_fill,
             bull_outline: value.bull_outline,
@@ -153,6 +155,7 @@ impl From<ChartColorOwnership> for OwnershipFile {
 impl From<OwnershipFile> for ChartColorOwnership {
     fn from(value: OwnershipFile) -> Self {
         Self {
+            fill_opacity: value.fill_opacity,
             bull_fill: value.bull_fill,
             bear_fill: value.bear_fill,
             bull_outline: value.bull_outline,
@@ -167,6 +170,38 @@ impl From<OwnershipFile> for ChartColorOwnership {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn opacity_ownership_roundtrips_and_absent_field_preserves_legacy_numeric_value() {
+        let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        for ownership in [Inheritance::Theme, Inheritance::Explicit] {
+            let mut style = ChartStyle::default();
+            style.candles.wick_width = 3.0;
+            style.candles.fill_opacity = 0.20;
+            style.ownership.fill_opacity = ownership;
+            let text = toml::to_string(&StyleFile::from(&style)).unwrap();
+            let mut loaded: ChartStyle = toml::from_str::<StyleFile>(&text).unwrap().into();
+            assert_eq!(loaded, style);
+            loaded.apply_theme(&light);
+            assert_eq!(
+                loaded.candles.fill_opacity,
+                if ownership == Inheritance::Theme {
+                    1.0
+                } else {
+                    0.20
+                }
+            );
+            assert_eq!(loaded.candles.wick_width, 3.0);
+            let mut legacy: toml::Value = toml::from_str(&text).unwrap();
+            legacy["ownership"]
+                .as_table_mut()
+                .unwrap()
+                .remove("fill_opacity");
+            let mut loaded: ChartStyle = legacy.try_into::<StyleFile>().unwrap().into();
+            loaded.apply_theme(&light);
+            assert_eq!(loaded.candles.fill_opacity, 0.20);
+            assert_eq!(loaded.ownership.fill_opacity, Inheritance::Explicit);
+        }
+    }
     #[test]
     fn ownership_roundtrips_and_legacy_concrete_values_remain_explicit() {
         let mut style = ChartStyle::default();
