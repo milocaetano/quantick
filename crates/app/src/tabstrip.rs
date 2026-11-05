@@ -40,8 +40,8 @@ const EDITED_MARK: &str = "\u{2022}";
 /// has one weight, and this is what reads as 600 at 13 pt.
 const SEMIBOLD_STRIKE_PX: f32 = 0.35;
 
-/// The plate-less Q, the wordmark's first letter: its glyph, 22 px tall.
-const HOME_Q: egui::Vec2 = egui::vec2(22.0 * crate::surfaces::home::MARK_ASPECT, 22.0);
+/// The plate-less Q, the wordmark's first letter: its 22 px box, the glyph inside.
+const HOME_Q: egui::Vec2 = egui::Vec2::splat(22.0);
 const HOME_TEXT_PX: f32 = 15.0;
 /// "uan" at rest; white when the tab is lit or active.
 const HOME_INK: egui::Color32 = egui::Color32::from_rgb(0xDD, 0xE4, 0xEC);
@@ -363,7 +363,7 @@ fn home_label(ui: &egui::Ui) -> HomeLabel {
     ui.fonts(|f| ["uan", "tick"].map(|part| f.layout_job(job(part))))
 }
 
-/// The first tab: the Q and "uantick" on the Q's baseline, or the Q alone and
+/// The first tab: the Q and "uantick" centred on one line, or the Q alone and
 /// centred in `bare` points when `label` is `None`. Shaped and lit like a
 /// market tab, with no close target. Returns whether it was pressed.
 fn draw_home_tab(
@@ -393,11 +393,13 @@ fn draw_home_tab(
     crate::surfaces::home::paint_logo(ui, q, true);
     if let Some(([uan, tick], _)) = label {
         let mut x = q.right() + HOME_LOGO_GAP_PX;
-        let baseline = q.top() + HOME_Q.y * crate::surfaces::home::MARK_BOWL;
         let lit = active || hovered || focused;
         let ink = if lit { egui::Color32::WHITE } else { HOME_INK };
         for (galley, color) in [(uan, ink), (tick, theme::BRAND)] {
-            let at = egui::pos2(x, baseline - galley.rows[0].glyphs[0].pos.y);
+            // CSS centres the 15 px line box: the font's unrounded metrics.
+            let glyph = galley.rows[0].glyphs[0];
+            let y = q.center().y + glyph.font_ascent - glyph.font_height / 2.0 - glyph.pos.y;
+            let at = egui::pos2(x, y);
             x += galley.size().x;
             ui.painter().galley(at, galley, color);
         }

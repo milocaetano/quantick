@@ -10,20 +10,16 @@ use crate::theme;
 const PAGE_LOGO_PX: f32 = 48.0;
 
 /// The plated logo, only ever scaled, and for the Home tab its own Q without the
-/// plate (`logo-q.png`); `TEXELS` is what each shows of its 256, the Q its alpha's box.
+/// plate (`logo-q.png`, framed as the design's `q-bare` viewBox).
 const LOGOS: [&[u8]; 2] = [
     include_bytes!("../../assets/icon.png"),
     include_bytes!("../../assets/logo-q.png"),
 ];
-const TEXELS: [[f32; 4]; 2] = [[0.0, 0.0, 256.0, 256.0], [23.0, 3.0, 233.0, 253.0]];
-/// The Q's width over its height, and its bowl's bottom (texel 225.3), tail below.
-pub(crate) const MARK_ASPECT: f32 = 210.0 / 250.0;
-pub(crate) const MARK_BOWL: f32 = 222.3 / 250.0;
 
-/// Paint the logo, or with `mark` the Q alone edge to edge, into `rect`,
-/// untinted in every state; mipmaps keep the large raster sharp at tab size.
+/// Paint the logo, or with `mark` the Q alone, whole into `rect`, untinted in
+/// every state; mipmaps keep the large raster sharp at tab size.
 pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, mark: bool) {
-    let ([left, top, right, bottom], id) = (TEXELS[mark as usize], egui::Id::new(("logo", mark)));
+    let id = egui::Id::new(("logo", mark));
     let texture = ui
         .ctx()
         .data_mut(|data| data.get_temp::<egui::TextureHandle>(id))
@@ -41,7 +37,7 @@ pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, mark: bool) {
                 .data_mut(|data| data.insert_temp(id, texture.clone()));
             texture
         });
-    let uv = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom)) / 256.0;
+    let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
     ui.painter()
         .image(texture.id(), rect, uv, egui::Color32::WHITE);
 }

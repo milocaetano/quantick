@@ -71,8 +71,8 @@ fn assert_plain_q(output: &egui::FullOutput, state: &str) {
         .all(|v| v.color == egui::Color32::WHITE);
     assert!(white, "{state}: {:?}", mesh.vertices[0].color);
     let uv = egui::Rect::from_points(&mesh.vertices.iter().map(|v| v.uv).collect::<Vec<_>>());
-    let glyph = egui::Rect::from_min_max(egui::pos2(23.0, 3.0), egui::pos2(233.0, 253.0));
-    assert_eq!(uv, glyph / 256.0, "{state}: cropped to the alpha's box");
+    let whole = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+    assert_eq!(uv, whole, "{state}: the whole q-bare frame");
 }
 
 /// The painted galley whose whole text is `wanted`.
@@ -270,13 +270,10 @@ fn the_q_is_the_first_letter_9_px_in_2_px_before_uantick_and_14_px_after() {
         assert!((got - want).abs() < 0.01, "{what}: {got} for {want}");
     };
     near(home.left(), STRIP_EDGE_PX, "window edge to tab");
-    near(q.height(), 22.0, "the glyph's height");
-    near(
-        q.width(),
-        22.0 * 210.0 / 250.0,
-        "the glyph's width, only scaled",
-    );
+    near(q.width(), 22.0, "the Q's box, square");
+    near(q.height(), 22.0, "the Q's box, square");
     near(q.left() - home.left(), 9.0, "tab to Q");
+    near(q.top() - home.top(), 4.0, "centred in the 30 px tab");
     near(uan.pos.x - q.right(), 2.0, "Q to text");
     near(tick.pos.x, uan.pos.x + uan.galley.size().x, "one word");
     near(
@@ -285,13 +282,13 @@ fn the_q_is_the_first_letter_9_px_in_2_px_before_uantick_and_14_px_after() {
         "after the text",
     );
 
-    // One baseline: the Q's bowl, its tail hanging below.
+    // One baseline, where CSS centring Hack's 15 px line box puts it.
     let baseline =
         |text: &egui::epaint::TextShape| text.pos.y + text.galley.rows[0].glyphs[0].pos.y;
-    near(
-        baseline(uan),
-        q.top() + 22.0 * 222.3 / 250.0,
-        "the bowl's bottom",
+    let below = baseline(uan) - home.top();
+    assert!(
+        (below - 20.3).abs() < 0.5,
+        "baseline {below} px below the tab top"
     );
     near(baseline(tick), baseline(uan), "both halves");
     for text in [uan, tick] {
