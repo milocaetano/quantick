@@ -225,35 +225,67 @@ fn a_roll_keeps_the_drawings_and_a_repeat_rolls_nothing() {
     disable_test_gateway(&mut app, &ctx);
 }
 
-/// The toolbar action runs the capability's own act and asks its own rule.
+/// What the three surfaces say the tab shows: the toolbar button's words,
+/// the tab chip's label and the status bar's venue and symbol.
+fn surfaces_read(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> [String; 3] {
+    let output = run_frame(app, ctx);
+    let status = app.status_model();
+    let button =
+        super::super::market_switch_tests::painted_starting(&output, &format!("{symbol} \u{b7} "));
+    assert_eq!(
+        button.len(),
+        1,
+        "one market button reads {symbol}: {button:?}"
+    );
+    [
+        button[0]
+            .trim_end_matches(egui_phosphor::regular::CARET_DOWN)
+            .to_owned(),
+        app.active_tab().chip_label().to_owned(),
+        format!("{} \u{b7} {}", status.symbol, status.venue),
+    ]
+}
+
+/// `tab.market.set` through the gateway moves the toolbar button, the tab
+/// chip and the status cell together, and a repeat moves nothing.
 #[test]
-fn the_toolbar_roll_is_the_capability_s_act_and_refuses_with_a_position_open() {
+fn a_market_switch_moves_the_button_chip_and_status_cell_together() {
     let ctx = egui::Context::default();
-    let (mut app, evt_tx, _commands, _book) = test_app();
-    let scratch = crate::scratch::ScratchDir::new("contract-roll-hand");
-    app.active_tab_mut()
-        .paper
-        .redirect_history_dir(scratch.path().to_path_buf());
-    app.config.feeds[0].contract_rolls =
-        std::collections::BTreeMap::from([("TESTUSDT".to_owned(), "ETHUSDT".to_owned())]);
-    let tab_id = app.runtime.tabs.active_id();
-    evt_tx
-        .try_send(FeedEvent::Backfilled(vec![trade(2)]))
-        .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
-    app.apply_toolbar_action(ToolbarAction::PaperBuy);
-    evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
-    assert!(!app.active_tab().paper.is_flat(), "a position is open");
-
-    app.apply_toolbar_action(ToolbarAction::RollContract);
-    assert_eq!(app.active_tab().active.1, "TESTUSDT", "the roll refused");
-
-    app.active_tab_mut().paper.close_position();
-    evt_tx.try_send(FeedEvent::Live(trade(5))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
-    assert!(app.active_tab().paper.is_flat(), "the position closed");
-    app.apply_toolbar_action(ToolbarAction::RollContract);
-    assert_eq!(app.active_tab().active.1, "ETHUSDT", "flat, it rolled");
+    let (mut app, _commands) = app_with_history(4);
     run_frame(&mut app, &ctx);
+    let before = surfaces_read(&mut app, &ctx, "TESTUSDT");
+    assert_eq!(before, ["TESTUSDT \u{b7} Binance"; 3].map(str::to_owned));
+
+    let directory = gateway_test_directory("tab-market-set");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.recover");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.recover"]),
+    );
+    let tab = app.runtime.tabs.active_id().to_string();
+    let input = json!({"tab": tab, "feed": "binance", "symbol": "ETHUSDT"});
+    let generation = app.active_tab().feed_generation();
+    let (first, _) = unkeyed_call(&mut app, &mut cockpit, "tab.market.set", input.clone());
+    let result = success_result(&first);
+    assert_eq!(
+        (
+            &result["changed"],
+            &result["from_symbol"],
+            &result["symbol"]
+        ),
+        (&json!(true), &json!("TESTUSDT"), &json!("ETHUSDT"))
+    );
+    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+    let after = surfaces_read(&mut app, &ctx, "ETHUSDT");
+    assert_eq!(after, ["ETHUSDT \u{b7} Binance"; 3].map(str::to_owned));
+
+    let (repeat, _) = unkeyed_call(&mut app, &mut cockpit, "tab.market.set", input);
+    assert_eq!(success_result(&repeat)["changed"], false);
+    assert_eq!(app.active_tab().feed_generation(), generation + 1);
+    let invalid = json!({"tab": tab, "feed": "binance", "symbol": "NOT_LISTED"});
+    let (refused, _) = unkeyed_call(&mut app, &mut cockpit, "tab.market.set", invalid);
+    assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
+    disable_test_gateway(&mut app, &ctx);
+    let _ = std::fs::remove_dir_all(&directory);
 }

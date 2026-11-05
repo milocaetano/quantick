@@ -767,9 +767,18 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
     fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
         super::tabs::edit_catalog(self, (feed, symbol), add)
     }
-    fn open_market_palette(&mut self, query: &str) -> Result<(), ControlError> {
-        self.surfaces.market_palette.open(query);
-        Ok(())
+    fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
+        super::tabs::open_palette(self, query, switch).map_err(ControlError::invalid_request)
+    }
+    fn set_flow_bar(&mut self, tab: u64, bar: Bars) -> Result<(), String> {
+        let tab = self
+            .runtime
+            .tabs
+            .by_id_mut(tab)
+            .ok_or("The tab has closed")?;
+        tab.set_pane_bar_spec(0, bar)
+            .map(drop)
+            .map_err(|e| e.to_string())
     }
 }
 

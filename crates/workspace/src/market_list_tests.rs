@@ -517,7 +517,7 @@ fn the_primary_label_says_what_enter_does() {
                 Asks::Add
             }
             Some(PaletteIntent::Focus { tab_id, .. }) => Asks::Focus(*tab_id),
-            Some(PaletteIntent::Remove { .. }) => panic!("Enter never removes: {case}"),
+            Some(other) => panic!("the open mode never asks {other:?}: {case}"),
             None => Asks::Nothing,
         };
         assert_eq!(got, asks, "{case}");

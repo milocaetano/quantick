@@ -46,10 +46,9 @@ impl MarketPaletteSurface {
         self.open.is_some()
     }
 
-    pub fn open(&mut self, query: &str) {
-        let mut palette = MarketPalette::default();
-        palette.set_query(query);
-        self.open = Some(palette);
+    /// Open on `query`; in switch mode when `switching` names a tab.
+    pub fn open(&mut self, query: &str, switching: Option<list::SwitchTarget>) {
+        self.open = Some(MarketPalette::opened(query, switching));
     }
 
     pub fn close(&mut self) {
@@ -245,7 +244,9 @@ fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing
             if let Some(name) = picked.inner {
                 palette.set_workspace(&name);
             }
-            ui.label(faint(format!("Ctrl {RETURN} background")));
+            if palette.switch_target().is_none() {
+                ui.label(faint(format!("Ctrl {RETURN} background")));
+            }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(format!("{}  {RETURN}", palette.primary_label(listing)));
@@ -261,7 +262,7 @@ impl Surface for MarketPaletteSurface {
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
         if let Some(query) = crate::hooks::captured::var("QUANTICK_MARKET_PALETTE") {
-            self.open(if query == "1" { "" } else { &query });
+            self.open(if query == "1" { "" } else { &query }, None);
         }
     }
 
@@ -304,11 +305,14 @@ impl Surface for MarketPaletteSurface {
                 let field = ui.add(field);
                 focus_stop(palette, &field, PaletteFocus::Field);
                 palette.settle_query(&before);
+                if let Some(target) = palette.switch_target() {
+                    ui.label(RichText::new(target.caption()).color(theme::TEXT_FAINT));
+                }
                 if let Some(reason) = palette.refusal() {
                     ui.label(RichText::new(reason).small().color(theme::SELL));
                 }
                 ui.separator();
-                let listing = list::list_markets(&data.world(), palette.query());
+                let listing = palette.listing(&data.world());
                 let pressed = keys.into_iter().fold(None, |asked, key| {
                     asked.or(palette.press(key, &listing, &data.workspaces, default_size))
                 });
@@ -496,7 +500,7 @@ mod market_palette_surface_tests {
     fn a_resting_pointer_leaves_the_keyboard_selection_alone() {
         let ctx = egui::Context::default();
         let mut surface = MarketPaletteSurface::default();
-        surface.open("");
+        surface.open("", None);
         let shown = settle(&mut surface, &ctx);
         let eth = text_rect(&shown.output, "ETHUSDT").center();
         frame(
@@ -525,7 +529,7 @@ mod market_palette_surface_tests {
     fn the_keyboard_and_the_focused_stop_move_together() {
         let ctx = egui::Context::default();
         let mut surface = MarketPaletteSurface::default();
-        surface.open("");
+        surface.open("", None);
         let shown = settle(&mut surface, &ctx);
         assert_eq!(focused(&ctx), Some(query_id()));
         click(&mut surface, &ctx, text_rect(&shown.output, "50").center());
@@ -557,7 +561,7 @@ mod market_palette_surface_tests {
     fn delete_edits_the_query_until_the_cursor_is_at_its_end() {
         let ctx = egui::Context::default();
         let mut surface = MarketPaletteSurface::default();
-        surface.open("pepe");
+        surface.open("pepe", None);
         settle(&mut surface, &ctx);
         frame(&mut surface, &ctx, key(Key::ArrowLeft));
         let edited = frame(&mut surface, &ctx, key(Key::Delete));
@@ -582,7 +586,7 @@ mod market_palette_surface_tests {
         for target in ["chart", "strip"] {
             let ctx = egui::Context::default();
             let mut surface = MarketPaletteSurface::default();
-            surface.open("");
+            surface.open("", None);
             let shown = settle(&mut surface, &ctx);
             let at = match target {
                 "chart" => OUTSIDE,
@@ -611,7 +615,7 @@ mod market_palette_surface_tests {
     fn a_click_off_an_open_dropdown_closes_only_the_dropdown() {
         let ctx = egui::Context::default();
         let mut surface = MarketPaletteSurface::default();
-        surface.open("");
+        surface.open("", None);
         let shown = settle(&mut surface, &ctx);
         click(
             &mut surface,
@@ -638,7 +642,7 @@ mod market_palette_surface_tests {
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         ctx.set_fonts(fonts);
         let mut surface = MarketPaletteSurface::default();
-        surface.open("");
+        surface.open("", None);
         let shown = settle(&mut surface, &ctx);
         let font = FontId::proportional(12.0);
         let has = |text: &str| ctx.fonts(|fonts| fonts.has_glyphs(&font, text));
@@ -657,7 +661,7 @@ mod market_palette_surface_tests {
     fn the_list_is_drawn_on_the_frame_a_key_asks_for_something() {
         let ctx = egui::Context::default();
         let mut surface = MarketPaletteSurface::default();
-        surface.open("");
+        surface.open("", None);
         settle(&mut surface, &ctx);
         let entered = frame(&mut surface, &ctx, key(Key::Enter));
         assert!(matches!(

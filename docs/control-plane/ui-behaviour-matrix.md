@@ -69,8 +69,8 @@ The three exclusion classes are closed:
 | `market.palette.choose` | Open or focus the market chosen in the palette | Enter or Ctrl+Enter on a palette row, with its Bars and Workspace selectors | `market.open` | — |
 | `market.palette.add` | Add a symbol to a venue and open it | Enter on a palette no-match row | — | `pending_capability` — no capability adds a symbol to a venue's list yet; `market.open` opens what the config and the added-symbols file already offer. Tracked in issue 401 |
 | `market.palette.remove` | Remove a market the trader added | Delete on a palette row the trader added | `catalog.remove` | — |
-| `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's SOURCE feed and symbol combos | `feed.source.set` | — |
-| `tab.market.roll` | Roll the active tab to its next configured contract | the symbol list on the toolbar's market label | `feed.contract.roll` | — |
+| `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's market button, then Enter on a row of the palette in switch mode | `tab.market.set`, `feed.source.set` | — |
+| `tab.market.roll` | Roll the active tab to its next configured contract | the toolbar's market button, then the roll row of the palette in switch mode | `feed.contract.roll` | — |
 | `replay.browser.open` | Open the market replay browser | window menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `replay.close` | Leave replay and go back to the live tape | window menu, while a tab is replaying | — | `pending_capability` — no capability drives the replay transport, so an operator can neither start a session nor end one. Tracked in issue 401 |
 | `replay.format_help.open` | Read what a replay file has to look like | window menu, Help | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -262,7 +262,7 @@ declares nothing here is a guard failure.
 | `market.palette.choose` | palette rows are drawn from the headless market list, not an action enum |
 | `market.palette.add` | the no-match row is drawn from the headless market list |
 | `market.palette.remove` | the row is drawn from the headless market list |
-| `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |
+| `tab.market.roll` | the roll row is drawn from the headless market list, not an action enum |
 | `chart.bars.set_spec` | the bar-kind and size controls are pane header widgets, not entries in an action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
 | `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |

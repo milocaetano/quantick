@@ -3,10 +3,14 @@
   "properties": {
     "query": {
       "type": "string"
+    },
+    "switch": {
+      "type": "boolean"
     }
   },
   "required": [
-    "query"
+    "query",
+    "switch"
   ],
   "title": "MarketPaletteOpenResult",
   "type": "object"

@@ -287,22 +287,29 @@ fn the_strip_is_36_tall_with_30_tall_tabs_and_46_by_36_window_buttons() {
 }
 
 #[test]
-fn the_toolbar_label_switches_the_symbol_inside_the_same_tab() {
+fn the_toolbar_market_button_switches_the_symbol_inside_the_same_tab() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let ctx = egui::Context::default();
     let tab = app.runtime.tabs.active_id();
     let output = run_frame(&mut app, &ctx);
-    assert!(painted_text_center(&output, "this tab").is_some());
     assert!(
-        painted_text_center(&output, "symbol").is_none(),
-        "no dropdown caption"
+        painted_text_center(&output, "this tab").is_none(),
+        "no eyebrow"
     );
-    let this_tab = painted_text_center(&output, "this tab").unwrap();
-    click_sized(
+    let caret = egui_phosphor::regular::CARET_DOWN;
+    click_entry(
         &mut app,
         &ctx,
-        TEST_WINDOW,
-        egui::pos2(this_tab.x + 70.0, this_tab.y),
+        &output,
+        &format!("TESTUSDT \u{b7} Binance{caret}"),
+    );
+    run_frame(&mut app, &ctx);
+    let palette = app.surfaces.market_palette.open.as_ref();
+    assert!(
+        palette
+            .and_then(|palette| palette.switch_target())
+            .is_some(),
+        "the button opens the palette in switch mode"
     );
     let output = run_frame(&mut app, &ctx);
     click_entry(&mut app, &ctx, &output, "ETHUSDT");

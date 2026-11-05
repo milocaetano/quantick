@@ -727,7 +727,7 @@ impl QuantickApp {
         if self.chrome.title_bar.surface.is_home() {
             scratch.canvas = answers;
             if super::home_wiring::draw_stage(ctx, self.active_tab_mut(), background) {
-                self.surfaces.market_palette.open("");
+                self.surfaces.market_palette.open("", None);
             }
             return;
         }

@@ -814,6 +814,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("feed.reconnect", 1, json!({}), Readback::Stays),
         ("feed.reload", 1, json!({}), Readback::Stays),
         ("feed.source.set", 1, Value::Null, Readback::Stays),
+        ("tab.market.set", 1, Value::Null, Readback::Stays),
         // A tab already on the target: the retry a dropped answer sends.
         ("feed.contract.roll", 1, Value::Null, Readback::Stays),
         // A tab whose feed declares no deal counter and has no recorded day:
@@ -1009,6 +1010,11 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "feed.source.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "feed_id": app.active_tab().active.0,
+                "symbol": app.active_tab().active.1,
+            }),
+            "tab.market.set" => json!({
+                "tab": app.runtime.tabs.active_id().to_string(),
+                "feed": app.active_tab().active.0,
                 "symbol": app.active_tab().active.1,
             }),
             "feed.contract.roll" => {

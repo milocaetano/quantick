@@ -193,3 +193,52 @@ fn a_changed_source_journals_who_switched_it_from_what_to_what() {
         assert_eq!(result, expected, "the caller reads what the journal reads");
     }
 }
+
+/// `tab.market.set` is `feed.source.set` under the tab's market names: the
+/// same checks, one switch, the same journal row, and a repeat moves nothing.
+#[test]
+fn tab_market_set_is_the_source_switch_under_market_names() {
+    let mut window = Window {
+        feed: "spot".into(),
+        symbol: "BTCUSDT".into(),
+        replay: false,
+        switches: 0,
+    };
+    let mut access = FakeAccess::with_budget(0);
+    let actor = FakeWindow::assistant();
+    let mut set =
+        |window: &mut Window, input: Value| set_market(window, &mut access, &actor, &input);
+    for invalid in [
+        json!({"tab":"8","feed":"futures","symbol":"BTCUSDT.p"}),
+        json!({"tab":"7","feed":"futures","symbol":"BTCUSDT"}),
+        json!({"tab":"7","feed_id":"futures","symbol":"BTCUSDT.p"}),
+    ] {
+        assert!(set(&mut window, invalid).is_err());
+    }
+    assert_eq!(window.switches, 0, "a refusal switches nothing");
+    let input = json!({"tab":"7","feed":"futures","symbol":"BTCUSDT.p"});
+    let switched = set(&mut window, input.clone()).expect("the switch answers");
+    assert_eq!(
+        switched,
+        json!({
+            "tab": "7",
+            "feed": "futures",
+            "symbol": "BTCUSDT.p",
+            "from_feed": "spot",
+            "from_symbol": "BTCUSDT",
+            "changed": true,
+        })
+    );
+    let repeat = set(&mut window, input).expect("the repeat answers");
+    assert_eq!(repeat["changed"], false);
+    assert_eq!(window.switches, 1);
+    assert_eq!(access.events.len(), 1, "one switch, one record");
+    assert_eq!(access.events[0].kind.as_str(), "feed.source.changed");
+    let mut registry = ActionRegistry::<Window, FakeAccess>::new();
+    register(&mut registry).expect("both descriptors are valid");
+    let ids: Vec<_> = registry
+        .descriptors()
+        .map(|d| d.id.as_str().to_owned())
+        .collect();
+    assert_eq!(ids, ["feed.source.set", "tab.market.set"]);
+}

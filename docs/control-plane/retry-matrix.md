@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 62 |
+| deduplicated per connection | 63 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **95** |
+| **Total** | **96** |
 
 ## Capabilities
 
@@ -184,7 +184,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `layout.window.placement.set` | 1 | required | key required; deduplicated per connection | `cockpit` | `snapshot.read` `workspace.windows` | `windows[].observed` | native viewport observations report actual placement after OS handling, independently of request acceptance | `market_window_operations_validate_authority_preserve_identity_and_replay_safely` |
 | `layout.window.state.set` | 1 | required | key required; deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | Read scene.read with window_id from the accepted result. tab_strip.maximize or tab_strip.minimize is selected once that native viewport reports its state; both clear in normal state | `native_window_requests_validate_authority_and_retry_without_repeating_the_effect` |
 | `market.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].tab_id` | a tab with the answer's tab_id shows the market, active unless background | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
-| `market.palette.open` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `market.palette.opened` | `payload.query` | an event after the pre-call cursor names the query | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `market.palette.open` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `market.palette.opened` | `payload.query` | an event after the pre-call cursor names the query and the mode | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `notify.popup` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.sound` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.toast` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
@@ -203,6 +203,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `session.journal.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.journal.changed` | `payload.journal_session` | an event after the pre-call cursor names the session and the name or tags, or the ledger view, the call asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `session.pnl_display.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.pnl_display.changed` | `payload.pnl_display.primary` | an event after the pre-call cursor carries the requested mode as `primary` | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `settings.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | the asked section's settings.section control is listed and selected | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `tab.market.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].active_symbol` | the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the market changed and not otherwise | `a_market_switch_moves_the_button_chip_and_status_cell_together`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `tab.workspace.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.tab_set` | `payload.workspace` | an event after the pre-call cursor names the requested workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `trade.instrument.set_money` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `events.read` `trade.ticket.changed` | `payload.asked` | an event after the pre-call cursor carries the caller's input as `asked` | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.bracket` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].stop_loss` | the named order carries the stop and target asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
@@ -218,4 +219,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-95 mutable capabilities registered, 95 with a readback.
+96 mutable capabilities registered, 96 with a readback.

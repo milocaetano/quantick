@@ -663,7 +663,7 @@ fn a_text_field_keeps_both_home_shortcuts() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
-    app.surfaces.market_palette.open("");
+    app.surfaces.market_palette.open("", None);
     frame(&mut app, &ctx);
     frame(&mut app, &ctx);
     assert!(ctx.memory(|memory| memory.focused().is_some()), "the field");

@@ -346,6 +346,17 @@ pub const READBACKS: &[Readback] = &[
         ],
     ),
     snapshot(
+        crate::feed_source::TAB_MARKET_SET_CAPABILITY_ID,
+        Optional,
+        SCOPE_ID,
+        "tabs[].active_symbol",
+        "the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the market changed and not otherwise",
+        &[
+            "a_market_switch_moves_the_button_chip_and_status_cell_together",
+            EVERY_OPTIONAL_TEST,
+        ],
+    ),
+    snapshot(
         "feed.reconnect",
         Optional,
         SCOPE_ID,

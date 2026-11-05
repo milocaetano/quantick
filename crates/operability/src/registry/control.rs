@@ -178,19 +178,18 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tab.market.source.set",
         title: "Switch the active tab to another configured feed and symbol",
-        reach: "the toolbar's SOURCE feed and symbol combos",
-        keys: &[(
-            Source::Authored,
-            "the SOURCE combos are toolbar widgets writing the tab's selection, not entries in \
-             its action enum",
-        )],
-        mapping: capability!("feed.source.set"),
+        reach: "the toolbar's market button, then Enter on a row of the palette in switch mode",
+        keys: &[(Source::ToolbarAction, "SwitchMarket")],
+        mapping: capability!("tab.market.set", "feed.source.set"),
     },
     UiBehaviour {
         id: "tab.market.roll",
         title: "Roll the active tab to its next configured contract",
-        reach: "the symbol list on the toolbar's market label",
-        keys: &[(Source::ToolbarAction, "RollContract")],
+        reach: "the toolbar's market button, then the roll row of the palette in switch mode",
+        keys: &[(
+            Source::Authored,
+            "the roll row is drawn from the headless market list, not an action enum",
+        )],
         mapping: capability!("feed.contract.roll"),
     },
 ];
