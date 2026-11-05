@@ -142,6 +142,8 @@ pub const GAP_LABEL: Color32 = Color32::from_rgb(0x9A, 0x82, 0x3A);
 
 /// The logo's teal, sampled from `assets/icon.png`: the "tick" of the wordmark.
 pub const BRAND: Color32 = Color32::from_rgb(0x3A, 0xF0, 0xB2);
+/// The wordmark's "uan" at rest; white when the Home tab is lit or active.
+pub const HOME_INK: Color32 = Color32::from_rgb(0xDD, 0xE4, 0xEC);
 
 /// `tag/bg` — tooltips and the axis price tag.
 pub const TAG_BG: Color32 = Color32::from_rgb(0x37, 0x3F, 0x50);

@@ -10,7 +10,7 @@ use quantick_workspace::arrangement::strip::{
     StripSurface, TabFeedDot, chip_parts, home_label_fits, market_slots, visible_tabs,
 };
 
-use crate::theme;
+use crate::theme::{self, HOME_INK};
 
 const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
 const CHIP_PREFERRED_WIDTH_PX: f32 = 180.0;
@@ -43,8 +43,6 @@ const SEMIBOLD_STRIKE_PX: f32 = 0.35;
 /// The plate-less Q, the wordmark's first letter: its 22 px box, the glyph inside.
 const HOME_Q: egui::Vec2 = egui::Vec2::splat(22.0);
 const HOME_TEXT_PX: f32 = 15.0;
-/// "uan" at rest; white when the tab is lit or active.
-const HOME_INK: egui::Color32 = egui::Color32::from_rgb(0xDD, 0xE4, 0xEC);
 // Window edge to the Home tab, tab edge to the Q, Q to text, text to edge.
 pub(crate) const STRIP_EDGE_PX: f32 = 10.0;
 pub(crate) const HOME_PADDING_LEFT_PX: f32 = 9.0;

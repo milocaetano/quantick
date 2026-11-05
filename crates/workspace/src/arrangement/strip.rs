@@ -18,12 +18,14 @@ pub fn market_slots(room: f32, labelled_width: f32, chip_width: f32) -> usize {
     (((room - labelled_width).max(0.0) / chip_width).floor() as usize).max(1)
 }
 
-/// Whether Home keeps its label beside `markets` chips: while every one of them
-/// fits at `chip_width`. A lone market is never hidden, but it would be crushed
-/// to its close target, so it too costs Home its label.
+/// Whether Home keeps its label beside `markets` chips: while [`market_slots`]
+/// holds every one of them, so the label and the overflow menu never disagree. A
+/// lone market is never hidden, but it would be crushed to its close target, so
+/// it too costs Home its label.
 #[must_use]
 pub fn home_label_fits(markets: usize, room: f32, labelled_width: f32, chip_width: f32) -> bool {
-    markets as f32 * chip_width <= room - labelled_width
+    let lone_fits = chip_width <= room - labelled_width;
+    markets <= market_slots(room, labelled_width, chip_width) && (markets > 1 || lone_fits)
 }
 
 /// What a market tab's dot says: the feed's state, never the selection.
@@ -279,6 +281,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Where `n * chip` and `floor(room / chip)` round apart in f32, the label
+    /// still follows the slot count, so it and the overflow never show together.
+    #[test]
+    fn the_label_follows_the_slot_count_where_f32_rounding_splits_them() {
+        for (chip, markets, room) in [
+            (84.451_7_f32, 7, 591.161_87_f32),
+            (141.264_6, 3, 423.793_8),
+            (136.460_54, 5, 682.302_7),
+        ] {
+            let all_shown = market_slots(room, 0.0, chip) >= markets;
+            assert_eq!(
+                home_label_fits(markets, room, 0.0, chip),
+                all_shown,
+                "{chip} x {markets}"
+            );
+        }
+        let split = |(chip, markets, room): (f32, usize, f32)| {
+            (markets as f32 * chip <= room) != (market_slots(room, 0.0, chip) >= markets)
+        };
+        assert!(
+            split((84.451_7, 7, 591.161_87)),
+            "the case still splits the two rules"
+        );
     }
 
     #[test]

@@ -196,20 +196,10 @@ fn hover_focus_and_home_lift_uan_only_and_the_q_is_never_dimmed() {
     let idle = moved(&mut app, far);
     let hovered = moved(&mut app, at);
     moved(&mut app, far);
-    // Keyboard focus walks the window's widgets until it reaches Home.
-    let focused = (0..200)
-        .find_map(|_| {
-            let output = press_tab(&mut app, &ctx);
-            let events = &output.platform_output.events;
-            let home = events.iter().any(|event| match event {
-                egui::output::OutputEvent::FocusGained(info) => {
-                    info.label.as_deref() == Some("Home")
-                }
-                _ => false,
-            });
-            home.then(|| moved(&mut app, far))
-        })
-        .expect("Tab reaches the Home tab");
+    let home = home_widget(&ctx, home_rect(&app));
+    ctx.memory_mut(|memory| memory.request_focus(home));
+    let focused = moved(&mut app, far);
+    assert!(ctx.memory(|memory| memory.has_focus(home)), "a real focus");
     assert!(!on_home(&app), "focus alone does not go Home");
     ctx.memory_mut(|memory| memory.surrender_focus(memory.focused().unwrap()));
     click_sized(&mut app, &ctx, WINDOW, at);
@@ -224,10 +214,7 @@ fn hover_focus_and_home_lift_uan_only_and_the_q_is_never_dimmed() {
     for (output, state) in states.into_iter().chain([(&active, "active")]) {
         assert_plain_q(output, state);
     }
-    let (rest, brand) = (
-        egui::Color32::from_rgb(0xDD, 0xE4, 0xEC),
-        crate::theme::BRAND,
-    );
+    let (rest, brand) = (crate::theme::HOME_INK, crate::theme::BRAND);
     assert_eq!(wordmark_colors(&idle), (rest, brand));
     for (output, state) in [
         (&hovered, "hovered"),
@@ -242,9 +229,89 @@ fn hover_focus_and_home_lift_uan_only_and_the_q_is_never_dimmed() {
     }
 }
 
-fn press_tab(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
-    let tab = key_press_with(egui::Key::Tab, egui::Modifiers::NONE);
-    run_frame_sized(app, ctx, WINDOW, vec![tab], egui::Modifiers::NONE)
+/// The Home tab's own widget, to focus it directly rather than by Tab order.
+fn home_widget(ctx: &egui::Context, home: egui::Rect) -> egui::Id {
+    ctx.viewport(|viewport| {
+        let passes = [&viewport.this_pass, &viewport.prev_pass];
+        let mut widgets = passes
+            .into_iter()
+            .flat_map(|pass| pass.widgets.layers().flat_map(|(_, rects)| rects.iter()));
+        widgets
+            .find(|widget| widget.sense.focusable && widget.rect == home)
+            .map(|widget| widget.id)
+    })
+    .expect("the Home tab is a focusable widget")
+}
+
+/// The fill of the tab surface that starts at `rect`'s top-left corner, if any.
+fn surface_fill(output: &egui::FullOutput, rect: egui::Rect) -> Option<egui::Color32> {
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(shape) if shape.rect.min == rect.min => Some(shape.fill),
+            _ => None,
+        })
+}
+
+/// The Q's light half is premultiplied in sRGB, as the design's browser does,
+/// not in egui's linear light, which paints its 0.647 alpha near 0.84.
+#[test]
+fn the_q_texture_is_premultiplied_in_srgb() {
+    let image = crate::surfaces::home::logo_image(true);
+    let png = include_bytes!("../../../assets/logo-q.png");
+    let source = eframe::icon_data::from_png_bytes(png).unwrap();
+    let light = source.rgba.as_chunks::<4>().0.iter().position(|texel| {
+        let [r, g, b, a] = texel.map(i32::from);
+        (r - 0xE6).abs() <= 1 && (g - 0xEE).abs() <= 1 && (b - 0xF6).abs() <= 1 && a == 165
+    });
+    let index = light.expect("the left half's #E6EEF6 at 0.647");
+    assert!(index % 256 < 128, "a texel of the left half");
+    let got = image.pixels[index].to_array().map(i32::from);
+    for (got, want) in got.into_iter().zip([149, 154, 159, 165]) {
+        assert!(
+            (got - want).abs() <= 1,
+            "{got} for {want}: {:?}",
+            image.pixels[index]
+        );
+    }
+}
+
+#[test]
+fn the_home_surface_is_bare_at_rest_a_market_tabs_fill_on_hover_and_chrome_when_active() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    let far = egui::pos2(1000.0, 400.0);
+    let moved = |app: &mut QuantickApp, to| {
+        let event = egui::Event::PointerMoved(to);
+        run_frame_sized(app, &ctx, WINDOW, vec![event], egui::Modifiers::NONE)
+    };
+    let (home, chip) = (home_rect(&app), chip_rect(&app, 0));
+    assert_ne!(
+        app.runtime.tabs.active_index(),
+        0,
+        "the first chip is inactive"
+    );
+    let idle = moved(&mut app, far);
+    assert_eq!(
+        surface_fill(&idle, home),
+        None,
+        "idle: no fill, only the divider"
+    );
+    let hovered = moved(&mut app, home.center());
+    let chip_hovered = moved(&mut app, chip.center());
+    let market_hover = surface_fill(&chip_hovered, chip).expect("a hovered market tab is lit");
+    assert_eq!(market_hover, crate::theme::BARE_HOVER);
+    assert_eq!(surface_fill(&hovered, home), Some(market_hover), "hovered");
+    click_sized(&mut app, &ctx, WINDOW, home.center());
+    let active = moved(&mut app, far);
+    assert!(on_home(&app));
+    assert_eq!(
+        surface_fill(&active, home),
+        Some(crate::theme::CHROME),
+        "active"
+    );
 }
 
 #[test]
@@ -780,7 +847,7 @@ fn the_overflow_menu_and_the_labelled_home_never_show_together_or_both_go() {
 }
 
 #[test]
-fn the_logo_is_the_one_icon_only_scaled_at_every_zoom() {
+fn the_logo_is_its_own_q_only_scaled_or_plate_dropped_on_whole_pixels_at_every_zoom() {
     for zoom in [1.0, 1.5, 2.0] {
         let (mut app, _, _, _) = test_app();
         let ctx = egui::Context::default();
@@ -802,5 +869,11 @@ fn the_logo_is_the_one_icon_only_scaled_at_every_zoom() {
         let size = manager.meta(texture).expect("the logo is loaded").size;
         assert_eq!(size, [256, 256], "assets/logo-q.png at {zoom}x");
         assert_plain_q(&output, &format!("{zoom}x"));
+        let ppp = ctx.pixels_per_point();
+        for vertex in &logo_mesh(&output).vertices {
+            let physical = vertex.pos.to_vec2() * ppp;
+            let whole = (physical - physical.round()).length() < 1e-3;
+            assert!(whole, "{zoom}x: the Q at {physical:?} physical px");
+        }
     }
 }
