@@ -40,16 +40,18 @@ const EDITED_MARK: &str = "\u{2022}";
 /// has one weight, and this is what reads as 600 at 13 pt.
 const SEMIBOLD_STRIKE_PX: f32 = 0.35;
 
-/// The logo, filling a 30 pt tab.
-const HOME_LOGO_PX: f32 = 28.0;
-const HOME_TEXT_PX: f32 = 14.0;
-// Window edge to the Home tab, tab edge to logo, logo to text, text to edge.
+/// The plate-less Q, the wordmark's first letter: its glyph, 22 px tall.
+const HOME_Q: egui::Vec2 = egui::vec2(22.0 * crate::surfaces::home::MARK_ASPECT, 22.0);
+const HOME_TEXT_PX: f32 = 15.0;
+/// "uan" at rest; white when the tab is lit or active.
+const HOME_INK: egui::Color32 = egui::Color32::from_rgb(0xDD, 0xE4, 0xEC);
+// Window edge to the Home tab, tab edge to the Q, Q to text, text to edge.
 pub(crate) const STRIP_EDGE_PX: f32 = 10.0;
-pub(crate) const HOME_PADDING_LEFT_PX: f32 = 10.0;
-pub(crate) const HOME_LOGO_GAP_PX: f32 = 10.0;
+pub(crate) const HOME_PADDING_LEFT_PX: f32 = 9.0;
+pub(crate) const HOME_LOGO_GAP_PX: f32 = 2.0;
 pub(crate) const HOME_PADDING_RIGHT_PX: f32 = 14.0;
-/// The logo alone, centred, with the labelled form's margin on both sides.
-pub(crate) const HOME_MIN_WIDTH_PX: f32 = HOME_PADDING_LEFT_PX * 2.0 + HOME_LOGO_PX;
+/// The Q alone, centred in its own height with the labelled form's margin.
+pub(crate) const HOME_MIN_WIDTH_PX: f32 = HOME_PADDING_LEFT_PX * 2.0 + HOME_Q.y;
 
 /// What one tab looks like on the strip this frame.
 pub struct TabChip<'a> {
@@ -121,18 +123,14 @@ pub(crate) fn draw(
     };
     let close_reserve = CLOSE_HIT_WIDTH_PX + CHIP_RIGHT_PADDING_PX;
     let label = home_label(ui);
-    let labelled = (HOME_PADDING_LEFT_PX
-        + HOME_LOGO_PX
-        + HOME_LOGO_GAP_PX
-        + label.iter().map(|galley| galley.size().x).sum::<f32>()
-        + HOME_PADDING_RIGHT_PX)
-        .max(HOME_MIN_WIDTH_PX);
+    let after_q = label.iter().map(|galley| galley.size().x).sum::<f32>() + HOME_LOGO_GAP_PX;
+    let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
     let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
     let slots = market_slots(room, labelled, CHIP_PREFERRED_WIDTH_PX);
     let visible = visible_tabs(chips.len(), drawn.reveal.unwrap_or(active), slots);
     let fits = home_label_fits(chips.len(), room, labelled, CHIP_PREFERRED_WIDTH_PX);
     let shown = fits.then_some((label, labelled));
-    // A compact strip has no room for the margins: the logo fills the tab.
+    // A compact strip has no room for the margins: the Q alone in a square tab.
     let bare = if compact {
         CHIP_HEIGHT
     } else {
@@ -356,14 +354,16 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
 
 type HomeLabel = [std::sync::Arc<egui::Galley>; 2];
 
-/// The wordmark: "Quan" lifts when the tab is lit or active; "tick" never changes.
+/// After the Q, in Hack at −0.02 em: "uan" lifts when lit or active; "tick" never does.
 fn home_label(ui: &egui::Ui) -> HomeLabel {
-    let font = egui::FontId::proportional(HOME_TEXT_PX);
-    let ink = egui::Color32::PLACEHOLDER;
-    ui.fonts(|f| ["Quan", "tick"].map(|part| f.layout_no_wrap(part.into(), font.clone(), ink)))
+    let font = egui::FontId::monospace(HOME_TEXT_PX);
+    let mut format = egui::TextFormat::simple(font, egui::Color32::PLACEHOLDER);
+    format.extra_letter_spacing = -0.02 * HOME_TEXT_PX;
+    let job = |part: &str| egui::text::LayoutJob::single_section(part.into(), format.clone());
+    ui.fonts(|f| ["uan", "tick"].map(|part| f.layout_job(job(part))))
 }
 
-/// The first tab: logo and the "Quantick" wordmark, or the logo alone and
+/// The first tab: the Q and "uantick" on the Q's baseline, or the Q alone and
 /// centred in `bare` points when `label` is `None`. Shaped and lit like a
 /// market tab, with no close target. Returns whether it was pressed.
 fn draw_home_tab(
@@ -385,25 +385,19 @@ fn draw_home_tab(
     drawn.home = bounds.is_positive().then_some(bounds);
     let (hovered, focused) = (response.hovered(), response.has_focus());
     paint_tab_surface(ui, surface, rect, active, hovered, focused);
-    let logo_x = if label.is_some() {
-        rect.left() + HOME_PADDING_LEFT_PX + HOME_LOGO_PX / 2.0
-    } else {
-        rect.center().x
+    let q_x = match label {
+        Some(_) => rect.left() + HOME_PADDING_LEFT_PX + HOME_Q.x / 2.0,
+        None => rect.center().x,
     };
-    let logo = egui::Rect::from_center_size(
-        egui::pos2(logo_x, rect.center().y),
-        egui::Vec2::splat(HOME_LOGO_PX),
-    );
-    crate::surfaces::home::paint_logo(ui, logo);
-    if let Some(([quan, tick], _)) = label {
-        let mut x = logo.right() + HOME_LOGO_GAP_PX;
-        let ink = if active || hovered || focused {
-            egui::Color32::WHITE
-        } else {
-            theme::TEXT_PRIMARY
-        };
-        for (galley, color) in [(quan, ink), (tick, theme::BRAND)] {
-            let at = egui::pos2(x, rect.center().y - galley.size().y / 2.0);
+    let q = egui::Rect::from_center_size(egui::pos2(q_x, rect.center().y), HOME_Q);
+    crate::surfaces::home::paint_logo(ui, q, true);
+    if let Some(([uan, tick], _)) = label {
+        let mut x = q.right() + HOME_LOGO_GAP_PX;
+        let baseline = q.top() + HOME_Q.y * crate::surfaces::home::MARK_BOWL;
+        let lit = active || hovered || focused;
+        let ink = if lit { egui::Color32::WHITE } else { HOME_INK };
+        for (galley, color) in [(uan, ink), (tick, theme::BRAND)] {
+            let at = egui::pos2(x, baseline - galley.rows[0].glyphs[0].pos.y);
             x += galley.size().x;
             ui.painter().galley(at, galley, color);
         }

@@ -50,7 +50,7 @@ fn two_tabs(app: &mut QuantickApp, ctx: &egui::Context) -> TabEnds {
     second
 }
 
-/// The first painted image, which is the Home tab's logo.
+/// The first painted image, which is the Home tab's Q.
 fn logo_mesh(output: &egui::FullOutput) -> &egui::Mesh {
     output
         .shapes
@@ -62,8 +62,17 @@ fn logo_mesh(output: &egui::FullOutput) -> &egui::Mesh {
         .expect("the logo is painted")
 }
 
-fn logo_tint(output: &egui::FullOutput) -> egui::Color32 {
-    logo_mesh(output).vertices[0].color
+/// The Q is untinted at full opacity, and shows the mark's glyph and nothing else.
+fn assert_plain_q(output: &egui::FullOutput, state: &str) {
+    let mesh = logo_mesh(output);
+    let white = mesh
+        .vertices
+        .iter()
+        .all(|v| v.color == egui::Color32::WHITE);
+    assert!(white, "{state}: {:?}", mesh.vertices[0].color);
+    let uv = egui::Rect::from_points(&mesh.vertices.iter().map(|v| v.uv).collect::<Vec<_>>());
+    let glyph = egui::Rect::from_min_max(egui::pos2(50.0, 38.0), egui::pos2(209.0, 228.0));
+    assert_eq!(uv, glyph / 256.0, "{state}: cropped to the alpha's box");
 }
 
 /// The painted galley whose whole text is `wanted`.
@@ -82,10 +91,10 @@ fn painted_text<'a>(output: &'a egui::FullOutput, wanted: &str) -> &'a egui::epa
         .unwrap_or_else(|| panic!("{wanted:?} is painted"))
 }
 
-/// The wordmark's two halves' colours: (`Quan`, `tick`).
+/// The wordmark's two halves' colours: (`uan`, `tick`).
 fn wordmark_colors(output: &egui::FullOutput) -> (egui::Color32, egui::Color32) {
     (
-        painted_text(output, "Quan").fallback_color,
+        painted_text(output, "uan").fallback_color,
         painted_text(output, "tick").fallback_color,
     )
 }
@@ -174,72 +183,126 @@ fn the_home_tab_has_no_close_target_and_a_click_inside_it_only_shows_home() {
 }
 
 #[test]
-fn hover_lifts_quan_only_and_the_logo_is_never_dimmed() {
+fn hover_focus_and_home_lift_uan_only_and_the_q_is_never_dimmed() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
     let far = egui::pos2(1000.0, 400.0);
     let at = home_rect(&app).center();
-    let idle = run_frame_sized(
-        &mut app,
-        &ctx,
-        WINDOW,
-        vec![egui::Event::PointerMoved(far)],
-        egui::Modifiers::NONE,
-    );
-    let hovered = run_frame_sized(
-        &mut app,
-        &ctx,
-        WINDOW,
-        vec![egui::Event::PointerMoved(at)],
-        egui::Modifiers::NONE,
-    );
+    let moved = |app: &mut QuantickApp, to| {
+        let event = egui::Event::PointerMoved(to);
+        run_frame_sized(app, &ctx, WINDOW, vec![event], egui::Modifiers::NONE)
+    };
+    let idle = moved(&mut app, far);
+    let hovered = moved(&mut app, at);
+    moved(&mut app, far);
+    // Keyboard focus walks the window's widgets until it reaches Home.
+    let focused = (0..200)
+        .find_map(|_| {
+            let output = press_tab(&mut app, &ctx);
+            let events = &output.platform_output.events;
+            let home = events.iter().any(|event| match event {
+                egui::output::OutputEvent::FocusGained(info) => {
+                    info.label.as_deref() == Some("Home")
+                }
+                _ => false,
+            });
+            home.then(|| moved(&mut app, far))
+        })
+        .expect("Tab reaches the Home tab");
+    assert!(!on_home(&app), "focus alone does not go Home");
+    ctx.memory_mut(|memory| memory.surrender_focus(memory.focused().unwrap()));
     click_sized(&mut app, &ctx, WINDOW, at);
-    let active = frame(&mut app, &ctx);
-    for (output, state) in [(&idle, "idle"), (&hovered, "hovered"), (&active, "active")] {
-        assert_eq!(logo_tint(output), egui::Color32::WHITE, "{state}");
+    moved(&mut app, far);
+    let active = moved(&mut app, far);
+    assert!(on_home(&app));
+    let states = [
+        (&idle, "idle"),
+        (&hovered, "hovered"),
+        (&focused, "focused"),
+    ];
+    for (output, state) in states.into_iter().chain([(&active, "active")]) {
+        assert_plain_q(output, state);
     }
-    let brand = crate::theme::BRAND;
-    assert_eq!(wordmark_colors(&idle), (crate::theme::TEXT_PRIMARY, brand));
-    assert_eq!(wordmark_colors(&hovered), (egui::Color32::WHITE, brand));
-    assert_eq!(wordmark_colors(&active), (egui::Color32::WHITE, brand));
+    let (rest, brand) = (
+        egui::Color32::from_rgb(0xDD, 0xE4, 0xEC),
+        crate::theme::BRAND,
+    );
+    assert_eq!(wordmark_colors(&idle), (rest, brand));
+    for (output, state) in [
+        (&hovered, "hovered"),
+        (&focused, "focused"),
+        (&active, "active"),
+    ] {
+        assert_eq!(
+            wordmark_colors(output),
+            (egui::Color32::WHITE, brand),
+            "{state}"
+        );
+    }
+}
+
+fn press_tab(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
+    let tab = key_press_with(egui::Key::Tab, egui::Modifiers::NONE);
+    run_frame_sized(app, ctx, WINDOW, vec![tab], egui::Modifiers::NONE)
 }
 
 #[test]
-fn the_wordmark_sits_10_px_in_with_10_px_to_the_logo_and_14_px_after() {
+fn the_q_is_the_first_letter_9_px_in_2_px_before_uantick_and_14_px_after() {
     use crate::tabstrip::{
-        HOME_LOGO_GAP_PX, HOME_PADDING_LEFT_PX, HOME_PADDING_RIGHT_PX, STRIP_EDGE_PX,
+        HOME_LOGO_GAP_PX, HOME_MIN_WIDTH_PX, HOME_PADDING_LEFT_PX, HOME_PADDING_RIGHT_PX,
+        STRIP_EDGE_PX,
     };
+    let constants = (STRIP_EDGE_PX, HOME_PADDING_LEFT_PX, HOME_LOGO_GAP_PX);
+    assert_eq!(constants, (10.0, 9.0, 2.0));
     assert_eq!(
-        (
-            STRIP_EDGE_PX,
-            HOME_PADDING_LEFT_PX,
-            HOME_LOGO_GAP_PX,
-            HOME_PADDING_RIGHT_PX
-        ),
-        (10.0, 10.0, 10.0, 14.0)
+        (HOME_PADDING_RIGHT_PX, HOME_MIN_WIDTH_PX),
+        (14.0, 9.0 + 22.0 + 9.0)
     );
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
     let output = frame(&mut app, &ctx);
     let home = home_rect(&app);
-    let logo = logo_mesh(&output).calc_bounds();
-    let quan = painted_text(&output, "Quan");
-    let tick = painted_text(&output, "tick");
-    assert_eq!(home.left(), STRIP_EDGE_PX, "window edge to tab");
-    assert_eq!(
-        logo.left() - home.left(),
-        HOME_PADDING_LEFT_PX,
-        "tab to logo"
+    let q = logo_mesh(&output).calc_bounds();
+    let (uan, tick) = (painted_text(&output, "uan"), painted_text(&output, "tick"));
+    let near = |got: f32, want: f32, what: &str| {
+        assert!((got - want).abs() < 0.01, "{what}: {got} for {want}");
+    };
+    near(home.left(), STRIP_EDGE_PX, "window edge to tab");
+    near(q.height(), 22.0, "the glyph's height");
+    near(
+        q.width(),
+        22.0 * 159.0 / 190.0,
+        "the glyph's width, only scaled",
     );
-    assert_eq!(quan.pos.x - logo.right(), HOME_LOGO_GAP_PX, "logo to text");
-    assert_eq!(tick.pos.x, quan.pos.x + quan.galley.size().x, "one word");
-    let after = home.right() - (tick.pos.x + tick.galley.size().x);
-    assert!(
-        (after - HOME_PADDING_RIGHT_PX).abs() < 0.01,
-        "after the text: {after}"
+    near(q.left() - home.left(), 9.0, "tab to Q");
+    near(uan.pos.x - q.right(), 2.0, "Q to text");
+    near(tick.pos.x, uan.pos.x + uan.galley.size().x, "one word");
+    near(
+        home.right() - (tick.pos.x + tick.galley.size().x),
+        14.0,
+        "after the text",
     );
+
+    // One baseline: the Q's bowl, its tail hanging below.
+    let baseline =
+        |text: &egui::epaint::TextShape| text.pos.y + text.galley.rows[0].glyphs[0].pos.y;
+    near(
+        baseline(uan),
+        q.top() + 22.0 * 168.0 / 190.0,
+        "the bowl's bottom",
+    );
+    near(baseline(tick), baseline(uan), "both halves");
+    for text in [uan, tick] {
+        let format = &text.galley.job.sections[0].format;
+        assert_eq!(
+            format.font_id,
+            egui::FontId::monospace(15.0),
+            "Hack, egui's own"
+        );
+        near(format.extra_letter_spacing, -0.3, "-0.02 em");
+    }
 }
 
 #[test]
@@ -380,7 +443,7 @@ fn nine_markets_at_1400_leave_only_the_logo_and_few_bring_the_label_back() {
     frame(&mut app, &ctx);
     let labelled = home_rect(&app).width();
     let output = frame(&mut app, &ctx);
-    assert!(painted_text_center(&output, "Quan").is_some());
+    assert!(painted_text_center(&output, "uan").is_some());
     assert!(labelled > crate::tabstrip::HOME_MIN_WIDTH_PX);
 
     let mut ends = Vec::new();
@@ -391,8 +454,14 @@ fn nine_markets_at_1400_leave_only_the_logo_and_few_bring_the_label_back() {
     let output = frame(&mut app, &ctx);
     let output_again = frame(&mut app, &ctx);
     assert_eq!(home_rect(&app).width(), crate::tabstrip::HOME_MIN_WIDTH_PX);
-    assert!(painted_text_center(&output, "Quan").is_none());
-    assert!(painted_text_center(&output_again, "Quan").is_none());
+    let q = logo_mesh(&output).calc_bounds();
+    assert!(
+        (q.center().x - home_rect(&app).center().x).abs() < 0.01,
+        "the Q alone, centred"
+    );
+    assert_plain_q(&output, "logo only");
+    assert!(painted_text_center(&output, "uan").is_none());
+    assert!(painted_text_center(&output_again, "uan").is_none());
     assert!(app.chrome.title_bar.strip.overflow.is_some());
 
     // Still the same command, centred, and it closes nothing.
@@ -418,7 +487,7 @@ fn nine_markets_at_1400_leave_only_the_logo_and_few_bring_the_label_back() {
     frame(&mut app, &ctx);
     let output = frame(&mut app, &ctx);
     assert_eq!(home_rect(&app).width(), labelled);
-    assert!(painted_text_center(&output, "Quan").is_some());
+    assert!(painted_text_center(&output, "uan").is_some());
 }
 
 fn count_painted(output: &egui::FullOutput, wanted: &str) -> usize {
@@ -674,7 +743,7 @@ fn a_narrow_strip_gives_the_label_room_to_the_market_chip() {
     };
     sized(&mut app, at(400.0));
     let output = sized(&mut app, at(400.0));
-    assert!(painted_text_center(&output, "Quan").is_none());
+    assert!(painted_text_center(&output, "uan").is_none());
     assert!(
         chip_rect(&app, 0).width() >= 90.0,
         "the lone chip keeps room for its symbol: {:?}",
@@ -687,7 +756,7 @@ fn a_narrow_strip_gives_the_label_room_to_the_market_chip() {
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
     sized(&mut app);
     let output = sized(&mut app);
-    assert!(painted_text_center(&output, "Quan").is_none());
+    assert!(painted_text_center(&output, "uan").is_none());
     assert_eq!(
         home_rect(&app).width(),
         crate::tabstrip::CHIP_HEIGHT,
@@ -707,7 +776,7 @@ fn the_overflow_menu_and_the_labelled_home_never_show_together_or_both_go() {
         let size = egui::vec2(width as f32, 760.0);
         run_frame_sized(&mut app, &ctx, size, Vec::new(), egui::Modifiers::NONE);
         let output = run_frame_sized(&mut app, &ctx, size, Vec::new(), egui::Modifiers::NONE);
-        let labelled = painted_text_center(&output, "Quan").is_some();
+        let labelled = painted_text_center(&output, "uan").is_some();
         let overflow = app.chrome.title_bar.strip.overflow.is_some();
         assert_ne!(labelled, overflow, "at {width} px");
     }
@@ -734,6 +803,7 @@ fn the_logo_is_the_one_icon_only_scaled_at_every_zoom() {
         let manager = ctx.tex_manager();
         let manager = manager.read();
         let size = manager.meta(texture).expect("the logo is loaded").size;
-        assert_eq!(size, [256, 256], "assets/icon.png at {zoom}x");
+        assert_eq!(size, [256, 256], "assets/logo-mark.png at {zoom}x");
+        assert_plain_q(&output, &format!("{zoom}x"));
     }
 }
