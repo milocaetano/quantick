@@ -9,16 +9,16 @@ use crate::theme;
 
 const PAGE_LOGO_PX: f32 = 48.0;
 
-/// The plated logo, only ever scaled, and for the Home tab the same Q without its
-/// plate; `TEXELS` is what each shows of its 256, the mark its alpha's box.
+/// The plated logo, only ever scaled, and for the Home tab its own Q without the
+/// plate (`logo-q.png`); `TEXELS` is what each shows of its 256, the Q its alpha's box.
 const LOGOS: [&[u8]; 2] = [
     include_bytes!("../../assets/icon.png"),
-    include_bytes!("../../assets/logo-mark.png"),
+    include_bytes!("../../assets/logo-q.png"),
 ];
-const TEXELS: [[f32; 4]; 2] = [[0.0, 0.0, 256.0, 256.0], [50.0, 38.0, 209.0, 228.0]];
-/// The mark's width over its height, and its bowl's bottom (texel 206), tail below.
-pub(crate) const MARK_ASPECT: f32 = 159.0 / 190.0;
-pub(crate) const MARK_BOWL: f32 = 168.0 / 190.0;
+const TEXELS: [[f32; 4]; 2] = [[0.0, 0.0, 256.0, 256.0], [23.0, 3.0, 233.0, 253.0]];
+/// The Q's width over its height, and its bowl's bottom (texel 225.3), tail below.
+pub(crate) const MARK_ASPECT: f32 = 210.0 / 250.0;
+pub(crate) const MARK_BOWL: f32 = 222.3 / 250.0;
 
 /// Paint the logo, or with `mark` the Q alone edge to edge, into `rect`,
 /// untinted in every state; mipmaps keep the large raster sharp at tab size.

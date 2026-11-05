@@ -62,7 +62,7 @@ fn logo_mesh(output: &egui::FullOutput) -> &egui::Mesh {
         .expect("the logo is painted")
 }
 
-/// The Q is untinted at full opacity, and shows the mark's glyph and nothing else.
+/// The Q is untinted at full opacity, and shows the logo's Q and nothing else.
 fn assert_plain_q(output: &egui::FullOutput, state: &str) {
     let mesh = logo_mesh(output);
     let white = mesh
@@ -71,7 +71,7 @@ fn assert_plain_q(output: &egui::FullOutput, state: &str) {
         .all(|v| v.color == egui::Color32::WHITE);
     assert!(white, "{state}: {:?}", mesh.vertices[0].color);
     let uv = egui::Rect::from_points(&mesh.vertices.iter().map(|v| v.uv).collect::<Vec<_>>());
-    let glyph = egui::Rect::from_min_max(egui::pos2(50.0, 38.0), egui::pos2(209.0, 228.0));
+    let glyph = egui::Rect::from_min_max(egui::pos2(23.0, 3.0), egui::pos2(233.0, 253.0));
     assert_eq!(uv, glyph / 256.0, "{state}: cropped to the alpha's box");
 }
 
@@ -273,7 +273,7 @@ fn the_q_is_the_first_letter_9_px_in_2_px_before_uantick_and_14_px_after() {
     near(q.height(), 22.0, "the glyph's height");
     near(
         q.width(),
-        22.0 * 159.0 / 190.0,
+        22.0 * 210.0 / 250.0,
         "the glyph's width, only scaled",
     );
     near(q.left() - home.left(), 9.0, "tab to Q");
@@ -290,7 +290,7 @@ fn the_q_is_the_first_letter_9_px_in_2_px_before_uantick_and_14_px_after() {
         |text: &egui::epaint::TextShape| text.pos.y + text.galley.rows[0].glyphs[0].pos.y;
     near(
         baseline(uan),
-        q.top() + 22.0 * 168.0 / 190.0,
+        q.top() + 22.0 * 222.3 / 250.0,
         "the bowl's bottom",
     );
     near(baseline(tick), baseline(uan), "both halves");
@@ -803,7 +803,7 @@ fn the_logo_is_the_one_icon_only_scaled_at_every_zoom() {
         let manager = ctx.tex_manager();
         let manager = manager.read();
         let size = manager.meta(texture).expect("the logo is loaded").size;
-        assert_eq!(size, [256, 256], "assets/logo-mark.png at {zoom}x");
+        assert_eq!(size, [256, 256], "assets/logo-q.png at {zoom}x");
         assert_plain_q(&output, &format!("{zoom}x"));
     }
 }
