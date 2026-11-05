@@ -119,7 +119,7 @@ pub(crate) fn draw(
             egui::Frame::none()
                 .fill(theme::INSET)
                 .inner_margin(egui::Margin {
-                    left: 4.0,
+                    left: crate::tabstrip::STRIP_EDGE_PX,
                     right: 0.0,
                     top: 0.0,
                     bottom: 0.0,
