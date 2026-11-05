@@ -252,7 +252,7 @@ impl<'a> FlowFrame<'a> {
         }
     }
 
-    /// Only the earned inner circumference crosses the configured candles.
+    /// Earned inner circumferences and labels finish the regional bubbles.
     pub(super) fn regional_perimeters(&self) {
         if let Some((frame, drawing)) = &self.regional {
             crate::orderflow_render::draw_flow_perimeters(

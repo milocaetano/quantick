@@ -198,6 +198,11 @@ choice sibling while the app is closed restores startup from the original source
 Invalid or unwritable candidates leave the previous source and destination intact.
 The choice shows Dark or Light only for the exact bundled source (or initial Dark
 fallback); authored copies, even with the same name or colors, show Custom theme.
+Startup also recognizes the three exact native Light choices saved before the
+dark Bookmap correction, allowing LF or CRLF line endings, and resolves them to
+current Light. This migration applies only to the choice sibling; edited copies
+and authored base files keep their source. Startup leaves the file untouched;
+the next explicit save writes the current source through the normal write gate.
 Custom source remains available through the existing API; the native menu only
 selects the two builtins. Both builtins keep the established fonts, sizes, layout
 and spacing; Light changes the colors. Font overrides remain an authoring feature,

@@ -6,6 +6,8 @@ use std::path::Path;
 pub use quantick_appearance::Builtin;
 use quantick_appearance::{Appearance, ApplyOutcome, ResolvedTheme, ThemeError};
 
+mod legacy;
+
 pub const DEFAULT_SOURCE: &str = quantick_appearance::DARK;
 
 pub const THEME_FILE: &str = "appearance.toml";
@@ -38,6 +40,10 @@ fn read_source(path: &Path) -> std::io::Result<String> {
 /// Missing files open Dark. Malformed or unreadable files are reported; callers
 /// must not silently replace a user's invalid file with a default theme.
 pub fn load(path: &Path) -> Result<Appearance, AppearanceError> {
+    load_selected(path, false)
+}
+
+fn load_selected(path: &Path, builtin_choice: bool) -> Result<Appearance, AppearanceError> {
     let source = match read_source(path) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -46,8 +52,13 @@ pub fn load(path: &Path) -> Result<Appearance, AppearanceError> {
         Err(error) => return Err(AppearanceError::Io(error)),
     };
     check_source(&source)?;
+    let source = if builtin_choice {
+        legacy::current_source(&source).unwrap_or(&source)
+    } else {
+        &source
+    };
     let mut state = Appearance::default();
-    state.apply(&source).map_err(AppearanceError::Invalid)?;
+    state.apply(source).map_err(AppearanceError::Invalid)?;
     Ok(state)
 }
 
@@ -135,12 +146,13 @@ impl AppearanceStore {
             "{}.choice.toml",
             path.file_name().unwrap_or_default().to_string_lossy()
         ));
-        let path = if choice_path.exists() {
+        let builtin_choice = choice_path.exists();
+        let path = if builtin_choice {
             choice_path.clone()
         } else {
             path
         };
-        let (state, load_failed) = match load(&path) {
+        let (state, load_failed) = match load_selected(&path, builtin_choice) {
             Ok(state) => (state, false),
             Err(error) => {
                 tracing::warn!(%error, "appearance could not be loaded; retaining Dark");

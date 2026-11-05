@@ -209,9 +209,8 @@ impl ChartPane {
             self.carve_bands(&layout, &mut carved);
             let price_band = carved.get(..1).unwrap_or_default();
             self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
-            if !flow_execution {
-                renderers.candles(&mut candle_pass);
-            }
+            // Candle fills, outlines and wicks share one pass beneath bubbles.
+            renderers.candles(&mut candle_pass);
             if flow_execution {
                 flow.regional_context(
                     self.orderflow.as_ref(),
@@ -229,7 +228,6 @@ impl ChartPane {
             }
             if flow_execution {
                 flow.regional_aggressions();
-                renderers.candles(&mut candle_pass);
                 flow.regional_perimeters();
             }
             history.overlay(&self.indicators);
