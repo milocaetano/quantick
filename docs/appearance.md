@@ -6,6 +6,8 @@ Quantick's appearance contract is versioned TOML. The bundled
 resolver as an authored theme. Start with either file when writing a community
 theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
+Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, green bullish candles and black bearish candles. Both builtins retain the established typography, spacing and layout.
+
 ## Document
 
 `version = 1` and a nonempty `name` of at most 80 characters are required. A name

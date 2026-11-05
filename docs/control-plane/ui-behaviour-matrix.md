@@ -309,5 +309,8 @@ disagree with.
 | `notice_action` | `None` | the feed notice's "nothing was clicked" variant: an absence, not a behaviour |
 | `scripted_menu` | `workspace` | a capture hook that opens the Workspace menu so a screenshot can see it. It performs nothing the menu's own entries do not |
 | `scripted_menu` | `history` | a capture hook that opens the toolbar's history caret. The behaviour behind it is `history.reach.set` |
+| `scripted_menu` | `theme` | a capture hook opening the native Theme menu; appearance.apply owns its choices |
+| `scripted_menu` | `theme-dark` | a scripted native Dark click; appearance.apply owns the same publication |
+| `scripted_menu` | `theme-light` | a scripted native Light click; appearance.apply owns the same publication |
 
-10 entries.
+13 entries.

@@ -543,3 +543,21 @@ fn preview_and_selection_keep_exact_dark_and_complete_light_values() {
         ThemeDocument::parse(DARK).unwrap().orderflow.colors.len()
     );
 }
+
+#[test]
+fn light_uses_neutral_surfaces_green_bulls_and_black_bears_without_typography_changes() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let dark = ResolvedTheme::default();
+    for (token, rgba) in [
+        (Token::Canvas, [245, 245, 245, 255]),
+        (Token::Chrome, [236, 236, 236, 255]),
+        (Token::Control, [222, 222, 222, 255]),
+        (Token::TextPrimary, [32, 32, 32, 255]),
+        (Token::Buy, [76, 175, 80, 255]),
+        (Token::Sell, [0, 0, 0, 255]),
+        (Token::CandleBearOutline, [0, 0, 0, 255]),
+    ] {
+        assert_eq!(light.color(token).to_array(), rgba, "{}", token.key());
+    }
+    assert_eq!(light.typography, dark.typography);
+}

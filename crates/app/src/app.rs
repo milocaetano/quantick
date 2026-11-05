@@ -77,7 +77,7 @@ use crate::dock::Dock;
 use crate::drawings;
 use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
-use crate::harness::{Harness, ScriptedMenu};
+use crate::harness::Harness;
 use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
@@ -675,7 +675,7 @@ impl eframe::App for QuantickApp {
     /// the first. So the hook supplies the click itself, on the pane it names,
     /// and every line after that is the code a trader's own click runs.
     #[cfg(any(feature = "scenario-harness", test))]
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         let chart_layers = self.active_tab().flow_pane.chart_layers_menu_center();
         if self
             .chrome
@@ -689,30 +689,12 @@ impl eframe::App for QuantickApp {
         // it; the hook supplies the press, and every line after it is what a
         // trader's click runs. The rect is published by the draw, so the
         // first frame has none — wait for it rather than guess.
-        if let Some(position) = self.chrome.harness.take_menu_release() {
-            raw_input.events.push(egui::Event::PointerButton {
-                pos: position,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::default(),
-            });
-            return;
-        }
-        if let Some(menu) = self.chrome.harness.menu()
-            && let Some(position) = match menu {
-                ScriptedMenu::Workspace => self.chrome.workspace_menu_rect,
-                ScriptedMenu::History => self.chrome.history_menu_rect,
-            }
-            .map(|rect| rect.center())
-        {
-            self.chrome.harness.menu_pressed(position);
-            raw_input.events.push(egui::Event::PointerMoved(position));
-            raw_input.events.push(egui::Event::PointerButton {
-                pos: position,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: egui::Modifiers::default(),
-            });
+        if self.chrome.harness.push_menu_input(
+            ctx,
+            raw_input,
+            self.chrome.workspace_menu_rect,
+            self.chrome.history_menu_rect,
+        ) {
             return;
         }
         // The parked pointer, re-delivered — before the menu branch and not

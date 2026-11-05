@@ -546,7 +546,7 @@ pub(super) fn show_tools_menu(
     record_deals: impl FnOnce(&mut egui::Ui),
     commands: &mut Vec<MenuCommand>,
 ) {
-    ui.menu_button("Tools", |ui| {
+    let menu = ui.menu_button("Tools", |ui| {
         if ui.button("Appearance…").clicked() {
             commands.push(MenuCommand::OpenAppearance);
             ui.close_menu();
@@ -557,6 +557,7 @@ pub(super) fn show_tools_menu(
             ui.close_menu();
         }
     });
+    crate::theme::choice::record(&menu.response, "Tools");
 }
 
 /// Help: the one reference a trader needs away from the chart.
