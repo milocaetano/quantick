@@ -10,9 +10,9 @@ use crate::theme;
 const PAGE_LOGO_PX: f32 = 48.0;
 
 /// The plated logo, only ever scaled, and the Home tab's Q without it (`q-bare`'s frame).
-const LOGOS: [&[u8]; 2] = [
-    include_bytes!("../../assets/icon.png"),
-    include_bytes!("../../assets/logo-q.png"),
+const LOGOS: [(&str, &[u8]); 2] = [
+    ("Quantick logo", include_bytes!("../../assets/icon.png")),
+    ("Quantick Q", include_bytes!("../../assets/logo-q.png")),
 ];
 
 /// Paint a logo, or with `mark` the Q, whole into `rect`: untinted, pixel-snapped, mipmapped.
@@ -22,7 +22,7 @@ pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, mark: bool) {
     let texture = cached.unwrap_or_else(|| {
         let mipmaps = Some(egui::TextureFilter::Linear);
         let options = egui::TextureOptions::LINEAR.with_mipmap_mode(mipmaps);
-        let texture = ctx.load_texture("Quantick logo", logo_image(mark), options);
+        let texture = ctx.load_texture(LOGOS[mark as usize].0, logo_image(mark), options);
         ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
         texture
     });
@@ -32,15 +32,18 @@ pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, mark: bool) {
     painter.image(texture.id(), rect, uv, egui::Color32::WHITE);
 }
 
-/// Texels premultiplied in sRGB as browsers do; egui's linear way brightens the Q's light half.
+/// The plated logo as egui reads it; the Q premultiplied in sRGB, as browsers do.
 pub(crate) fn logo_image(mark: bool) -> egui::ColorImage {
-    let png = eframe::icon_data::from_png_bytes(LOGOS[mark as usize]);
+    let png = eframe::icon_data::from_png_bytes(LOGOS[mark as usize].1);
     let mut icon = png.expect("bundled logo is a valid PNG");
+    let size = [icon.width as usize, icon.height as usize];
+    if !mark {
+        return egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
+    }
     for texel in icon.rgba.as_chunks_mut::<4>().0 {
         let [r, g, b, a] = texel.map(u16::from);
         *texel = [r * a, g * a, b * a, a * 255].map(|c| ((c + 127) / 255) as u8);
     }
-    let size = [icon.width as usize, icon.height as usize];
     egui::ColorImage::from_rgba_premultiplied(size, &icon.rgba)
 }
 

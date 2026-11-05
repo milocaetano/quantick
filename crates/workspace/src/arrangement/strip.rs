@@ -18,14 +18,21 @@ pub fn market_slots(room: f32, labelled_width: f32, chip_width: f32) -> usize {
     (((room - labelled_width).max(0.0) / chip_width).floor() as usize).max(1)
 }
 
-/// Whether Home keeps its label beside `markets` chips: while [`market_slots`]
-/// holds every one of them, so the label and the overflow menu never disagree. A
-/// lone market is never hidden, but it would be crushed to its close target, so
-/// it too costs Home its label.
+/// Whether Home keeps its label beside `markets` chips: while the strip's
+/// `slots` (from [`market_slots`]) hold every one of them, so the label and the
+/// overflow menu come from one count. A lone market is never hidden, but it
+/// would be crushed to its close target, so it too costs Home its label; with
+/// no market at all nothing competes for the room.
 #[must_use]
-pub fn home_label_fits(markets: usize, room: f32, labelled_width: f32, chip_width: f32) -> bool {
+pub fn home_label_fits(
+    markets: usize,
+    slots: usize,
+    room: f32,
+    labelled_width: f32,
+    chip_width: f32,
+) -> bool {
     let lone_fits = chip_width <= room - labelled_width;
-    markets <= market_slots(room, labelled_width, chip_width) && (markets > 1 || lone_fits)
+    markets <= slots && (markets != 1 || lone_fits)
 }
 
 /// What a market tab's dot says: the feed's state, never the selection.
@@ -240,13 +247,33 @@ mod tests {
         assert!(!surface.is_home(), "and the cycle does not also move a tab");
     }
 
+    /// The strip's own call: the slot count it also hands to the overflow.
+    fn fits(markets: usize, room: f32, labelled: f32, chip: f32) -> bool {
+        home_label_fits(
+            markets,
+            market_slots(room, labelled, chip),
+            room,
+            labelled,
+            chip,
+        )
+    }
+
+    /// With every market closed (`allow_close_last`), nothing competes for the
+    /// room: the label stays wherever it fits at all.
+    #[test]
+    fn no_market_keeps_the_label_whenever_it_fits() {
+        for room in [70.0, 71.0, 269.0, 1130.0] {
+            assert!(fits(0, room, 70.0, 200.0), "{room} px");
+        }
+    }
+
     #[test]
     fn home_keeps_its_label_until_the_market_chips_overflow() {
         // 1130 px of room, a 70 px labelled Home, 200 px chips: five fit.
-        assert!(home_label_fits(1, 1130.0, 70.0, 200.0));
-        assert!(home_label_fits(5, 1130.0, 70.0, 200.0));
-        assert!(!home_label_fits(6, 1130.0, 70.0, 200.0));
-        assert!(!home_label_fits(9, 1130.0, 70.0, 200.0));
+        assert!(fits(1, 1130.0, 70.0, 200.0));
+        assert!(fits(5, 1130.0, 70.0, 200.0));
+        assert!(!fits(6, 1130.0, 70.0, 200.0));
+        assert!(!fits(9, 1130.0, 70.0, 200.0));
     }
 
     /// The width that decides is the labelled one, never the width drawn, so a
@@ -255,26 +282,26 @@ mod tests {
     fn the_rule_cannot_flip_flop_at_the_boundary() {
         let (room, labelled) = (70.0 + 2.0 * 200.0 - 1.0, 70.0);
         for _ in 0..4 {
-            assert!(!home_label_fits(2, room, labelled, 200.0));
+            assert!(!fits(2, room, labelled, 200.0));
         }
-        assert!(home_label_fits(2, room + 1.0, labelled, 200.0));
+        assert!(fits(2, room + 1.0, labelled, 200.0));
     }
 
     /// The logo stands alone exactly when a chip is hidden, or when the one
     /// market left would no longer fit beside the label.
     #[test]
     fn home_is_logo_only_exactly_when_a_chip_is_hidden_or_crushed() {
-        assert!(!home_label_fits(1, 10.0, 70.0, 200.0), "no room at all");
-        assert!(!home_label_fits(1, 269.0, 70.0, 200.0));
-        assert!(home_label_fits(1, 270.0, 70.0, 200.0));
-        assert!(!home_label_fits(2, 10.0, 70.0, 200.0));
+        assert!(!fits(1, 10.0, 70.0, 200.0), "no room at all");
+        assert!(!fits(1, 269.0, 70.0, 200.0));
+        assert!(fits(1, 270.0, 70.0, 200.0));
+        assert!(!fits(2, 10.0, 70.0, 200.0));
         for room in [0.0, 10.0, 269.0, 270.0, 469.0, 470.0, 1130.0] {
             let slots = market_slots(room, 70.0, 200.0);
             for markets in 1..=9 {
                 for active in 0..markets {
                     let shown = visible_tabs(markets, active, slots).len();
                     assert_eq!(
-                        home_label_fits(markets, room, 70.0, 200.0),
+                        fits(markets, room, 70.0, 200.0),
                         shown == markets && room >= 270.0,
                         "{markets} markets in {room} px"
                     );
@@ -294,7 +321,7 @@ mod tests {
         ] {
             let all_shown = market_slots(room, 0.0, chip) >= markets;
             assert_eq!(
-                home_label_fits(markets, room, 0.0, chip),
+                fits(markets, room, 0.0, chip),
                 all_shown,
                 "{chip} x {markets}"
             );

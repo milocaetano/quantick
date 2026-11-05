@@ -126,14 +126,10 @@ pub(crate) fn draw(
     let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
     let slots = market_slots(room, labelled, CHIP_PREFERRED_WIDTH_PX);
     let visible = visible_tabs(chips.len(), drawn.reveal.unwrap_or(active), slots);
-    let fits = home_label_fits(chips.len(), room, labelled, CHIP_PREFERRED_WIDTH_PX);
+    let fits = home_label_fits(chips.len(), slots, room, labelled, CHIP_PREFERRED_WIDTH_PX);
     let shown = fits.then_some((label, labelled));
     // A compact strip has no room for the margins: the Q alone in a square tab.
-    let bare = if compact {
-        CHIP_HEIGHT
-    } else {
-        HOME_MIN_WIDTH_PX
-    };
+    let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
     let mut action =
         draw_home_tab(ui, surface.is_home(), shown, bare, drawn).then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
@@ -388,6 +384,7 @@ fn draw_home_tab(
         None => rect.center().x,
     };
     let q = egui::Rect::from_center_size(egui::pos2(q_x, rect.center().y), HOME_Q);
+    let q = ui.painter().round_rect_to_pixels(q); // One grid for the Q and its text.
     crate::surfaces::home::paint_logo(ui, q, true);
     if let Some(([uan, tick], _)) = label {
         let mut x = q.right() + HOME_LOGO_GAP_PX;
