@@ -172,7 +172,7 @@ pub(super) fn readout_color(
     match readout.rising {
         Some(true) => appearance.color(Token::Buy),
         Some(false) => appearance.color(Token::Sell),
-        None => style.color,
+        None => appearance.legible_readout(style.color),
     }
 }
 

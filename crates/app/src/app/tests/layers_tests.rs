@@ -948,7 +948,8 @@ fn hidden_drawing_neither_paints_nor_hit_tests() {
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     let stroke_position = egui::pos2(700.0, 300.0);
     click_chart(&mut app, &ctx, stroke_position);
-    let marker = egui::Color32::from_rgb(1, 2, 3);
+    // A sentinel the canvas leaves alone: near-black would be repainted legible.
+    let marker = egui::Color32::from_rgb(201, 2, 3);
     app.active_tab_mut()
         .flow_pane
         .drawings

@@ -13,6 +13,22 @@ fn scene(
     payload: &dyn DrawingPayload,
     selected: bool,
 ) -> MarkScene {
+    scene_in(
+        theme,
+        id,
+        payload,
+        selected,
+        PremultipliedRgba::from_rgb(71, 92, 123),
+    )
+}
+
+fn scene_in(
+    theme: &ResolvedTheme,
+    id: &str,
+    payload: &dyn DrawingPayload,
+    selected: bool,
+    color: PremultipliedRgba,
+) -> MarkScene {
     let scale = PriceScale::from_range(0.0, 100.0, 0.0, 500.0);
     let anchors = [
         ChartPoint {
@@ -27,7 +43,7 @@ fn scene(
         },
     ];
     let style = DrawingStyle {
-        color: PremultipliedRgba::from_rgb(71, 92, 123),
+        color,
         ..DrawingStyle::default()
     };
     let ctxt = DrawContext {
@@ -233,4 +249,78 @@ fn light_enlarged_profile_status_uses_ambient_font_and_ink() {
             "expected visible status at {expected_size}px: {painted:?}"
         );
     }
+}
+
+/// Every colour a scene paints with, strokes, fills and text alike.
+fn painted_colors(scene: &MarkScene) -> Vec<PremultipliedRgba> {
+    scene
+        .shapes
+        .iter()
+        .flat_map(|shape| match shape {
+            MarkShape::Line { stroke, .. } | MarkShape::DashedLine { stroke, .. } => {
+                vec![stroke.color]
+            }
+            MarkShape::Path { fill, stroke, .. }
+            | MarkShape::Rect { fill, stroke, .. }
+            | MarkShape::Circle { fill, stroke, .. } => vec![*fill, stroke.color],
+            MarkShape::Text { color, .. } => vec![*color],
+        })
+        .collect()
+}
+
+#[test]
+fn a_style_saved_on_dark_keeps_its_colour_on_dark_and_falls_back_on_light() {
+    // The trader's saved presets: every tool in #f3f7ff, chosen on Dark.
+    let near_white = PremultipliedRgba::from_rgb(0xF3, 0xF7, 0xFF);
+    let dark = ResolvedTheme::default();
+    let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let fallback = light.color(Token::DrawingDefault);
+    for tool in DRAWING_TOOLS {
+        let payload = tool.default_payload();
+        let on_dark = painted_colors(&scene_in(&dark, tool.id(), &*payload, false, near_white));
+        let on_light = painted_colors(&scene_in(&light, tool.id(), &*payload, false, near_white));
+        assert!(
+            !on_light.contains(&near_white),
+            "{} paints white on white",
+            tool.id()
+        );
+        assert_eq!(
+            on_dark.contains(&near_white),
+            on_light.contains(&fallback),
+            "{} swaps exactly the authored colour",
+            tool.id()
+        );
+    }
+    let ruler = painted_colors(&scene_in(&light, "measure", &NoPayload, false, near_white));
+    assert!(ruler.contains(&fallback), "the ruler leg reads on Light");
+    let dark_ruler = painted_colors(&scene_in(&dark, "measure", &NoPayload, false, near_white));
+    assert!(
+        dark_ruler.contains(&near_white),
+        "Dark paints the saved colour unchanged"
+    );
+}
+
+#[test]
+fn a_flat_readout_reads_against_its_plate() {
+    let near_white = PremultipliedRgba::from_rgb(0xF3, 0xF7, 0xFF);
+    let dark = ResolvedTheme::default();
+    let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+    let text = |theme: &ResolvedTheme| {
+        scene_in(theme, "date-range", &NoPayload, false, near_white)
+            .shapes
+            .into_iter()
+            .filter_map(|shape| match shape {
+                MarkShape::Text { color, .. } => Some(color),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let (on_dark, on_light) = (text(&dark), text(&light));
+    assert!(!on_dark.is_empty() && on_dark.iter().all(|color| *color == near_white));
+    assert!(!on_light.is_empty());
+    assert!(
+        on_light
+            .iter()
+            .all(|color| *color == light.color(Token::DrawingDefault))
+    );
 }
