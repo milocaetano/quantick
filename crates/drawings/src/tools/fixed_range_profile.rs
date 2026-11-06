@@ -19,7 +19,7 @@
 //! - a cap-coarsened profile names its effective row width, like the
 //!   footprint legend does.
 
-use crate::{Align2, FontSpec, TextMetrics, MarkScene, pos2, Px, PxRect, vec2};
+use crate::{Align2, FontSpec, MarkScene, pos2, Px, PxRect, vec2};
 use quantick_chart::style::PremultipliedRgba;
 use crate::icons;
 #[cfg(test)]
@@ -33,7 +33,7 @@ use std::any::Any;
 use super::measure_core::MEASURE_FAMILY;
 use super::{Constrain, DrawContext, DrawingPayload, DrawingStyle, MarkTool, Handles};
 use crate::chart::to_f64;
-use crate::palette::CASING;
+use quantick_appearance::{Token, FontRole};
 
 mod geometry;
 mod paint;
@@ -379,21 +379,21 @@ fn bar_x(points: &[Px], anchors: &[super::ChartPoint], bar: f32) -> Option<f32> 
 /// map is covered to make room for a word.
 fn knockout_text(
     painter: &mut MarkScene,
-    metrics: &dyn TextMetrics,
+    ctxt: &DrawContext<'_>,
     pos: Px,
     anchor: Align2,
     text: &str,
     color: PremultipliedRgba,
 ) {
-    let font = FontSpec::proportional(LABEL_SIZE_PX);
-    let corner = anchor.anchor_size(pos, metrics.size(text, font)).min;
+    let font = FontSpec::themed(ctxt.appearance, FontRole::Body, LABEL_SIZE_PX);
+    let corner = anchor.anchor_size(pos, ctxt.text.size(text, font)).min;
     for offset in [
         vec2(-1.0, 0.0),
         vec2(1.0, 0.0),
         vec2(0.0, -1.0),
         vec2(0.0, 1.0),
     ] {
-        painter.text(corner + offset, Align2::LEFT_TOP, text, font, CASING);
+        painter.text(corner + offset, Align2::LEFT_TOP, text, font, ctxt.appearance.color(Token::Casing));
     }
     painter.text(corner, Align2::LEFT_TOP, text, font, color);
 }
@@ -442,15 +442,15 @@ fn clamped_label_y(preferred_y: f32, span: (f32, f32), height: f32, bounds: PxRe
 /// label on screen costs no extra layout on the per-frame path.
 fn knockout_text_within(
     painter: &mut MarkScene,
-    metrics: &dyn TextMetrics,
+    ctxt: &DrawContext<'_>,
     pos: Px,
     text: &str,
     color: PremultipliedRgba,
     bounds: PxRect,
     object_span: (f32, f32),
 ) {
-    let font = FontSpec::proportional(LABEL_SIZE_PX);
-    let size = metrics.size(text, font);
+    let font = FontSpec::themed(ctxt.appearance, FontRole::Body, LABEL_SIZE_PX);
+    let size = ctxt.text.size(text, font);
     let x = clamped_label_x(pos.x, size.x, bounds);
     let y = clamped_label_y(pos.y, object_span, size.y, bounds);
     let corner = Align2::LEFT_TOP.anchor_size(pos2(x, y), size).min;
@@ -460,7 +460,7 @@ fn knockout_text_within(
         vec2(0.0, -1.0),
         vec2(0.0, 1.0),
     ] {
-        painter.text(corner + offset, Align2::LEFT_TOP, text, font, CASING);
+        painter.text(corner + offset, Align2::LEFT_TOP, text, font, ctxt.appearance.color(Token::Casing));
     }
     painter.text(corner, Align2::LEFT_TOP, text, font, color);
 }
@@ -556,6 +556,9 @@ impl MarkTool for FixedRangeProfile {
     }
     fn supports_fill(&self) -> bool {
         false
+    }
+    fn default_color_token(&self) -> Token {
+        Token::DrawingProfile
     }
     /// Profile rows are prices. Started over an indicator band, the object
     /// still belongs to the candles' price axis — see `price_band_only`.
@@ -959,6 +962,7 @@ mod tests {
         // 10 bars over 200px → 20px per slot, bar 10 at x=100.
         let points = [pos2(100.0, 120.0), pos2(300.0, 280.0)];
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: &payload,
             anchors: &anchors,
             scale: &scale,
@@ -1027,6 +1031,7 @@ mod tests {
         let anchors = [ChartPoint::at(10.0, 104.0), ChartPoint::at(30.0, 96.0)];
         let points = [pos2(100.0, 120.0), pos2(300.0, 280.0)];
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: &payload,
             anchors: &anchors,
             scale: &scale,

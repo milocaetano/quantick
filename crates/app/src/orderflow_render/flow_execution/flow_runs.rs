@@ -8,6 +8,7 @@ pub(super) fn flow_runs(
     tick_look: Option<quantick_orderflow::TickLook>,
     (painter, history): (&egui::Painter, egui::Rect),
     previous: Option<&flow::FlowRunCache<Arc<[egui::Mesh; 2]>>>,
+    appearance: &crate::theme::Palette,
 ) -> flow::FlowRunCache<Arc<[egui::Mesh; 2]>> {
     let ppp = painter.ctx().pixels_per_point();
     let options = painter.ctx().options(|o| o.tessellation_options);
@@ -15,12 +16,14 @@ pub(super) fn flow_runs(
     tessellator.set_clip_rect(history.intersect(painter.clip_rect()));
     let tick_style = tick_look.map(|(tick, _)| tick.bubbles());
     let tick_colors = tick_look.map(|(tick, theme)| {
-        BubbleColors::resolve(&super::palette_for_theme(theme), &tick.bubbles())
+        let mut style = quantick_orderflow::config::theme::OrderflowRenderStyle::default();
+        style.resolve_palette(theme, &appearance.resolved.orderflow);
+        BubbleColors::resolve(&style.colors(super::super::premultiplied), &tick.bubbles())
     });
     let canvas = background.to_array();
     let underlay = backing.as_ref().map(egui::Color32::to_array);
     let keys = plan.region_keys(frame, tick_look.is_some());
-    let hair_color = egui::Color32::from_black_alpha(super::bubbles::SEPARATOR_RING_ALPHA);
+    let hair_color = tick_colors.map_or(egui::Color32::TRANSPARENT, |colors| colors.separator);
     let light = tick_style.as_ref().map_or(0.0, |_| SPHERE_LIGHT_OFFSET);
     let shade = |color| match &tick_style {
         Some(style) => SphereShading::sphere(color, style).faded(style.opacity),
@@ -33,7 +36,7 @@ pub(super) fn flow_runs(
             let colors = match tick_colors {
                 Some(colors) => [colors.buy, colors.sell],
                 None => region
-                    .regional_fill(frame, canvas, underlay)
+                    .regional_fill_with(frame, canvas, underlay, &appearance.resolved)
                     .map(super::premultiplied),
             };
             if let Some(style) = &tick_style

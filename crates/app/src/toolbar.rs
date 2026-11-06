@@ -195,12 +195,13 @@ pub enum ToolbarAction {
 /// list carries zero or one action in practice; a `Vec` only spares every
 /// widget the "was something already clicked" bookkeeping.
 pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction> {
+    let palette = theme::get(ctx);
     let mut actions = Vec::new();
     egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "toolbar")))
         .exact_height(TOOLBAR_HEIGHT)
         .frame(
             egui::Frame::none()
-                .fill(theme::CHROME)
+                .fill(palette.chrome())
                 .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
         )
         .show(ctx, |ui| {
@@ -259,11 +260,12 @@ fn draw_source(
     plan: CollapsePlan,
     actions: &mut Vec<ToolbarAction>,
 ) {
+    let palette = theme::get(ui.ctx());
     if let Some(replay) = &model.replay {
-        ui.label(egui::RichText::new("source:").color(theme::TEXT_MUTED));
+        ui.label(egui::RichText::new("source:").color(palette.text_muted()));
         ui.label(
             egui::RichText::new(&replay.label)
-                .color(theme::AMBER)
+                .color(palette.amber())
                 .strong(),
         )
         .on_hover_text(&replay.hover);
@@ -293,15 +295,20 @@ const MARKET_CHIP_PX: f32 = 16.0;
 /// until hovered under [`theme::MARKET_BUTTON_QUIET`]); the venue shrinks to
 /// its initial when the row is short.
 fn draw_market(ui: &mut egui::Ui, (chip, label): (char, &str), full: bool) -> egui::Response {
+    let palette = theme::get(ui.ctx());
     let (symbol, venue) = quantick_workspace::arrangement::strip::chip_parts(label);
     let initial = venue.chars().next().map_or(0, char::len_utf8);
     let venue = if full { venue } else { &venue[..initial] };
     let font = egui::TextStyle::Button.resolve(ui.style());
     let format = |color| egui::TextFormat::simple(font.clone(), color);
     let mut job = egui::text::LayoutJob::default();
-    job.append(symbol, MARKET_CHIP_PX + 6.0, format(theme::TEXT_PRIMARY));
-    job.append(&format!(" \u{b7} {venue}"), 0.0, format(theme::TEXT_MUTED));
-    job.append(icons::CARET_DOWN, 6.0, format(theme::TEXT_FAINT));
+    job.append(symbol, MARKET_CHIP_PX + 6.0, format(palette.text_primary()));
+    job.append(
+        &format!(" \u{b7} {venue}"),
+        0.0,
+        format(palette.text_muted()),
+    );
+    job.append(icons::CARET_DOWN, 6.0, format(palette.text_faint()));
     let response = ui
         .scope(|ui| {
             if theme::MARKET_BUTTON_QUIET {
@@ -319,8 +326,8 @@ fn draw_market(ui: &mut egui::Ui, (chip, label): (char, &str), full: bool) -> eg
     painter.rect(
         mark,
         4.0,
-        theme::INSET,
-        egui::Stroke::new(1.0_f32, theme::BORDER),
+        palette.inset(),
+        egui::Stroke::new(1.0_f32, palette.border()),
     );
     let letter = egui::FontId::proportional(9.5);
     painter.text(
@@ -328,7 +335,7 @@ fn draw_market(ui: &mut egui::Ui, (chip, label): (char, &str), full: bool) -> eg
         egui::Align2::CENTER_CENTER,
         chip,
         letter,
-        theme::TEXT_MUTED,
+        palette.text_muted(),
     );
     response.on_hover_text(MARKET_HOVER)
 }
@@ -538,6 +545,7 @@ fn draw_history_menu(
 /// Trading dock tab; the labels disclose them. Gated on the simulator having
 /// seen a price, never on the provider — paper trading works on any feed.
 fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<ToolbarAction>) {
+    let palette = theme::get(ui.ctx());
     // The entries speak the chip language: solid side colour, dark ink —
     // the same grammar as the price chips in the gutter, because the button
     // and the entry line it will create are one statement. Both wear one
@@ -547,24 +555,28 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
         ui.add_enabled_ui(enabled, |ui| {
             ui.add_sized(
                 egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0),
-                egui::Button::new(egui::RichText::new(label).color(theme::CHIP_INK).strong())
-                    .wrap_mode(egui::TextWrapMode::Truncate)
-                    .fill(fill)
-                    .stroke(egui::Stroke::NONE)
-                    .rounding(egui::Rounding::same(3.0)),
+                egui::Button::new(
+                    egui::RichText::new(label)
+                        .color(palette.chip_ink())
+                        .strong(),
+                )
+                .wrap_mode(egui::TextWrapMode::Truncate)
+                .fill(fill)
+                .stroke(egui::Stroke::NONE)
+                .rounding(egui::Rounding::same(3.0)),
             )
         })
         .inner
     };
     let enabled = paper.blocked.is_none();
     let locked = paper.blocked.as_deref().unwrap_or_default();
-    let buy = entry(ui, &paper.buy.face, theme::BUY, enabled)
+    let buy = entry(ui, &paper.buy.face, palette.buy(), enabled)
         .on_hover_text(&paper.buy.hover)
         .on_disabled_hover_text(locked);
     if buy.clicked() {
         actions.push(ToolbarAction::PaperBuy);
     }
-    let sell = entry(ui, &paper.sell.face, theme::SELL, enabled)
+    let sell = entry(ui, &paper.sell.face, palette.sell(), enabled)
         .on_hover_text(&paper.sell.hover)
         .on_disabled_hover_text(locked);
     if sell.clicked() {
@@ -583,12 +595,12 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
                     egui::vec2(width, 24.0),
                     egui::Button::new(
                         egui::RichText::new(text)
-                            .color(theme::TEXT_PRIMARY)
+                            .color(palette.text_primary())
                             .strong(),
                     )
                     .wrap_mode(egui::TextWrapMode::Truncate)
-                    .fill(theme::CONTROL)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .fill(palette.control())
+                    .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                     .rounding(egui::Rounding::same(3.0)),
                 )
             })

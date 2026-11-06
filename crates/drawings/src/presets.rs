@@ -24,16 +24,21 @@ const STORE_FORMAT_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct StoredStyle {
     /// `#rrggbb`, the notation every other config in this repo uses.
-    color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
+    /// Exact renderer bytes for translucent styles; never mislabel them as straight RGB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color_premultiplied: Option<[u8; 4]>,
     width_px: f32,
     fill_alpha: u8,
 }
 
 impl StoredStyle {
     fn from_style(style: DrawingStyle) -> Self {
-        let [red, green, blue, _] = style.color.to_array();
+        let [red, green, blue, alpha] = style.color.to_array();
         Self {
-            color: format!("#{red:02x}{green:02x}{blue:02x}"),
+            color: (alpha == 255).then(|| format!("#{red:02x}{green:02x}{blue:02x}")),
+            color_premultiplied: (alpha != 255).then_some(style.color.to_array()),
             width_px: style.width_px,
             fill_alpha: style.fill_alpha,
         }
@@ -43,17 +48,18 @@ impl StoredStyle {
     /// colour that does not parse falls back to the built-in start rather
     /// than to a silently different one.
     fn to_style(&self) -> Option<DrawingStyle> {
-        let hex = self.color.strip_prefix('#')?;
-        if hex.len() != 6 {
-            return None;
-        }
-        let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+        let color = if let Some(rgba) = self.color_premultiplied {
+            quantick_appearance::PremultipliedRgba::from_premultiplied(rgba)
+        } else {
+            let hex = self.color.as_ref()?.strip_prefix('#')?;
+            if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return None;
+            }
+            let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+            quantick_appearance::PremultipliedRgba::from_rgb(channel(0)?, channel(2)?, channel(4)?)
+        };
         Some(DrawingStyle {
-            color: quantick_chart::style::PremultipliedRgba::from_rgb(
-                channel(0)?,
-                channel(2)?,
-                channel(4)?,
-            ),
+            color,
             width_px: self
                 .width_px
                 .clamp(crate::MIN_DRAWING_WIDTH_PX, crate::MAX_DRAWING_WIDTH_PX),
@@ -116,11 +122,19 @@ pub fn validate(text: &str) -> Result<(), String> {
 /// event-driven work — never on the frame path).
 #[derive(Debug)]
 pub struct PresetStore {
+    theme: Option<(u64, quantick_appearance::ResolvedTheme)>,
     path: PathBuf,
     tools: BTreeMap<String, ToolPresets>,
 }
 
 impl PresetStore {
+    /// Revision-gated snapshot; never changes existing objects or saved defaults.
+    pub fn sync_theme(&mut self, appearance: &quantick_appearance::Appearance) {
+        if self.theme.as_ref().map(|(revision, _)| *revision) != Some(appearance.revision()) {
+            self.theme = Some((appearance.revision(), appearance.resolved().clone()));
+        }
+    }
+
     /// Load the store, empty when the file is missing, unreadable or from an
     /// unknown version (reported, never silently half-read).
     #[must_use]
@@ -148,7 +162,11 @@ impl PresetStore {
             },
             Err(_) => BTreeMap::new(),
         };
-        Self { path, tools }
+        Self {
+            path,
+            tools,
+            theme: None,
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -183,6 +201,9 @@ impl PresetStore {
 }
 
 impl PresetHost for PresetStore {
+    fn theme(&self) -> Option<&quantick_appearance::ResolvedTheme> {
+        self.theme.as_ref().map(|(_, theme)| theme)
+    }
     fn custom_preset_names(&self, tool_id: &str) -> Vec<String> {
         self.tools
             .get(tool_id)
@@ -475,5 +496,143 @@ fill_alpha = 255
         let store = PresetStore::load_from(&path);
         assert!(store.custom_preset_names("fib-retracement").is_empty());
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use super::*;
+    use crate::{DrawingPayload, FontFamily, TextPayload, new_drawing_from_defaults};
+
+    #[test]
+    fn light_creates_amber_drawings_and_blue_gray_profiles_without_recoloring_saved_styles() {
+        let path = crate::scratch::thread_dir("light-drawing-defaults").join(PRESETS_FILE);
+        let mut store = PresetStore::load_from(&path);
+        let mut appearance = quantick_appearance::Appearance::default();
+        store.sync_theme(&appearance);
+        let original: Vec<_> = crate::DRAWING_TOOLS
+            .into_iter()
+            .map(|tool| new_drawing_from_defaults(&store, tool))
+            .collect();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        store.sync_theme(&appearance);
+        for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
+            let fresh = new_drawing_from_defaults(&store, tool);
+            let expected = if tool.id() == "fixed-range-profile" {
+                [122, 142, 194, 255]
+            } else {
+                [181, 131, 43, 255]
+            };
+            assert_eq!(fresh.style.color.to_array(), expected, "{}", tool.id());
+            assert_eq!(fresh.style.width_px, existing.style.width_px);
+            assert_eq!(fresh.style.fill_alpha, existing.style.fill_alpha);
+            assert_eq!(existing.style, tool.default_style());
+        }
+        let line = crate::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "trend-line")
+            .unwrap();
+        let legacy: StoredStyle =
+            toml::from_str("color = '#8ab4f8'\nwidth_px = 1.0\nfill_alpha = 20").unwrap();
+        let authored = legacy.to_style().unwrap();
+        store.set_default_style(line.id(), Some(authored));
+        let mut loaded = PresetStore::load_from(&path);
+        loaded.sync_theme(&appearance);
+        assert_eq!(new_drawing_from_defaults(&loaded, line).style, authored);
+        let profile = crate::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "fixed-range-profile")
+            .unwrap();
+        loaded.set_default_style(profile.id(), Some(authored));
+        let mut restored = PresetStore::load_from(&path);
+        restored.sync_theme(&appearance);
+        assert_eq!(
+            new_drawing_from_defaults(&restored, profile).style,
+            authored
+        );
+        assert_ne!(
+            appearance
+                .resolved()
+                .color(quantick_appearance::Token::Accent),
+            appearance
+                .resolved()
+                .color(quantick_appearance::Token::DrawingDefault)
+        );
+    }
+
+    #[test]
+    fn every_registered_tool_keeps_its_historical_dark_default() {
+        use crate::ToolCatalog;
+        let dark = quantick_appearance::ResolvedTheme::default();
+        for tool in crate::DRAWING_TOOLS {
+            assert_eq!(
+                tool.themed_style(Some(&dark)),
+                tool.default_style(),
+                "{}",
+                tool.id()
+            );
+        }
+    }
+
+    #[test]
+    fn new_objects_follow_the_theme_and_saved_defaults_roundtrip_as_authored() {
+        let path = crate::scratch::thread_dir("appearance-drawing").join(PRESETS_FILE);
+        let _ = std::fs::remove_file(&path);
+        let mut store = PresetStore::load_from(&path);
+        let mut appearance = quantick_appearance::Appearance::default();
+        store.sync_theme(&appearance);
+        let text = crate::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "text")
+            .unwrap();
+        let original = new_drawing_from_defaults(&store, text);
+        let source = "version = 1\nname = 'new defaults'\n[colors]\ndrawing_default = '#12345680'\n[typography.drawing]\nfamily = 'monospace'\nsize = 32.0";
+        appearance.apply(source).unwrap();
+        store.sync_theme(&appearance);
+        let themed = new_drawing_from_defaults(&store, text);
+        assert_ne!(themed.style.color, original.style.color);
+        assert_eq!(original.style, text.default_style());
+        let payload = themed
+            .payload
+            .as_any()
+            .downcast_ref::<TextPayload>()
+            .unwrap();
+        assert_eq!(
+            (payload.size_px, payload.family),
+            (32.0, FontFamily::Monospace)
+        );
+        store.set_default_style(text.id(), Some(themed.style));
+        store.set_default_config(text.id(), payload.export_preset());
+        let mut loaded = PresetStore::load_from(&path);
+        loaded.sync_theme(&quantick_appearance::Appearance::default());
+        let saved = new_drawing_from_defaults(&loaded, text);
+        assert_eq!(
+            saved.style, themed.style,
+            "translucent premultiplied bytes roundtrip exactly"
+        );
+        assert!(saved.payload.eq_dyn(themed.payload.as_ref()));
+        // An explicit saved color equal to the old factory default is still authored.
+        loaded.set_default_style(text.id(), Some(original.style));
+        let mut loaded = PresetStore::load_from(&path);
+        loaded.sync_theme(&appearance);
+        assert_eq!(
+            new_drawing_from_defaults(&loaded, text).style,
+            original.style
+        );
+        // Legacy config had only a size: it captures the historical proportional face.
+        loaded.set_default_config(text.id(), Some(toml::from_str("size_px = 18.0").unwrap()));
+        let fresh = new_drawing_from_defaults(&loaded, text);
+        let payload = fresh
+            .payload
+            .as_any()
+            .downcast_ref::<TextPayload>()
+            .unwrap();
+        assert_eq!(
+            (payload.size_px, payload.family),
+            (18.0, FontFamily::Proportional)
+        );
+        let legacy: StoredStyle =
+            toml::from_str("color = '#8ab4f8'\nwidth_px = 1.0\nfill_alpha = 20").unwrap();
+        assert_eq!(legacy.to_style().unwrap().color, original.style.color);
     }
 }

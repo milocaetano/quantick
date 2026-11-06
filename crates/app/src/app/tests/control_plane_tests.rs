@@ -1451,7 +1451,7 @@ fn observer_modules_project_headless_state_that_matches_their_schemas() {
         .descriptors()
         .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
         .collect::<Vec<_>>();
-    assert_eq!(descriptors.len(), 20, "every registered scope is projected");
+    assert_eq!(descriptors.len(), 21, "every registered scope is projected");
     let scopes = descriptors
         .iter()
         .map(|(scope_id, _)| scope_id.clone())
@@ -1713,7 +1713,7 @@ fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
     // reports what the pane actually holds.
     assert_eq!(
         footprint["visible"],
-        app.active_tab().flow_pane.footprint.visible,
+        app.active_tab().flow_pane.presentation.footprint.visible,
         "the scope reports the pane's own layer state"
     );
     assert_eq!(
@@ -2105,9 +2105,15 @@ fn observer_per_scope_capture_cost() {
 }
 
 /// Heap work one coherent capture of every scope may do on the loaded
-/// fixture. Readings: 1285 allocations, 67368 bytes on Windows, 67358 on Linux.
+/// fixture. Readings: 1285 allocations, 67368 bytes on Windows, 67358 on Linux;
+/// 1287 allocations, 80979 bytes on Windows once the layout's scopes and
+/// `appearance.state` were merged together; 81179 on Windows with the tab
+/// strip's three tokens, each semantic color adding about 67 bytes to the
+/// capture. No Linux reading of that tree yet, and Linux has read a few bytes
+/// apart before, so the byte ceiling sits about 3.5% above the Windows reading:
+/// room for a few more tokens, not for a new scope.
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 77500;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 84000;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
@@ -5530,7 +5536,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 140);
+    assert_eq!(documents.len(), 143);
     for file_name in [
         "session-journal-delete-input-v1.schema.json",
         "session-journal-input-v1.schema.json",

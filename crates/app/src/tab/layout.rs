@@ -110,9 +110,13 @@ impl Tab {
             .copied()
             .unwrap_or(self.time_pane_opening_interval_ms);
         let mut pane = ChartPane::time(ids.alloc(), interval_ms);
+        let saved_style = self.context_opening.take_style(self.time_panes.len() + 1);
+        pane.presentation.candles =
+            quantick_stores::pane_style::restore(saved_style.as_slice(), self.time_panes.len() + 1);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
         pane.layout.opening = Some(
-            self.context_opening_layouts
+            self.context_opening
+                .layouts
                 .get(self.time_panes.len())
                 .copied()
                 .flatten()
@@ -173,7 +177,7 @@ impl Tab {
     pub fn set_opening_layouts(&mut self, flow: Option<u64>, context: &[u64]) {
         self.flow_pane
             .request_opening_layout(flow.map(crate::layouts::LayoutId));
-        self.context_opening_layouts = context
+        self.context_opening.layouts = context
             .iter()
             .map(|id| (*id != crate::ui_state::LAYOUT_UNRECORDED).then_some(*id))
             .take(MAX_CONTEXT_PANES)
@@ -190,6 +194,29 @@ impl Tab {
                 pane.request_opening_layout(Some(crate::layouts::LayoutId(id)));
             }
         }
+    }
+
+    pub(crate) fn candle_styles(
+        &self,
+    ) -> Vec<quantick_workspace::arrangement_document::SavedPaneStyle> {
+        quantick_stores::pane_style::capture_all(
+            self.panes()
+                .enumerate()
+                .map(|(index, (pane, _))| (index, pane.presentation.candles)),
+            &self.context_opening.styles,
+        )
+    }
+
+    pub(crate) fn restore_candle_styles(
+        &mut self,
+        saved: &[quantick_workspace::arrangement_document::SavedPaneStyle],
+    ) {
+        self.flow_pane.presentation.candles = quantick_stores::pane_style::restore(saved, 0);
+        for (index, pane) in self.time_panes.iter_mut().enumerate() {
+            pane.presentation.candles = quantick_stores::pane_style::restore(saved, index + 1);
+        }
+        self.context_opening
+            .set_styles(saved, self.time_panes.len());
     }
 
     /// Name the layout a context pane will open on when the stack builds it.
@@ -211,10 +238,10 @@ impl Tab {
         if slot >= MAX_CONTEXT_PANES {
             return;
         }
-        if self.context_opening_layouts.len() <= slot {
-            self.context_opening_layouts.resize(slot + 1, None);
+        if self.context_opening.layouts.len() <= slot {
+            self.context_opening.layouts.resize(slot + 1, None);
         }
-        self.context_opening_layouts[slot] = Some(id.0);
+        self.context_opening.layouts[slot] = Some(id.0);
     }
 
     /// Put this tab's canvas back the way a saved workspace recorded it: the

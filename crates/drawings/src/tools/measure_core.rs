@@ -11,16 +11,14 @@
 //! from the anchors alone, and they are what is shown.
 
 use crate::icons;
-use crate::{
-    Align2, FontSpec, MarkScene, Px, PxRect, Stroke, TextMetrics, pos2, rgba_premultiplied, vec2,
-};
+use crate::{Align2, FontSpec, MarkScene, Px, PxRect, Stroke, TextMetrics, pos2, vec2};
 use quantick_chart::style::PremultipliedRgba;
 
 use super::{
     ChartPoint, DrawingStyle, ToolFamily, ValueUnit, dashed_segment_within, drawing_fill,
     drawing_stroke,
 };
-use crate::palette as theme;
+use quantick_appearance::{FontRole, ResolvedTheme, Token};
 
 /// The one rail family every measurement tool declares.
 pub(super) const MEASURE_FAMILY: ToolFamily = ToolFamily {
@@ -58,9 +56,6 @@ const READOUT_LINE_GAP_PX: f32 = 2.0;
 const READOUT_PAD_X_PX: f32 = 5.0;
 const READOUT_PAD_Y_PX: f32 = 3.0;
 const READOUT_RADIUS_PX: f32 = 3.0;
-/// The plate under the readout. Opaque enough to stay legible over candles,
-/// dark enough not to become a second chart object.
-const READOUT_PLATE: PremultipliedRgba = rgba_premultiplied(14, 18, 26, 216);
 /// The ruler's anchor dots: big enough to find the end of the leg, small
 /// enough to stay under the selection ring.
 const RULER_DOT_RADIUS_PX: f32 = 3.0;
@@ -169,10 +164,14 @@ pub(super) fn readout(anchors: &[ChartPoint], axes: Axes, unit: ValueUnit<'_>) -
 /// The colour a readout is spoken in: the direction of the move, so the sign
 /// is readable without reading the sign.
 #[must_use]
-pub(super) fn readout_color(readout: &Readout, style: DrawingStyle) -> PremultipliedRgba {
+pub(super) fn readout_color(
+    readout: &Readout,
+    style: DrawingStyle,
+    appearance: &ResolvedTheme,
+) -> PremultipliedRgba {
     match readout.rising {
-        Some(true) => theme::BUY,
-        Some(false) => theme::SELL,
+        Some(true) => appearance.color(Token::Buy),
+        Some(false) => appearance.color(Token::Sell),
         None => style.color,
     }
 }
@@ -183,6 +182,7 @@ pub(super) fn readout_color(readout: &Readout, style: DrawingStyle) -> Premultip
 /// knew its axes but not its unit could word a CVD move in points.
 #[derive(Clone, Copy)]
 pub(super) struct Measured<'a> {
+    pub appearance: &'a ResolvedTheme,
     pub anchors: &'a [ChartPoint],
     pub axes: Axes,
     pub unit: ValueUnit<'a>,
@@ -207,6 +207,7 @@ pub(super) fn paint_measure(
     measured: Measured<'_>,
 ) {
     let Measured {
+        appearance,
         anchors,
         axes,
         unit,
@@ -246,7 +247,8 @@ pub(super) fn paint_measure(
         chart_rect,
         area.center(),
         &readout,
-        readout_color(&readout, style),
+        readout_color(&readout, style, appearance),
+        appearance,
     );
 }
 
@@ -325,8 +327,9 @@ fn paint_plate(
     centre: Px,
     readout: &Readout,
     color: PremultipliedRgba,
+    appearance: &ResolvedTheme,
 ) {
-    let font = FontSpec::monospace(READOUT_TEXT_PX);
+    let font = FontSpec::themed(appearance, FontRole::Monospace, READOUT_TEXT_PX);
     let sizes: Vec<Px> = readout
         .lines
         .iter()
@@ -350,7 +353,11 @@ fn paint_plate(
         (chart_rect.top() - plate.top()).max(0.0) + (chart_rect.bottom() - plate.bottom()).min(0.0),
     ));
 
-    painter.rect_filled(plate, READOUT_RADIUS_PX, READOUT_PLATE);
+    painter.rect_filled(
+        plate,
+        READOUT_RADIUS_PX,
+        appearance.color(Token::DrawingReadoutPlate),
+    );
     let mut cursor = plate.min + vec2(READOUT_PAD_X_PX, READOUT_PAD_Y_PX);
     for (line, size) in readout.lines.iter().zip(&sizes) {
         let advance = size.y + READOUT_LINE_GAP_PX;
@@ -586,6 +593,7 @@ mod tests {
         let anchors = anchors((0.0, 100.0, 0), (10.0, 110.0, 60_000));
         let mut scene = MarkScene::default();
         let measured = Measured {
+            appearance: ResolvedTheme::bundled_dark(),
             anchors: &anchors,
             axes,
             unit: ValueUnit::Price,

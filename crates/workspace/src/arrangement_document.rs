@@ -162,6 +162,17 @@ pub struct SavedTab {
     /// The tab's order-flow panel: open or not, and how wide.
     #[serde(default, skip_serializing_if = "OrderFlowPanel::is_default")]
     pub orderflow_panel: OrderFlowPanel,
+    /// Local style records by pane address; an empty legacy file keeps its global seed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candle_styles: Vec<SavedPaneStyle>,
+}
+
+/// Opaque style document interpreted and validated by the stores crate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedPaneStyle {
+    pub pane_index: usize,
+    pub version: u32,
+    pub style: toml::Value,
 }
 
 impl SavedTab {

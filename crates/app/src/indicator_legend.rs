@@ -153,6 +153,7 @@ pub(crate) fn draw(
     preview_slot: Option<SlotId>,
     collapsed: bool,
 ) -> (Vec<LegendAction>, Option<egui::Rect>) {
+    let palette = theme::get(ctx);
     let mut actions = Vec::new();
     if views.is_empty() {
         return (actions, None);
@@ -164,8 +165,8 @@ pub(crate) fn draw(
             // The HUD's card grammar, quieter: sunken fill, hairline border,
             // no rail — the rows' own colour dots carry the identity.
             egui::Frame::none()
-                .fill(theme::INSET)
-                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                .fill(palette.inset())
+                .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                 .rounding(egui::Rounding::same(4.0))
                 .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                 .show(ui, |ui| {
@@ -231,6 +232,7 @@ fn draw_puck(
     previewing: bool,
     actions: &mut Vec<LegendAction>,
 ) {
+    let palette = theme::get(ui.ctx());
     ui.horizontal(|ui| {
         // The whole puck answers the click, not just the 18 px glyph inside
         // it. A control that looks bigger than it is teaches a trader to miss
@@ -243,10 +245,14 @@ fn draw_puck(
                     chevron(ui, Some(COLLAPSED_CHEVRON));
                     draw_folded_dots(ui, views);
                     if previewing {
-                        ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
-                            .on_hover_text(
-                                "showing un-applied settings — Apply keeps, Discard reverts",
-                            );
+                        ui.label(
+                            egui::RichText::new("preview")
+                                .small()
+                                .color(palette.accent()),
+                        )
+                        .on_hover_text(
+                            "showing un-applied settings — Apply keeps, Discard reverts",
+                        );
                     }
                 });
             })
@@ -280,6 +286,7 @@ fn draw_puck(
 /// rest becomes `+N`, which keeps the number attached to the dots explaining
 /// it.
 fn draw_folded_dots(ui: &mut egui::Ui, views: &[IndicatorView]) {
+    let palette = theme::get(ui.ctx());
     let folded = folded_views(views);
     for view in folded.iter().take(MAX_PUCK_DOTS) {
         draw_status_dot(ui, view);
@@ -288,7 +295,7 @@ fn draw_folded_dots(ui: &mut egui::Ui, views: &[IndicatorView]) {
         ui.label(
             egui::RichText::new(format!("+{}", folded.len() - MAX_PUCK_DOTS))
                 .small()
-                .color(theme::TEXT_MUTED),
+                .color(palette.text_muted()),
         );
     }
 }
@@ -344,15 +351,23 @@ fn folded_summary(views: &[IndicatorView]) -> String {
 /// offers, because a control you have to aim at is one a trader does not use
 /// mid-tape.
 fn chevron(ui: &mut egui::Ui, glyph: Option<&str>) -> Option<egui::Response> {
+    let palette = theme::get(ui.ctx());
     let size = egui::vec2(PANE_DISCLOSURE_PX, PANE_DISCLOSURE_PX);
     let Some(glyph) = glyph else {
         ui.allocate_exact_size(size, egui::Sense::hover());
         return None;
     };
-    Some(ui.add_sized(
-        size,
-        egui::Button::new(egui::RichText::new(glyph).small().color(theme::TEXT_MUTED)).frame(false),
-    ))
+    Some(
+        ui.add_sized(
+            size,
+            egui::Button::new(
+                egui::RichText::new(glyph)
+                    .small()
+                    .color(palette.text_muted()),
+            )
+            .frame(false),
+        ),
+    )
 }
 
 /// What the chevron's hover says on each half of the gesture.
@@ -380,6 +395,7 @@ fn draw_row(
     leads: bool,
     actions: &mut Vec<LegendAction>,
 ) {
+    let palette = theme::get(ui.ctx());
     ui.horizontal(|ui| {
         if chevron(ui, leads.then_some(EXPANDED_CHEVRON))
             .is_some_and(|response| response.on_hover_text(COLLAPSE_HINT).clicked())
@@ -397,13 +413,13 @@ fn draw_row(
                 ui.horizontal(|ui| {
                     draw_status_dot(ui, view);
                     let name_color = if view.error.is_some() {
-                        theme::SELL
+                        palette.sell()
                     } else if view.stale.is_some() {
-                        theme::ACCENT
+                        palette.accent()
                     } else if view.hidden {
-                        theme::TEXT_MUTED
+                        palette.text_muted()
                     } else {
-                        theme::TEXT_PRIMARY
+                        palette.text_primary()
                     };
                     ui.label(egui::RichText::new(view.label()).color(name_color).small());
                     // The last committed value of the first plot — the number a trader
@@ -417,24 +433,28 @@ fn draw_row(
                             egui::RichText::new(chart::compact_value(*value))
                                 .monospace()
                                 .small()
-                                .color(theme::TEXT_MUTED),
+                                .color(palette.text_muted()),
                         );
                     }
                     if let Some(error) = &view.error {
-                        ui.label(egui::RichText::new("error").small().color(theme::SELL))
+                        ui.label(egui::RichText::new("error").small().color(palette.sell()))
                             .on_hover_text(error.to_string());
                     } else if let Some(stale) = &view.stale {
-                        ui.label(egui::RichText::new("stale").small().color(theme::ACCENT))
+                        ui.label(egui::RichText::new("stale").small().color(palette.accent()))
                             .on_hover_text(stale.clone());
                     } else if previewing {
                         // The chart is showing settings the state file does not hold —
                         // said here, on the chart, not only inside the dialog that may
                         // be sitting behind it (trader-ux review). Error and stale
                         // outrank it: a broken indicator is not merely previewing.
-                        ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
-                            .on_hover_text(
-                                "showing un-applied settings — Apply keeps, Discard reverts",
-                            );
+                        ui.label(
+                            egui::RichText::new("preview")
+                                .small()
+                                .color(palette.accent()),
+                        )
+                        .on_hover_text(
+                            "showing un-applied settings — Apply keeps, Discard reverts",
+                        );
                     }
                     // A layer switched off in settings must not read like a broken
                     // indicator: a Copilot with everything off draws nothing, and a row
@@ -456,7 +476,7 @@ fn draw_row(
                         ui.label(
                             egui::RichText::new(format!("{layers_off} off"))
                                 .small()
-                                .color(theme::TEXT_MUTED),
+                                .color(palette.text_muted()),
                         )
                         .on_hover_text("display layers switched off in settings");
                     }
@@ -506,11 +526,12 @@ fn draw_row(
 /// line it names can never disagree; error and stale wear the same glyphs
 /// as the toolbar menu's status dot.
 fn draw_status_dot(ui: &mut egui::Ui, view: &IndicatorView) {
+    let palette = theme::get(ui.ctx());
     if view.error.is_some() {
         ui.label(
             egui::RichText::new(icons::WARNING_CIRCLE)
                 .small()
-                .color(theme::SELL),
+                .color(palette.sell()),
         );
         return;
     }
@@ -518,7 +539,7 @@ fn draw_status_dot(ui: &mut egui::Ui, view: &IndicatorView) {
         ui.label(
             egui::RichText::new(icons::WARNING)
                 .small()
-                .color(theme::ACCENT),
+                .color(palette.accent()),
         );
         return;
     }
@@ -526,7 +547,7 @@ fn draw_status_dot(ui: &mut egui::Ui, view: &IndicatorView) {
     // can never disagree, which a restyled plot would break instantly.
     let color = view
         .plot_style(0)
-        .map_or(theme::TEXT_MUTED, |plot| rgba(plot.color));
+        .map_or(palette.text_muted(), |plot| rgba(plot.color));
     let color = if view.hidden {
         color.gamma_multiply(HIDDEN_DOT_FADE)
     } else {

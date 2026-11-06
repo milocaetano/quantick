@@ -38,6 +38,7 @@ impl ToolRail {
         members: &[DrawingTool],
         drawings: &Drawings,
     ) {
+        let palette = theme::get(ui.ctx());
         let shown = self.family_member(family, members);
         let armed = self
             .tool
@@ -69,11 +70,11 @@ impl ToolRail {
         );
         if !badge_shown && ui.is_rect_visible(response.rect) {
             let caret_color = if armed {
-                theme::ACCENT
+                palette.accent()
             } else if response.hovered() {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_FAINT
+                palette.text_faint()
             };
             let corner = egui::pos2(
                 response.rect.right() - CARET_INSET_PX,
@@ -116,6 +117,7 @@ impl ToolRail {
     /// The open family flyout, on the rail's chart-facing side, first row
     /// aligned with the slot's leading edge.
     pub(super) fn draw_family_flyout(&mut self, ctx: &egui::Context) {
+        let palette = theme::get(ctx);
         let Some((family_id, anchor)) = self.flyout else {
             return;
         };
@@ -155,15 +157,18 @@ impl ToolRail {
             .fixed_pos(position)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
-                    .fill(theme::CONTROL)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .fill(palette.control())
+                    .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                     .rounding(egui::Rounding::same(FLYOUT_CORNER_RADIUS_PX))
                     .show(ui, |ui| {
                         ui.set_width(TOOLBOX_FLYOUT_WIDTH_PX - 2.0 * TOOLBOX_ITEM_GAP_PX);
                         ui.label(
                             egui::RichText::new(family.title)
-                                .color(theme::TEXT_MUTED)
-                                .size(FLYOUT_HEADER_TEXT_PX),
+                                .color(palette.text_muted())
+                                .font(crate::theme::get(ui.ctx()).font_at(
+                                    quantick_appearance::FontRole::Heading,
+                                    FLYOUT_HEADER_TEXT_PX,
+                                )),
                         );
                         for member in members {
                             match self.draw_flyout_row(ui, *member) {
@@ -200,6 +205,7 @@ impl ToolRail {
     /// shortcut. Returns what the click asked for, `None` when nothing was
     /// clicked.
     fn draw_flyout_row(&mut self, ui: &mut egui::Ui, member: DrawingTool) -> Option<FlyoutClick> {
+        let palette = theme::get(ui.ctx());
         let width = ui.available_width();
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(width, TOOLBOX_FLYOUT_ROW_HEIGHT_PX),
@@ -221,19 +227,19 @@ impl ToolRail {
                 ui.painter().rect_filled(
                     rect,
                     egui::Rounding::same(FLYOUT_ROW_RADIUS_PX),
-                    theme::active_tint(theme::ACCENT),
+                    theme::active_tint(palette.accent()),
                 );
             } else if response.hovered() {
                 ui.painter().rect_filled(
                     rect,
                     egui::Rounding::same(FLYOUT_ROW_RADIUS_PX),
-                    theme::BORDER,
+                    palette.border(),
                 );
             }
             let glyph_color = if armed {
-                theme::ACCENT
+                palette.accent()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             };
             let glyph_center = egui::pos2(rect.left() + FLYOUT_GLYPH_CENTER_X_PX, rect.center().y);
             if member.icon_strokes().is_empty() {
@@ -241,7 +247,7 @@ impl ToolRail {
                     glyph_center,
                     egui::Align2::CENTER_CENTER,
                     member.icon(),
-                    egui::FontId::proportional(FLYOUT_GLYPH_PX),
+                    palette.body_font(FLYOUT_GLYPH_PX),
                     glyph_color,
                 );
             } else {
@@ -261,15 +267,15 @@ impl ToolRail {
             // hover, so an unstarred flyout stays as quiet as before.
             if favorite || response.hovered() {
                 let star_color = if favorite {
-                    theme::ACCENT
+                    palette.accent()
                 } else {
-                    theme::TEXT_FAINT
+                    palette.text_faint()
                 };
                 ui.painter().text(
                     star_center,
                     egui::Align2::CENTER_CENTER,
                     icons::STAR,
-                    egui::FontId::proportional(FLYOUT_STAR_PX),
+                    palette.body_font(FLYOUT_STAR_PX),
                     star_color,
                 );
             }
@@ -277,8 +283,8 @@ impl ToolRail {
                 egui::pos2(rect.left() + FLYOUT_NAME_X_PX, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 member.name(),
-                egui::FontId::proportional(FLYOUT_NAME_TEXT_PX),
-                theme::TEXT_PRIMARY,
+                palette.body_font(FLYOUT_NAME_TEXT_PX),
+                palette.text_primary(),
             );
             if let Some(shortcut) = Tool::Drawing(member).shortcut_label() {
                 ui.painter().text(
@@ -288,8 +294,8 @@ impl ToolRail {
                     ),
                     egui::Align2::RIGHT_CENTER,
                     shortcut,
-                    egui::FontId::proportional(FLYOUT_SHORTCUT_TEXT_PX),
-                    theme::TEXT_FAINT,
+                    palette.body_font(FLYOUT_SHORTCUT_TEXT_PX),
+                    palette.text_faint(),
                 );
             }
         }

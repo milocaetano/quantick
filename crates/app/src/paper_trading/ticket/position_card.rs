@@ -74,18 +74,19 @@ impl PositionCard<'_> {
     }
 
     fn flat_row(&self, ui: &mut egui::Ui) -> Option<CardCommand> {
+        let palette = theme::get(ui.ctx());
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("FLAT")
                     .monospace()
-                    .color(theme::TEXT_MUTED),
+                    .color(palette.text_muted()),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(&self.realized_text)
                         .monospace()
                         .strong()
-                        .color(points_color(self.realized)),
+                        .color(points_color(&palette, self.realized)),
                 )
                 .on_hover_text("this session's realized result");
             });
@@ -101,6 +102,7 @@ impl PositionCard<'_> {
     /// Brackets: the level, what it pays, ✕ to clear — or the way to set
     /// the missing leg right here, from the ticket's offset.
     fn brackets(&self, ui: &mut egui::Ui, position: &Position) -> Option<Command> {
+        let palette = theme::get(ui.ctx());
         let mut bracket_change = None;
         egui::Grid::new("paper_position_brackets")
             .num_columns(3)
@@ -111,7 +113,7 @@ impl PositionCard<'_> {
                         stop: true,
                         word: "SL",
                         level: self.brackets[0].clone(),
-                        color: theme::SELL,
+                        color: palette.sell(),
                         offset: self.stop_offset,
                         clear_hover: "remove the protective stop",
                     },
@@ -119,7 +121,7 @@ impl PositionCard<'_> {
                         stop: false,
                         word: "TP",
                         level: self.brackets[1].clone(),
-                        color: theme::BUY,
+                        color: palette.buy(),
                         offset: self.profit_offset,
                         clear_hover: "remove the profit target",
                     },
@@ -148,9 +150,10 @@ struct BracketLeg {
 
 impl BracketLeg {
     fn show(&self, ui: &mut egui::Ui, position: &Position) -> Option<Command> {
+        let palette = theme::get(ui.ctx());
         ui.label(
             egui::RichText::new(self.word)
-                .color(theme::TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         );
         match (&self.level, self.offset) {
@@ -170,7 +173,7 @@ impl BracketLeg {
                 ui.label(
                     egui::RichText::new("—")
                         .monospace()
-                        .color(theme::TEXT_FAINT),
+                        .color(palette.text_faint()),
                 );
                 let set = ui
                     .small_button(format!("Set {} pts", fmt_decimal(offset)))
@@ -187,7 +190,7 @@ impl BracketLeg {
             (None, None) => {
                 ui.label(
                     egui::RichText::new("drag from the entry line, or type an offset below")
-                        .color(theme::TEXT_SUPPORT)
+                        .color(palette.text_support())
                         .small(),
                 );
                 ui.label("");
@@ -214,7 +217,8 @@ impl BracketLeg {
 
 /// Identity: the HUD's own chip, so the two surfaces read as one.
 fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, text: Option<&str>) {
-    let color = theme::side_color(position.side);
+    let palette = theme::get(ui.ctx());
+    let color = palette.side_color(position.side);
     ui.horizontal(|ui| {
         egui::Frame::none()
             .fill(color)
@@ -227,7 +231,7 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, t
                         position_word(position.side),
                         fmt_decimal(position.quantity)
                     ))
-                    .color(theme::CHIP_INK)
+                    .color(palette.chip_ink())
                     .strong()
                     .small(),
                 );
@@ -235,7 +239,7 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, t
         ui.label(
             egui::RichText::new(format!("@ {}", fmt_decimal(position.avg_price)))
                 .monospace()
-                .color(theme::TEXT_PRIMARY),
+                .color(palette.text_primary()),
         );
         if let (Some(open), Some(text)) = (open, text) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -243,7 +247,7 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, t
                     egui::RichText::new(text)
                         .monospace()
                         .strong()
-                        .color(points_color(open)),
+                        .color(points_color(&palette, open)),
                 )
                 .on_hover_text("open profit at the last print");
             });
@@ -253,6 +257,7 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, t
 
 /// The R:R read, while both legs are set and the stop is not at entry.
 fn reward_to_risk(ui: &mut egui::Ui, position: &Position) {
+    let palette = theme::get(ui.ctx());
     let (Some(stop), Some(target)) = (position.stop_loss, position.take_profit) else {
         return;
     };
@@ -262,7 +267,7 @@ fn reward_to_risk(ui: &mut egui::Ui, position: &Position) {
         ui.label(
             egui::RichText::new(format!("R:R {}", fmt_points(reward / risk)))
                 .monospace()
-                .color(theme::TEXT_MUTED),
+                .color(palette.text_muted()),
         )
         .on_hover_text("reward divided by risk, in points, at the current levels");
     }
@@ -271,6 +276,7 @@ fn reward_to_risk(ui: &mut egui::Ui, position: &Position) {
 /// Actions, two per row at equal width; consequential ones stay text-first,
 /// never a bare glyph.
 fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Option<CardCommand> {
+    let palette = theme::get(ui.ctx());
     ui.add_space(4.0);
     let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
     let word = position_word(position.side);
@@ -278,7 +284,7 @@ fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Opt
     let mut command = None;
     ui.horizontal(|ui| {
         if ui
-            .add(quiet_action("× Close", half))
+            .add(quiet_action(&palette, "× Close", half))
             .on_hover_text(format!("exit the {word} {qty} at the next print (market)"))
             .clicked()
         {
@@ -286,6 +292,7 @@ fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Opt
         }
         if ui
             .add(quiet_action(
+                &palette,
                 &format!("{} Reverse", icons::ARROWS_LEFT_RIGHT),
                 half,
             ))
@@ -301,7 +308,7 @@ fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Opt
     ui.horizontal(|ui| {
         let in_profit = open.is_some_and(|open| open > Decimal::ZERO);
         if ui
-            .add_enabled(in_profit, quiet_action("Breakeven", half))
+            .add_enabled(in_profit, quiet_action(&palette, "Breakeven", half))
             .on_hover_text(
                 "move the stop to the average entry - with no fees simulated, \
                  break-even is the entry exactly",
@@ -318,7 +325,7 @@ fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Opt
             })));
         }
         if ui
-            .add(quiet_action("Close 50%", half))
+            .add(quiet_action(&palette, "Close 50%", half))
             .on_hover_text(
                 "close half the open quantity at the next print; the rest keeps \
                  its average entry and brackets",
@@ -332,7 +339,7 @@ fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Opt
     });
     let full = ui.available_width();
     if ui
-        .add(quiet_action("Flatten all", full))
+        .add(quiet_action(&palette, "Flatten all", full))
         .on_hover_text("close the position and cancel every working order (Shift+F)")
         .clicked()
     {
@@ -343,14 +350,18 @@ fn actions(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) -> Opt
 
 /// A quiet action button — the HUD's control grammar, sized to share a
 /// row evenly.
-fn quiet_action(label: &str, width: f32) -> egui::Button<'_> {
+fn quiet_action<'a>(
+    palette: &crate::theme::Palette,
+    label: &'a str,
+    width: f32,
+) -> egui::Button<'a> {
     egui::Button::new(
         egui::RichText::new(label)
-            .color(theme::TEXT_PRIMARY)
+            .color(palette.text_primary())
             .small(),
     )
-    .fill(theme::CONTROL)
-    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+    .fill(palette.control())
+    .stroke(egui::Stroke::new(1.0_f32, palette.border()))
     .rounding(egui::Rounding::same(3.0))
     .min_size(egui::vec2(width, 22.0))
 }

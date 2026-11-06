@@ -459,3 +459,18 @@ retained five-sample experiment.
 
 References: [Cargo build cache](https://doc.rust-lang.org/cargo/reference/build-cache.html)
 and [GitHub schedule events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+#### Appearance member-only applicability amendment (PR #765)
+
+PR #765 binds the active root-manifest SHA256 to
+`2a0cbf1c8e0f6a97abe1ed5f612aac5a31d0ca146fdc37f94fea64e936b76dde`.
+Relative to the session identity, only `crates/appearance` is added to the
+workspace members; all other parsed root-manifest values, including profiles,
+are equal. The [retained ordinary run](https://github.com/milocaetano/quantick/actions/runs/41974830835)
+at `dda7373e0a9503ed5b3201e74bb4104e8c08413c` failed on the old identity and
+retained a complete five-sample series. Applying this identity to that series
+passes every existing numerical ceiling. This is a scoped applicability
+amendment for the PR's CI completion, not recalibration: calibration history,
+limits, host, toolchain, jobs, protocol, selection and representatives are
+unchanged. A fresh ordinary exact-final-head run must still pass every ceiling;
+this amendment does not authorize automatic future identity refreshes.

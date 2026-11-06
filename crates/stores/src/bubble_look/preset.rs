@@ -32,6 +32,20 @@ impl BubbleLook {
         config: &mut HeatmapConfig,
         spheres: bool,
     ) -> Result<bool, String> {
+        self.apply_named_preset_with(
+            name,
+            config,
+            spheres,
+            &quantick_appearance::ResolvedTheme::bundled_dark().orderflow,
+        )
+    }
+    pub fn apply_named_preset_with(
+        &mut self,
+        name: &str,
+        config: &mut HeatmapConfig,
+        spheres: bool,
+        appearance: &quantick_appearance::orderflow::OrderflowAppearance,
+    ) -> Result<bool, String> {
         let preset = match self.presets.get(name) {
             Some(preset) if !name.trim().is_empty() => preset.clone(),
             _ => return Err("Unknown or empty bubble preset name".to_owned()),
@@ -39,12 +53,12 @@ impl BubbleLook {
         // Dressed as the pick dresses the screen, so a look worn without its
         // spheres reads back as itself.
         let mut desired = config.clone();
-        super::dress(&preset, &mut desired, spheres);
+        super::dress(&preset, &mut desired, spheres, appearance);
         desired.sanitize();
         if desired == *config && self.look_name == name {
             return Ok(false);
         }
-        self.apply_preset(name, config, spheres);
+        self.apply_preset_with(name, config, spheres, appearance);
         self.note_edit();
         Ok(true)
     }

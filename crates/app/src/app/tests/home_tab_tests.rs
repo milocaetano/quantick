@@ -183,7 +183,7 @@ fn the_home_tab_has_no_close_target_and_a_click_inside_it_only_shows_home() {
 }
 
 #[test]
-fn hover_focus_and_home_lift_uan_only_and_the_q_is_never_dimmed() {
+fn the_wordmark_and_the_q_never_dim_at_rest_on_hover_focus_or_home() {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     frame(&mut app, &ctx);
@@ -214,19 +214,117 @@ fn hover_focus_and_home_lift_uan_only_and_the_q_is_never_dimmed() {
     for (output, state) in states.into_iter().chain([(&active, "active")]) {
         assert_plain_q(output, state);
     }
-    let (rest, brand) = (crate::theme::HOME_INK, crate::theme::BRAND);
-    assert_eq!(wordmark_colors(&idle), (rest, brand));
-    for (output, state) in [
-        (&hovered, "hovered"),
-        (&focused, "focused"),
-        (&active, "active"),
-    ] {
-        assert_eq!(
-            wordmark_colors(output),
-            (egui::Color32::WHITE, brand),
-            "{state}"
-        );
+    let palette = crate::theme::get(&ctx);
+    let wordmark = (palette.text_primary(), palette.brand());
+    for (output, state) in states.into_iter().chain([(&active, "active")]) {
+        assert_eq!(wordmark_colors(output), wordmark, "{state}");
     }
+}
+
+/// An inactive market tab's text lights whenever its sheet does: the × hovered
+/// or the tab focused from the keyboard, not only the body under the pointer.
+#[test]
+fn a_market_tabs_text_lights_whenever_its_sheet_does() {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    let _second = two_tabs(&mut app, &ctx);
+    assert_ne!(app.runtime.tabs.active_index(), 0, "chip 0 is inactive");
+    let moved = |app: &mut QuantickApp, to| {
+        let event = egui::Event::PointerMoved(to);
+        run_frame_sized(app, &ctx, WINDOW, vec![event], egui::Modifiers::NONE)
+    };
+    let label = app.runtime.tabs[0].chip_label().to_owned();
+    let symbol = quantick_workspace::arrangement::strip::chip_parts(&label).0;
+    let ink = |output: &egui::FullOutput| painted_text(output, symbol).fallback_color;
+    let palette = crate::theme::get(&ctx);
+    let far = egui::pos2(1000.0, 400.0);
+    assert_eq!(ink(&moved(&mut app, far)), palette.text_muted(), "at rest");
+    let close = app.chrome.title_bar.strip.close[0].center();
+    assert_eq!(ink(&moved(&mut app, close)), palette.text_primary(), "×");
+    moved(&mut app, far);
+    let body = home_widget(&ctx, chip_rect(&app, 0));
+    ctx.memory_mut(|memory| memory.request_focus(body));
+    let focused = moved(&mut app, far);
+    assert!(ctx.memory(|memory| memory.has_focus(body)), "a real focus");
+    assert_eq!(ink(&focused), palette.text_primary(), "focused");
+}
+
+/// Under Dark and Light the strip, the active tab, its feed mark and the
+/// wordmark paint that theme's tokens: none is a fixed Dark constant.
+#[test]
+fn the_strip_and_its_tabs_paint_each_themes_tokens() {
+    use quantick_appearance::{ResolvedTheme, Token, tab_strip::feed_token};
+    use quantick_workspace::arrangement::strip::TabFeed;
+    let mut strips = Vec::new();
+    for source in [quantick_appearance::DARK, quantick_appearance::LIGHT] {
+        let (mut app, _, _, _) = test_app();
+        let ctx = egui::Context::default();
+        app.runtime
+            .appearance
+            .apply_candidate(source, false)
+            .unwrap();
+        frame(&mut app, &ctx);
+        let output = frame(&mut app, &ctx);
+        let palette = crate::theme::get(&ctx);
+        let theme = ResolvedTheme::parse(source).unwrap();
+        for token in [Token::TabStrip, Token::Brand, Token::ReplayInk] {
+            assert_eq!(
+                palette.color(token).to_array(),
+                theme.color(token).to_array()
+            );
+        }
+        let rects: Vec<_> = (output.shapes.iter())
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(shape) => Some(shape),
+                _ => None,
+            })
+            .collect();
+        let strip = rects
+            .iter()
+            .find(|shape| shape.rect.min == egui::Pos2::ZERO);
+        assert_eq!(
+            strip.map(|shape| shape.fill),
+            Some(palette.tab_strip()),
+            "{}",
+            theme.name
+        );
+        strips.push(palette.tab_strip());
+        assert_eq!(
+            wordmark_colors(&output),
+            (palette.text_primary(), palette.brand()),
+            "{}",
+            theme.name
+        );
+        let chip = chip_rect(&app, 0);
+        let sheet = rects.iter().find(|shape| shape.rect.min == chip.min);
+        let sheet = sheet.expect("the active tab wears a sheet");
+        assert_eq!(sheet.fill, palette.chrome(), "{}", theme.name);
+        assert_eq!(sheet.stroke.color, palette.border(), "{}", theme.name);
+        // No rule along the strip's floor: the active tab joins the toolbar.
+        let floor = output.shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::LineSegment { points, stroke } => {
+                let [a, b] = points.map(|point| point.y);
+                let seen = stroke.width > 0.0 && !stroke.is_empty();
+                let spans = (points[0].x..=points[1].x).contains(&chip.center().x);
+                seen && a == b && (a - chip.bottom()).abs() <= 1.0 && spans
+            }
+            _ => false,
+        });
+        assert!(!floor, "{}: an edge under the active tab", theme.name);
+        let tab = app.active_tab();
+        let connected = tab.feed_connection == quantick_feed::FeedConnectionState::Connected;
+        let feed = TabFeed::of(tab.replay.is_some(), connected, tab.needs_attention());
+        let ink = palette.color(feed_token(crate::tabstrip::feed_mark(feed)));
+        let marked = output.shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Circle(circle) => {
+                chip.contains(circle.center) && (circle.fill == ink || circle.stroke.color == ink)
+            }
+            egui::Shape::Path(path) => chip.contains(path.points[0]) && path.fill == ink,
+            _ => false,
+        });
+        assert!(marked, "{}: the {feed:?} mark in its token", theme.name);
+    }
+    assert_ne!(strips[0], strips[1], "Light has its own strip");
 }
 
 /// The Home tab's own widget, to focus it directly rather than by Tab order.

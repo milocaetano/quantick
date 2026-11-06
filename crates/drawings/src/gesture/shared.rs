@@ -214,6 +214,7 @@ impl DrawingProjection<'_> {
                 .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
                 .collect();
             let mut ctxt = DrawContext {
+                appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
                 payload: drawing.payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
@@ -284,7 +285,7 @@ impl DrawingProjection<'_> {
         source: SharedSource<'_>,
         bands: &[Band],
         (history_right, total): (f32, usize),
-        text: &dyn TextMetrics,
+        (text, appearance): (&dyn TextMetrics, &quantick_appearance::ResolvedTheme),
         paint: &mut dyn FnMut(PxRect, &MarkScene),
     ) {
         for (index, drawing) in source.drawings.items().iter().enumerate() {
@@ -331,6 +332,7 @@ impl DrawingProjection<'_> {
                 // leave the gesture with no visible subject.
                 let selected = source.drawings.selected_id() == Some(drawing.id);
                 let ctxt = DrawContext {
+                    appearance,
                     payload: drawing.payload.as_ref(),
                     anchors: &anchors,
                     scale: &scale,

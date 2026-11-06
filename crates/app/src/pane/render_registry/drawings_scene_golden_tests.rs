@@ -217,6 +217,7 @@ fn paint(fixture: &Fixture, selected: bool) -> Vec<egui::epaint::ClippedShape> {
         .collect();
     let style = DrawingStyle::default();
     let ctxt = DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload: fixture.payload.as_ref(),
         anchors: &anchors,
         scale: &fixture.scale,
@@ -244,6 +245,7 @@ fn paint(fixture: &Fixture, selected: bool) -> Vec<egui::epaint::ClippedShape> {
             .with_clip_rect(CHART);
         let fonts = TextFonts(ctx);
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             text: &fonts,
             ..ctxt
         };

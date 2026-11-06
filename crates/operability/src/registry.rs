@@ -178,4 +178,19 @@ pub const NOT_A_BEHAVIOUR: &[(Source, &str, &str)] = &[
         "a capture hook that opens the toolbar's history caret. The behaviour behind it is \
          `history.reach.set`",
     ),
+    (
+        Source::ScriptedMenu,
+        "theme",
+        "a capture hook opening the native Theme menu; appearance.apply owns its choices",
+    ),
+    (
+        Source::ScriptedMenu,
+        "theme-dark",
+        "a scripted native Dark click; appearance.apply owns the same publication",
+    ),
+    (
+        Source::ScriptedMenu,
+        "theme-light",
+        "a scripted native Light click; appearance.apply owns the same publication",
+    ),
 ];

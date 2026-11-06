@@ -190,6 +190,7 @@ impl StrategyPopupSurface {
         env: &SurfaceEnv<'_>,
         test_alert: &mut Option<Cue>,
     ) {
+        let palette = theme::get(ui.ctx());
         // Taken before the early return below, so it is a one-shot whatever
         // the form looks like. Left until the combo row, a staged flag on a
         // form whose alarm box is clear would survive to a later arming and
@@ -240,7 +241,7 @@ impl StrategyPopupSurface {
                  to take would occupy the account and silence the next signal.",
             );
         if let Some(reason) = env.alert_failure {
-            ui.colored_label(theme::SELL, format!("no sound was played: {reason}"));
+            ui.colored_label(palette.sell(), format!("no sound was played: {reason}"));
         }
     }
 }
@@ -590,8 +591,9 @@ impl StrategyPopup {
     /// refusal the trader has to scroll to find reads as a dialog that did
     /// nothing.
     fn footer(&self, ui: &mut egui::Ui) -> Option<Footer> {
+        let palette = theme::get(ui.ctx());
         if let Some(error) = &self.error {
-            ui.colored_label(theme::SELL, error);
+            ui.colored_label(palette.sell(), error);
         }
         ui.separator();
         let mut pressed = None;

@@ -13,11 +13,11 @@ use quantick_control_handlers::bubble_preset::TickSpherePane;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
-use crate::orderflow_render::{draw_preview, theme_bubble_rgb};
+use crate::orderflow_render::draw_preview;
 use crate::ui_state::PanelSection;
 
 use super::OrderflowView;
-use super::frame::status_color;
+use quantick_orderflow::status_appearance::status_token;
 
 mod bubble_sections;
 mod l2_sections;
@@ -84,7 +84,7 @@ impl OrderflowView {
                 .on_hover_text("write the current bubble settings to the presets file as a preset any asset can pick")
                 .clicked()
             {
-                self.look.save_preset(&self.config, bubble_presets::save);
+                self.look.save_preset_with(&self.config, &crate::theme::get(ui.ctx()).resolved.orderflow, bubble_presets::save);
             }
             if ui
                 .add_enabled(self.look.draft_is_stored(), egui::Button::new("delete"))
@@ -102,7 +102,12 @@ impl OrderflowView {
                 .get(index)
                 .map(|preset| preset.name.clone())
         {
-            self.look.apply_preset(&name, &mut self.config, spheres);
+            self.look.apply_preset_with(
+                &name,
+                &mut self.config,
+                spheres,
+                &crate::theme::get(ui.ctx()).resolved.orderflow,
+            );
         }
         ui.small(format!("presets · {}", self.look.source()));
         let mut save_switched = None;
@@ -154,12 +159,13 @@ impl OrderflowView {
     /// The layer's *toggle* lives in the toolbar; this body is settings only —
     /// opening it never starts capture (looking is not enabling).
     pub fn draw_l2_tab(&mut self, ui: &mut egui::Ui) -> bool {
+        let palette = crate::theme::get(ui.ctx());
         self.sync_published();
         let before = self.config.clone();
         ui.label(
             egui::RichText::new(self.published.status.label())
                 .small()
-                .color(status_color(&self.published.status)),
+                .color(*palette.get(status_token(&self.published.status))),
         );
         ui.small("Brightness is resting liquidity. Green/red bubbles are confirmed trades.");
         ui.small(
@@ -256,7 +262,10 @@ impl OrderflowView {
     /// how prints fold, the live lane, then the bubbles themselves — size and
     /// placement, the marks a consuming print leaves, labels, and colour.
     fn draw_bubble_controls(&mut self, ui: &mut egui::Ui) {
-        let theme_rgb = theme_bubble_rgb(self.config.theme);
+        let theme_rgb = self
+            .config
+            .palette
+            .bubble_rgb(&crate::theme::get(ui.ctx()).resolved.orderflow);
         let config = &mut self.config;
         ClusteringSection {
             config: &mut *config,

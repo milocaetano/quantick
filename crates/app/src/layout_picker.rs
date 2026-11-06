@@ -176,6 +176,7 @@ fn draw_cell(
     selected: bool,
     index: usize,
 ) -> egui::Response {
+    let palette = theme::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(CELL_SIZE, egui::Sense::click());
     let hint = if index < SHORTCUT_KEYS {
         format!("{} (Ctrl+{})", preset.label, index + 1)
@@ -189,13 +190,13 @@ fn draw_cell(
     let painter = ui.painter();
 
     if response.hovered() {
-        painter.rect_filled(rect, CORNER_RADIUS, theme::CONTROL);
+        painter.rect_filled(rect, CORNER_RADIUS, palette.control());
     }
     if selected {
         painter.rect_stroke(
             rect,
             CORNER_RADIUS,
-            egui::Stroke::new(SELECTED_STROKE_PX, theme::ACCENT),
+            egui::Stroke::new(SELECTED_STROKE_PX, palette.accent()),
         );
     }
 
@@ -211,16 +212,16 @@ fn draw_cell(
     // The label carries the selection in weight as well as in colour: a ring
     // alone asks the reader to discriminate a hue against a busy chrome.
     let label_colour = if selected || response.hovered() {
-        theme::TEXT_PRIMARY
+        palette.text_primary()
     } else {
-        theme::TEXT_MUTED
+        palette.text_muted()
     };
     // Wrapped to the cell, never past it. An unwrapped label crosses the
     // selection ring and reads as a broken widget — which is what a preset
     // name one pane longer than today's would have done.
     let mut job = egui::text::LayoutJob::simple(
         preset.label.to_owned(),
-        egui::FontId::proportional(LABEL_SIZE_PX),
+        palette.body_font(LABEL_SIZE_PX),
         label_colour,
         rect.width() - LABEL_INSET_PX * 2.0,
     );
@@ -243,13 +244,15 @@ fn draw_cell(
 /// the heatmap is the protagonist, and the picture says where it will be
 /// before the trader commits to the layout.
 fn draw_thumbnail(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
-    painter.rect_filled(rect, THUMBNAIL_RADIUS_PX, theme::INSET);
+    let palette = theme::get(painter.ctx());
+    painter.rect_filled(rect, THUMBNAIL_RADIUS_PX, palette.inset());
     draw_panes(painter, rect, preset);
 }
 
 /// The miniature's panes and frame without its backdrop, so the toolbar
 /// button's own hover and active tint stay visible behind its face.
 fn draw_panes(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
+    let palette = theme::get(painter.ctx());
     let count = preset.kinds.len().max(1);
     // The flow pane is drawn wider than the context panes for the same reason
     // it is wider on the canvas. An even miniature would promise a layout the
@@ -280,12 +283,12 @@ fn draw_panes(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) 
             painter.rect_filled(
                 block.shrink(1.0),
                 THUMBNAIL_RADIUS_PX,
-                theme::active_tint(theme::ACCENT),
+                theme::active_tint(palette.accent()),
             );
             painter.rect_stroke(
                 block.shrink(1.0),
                 THUMBNAIL_RADIUS_PX,
-                egui::Stroke::new(THUMBNAIL_STROKE_PX, theme::ACCENT),
+                egui::Stroke::new(THUMBNAIL_STROKE_PX, palette.accent()),
             );
         }
         if index + 1 < count {
@@ -294,7 +297,7 @@ fn draw_panes(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) 
                     egui::pos2(block.right(), rect.top()),
                     egui::pos2(block.right(), rect.bottom()),
                 ],
-                egui::Stroke::new(THUMBNAIL_STROKE_PX, theme::TEXT_FAINT),
+                egui::Stroke::new(THUMBNAIL_STROKE_PX, palette.text_faint()),
             );
         }
         left = block.right();
@@ -302,7 +305,7 @@ fn draw_panes(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) 
     painter.rect_stroke(
         rect,
         THUMBNAIL_RADIUS_PX,
-        egui::Stroke::new(THUMBNAIL_STROKE_PX, theme::TEXT_FAINT),
+        egui::Stroke::new(THUMBNAIL_STROKE_PX, palette.text_faint()),
     );
 }
 

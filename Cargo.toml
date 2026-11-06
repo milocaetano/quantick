@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/appearance",
     "crates/anchored-studies",
     "crates/backpressure",
     "crates/chart",

@@ -856,3 +856,7 @@ mod bubble_asset_store_save_tests;
 #[cfg(test)]
 #[path = "bubble_asset_store_tests.rs"]
 pub(crate) mod bubble_asset_store_tests;
+
+#[cfg(test)]
+#[path = "bubble_palette_tests.rs"]
+mod bubble_palette_tests;

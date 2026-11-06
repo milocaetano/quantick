@@ -104,6 +104,7 @@ pub struct IconPaint {
 /// whichever state won — a keyboard affordance, not a state of its own.
 #[must_use]
 pub fn icon_paint(
+    palette: &theme::Palette,
     enabled: bool,
     pressed: bool,
     active: bool,
@@ -113,7 +114,7 @@ pub fn icon_paint(
     if !enabled {
         return IconPaint {
             fill: None,
-            glyph: theme::TEXT_MUTED.gamma_multiply(DISABLED_OPACITY),
+            glyph: palette.text_muted().gamma_multiply(DISABLED_OPACITY),
         };
     }
     if pressed {
@@ -130,13 +131,13 @@ pub fn icon_paint(
     }
     if hovered {
         return IconPaint {
-            fill: Some(theme::BORDER),
-            glyph: theme::TEXT_PRIMARY,
+            fill: Some(palette.border()),
+            glyph: palette.text_primary(),
         };
     }
     IconPaint {
         fill: None,
-        glyph: theme::TEXT_MUTED,
+        glyph: palette.text_muted(),
     }
 }
 
@@ -149,7 +150,7 @@ pub struct IconButton<'a> {
     size: IconSize,
     active: bool,
     enabled: bool,
-    accent: egui::Color32,
+    accent: Option<egui::Color32>,
     hover_text: &'a str,
     disabled_text: &'a str,
     marker_edge: Option<MarkerEdge>,
@@ -167,7 +168,7 @@ impl<'a> IconButton<'a> {
             size,
             active: false,
             enabled: true,
-            accent: theme::ACCENT,
+            accent: None,
             hover_text: "",
             disabled_text: "",
             marker_edge: None,
@@ -214,7 +215,7 @@ impl<'a> IconButton<'a> {
     /// The accent that tints the active state — the owning layer's colour.
     #[must_use]
     pub fn accent(mut self, accent: egui::Color32) -> Self {
-        self.accent = accent;
+        self.accent = Some(accent);
         self
     }
 
@@ -243,6 +244,8 @@ impl<'a> IconButton<'a> {
     /// Draw the button and return its response. Clicks only register while
     /// enabled; the disabled state still hovers so it can explain itself.
     pub fn show(self, ui: &mut egui::Ui) -> egui::Response {
+        let palette = theme::get(ui.ctx());
+        let accent = self.accent.unwrap_or(palette.accent());
         let sense = if self.enabled {
             egui::Sense::click()
         } else {
@@ -252,11 +255,12 @@ impl<'a> IconButton<'a> {
             ui.allocate_exact_size(egui::vec2(self.size.hit, self.size.hit), sense);
         if ui.is_rect_visible(rect) {
             let paint = icon_paint(
+                &palette,
                 self.enabled,
                 response.is_pointer_button_down_on(),
                 self.active,
                 response.hovered(),
-                self.accent,
+                accent,
             );
             let painter = ui.painter();
             if let Some(fill) = paint.fill {
@@ -285,13 +289,13 @@ impl<'a> IconButton<'a> {
             if self.active
                 && let Some(edge) = self.marker_edge
             {
-                painter.rect_filled(edge.bar(rect), egui::Rounding::same(1.0), self.accent);
+                painter.rect_filled(edge.bar(rect), egui::Rounding::same(1.0), accent);
             }
             if response.has_focus() {
                 painter.rect_stroke(
                     rect.shrink(1.0),
                     egui::Rounding::same(CORNER_RADIUS),
-                    egui::Stroke::new(FOCUS_RING_WIDTH_PX, self.accent),
+                    egui::Stroke::new(FOCUS_RING_WIDTH_PX, accent),
                 );
             }
         }
@@ -376,6 +380,7 @@ pub fn paint_vector_icon(
 /// too), buttons right, Enter's in the accent; Esc and Enter press theirs.
 pub fn ask(ctx: &egui::Context, prompt: &quantick_session::prompt::Prompt) -> Option<usize> {
     let (id, screen, mut chosen) = (egui::Id::new(prompt.id.as_str()), ctx.screen_rect(), None);
+    let palette = theme::get(ctx);
     let scrim = egui::Area::new(id.with("scrim")).order(egui::Order::Tooltip);
     scrim.fixed_pos(screen.min).show(ctx, |ui| {
         ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag())
@@ -389,13 +394,17 @@ pub fn ask(ctx: &egui::Context, prompt: &quantick_session::prompt::Prompt) -> Op
         .show(ctx, |ui| {
             ui.label(prompt.body.as_str());
             if let Some(note) = &prompt.note {
-                ui.label(egui::RichText::new(note).small().color(theme::TEXT_SUPPORT));
+                ui.label(
+                    egui::RichText::new(note)
+                        .small()
+                        .color(palette.text_support()),
+                );
             }
             let (font, gap) = (egui::TextStyle::Button.resolve(ui.style()), ui.spacing());
             let pad = gap.button_padding.x * 2.0 + gap.item_spacing.x;
             let wide = |label: &String| {
                 let galley =
-                    ui.fonts(|f| f.layout_no_wrap(label.clone(), font.clone(), theme::ACCENT));
+                    ui.fonts(|f| f.layout_no_wrap(label.clone(), font.clone(), palette.accent()));
                 galley.size().x + pad
             };
             let width = prompt.buttons.iter().map(wide).sum::<f32>();
@@ -404,7 +413,7 @@ pub fn ask(ctx: &egui::Context, prompt: &quantick_session::prompt::Prompt) -> Op
             ui.allocate_ui_with_layout(row, layout, |ui| {
                 for (at, label) in prompt.buttons.iter().enumerate().rev() {
                     let button = if at == prompt.enter {
-                        accent_button(label)
+                        accent_button(&palette, label)
                     } else {
                         egui::Button::new(label.as_str())
                     };
@@ -426,11 +435,11 @@ pub fn ask(ctx: &egui::Context, prompt: &quantick_session::prompt::Prompt) -> Op
 }
 
 /// A button in the accent: Enter's answer, or the Save held edits wait for.
-pub fn accent_button(label: &str) -> egui::Button<'static> {
-    let text = egui::RichText::new(label).color(theme::ACCENT);
-    egui::Button::new(text)
-        .fill(theme::active_tint(theme::ACCENT))
-        .stroke((1.0, theme::ACCENT.gamma_multiply(0.5)))
+pub fn accent_button(palette: &theme::Palette, label: &str) -> egui::Button<'static> {
+    let accent = palette.accent();
+    egui::Button::new(egui::RichText::new(label).color(accent))
+        .fill(theme::active_tint(accent))
+        .stroke((1.0, accent.gamma_multiply(0.5)))
 }
 
 #[cfg(test)]
@@ -463,6 +472,24 @@ mod tests {
     /// branch that used to have no way to say a word — so a regression here
     /// would be silent: the lines would still be there and the button would
     /// still work, with the one mark that says which Fibonacci it is gone.
+    #[test]
+    fn light_controls_use_resolved_ink_and_keep_explicit_accents() {
+        let ctx = egui::Context::default();
+        let mut state = quantick_appearance::Appearance::default();
+        state.apply(quantick_appearance::LIGHT).unwrap();
+        theme::sync(&ctx, &state);
+        let palette = theme::get(&ctx);
+        let idle = icon_paint(&palette, true, false, false, false, palette.accent());
+        assert_eq!(idle.glyph, palette.text_muted());
+        assert_ne!(idle.glyph, theme::TEXT_MUTED);
+        let explicit = theme::ACCENT;
+        let active = icon_paint(&palette, true, false, true, false, explicit);
+        assert_eq!(active.glyph, explicit);
+        assert_eq!(active.fill, Some(theme::active_tint(explicit)));
+        assert_eq!(palette.ink(quantick_engine::Side::Buy), palette.buy_ink());
+        assert_eq!(palette.drawing_swatches()[0], palette.accent());
+    }
+
     #[test]
     fn a_vector_icon_paints_the_letter_it_was_given() {
         let strokes: crate::drawings::IconStrokes = &[&[(0.4, 0.9), (0.9, 0.2)]];
@@ -499,14 +526,28 @@ mod tests {
 
     #[test]
     fn idle_is_muted_on_bare_chrome() {
-        let paint = icon_paint(true, false, false, false, theme::ACCENT);
+        let paint = icon_paint(
+            &theme::get(&egui::Context::default()),
+            true,
+            false,
+            false,
+            false,
+            theme::ACCENT,
+        );
         assert_eq!(paint.fill, None);
         assert_eq!(paint.glyph, theme::TEXT_MUTED);
     }
 
     #[test]
     fn hover_lifts_the_glyph_on_a_border_fill() {
-        let paint = icon_paint(true, false, false, true, theme::ACCENT);
+        let paint = icon_paint(
+            &theme::get(&egui::Context::default()),
+            true,
+            false,
+            false,
+            true,
+            theme::ACCENT,
+        );
         assert_eq!(paint.fill, Some(theme::BORDER));
         assert_eq!(paint.glyph, theme::TEXT_PRIMARY);
     }
@@ -514,7 +555,14 @@ mod tests {
     #[test]
     fn active_tints_in_the_layer_accent_even_under_hover() {
         for hovered in [false, true] {
-            let paint = icon_paint(true, false, true, hovered, theme::BUY);
+            let paint = icon_paint(
+                &theme::get(&egui::Context::default()),
+                true,
+                false,
+                true,
+                hovered,
+                theme::BUY,
+            );
             assert_eq!(paint.fill, Some(theme::active_tint(theme::BUY)));
             assert_eq!(paint.glyph, theme::BUY);
         }
@@ -526,14 +574,28 @@ mod tests {
         for pressed in [false, true] {
             for active in [false, true] {
                 for hovered in [false, true] {
-                    let disabled = icon_paint(false, pressed, active, hovered, theme::ACCENT);
+                    let disabled = icon_paint(
+                        &theme::get(&egui::Context::default()),
+                        false,
+                        pressed,
+                        active,
+                        hovered,
+                        theme::ACCENT,
+                    );
                     assert_eq!(disabled.fill, None, "disabled beats everything");
                     assert!(
                         disabled.glyph.a() < theme::TEXT_MUTED.a(),
                         "disabled glyph must be dimmer than idle"
                     );
 
-                    let paint = icon_paint(true, pressed, active, hovered, theme::ACCENT);
+                    let paint = icon_paint(
+                        &theme::get(&egui::Context::default()),
+                        true,
+                        pressed,
+                        active,
+                        hovered,
+                        theme::ACCENT,
+                    );
                     let expected_fill = if pressed {
                         Some(theme::press_tint(theme::ACCENT))
                     } else if active {

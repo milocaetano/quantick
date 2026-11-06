@@ -486,7 +486,7 @@ fn measure_book() {
         show_aggressions: true,
         ..HeatmapConfig::default()
     };
-    worker.send(BookCommand::ApplyVisualConfig(config));
+    worker.send(BookCommand::ApplyVisualConfig(Box::new(config)));
     worker.send(BookCommand::SetEnabled {
         enabled: true,
         generation_floor: 10,

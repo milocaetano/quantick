@@ -102,6 +102,7 @@ pub fn draw(
     reserve_px: f32,
     bars: impl FnOnce(&mut egui::Ui),
 ) -> HeaderLayout {
+    let palette = theme::get(ui.ctx());
     let mut changed = false;
     #[cfg(test)]
     let mut chips = [egui::Rect::NOTHING; PRESETS.len()];
@@ -123,14 +124,14 @@ pub fn draw(
         for (label, preset_ms) in PRESETS {
             let selected = *interval_ms == preset_ms;
             let ink = if selected {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             };
             let chip = content.add(
                 egui::Button::new(
                     egui::RichText::new(label)
-                        .font(egui::FontId::monospace(PRESET_SIZE))
+                        .font(palette.mono_font(PRESET_SIZE))
                         .color(ink),
                 )
                 .frame(false),
@@ -139,7 +140,7 @@ pub fn draw(
                 let patch = egui::Rounding::same(crate::pane_header::HOVER_ROUNDING);
                 content
                     .painter()
-                    .rect_filled(chip.rect, patch, theme::BARE_HOVER);
+                    .rect_filled(chip.rect, patch, theme::get(ui.ctx()).bare_hover());
             }
             #[cfg(test)]
             if let Some(slot) = recorded.next() {
@@ -156,7 +157,8 @@ pub fn draw(
         let fits = content.available_width() >= indicators_px + reserve_px + MIN_INTERVAL_FIELD_PX;
         let widgets = &mut content.visuals_mut().widgets;
         (widgets.inactive.weak_bg_fill, widgets.inactive.bg_stroke) = (TRANSPARENT, NO_LINE);
-        (widgets.hovered.weak_bg_fill, widgets.hovered.bg_stroke) = (theme::BARE_HOVER, NO_LINE);
+        (widgets.hovered.weak_bg_fill, widgets.hovered.bg_stroke) =
+            (theme::get(ui.ctx()).bare_hover(), NO_LINE);
         let interval = (fits
             && quantick_engine::time_bucket::calendar_months(*interval_ms).is_none())
         .then(|| {

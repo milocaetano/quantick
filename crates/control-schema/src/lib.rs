@@ -61,3 +61,5 @@ pub mod workspace;
 pub mod workspace_book;
 
 pub mod indicator_picker;
+
+pub mod appearance;

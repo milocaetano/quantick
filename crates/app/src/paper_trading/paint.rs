@@ -59,7 +59,9 @@ impl PaperTrading {
         pointer: Option<egui::Pos2>,
         aimed_here: bool,
     ) {
+        let palette = theme::get(painter.ctx());
         let ctx = PaintCtx {
+            palette: palette.clone(),
             painter,
             chart_rect,
             tag_right,
@@ -115,7 +117,7 @@ impl PaperTrading {
             // trades. Four accent-dashed `SELL LMT 1` rows over a long the
             // trader is already holding is the misreading this surface
             // cannot afford.
-            let color = order_line_color(order.role);
+            let color = order_line_color(&palette, order.role);
             ctx.level_line(y, color, true, LINE_WIDTH_PX, hovered, dragged);
             ctx.gutter_chip(y, color, &fmt_decimal(shown));
             // Resting, the pill states what the gutter chip cannot — which
@@ -166,7 +168,7 @@ impl PaperTrading {
         // it, because the tag's rect is only known once it is drawn.
         let mut position_reveal = false;
         if let Some(position) = self.account.venue().position().cloned() {
-            let color = theme::side_color(position.side);
+            let color = palette.side_color(position.side);
             let entry_y = ctx.scale.y(position.avg_price.to_f64().unwrap_or_default());
             if ctx.in_range(entry_y) {
                 ctx.level_line(entry_y, color, false, POSITION_LINE_WIDTH_PX, false, false);
@@ -184,7 +186,7 @@ impl PaperTrading {
                     .map(|open| {
                         (
                             self.account.pnl_compact(open, position.quantity),
-                            points_color(open),
+                            points_color(&palette, open),
                         )
                     });
                 let line_hovered = ctx.hovers_line(entry_y);
@@ -215,8 +217,8 @@ impl PaperTrading {
                 chart_rect.left_bottom() + egui::vec2(8.0, -8.0),
                 egui::Align2::LEFT_BOTTOM,
                 hint,
-                egui::FontId::proportional(12.0),
-                theme::ACCENT,
+                palette.body_font(12.0),
+                palette.accent(),
             );
         }
 
@@ -235,6 +237,7 @@ impl PaperTrading {
     /// the 1:1 read. Under a strategy the whole ladder is drawn instead,
     /// every rung of it, before the click.
     pub(super) fn draw_aim_bracket(&self, ctx: &PaintCtx<'_>, preview: &CmdPreview) {
+        let palette = &ctx.palette;
         if preview.bracket.is_empty() {
             return;
         }
@@ -242,8 +245,8 @@ impl PaperTrading {
         let pnl = self.account.symbol_pnl();
         for part in preview.bracket.parts() {
             for (level, leg, color) in [
-                (part.stop_loss, Leg::StopLoss, theme::SELL),
-                (part.take_profit, Leg::TakeProfit, theme::BUY),
+                (part.stop_loss, Leg::StopLoss, palette.sell()),
+                (part.take_profit, Leg::TakeProfit, palette.buy()),
             ] {
                 let Some(level) = level else { continue };
                 let y = ctx.scale.y(level.to_f64().unwrap_or_default());
@@ -285,6 +288,7 @@ impl PaperTrading {
         reference: Decimal,
         bracket: Bracket,
     ) {
+        let palette = &ctx.palette;
         let order = match owner {
             BracketTarget::Order(id) => Some(id),
             BracketTarget::Position => None,
@@ -295,7 +299,7 @@ impl PaperTrading {
                 (part.take_profit, Leg::TakeProfit),
             ] {
                 let Some(level) = level else { continue };
-                let color = leg_color(leg);
+                let color = leg_color(palette, leg);
                 // The rung being hauled follows the pointer, exactly as a
                 // whole bracket's leg does: what the trader sees moving is
                 // what the release will submit.
@@ -360,6 +364,7 @@ impl PaperTrading {
         pending: bool,
         reveal: bool,
     ) {
+        let palette = &ctx.palette;
         let Some((side, reference, bracket, quantity)) = self.account.bracket_owner(owner) else {
             return;
         };
@@ -416,7 +421,7 @@ impl PaperTrading {
         for leg in missing {
             let rect =
                 bracket_handle_rect(ctx.tag_right, center, leg.sits_above_entry(side) != flip);
-            ctx.bracket_handle(rect, leg.word(), leg_color(leg));
+            ctx.bracket_handle(rect, leg.word(), leg_color(palette, leg));
         }
     }
 
@@ -428,6 +433,7 @@ impl PaperTrading {
     /// form is this frame's [`TagKey::Leg`] answer, so the ✕ is pressable
     /// exactly while it is painted.
     fn draw_bracket_leg(&self, ctx: &PaintCtx<'_>, paint: &LegPaint) {
+        let palette = &ctx.palette;
         let identity = (paint.owner, paint.leg);
         let drag = self.desk.gesture.drag;
         let amending = matches!(drag, PaperDrag::Leg { owner, leg } if (owner, leg) == identity);
@@ -451,7 +457,7 @@ impl PaperTrading {
         } else {
             paint.level.unwrap_or_else(|| self.account.snap(price))
         };
-        let color = leg_color(paint.leg);
+        let color = leg_color(palette, paint.leg);
         // Dashed while it is being created (it is not placed yet) and while
         // it rides an unfilled order (it is a promise that arms on the
         // fill). Solid only once it is a live exit on an open position.
@@ -487,6 +493,7 @@ impl PaperTrading {
     /// the pointer to the price on the axis, so it spans the whole way
     /// rather than hugging the edge.
     pub(super) fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>, aimed_here: bool) {
+        let palette = &ctx.palette;
         if self.desk.gesture.cmd_preview.is_none() {
             return;
         }
@@ -508,7 +515,7 @@ impl PaperTrading {
             }
             None => return,
         };
-        let color = theme::side_color(preview.side);
+        let color = palette.side_color(preview.side);
         let (start, end, label) = cmd_preview_layout(band, ctx.axis_x, pos(preview.pointer));
         // The gesture in progress reads a step above a resting order's
         // line: this is the one thing on the chart the next click acts on.
@@ -527,16 +534,16 @@ impl PaperTrading {
             kind_word(preview.kind),
             quantity,
         );
-        let galley =
-            ctx.painter
-                .layout_no_wrap(text, egui::FontId::monospace(11.0), theme::CHIP_INK);
+        let galley = ctx
+            .painter
+            .layout_no_wrap(text, palette.mono_font(11.0), palette.chip_ink());
         ctx.painter.galley(
             egui::pos2(
                 label.center().x - galley.size().x / 2.0,
                 label.center().y - galley.size().y / 2.0,
             ),
             galley,
-            theme::CHIP_INK,
+            palette.chip_ink(),
         );
         self.draw_aim_bracket(ctx, &preview);
         // The wheel is an invisible affordance, and with no strategy armed
@@ -551,8 +558,8 @@ impl PaperTrading {
                 egui::pos2(label.center().x, label.max.y + 3.0),
                 egui::Align2::CENTER_TOP,
                 "roll the wheel for a stop and target",
-                egui::FontId::proportional(10.0),
-                theme::TEXT_SUPPORT,
+                palette.body_font(10.0),
+                palette.text_support(),
             );
         }
     }
@@ -563,7 +570,8 @@ impl PaperTrading {
 /// click is the aiming pane's. Orders and the aim wear a solid chip and a 4/4
 /// dash; the echo, no order, wears neither (`AIM_ECHO_*`).
 fn draw_aim_echo(ctx: &PaintCtx<'_>, band: egui::Rect, side: Side, y: f32, price: Decimal) {
-    let color = theme::side_color(side);
+    let palette = &ctx.palette;
+    let color = palette.side_color(side);
     let ends = [egui::pos2(band.left(), y), egui::pos2(band.right(), y)];
     let stroke = egui::Stroke::new(AIM_ECHO_WIDTH_PX, color.gamma_multiply(AIM_ECHO_ALPHA));
     dashed_run(ctx, ends, stroke, AIM_ECHO_DASH_PX, AIM_ECHO_GAP_PX);
@@ -588,11 +596,11 @@ fn dashed_run(
 
 /// A working order's line colour: accent for an entry waiting to trade, the
 /// leg's own side colour for protection guarding a position.
-fn order_line_color(role: OrderRole) -> egui::Color32 {
+fn order_line_color(palette: &crate::theme::Palette, role: OrderRole) -> egui::Color32 {
     match role {
-        OrderRole::Entry => theme::ACCENT,
-        OrderRole::StopLoss => theme::SELL,
-        OrderRole::TakeProfit => theme::BUY,
+        OrderRole::Entry => palette.accent(),
+        OrderRole::StopLoss => palette.sell(),
+        OrderRole::TakeProfit => palette.buy(),
     }
 }
 

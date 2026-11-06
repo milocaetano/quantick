@@ -8,7 +8,6 @@
 //! effects land on, and one name for both would make the import at the top
 //! of `app.rs` ambiguous to a reader.
 
-use crate::candle_presets::PresetError;
 use crate::chart_layers;
 use crate::footprint_config::FootprintConfig;
 use crate::style::ChartStyle;
@@ -16,7 +15,6 @@ use crate::surfaces::{ChartSettingsSurface, ChartSettingsTab, FootprintChange};
 use crate::tab::Tab;
 use crate::workspace_store::WorkspaceStore;
 use eframe::egui;
-use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
 
 use super::arrangement_host::ArrangementHost;
 
@@ -27,6 +25,7 @@ pub(crate) struct LayerWiring<'a> {
     pub(super) tabs: &'a mut ArrangementHost,
     pub(super) workspace: &'a mut WorkspaceStore,
     pub(super) style: &'a mut ChartStyle,
+    pub(super) appearance: &'a quantick_appearance::Appearance,
     pub(super) style_revision: &'a mut u64,
     pub(super) footprint_config: &'a mut FootprintConfig,
     pub(super) chart_settings: &'a mut ChartSettingsSurface,
@@ -42,93 +41,22 @@ impl LayerWiring<'_> {
         layer: chart_layers::ChartLayer,
         visible: bool,
     ) {
+        if layer == chart_layers::ChartLayer::Grid {
+            self.tabs
+                .runtime_mut(tab)
+                .pane_mut(side)
+                .presentation
+                .candles
+                .set_grid(self.style, visible);
+            *self.style_revision = self.style_revision.saturating_add(1);
+            return;
+        }
         self.tabs.runtime_mut(tab).pane_mut(side).set_layer_visible(
             layer,
             visible,
             &mut self.workspace.layers_mut().actions,
         );
         self.apply_actions();
-    }
-
-    /// The control plane's `chart.settings.set`: the same window and the
-    /// same preset store the clicks reach, so a named call and a click cannot
-    /// disagree — and a style change leaves the same appearance log line a
-    /// click does. `Err` says whether the call was refused or its write
-    /// failed; either way nothing changed.
-    pub(crate) fn chart_settings(
-        &mut self,
-        input: ChartSettingsInput,
-    ) -> Result<ChartSettingsResult, PresetError> {
-        let settings = &mut *self.chart_settings;
-        let window_before = (settings.is_open(), settings.tab());
-        let style_before = *self.style;
-        let mut list_changed = false;
-        let mut applied_preset = None;
-        match input {
-            ChartSettingsInput::Open { tab } => settings.open(tab, style_before),
-            ChartSettingsInput::Close => settings.close(),
-            ChartSettingsInput::ApplyCandlePreset { name } => {
-                let (look, preset) =
-                    settings
-                        .candles
-                        .apply(&name, &style_before)
-                        .ok_or(PresetError::Refused(
-                            "no built-in or saved candle preset has that name",
-                        ))?;
-                *self.style = look;
-                applied_preset = preset;
-            }
-            ChartSettingsInput::SaveCandlePreset { name } => {
-                let before = settings.candles.saved(&name);
-                settings.candles.save(&name, style_before)?;
-                list_changed = before != Some(style_before);
-            }
-            ChartSettingsInput::DeleteCandlePreset { name } => {
-                if crate::style::CandlePreset::from_name(&name).is_some() {
-                    return Err(PresetError::Refused("built-in presets cannot be deleted"));
-                }
-                list_changed = settings.candles.delete(&name)?;
-            }
-            ChartSettingsInput::ResetCandles => {
-                if !settings.candles.in_sitting() {
-                    return Err(PresetError::Refused(
-                        "the chart settings window is closed; reset restores the appearance it \
-                         opened on",
-                    ));
-                }
-                if let Some(look) = settings.candles.reset(&style_before) {
-                    *self.style = look;
-                }
-            }
-        }
-        let style_changed = *self.style != style_before;
-        if style_changed {
-            *self.style_revision = self.style_revision.saturating_add(1);
-            // A click reaches this line through the window's debounce; a
-            // named call is one discrete change, so it is recorded at once.
-            super::health::emit_style_changed(self.style, *self.style_revision, applied_preset);
-        }
-        let settings = &*self.chart_settings;
-        Ok(ChartSettingsResult {
-            open: settings.is_open(),
-            tab: settings.tab(),
-            candle_preset: settings.candles.matching(self.style),
-            built_in_presets: crate::style::CandlePreset::ALL
-                .iter()
-                .map(|preset| preset.label().to_owned())
-                .collect(),
-            custom_presets: settings.candles.custom_names(),
-            changed: style_changed
-                || list_changed
-                || window_before != (settings.is_open(), settings.tab()),
-        })
-    }
-
-    /// Open the chart settings at `tab` over the look in force — the door
-    /// the toolbar, the menus and the pane share, so each starts the sitting
-    /// Reset returns to.
-    pub(crate) fn open_settings(&mut self, tab: ChartSettingsTab) {
-        self.chart_settings.open(tab, *self.style);
     }
 
     /// What a pane's layer menu could not switch itself.
@@ -143,10 +71,22 @@ impl LayerWiring<'_> {
             self.set_bar_progress(self.tabs.id_at(self.tabs.active_index()), on);
         }
         if let Some(visible) = actions.grid {
-            self.style.canvas.grid_enabled = visible;
-            // The appearance panel's own edits bump this; the renderer and the
-            // style log both read it to know something moved.
-            *self.style_revision = self.style_revision.saturating_add(1);
+            let tab = self.tabs.runtime_mut(self.tabs.active_index());
+            let side = match actions.grid_pane {
+                Some(id) => tab
+                    .panes()
+                    .find(|(pane, _)| pane.id == id)
+                    .map(|(_, side)| side),
+                None => Some(tab.focused_side()),
+            };
+            if let Some(side) = side {
+                tab.pane_mut(side)
+                    .presentation
+                    .candles
+                    .set_grid(self.style, visible);
+                // The renderer and style log read this revision.
+                *self.style_revision = self.style_revision.saturating_add(1);
+            }
         }
         if actions.indicators_changed {
             // The same mark `LayoutAdapter::note_indicator_edit_at` leaves:
@@ -166,7 +106,22 @@ impl LayerWiring<'_> {
             self.open_settings(ChartSettingsTab::Footprint);
         }
         if actions.open_chart_settings {
-            self.open_settings(ChartSettingsTab::Candles);
+            let tab_id = self.tabs.active_id();
+            let tab = self.tabs.runtime_mut(self.tabs.active_index());
+            let requested = tab
+                .sides()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .find_map(|side| {
+                    let pane = tab.pane_mut(side);
+                    pane.presentation.candles.take_editor_request().then_some(
+                        quantick_chart::pane_style::StyleTarget {
+                            tab_id,
+                            pane_id: pane.id,
+                        },
+                    )
+                });
+            self.open_target_settings(ChartSettingsTab::Candles, requested);
         }
         let tab = self.tabs.runtime_mut(self.tabs.active_index());
         quantick_chart::pane_header::settings_actions(&mut tab.tape_mut().settings_panel, &actions);
@@ -184,19 +139,28 @@ impl LayerWiring<'_> {
         match change {
             FootprintChange::Applied(edited) => {
                 tab.pane_mut(side)
+                    .presentation
                     .footprint
                     .config
                     .set_own(Some((*edited).clone()));
                 *self.footprint_config = *edited;
                 for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
-                    pane.footprint.config.follow(self.footprint_config);
+                    pane.presentation
+                        .footprint
+                        .config
+                        .follow(self.footprint_config);
                 }
                 crate::footprint_config::save(
                     self.workspace.footprint_settings_path(),
                     self.footprint_config,
                 );
             }
-            FootprintChange::ResetToDefault => tab.pane_mut(side).footprint.config.set_own(None),
+            FootprintChange::ResetToDefault => tab
+                .pane_mut(side)
+                .presentation
+                .footprint
+                .config
+                .set_own(None),
         }
     }
 

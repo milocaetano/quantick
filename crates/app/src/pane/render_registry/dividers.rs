@@ -29,6 +29,7 @@ pub(in crate::pane) struct DividerPass<'a> {
     pub gaps: &'a [quantick_feed::FeedGap],
 }
 fn seam(p: &mut DividerPass<'_>) {
+    let palette = theme::get(p.painter.ctx());
     let DividerPass {
         painter,
         pane,
@@ -52,17 +53,18 @@ fn seam(p: &mut DividerPass<'_>) {
         pane,
         SEAM_DASH_PX,
         SEAM_GAP_PX,
-        theme::SEAM_LINE,
+        palette.seam_line(),
     );
     painter.text(
         egui::pos2(x - SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
         egui::Align2::RIGHT_TOP,
         "venue",
-        egui::FontId::proportional(SEAM_LABEL_PT),
-        theme::SEAM_LABEL,
+        palette.label_font(SEAM_LABEL_PT),
+        palette.seam_label(),
     );
 }
 fn backfill(p: &mut DividerPass<'_>) {
+    let palette = theme::get(p.painter.ctx());
     let DividerPass {
         painter,
         pane,
@@ -88,22 +90,22 @@ fn backfill(p: &mut DividerPass<'_>) {
     }
     painter.line_segment(
         [egui::pos2(x, pane.top()), egui::pos2(x, pane.bottom())],
-        egui::Stroke::new(1.0_f32, theme::AMBER),
+        egui::Stroke::new(1.0_f32, palette.amber()),
     );
-    let font = egui::FontId::proportional(11.0);
+    let font = palette.label_font(11.0);
     painter.text(
         egui::pos2(x - 4.0, pane.bottom() - 4.0),
         egui::Align2::RIGHT_BOTTOM,
         "backfill",
         font.clone(),
-        theme::TEXT_MUTED,
+        palette.text_muted(),
     );
     painter.text(
         egui::pos2(x + 4.0, pane.bottom() - 4.0),
         egui::Align2::LEFT_BOTTOM,
         "live",
         font,
-        theme::AMBER,
+        palette.amber(),
     );
 }
 fn gap_slot(
@@ -115,6 +117,7 @@ fn gap_slot(
     (index < bars.len()).then_some(prefix + index)
 }
 fn feed_gaps(p: &mut DividerPass<'_>) {
+    let palette = theme::get(p.painter.ctx());
     let DividerPass {
         painter,
         pane,
@@ -136,7 +139,14 @@ fn feed_gaps(p: &mut DividerPass<'_>) {
         if x < pane.left() || x > pane.right() {
             continue; // off-screen
         }
-        draw_dashed_vertical(painter, x, pane, SEAM_DASH_PX, SEAM_GAP_PX, theme::GAP_LINE);
+        draw_dashed_vertical(
+            painter,
+            x,
+            pane,
+            SEAM_DASH_PX,
+            SEAM_GAP_PX,
+            palette.gap_line(),
+        );
         // Above the bottom footer/backfill labels, away from the top
         // foreground loading overlay and flow legend. Keep the caption
         // to the right of its line, opposite the venue seam's caption.
@@ -147,8 +157,8 @@ fn feed_gaps(p: &mut DividerPass<'_>) {
             ),
             egui::Align2::LEFT_BOTTOM,
             format!("{} gap", gap.duration_label()),
-            egui::FontId::proportional(SEAM_LABEL_PT),
-            theme::GAP_LABEL,
+            palette.label_font(SEAM_LABEL_PT),
+            palette.gap_label(),
         );
     }
 }

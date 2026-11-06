@@ -19,8 +19,8 @@ use crate::theme;
 
 use super::heat::{HEAT_INK_FLIP_STEP, HeatScale, heat_fill, heat_ink, heat_step};
 use super::{
-    CENTER_GUTTER_PX, CLUSTER_BOX_PAD_PX, CLUSTER_GUTTER_PX, DetailLevel, GLYPH_EM,
-    LADDER_MIN_FONT_PX, LayerFrame, QUANTITY_GLYPHS, ZoneMark, fmt_delta, fmt_qty, poc_of,
+    CENTER_GUTTER_PX, CLUSTER_BOX_PAD_PX, CLUSTER_GUTTER_PX, DetailLevel, LayerFrame, ZoneMark,
+    fmt_delta, fmt_qty, poc_of,
 };
 
 /// Where one display row lands on screen, and what the signals say about it.
@@ -189,6 +189,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
     /// arithmetic happened to leave behind — 2.2:1 on the `Classic` preset,
     /// 4.1:1 on `Glass`.
     fn paint_plate(&self) {
+        let palette = &self.paint.frame.palette;
         let &BarPaint {
             frame,
             level,
@@ -198,8 +199,8 @@ impl<'p, 'f> BarRender<'p, 'f> {
         } = self.paint;
         let xc = self.xc;
         let plate = match style.plate() {
-            StylePlate::Backdrop => canvas_backdrop(),
-            StylePlate::Casing => theme::CASING,
+            StylePlate::Backdrop => canvas_backdrop(palette),
+            StylePlate::Casing => palette.casing(),
         };
         if level >= DetailLevel::Profile
             && let (Some(&first), Some(&last)) =
@@ -231,7 +232,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
                 frame.painter.rect_stroke(
                     box_rect,
                     egui::Rounding::same(2.0),
-                    egui::Stroke::new(1.0_f32, theme::BORDER),
+                    egui::Stroke::new(1.0_f32, palette.border()),
                 );
             }
             // A hairline spine at the central axis keeps the bar's midline
@@ -246,7 +247,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
             if inset == 0.0 {
                 frame.painter.line_segment(
                     [egui::pos2(xc, bar_top), egui::pos2(xc, bar_bottom)],
-                    egui::Stroke::new(1.0_f32, theme::TEXT_FAINT.gamma_multiply(spine)),
+                    egui::Stroke::new(1.0_f32, palette.text_faint().gamma_multiply(spine)),
                 );
             }
         }
@@ -299,6 +300,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
     /// the winner's color — "who won the fight" readable at a glance, the
     /// volume shape behind it.
     fn paint_split_row(&self, cell: &FootprintLevel, geometry: &RowGeometry) {
+        let palette = &self.paint.frame.palette;
         let frame = self.frame;
         let painter = frame.painter;
         let xc = self.xc;
@@ -344,19 +346,19 @@ impl<'p, 'f> BarRender<'p, 'f> {
                 egui::pos2(xc + reach * volume_frac, bottom - 0.5),
             ),
             egui::Rounding::ZERO,
-            PROFILE_COLOR.gamma_multiply(if is_poc { 0.95 } else { 0.60 }),
+            palette
+                .footprint_profile()
+                .gamma_multiply(if is_poc { 0.95 } else { 0.60 }),
         );
         // Left: the fight.
         let (left_from, left_color) = match winner {
             Some(side) => (
                 xc - reach * delta_frac.max(0.04),
-                theme::side_color(side).gamma_multiply(if chip_side.is_some() {
-                    0.55
-                } else {
-                    0.5
-                }),
+                palette
+                    .side_color(side)
+                    .gamma_multiply(if chip_side.is_some() { 0.55 } else { 0.5 }),
             ),
-            None => (xc - 2.0, theme::TEXT_FAINT.gamma_multiply(0.35)),
+            None => (xc - 2.0, palette.text_faint().gamma_multiply(0.35)),
         };
         painter.rect_filled(
             egui::Rect::from_min_max(
@@ -380,7 +382,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
                     egui::pos2(xc - 1.0, bottom - 1.5),
                 ),
                 egui::Rounding::ZERO,
-                egui::Stroke::new(1.0_f32, theme::side_color(side)),
+                egui::Stroke::new(1.0_f32, palette.side_color(side)),
             );
         }
         // Deep zoom: the delta number over the left half, side-colored
@@ -390,18 +392,14 @@ impl<'p, 'f> BarRender<'p, 'f> {
             && frame.config.show_numbers
             && let Some(text) = delta_text
         {
-            let width_budget = (frame.half - 6.0) / 3.0;
-            let font = egui::FontId::monospace(
-                (row_height - 2.0)
-                    .min(width_budget)
-                    .clamp(LADDER_MIN_FONT_PX, 13.0),
-            );
+            let width_budget = frame.half - 6.0;
+            let font = palette.footprint_font(row_height, width_budget);
             painter.text(
                 egui::pos2(xc - CENTER_GUTTER_PX, (top + bottom) / 2.0),
                 egui::Align2::RIGHT_CENTER,
                 text,
                 font,
-                winner.map_or(theme::TEXT_MUTED, theme::side_color),
+                winner.map_or(palette.text_muted(), |side| palette.side_color(side)),
             );
         }
         if is_poc {
@@ -416,14 +414,15 @@ impl<'p, 'f> BarRender<'p, 'f> {
     /// colored by the row's delta sign — neutral by design, so the POC and
     /// the zone marks stay the only saturated things.
     fn paint_profile_row(&self, cell: &FootprintLevel, geometry: &RowGeometry) {
+        let palette = &self.paint.frame.palette;
         let frame = self.frame;
         let xc = self.xc;
         let frac = (cell.volume().to_f64().unwrap_or(0.0) / self.max_volume) as f32;
         let width = (2.0 * frame.half - 1.0).max(1.0) * frac;
         let color = if cell.delta() >= Decimal::ZERO {
-            theme::BUY
+            palette.buy()
         } else {
-            theme::SELL
+            palette.sell()
         };
         frame.painter.rect_filled(
             egui::Rect::from_min_max(
@@ -445,14 +444,12 @@ impl<'p, 'f> BarRender<'p, 'f> {
     fn number_font(&self, geometry: &RowGeometry) -> egui::FontId {
         let half = self.frame.half;
         let width_budget = match self.paint.level {
-            DetailLevel::Detailed => (half - 6.0) / 3.0,
-            _ => (2.0 * half - 6.0) / 3.0,
+            DetailLevel::Detailed => half - 6.0,
+            _ => 2.0 * half - 6.0,
         };
-        egui::FontId::monospace(
-            (geometry.row_height - 2.0)
-                .min(width_budget)
-                .clamp(LADDER_MIN_FONT_PX, 13.0),
-        )
+        self.frame
+            .palette
+            .footprint_font(geometry.row_height, width_budget)
     }
 
     /// A ring around the POC row, not a wash under it.
@@ -465,6 +462,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
     /// gives the POC a *shape*: the only framed row in the bar, readable
     /// without relying on hue.
     fn paint_poc_ring(&self, geometry: &RowGeometry) {
+        let palette = &self.paint.frame.palette;
         if !geometry.is_poc {
             return;
         }
@@ -475,12 +473,13 @@ impl<'p, 'f> BarRender<'p, 'f> {
                 egui::pos2(xc + half - 0.5, geometry.bottom - 0.5),
             ),
             egui::Rounding::ZERO,
-            egui::Stroke::new(1.5_f32, theme::POC),
+            egui::Stroke::new(1.5_f32, palette.poc()),
         );
     }
 
     /// Compact: the POC ring and one delta number, centred and side-inked.
     fn paint_compact_row(&self, cell: &FootprintLevel, geometry: &RowGeometry) {
+        let palette = &self.paint.frame.palette;
         let font = self.number_font(geometry);
         self.paint_poc_ring(geometry);
         if !self.frame.config.show_numbers {
@@ -498,7 +497,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
             egui::Align2::CENTER_CENTER,
             fmt_qty(delta),
             font,
-            theme::ink(side),
+            palette.ink(side),
         );
     }
 
@@ -506,6 +505,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
     /// left-to-right: taker-sells hit the bid printed on the left, taker-buys
     /// lift the ask on the right.
     fn paint_ladder_row(&self, cell: &FootprintLevel, geometry: &RowGeometry) {
+        let palette = &self.paint.frame.palette;
         let frame = self.frame;
         let painter = frame.painter;
         let xc = self.xc;
@@ -551,7 +551,9 @@ impl<'p, 'f> BarRender<'p, 'f> {
                 painter.rect_filled(
                     cell_rect,
                     egui::Rounding::same(2.0),
-                    theme::side_color(side).gamma_multiply(IMBALANCE_CELL_ALPHA),
+                    palette
+                        .side_color(side)
+                        .gamma_multiply(IMBALANCE_CELL_ALPHA),
                 );
                 // And an edge on the *outer* border of the column
                 // that dominated — sell on the body's left, buy on
@@ -568,7 +570,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
                         egui::pos2(cell_rect.right(), cell_rect.bottom()),
                     ),
                 };
-                painter.rect_filled(edge, egui::Rounding::ZERO, theme::side_color(side));
+                painter.rect_filled(edge, egui::Rounding::ZERO, palette.side_color(side));
             }
             if !frame.config.show_numbers {
                 // Numbers off leaves the imbalance cells above:
@@ -581,9 +583,9 @@ impl<'p, 'f> BarRender<'p, 'f> {
             // `Classic` candle body, which is the reading this
             // plate exists to end).
             let color = if imbalanced {
-                theme::ink(side)
+                palette.ink(side)
             } else {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             };
             painter.text(egui::pos2(x, mid), align, fmt_qty(qty), font.clone(), color);
         }
@@ -607,6 +609,7 @@ impl<'p, 'f> BarRender<'p, 'f> {
     }
 
     fn paint_extreme_badge(&self, extreme: Extreme) {
+        let palette = &self.paint.frame.palette;
         let frame = self.frame;
         let painter = frame.painter;
         let cell = match extreme {
@@ -651,35 +654,35 @@ impl<'p, 'f> BarRender<'p, 'f> {
             (egui::Align2::CENTER_BOTTOM, band_top - EXTREME_BADGE_GAP_PX)
         };
         let text = format!("{:.1}x", ratio_value.to_f64().unwrap_or(0.0));
-        let galley =
-            painter.layout_no_wrap(text, egui::FontId::monospace(10.0), theme::TEXT_PRIMARY);
+        let galley = painter.layout_no_wrap(text, palette.axis_font(10.0), palette.text_primary());
         let anchor = align.anchor_size(egui::pos2(self.xc, y), galley.size());
         painter.rect_filled(
             anchor.expand(2.0),
             egui::Rounding::same(2.0),
-            canvas_backdrop(),
+            canvas_backdrop(palette),
         );
         painter.rect_stroke(
             anchor.expand(2.0),
             egui::Rounding::same(2.0),
-            egui::Stroke::new(1.0_f32, theme::side_color(dominant_side)),
+            egui::Stroke::new(1.0_f32, palette.side_color(dominant_side)),
         );
-        painter.galley(anchor.min, galley, theme::TEXT_PRIMARY);
+        painter.galley(anchor.min, galley, palette.text_primary());
     }
 }
 
 /// The POC line over `[x_from, x_to]`, with a background under-stroke so it
 /// registers against the candle outline it crosses at every level.
 fn draw_poc_line(frame: &LayerFrame<'_>, x_from: f32, x_to: f32, row: i64, row_group: f64) {
+    let palette = &frame.palette;
     let (top, bottom) = row_band(frame, row, row_group);
     let y = (top + bottom) / 2.0;
     frame.painter.line_segment(
         [egui::pos2(x_from, y), egui::pos2(x_to, y)],
-        egui::Stroke::new(3.5_f32, canvas_backdrop()),
+        egui::Stroke::new(3.5_f32, canvas_backdrop(palette)),
     );
     frame.painter.line_segment(
         [egui::pos2(x_from, y), egui::pos2(x_to, y)],
-        egui::Stroke::new(1.5_f32, theme::POC),
+        egui::Stroke::new(1.5_f32, palette.poc()),
     );
 }
 
@@ -693,22 +696,6 @@ pub(super) const CLUSTER_TOTAL_SILHOUETTE_ALPHA: f32 = 0.35;
 /// Alpha of a `bidask` bar. Low enough that a POC line crosses it readably,
 /// high enough that the two sides separate from the plate at a glance.
 const BIDASK_BAR_ALPHA: f32 = 0.62;
-
-/// The bevel's two faces.
-///
-/// Complementary by construction, and the asymmetry is the design rather than
-/// a compromise: on a dark cell the white edge does all the work and the
-/// shadow has nowhere to go, on a light cell the reverse. Measured in L*, the
-/// highlight buys +19 on the floor step and +0.4 on the top one; the shadow
-/// buys +5 on the floor and +29 on the top. So only the face that can be seen
-/// is drawn — painting both always meant painting one for nothing.
-///
-/// Raising the alpha does not rescue the losing face: even at full opacity,
-/// white over the top step is worth +17 L* — the cell simply turns white.
-/// Which is why this is a choice of face, not a choice of number.
-const BEVEL_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgba_premultiplied(56, 56, 56, 56);
-
-const BEVEL_SHADOW: egui::Color32 = egui::Color32::from_rgba_premultiplied(0, 0, 0, 120);
 
 /// The step at and above which the shadow carries the relief instead of the
 /// highlight. Shares the ink flip's boundary because both answer the same
@@ -737,6 +724,7 @@ const BEVEL_MIN_ROW_PX: f32 = 10.0;
 /// through the tessellator's feathering, and feathering is exactly what blurs
 /// a one-pixel edge into nothing.
 fn paint_bevel(
+    palette: &crate::theme::Palette,
     painter: &egui::Painter,
     rect: egui::Rect,
     row_height: f32,
@@ -768,9 +756,9 @@ fn paint_bevel(
         egui::pos2(snap(rect.right()), snap(rect.bottom())),
     );
     let (face, lit_top) = if step >= BEVEL_SHADOW_FROM_STEP {
-        (BEVEL_SHADOW, false)
+        (palette.footprint_bevel_shadow(), false)
     } else {
-        (BEVEL_HIGHLIGHT, true)
+        (palette.footprint_bevel_highlight(), true)
     };
     // Two edges meeting at a corner, not two opposite bars: relief is read at
     // the corner, and a top and a bottom with no sides read as a rule.
@@ -794,13 +782,7 @@ fn paint_bevel(
 /// The painter and the floor read the *same* function. They used to compute it
 /// apart, which is how the floor came to declare a width legible that the
 /// painter then drew three overlapping numbers into.
-pub(super) fn cluster_column_px_from(body_width: f32, columns: f32) -> f32 {
-    let inner = body_width
-        - crate::footprint_config::CANDLE_LANE_PX
-        - 2.0 * CLUSTER_BOX_PAD_PX
-        - (columns - 1.0) * CLUSTER_GUTTER_PX;
-    (inner / columns).max(1.0)
-}
+use quantick_stores::footprint_presentation::cluster_column_px_from;
 
 /// How many number columns the cluster draws: three with the total, two
 /// without. The knob exists because the third column costs ~33 px of candle
@@ -827,6 +809,7 @@ fn draw_bidask_row(
     max_side_volume: f64,
     row_group: f64,
 ) {
+    let palette = &frame.palette;
     let painter = frame.painter;
     let reach = (frame.half - 1.0).max(1.0);
     let top = geometry.top + 0.5;
@@ -853,7 +836,7 @@ fn draw_bidask_row(
         painter.rect_filled(
             bar,
             egui::Rounding::ZERO,
-            theme::side_color(side).gamma_multiply(BIDASK_BAR_ALPHA),
+            palette.side_color(side).gamma_multiply(BIDASK_BAR_ALPHA),
         );
         if imbalanced {
             // A cap on the growing end, in the side's own ink. It reads as a
@@ -870,7 +853,7 @@ fn draw_bidask_row(
                     egui::pos2(bar.right(), bottom),
                 ),
             };
-            painter.rect_filled(cap, egui::Rounding::ZERO, theme::ink(side));
+            painter.rect_filled(cap, egui::Rounding::ZERO, palette.ink(side));
         }
     }
     if geometry.is_poc {
@@ -890,6 +873,7 @@ fn draw_cluster_row(
     heat: Option<HeatScale>,
     max_volume: f64,
 ) {
+    let palette = &frame.palette;
     let painter = frame.painter;
     let reach = (frame.half - 1.0).max(1.0);
     let inset = crate::footprint_config::CANDLE_LANE_PX;
@@ -909,12 +893,7 @@ fn draw_cluster_row(
     // to the font instead is how three columns of numbers end up written over
     // each other — which is exactly what the first capture of this style
     // showed. Same arithmetic the ladder's own budget uses.
-    let width_budget = (column_width - 2.0) / (QUANTITY_GLYPHS * GLYPH_EM);
-    let font = egui::FontId::monospace(
-        (geometry.row_height - 2.0)
-            .min(width_budget)
-            .clamp(LADDER_MIN_FONT_PX, 13.0),
-    );
+    let font = palette.footprint_font(geometry.row_height, column_width - 2.0);
 
     let mut x = xc - reach + inset + CLUSTER_BOX_PAD_PX;
     let mut column_rect = || -> egui::Rect {
@@ -935,9 +914,20 @@ fn draw_cluster_row(
     ] {
         let rect = column_rect();
         let step = heat_step(qty, heat);
-        painter.rect_filled(rect, egui::Rounding::ZERO, heat_fill(side, step));
+        painter.rect_filled(
+            rect,
+            egui::Rounding::ZERO,
+            heat_fill(&frame.palette, side, step),
+        );
         if bevel {
-            paint_bevel(painter, rect, geometry.row_height, step, pixels_per_point);
+            paint_bevel(
+                palette,
+                painter,
+                rect,
+                geometry.row_height,
+                step,
+                pixels_per_point,
+            );
         }
         if imbalanced {
             // The outline flips with the ink, and for the same reason. A
@@ -946,9 +936,9 @@ fn draw_cluster_row(
             // vanishing into the cell it was meant to ring, precisely on the
             // busiest rows.
             let outline = if step >= HEAT_INK_FLIP_STEP {
-                theme::CHIP_INK
+                palette.chip_ink()
             } else {
-                theme::ink(side)
+                palette.ink(side)
             };
             painter.rect_stroke(
                 rect.shrink(0.5),
@@ -962,7 +952,7 @@ fn draw_cluster_row(
                 egui::Align2::CENTER_CENTER,
                 fmt_qty(qty),
                 font.clone(),
-                heat_ink(step),
+                heat_ink(&frame.palette, step),
             );
         }
     }
@@ -992,10 +982,19 @@ fn draw_cluster_row(
                 egui::pos2(rect.left() + rect.width() * frac, rect.bottom()),
             ),
             egui::Rounding::ZERO,
-            PROFILE_COLOR.gamma_multiply(CLUSTER_TOTAL_SILHOUETTE_ALPHA),
+            palette
+                .footprint_profile()
+                .gamma_multiply(CLUSTER_TOTAL_SILHOUETTE_ALPHA),
         );
         if bevel {
-            paint_bevel(painter, rect, geometry.row_height, 0, pixels_per_point);
+            paint_bevel(
+                palette,
+                painter,
+                rect,
+                geometry.row_height,
+                0,
+                pixels_per_point,
+            );
         }
         if frame.config.show_numbers {
             painter.text(
@@ -1003,7 +1002,7 @@ fn draw_cluster_row(
                 egui::Align2::CENTER_CENTER,
                 fmt_qty(volume),
                 font,
-                theme::TEXT_PRIMARY,
+                palette.text_primary(),
             );
         }
     }
@@ -1019,12 +1018,12 @@ fn draw_cluster_row(
         painter.rect_stroke(
             ring,
             egui::Rounding::ZERO,
-            egui::Stroke::new(1.5 + theme::CASING_EXTRA_PX, theme::CASING),
+            egui::Stroke::new(1.5 + theme::CASING_EXTRA_PX, palette.casing()),
         );
         painter.rect_stroke(
             ring,
             egui::Rounding::ZERO,
-            egui::Stroke::new(1.5_f32, theme::POC),
+            egui::Stroke::new(1.5_f32, palette.poc()),
         );
     }
 }
@@ -1035,6 +1034,7 @@ pub(super) fn draw_poc_dot(frame: &LayerFrame<'_>, xc: f32, row: i64, row_group:
 }
 
 pub(super) fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group: f64) {
+    let palette = &frame.palette;
     // Composed from both rows' screen bands: upside down the high bucket
     // renders below the low one, and reading "top" off it would hand both
     // rects a negative height (see the Split backdrop above).
@@ -1055,7 +1055,7 @@ pub(super) fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group:
     // because a wick that pierces and returns is the defender holding). That
     // is a level-memory of its own, shared with naked POCs and absorption,
     // and it is not this change.
-    let color = theme::side_color(mark.side);
+    let color = palette.side_color(mark.side);
     frame.painter.rect_filled(
         egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom)),
         egui::Rounding::ZERO,
@@ -1085,8 +1085,7 @@ const IMBALANCE_EDGE_PX: f32 = 2.0;
 /// The split style's volume-profile silhouette: neutral light, after the
 /// reference charts' white/gray histograms — color stays reserved for the
 /// fight (the delta side) and the POC.
-pub(super) const PROFILE_COLOR: egui::Color32 = egui::Color32::from_gray(0xD8);
-
+///
 /// The least an imbalance chip spans, in pixels: enough to ring the number
 /// on a short bar without swallowing the whole half.
 const MIN_CHIP_PX: f32 = 14.0;
@@ -1103,8 +1102,8 @@ const BACKDROP_ALPHA: f32 = 0.65;
 /// That backdrop, derived from the theme rather than hand-premultiplied —
 /// a canvas color copied by hand goes stale the day the theme moves, with
 /// no test to notice.
-fn canvas_backdrop() -> egui::Color32 {
-    theme::CANVAS.gamma_multiply(BACKDROP_ALPHA)
+fn canvas_backdrop(palette: &crate::theme::Palette) -> egui::Color32 {
+    palette.canvas().gamma_multiply(BACKDROP_ALPHA)
 }
 
 /// Pixel band of display row `row` (rows are `row_group` of price tall).

@@ -431,6 +431,7 @@ mod tests {
         scale: &'a PriceScale,
     ) -> DrawContext<'a> {
         DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload,
             anchors,
             scale,

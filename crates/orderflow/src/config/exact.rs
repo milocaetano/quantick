@@ -42,6 +42,7 @@ exact_by_eq!(
     [u8; 3],
     DisplayGrouping,
     HeatmapTheme,
+    super::theme::PaletteChoice,
     BubbleRenderMode,
     BubbleSizeReference,
     ConsumptionMark,
@@ -72,7 +73,7 @@ exact_fields! {
         live_lane, show_depth, show_liquidity, show_buy_aggressions, show_sell_aggressions,
         show_aligned_depletion, show_unattributed_reductions, show_gaps,
         min_unattributed_reduction, min_unattributed_pull_share, liquidity_correlation_ms,
-        show_legend, show_status_badge, theme, max_history_runs, max_history_bytes,
+        show_legend, show_status_badge, palette, max_history_runs, max_history_bytes,
         max_aggressions, max_visible_cells, max_aggression_primitives, intensity_mode,
     }
     VolumeDotStyle {

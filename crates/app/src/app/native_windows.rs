@@ -289,6 +289,7 @@ fn capture_frame(app: &mut QuantickApp, ctx: &egui::Context, before: bool) {
 /// egui-winit divides both desktop origin and client coordinates by the
 /// viewport's full pixels-per-point. Multiply both before crossing monitors.
 fn observe_strip(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId) {
+    let palette = crate::theme::get(ctx);
     let scale = ctx.pixels_per_point();
     let origin = ctx
         .input(|input| input.viewport().inner_rect.map(|rect| rect.min))
@@ -395,7 +396,7 @@ fn observe_strip(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId) {
                 ))
                 .line_segment(
                     [egui::pos2(x, bounds.top()), egui::pos2(x, bounds.bottom())],
-                    egui::Stroke::new(3.0_f32, crate::theme::AMBER),
+                    egui::Stroke::new(3.0_f32, palette.amber()),
                 );
             }
         }

@@ -49,6 +49,7 @@ pub(crate) fn logo_image(mark: bool) -> egui::ColorImage {
 
 /// Draw the page. Returns whether "Open a market" was pressed.
 pub(crate) fn draw_page(ui: &mut egui::Ui) -> bool {
+    let palette = theme::get(ui.ctx());
     let mut open = false;
     ui.vertical_centered(|ui| {
         ui.add_space((ui.available_height() / 2.0 - PAGE_LOGO_PX).max(0.0));
@@ -56,7 +57,7 @@ pub(crate) fn draw_page(ui: &mut egui::Ui) -> bool {
             ui.allocate_exact_size(egui::Vec2::splat(PAGE_LOGO_PX), egui::Sense::hover());
         paint_logo(ui, logo, false);
         ui.add_space(12.0);
-        ui.label(egui::RichText::new("Market Shelf not built yet").color(theme::TEXT_MUTED));
+        ui.label(egui::RichText::new("Market Shelf not built yet").color(palette.text_muted()));
         ui.add_space(12.0);
         open = ui.button("Open a market").clicked();
     });

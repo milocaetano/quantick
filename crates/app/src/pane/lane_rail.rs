@@ -111,17 +111,18 @@ pub(super) fn paint_flow_divider(
         return;
     };
     let painter = ui.painter();
+    let palette = theme::get(ui.ctx());
     let half = DIVIDER_WIDTH_PX / 2.0;
     let bar = egui::Rect::from_x_y_ranges(x - half..=x + half, top..=chart.bottom());
-    painter.rect_filled(bar, egui::Rounding::ZERO, theme::FLOW_DIVIDER);
+    painter.rect_filled(bar, egui::Rounding::ZERO, palette.flow_divider());
     let dot = GRIP_DOT_PX / 2.0;
     for y in grip_dots(top, chart.bottom()) {
         let at = egui::Rect::from_x_y_ranges(x - dot..=x + dot, y..=y + GRIP_DOT_PX);
-        painter.rect_filled(at, egui::Rounding::ZERO, theme::TEXT_PRIMARY);
+        painter.rect_filled(at, egui::Rounding::ZERO, palette.text_primary());
     }
     // The chart pass's own carve: the price band, then each indicator pane.
     if let Some(last) = pane.frame.cached_bands().get(1..).and_then(<[_]>::last) {
-        let faint = egui::Stroke::new(1.0_f32, theme::FLOW_DIVIDER.gamma_multiply(FAINT_TRACE));
+        let faint = egui::Stroke::new(1.0_f32, palette.flow_divider().gamma_multiply(FAINT_TRACE));
         painter.vline(x, chart.bottom()..=last.rect.max.y, faint);
     }
 }

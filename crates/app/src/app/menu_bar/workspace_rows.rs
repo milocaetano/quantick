@@ -232,6 +232,7 @@ pub(super) fn name_dialog(
     ctx: &egui::Context,
     commands: &mut Vec<MenuCommand>,
 ) {
+    let palette = crate::theme::get(ctx);
     let tab = app.runtime.tabs.active_id();
     let state = &mut app.chrome.window_menu.tab_workspace;
     let Some(dialog) = state.dialog.as_mut().filter(|dialog| dialog.tab == tab) else {
@@ -258,7 +259,7 @@ pub(super) fn name_dialog(
                 dialog.refusal = None;
             }
             if let Some(reason) = &dialog.refusal {
-                ui.colored_label(crate::theme::WARN, reason);
+                ui.colored_label(palette.warn(), reason);
             }
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
             cancelled =

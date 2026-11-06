@@ -44,7 +44,7 @@ pub(crate) enum BookCommand {
         generation_floor: u64,
         reason: &'static str,
     },
-    ApplyVisualConfig(HeatmapConfig),
+    ApplyVisualConfig(Box<HeatmapConfig>),
     ApplyGroupingNow(Decimal),
     /// The price grid the tape itself prints on and the magnitude it prints
     /// at, for a chart whose feed never states an instrument tick and whose
@@ -233,7 +233,7 @@ fn run(
                     generation_floor,
                     reason,
                 } => engine.prepare_restart(generation_floor, reason),
-                BookCommand::ApplyVisualConfig(config) => engine.apply_visual_config(config),
+                BookCommand::ApplyVisualConfig(config) => engine.apply_visual_config(*config),
                 BookCommand::ApplyGroupingNow(grouping) => engine.apply_grouping_now(grouping),
                 BookCommand::TapePriceGrid {
                     step,

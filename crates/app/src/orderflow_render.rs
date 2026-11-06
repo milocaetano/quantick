@@ -9,6 +9,7 @@ use eframe::egui;
 use eframe::egui::epaint::{Vertex, WHITE_UV};
 #[cfg(test)]
 use quantick_orderbook::BookSide;
+#[cfg(test)]
 use quantick_orderflow::HeatmapTheme;
 
 mod bubbles;
@@ -41,15 +42,16 @@ pub(crate) use tape_path::draw_past_tape_edge;
 pub(crate) use tape_rebuild::PaneTapeRebuilds;
 
 pub(crate) use quantick_orderflow::config::theme::{
-    LEGEND_HEADER_CLEARANCE_PX, OrderflowRenderStyle, ThemeBubbleRgb, theme_bubble_rgb,
+    LEGEND_HEADER_CLEARANCE_PX, OrderflowRenderStyle, ThemeBubbleRgb,
 };
-use quantick_orderflow::config::theme::{finite_unit, mix_rgb, resting_rgb, thermal_rgb};
+use quantick_orderflow::config::theme::{finite_unit, mix_rgb};
 type Palette = quantick_orderflow::config::theme::Palette<egui::Color32>;
 
 fn premultiplied([r, g, b, a]: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_premultiplied(r, g, b, a)
 }
 
+#[cfg(test)]
 fn palette_for_theme(theme: HeatmapTheme) -> Palette {
     Palette::for_theme(theme, premultiplied)
 }
