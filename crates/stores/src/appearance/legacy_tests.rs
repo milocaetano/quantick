@@ -139,6 +139,41 @@ fn authored_light_before_the_strip_tokens_resolves_light_values() {
     }
 }
 
+/// A Light choice saved before the beige canvas and Blue-ink order flow
+/// loads as today's Light, not as an authored white and slate theme.
+#[test]
+fn light_choice_before_beige_canvas_migrates_to_current_light() {
+    let old = include_str!("legacy-light-ab24b5e3.toml");
+    let (old_theme, light) = (
+        ResolvedTheme::parse(old).unwrap(),
+        ResolvedTheme::parse(LIGHT).unwrap(),
+    );
+    assert_eq!(old_theme.color(Token::Canvas).to_array(), [255; 4]);
+    assert_eq!(
+        old_theme.bookmap().color(Token::Canvas).to_array(),
+        [0x43, 0x4A, 0x52, 255]
+    );
+    let scratch = ScratchDir::new("legacy-light-beige");
+    let path = scratch.join("appearance.toml");
+    let choice_path = scratch.join("appearance.toml.choice.toml");
+    std::fs::write(&choice_path, old).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), Some(Builtin::Light));
+    assert_eq!(store.source(), Some(LIGHT));
+    for (resolved, expected, stale) in [
+        (store.resolved(), &light, &old_theme),
+        (
+            store.resolved().bookmap(),
+            light.bookmap(),
+            old_theme.bookmap(),
+        ),
+    ] {
+        assert_eq!(resolved.color(Token::Canvas), expected.color(Token::Canvas));
+        assert_ne!(resolved.color(Token::Canvas), stale.color(Token::Canvas));
+    }
+    assert_eq!(std::fs::read_to_string(&choice_path).unwrap(), old);
+}
+
 #[test]
 fn historical_choice_loads_with_writes_refused_and_invalid_choice_stays_untouched() {
     use quantick_workspace::write_refusal::{WritesRefused, refuse_writes_on_this_thread};
