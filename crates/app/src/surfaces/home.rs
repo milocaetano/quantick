@@ -9,20 +9,44 @@ use crate::theme;
 
 const PAGE_LOGO_PX: f32 = 48.0;
 
-/// The plated logo, only ever scaled, and the Home tab's Q without it (`q-bare`'s frame).
-const LOGOS: [(&str, &[u8]); 2] = [
-    ("Quantick logo", include_bytes!("../../assets/icon.png")),
-    ("Quantick Q", include_bytes!("../../assets/logo-q.png")),
-];
+/// A bundled logo raster, only ever scaled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Logo {
+    /// The plated logo.
+    Plated,
+    /// The Home tab's Q without the plate (`q-bare`'s frame).
+    Q,
+    /// The Light theme's Q, same frame: white faces and black edges
+    /// (`tools/logo/light_mark.py`).
+    QLight,
+}
 
-/// Paint a logo, or with `mark` the Q, whole into `rect`: untinted, pixel-snapped, mipmapped.
-pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, mark: bool) {
-    let (ctx, id) = (ui.ctx(), egui::Id::new(("logo", mark)));
+impl Logo {
+    /// The Home tab's Q for a theme: the edged one on a light strip.
+    pub(crate) fn mark(dark: bool) -> Self {
+        if dark { Self::Q } else { Self::QLight }
+    }
+
+    fn source(self) -> (&'static str, &'static [u8]) {
+        match self {
+            Self::Plated => ("Quantick logo", include_bytes!("../../assets/icon.png")),
+            Self::Q => ("Quantick Q", include_bytes!("../../assets/logo-q.png")),
+            Self::QLight => (
+                "Quantick Q light",
+                include_bytes!("../../assets/logo-q-light.png"),
+            ),
+        }
+    }
+}
+
+/// Paint a logo whole into `rect`: untinted, pixel-snapped, mipmapped.
+pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, logo: Logo) {
+    let (ctx, id) = (ui.ctx(), egui::Id::new(("logo", logo)));
     let cached = ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id));
     let texture = cached.unwrap_or_else(|| {
         let mipmaps = Some(egui::TextureFilter::Linear);
         let options = egui::TextureOptions::LINEAR.with_mipmap_mode(mipmaps);
-        let texture = ctx.load_texture(LOGOS[mark as usize].0, logo_image(mark), options);
+        let texture = ctx.load_texture(logo.source().0, logo_image(logo), options);
         ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
         texture
     });
@@ -32,12 +56,12 @@ pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, mark: bool) {
     painter.image(texture.id(), rect, uv, egui::Color32::WHITE);
 }
 
-/// The plated logo as egui reads it; the Q premultiplied in sRGB, as browsers do.
-pub(crate) fn logo_image(mark: bool) -> egui::ColorImage {
-    let png = eframe::icon_data::from_png_bytes(LOGOS[mark as usize].1);
+/// The plated logo as egui reads it; a Q premultiplied in sRGB, as browsers do.
+pub(crate) fn logo_image(logo: Logo) -> egui::ColorImage {
+    let png = eframe::icon_data::from_png_bytes(logo.source().1);
     let mut icon = png.expect("bundled logo is a valid PNG");
     let size = [icon.width as usize, icon.height as usize];
-    if !mark {
+    if logo == Logo::Plated {
         return egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
     }
     for texel in icon.rgba.as_chunks_mut::<4>().0 {
@@ -55,7 +79,7 @@ pub(crate) fn draw_page(ui: &mut egui::Ui) -> bool {
         ui.add_space((ui.available_height() / 2.0 - PAGE_LOGO_PX).max(0.0));
         let (logo, _) =
             ui.allocate_exact_size(egui::Vec2::splat(PAGE_LOGO_PX), egui::Sense::hover());
-        paint_logo(ui, logo, false);
+        paint_logo(ui, logo, Logo::Plated);
         ui.add_space(12.0);
         ui.label(egui::RichText::new("Market Shelf not built yet").color(palette.text_muted()));
         ui.add_space(12.0);

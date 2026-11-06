@@ -356,7 +356,7 @@ fn surface_fill(output: &egui::FullOutput, rect: egui::Rect) -> Option<egui::Col
 /// not in egui's linear light, which paints its 0.647 alpha near 0.84.
 #[test]
 fn the_q_texture_is_premultiplied_in_srgb() {
-    let image = crate::surfaces::home::logo_image(true);
+    let image = crate::surfaces::home::logo_image(crate::surfaces::home::Logo::Q);
     let png = include_bytes!("../../../assets/logo-q.png");
     let source = eframe::icon_data::from_png_bytes(png).unwrap();
     let light = source.rgba.as_chunks::<4>().0.iter().position(|texel| {
@@ -973,5 +973,86 @@ fn the_logo_is_its_own_q_only_scaled_or_plate_dropped_on_whole_pixels_at_every_z
             let whole = (physical - physical.round()).length() < 1e-3;
             assert!(whole, "{zoom}x: the Q at {physical:?} physical px");
         }
+    }
+}
+
+/// Light paints its own Q at Dark's size, its glyph tucked about a pixel
+/// from the "u"; the wordmark keeps the place Dark gives it.
+#[test]
+fn the_light_q_is_edged_and_moved_toward_the_wordmark() {
+    use crate::tabstrip::LIGHT_Q_SHIFT_PT;
+    let mut placed = Vec::new();
+    for (source, name) in [
+        (quantick_appearance::DARK, "Quantick Q"),
+        (quantick_appearance::LIGHT, "Quantick Q light"),
+    ] {
+        let (mut app, _, _, _) = test_app();
+        let ctx = egui::Context::default();
+        app.runtime
+            .appearance
+            .apply_candidate(source, false)
+            .unwrap();
+        frame(&mut app, &ctx);
+        let output = frame(&mut app, &ctx);
+        assert_plain_q(&output, name);
+        let mesh = logo_mesh(&output);
+        let manager = ctx.tex_manager();
+        let texture = manager
+            .read()
+            .meta(mesh.texture_id)
+            .expect("loaded")
+            .name
+            .clone();
+        assert_eq!(texture, name);
+        let uan = painted_text(&output, "uan").pos.x;
+        placed.push((mesh.calc_bounds(), uan));
+    }
+    let [(dark, dark_uan), (light, light_uan)] = placed[..] else {
+        unreachable!()
+    };
+    assert_eq!(light_uan, dark_uan, "the wordmark stays put");
+    assert_eq!(dark.size(), egui::vec2(22.0, 22.0), "Dark is unchanged");
+    assert_eq!(light, dark.translate(egui::vec2(LIGHT_Q_SHIFT_PT, 0.0)));
+    // The glyph's right edge, icon.svg's x 206, is texel 230 of 256; the "u"
+    // galley starts just after it, and its ink one side bearing later.
+    let glyph_right = light.left() + light.width() * 230.0 / 256.0;
+    let gap = light_uan - glyph_right;
+    assert!((0.0..=0.5).contains(&gap), "Q to the u galley: {gap} px");
+}
+
+/// The Light Q's faded side is opaque white, its teal keeps the gradient and
+/// every rect is edged in black; egui gets it premultiplied like the Dark Q.
+#[test]
+fn the_light_q_has_white_faces_black_edges_and_the_teal_gradient() {
+    use crate::surfaces::home::{Logo, logo_image};
+    let image = logo_image(Logo::QLight);
+    assert_eq!(image.size, [256, 256], "the q-bare frame");
+    let at = |x: usize, y: usize| image.pixels[y * 256 + x].to_array();
+    // icon.svg rects (53,116,51,14) and (160,79,43,14) at 4/3 about the glyph centre:
+    // a face centre, its edge band, and a teal face centre.
+    assert_eq!(at(60, 115), [255, 255, 255, 255], "white face");
+    assert_eq!(at(60, 108), [0, 0, 0, 255], "black edge");
+    let [r, g, b, a] = at(197, 65);
+    assert_eq!(a, 255);
+    assert!(g > r + 150 && g > b, "teal face: {:?}", [r, g, b]);
+}
+
+/// Dark and a lone Light Q keep their box; beside the wordmark the Light Q
+/// moves toward it by whole physical pixels, so it stays on the grid.
+#[test]
+fn the_light_mark_moves_by_whole_physical_pixels() {
+    use crate::tabstrip::{LIGHT_Q_SHIFT_PT, mark_box};
+    for ppp in [1.0, 1.25, 1.5, 1.68, 2.0, 2.5] {
+        let on_grid = |v: f32| (v * ppp).round() / ppp;
+        let min = egui::pos2(on_grid(19.0), on_grid(4.0));
+        let q = egui::Rect::from_min_size(min, egui::Vec2::splat(on_grid(22.0)));
+        assert_eq!(mark_box(q, true, true, ppp), q, "Dark at {ppp}");
+        assert_eq!(mark_box(q, false, false, ppp), q, "lone Light Q at {ppp}");
+        let mark = mark_box(q, false, true, ppp);
+        assert_eq!(mark.size(), q.size(), "same size at {ppp}");
+        let shift = (mark.left() - q.left()) * ppp;
+        assert!((shift - shift.round()).abs() < 1e-3, "{shift} px at {ppp}");
+        let off = (mark.left() - q.left() - LIGHT_Q_SHIFT_PT).abs();
+        assert!(off <= 0.5 / ppp, "{off} pt off at {ppp}");
     }
 }
