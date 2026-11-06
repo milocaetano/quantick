@@ -984,6 +984,31 @@ fn a_strip_close_with_held_edits_asks_and_enter_saves_then_closes() {
     assert_eq!(saved.split_fraction, Some(0.31));
 }
 
+/// Autosave off: the close prompt's Esc only cancels the close. The chart
+/// under it keeps its selected drawing, as the Cancel button does.
+#[test]
+fn the_close_prompt_s_esc_leaves_the_chart_s_selection_alone() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-close-esc", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.active_id();
+    let drawings = &mut app.active_tab_mut().flow_pane.drawings;
+    drawings.place(
+        drawing_tool("horizontal-line"),
+        ChartPoint::at_time(1.0, 100.0, None),
+    );
+    drawings.select(Some(0));
+    edit_split(&mut app, tab, 0.33);
+    let index = app.runtime.tabs.active_index();
+    app.apply_tab_action(crate::tabstrip::TabAction::Close(index));
+    let ctx = egui::Context::default();
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    let queue = &app.chrome.window_menu.tab_workspace.close;
+    assert!(queue.question().is_none(), "Esc cancelled the close");
+    assert!(app.runtime.tabs.by_id(tab).is_some(), "the tab stays");
+    let selected = app.active_tab().flow_pane.drawings.selected();
+    assert_eq!(selected, Some(0), "the drawing stays selected");
+}
+
 /// Autosave off: the window's close asks before the app exits, and Esc
 /// (Cancel) keeps every tab and the app.
 #[test]

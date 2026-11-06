@@ -95,6 +95,11 @@ pub(super) fn settle(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
 /// then the edge-docked drawing rail and the right dock. The chart keeps
 /// whatever remains.
 fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    // The close prompt, painted later this frame, answers Esc and Enter alone.
+    let asking = app.chrome.window_menu.tab_workspace.close.question();
+    if asking.is_some() {
+        return;
+    }
     app.toolrail.handle_keys(ctx);
     let effects = app.drawings.handle_drawing_keys(
         &mut super::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
