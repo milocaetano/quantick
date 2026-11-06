@@ -306,3 +306,22 @@ pub const READBACKS: &[Readback] = &[
         &[EVERY_OPTIONAL_TEST],
     ),
 ];
+
+/// Published schemas of the session journal.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "session-journal-input-v1.schema.json",
+            schema::<JournalSessionsInput>(),
+        ),
+        (
+            "session-journal-result-v1.schema.json",
+            schema::<JournalSessionsResult>(),
+        ),
+        (
+            "session-journal-delete-input-v1.schema.json",
+            schema::<JournalDeleteInput>(),
+        ),
+    ]
+}

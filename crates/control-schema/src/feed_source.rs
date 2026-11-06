@@ -121,3 +121,26 @@ pub fn tab_market_descriptor() -> CapabilityDescriptor {
             .expect("static module ID is valid");
     descriptor
 }
+
+/// Published schemas of the feed source and tab market.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "feed-source-input-v1.schema.json",
+            schema::<FeedSourceInput>(),
+        ),
+        (
+            "feed-source-result-v1.schema.json",
+            schema::<FeedSourceResult>(),
+        ),
+        (
+            "tab-market-set-input-v1.schema.json",
+            schema::<TabMarketSetInput>(),
+        ),
+        (
+            "tab-market-set-result-v1.schema.json",
+            schema::<TabMarketSetResult>(),
+        ),
+    ]
+}
