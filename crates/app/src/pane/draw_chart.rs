@@ -73,18 +73,29 @@ impl ChartPane {
         self.frame.axis_metrics = quantick_appearance::AxisMetrics::new(
             &crate::theme::get(painter.ctx()).resolved.typography,
         );
-        let Some(layout) = self.lay_out(area, chrome) else {
-            return;
+        let layout = self.lay_out(area, chrome);
+        let ui = theme::ui(painter.ctx());
+        let light_flow = self.orderflow.is_some() && !ui.resolved.dark;
+        let fill = |rect, color| painter.rect_filled(rect, egui::Rounding::ZERO, color);
+        let background = if light_flow {
+            ui.canvas()
+        } else {
+            start.canvas_background
         };
-        // The flow pane's time axis stands on the frame's tone: its chart's dark ends at the plot.
-        if self.orderflow.is_some() {
-            let axis = area.with_min_y(layout.areas.time_strip.top());
-            painter.rect_filled(
-                axis,
-                egui::Rounding::ZERO,
-                theme::get(painter.ctx()).flow_surface(),
-            );
+        fill(area, background);
+        if let (Some(gutter), Some(strip)) = (self.frame.price_gutter, self.frame.time_strip) {
+            if light_flow {
+                let plot = area
+                    .shrink(crate::plot_area::PLOT_PADDING_PX)
+                    .with_max_x(gutter.left())
+                    .with_max_y(strip.top());
+                fill(plot, start.canvas_background);
+            }
+            if self.orderflow.is_some() && (layout.is_some() || light_flow) {
+                fill(area.with_min_y(strip.top()), ui.flow_surface());
+            }
         }
+        let Some(layout) = layout else { return };
         let tape_range = self
             .orderflow
             .as_ref()
@@ -150,10 +161,7 @@ impl ChartPane {
             price: price_claims,
             time: time_chip,
         } = self.axis_claims(&frame, chrome);
-        // Gathered once, read twice: the axis stands aside for these just
-        // below, and the same list is what gets painted onto the gutter
-        // further down. Borrowed out of the pane so the container survives
-        // the frame and the next one refills it rather than reallocating.
+        // Share the levels between grid claims and gutter marks; retain the allocation.
         let mut levels = std::mem::take(&mut self.price_axis_levels);
         self.fill_price_axis_levels(&frame, chrome, &mut levels);
 
@@ -265,8 +273,6 @@ impl ChartPane {
         let nothing_in_view = nothing_in_view(&frame);
         self.paint_canvas_chrome(&frame, axis_x, nothing_in_view, compass.as_ref(), chrome);
 
-        // The levels' container, back on the pane for the next frame to
-        // refill rather than reallocate.
         self.price_axis_levels = levels;
 
         // Cache the auto range + height for next frame's input handler, which
@@ -277,8 +283,7 @@ impl ChartPane {
         self.frame.chart_top = chart_rect.top();
     }
 
-    /// The frame's opening writes: the values published per frame reset, the
-    /// canvas cleared, and the footprint ladders switched and snapshotted.
+    /// Reset the frame's published values and snapshot the footprint ladders.
     fn begin_frame(
         &mut self,
         painter: &egui::Painter,
@@ -291,7 +296,6 @@ impl ChartPane {
         // says where it is.
         self.frame.area = Some(area);
         let canvas_background = background_color(chrome.style);
-        painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
         // The ladders accumulate only while something consumes them: the
         // footprint layer, or a fixed-range-profile drawing (placed or being

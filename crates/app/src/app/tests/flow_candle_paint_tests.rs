@@ -532,7 +532,7 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
         assert_eq!(
             bubble_geometry.get_or_insert_with(|| current_bubble_geometry.clone()),
             &current_bubble_geometry,
-            "the warm-gray canvas changes composited colors, never bubble geometry"
+            "the slate canvas changes composited colors, never bubble geometry"
         );
         if source == quantick_appearance::DARK {
             assert_eq!(
@@ -568,8 +568,15 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
             .color(quantick_appearance::Token::Canvas)
             .to_array();
         let background = egui::Color32::from_rgb(r, g, b);
+        let plot = if theme.dark {
+            area
+        } else {
+            area.shrink(crate::plot_area::PLOT_PADDING_PX)
+                .with_max_x(pane.frame.price_gutter.unwrap().left())
+                .with_max_y(pane.frame.time_strip.unwrap().top())
+        };
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-            egui::Shape::Rect(rect) if rect.rect == area && rect.fill == background)));
+            egui::Shape::Rect(rect) if rect.rect == plot && rect.fill == background)));
         let time = app.active_tab().time_pane().unwrap().frame.area.unwrap();
         let rgba = app
             .runtime

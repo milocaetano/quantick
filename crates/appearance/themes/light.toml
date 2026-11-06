@@ -4,10 +4,10 @@ dark = false
 candle_fill_opacity = 1.0
 
 [colors]
-drawing_default = "#D89A32"
-drawing_buy = "#D89A32"
-drawing_sell = "#D89A32"
-drawing_vwap = "#D89A32"
+drawing_default = "#B5832B"
+drawing_buy = "#B5832B"
+drawing_sell = "#B5832B"
+drawing_vwap = "#B5832B"
 # The reference histogram fill (#B1BCD9) includes its existing 0.55 row opacity.
 drawing_profile = "#7A8EC2"
 flow_surface = "#eeeeee"
@@ -132,15 +132,15 @@ ask_tint = { premultiplied = [255, 90, 108, 255] }
 preview_grid = { premultiplied = [16, 16, 16, 16] }
 preview_path = { premultiplied = [145, 145, 145, 145] }
 
-# Bookmap uses the approved warm-gray surface independently of the Light Time canvas.
+# Bookmap uses the approved slate plot independently of the Light Time canvas.
 [bookmap]
 candle_fill_opacity = 0.20
 
 [bookmap.colors]
-drawing_default = "#D89A32"
-drawing_buy = "#D89A32"
-drawing_sell = "#D89A32"
-drawing_vwap = "#D89A32"
+drawing_default = "#B5832B"
+drawing_buy = "#B5832B"
+drawing_sell = "#B5832B"
+drawing_vwap = "#B5832B"
 drawing_profile = "#7A8EC2"
 flow_surface = "#1e2433"
 flow_divider = "#3a4357"
@@ -157,7 +157,7 @@ flow_key_up_shadow = { premultiplied = [0, 0, 0, 128] }
 flow_key_up_ink = "#ffffff"
 flow_band_rule = "#2e3648"
 trade_selection_halo = { premultiplied = [40, 40, 40, 40] }
-candle_preview_background = "#625E59"
+candle_preview_background = "#434A52"
 candle_preview_bid = "#14B9E6"
 candle_preview_ask = "#F54646"
 candle_preview_buy = "#37E2B0D2"
@@ -183,7 +183,7 @@ drawing_selection_halo = { premultiplied = [28, 28, 28, 28] }
 flow_buy = "#70B9F4"
 flow_sell = "#E8AF63"
 tape_path = "#8EA6B15F"
-tape_label = "#8EA6B1"
+tape_label = "#D0D7DF"
 quantity_shadow = { premultiplied = [0, 0, 0, 190] }
 crosshair_ink = "#FFFFFF"
 footprint_total_ink = "#FFFFFF"
@@ -193,17 +193,17 @@ loading_title = "#D7DDE8"
 loading_meta = "#7C8799"
 loading_faint = "#4B5566"
 loading_border = "#1B2330"
-footprint_profile = "#D8D8D8"
+footprint_profile = "#C5CCD6"
 footprint_bevel_highlight = { premultiplied = [56, 56, 56, 56] }
 footprint_bevel_shadow = { premultiplied = [0, 0, 0, 120] }
-canvas = "#625E59"
+canvas = "#434A52"
 chrome = "#171B26"
 inset = "#10141D"
 control = "#232936"
 border = "#2E3648"
-text_primary = "#D2DAE2"
-text_muted = "#96A0AF"
-text_faint = "#6E7887"
+text_primary = "#F3F4F6"
+text_muted = "#D0D7DF"
+text_faint = "#BBC6D0"
 buy = "#26A69A"
 sell = "#EF5350"
 poc = "#FFD54F"
@@ -224,7 +224,7 @@ rec = "#FF4D4D"
 gap_line = { premultiplied = [120, 92, 10, 150] }
 gap_label = "#9A823A"
 tag_bg = "#373F50"
-text_support = "#8692A4"
+text_support = "#D0D7DF"
 chip_ink = "#0E121A"
 casing = { premultiplied = [5, 7, 12, 235] }
 draw_violet = "#C58AF9"
@@ -232,7 +232,7 @@ draw_cyan = "#4DD0E1"
 float_shadow = { premultiplied = [0, 0, 0, 96] }
 candle_bull_outline = "#68E0C9"
 candle_bear_outline = "#FF898B"
-candle_wick = "#A0A9B8"
+candle_wick = "#B6C9D2"
 
 buy_ink = "#88CEC7"
 sell_ink = "#F6A09F"

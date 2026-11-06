@@ -6,7 +6,7 @@ Quantick's appearance contract is versioned TOML. The bundled
 resolver as an authored theme. Start with either file when writing a community
 theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
-Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Light Bookmap (Trail and Tape) uses a warm-gray `#625E59` canvas with the established liquidity ramp, bubbles and translucent candles. Light drawing defaults use amber `#D89A32`; fixed-range profiles use muted blue-gray. Dark retains its established appearance. Typography, spacing and layout are unchanged.
+Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Light Bookmap (Trail and Tape) uses a slate `#434A52` plot with the established liquidity ramp, bubbles and translucent candles. Light drawing defaults use amber `#B5832B`; fixed-range profiles use muted blue-gray. Dark retains its established appearance. Typography, spacing and layout are unchanged.
 
 
 ## Bookmap surface
@@ -16,7 +16,7 @@ application interface and conventional charts. `candle_fill_opacity`,
 `[bookmap.colors]` and `[bookmap.footprint_heat]` use the same validated fields as
 their root counterparts. Missing surface fields inherit the resolved parent
 values; omitting the table preserves existing authored themes. Typography is
-shared. The bundled Light document explicitly supplies its warm-gray canvas,
+shared. The bundled Light document explicitly supplies its slate plot,
 amber drawing defaults and blue-gray profiles over the historical Dark market
 colors and `0.20` candle opacity, independently of its name or `dark` flag.
 `[orderflow]` continues to own liquidity and bubble colors and supports explicit
@@ -25,7 +25,10 @@ palette snapshots as before.
 Only theme-owned chart fields use the surface values. Legacy global chart settings,
 saved candle presets and scripts remain explicit overrides: saving a chart
 settings preview captures that preview, and applying such a preset to a chart
-can override its Time or Bookmap defaults. No inheritance is inferred from RGB equality. Paint scopes
+can override its Time or Bookmap defaults. No inheritance is inferred from RGB equality. Axis gutters, timestamp strips and their labels use the root interface palette.
+Light confines the Bookmap canvas to the plot, including before data arrives;
+Dark retains its existing frame. Candle colors and chart marks keep the surface
+palette. Paint scopes
 are local to one synchronous pane draw and never modify widget visuals or fonts.
 
 ## Document

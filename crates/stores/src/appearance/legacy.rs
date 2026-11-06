@@ -4,13 +4,15 @@
 //! e24a42a3: ace82b76e7df710e94ed164af4e5c23af155d685 (neutral Light),
 //! 8bb894e1: d28a176148a2cc4bb479a30964633002ec544c4f (solid Light candles).
 //! 66aa9abc: 66aa9abced90b1daa892a172305b7eafbd9c40ec (dark Bookmap surface).
+//! 90d18edf: the warm-gray Bookmap and amber drawing defaults.
 //! Dark's fixture is also the unmodified 66aa9abc source, before drawing_profile.
 
-const LIGHT_SOURCES: [&str; 4] = [
+const LIGHT_SOURCES: [&str; 5] = [
     include_str!("legacy-light-e4a9249b.toml"),
     include_str!("legacy-light-e24a42a3.toml"),
     include_str!("legacy-light-8bb894e1.toml"),
     include_str!("legacy-light-66aa9abc.toml"),
+    include_str!("legacy-light-90d18edf.toml"),
 ];
 const DARK_SOURCE: &str = include_str!("legacy-dark-66aa9abc.toml");
 

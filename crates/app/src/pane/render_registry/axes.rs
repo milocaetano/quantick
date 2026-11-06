@@ -62,7 +62,7 @@ pub(in crate::pane) struct PointerPass<'a> {
     pub tz: TzOffset,
 }
 fn grid(p: &mut GridPass<'_, '_>) {
-    let palette = theme::get(p.painter.ctx());
+    let palette = theme::ui(p.painter.ctx());
     let GridPass {
         painter,
         chart_rect,
@@ -204,6 +204,7 @@ fn crosshair(p: &mut CrosshairPass<'_>) {
         stroke,
     );
 
+    let axis_palette = theme::ui(painter.ctx());
     // Price tag on the axis at the cursor height, through the axis's one
     // tag owner — the compass and the last-price chip write theirs the
     // same way, so the marks that share this gutter cannot drift apart.
@@ -212,8 +213,8 @@ fn crosshair(p: &mut CrosshairPass<'_>) {
         axis_x,
         pos.y,
         pointer_compass::price_text(scale.price_at(pos.y)),
-        palette.tag_bg(),
-        palette.crosshair_ink(),
+        axis_palette.tag_bg(),
+        axis_palette.crosshair_ink(),
     );
 }
 fn pointer(p: &mut PointerPass<'_>) {
@@ -255,7 +256,7 @@ pub(in crate::pane) struct TimeStripPass<'a> {
 }
 impl TimeStripPass<'_> {
     pub fn paint(&self) {
-        let palette = theme::get(self.painter.ctx());
+        let palette = theme::ui(self.painter.ctx());
         let Self {
             painter,
             strip,
@@ -373,7 +374,7 @@ pub(in crate::pane) struct LaneTimeAxisPass<'a> {
 }
 impl LaneTimeAxisPass<'_> {
     pub fn paint(&self) {
-        let palette = theme::get(self.painter.ctx());
+        let palette = theme::ui(self.painter.ctx());
         let Self {
             painter,
             lane_strip,
@@ -538,7 +539,7 @@ fn paint_tape_clock(
     labelled: &[egui::Rect],
     geometry: quantick_orderflow::projection::TapeHorizontalGeometry,
 ) {
-    let palette = theme::get(painter.ctx());
+    let palette = theme::ui(painter.ctx());
     let format = crate::chart::TimeLabelFormat::Full;
     let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
     let label_width = painter

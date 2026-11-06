@@ -45,7 +45,7 @@ mod tests {
     use crate::{Appearance, DARK, LIGHT, ResolvedTheme, ThemeDocument, Token};
 
     #[test]
-    fn amber_light_bookmap_preserves_market_colors_and_keeps_time_canvas_light() {
+    fn slate_light_bookmap_preserves_market_colors_and_keeps_time_canvas_light() {
         let dark = ResolvedTheme::default();
         let light = ResolvedTheme::parse(LIGHT).unwrap();
         assert_eq!(light.candle_fill_opacity, 1.0);
@@ -55,12 +55,17 @@ mod tests {
         );
         for token in Token::ALL {
             let expected = match token {
-                Token::Canvas | Token::CandlePreviewBackground => [98, 94, 89, 255],
+                Token::Canvas | Token::CandlePreviewBackground => [67, 74, 82, 255],
                 Token::DrawingDefault
                 | Token::DrawingBuy
                 | Token::DrawingSell
-                | Token::DrawingVwap => [216, 154, 50, 255],
+                | Token::DrawingVwap => [181, 131, 43, 255],
                 Token::DrawingProfile => [122, 142, 194, 255],
+                Token::TextPrimary => [243, 244, 246, 255],
+                Token::TextMuted | Token::TextSupport | Token::TapeLabel => [208, 215, 223, 255],
+                Token::TextFaint => [187, 198, 208, 255],
+                Token::CandleWick => [182, 201, 210, 255],
+                Token::FootprintProfile => [197, 204, 214, 255],
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(

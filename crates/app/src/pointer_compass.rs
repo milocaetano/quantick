@@ -146,7 +146,7 @@ pub(crate) fn time_tag(
     readout: &PointerReadout,
     tz: TzOffset,
 ) -> Option<(TimeChip, String)> {
-    let palette = theme::get(painter.ctx());
+    let palette = theme::ui(painter.ctx());
     let bar = readout.bar?;
     let full = crate::plot_area::fmt_pointer_time(bar.open_time_unix_ms, bar.interval_ms, tz);
     let font = palette.axis_font(chart::TIME_LABEL_FONT_PX);
@@ -244,7 +244,7 @@ pub(crate) fn paint_price_tag(
     fill: egui::Color32,
     ink: egui::Color32,
 ) {
-    let palette = theme::get(painter.ctx());
+    let palette = theme::ui(painter.ctx());
     let galley = painter.layout_no_wrap(text, palette.axis_font(chart::AXIS_LABEL_FONT_PX), ink);
     let text_pos = egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y - galley.size().y / 2.0);
     let background = egui::Rect::from_min_size(text_pos - TAG_PAD, galley.size() + TAG_PAD * 2.0);
@@ -259,7 +259,7 @@ pub(crate) fn paint_price_tag(
 /// one more axis label: it joins the height the mouse is at to the number
 /// beside it, over the six pixels of gutter between them.
 pub(crate) fn paint_price_mark(painter: &egui::Painter, axis_x: f32, readout: &PointerReadout) {
-    let palette = theme::get(painter.ctx());
+    let palette = theme::ui(painter.ctx());
     let y = readout.position.y;
     painter.line_segment(
         [egui::pos2(axis_x, y), egui::pos2(axis_x + TICK_PX, y)],
@@ -294,7 +294,7 @@ pub(crate) fn paint_time_mark(
     readout: &PointerReadout,
     tz: TzOffset,
 ) {
-    let palette = theme::get(painter.ctx());
+    let palette = theme::ui(painter.ctx());
     let Some((TimeChip { centre, .. }, text)) = time_tag(painter, strip, readout, tz) else {
         return;
     };

@@ -7,7 +7,7 @@ mod palette;
 mod resolved;
 pub mod store;
 
-pub use resolved::{Palette, bookmap, bookmap_scope, get, install_fonts, sync};
+pub use resolved::{Palette, bookmap, bookmap_scope, get, install_fonts, sync, ui};
 
 pub use chrome::apply;
 pub use ink::{active_tint, press_tint, with_opacity};

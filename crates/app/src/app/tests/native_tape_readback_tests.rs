@@ -683,3 +683,6 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
 
 #[path = "flow_candle_paint_tests.rs"]
 mod flow_candle_paint_tests;
+
+#[path = "slate_axes_tests.rs"]
+mod slate_axes_tests;

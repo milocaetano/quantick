@@ -198,8 +198,15 @@ mod bookmap_tests {
         let mut flow = shared;
         flow.apply_theme(light.bookmap());
         let mut expected_flow = ChartStyle::default();
-        expected_flow.canvas.background = [0x62, 0x5E, 0x59];
+        expected_flow.canvas.background = [0x43, 0x4A, 0x52];
+        expected_flow.candles.wick = [0xB6, 0xC9, 0xD2];
         assert_eq!(flow, expected_flow);
+        for bullish in [false, true] {
+            assert_eq!(
+                flow.candles.resolved(bullish, false),
+                ChartStyle::default().candles.resolved(bullish, false)
+            );
+        }
         flow.apply_theme(dark.bookmap());
         assert_eq!(flow, ChartStyle::default());
         assert_eq!(shared.candles.fill_opacity, 1.0);

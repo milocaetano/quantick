@@ -120,12 +120,9 @@ type Installed = quantick_appearance::RenderCache<Palettes>;
 fn key() -> egui::Id {
     egui::Id::new("quantick.resolved_appearance")
 }
-fn cached(ctx: &egui::Context) -> Installed {
-    ctx.data_mut(|data| {
-        data.get_temp_mut_or_insert_with(key(), || {
-            Installed::new(Palettes::new(ResolvedTheme::bundled_dark()))
-        })
-        .clone()
+fn cached(data: &mut egui::util::IdTypeMap) -> &mut Installed {
+    data.get_temp_mut_or_insert_with(key(), || {
+        Installed::new(Palettes::new(ResolvedTheme::bundled_dark()))
     })
 }
 
@@ -133,15 +130,13 @@ fn cached(ctx: &egui::Context) -> Installed {
 pub fn get(ctx: &egui::Context) -> Arc<Palette> {
     ctx.data_mut(|data| {
         data.get_temp::<Arc<Palette>>(surface_key())
-            .unwrap_or_else(|| {
-                data.get_temp_mut_or_insert_with(key(), || {
-                    Installed::new(Palettes::new(ResolvedTheme::bundled_dark()))
-                })
-                .value
-                .ui
-                .clone()
-            })
+            .unwrap_or_else(|| cached(data).value.ui.clone())
     })
+}
+
+/// Axis and interface colors, independent of the active plot paint scope.
+pub fn ui(ctx: &egui::Context) -> Arc<Palette> {
+    ctx.data_mut(|data| cached(data).value.ui.clone())
 }
 
 fn surface_key() -> egui::Id {
@@ -167,7 +162,7 @@ impl Drop for PaintScope {
 }
 
 pub fn bookmap(ctx: &egui::Context) -> Arc<Palette> {
-    cached(ctx).value.bookmap
+    ctx.data_mut(|data| cached(data).value.bookmap.clone())
 }
 
 pub fn bookmap_scope(ctx: &egui::Context) -> PaintScope {
@@ -184,7 +179,7 @@ pub fn bookmap_scope(ctx: &egui::Context) -> PaintScope {
 }
 
 pub fn sync(ctx: &egui::Context, state: &Appearance) {
-    let mut installed = cached(ctx);
+    let mut installed = ctx.data_mut(|data| cached(data).clone());
     if let Some(typography_changed) = installed.refresh(state, Palettes::new) {
         super::chrome::apply_palette(ctx, &installed.value.ui, typography_changed);
         ctx.data_mut(|data| data.insert_temp(key(), installed));
@@ -318,9 +313,11 @@ mod surface_tests {
         {
             let _outer = bookmap_scope(&ctx);
             assert!(Arc::ptr_eq(&get(&ctx), &surface));
+            assert!(Arc::ptr_eq(&ui(&ctx), &root));
             assert_eq!(get(&other).canvas(), root.canvas());
             {
                 let _inner = bookmap_scope(&ctx);
+                assert!(Arc::ptr_eq(&ui(&ctx), &root));
             }
             assert!(Arc::ptr_eq(&get(&ctx), &surface));
             assert_eq!(ctx.style().visuals, visuals);

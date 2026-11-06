@@ -521,7 +521,7 @@ mod appearance_tests {
             let expected = if tool.id() == "fixed-range-profile" {
                 [122, 142, 194, 255]
             } else {
-                [216, 154, 50, 255]
+                [181, 131, 43, 255]
             };
             assert_eq!(fresh.style.color.to_array(), expected, "{}", tool.id());
             assert_eq!(fresh.style.width_px, existing.style.width_px);
