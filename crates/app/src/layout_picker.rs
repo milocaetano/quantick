@@ -16,6 +16,13 @@ use crate::canvas_layout::{LAYOUT_PRESETS, LayoutPreset, PaneKind};
 use crate::theme;
 use crate::widgets::{CORNER_RADIUS, IconButton, TOOLBAR_ICON};
 
+/// The button's own miniature of the layout on screen, in pixels: the
+/// popover's thumbnail at toolbar scale, inside the 28 px hit target.
+const FACE_THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(20.0, 14.0);
+const _: () = assert!(
+    FACE_THUMBNAIL_SIZE.x < TOOLBAR_ICON.hit && FACE_THUMBNAIL_SIZE.y < TOOLBAR_ICON.hit,
+    "the miniature must sit inside the button's hit target"
+);
 /// Width of the popover, in pixels.
 const POPOVER_WIDTH_PX: f32 = 268.0;
 /// One preset cell: the thumbnail plus its label.
@@ -77,10 +84,16 @@ pub struct PickerModel<'a> {
 ///
 /// Returns the preset the trader picked this frame, if any.
 pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static LayoutPreset> {
-    let button = IconButton::new(icons::LAYOUT, TOOLBAR_ICON)
+    let button = IconButton::new(face_glyph(model.current), TOOLBAR_ICON)
         .active(*model.open)
         .hover_text("chart layout (Ctrl+Shift+1…)")
         .show(ui);
+    if let Some(preset) = model.current
+        && ui.is_rect_visible(button.rect)
+    {
+        let face = egui::Rect::from_center_size(button.rect.center(), FACE_THUMBNAIL_SIZE);
+        draw_thumbnail(ui.painter(), face, preset);
+    }
 
     let popup_id = ui.make_persistent_id("layout_picker_popup");
     if model.request_open {
@@ -113,6 +126,13 @@ pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static Layout
         *model.open = false;
     }
     picked
+}
+
+/// The glyph the button wears: none while a preset is on screen, whose
+/// miniature is painted instead, and the generic layout icon for a row the
+/// trader rearranged by hand, which no miniature describes.
+fn face_glyph(current: Option<&'static LayoutPreset>) -> &'static str {
+    if current.is_some() { "" } else { icons::LAYOUT }
 }
 
 /// The grid of preset cells, wrapped to the popover's width.
@@ -320,6 +340,22 @@ mod tests {
             "{} presets need {rows} rows and {height}px of popover; either the              grid wraps wider or the registry has outgrown a popover",
             LAYOUT_PRESETS.len()
         );
+    }
+
+    /// The button shows the layout on screen, so it never says the same thing
+    /// for two arrangements; a custom row, which matches no preset, falls back
+    /// to the generic icon rather than a miniature of something it is not.
+    #[test]
+    fn the_button_face_is_the_current_preset_or_the_generic_icon() {
+        for preset in LAYOUT_PRESETS {
+            assert_eq!(
+                face_glyph(Some(preset)),
+                "",
+                "{} paints its miniature",
+                preset.id
+            );
+        }
+        assert_eq!(face_glyph(None), icons::LAYOUT);
     }
 
     /// A cell is a click target before it is a picture, so it has to clear the

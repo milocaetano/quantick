@@ -2,13 +2,16 @@
 //! on it* on the right (`docs/ux/ui-design-model.md` §6).
 //!
 //! Left: the tab's market as a dropdown button that opens the palette in
-//! switch mode (or the amber session label while replaying),
-//! HISTORY (a `+ older ▾` split button whose menu holds the page size). Right:
-//! LOOK (appearance dialog), PANELS (dock show/hide). Between HISTORY and the right groups sits TRADE — the
-//! simulated BUY/SELL market buttons (`docs/ux/paper-trading.md`). The
-//! toolbar never wraps: [`collapse_plan`] folds groups into the `⋯` overflow
-//! menu in the §6 order — LOOK → PANELS → HISTORY → TRADE → the feed name
-//! shrinks to its initial. The symbol never folds. Bars, indicators and layers
+//! switch mode (or the amber session label while replaying), the layout
+//! picker wearing a miniature of the layout on screen, and HISTORY (a
+//! `+ older ▾` split button whose menu holds the page size). Right, alone at
+//! the edge: PANELS (dock show/hide, a tray). Between HISTORY and the right
+//! edge sits TRADE — the simulated BUY/SELL market buttons
+//! (`docs/ux/paper-trading.md`). Appearance has no toolbar button: the chart
+//! itself and the Settings window open it. The toolbar never wraps:
+//! [`collapse_plan`] folds groups into the `⋯` overflow menu in the §6 order —
+//! PANELS → HISTORY → TRADE → the feed name shrinks to its initial. The symbol
+//! and the layout picker never fold. Bars, indicators and layers
 //! belong to each pane, on its header line (`crate::pane_header`).
 //!
 //! The widgets edit the app's state through [`ToolbarModel`]'s borrows;
@@ -113,8 +116,6 @@ pub struct ToolbarModel<'a> {
     pub capabilities: FeedCapabilities,
     /// Whether the dock (strip included) is shown.
     pub dock_visible: bool,
-    /// Whether the appearance dialog is open.
-    pub appearance_open: bool,
     /// The TRADE group: readiness, state-aware entry labels and the close
     /// button, all computed by the paper host (`PaperTrading`).
     pub paper: PaperTradeModel,
@@ -172,8 +173,6 @@ pub enum ToolbarAction {
     LoadOlderCandles,
     /// Show or hide the dock.
     ToggleDock,
-    /// Open or close the appearance dialog.
-    ToggleAppearance,
     /// Add a native indicator, by its catalog id
     /// (`quantick_indicators::native`). One variant for every native there
     /// will ever be — the menu is drawn from the catalog, so the toolbar
@@ -220,6 +219,17 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 draw_source(ui, model, plan, &mut actions);
+                ui.separator();
+                if let Some(preset) = crate::layout_picker::draw(
+                    ui,
+                    crate::layout_picker::PickerModel {
+                        current: model.layout_preset,
+                        open: model.layout_picker_open,
+                        request_open: model.layout_picker_request_open,
+                    },
+                ) {
+                    actions.push(ToolbarAction::SetLayout(preset));
+                }
                 if plan.history_inline {
                     ui.separator();
                     draw_history(ui, model, &mut actions);
@@ -233,31 +243,12 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                         draw_overflow(ui, model, plan, &mut actions);
                     }
                     if plan.panels_inline {
-                        let panels = IconButton::new(icons::SIDEBAR_SIMPLE, TOOLBAR_ICON)
+                        let panels = IconButton::new(icons::TRAY, TOOLBAR_ICON)
                             .active(model.dock_visible)
                             .hover_text("show or hide the panels dock (Ctrl+Shift+B)")
                             .show(ui);
                         if panels.clicked() {
                             actions.push(ToolbarAction::ToggleDock);
-                        }
-                    }
-                    if let Some(preset) = crate::layout_picker::draw(
-                        ui,
-                        crate::layout_picker::PickerModel {
-                            current: model.layout_preset,
-                            open: model.layout_picker_open,
-                            request_open: model.layout_picker_request_open,
-                        },
-                    ) {
-                        actions.push(ToolbarAction::SetLayout(preset));
-                    }
-                    if plan.look_inline {
-                        let look = IconButton::new(icons::PAINT_BRUSH, TOOLBAR_ICON)
-                            .active(model.appearance_open)
-                            .hover_text("appearance: candles, canvas, grid")
-                            .show(ui);
-                        if look.clicked() {
-                            actions.push(ToolbarAction::ToggleAppearance);
                         }
                     }
                 });
@@ -650,17 +641,9 @@ fn draw_overflow(
     actions: &mut Vec<ToolbarAction>,
 ) {
     ui.menu_button(egui::RichText::new(icons::DOTS_THREE).size(16.0), |ui| {
-        if !plan.look_inline
-            && ui
-                .button(format!("{} Appearance…", icons::PAINT_BRUSH))
-                .clicked()
-        {
-            actions.push(ToolbarAction::ToggleAppearance);
-            ui.close_menu();
-        }
         if !plan.panels_inline
             && ui
-                .button(format!("{} Show/hide panels", icons::SIDEBAR_SIMPLE))
+                .button(format!("{} Show/hide panels", icons::TRAY))
                 .clicked()
         {
             actions.push(ToolbarAction::ToggleDock);
@@ -740,7 +723,7 @@ mod tests {
 
     /// With bars, indicators and layers gone from the row, every group fits a
     /// 1280 px window at TRADE's reserved width. REC needs more: beside it, 1280 px
-    /// folds LOOK into the overflow, and 1920 px folds nothing.
+    /// folds PANELS into the overflow, and 1920 px folds nothing.
     #[test]
     fn nothing_folds_at_the_common_window_widths() {
         let rec = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX;
@@ -749,7 +732,7 @@ mod tests {
             assert_eq!(collapse_plan(available, W_TRADE), CollapsePlan::FULL);
         }
         let with_rec = collapse_plan(1280.0 - margins - rec, W_TRADE);
-        assert!(!with_rec.look_inline && with_rec.panels_inline);
+        assert!(!with_rec.panels_inline);
         assert!(with_rec.history_inline && with_rec.trade_inline);
     }
 
@@ -819,7 +802,6 @@ mod tests {
                             ohlcv_aggressor_split: false,
                         },
                         dock_visible: true,
-                        appearance_open: false,
                         paper: flat_trade(true),
                     };
                     let actions = draw(ctx, &mut model);
@@ -870,7 +852,6 @@ mod tests {
                         ohlcv_aggressor_split: false,
                     },
                     dock_visible: true,
-                    appearance_open: false,
                     // Not yet ready: the TRADE pair must lay out in its
                     // disabled state without asking anything of the app.
                     paper: flat_trade(false),
@@ -971,7 +952,6 @@ mod tests {
                         ohlcv_aggressor_split: false,
                     },
                     dock_visible: true,
-                    appearance_open: false,
                     paper: paper.clone(),
                 };
                 let actions = draw(ctx, &mut model);

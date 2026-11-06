@@ -20,11 +20,8 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.dialog.toggle",
         title: "Open the chart settings on the Candles tab — candles, canvas, grid",
-        reach: "toolbar brush button, Settings window, a double click on a candle",
-        keys: &[
-            (Source::ToolbarAction, "ToggleAppearance"),
-            (Source::MenuEntry, "Appearance…"),
-        ],
+        reach: "Settings window, a double click on a candle",
+        keys: &[(Source::MenuEntry, "Appearance…")],
         mapping: capability!("chart.settings.set"),
     },
     UiBehaviour {

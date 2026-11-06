@@ -16,14 +16,12 @@ const W_SOURCE_FULL: f32 = 330.0;
 const W_SOURCE_SHRUNK: f32 = 240.0;
 /// The `History: <target> ▾` split button.
 const W_HISTORY: f32 = 150.0;
-/// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
+/// One 28 px icon button (the layout picker, PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
 /// Which groups stay inline at the current width. Everything folded is
 /// reachable through the `⋯` overflow menu instead — never hidden.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CollapsePlan {
-    /// LOOK renders as its own icon.
-    pub look_inline: bool,
     /// PANELS renders as its own icon.
     pub panels_inline: bool,
     /// HISTORY renders as the split button.
@@ -37,7 +35,6 @@ pub struct CollapsePlan {
 impl CollapsePlan {
     /// Nothing folded.
     pub const FULL: Self = Self {
-        look_inline: true,
         panels_inline: true,
         history_inline: true,
         trade_inline: true,
@@ -48,7 +45,7 @@ impl CollapsePlan {
     /// name loses no affordance, so it alone needs no overflow.
     #[must_use]
     pub fn overflow_needed(self) -> bool {
-        !(self.look_inline && self.panels_inline && self.history_inline && self.trade_inline)
+        !(self.panels_inline && self.history_inline && self.trade_inline)
     }
 
     /// Estimated width of the toolbar under this plan. The `⋯` slot is
@@ -56,9 +53,11 @@ impl CollapsePlan {
     /// it conditionally would make the first fold width-neutral and leave
     /// the planner skipping straight past it. `trade_width` comes in as a
     /// parameter: TRADE reserves its open-state width (the toolbar's `W_TRADE`).
+    /// The layout picker sits beside SOURCE and never folds, so it is always
+    /// counted.
     #[must_use]
     pub fn width(self, trade_width: f32) -> f32 {
-        let mut width = W_SLACK + W_ICON;
+        let mut width = W_SLACK + W_ICON + W_ICON;
         width += if self.feed_full_name {
             W_SOURCE_FULL
         } else {
@@ -69,9 +68,6 @@ impl CollapsePlan {
         }
         if self.trade_inline {
             width += trade_width;
-        }
-        if self.look_inline {
-            width += W_ICON;
         }
         if self.panels_inline {
             width += W_ICON;
@@ -86,8 +82,7 @@ impl CollapsePlan {
 #[must_use]
 pub fn collapse_plan(available: f32, trade_width: f32) -> CollapsePlan {
     let mut plan = CollapsePlan::FULL;
-    let steps: [fn(&mut CollapsePlan); 5] = [
-        |plan| plan.look_inline = false,
+    let steps: [fn(&mut CollapsePlan); 4] = [
         |plan| plan.panels_inline = false,
         |plan| plan.history_inline = false,
         |plan| plan.trade_inline = false,
@@ -111,20 +106,18 @@ mod tests {
     const FLAT_TRADE_W: f32 = 110.0;
 
     /// How many §6 collapse steps a plan has taken. `None` when the plan is
-    /// not one of the six canonical states — folding out of order.
+    /// not one of the five canonical states — folding out of order.
     fn stage(plan: CollapsePlan) -> Option<usize> {
         let states = [
-            (true, true, true, true, true),
-            (false, true, true, true, true),
-            (false, false, true, true, true),
-            (false, false, false, true, true),
-            (false, false, false, false, true),
-            (false, false, false, false, false),
+            (true, true, true, true),
+            (false, true, true, true),
+            (false, false, true, true),
+            (false, false, false, true),
+            (false, false, false, false),
         ];
         states.iter().position(|&state| {
             state
                 == (
-                    plan.look_inline,
                     plan.panels_inline,
                     plan.history_inline,
                     plan.trade_inline,
@@ -143,13 +136,13 @@ mod tests {
     #[test]
     fn a_hopeless_width_ends_fully_folded() {
         let plan = collapse_plan(0.0, FLAT_TRADE_W);
-        assert_eq!(stage(plan), Some(5));
+        assert_eq!(stage(plan), Some(4));
         assert!(plan.overflow_needed());
     }
 
     #[test]
     fn folding_follows_the_documented_order_and_never_skips() {
-        let mut last_stage = 5;
+        let mut last_stage = 4;
         // Sweep from narrow to wide: the collapse stage must only decrease,
         // and every plan must be one of the canonical §6 states.
         let mut width = 100.0;
@@ -167,8 +160,8 @@ mod tests {
     }
 
     #[test]
-    fn look_folds_first_and_alone_at_a_mildly_tight_width() {
-        // One pixel short of the full plan: exactly LOOK moves to overflow.
+    fn panels_fold_first_and_alone_at_a_mildly_tight_width() {
+        // One pixel short of the full plan: exactly PANELS moves to overflow.
         let full_width = CollapsePlan::FULL.width(FLAT_TRADE_W);
         let plan = collapse_plan(full_width - 1.0, FLAT_TRADE_W);
         assert_eq!(stage(plan), Some(1));
