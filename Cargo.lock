@@ -2939,6 +2939,7 @@ dependencies = [
  "quantick-orderflow",
  "quantick-paper",
  "quantick-pine",
+ "quantick-platform",
  "quantick-replay",
  "quantick-session",
  "quantick-sim",
@@ -3276,6 +3277,15 @@ name = "quantick-pine"
 version = "0.1.0"
 dependencies = [
  "quantick-indicators",
+]
+
+[[package]]
+name = "quantick-platform"
+version = "0.1.0"
+dependencies = [
+ "raw-window-handle",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

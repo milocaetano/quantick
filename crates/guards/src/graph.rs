@@ -235,6 +235,10 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // needs building before they can answer. A dependency here would put a
     // compile back in front of the cheapest checks in the repo.
     ("guards", &[]),
+    // The OS-window exception: native window calls for `app` alone, keyed by
+    // window number and title. It reaches no workspace crate, so no domain
+    // type and no UI toolkit can travel through it.
+    ("platform", &[]),
 ];
 
 /// The one crate above the graph: everything may be linked from it, so there
