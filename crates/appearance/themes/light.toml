@@ -72,8 +72,8 @@ control = "#DEDBD7"
 chart_grid = "#BABBBB"
 # About 20 levels under chrome, so the strip reads apart from the toolbar.
 tab_strip = "#D9D6D2"
-# The logo's hue darkened to 3.8:1 on the strip; #3AF0B2 there is 1.2:1.
-brand = "#007A55"
+# The wordmark's "tick", the approved W6 green: a logotype, so no contrast floor.
+brand = "#12C68C"
 replay_ink = "#7F36B3"
 border = "#B8B6B2"
 text_primary = "#202020"

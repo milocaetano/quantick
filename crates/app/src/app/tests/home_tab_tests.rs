@@ -976,65 +976,79 @@ fn the_logo_is_its_own_q_only_scaled_or_plate_dropped_on_whole_pixels_at_every_z
     }
 }
 
-/// Light paints its own Q at Dark's size, its glyph tucked about a pixel
-/// from the "u"; the wordmark keeps the place Dark gives it.
-#[test]
-fn the_light_q_is_edged_and_moved_toward_the_wordmark() {
-    use crate::tabstrip::LIGHT_Q_SHIFT_PT;
-    let mut placed = Vec::new();
-    for (source, name) in [
-        (quantick_appearance::DARK, "Quantick Q"),
-        (quantick_appearance::LIGHT, "Quantick Q light"),
-    ] {
-        let (mut app, _, _, _) = test_app();
-        let ctx = egui::Context::default();
-        app.runtime
-            .appearance
-            .apply_candidate(source, false)
-            .unwrap();
-        frame(&mut app, &ctx);
-        let output = frame(&mut app, &ctx);
-        assert_plain_q(&output, name);
-        let mesh = logo_mesh(&output);
-        let manager = ctx.tex_manager();
-        let texture = manager
-            .read()
-            .meta(mesh.texture_id)
-            .expect("loaded")
-            .name
-            .clone();
-        assert_eq!(texture, name);
-        let uan = painted_text(&output, "uan").pos.x;
-        placed.push((mesh.calc_bounds(), uan));
-    }
-    let [(dark, dark_uan), (light, light_uan)] = placed[..] else {
-        unreachable!()
-    };
-    assert_eq!(light_uan, dark_uan, "the wordmark stays put");
-    assert_eq!(dark.size(), egui::vec2(22.0, 22.0), "Dark is unchanged");
-    assert_eq!(light, dark.translate(egui::vec2(LIGHT_Q_SHIFT_PT, 0.0)));
-    // The glyph's right edge, icon.svg's x 206, is texel 230 of 256; the "u"
-    // galley starts just after it, and its ink one side bearing later.
-    let glyph_right = light.left() + light.width() * 230.0 / 256.0;
-    let gap = light_uan - glyph_right;
-    assert!((0.0..=0.5).contains(&gap), "Q to the u galley: {gap} px");
+/// The Home strip under `source` at `ppp`: the logo mesh's bounds, the
+/// texture's name and size, and where the "uan" galley starts.
+fn light_strip(source: &str, ppp: f32) -> (egui::Rect, String, [usize; 2], f32) {
+    let (mut app, _, _, _) = test_app();
+    let ctx = egui::Context::default();
+    ctx.set_pixels_per_point(ppp);
+    app.runtime
+        .appearance
+        .apply_candidate(source, false)
+        .unwrap();
+    frame(&mut app, &ctx);
+    let output = frame(&mut app, &ctx);
+    assert_plain_q(&output, source);
+    let mesh = logo_mesh(&output);
+    let manager = ctx.tex_manager();
+    let meta = manager
+        .read()
+        .meta(mesh.texture_id)
+        .expect("loaded")
+        .clone();
+    let uan = painted_text(&output, "uan").pos.x;
+    (mesh.calc_bounds(), meta.name, meta.size, uan)
 }
 
-/// The Light Q's faded side is opaque white, its teal keeps the gradient and
-/// every rect is edged in black; egui gets it premultiplied like the Dark Q.
+/// Light paints W6's Q: the whole viewBox in 28 pt, its glyph's right edge
+/// where Dark's sits plus the shift, about a pixel from the "u"; the wordmark
+/// keeps the place Dark gives it.
 #[test]
-fn the_light_q_has_white_faces_black_edges_and_the_teal_gradient() {
-    use crate::surfaces::home::{Logo, logo_image};
-    let image = logo_image(Logo::QLight);
-    assert_eq!(image.size, [256, 256], "the q-bare frame");
-    let at = |x: usize, y: usize| image.pixels[y * 256 + x].to_array();
-    // icon.svg rects (53,116,51,14) and (160,79,43,14) at 4/3 about the glyph centre:
-    // a face centre, its edge band, and a teal face centre.
-    assert_eq!(at(60, 115), [255, 255, 255, 255], "white face");
-    assert_eq!(at(60, 108), [0, 0, 0, 255], "black edge");
-    let [r, g, b, a] = at(197, 65);
-    assert_eq!(a, 255);
-    assert!(g > r + 150 && g > b, "teal face: {:?}", [r, g, b]);
+fn the_light_q_is_w6s_and_moved_toward_the_wordmark() {
+    use crate::tabstrip::LIGHT_Q_SHIFT_PT;
+    use quantick_appearance::mark;
+    let (dark, dark_name, _, dark_uan) = light_strip(quantick_appearance::DARK, 1.0);
+    let (light, light_name, size, light_uan) = light_strip(quantick_appearance::LIGHT, 1.0);
+    assert_eq!(
+        (dark_name.as_str(), light_name.as_str()),
+        ("Quantick Q", "Quantick Q light")
+    );
+    assert_eq!(light_uan, dark_uan, "the wordmark stays put");
+    assert_eq!(dark.size(), egui::vec2(22.0, 22.0), "Dark is unchanged");
+    assert_eq!(light.size(), egui::Vec2::splat(mark::MARK_PT));
+    assert_eq!(size, [28, 28], "one texel per pixel");
+    let unit = light.width() / mark::VIEWBOX;
+    let glyph_right = light.left() + mark::GLYPH_RIGHT * unit;
+    let dark_right =
+        dark.center().x + (mark::GLYPH_RIGHT - mark::GLYPH_CENTRE.0) * 22.0 * 4.0 / 3.0 / 256.0;
+    let moved = glyph_right - dark_right;
+    assert!(
+        (moved - LIGHT_Q_SHIFT_PT).abs() <= 0.5,
+        "glyph moved {moved} pt"
+    );
+    let gap = light_uan - glyph_right;
+    assert!((0.0..=1.0).contains(&gap), "Q to the u galley: {gap} px");
+}
+
+/// At every scale the Light Q is rasterised for that scale and drawn one
+/// texel per physical pixel, on the pixel grid.
+#[test]
+fn the_light_q_is_drawn_one_to_one_on_the_pixel_grid() {
+    use quantick_appearance::mark;
+    for ppp in [1.0, 1.25, 1.5, 1.75, 2.0] {
+        let (light, _, size, _) = light_strip(quantick_appearance::LIGHT, ppp);
+        let side = mark::side_px(ppp) as usize;
+        assert_eq!(size, [side, side], "texture at {ppp}");
+        let px = light.size() * ppp;
+        assert!(
+            (px.x - side as f32).abs() < 1e-3 && (px.y - side as f32).abs() < 1e-3,
+            "{px:?} at {ppp}"
+        );
+        for v in [light.left(), light.top()] {
+            let at = v * ppp;
+            assert!((at - at.round()).abs() < 1e-3, "{at} px off grid at {ppp}");
+        }
+    }
 }
 
 /// Dark and a lone Light Q keep their box; beside the wordmark the Light Q
