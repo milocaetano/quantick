@@ -791,3 +791,119 @@ fn autosave_on_writes_held_drawings_at_once() {
     autosave_set(&mut host, &mut access, &actor, &json!({ "on": false })).unwrap();
     assert!(host.market.as_ref().unwrap().is_held(), "off holds again");
 }
+
+fn row(
+    host: &mut FakeHost,
+    access: &mut FakeAccess,
+    actor: &ActorContext,
+    menu: &mut WorkspaceMenuState,
+    command: WorkspaceCommand,
+) -> Option<String> {
+    apply_row_command(host, Some((access, actor)), menu, 1, "SYM1", command)
+}
+
+/// The window's prompt and `tab.close` ask one question: same words, and the
+/// prompt's Save writes then closes.
+#[test]
+fn the_close_prompt_asks_what_tab_close_refuses_with() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    let refused = close(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap_err();
+    let mut menu = WorkspaceMenuState::default();
+    let close_one = WorkspaceCommand::Close(CloseScope::Tabs, vec![1]);
+    assert_eq!(
+        row(&mut host, &mut access, &actor, &mut menu, close_one),
+        None
+    );
+    let prompt = close_prompt(&menu.close).expect("the close asks");
+    assert_eq!(prompt.title, "Close SYM1");
+    let body = format!(
+        "This tab changed its layout since {DEFAULT_WORKSPACE} was last saved (footprint style). \
+         Saving also changes SYM2."
+    );
+    assert_eq!(prompt.body, body);
+    assert!(refused.message.starts_with(&body), "{}", refused.message);
+    let save = format!("Save to {DEFAULT_WORKSPACE}");
+    assert_eq!(
+        prompt.buttons,
+        ["Cancel", "Close without saving", save.as_str()]
+    );
+    assert_eq!((prompt.enter, prompt.escape), (2, 0));
+    assert_eq!(host.tabs, [1, 2], "nothing closes before the answer");
+
+    let answer = WorkspaceCommand::AnswerClose(CloseAnswer::Save);
+    assert_eq!(row(&mut host, &mut access, &actor, &mut menu, answer), None);
+    assert_eq!((host.closed.as_slice(), host.writes), ([1].as_slice(), 1));
+    assert!(close_prompt(&menu.close).is_none());
+}
+
+#[test]
+fn cancel_on_the_close_prompt_closes_and_writes_nothing() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    let mut menu = WorkspaceMenuState::default();
+    let close_one = WorkspaceCommand::Close(CloseScope::Tabs, vec![1]);
+    row(&mut host, &mut access, &actor, &mut menu, close_one);
+    let answer = WorkspaceCommand::AnswerClose(CloseAnswer::Cancel);
+    row(&mut host, &mut access, &actor, &mut menu, answer);
+    assert!(host.closed.is_empty());
+    assert_eq!(host.writes, 0);
+    assert!(close_prompt(&menu.close).is_none());
+    assert!(
+        host.book.tab_state(1).unwrap().modified,
+        "the edits stay held"
+    );
+}
+
+/// An exit asks per tab holding edits, in order, and closes no tab: the desk
+/// reopens them all. Once every tab is settled the window may go.
+#[test]
+fn an_exit_asks_per_pending_tab_and_keeps_every_tab() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    edit(&mut host, 2);
+    let mut menu = WorkspaceMenuState::default();
+    let exit = WorkspaceCommand::Close(CloseScope::App, vec![1, 2]);
+    row(&mut host, &mut access, &actor, &mut menu, exit);
+    assert_eq!(close_prompt(&menu.close).unwrap().title, "Close SYM1");
+    let discard = WorkspaceCommand::AnswerClose(CloseAnswer::CloseWithoutSaving);
+    row(&mut host, &mut access, &actor, &mut menu, discard);
+    assert!(!menu.close.take_exit(), "the second tab still asks");
+    assert_eq!(close_prompt(&menu.close).unwrap().title, "Close SYM2");
+    let save = WorkspaceCommand::AnswerClose(CloseAnswer::Save);
+    row(&mut host, &mut access, &actor, &mut menu, save);
+    assert!(menu.close.take_exit());
+    assert_eq!(host.writes, 1, "only the saved tab wrote");
+    assert!(host.closed.is_empty(), "an exit closes no tab");
+}
+
+/// Autosave on: an exit asks nothing and writes the pending edit first.
+#[test]
+fn an_exit_with_autosave_on_flushes_and_never_asks() {
+    let (mut host, mut access, actor) = autosaving();
+    edit(&mut host, 1);
+    let mut menu = WorkspaceMenuState::default();
+    let exit = WorkspaceCommand::Close(CloseScope::App, vec![1, 2]);
+    assert_eq!(row(&mut host, &mut access, &actor, &mut menu, exit), None);
+    assert!(close_prompt(&menu.close).is_none());
+    assert!(menu.close.take_exit());
+    assert_eq!(host.writes, 1, "the pending edit reached the disk");
+}
+
+/// The window's last tab stays, and the prompt path says nothing about it.
+#[test]
+fn closing_the_last_tab_from_the_strip_is_quiet() {
+    let (mut host, mut access, actor) = autosaving();
+    host.tabs = vec![1];
+    let mut menu = WorkspaceMenuState::default();
+    let close_one = WorkspaceCommand::Close(CloseScope::Tabs, vec![1]);
+    assert_eq!(
+        row(&mut host, &mut access, &actor, &mut menu, close_one),
+        None
+    );
+    assert!(host.closed.is_empty());
+    assert!(
+        menu.close.request(CloseScope::Tabs, [1]),
+        "nothing is left in flight"
+    );
+}

@@ -29,6 +29,10 @@ use quantick_control_schema::workspace_book::{
     workspace_new_descriptor, workspace_rename_descriptor, workspace_revert_descriptor,
     workspace_save_as_descriptor, workspace_save_to_descriptor,
 };
+use quantick_session::close_queue::{
+    CloseAnswer, CloseQuestion, CloseQueue, CloseScope, CloseStep,
+};
+use quantick_session::prompt::Prompt;
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
 use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
@@ -142,6 +146,14 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         }
         WorkspaceCommand::SubmitDialog => {
             return submit_name_dialog(host, &mut to, menu, symbol);
+        }
+        WorkspaceCommand::Close(scope, tabs) => {
+            menu.close.request(scope, tabs);
+            return run_close(host, &mut to, &mut menu.close);
+        }
+        WorkspaceCommand::AnswerClose(answer) => {
+            menu.close.answer(answer);
+            return run_close(host, &mut to, &mut menu.close);
         }
         WorkspaceCommand::Set(name) => set_journaled(host, &mut to, tab, &name).map(|set| {
             set.changed
@@ -493,9 +505,8 @@ pub fn close_tab<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     save: Option<bool>,
 ) -> Result<Option<SaveOutcome>, ControlError> {
     flush(app, to, tab)?;
-    let held = book(app)?.unsaved_edits(tab);
-    let saved = match (held, save) {
-        (Some(edits), None) => return Err(unsaved(app, &edits)),
+    let saved = match (close_question(app, tab), save) {
+        (Some(asked), None) => return Err(unsaved(&asked)),
         (Some(_), Some(true)) => Some(save_to_journaled(app, to, tab)?),
         _ => None,
     };
@@ -519,16 +530,108 @@ pub fn close_tab<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(saved)
 }
 
-fn unsaved<H: WorkspaceBookHost + ?Sized>(app: &H, edits: &UnsavedEdits) -> ControlError {
-    let followers = app.tab_symbols(&edits.followers);
+fn unsaved(asked: &CloseQuestion) -> ControlError {
+    let CloseQuestion {
+        workspace,
+        changes,
+        followers,
+        ..
+    } = asked;
     let mut error = ControlError::invalid_request(format!(
-        "{} Pass save true to save to {}, or save false to close without saving.",
-        text::close_prompt_body(&edits.workspace, &edits.changes, &followers),
-        edits.workspace
+        "{} Pass save true to save to {workspace}, or save false to close without saving.",
+        text::close_prompt_body(workspace, changes, followers),
     ));
     error.context.details = Some(json!({ "code": UNSAVED_EDITS_CODE,
-        "workspace": edits.workspace, "followers": followers, "changes": edits.changes }));
+        "workspace": workspace, "followers": followers, "changes": changes }));
     error
+}
+
+/// The question closing `tab` asks: `None` while autosave is on or the tab
+/// holds no edits. `tab.close` refuses with this same question, so the call
+/// and the window's prompt cannot disagree on when to ask.
+pub fn close_question<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+) -> Option<CloseQuestion> {
+    let UnsavedEdits {
+        workspace,
+        followers,
+        changes,
+    } = app.workspace_book()?.unsaved_edits(tab)?;
+    Some(CloseQuestion {
+        tab,
+        symbol: app.tab_symbols(&[tab]).pop().unwrap_or_default(),
+        followers: app.tab_symbols(&followers),
+        workspace,
+        changes,
+    })
+}
+
+/// The window's words for the question up: `Close WINZ26`, what changed and
+/// who follows, then Cancel / Close without saving / Save to Scalp, with
+/// Enter on the save and Esc on Cancel.
+#[must_use]
+pub fn close_prompt(queue: &CloseQueue) -> Option<Prompt> {
+    let asked = queue.question()?;
+    let label = |answer| match answer {
+        CloseAnswer::Cancel => text::CLOSE_CANCEL.to_owned(),
+        CloseAnswer::CloseWithoutSaving => text::CLOSE_WITHOUT_SAVING.to_owned(),
+        CloseAnswer::Save => text::save_to_short_label(&asked.workspace),
+    };
+    Some(Prompt {
+        id: format!("workspace_close_prompt_{}", asked.tab),
+        title: text::close_prompt_title(&asked.symbol),
+        body: text::close_prompt_body(&asked.workspace, &asked.changes, &asked.followers),
+        note: None,
+        buttons: CloseAnswer::BUTTONS.map(label).to_vec(),
+        enter: CloseAnswer::BUTTONS.len() - 1,
+        escape: 0,
+    })
+}
+
+/// Carry a close as far as it goes without the trader: settle each tab that
+/// asks nothing and stop at the first question. A step that fails ends the
+/// close and answers why; the window's last tab staying open is no news.
+fn run_close<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    queue: &mut CloseQueue,
+) -> Option<String> {
+    while let CloseStep::Settle { tab, save, scope } = queue.next(|tab| close_question(app, tab)) {
+        let settled = match scope {
+            CloseScope::Tabs => close_tab(app, to, tab, save).map(drop),
+            CloseScope::App => settle_in_place(app, to, tab, save),
+        };
+        if let Err(error) = settled {
+            queue.abort();
+            let code = error
+                .context
+                .details
+                .as_ref()
+                .and_then(|details| details.get("code"));
+            return (code != Some(&json!(LAST_TAB_CODE))).then_some(error.message);
+        }
+    }
+    None
+}
+
+/// Exit's settle: the tab stays in the desk for the next launch, its edits
+/// written into its workspace or let go, and a pending autosave written.
+fn settle_in_place<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    to: &mut Journal<'_, A>,
+    tab: u64,
+    save: Option<bool>,
+) -> Result<(), ControlError> {
+    match save {
+        Some(true) => save_to_journaled(app, to, tab).map(drop),
+        Some(false) => {
+            let keys = book(app)?.drawing_keys(tab).to_vec();
+            discard_market(app, &keys, tab);
+            Ok(())
+        }
+        None => flush(app, to, tab),
+    }
 }
 
 /// Rename a workspace. Answers the name as stored and whether it moved.
