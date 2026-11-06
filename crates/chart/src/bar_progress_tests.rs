@@ -39,13 +39,13 @@ fn count_rules_print_done_over_target() {
 
 #[test]
 fn large_targets_print_in_the_targets_unit() {
-    assert_eq!(count_text(dec("1250000"), dec("2000000")), "1.2M/2M");
+    assert_eq!(count_text(dec("1250000"), dec("2000000")), "1.2M/2.0M");
     assert_eq!(
         count_text(dec("1999999"), dec("2000000")),
-        "1.9M/2M",
+        "1.9M/2.0M",
         "1.99M has not reached 2M"
     );
-    assert_eq!(count_text(dec("31200"), dec("500000")), "31.2K/500K");
+    assert_eq!(count_text(dec("31200"), dec("500000")), "31.2K/500.0K");
     assert_eq!(count_text(dec("700000000"), dec("1500000000")), "0.7B/1.5B");
 }
 
@@ -53,8 +53,8 @@ fn large_targets_print_in_the_targets_unit() {
 /// whole figures would print `4999.99/10000` and `12345/20000`.
 #[test]
 fn a_five_figure_target_prints_compact() {
-    assert_eq!(count_text(dec("4999.99"), dec("10000")), "4.9K/10K");
-    assert_eq!(count_text(dec("12345"), dec("20000")), "12.3K/20K");
+    assert_eq!(count_text(dec("4999.99"), dec("10000")), "4.9K/10.0K");
+    assert_eq!(count_text(dec("12345"), dec("20000")), "12.3K/20.0K");
     assert_eq!(count_text(dec("99999"), dec("99999")), "99.9K/99.9K");
     assert_eq!(count_text(dec("4999.99"), dec("5000")), "4999.99/5000");
 }
@@ -135,7 +135,7 @@ fn a_volume_and_a_dollar_chart_read_in_their_measure() {
     let dollar = chart_after(BarSpec::Dollar(dec("2000000")), &trades)
         .bar_progress_at(None)
         .unwrap();
-    assert_eq!(dollar.tag_text(), "0.0M/2M");
+    assert_eq!(dollar.tag_text(), "0.0M/2.0M");
     assert_eq!(dollar.done(), dec("250.0"));
 }
 

@@ -187,15 +187,15 @@ fn whole_ms(value: Decimal) -> Option<i64> {
     i64::try_from(value.trunc()).ok()
 }
 
-/// `522/2000`, `312/500`, `1.2M/2M`: both figures in the target's unit, the
-/// count at one place and the target, usually round, without a dead `.0`.
+/// `522/2000`, `312/500`, `1.2M/2.0M`: both figures in the target's unit, at
+/// one place once compact, as the spec prints them.
 #[must_use]
 pub fn count_text(done: Decimal, target: Decimal) -> String {
     match compact_scale(target.abs()) {
         Some((divisor, suffix)) => format!(
             "{}{suffix}/{}{suffix}",
             one_place(done / divisor),
-            display_decimal(cut(target / divisor, 1))
+            one_place(target / divisor)
         ),
         None => format!(
             "{}/{}",
