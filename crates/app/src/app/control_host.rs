@@ -801,7 +801,7 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
     }
     fn close_market_tab(&mut self, tab: u64) -> bool {
         let index = self.runtime.tabs.position(tab);
-        index.is_some_and(|index| self.arrangement_adapter().close_tab(index).is_some())
+        index.is_some_and(|index| super::tabs::close_now(self, index))
     }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         super::tab_workspaces::symbols_of(self, tabs)

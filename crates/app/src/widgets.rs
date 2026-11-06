@@ -372,6 +372,37 @@ pub fn paint_vector_icon(
     }
 }
 
+/// Paint `prompt` centred and answer the button chosen; Esc and Enter press
+/// theirs.
+pub fn ask(ctx: &egui::Context, prompt: &quantick_session::prompt::Prompt) -> Option<usize> {
+    let mut chosen = None;
+    egui::Window::new(prompt.title.as_str())
+        .id(egui::Id::new(prompt.id.as_str()))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.label(prompt.body.as_str());
+            if let Some(note) = &prompt.note {
+                ui.label(egui::RichText::new(note).small().color(theme::TEXT_SUPPORT));
+            }
+            ui.horizontal(|ui| {
+                let buttons = prompt.buttons.iter().enumerate();
+                chosen = buttons.fold(None, |was, (at, label)| {
+                    was.or(ui.button(label.as_str()).clicked().then_some(at))
+                });
+            });
+        });
+    let pressed = |key| ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key));
+    if pressed(egui::Key::Escape) {
+        Some(prompt.escape)
+    } else if pressed(egui::Key::Enter) {
+        Some(prompt.enter)
+    } else {
+        chosen
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

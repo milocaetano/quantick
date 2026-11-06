@@ -314,14 +314,13 @@ impl ArrangementAdapter<'_> {
             super::home_wiring::show_home(self.tabs, self.surface);
         }
         let keys = self.surface.settle_keys(keys);
-        let closed = (keys.close_tab).then(|| self.close_tab(self.tabs.active_index()));
         if keys.next {
             self.cycle_tab(1);
         }
         if keys.previous {
             self.cycle_tab(-1);
         }
-        (keys.new_tab, closed.flatten())
+        (keys.new_tab, None)
     }
     /// Move tabs along the strip with the core's existing positional wrap.
     pub(super) fn cycle_tab(&mut self, delta: isize) {

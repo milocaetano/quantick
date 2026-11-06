@@ -104,7 +104,7 @@ Help ▸        Keyboard shortcuts… · Replay file format… · About quantick
 | Today | Entry | Goes to | Command |
 |---|---|---|---|
 | File | New Tab… | `+` · Ctrl+T | `market.open {feed, symbol, bar, workspace, background}` |
-| File | Close Tab | × on the tab · Ctrl+W; an unsaved change is dropped with "Unsaved Scalp changes dropped · Undo" | `tab.close` |
+| File | Close Tab | × on the tab · Ctrl+W; with autosave off and edits held it asks first (below) | `tab.close {tab_id, save}` |
 | File | Market Replay… / Close Replay | `⋮` root · "Back to live" on the replay tab (keeps layout, indicators, drawings) | `replay.browser.open` · `replay.close` |
 | File | Exit | the window's ✕ | `app.exit` (command only) |
 | View | Layouts, Layout, Move chart, Hide context, legend | workspace content; the controls move to the chart header once chart-identity ships. Until then View stays | `layout.*` · `pane.legend.*` |
@@ -172,9 +172,16 @@ snapshot reads it as `auto_save`.
   a time: "Close WINZ26" — "This tab changed its layout since Scalp was last
   saved (RSI, CVD, 3 drawings). Saving also changes WDOZ26." — Cancel /
   Close without saving / Save to Scalp; Enter saves, Esc cancels the whole
-  close. `tab.close {tab_id, save}` is the named form: without `save` it
-  answers `workspace.unsaved_edits` (with the workspace, followers and
-  changes) and does not close.
+  close (a tab already answered stays closed, nothing after it closes).
+  `tab.close {tab_id, save}` is the named form and asks the same question:
+  without `save` it answers `workspace.unsaved_edits` (with the workspace,
+  followers and changes) and does not close. Closing a torn-off window while
+  another window stays asks nothing, because its tabs move into that window;
+  closing the last window is the exit, which asks for every tab in strip
+  order and keeps them all in the desk for the next launch (Save writes the
+  workspace and market file, Close without saving leaves both as saved).
+  With autosave on, or nothing held, no close asks: a pending write-through
+  is written first, on exit too.
 - What counts as a change: indicators (add, remove, settings, style), panes
   (add, remove, divider, kind), the layout strip (new, switch, rename,
   delete), layers, footprint style, drawings, anchored studies. Never a

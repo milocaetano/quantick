@@ -211,6 +211,7 @@ impl QuantickApp {
         draw_window_menu(self, ctx, &mut commands);
         settings_window::show(self, ctx, &mut commands);
         workspace_rows::name_dialog(self, ctx, &mut commands);
+        super::native_windows::close_prompt(self, ctx);
         for command in commands {
             apply_menu_command_on(self, ctx, command);
         }

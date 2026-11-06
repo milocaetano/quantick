@@ -848,3 +848,61 @@ fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
         .expect("a context chart");
     assert_eq!(opened.state.spec().to_config_string(), shown);
 }
+
+/// Autosave off: closing a chip whose tab holds edits asks first, and Enter
+/// (Save) writes the workspace to disk before the tab goes.
+#[test]
+fn a_strip_close_with_held_edits_asks_and_enter_saves_then_closes() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-close-asks", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let workspace = app.runtime.workspace.book.tab_row(first).0;
+    edit_split(&mut app, first, 0.31);
+    let index = app.runtime.tabs.position(first).expect("an open tab");
+    app.apply_tab_action(crate::tabstrip::TabAction::Close(index));
+    assert_eq!(
+        app.runtime.tabs.len(),
+        2,
+        "nothing closes before the answer"
+    );
+    let queue = &app.chrome.window_menu.tab_workspace.close;
+    let prompt = quantick_control_handlers::workspace_book::close_prompt(queue).expect("asks");
+    let symbol = app.runtime.tabs.by_id(first).expect("open").symbol.clone();
+    assert_eq!(prompt.title, format!("Close {symbol}"));
+    assert_eq!(prompt.buttons[prompt.enter], format!("Save to {workspace}"));
+
+    let ctx = egui::Context::default();
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Enter)]);
+    assert!(app.runtime.tabs.by_id(first).is_none(), "the tab closed");
+    assert!(app.runtime.tabs.by_id(second).is_some());
+    let path = quantick_stores::workspaces::path_beside(layouts.as_ref());
+    let (on_disk, _) = quantick_stores::workspaces::load(&path);
+    let saved = on_disk.recipe(&workspace).expect("the workspace on disk");
+    assert_eq!(saved.split_fraction, Some(0.31));
+}
+
+/// Autosave off: the window's close asks before the app exits, and Esc
+/// (Cancel) keeps every tab and the app.
+#[test]
+fn an_exit_with_held_edits_asks_and_esc_keeps_the_app() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-exit-asks", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    edit_split(&mut app, first, 0.29);
+    let ctx = egui::Context::default();
+    close_requested_frame(&mut app, &ctx);
+    assert!(
+        app.chrome
+            .window_menu
+            .tab_workspace
+            .close
+            .question()
+            .is_some()
+    );
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    let queue = &app.chrome.window_menu.tab_workspace.close;
+    assert!(queue.question().is_none(), "Cancel ends the exit");
+    assert_eq!(app.runtime.tabs.len(), 2);
+    assert!(
+        app.runtime.workspace.book.tab_row(first).1,
+        "the edit stays held"
+    );
+}

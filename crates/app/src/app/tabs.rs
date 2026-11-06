@@ -17,6 +17,7 @@ use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
 use crate::tabstrip::TabAction;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
 use quantick_workspace::market_list as list;
 
 use super::{QuantickApp, TabSlot};
@@ -45,33 +46,6 @@ impl QuantickApp {
         }
     }
 
-    /// Whether the toolbar's heatmap lamp is lit.
-    ///
-    /// The *switch*, not what capture lets through it — the same reading the
-    /// layer file was taught in 848cba0, and for a sibling reason. A lamp lit
-    /// from `depth_visible()` (`enabled && show_depth`) reports the heatmap off
-    /// for as long as book capture is starting, and forever on a source with no
-    /// book: the trader sees an unlit button, presses it, and switches the
-    /// layer they wanted *off*. The button already has an honest way to say a
-    /// source cannot fill it — `.enabled(...)` carrying its
-    /// `disabled_explanation` — so the lamp beside it answers the only other
-    /// question there is.
-    ///
-    /// A named reading rather than an expression inside the header's own
-    /// frame, so the rule can be asserted without painting a header. What
-    /// reads it back without looking at the screen is the semantic scene,
-    /// which takes the same reading this delegates to.
-    #[must_use]
-    #[cfg(test)]
-    pub(super) fn heatmap_lamp_on(&self) -> bool {
-        // `#[cfg(test)]` because the header takes the pane's reading directly:
-        // keeping a second production entry point to the same answer is how the
-        // two drift.
-        self.active_tab()
-            .flow_pane
-            .layer_switched_on(ChartLayer::Heatmap, &self.runtime.style)
-    }
-
     /// Every tab takes in what its feed sent this frame, on screen or not.
     ///
     /// §11: switching tabs never tears a feed down, so a background tab has to
@@ -91,17 +65,65 @@ impl QuantickApp {
     /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle; none under the palette.
     pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
         self.read_view_keys(ctx);
-        let keys = super::home_wiring::read_tab_keys(ctx);
+        let mut keys = super::home_wiring::read_tab_keys(ctx);
         if !self.surfaces.market_palette.is_open() {
+            if std::mem::take(&mut keys.close_tab) && !self.chrome.title_bar.surface.is_home() {
+                self.apply_tab_action(TabAction::Close(self.runtime.tabs.active_index()));
+            }
             let asked = self.arrangement_adapter().apply_tab_keys(keys);
             settle_strip(self, asked);
         }
     }
 
-    /// Carry out what the tab strip asked for.
+    /// Carry out what the tab strip asked for; a close asks first while the
+    /// tab holds unsaved workspace edits.
     pub(super) fn apply_tab_action(&mut self, action: TabAction) {
+        if let TabAction::Close(index) = action {
+            let tab = (index < self.runtime.tabs.len()).then(|| self.runtime.tabs.id_at(index));
+            let close = WorkspaceCommand::Close(CloseScope::Tabs, Vec::from_iter(tab));
+            return super::tab_workspaces::apply_workspace_command(self, close);
+        }
         let asked = self.arrangement_adapter().apply_tab_action(action);
         settle_strip(self, asked);
+    }
+}
+
+/// Close the tab at `index` without asking; answers whether it went.
+pub(super) fn close_now(app: &mut QuantickApp, index: usize) -> bool {
+    let asked = app
+        .arrangement_adapter()
+        .apply_tab_action(TabAction::Close(index));
+    let closed = asked.1.is_some();
+    settle_strip(app, asked);
+    closed
+}
+
+#[cfg(test)]
+impl QuantickApp {
+    /// Whether the toolbar's heatmap lamp is lit.
+    ///
+    /// The *switch*, not what capture lets through it — the same reading the
+    /// layer file was taught in 848cba0, and for a sibling reason. A lamp lit
+    /// from `depth_visible()` (`enabled && show_depth`) reports the heatmap off
+    /// for as long as book capture is starting, and forever on a source with no
+    /// book: the trader sees an unlit button, presses it, and switches the
+    /// layer they wanted *off*. The button already has an honest way to say a
+    /// source cannot fill it — `.enabled(...)` carrying its
+    /// `disabled_explanation` — so the lamp beside it answers the only other
+    /// question there is.
+    ///
+    /// A named reading rather than an expression inside the header's own
+    /// frame, so the rule can be asserted without painting a header. What
+    /// reads it back without looking at the screen is the semantic scene,
+    /// which takes the same reading this delegates to.
+    #[must_use]
+    pub(super) fn heatmap_lamp_on(&self) -> bool {
+        // `#[cfg(test)]` because the header takes the pane's reading directly:
+        // keeping a second production entry point to the same answer is how the
+        // two drift.
+        self.active_tab()
+            .flow_pane
+            .layer_switched_on(ChartLayer::Heatmap, &self.runtime.style)
     }
 }
 
