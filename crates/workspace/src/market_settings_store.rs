@@ -1,8 +1,9 @@
 //! The market settings document at its resolved path, under the commit policy.
 use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
-    market_settings::{MARKET_SETTINGS_FILE, MarketKey, MarketSettings},
+    market_settings::{DrawingKey, MARKET_SETTINGS_FILE, MarketKey, MarketSettings},
 };
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
@@ -11,8 +12,22 @@ use std::time::Instant;
 pub type AssetResolver = Rc<dyn Fn(&str, &str) -> String>;
 
 /// The per-market document, and the one rule that decides when it reaches disk.
+///
+/// With autosave off the store is *held*: drawings and anchored studies change
+/// in memory and wait for Save ([`Self::commit_document`]); `saved` is what the
+/// file holds, so a held change can be counted and dropped. `saved` moves only
+/// once a write has reached the disk ([`Self::note_saved`]): a failed write
+/// leaves every change counted and owed.
 pub struct MarketSettingsStore {
     settings: MarketSettings,
+    saved: MarketSettings,
+    held: bool,
+    /// Moves whenever `settings`, `saved` or the hold may have: a reader that
+    /// counts held changes recounts only when it moved.
+    revision: u64,
+    /// How many times [`Self::held_changes`] compared drawings, for a test
+    /// that proves an idle frame compares none.
+    counted: Cell<u64>,
     path: PathBuf,
     policy: LayoutCommitPolicy,
     asset: AssetResolver,
@@ -24,7 +39,11 @@ impl MarketSettingsStore {
     #[must_use]
     pub fn new(settings: MarketSettings, path: PathBuf, blocked: bool) -> Self {
         Self {
+            saved: settings.clone(),
             settings,
+            held: false,
+            revision: 0,
+            counted: Cell::new(0),
             path,
             policy: LayoutCommitPolicy::new(blocked),
             asset: Rc::new(|_, symbol| symbol.to_owned()),
@@ -52,6 +71,19 @@ impl MarketSettingsStore {
     #[must_use]
     pub fn assets(&self) -> AssetResolver {
         Rc::clone(&self.asset)
+    }
+
+    /// A contract roll on `venue` from one symbol to another: their assets'
+    /// markets, and how many drawings [`MarketSettings::carry_market`] copied
+    /// onto the second.
+    pub fn carry_roll(&mut self, venue: &str, from: &str, to: &str) -> (MarketKey, usize) {
+        let of = |asset: String| MarketKey {
+            venue: venue.to_owned(),
+            asset,
+        };
+        let (from, to) = (of(self.asset(venue, from)), of(self.asset(venue, to)));
+        let carried = self.settings.carry_market(&from, &to);
+        (to, carried)
     }
 
     /// The asset `symbol` belongs to on `venue`.
@@ -92,12 +124,28 @@ impl MarketSettingsStore {
         &self.settings
     }
     pub fn settings_mut(&mut self) -> &mut MarketSettings {
+        self.revision += 1;
         &mut self.settings
     }
 
     /// Replace the document wholesale — an imported bundle landing.
     pub fn set_settings(&mut self, settings: MarketSettings) {
+        self.revision += 1;
+        self.saved = settings.clone();
         self.settings = settings;
+    }
+
+    /// Moves whenever what [`Self::held_changes`] answers may have.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// How many sets [`Self::held_changes`] has compared so far.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn held_counts(&self) -> u64 {
+        self.counted.get()
     }
 
     #[must_use]
@@ -124,11 +172,97 @@ impl MarketSettingsStore {
     pub fn mark_changed(&mut self, now: Instant) {
         self.policy.mark_changed(now);
     }
+    /// The debounced write of the whole document; nothing while held. On
+    /// `Write` the caller writes [`Self::settings`] and reports the outcome
+    /// with [`Self::note_saved`] or [`Self::note_write_failed`].
     pub fn take_save(&mut self, now: Instant) -> LayoutSave {
+        if self.held {
+            return LayoutSave::Wait;
+        }
         self.policy.take_save(now)
     }
+    /// The write on exit or before an export; nothing while held.
     pub fn take_flush(&mut self) -> LayoutSave {
+        if self.held {
+            return LayoutSave::Wait;
+        }
         self.policy.take_flush()
+    }
+
+    /// Save for one tab: the file as it stands, with only `keys` taken from
+    /// memory, so a set another tab holds back stays held. `None` when those
+    /// keys hold nothing the file lacks.
+    #[must_use]
+    pub fn commit_document(&self, keys: &[DrawingKey]) -> Option<MarketSettings> {
+        let mut document = self.saved.clone();
+        for key in keys {
+            document.restore(&self.settings, key);
+        }
+        (document != self.saved).then_some(document)
+    }
+
+    /// Whether memory holds anything the file lacks.
+    #[must_use]
+    pub fn owes_write(&self) -> bool {
+        self.settings != self.saved
+    }
+
+    /// `written` reached the disk: it is what the file holds now. Once memory
+    /// holds nothing more, nothing is owed.
+    pub fn note_saved(&mut self, written: MarketSettings) {
+        self.revision += 1;
+        self.saved = written;
+        if self.settings == self.saved {
+            // The pending change is consumed: the file holds it.
+            let _ = self.policy.take_flush();
+        }
+    }
+
+    /// A write did not reach the disk: the change is owed again, and the
+    /// debounce retries it a quiet second after `now`.
+    pub fn note_write_failed(&mut self, now: Instant) {
+        self.policy.mark_changed(now);
+    }
+
+    /// Hold writes until Save (autosave off), or let them through.
+    pub fn set_held(&mut self, held: bool) {
+        if self.held != held {
+            self.revision += 1;
+        }
+        self.held = held;
+    }
+    #[must_use]
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+
+    /// How many drawings on `keys` wait for Save; none unless held.
+    #[must_use]
+    pub fn held_changes<'a>(&self, keys: impl IntoIterator<Item = &'a DrawingKey>) -> usize {
+        if !self.held {
+            return 0;
+        }
+        keys.into_iter()
+            .inspect(|_| self.counted.set(self.counted.get() + 1))
+            .map(|key| self.settings.drawing_changes(&self.saved, key))
+            .sum()
+    }
+
+    /// Close without saving: put every key in `closed` that no pane in `open`
+    /// still shows back to the file's version. Once nothing differs, nothing is
+    /// owed. Answers whether anything was dropped.
+    pub fn discard(&mut self, closed: &[DrawingKey], open: &[DrawingKey]) -> bool {
+        self.revision += 1;
+        let mut dropped = false;
+        for key in closed.iter().filter(|key| !open.contains(key)) {
+            dropped |= self.settings.drawing_changes(&self.saved, key) > 0;
+            self.settings.restore(&self.saved, key);
+        }
+        if self.settings == self.saved {
+            // The pending change is consumed unwritten: the file already holds this.
+            let _ = self.policy.take_flush();
+        }
+        dropped
     }
     #[must_use]
     pub fn is_dirty(&self) -> bool {
@@ -137,27 +271,5 @@ impl MarketSettingsStore {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The switch is kept per asset: two symbols of one asset share it, the
-    /// same asset on another venue does not, and only a change owes a save.
-    #[test]
-    fn bar_progress_is_kept_per_market_and_only_a_change_is_saved() {
-        let assets: AssetResolver = Rc::new(|_, symbol: &str| symbol[..3].to_owned());
-        let mut store =
-            MarketSettingsStore::new(MarketSettings::default(), PathBuf::from("m.toml"), false)
-                .with_assets(assets);
-        let now = Instant::now();
-        assert!(store.bar_progress_on("mt5", "WINZ26"), "on by default");
-        assert!(store.set_bar_progress("mt5", "WINZ26", false, now));
-        assert!(store.is_dirty(), "a change owes the file a save");
-        assert!(!store.bar_progress_on("mt5", "WING27"), "the same asset");
-        assert!(store.bar_progress_on("replay", "WINZ26"), "another venue");
-        assert!(store.bar_progress_on("mt5", "WDOZ26"), "another asset");
-
-        let _ = store.take_flush();
-        assert!(!store.set_bar_progress("mt5", "WING27", false, now));
-        assert!(!store.is_dirty(), "a repeat is no change and no save");
-    }
-}
+#[path = "market_settings_store_tests.rs"]
+mod tests;

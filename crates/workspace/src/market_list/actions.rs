@@ -143,6 +143,7 @@ impl SwitchTarget {
             asset,
             user_added: false,
             bar: None,
+            context_bars: Vec::new(),
             status: MarketStatus::Roll {
                 from: self.symbol.clone(),
                 refused: roll.refusal.is_some(),
@@ -243,6 +244,10 @@ pub struct OpenChoice {
     pub symbol: String,
     /// The bar the tab opens on, as `kind:size`.
     pub bar: String,
+    /// The context charts the tab opens on, top first: the market's own (see
+    /// [`market_context_bars`](super::market_context_bars)); empty takes what
+    /// any new tab takes.
+    pub context_bars: Vec<String>,
     /// The market has no bar of its own and nobody named one: `bar` is the
     /// active tab's, shown, and the open names none so the new tab takes it
     /// the way every new tab does.
@@ -286,6 +291,7 @@ impl MarketSnapshot {
             feed_id: feed_id.to_owned(),
             symbol: symbol.to_owned(),
             bar: bar.unwrap_or_default(),
+            context_bars: row.context_bars,
             inherit_bar,
             workspace,
             background,

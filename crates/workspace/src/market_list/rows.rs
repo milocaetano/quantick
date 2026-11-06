@@ -79,6 +79,10 @@ pub struct MarketRow {
     /// The bar the market remembers, as [`market_bar`](super::market_bar)
     /// answers; `None` when a tab opened from here takes the active tab's.
     pub bar: Option<String>,
+    /// The context charts the market remembers, as
+    /// [`market_context_bars`](super::market_context_bars) answers; empty
+    /// when a tab opened from here takes a new tab's.
+    pub context_bars: Vec<String>,
     pub status: MarketStatus,
     pub price: Option<String>,
     /// The price is the last one a closed tab showed.
@@ -167,6 +171,9 @@ pub(super) fn catalog_row(world: &MarketWorld<'_>, market: &CatalogMarket) -> Op
         bar: (tabs.first().map(|tab| tab.bar.clone()))
             .or_else(|| closed.map(|closed| closed.bar.clone()))
             .or_else(|| venue.bar.clone()),
+        context_bars: (tabs.first().map(|tab| tab.context_bars.clone()))
+            .or_else(|| closed.map(|closed| closed.context_bars.clone()))
+            .unwrap_or_default(),
         status: MarketStatus::Live,
         price: None,
         price_dim: false,
@@ -207,6 +214,7 @@ pub(super) fn replay_row(tab: &OpenMarket) -> MarketRow {
         asset: tab.asset.clone(),
         user_added: false,
         bar: Some(tab.bar.clone()),
+        context_bars: tab.context_bars.clone(),
         status: MarketStatus::Replay,
         price: tab.price.clone(),
         price_dim: false,
@@ -227,6 +235,7 @@ pub(super) fn add_row(venue: &Venue, symbol: &str) -> MarketRow {
         asset: symbol.to_owned(),
         user_added: false,
         bar: venue.bar.clone(),
+        context_bars: Vec::new(),
         status: MarketStatus::Add,
         price: None,
         price_dim: false,

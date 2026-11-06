@@ -332,6 +332,11 @@
     "active_tab_index": {
       "$ref": "#/$defs/WireU64"
     },
+    "auto_save": {
+      "default": true,
+      "description": "Whether layout edits are written into the tab's workspace as they are\nmade (`workspace.autosave.set`). Absent from an older answer: on.",
+      "type": "boolean"
+    },
     "focused_window_id": {
       "anyOf": [
         {

@@ -136,8 +136,6 @@ impl LayoutAdapter<'_> {
     /// consumed here, so neither reaches the chart's own key handling —
     /// and nothing else on the window is touched while it is up.
     pub(in crate::app) fn draw_layout_delete_confirm(&mut self, ctx: &eframe::egui::Context) {
-        let palette = crate::theme::get(ctx);
-        use eframe::egui;
         let Some(id) = *self.delete_confirm else {
             return;
         };
@@ -149,44 +147,10 @@ impl LayoutAdapter<'_> {
         // Counted, not collected: the window repaints continuously and only
         // the number is read.
         let showing = self.panes_on_count(id);
-        let mut decision: Option<bool> = None;
-        egui::Window::new("Delete layout")
-            .id(egui::Id::new("layout_delete_confirm"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                ui.label(format!("Delete \"{name}\"?"));
-                let mut what =
-                    "Its indicator set goes with it. Drawings stay with their markets.".to_owned();
-                if showing > 0 {
-                    what.push_str(&format!(
-                        " {showing} chart(s) showing it move to the layout beside it."
-                    ));
-                }
-                ui.label(
-                    egui::RichText::new(what)
-                        .small()
-                        .color(palette.text_support()),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button("Delete").clicked() {
-                        decision = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        decision = Some(false);
-                    }
-                });
-            });
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-            decision = Some(false);
-        } else if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
-        {
-            decision = Some(true);
-        }
-        match decision {
-            Some(true) => self.confirm_layout_delete(),
-            Some(false) => *self.delete_confirm = None,
+        let prompt = quantick_session::prompt::Prompt::layout_delete(&name, showing);
+        match crate::widgets::ask(ctx, &prompt) {
+            Some(0) => self.confirm_layout_delete(),
+            Some(_) => *self.delete_confirm = None,
             None => {}
         }
     }

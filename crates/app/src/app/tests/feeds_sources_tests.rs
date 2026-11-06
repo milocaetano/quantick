@@ -2306,6 +2306,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         feed_id: "b3".to_owned(),
         symbol: "US500".to_owned(),
         bar: "tick:50".to_owned(),
+        context_bars: Vec::new(),
         inherit_bar: false,
         workspace: "Default".to_owned(),
         background: false,

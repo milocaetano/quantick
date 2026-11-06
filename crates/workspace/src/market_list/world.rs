@@ -52,6 +52,8 @@ pub struct OpenMarket {
     pub workspace: String,
     /// The flow pane's bar, as `kind:size`.
     pub bar: String,
+    /// The context charts' bars, top first: the pane timeframes.
+    pub context_bars: Vec<String>,
     pub replay: bool,
     /// Whether a trade has arrived.
     pub streaming: bool,
@@ -70,6 +72,8 @@ pub struct ClosedMarket {
     pub price: Option<String>,
     /// The bar the tab showed when it closed, as `kind:size`.
     pub bar: String,
+    /// The context charts' bars it closed on, top first.
+    pub context_bars: Vec<String>,
 }
 
 /// The markets closed lately, newest first.

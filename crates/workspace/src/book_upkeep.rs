@@ -4,9 +4,12 @@
 //! is [`crate::workspace_sync`]'s or the book's. Nothing here touches a file:
 //! a write the upkeep calls for comes back as [`UpkeepSave`].
 
+use crate::market_settings::DrawingKey;
+use crate::market_settings_store::MarketSettingsStore;
 use crate::workspace_book::{SeedTab, WorkspaceBook};
 use crate::workspace_recipe::WorkspaceRecipe;
 use crate::workspace_sync::{TabAdoption, TabRecipeSync};
+use std::time::Instant;
 
 /// What the upkeep leaves its caller to write.
 #[must_use]
@@ -15,6 +18,17 @@ pub enum UpkeepSave {
     Nothing,
     /// A first run seeded workspaces from the open tabs: the book is to be saved.
     SeededBook,
+}
+
+/// What a frame's upkeep leaves its caller: the book to save, and the tabs
+/// autosave writes through now.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upkeep {
+    pub save: UpkeepSave,
+    /// Edits quiet for a second, never while autosave is off, one tab per
+    /// workspace ([`WorkspaceBook::autosave_winners`]).
+    pub write_through: Vec<u64>,
 }
 
 /// What the window lends the book's upkeep.
@@ -30,6 +44,9 @@ pub trait TabRecipeHost {
     /// What the tab shows now, as a recipe.
     fn live_recipe(&self, tab: u64) -> Option<WorkspaceRecipe>;
     fn recipe_tab_symbol(&self, tab: u64) -> Option<String>;
+    /// The name of the layout the tab shows, which a first run names its
+    /// workspace after.
+    fn recipe_tab_layout(&self, tab: u64) -> Option<String>;
     /// What a new tab on this tab's feed opens with: what the factory
     /// `Default` amounts to here.
     fn new_tab_recipe(&self, tab: u64) -> WorkspaceRecipe;
@@ -48,20 +65,90 @@ pub trait TabRecipeHost {
     fn apply_recipe_switches(&mut self, tab: u64, recipe: &WorkspaceRecipe);
     /// Each pane by role takes the recipe's set, onto a layout entry only it holds.
     fn apply_recipe_indicators(&mut self, tab: u64, recipe: &WorkspaceRecipe);
+    /// The drawing sets (anchored studies among them) the tab's panes hold.
+    fn tab_drawing_keys(&self, _tab: u64) -> Vec<DrawingKey> {
+        Vec::new()
+    }
+    /// The market store those sets live in; `None` for a host without drawings.
+    fn recipe_market(&mut self) -> Option<&mut MarketSettingsStore> {
+        None
+    }
 }
 
-/// What the frame owes the book, once its panes are built and seeded.
-pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H) -> UpkeepSave {
+/// What the frame owes the book, once its panes are built and seeded. A
+/// write-through that failed is armed again, so it is retried a quiet second
+/// later, never per frame.
+pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H, now: Instant) -> Upkeep {
     let save = adopt_tabs(host);
+    note_drawings(host);
     apply_pending_recipes(host);
     let active = host.active_recipe_tab();
-    observe_tab(host, active);
     let tabs = host.recipe_tabs();
     let other = host.recipe_book_mut().1.next_watch(&tabs, active);
-    if let Some(other) = other {
-        observe_tab(host, other);
+    for id in std::iter::once(active).chain(other) {
+        watch_tab(host, id, now);
     }
-    save
+    let (book, sync) = host.recipe_book_mut();
+    book.note_active(active);
+    let mut due = Vec::new();
+    if book.autosave() {
+        for tab in book.failed_writes() {
+            sync.arm(tab, now);
+        }
+        due = book.autosave_winners(&sync.take_due(now), active);
+    }
+    Upkeep {
+        save,
+        write_through: due,
+    }
+}
+
+/// Read one tab as [`observe_tab`] does and, when its copy changed, start
+/// the quiet second autosave waits: the one path every reading takes, the
+/// frame's and a command's, so no edit it picks up is left unwritten.
+pub fn watch_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64, now: Instant) -> bool {
+    let changed = observe_tab(host, id);
+    if changed {
+        host.recipe_book_mut().1.note_edit(id, now);
+    }
+    changed
+}
+
+/// The market store waits for Save while autosave is off, and the book learns
+/// what each tab's drawings hold back, so its mark and close prompt count them.
+///
+/// Per frame, so autosave on reads no pane (nothing is held, nothing marks)
+/// and a tab whose sets and store revision stand as they were last counted
+/// compares no drawing.
+pub fn note_drawings<H: TabRecipeHost + ?Sized>(host: &mut H) {
+    let held = !host.recipe_book().0.autosave();
+    let Some(market) = host.recipe_market() else {
+        return;
+    };
+    market.set_held(held);
+    if !held {
+        return;
+    }
+    let revision = market.revision();
+    let book = host.recipe_book().0;
+    let stale: Vec<(u64, Vec<DrawingKey>)> = (host.recipe_tabs().into_iter())
+        .map(|tab| (tab, host.tab_drawing_keys(tab)))
+        .filter(|(tab, keys)| !book.drawings_current(*tab, keys, revision))
+        .collect();
+    if stale.is_empty() {
+        return;
+    }
+    let Some(market) = host.recipe_market() else {
+        return;
+    };
+    let counts: Vec<usize> = stale
+        .iter()
+        .map(|(_, keys)| market.held_changes(keys))
+        .collect();
+    let book = host.recipe_book_mut().0;
+    for ((tab, keys), held) in stale.into_iter().zip(counts) {
+        book.note_drawings_at(tab, keys, held, revision);
+    }
 }
 
 fn adopt_tabs<H: TabRecipeHost + ?Sized>(host: &mut H) -> UpkeepSave {
@@ -95,6 +182,7 @@ fn adopt_tabs<H: TabRecipeHost + ?Sized>(host: &mut H) -> UpkeepSave {
                 if let (Some(live), Some(symbol)) = (live, symbol) {
                     seeds.push(SeedTab {
                         tab: id,
+                        layout: host.recipe_tab_layout(id),
                         symbol,
                         live,
                     });
@@ -189,34 +277,34 @@ pub fn apply_pending_recipes<H: TabRecipeHost + ?Sized>(host: &mut H) {
 
 /// Read one tab; a change the book has not seen becomes its copy, and only its.
 /// A tab whose change signal has not moved since it was last read is not read.
-pub fn observe_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) {
+/// Answers whether the copy changed.
+pub fn observe_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64) -> bool {
     let (book, sync) = host.recipe_book();
     if sync.is_pending(id) || book.tab_state(id).is_none() {
-        return;
+        return false;
     }
     if !host.tab_settled(id) {
-        return;
+        return false;
     }
     if !host.recipe_book().1.is_settled(id) {
         settle(host, id);
-        return;
+        return false;
     }
     let signal = host.recipe_signal(id);
     if host.recipe_book().1.is_quiet(id, signal) {
-        return;
+        return false;
     }
     let Some(live) = host.live_recipe(id) else {
-        return;
+        return false;
     };
     let (book, sync) = host.recipe_book_mut();
     sync.note_signal(id, signal);
     let Some(copy) = book.tab_copy(id) else {
-        return;
+        return false;
     };
-    if let Some(edit) = sync.observe(id, live, copy) {
-        // The tab was just found in the book, so this cannot refuse.
-        let _ = book.observe(id, &edit);
-    }
+    // The tab was just found in the book, so observe cannot refuse.
+    sync.observe(id, live, copy)
+        .is_some_and(|edit| book.observe(id, &edit).unwrap_or(false))
 }
 
 #[cfg(test)]

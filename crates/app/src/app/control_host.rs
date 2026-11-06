@@ -27,6 +27,7 @@ use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
 use quantick_control_handlers::market_palette::TabOpening;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_workspace::market_list::OpenChoice;
 
 use super::deal_recording_wiring as deals;
@@ -796,17 +797,24 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
 }
 
 impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickApp {
-    fn workspace_book(&mut self) -> Option<&mut quantick_stores::workspaces::WorkspaceBook> {
-        Some(self.runtime.workspace.book.book_mut())
+    fn workspace_store(&mut self) -> Option<&mut WorkspaceBookStore> {
+        Some(&mut self.runtime.workspace.book)
     }
-    fn persist_workspace_book(&mut self) -> Result<(), String> {
-        self.runtime.workspace.book.persist()
+    fn workspace_store_ref(&self) -> Option<&WorkspaceBookStore> {
+        Some(&self.runtime.workspace.book)
+    }
+    fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
+        Some(self.runtime.workspace.layouts_mut().market_mut())
     }
     fn show_tab_recipe(&mut self, tab: u64, recipe: &quantick_stores::workspaces::WorkspaceRecipe) {
         quantick_workspace::book_upkeep::show_recipe(&mut BookTabs(self), tab, recipe);
     }
-    fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
-        self.runtime.workspace.book.tab_row(tab)
+    fn persist_workspace_autosave(&mut self, on: bool) -> Result<(), String> {
+        self.workspace_save_adapter().write_auto_save(on)
+    }
+    fn close_market_tab(&mut self, tab: u64, close: bool) -> bool {
+        let index = self.runtime.tabs.position(tab);
+        index.is_some_and(|index| super::tabs::close_now(self, index, close))
     }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
         super::tab_workspaces::symbols_of(&self.runtime.tabs, tabs)

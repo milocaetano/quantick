@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 pub use quantick_workspace::workspace_book::{
     BookParseError, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, MAX_WORKSPACE_NAME,
-    RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, WORKSPACES_FILE,
-    WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
+    RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UnsavedEdits, Unsynced,
+    WORKSPACES_FILE, WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
 };
 pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};
 pub use quantick_workspace::workspace_sync::{TabAdoption, TabRecipeSync};
@@ -129,6 +129,16 @@ impl WorkspaceBookStore {
         &mut self.book
     }
 
+    /// Whether layout edits are written through as they are made.
+    #[must_use]
+    pub fn autosave(&self) -> bool {
+        self.book.autosave()
+    }
+    /// Turn autosave on or off, as the desk file says.
+    pub fn set_autosave(&mut self, on: bool) {
+        self.book.set_autosave(on);
+    }
+
     /// What the snapshot and the chip read for a tab: a tab the book has not met
     /// is on `Default`, clean, as a new tab is.
     #[must_use]
@@ -168,7 +178,9 @@ impl WorkspaceBookStore {
 
     /// Read the file again: an import wrote it under the running window.
     pub fn reload(&mut self) {
+        let autosave = self.book.autosave();
         (self.book, self.blocked) = load(&self.path);
+        self.book.set_autosave(autosave);
         self.sync.restart();
     }
 

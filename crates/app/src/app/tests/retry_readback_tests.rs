@@ -875,7 +875,14 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("workspace.save_to", 1, json!({}), Readback::Stays),
+        // Refused since revert left the menus: nothing moves.
         ("workspace.revert", 1, json!({}), Readback::Stays),
+        (
+            "workspace.autosave.set",
+            1,
+            json!({ "on": false }),
+            Readback::Moves,
+        ),
         (
             "tab.workspace.set",
             1,
@@ -894,6 +901,8 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "name": "Renamed" }),
             Readback::Moves,
         ),
+        // Last of all: it closes the active tab, edits or not.
+        ("tab.close", 1, json!({ "save": false }), Readback::Moves),
     ]
 }
 
@@ -1139,6 +1148,14 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             }),
             "layout.tab.switch" => json!({ "name": first_layout }),
             "workspace.save_as" => payload,
+            "tab.close" => {
+                // A second tab, so the one closed is not the window's last.
+                let feed = app.active_tab().feed_id.clone();
+                app.arrangement_adapter()
+                    .open_tab(feed, "CLOSEUSDT".to_owned(), None);
+                run_frame(&mut app, &ctx);
+                payload
+            }
             "layout.pane.resize_pair" => json!({
                 "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
                 "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),

@@ -5,6 +5,7 @@ pub(super) fn model(replaying: bool) -> StatusModel {
     StatusModel {
         workspace: Some("Scalp".to_owned()),
         modified: true,
+        autosave: false,
         venue: if replaying {
             "Recorded session"
         } else {

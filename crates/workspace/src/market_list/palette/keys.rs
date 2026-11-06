@@ -53,6 +53,7 @@ impl MarketPalette {
             feed_id: row.feed_id.clone(),
             symbol: row.symbol.clone(),
             bar,
+            context_bars: row.context_bars.clone(),
             inherit_bar: self.bar.is_none() && row.bar.is_none(),
             workspace: self.workspace.clone(),
             background,

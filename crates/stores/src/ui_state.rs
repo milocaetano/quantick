@@ -81,6 +81,7 @@ pub const LOCAL_KEYS: &[&str] = &[
     "saved",
     "replay_folder",
     "save_on_exit",
+    "auto_save",
 ];
 
 /// Application configuration and persistence effects over the shared document.
@@ -579,6 +580,7 @@ mod tests {
         let literal = concat!(
             "version = 1\n",
             "save_on_exit = false\n",
+            "auto_save = true\n",
             "window = [\n    1200.0,\n    800.0,\n]\n",
             "active_tab = 2\n",
             "tabs = []\n",

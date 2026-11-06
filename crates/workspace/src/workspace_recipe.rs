@@ -1,9 +1,11 @@
 //! What a workspace keeps: one saved way of reading a market.
 //!
-//! A recipe holds the canvas, the context intervals, the indicators on each
-//! pane by role, the layer toggles and the footprint style. It never holds
-//! drawings, anchored studies, the flow bar size or the paper position: those
-//! belong to the market ([`crate::market_settings`]).
+//! A recipe holds the canvas, the indicators on each pane by role, the layer
+//! toggles and the footprint style. It never holds drawings, anchored studies,
+//! a pane's timeframe, the flow bar size or the paper position: those belong to
+//! the market the tab shows, so a workspace switch never moves them. A recipe
+//! written while it still kept `context_bars` reads with that key ignored, and
+//! the tab keeps the intervals it had.
 //!
 //! Indicators are copies, not layout ids. A layout id points into the shared
 //! [`crate::layout_document::LayoutBook`], so an edit on a shared id would
@@ -17,19 +19,9 @@ use std::collections::BTreeMap;
 pub const FACTORY_SUMMARY: &str = "as the feed opens";
 const SUMMARY_SEPARATOR: &str = " \u{b7} ";
 
-/// A context pane's interval as the menu reads it: `time:1m` is `Time 1m`,
-/// `tick:200` is `Tick 200`, a pane with none recorded is `Time`.
-fn interval_label(bars: Option<&str>) -> String {
-    let Some((kind, parameter)) = bars.and_then(|bars| bars.split_once(':')) else {
-        return "Time".to_owned();
-    };
-    let mut letters = kind.chars();
-    let word: String = letters
-        .next()
-        .map(|first| first.to_uppercase().chain(letters).collect())
-        .unwrap_or_default();
-    format!("{word} {parameter}")
-}
+/// What the menu calls a context pane: its interval is the market's, not the
+/// workspace's.
+const CONTEXT_PANE_LABEL: &str = "Time";
 
 /// The canvas layout a feed declares its tabs open on (`default_layout` in
 /// the TOML), named for what each layout shows.
@@ -88,7 +80,7 @@ impl DeclaredLayout {
 }
 
 /// What a recipe keeps for one context pane; its role is its place, top to
-/// bottom, the same place `context_bars` gives its interval.
+/// bottom.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextPaneRecipe {
     #[serde(default)]
@@ -118,9 +110,6 @@ pub struct WorkspaceRecipe {
     /// Folded context panes, top to bottom.
     #[serde(default)]
     pub context_panes_collapsed: Vec<bool>,
-    /// Every context chart's interval, top to bottom, as `kind:parameter`.
-    #[serde(default)]
-    pub context_bars: Vec<String>,
     /// The flow pane's indicators, in display order.
     #[serde(default)]
     pub flow_indicators: Vec<SavedIndicator>,
@@ -147,7 +136,6 @@ impl Default for WorkspaceRecipe {
             flow_collapsed: false,
             context_heights: Vec::new(),
             context_panes_collapsed: Vec::new(),
-            context_bars: Vec::new(),
             flow_indicators: Vec::new(),
             context_panes: Vec::new(),
             layers: BTreeMap::new(),
@@ -181,7 +169,7 @@ impl WorkspaceRecipe {
     }
 
     /// What a new workspace starts from: this recipe with every pane bare of
-    /// indicators. The canvas, its sizes and folds, the context intervals, the
+    /// indicators. The canvas, its sizes and folds, the
     /// layer switches and the footprint style stay as the tab reads them back,
     /// so the tab on it reads clean once its panes stand again.
     #[must_use]
@@ -197,9 +185,8 @@ impl WorkspaceRecipe {
         }
     }
 
-    /// One line the workspace menu shows beside the name: the panes, each
-    /// context pane with its interval, then the indicator count when there is
-    /// one, e.g. `Time 1m · Flow · 3 ind`. The factory `Default` names no
+    /// One line the workspace menu shows beside the name: the panes, then the
+    /// indicator count when there is one, e.g. `Time · Flow · 3 ind`. The factory `Default` names no
     /// arrangement, so it says what it means instead.
     #[must_use]
     pub fn summary(&self) -> String {
@@ -207,7 +194,7 @@ impl WorkspaceRecipe {
             return FACTORY_SUMMARY.to_owned();
         }
         let mut parts: Vec<String> = (0..self.layout.context_panes())
-            .map(|slot| interval_label(self.context_bars.get(slot).map(String::as_str)))
+            .map(|_| CONTEXT_PANE_LABEL.to_owned())
             .collect();
         if self.layout != DeclaredLayout::Time {
             parts.push("Flow".to_owned());
@@ -238,5 +225,72 @@ impl WorkspaceRecipe {
             context_panes: vec![pane; layout.context_panes()],
             ..Self::default()
         }
+    }
+
+    /// What differs from `base`, in the words the close prompt lists: each
+    /// indicator added, removed or changed by name, then `panes`, `layers` and
+    /// `footprint style` once each. Empty when nothing differs.
+    #[must_use]
+    pub fn changes_from(&self, base: &Self) -> Vec<String> {
+        let mut words: Vec<String> = Vec::new();
+        let mut note = |word: String| {
+            if !words.contains(&word) {
+                words.push(word);
+            }
+        };
+        let sets = |recipe: &Self| -> Vec<Vec<SavedIndicator>> {
+            std::iter::once(recipe.flow_indicators.clone())
+                .chain(
+                    recipe
+                        .context_panes
+                        .iter()
+                        .map(|pane| pane.indicators.clone()),
+                )
+                .collect()
+        };
+        let (mine, theirs) = (sets(self), sets(base));
+        for slot in 0..mine.len().max(theirs.len()) {
+            let (held, was) = (mine.get(slot), theirs.get(slot));
+            let (held, was) = (
+                held.map_or(&[][..], Vec::as_slice),
+                was.map_or(&[][..], Vec::as_slice),
+            );
+            for indicator in held.iter().filter(|one| !was.contains(one)) {
+                note(indicator.kind.display_name());
+            }
+            for indicator in was.iter().filter(|one| !held.contains(one)) {
+                note(indicator.kind.display_name());
+            }
+        }
+        let canvas = |recipe: &Self| {
+            (
+                recipe.layout,
+                recipe.split_fraction.map(f32::to_bits),
+                recipe.context_collapsed,
+                recipe.flow_collapsed,
+                recipe
+                    .context_heights
+                    .iter()
+                    .map(|h| h.to_bits())
+                    .collect::<Vec<_>>(),
+                recipe.context_panes_collapsed.clone(),
+                recipe.context_panes.len(),
+            )
+        };
+        if canvas(self) != canvas(base) {
+            note("panes".to_owned());
+        }
+        let layers = |recipe: &Self| {
+            std::iter::once(recipe.layers.clone())
+                .chain(recipe.context_panes.iter().map(|pane| pane.layers.clone()))
+                .collect::<Vec<_>>()
+        };
+        if layers(self) != layers(base) {
+            note("layers".to_owned());
+        }
+        if self.footprint_style != base.footprint_style {
+            note("footprint style".to_owned());
+        }
+        words
     }
 }

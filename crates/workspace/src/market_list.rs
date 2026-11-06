@@ -34,7 +34,7 @@ pub use copy::{
 };
 pub use palette::{MarketPalette, PaletteFocus, PaletteIntent, PaletteKey, delete_removes_row};
 pub use rows::{MarketGroup, MarketListing, MarketRow, MarketStatus, StatusTone};
-pub use search::{focus_target, list_markets, market_bar, removal_refusal};
+pub use search::{focus_target, list_markets, market_bar, market_context_bars, removal_refusal};
 pub use world::{
     CatalogMarket, ClosedMarket, MarketSnapshot, MarketWorld, OpenMarket, RecentMarkets, Venue,
     VenueKind,

@@ -5158,7 +5158,7 @@ fn drawings_stay_with_their_market_when_the_layout_changes() {
         .spec()
         .to_config_string();
     let key = crate::layouts::DrawingKey {
-        market: crate::layouts::MarketKey {
+        market: quantick_workspace::market_settings::MarketKey {
             venue: "binance".to_owned(),
             asset: "TESTUSDT".to_owned(),
         },

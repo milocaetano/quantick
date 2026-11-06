@@ -17,6 +17,16 @@ pub fn market_bar(world: &MarketWorld<'_>, feed_id: &str, symbol: &str) -> Optio
     catalog_row(world, market)?.bar
 }
 
+/// The pane timeframes a market remembers, as [`market_bar`] remembers its
+/// flow bar: its first open tab's context charts, else the ones its tab last
+/// closed on. Empty when it has none: a new tab then opens as any new tab does.
+#[must_use]
+pub fn market_context_bars(world: &MarketWorld<'_>, feed_id: &str, symbol: &str) -> Vec<String> {
+    let market = find_market(world, feed_id, symbol);
+    let row = market.and_then(|market| catalog_row(world, market));
+    row.map(|row| row.context_bars).unwrap_or_default()
+}
+
 /// Build the list for `query`.
 #[must_use]
 pub fn list_markets(world: &MarketWorld<'_>, query: &str) -> MarketListing {

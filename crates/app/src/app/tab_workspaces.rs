@@ -7,6 +7,7 @@ use std::time::Instant;
 use quantick_control_handlers::workspace_book as ops;
 use quantick_layers::{ChartLayer, recipe_layers};
 use quantick_session::workspace_menu::WorkspaceCommand;
+use quantick_stores::market_settings::{DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{TabRecipeSync, WorkspaceBook, WorkspaceRecipe, capture_recipe};
 use quantick_workspace::book_upkeep::{self, TabRecipeHost};
 
@@ -20,11 +21,30 @@ fn layer_states(layers: &BTreeMap<String, bool>) -> BTreeMap<ChartLayer, bool> {
     quantick_layers::recipe_states(crate::pane::registered_layers().layers(), layers)
 }
 
-/// What the frame owes the book, once its panes are built and seeded.
+/// What the frame owes the book, once its panes are built and seeded; with
+/// autosave on, the quiet edits are written through.
 pub(super) fn maintain(app: &mut QuantickApp) {
     app.layout_adapter().own_indicator_copies();
-    let save = book_upkeep::maintain(&mut BookTabs(app));
-    app.runtime.workspace.book.save_upkeep(save);
+    let upkeep = book_upkeep::maintain(&mut BookTabs(app), Instant::now());
+    app.runtime.workspace.book.save_upkeep(upkeep.save);
+    let due = upkeep.write_through;
+    if !due.is_empty() {
+        as_hand(app, |app, to| ops::write_through(app, to, &due));
+    }
+}
+
+/// Run `act` journaled as the trader's hand, toasting each note it answers.
+fn as_hand<I: IntoIterator<Item = String>>(
+    app: &mut QuantickApp,
+    act: impl FnOnce(&mut QuantickApp, ops::Journal<'_, crate::control::ControlAccess>) -> I,
+) {
+    let mut access = app.control.control_access.take();
+    let hand = access.as_mut().and_then(|access| access.hand_actor());
+    let notes = act(app, access.as_mut().zip(hand.as_ref()));
+    app.control.control_access = access;
+    for message in notes {
+        app.surfaces.toast.note(message, Instant::now());
+    }
 }
 
 /// The window as [`TabRecipeHost`]: the protected root gains no impl.
@@ -60,6 +80,11 @@ impl TabRecipeHost for BookTabs<'_> {
     }
     fn recipe_tab_symbol(&self, id: u64) -> Option<String> {
         self.0.runtime.tabs.by_id(id).map(|tab| tab.symbol.clone())
+    }
+    fn recipe_tab_layout(&self, id: u64) -> Option<String> {
+        let layouts = self.0.layout_state();
+        let shown = layouts.pane_layout(id, PaneSide::Flow);
+        Some(layouts.layouts().get(shown)?.name.clone())
     }
     fn new_tab_recipe(&self, id: u64) -> WorkspaceRecipe {
         let app = &*self.0;
@@ -111,6 +136,14 @@ impl TabRecipeHost for BookTabs<'_> {
     fn apply_recipe_indicators(&mut self, id: u64, recipe: &WorkspaceRecipe) {
         apply_recipe_indicators(self.0.layout_adapter(), id, recipe);
     }
+    fn tab_drawing_keys(&self, id: u64) -> Vec<DrawingKey> {
+        let panes = self.0.runtime.tabs.by_id(id).into_iter();
+        let keys = panes.flat_map(|tab| tab.panes().map(|(pane, _)| &pane.layout));
+        Vec::from_iter(keys.filter_map(|layout| layout.drawings_key.clone()))
+    }
+    fn recipe_market(&mut self) -> Option<&mut MarketSettingsStore> {
+        Some(self.0.runtime.workspace.layouts_mut().market_mut())
+    }
 }
 
 /// What the tab shows now, as a recipe.
@@ -135,10 +168,12 @@ pub(super) fn symbols_of(open: &ArrangementHost, tabs: &[u64]) -> Vec<String> {
 }
 
 fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe) {
-    let intervals = super::saved_context_intervals(&recipe.context_bars, None);
     let Some(tab) = runtime.tabs.by_id_mut(id) else {
         return;
     };
+    // The timeframe stays the tab's: each pane keeps its own interval.
+    let bars = super::arrangement_adapter::saved_tab_of(tab).context_bars;
+    let intervals = super::saved_context_intervals(&bars, None);
     let legends = LegendFold {
         flow: tab.flow_pane.legend_collapsed,
         time: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
@@ -156,22 +191,6 @@ fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe)
         &intervals,
         legends,
     );
-    for (slot, bars) in recipe.context_bars.iter().enumerate() {
-        let index = slot + 1;
-        let moved = tab
-            .pane_at(index)
-            .is_some_and(|pane| pane.state.spec().to_config_string() != *bars);
-        if let (true, Ok(spec)) = (
-            moved,
-            quantick_engine::bar_registry::BUILTIN_BARS.parse(bars),
-        ) {
-            tab.recut_pane_with(
-                index,
-                quantick_strategy::DisarmReason::BarSpecChanged,
-                |pane| pane.set_spec(spec),
-            );
-        }
-    }
     apply_recipe_switches(runtime, id, recipe);
 }
 
@@ -206,26 +225,15 @@ fn apply_recipe_indicators(mut layouts: LayoutAdapter<'_>, id: u64, recipe: &Wor
     }
 }
 
-/// The workspace the active tab holds edits against, while it holds any.
-pub(super) fn edits_of_active(runtime: &Runtime) -> Option<String> {
-    let (workspace, modified) = runtime.workspace.book.tab_row(runtime.tabs.active_id());
-    modified.then_some(workspace)
-}
-
 /// Carry out what a workspace row or the toolbar asked for, on what the active
 /// tab shows now, journaled as the trader's hand.
 pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: WorkspaceCommand) {
     let tab = app.runtime.tabs.active_id();
-    book_upkeep::observe_tab(&mut BookTabs(app), tab);
+    book_upkeep::watch_tab(&mut BookTabs(app), tab, Instant::now());
     let symbol = app.active_tab().symbol.clone();
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
-    let mut access = app.control.control_access.take();
-    let hand = access.as_mut().and_then(|access| access.hand_actor());
-    let to = access.as_mut().zip(hand.as_ref());
-    let note = ops::apply_row_command(app, to, &mut menu, tab, &symbol, command);
-    app.control.control_access = access;
+    as_hand(app, |app, to| {
+        ops::apply_row_command(app, to, &mut menu, tab, &symbol, command)
+    });
     app.chrome.window_menu.tab_workspace = menu;
-    if let Some(message) = note {
-        app.surfaces.toast.note(message, Instant::now());
-    }
 }

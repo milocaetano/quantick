@@ -19,6 +19,12 @@ pub struct Workspace {
     /// it is a fact *about this file*.
     #[serde(default = "yes")]
     pub save_on_exit: bool,
+    /// Whether a tab's layout edits are written into its workspace as they are
+    /// made ("auto save layout changes"). On unless the trader turned it off;
+    /// a file from before the field means on. A fact about this desk, beside
+    /// `save_on_exit`.
+    #[serde(default = "yes")]
+    pub auto_save: bool,
     /// The window's inner size in points, as it was last saved.
     #[serde(default)]
     pub window: Option<[f32; 2]>,
@@ -174,6 +180,7 @@ impl Default for Workspace {
         Self {
             version: FORMAT_VERSION,
             save_on_exit: true,
+            auto_save: true,
             window: None,
             active_tab: 0,
             tabs: Vec::new(),
@@ -218,6 +225,7 @@ impl Workspace {
         Self {
             version: FORMAT_VERSION,
             save_on_exit,
+            auto_save: true,
             window,
             active_tab,
             tabs,
@@ -228,6 +236,13 @@ impl Workspace {
             favorite_tools: Vec::new(),
             recent_workspaces: Vec::new(),
         }
+    }
+
+    /// The same, with the desk's autosave choice as the book holds it.
+    #[must_use]
+    pub fn with_auto_save(mut self, auto_save: bool) -> Self {
+        self.auto_save = auto_save;
+        self
     }
 
     /// The same, carrying the recently visited workspace files through.
@@ -329,6 +344,7 @@ mod tests {
         let literal = concat!(
             "version = 1\n",
             "save_on_exit = false\n",
+            "auto_save = true\n",
             "window = [\n    1200.0,\n    800.0,\n]\n",
             "active_tab = 2\n",
             "tabs = []\n",

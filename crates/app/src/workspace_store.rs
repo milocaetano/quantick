@@ -11,8 +11,6 @@ use std::path::{Path, PathBuf};
 
 use quantick_workspace::workspace_commit::WorkspaceCommitSession;
 
-pub(crate) use quantick_workspace::layout_commit::LayoutSave;
-
 pub(crate) use quantick_workspace::layout_store::LayoutStore;
 
 pub(crate) use quantick_stores::paths::StorePaths;

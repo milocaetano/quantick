@@ -1,6 +1,7 @@
 //! Native viewport adapters over one retained workspace and headless membership.
 use super::{ArrangementHost, QuantickApp, title_bar::TitleBarState};
 use eframe::egui;
+use quantick_session::{close_queue::*, workspace_menu::WorkspaceCommand};
 use quantick_workspace::arrangement::{
     tab_drag::{self, Gesture, Point, Strip},
     windows::{TransferTarget, WindowId},
@@ -143,34 +144,42 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     let focused = app.runtime.tabs.windows().focused();
     present(app, focused);
     super::frame::settle(app, ctx, now);
-    let live = app.runtime.tabs.windows();
+    let (live, native) = (app.runtime.tabs.windows(), &mut app.presentation.native);
     // Final-child close queues a root Close event for the next update.
     // Keep scheduling until eframe consumes it and calls on_exit.
-    app.presentation
-        .native
+    native
         .pump
         .set_active(live.window(WindowId::ROOT).is_none());
-    app.presentation
-        .native
-        .titles
-        .retain(|id, _| live.window(*id).is_some());
-    app.presentation
-        .native
-        .strips
-        .retain(|id, _| live.window(*id).is_some());
-    app.presentation
-        .native
-        .positions
-        .retain(|id, _| live.window(*id).is_some());
-    app.presentation
-        .native
-        .observed
-        .retain(|id, _| live.window(*id).is_some());
-    app.presentation
-        .native
-        .placements
-        .retain(|id, _| live.window(*id).is_some());
+    native.titles.retain(|id, _| live.window(*id).is_some());
+    native.strips.retain(|id, _| live.window(*id).is_some());
+    native.positions.retain(|id, _| live.window(*id).is_some());
+    native.observed.retain(|id, _| live.window(*id).is_some());
+    native.placements.retain(|id, _| live.window(*id).is_some());
     ctx.request_repaint_after(std::time::Duration::from_millis(16));
+}
+
+/// The close prompt, in the focused window: an answer settles its tab, and
+/// an exit's last answer closes the app.
+pub(super) fn close_prompt(app: &mut QuantickApp, ctx: &egui::Context) {
+    let focused = viewport(app.runtime.tabs.windows().focused()) == ctx.viewport_id();
+    let queue = &app.chrome.window_menu.tab_workspace.close;
+    let asked = quantick_control_handlers::workspace_book::close_prompt(queue).filter(|_| focused);
+    let Some(at) = asked.and_then(|prompt| crate::widgets::ask(ctx, &prompt)) else {
+        return;
+    };
+    let answer = WorkspaceCommand::AnswerClose(CloseAnswer::BUTTONS[at]);
+    super::tab_workspaces::apply_workspace_command(app, answer);
+    exit_when_settled(app, ctx);
+}
+
+/// The exit every tab settled for: the window closes, and with it the app.
+fn exit_when_settled(app: &mut QuantickApp, ctx: &egui::Context) -> bool {
+    let settled = app.chrome.window_menu.tab_workspace.close.take_exit();
+    if settled {
+        app.presentation.native.final_exit = true;
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
+    }
+    settled
 }
 
 pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId, now: Instant) {
@@ -178,6 +187,15 @@ pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId
         quantick_platform::attach_dpi_child(window.0);
     }
     if ctx.input(|input| input.viewport().close_requested()) {
+        if app.runtime.tabs.windows().windows().len() == 1 && !app.presentation.native.final_exit {
+            let tabs = app.runtime.tabs.iter_with_ids().map(|(id, _)| id).collect();
+            let exit = WorkspaceCommand::Close(CloseScope::App, tabs);
+            super::tab_workspaces::apply_workspace_command(app, exit);
+            if !exit_when_settled(app, ctx) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
+            return;
+        }
         match app
             .runtime
             .tabs

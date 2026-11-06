@@ -208,7 +208,7 @@ The three exclusion classes are closed:
 | `workspace.save_to` | Save a tab's edits to its workspace | window menu, Save to | `workspace.save_to` | — |
 | `workspace.save_as` | Save a tab as a new workspace | window menu, Workspace, Save as new | `workspace.save_as` | — |
 | `workspace.new` | Make a new, empty workspace for a tab | the status bar's workspace cell, New workspace | `workspace.new` | — |
-| `workspace.revert` | Drop a tab's unsaved edits | window menu, Workspace, Revert | `workspace.revert` | — |
+| `workspace.autosave.set` | Turn auto save layout changes on or off | the status bar's auto save check, or the workspace cell's menu | `workspace.autosave.set` | — |
 | `workspace.rename` | Rename a workspace | window menu, Workspace, Rename | `workspace.rename` | — |
 | `workspace.delete` | Delete a workspace, moving its tabs to Default | window menu, Workspace, Delete | `workspace.delete` | — |
 | `workspace.list` | List the workspaces and the tabs using each | window menu, Workspace, whose list names each workspace | `workspace.list` | — |
@@ -228,7 +228,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 18 |
+| `toolbar_action` | 16 |
 | `strip_action` | 6 |
 | `tab_action` | 4 |
 | `dock_tab` | 3 |

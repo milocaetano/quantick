@@ -1,5 +1,8 @@
 //! The workspace menus' state, apart from their pixels: the status bar cell's
-//! menu, the delete that asks twice and the dialog that asks for a name.
+//! menu, the delete that asks twice, the dialog that asks for a name and the
+//! close that asks per tab holding edits.
+
+use crate::close_queue::{CloseAnswer, CloseQueue, CloseScope};
 
 /// What a workspace row or the dialog asked the window to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,8 +11,8 @@ pub enum WorkspaceCommand {
     Set(String),
     /// Write the active tab's edits into its workspace.
     SaveTo,
-    /// Drop the active tab's edits.
-    Revert,
+    /// Turn "auto save layout changes" on or off.
+    SetAutosave(bool),
     BeginSaveAs,
     /// Ask the name of a new, empty workspace. Nothing changes before Enter.
     BeginNew,
@@ -18,6 +21,10 @@ pub enum WorkspaceCommand {
     Delete(String),
     /// The dialog's Enter.
     SubmitDialog,
+    /// Close these tabs, or exit, asking first per tab holding edits.
+    Close(CloseScope, Vec<u64>),
+    /// The close prompt's answer.
+    AnswerClose(CloseAnswer),
 }
 
 /// What the name dialog is asking for.
@@ -64,6 +71,7 @@ pub struct WorkspaceMenuState {
     pub chip_menu: Option<u64>,
     pub armed_delete: Option<String>,
     pub dialog: Option<NameDialog>,
+    pub close: CloseQueue,
 }
 
 impl WorkspaceMenuState {

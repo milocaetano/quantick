@@ -84,8 +84,6 @@ pub struct ToolbarModel<'a> {
     /// The market button: the venue's letter and the tab chip's own
     /// `SYMBOL · venue`, so the two cannot disagree.
     pub market: (char, &'a str),
-    /// The workspace this tab holds unsaved edits against, while it holds any.
-    pub workspace_edits: Option<String>,
     /// Present while a recording is the source; replaces the market label.
     pub replay: Option<ReplaySource>,
     /// The deal recorder shown beside the symbol, when supported.
@@ -158,10 +156,6 @@ pub enum ToolbarAction {
     CancelHistory,
     /// Open the palette in switch mode on this tab (the market button).
     SwitchMarket,
-    /// Write this tab's edits into its workspace.
-    SaveToWorkspace,
-    /// Drop this tab's edits.
-    RevertWorkspace,
     /// What the REC control beside the symbol asked for.
     DealRecording(crate::deal_recording::DealRecordingAction),
     /// Fetch and prepend one more span of older venue candles.
@@ -279,18 +273,6 @@ fn draw_source(
     }
     if draw_market(ui, model.market, plan.feed_full_name).clicked() {
         actions.push(ToolbarAction::SwitchMarket);
-    }
-    if let Some(workspace) = &model.workspace_edits {
-        let save = quantick_control_schema::window_menu::save_to_short_label(workspace);
-        if ui.button(save).clicked() {
-            actions.push(ToolbarAction::SaveToWorkspace);
-        }
-        if ui
-            .button(quantick_control_schema::window_menu::TOOLBAR_REVERT)
-            .clicked()
-        {
-            actions.push(ToolbarAction::RevertWorkspace);
-        }
     }
     if let Some(view) = &model.deal_recording
         && let Some(action) = crate::deal_recording_ui::draw_button(
@@ -793,7 +775,6 @@ mod tests {
                         layout_preset: None,
                         layout_picker_open: &mut layout_picker_open,
                         layout_picker_request_open: false,
-                        workspace_edits: None,
                         market: ('B', "BTCUSDT \u{b7} Binance"),
                         replay: replaying.then(|| ReplaySource {
                             label: "BTCUSDT · 2026-03-16".to_owned(),
@@ -846,7 +827,6 @@ mod tests {
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
-                    workspace_edits: None,
                     market: ('B', "US500 \u{b7} MetaTrader 5"),
                     replay: None,
                     deal_recording: None,
@@ -946,7 +926,6 @@ mod tests {
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
                     layout_picker_request_open: false,
-                    workspace_edits: None,
                     market: ('B', "BTCUSDT \u{b7} Binance"),
                     replay: None,
                     deal_recording: None,

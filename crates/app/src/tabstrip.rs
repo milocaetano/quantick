@@ -6,7 +6,9 @@
 
 use eframe::egui;
 use quantick_appearance::tab_strip::{FeedMark, MarkShape, feed_shape, feed_token, tab_ink};
-use quantick_session::tab_chip::{ChipMeasure, CloseSlot, close_slot, fit_chip, shortened_name};
+use quantick_session::tab_chip::{
+    ChipMeasure, CloseSlot, broker_name, close_slot, fit_chip, shortened_name,
+};
 use quantick_workspace::arrangement::strip::{
     StripSurface, TabFeed, chip_parts, home_label_fits, market_slots, visible_tabs,
 };
@@ -33,10 +35,8 @@ const ADD_WIDTH_PX: f32 = 30.0;
 const CHIP_PADDING_LEFT_PX: f32 = 10.0;
 const CHIP_DOT_RADIUS_PX: f32 = 3.0;
 const CHIP_DOT_GAP_PX: f32 = 7.0;
-/// The gap between the workspace name and the edited mark.
+/// The gap between the chip's trailing words.
 const NAME_MARK_GAP_PT: f32 = 3.0;
-/// What marks a tab holding edits.
-const EDITED_MARK: &str = "\u{2022}";
 /// How far a second strike of the symbol sits from the first. The bundled face
 /// has one weight, and this is what reads as 600 at 13 pt.
 const SEMIBOLD_STRIKE_PX: f32 = 0.35;
@@ -57,12 +57,8 @@ pub struct TabChip<'a> {
     pub id: u64,
     /// `SYMBOL · venue`, composed by the tab when its market last changed.
     pub label: &'a str,
-    /// The feed's mark. Amber stays reserved for an edited tab.
+    /// The feed's mark.
     pub feed: TabFeed,
-    /// The workspace the tab uses.
-    pub workspace: String,
-    /// Whether the tab holds edits it has not saved to that workspace.
-    pub modified: bool,
 }
 
 /// What the strip asked the window to do.
@@ -172,7 +168,7 @@ pub(crate) fn draw(
                     egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
                 );
                 let close_hot = ui.rect_contains_pointer(close_target);
-                let slot = close_slot(selected, response.hovered() || close_hot, chip.modified);
+                let slot = close_slot(selected, response.hovered() || close_hot);
                 let hot = close_hot && closable && slot == CloseSlot::Close;
                 if hot {
                     let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);
@@ -197,11 +193,6 @@ pub(crate) fn draw(
                         "The last tab stays open — a window with no market has nothing to show",
                     )
                 };
-                if slot == CloseSlot::Mark {
-                    let center = close.rect.center();
-                    ui.painter()
-                        .circle_filled(center, CHIP_DOT_RADIUS_PX, palette.amber());
-                }
                 drawn.close.push(close.rect);
                 let sheet = response.rect.union(close.rect);
                 let chip_bounds = sheet.intersect(ui.clip_rect());
@@ -212,7 +203,7 @@ pub(crate) fn draw(
                 let pointer = (hovered, response.has_focus() || close.has_focus());
                 let lit = paint_tab_surface(ui, &palette, surface, sheet, selected, pointer, true);
                 // The face reads lit whenever its sheet is: body, × or focus.
-                paint_chip_face(ui, &palette, chip, body, selected, lit);
+                paint_chip_face(ui, &palette, chip, body, lit);
                 if lit && let Some(before) = separator.take() {
                     ui.painter().set(before, egui::Shape::Noop);
                 }
@@ -270,14 +261,13 @@ pub(crate) fn draw(
 }
 
 /// The feed's mark, the symbol in its heavier strike, "Replay" on a recording
-/// and the workspace in muted ink, `Scalp •` with the amber mark while edited.
-/// The name is paint, never a control: the status bar's cell switches it.
+/// and the broker in muted ink: `• WINZ26 MetaTrader 5`. No workspace and no
+/// mark: the status bar's cell shows both.
 fn paint_chip_face(
     ui: &egui::Ui,
     palette: &Palette,
     chip: &TabChip<'_>,
     body: egui::Rect,
-    selected: bool,
     lit: bool,
 ) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
@@ -286,7 +276,8 @@ fn paint_chip_face(
     let mark = feed_mark(chip.feed);
     let feed_ink = *palette.get(feed_token(mark));
     paint_feed_mark(&painter, egui::pos2(dot_x, center_y), mark, feed_ink);
-    let (symbol, _venue_on_hover) = chip_parts(chip.label);
+    let (symbol, venue) = chip_parts(chip.label);
+    let broker = broker_name(venue);
     let ink = *palette.get(tab_ink(lit));
     let text_x = dot_x + CHIP_DOT_RADIUS_PX + CHIP_DOT_GAP_PX;
     let laid = |text: String, px: f32, color: egui::Color32| {
@@ -298,9 +289,6 @@ fn paint_chip_face(
     painter.galley(at, galley.clone(), ink);
     painter.galley(at + egui::vec2(SEMIBOLD_STRIKE_PX, 0.0), galley, ink);
 
-    let mark = chip
-        .modified
-        .then(|| laid(EDITED_MARK.to_owned(), SUFFIX_TEXT_PX, palette.amber()));
     let gapped = |galley: &Option<std::sync::Arc<egui::Galley>>| {
         galley
             .as_ref()
@@ -311,27 +299,25 @@ fn paint_chip_face(
     let symbol_width = glyphs + gapped(&word);
     let name_ink = palette.text_muted();
     let name_width = |letters: usize| {
-        let cut = shortened_name(&chip.workspace, letters);
+        let cut = shortened_name(broker, letters);
         laid(cut, SUFFIX_TEXT_PX, name_ink).size().x
     };
     let fit = fit_chip(&ChipMeasure {
         available: body.width(),
         symbol: text_x - body.left() + symbol_width + CHIP_DOT_GAP_PX,
-        mark: gapped(&mark),
-        active: selected,
         close: 0.0,
-        name_letters: chip.workspace.chars().count(),
+        name_letters: broker.chars().count(),
         name_width: &name_width,
     });
     let mut x = text_x + glyphs + CHIP_DOT_GAP_PX;
     let name = (fit.name_letters > 0).then(|| {
         laid(
-            shortened_name(&chip.workspace, fit.name_letters),
+            shortened_name(broker, fit.name_letters),
             SUFFIX_TEXT_PX,
             name_ink,
         )
     });
-    let trail = [word, name, mark.filter(|_| fit.mark)];
+    let trail = [word, name];
     for galley in trail.into_iter().flatten() {
         let at = egui::pos2(x, center_y - galley.size().y / 2.0);
         x += galley.size().x + NAME_MARK_GAP_PT;

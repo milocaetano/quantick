@@ -1212,8 +1212,11 @@ impl ControlAccess {
             "gateway cleanup did not acknowledge before application exit"
         );
     }
+}
 
-    #[cfg(test)]
+/// Test-only handles on the gateway, apart from the shipped impl.
+#[cfg(test)]
+impl ControlAccess {
     pub(crate) fn enable_for_test(
         &mut self,
         ctx: &eframe::egui::Context,
@@ -1228,7 +1231,6 @@ impl ControlAccess {
         self.request_enable(ctx, options);
     }
 
-    #[cfg(test)]
     pub(crate) fn enable_for_test_with_limits(
         &mut self,
         ctx: &eframe::egui::Context,
@@ -1250,7 +1252,6 @@ impl ControlAccess {
     /// [`Self::enable_for_test`], with `written` called on the answering
     /// thread each time an answer that released a request ID has been
     /// written, before that thread moves on.
-    #[cfg(test)]
     pub(crate) fn enable_for_test_observing_answers(
         &mut self,
         ctx: &eframe::egui::Context,
@@ -1270,7 +1271,6 @@ impl ControlAccess {
     /// One frame whose request budget was spent before the frame service ran,
     /// as a loaded machine's frame prelude spends it. Everything the frame
     /// does after that is the production path, unchanged.
-    #[cfg(test)]
     pub(crate) fn begin_frame_over_budget_for_test(
         &mut self,
         app: &mut ControlWindow,
@@ -1283,12 +1283,10 @@ impl ControlAccess {
         self.begin_frame_since(app, ctx, started);
     }
 
-    #[cfg(test)]
     pub(crate) fn disable_for_test(&mut self) {
         self.request_disable();
     }
 
-    #[cfg(test)]
     pub(crate) fn queued_requests_for_test(&self) -> usize {
         match &self.state {
             AccessState::Enabled(runtime) => {
@@ -1304,7 +1302,6 @@ impl ControlAccess {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn descriptor_path_for_test(&self) -> Option<PathBuf> {
         match &self.state {
             AccessState::Enabled(runtime) => Some(runtime.public.descriptor_path.clone()),
@@ -1312,12 +1309,10 @@ impl ControlAccess {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn is_disabled_for_test(&self) -> bool {
         matches!(self.state, AccessState::Disabled)
     }
 
-    #[cfg(test)]
     pub(crate) fn connection_ids_for_test(&self) -> Vec<ConnectionId> {
         self.connections.keys().cloned().collect()
     }

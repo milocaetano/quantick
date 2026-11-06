@@ -51,10 +51,12 @@ it collides with the B3 trading session, the `session` crate and the
   market tabs, `+`, free space, the **Agent on** pill while local agent access
   is on (amber: it is an exposure, not a health state; click opens the access
   panel), `⋮`, window controls.
-- A market tab reads `● BTCUSDT  Swing ×`: venue dot, symbol, the workspace
-  name in muted ink, `•` after the name while the tab holds unsaved workspace
-  changes. The tooltip carries the full title. When tabs get narrow the venue
-  truncates first and the workspace keeps at least four characters.
+- A market tab reads `● WINZ26  MetaTrader 5 ×` (`● BTCUSDT  Binance ×`):
+  venue dot, symbol, and the broker in muted ink — the venue's name before its
+  ` — ` qualifier. No workspace name and no edited mark: the status bar's
+  workspace cell is the one place those show. The tooltip carries the full
+  title. When tabs get narrow the broker truncates first (to four letters, then
+  dropped); the symbol never shortens.
 - Dragging a tab below the strip opens it in its own window with the same
   feed, workspace and drawings; closing that window brings the tab back. This
   replaces the "Move to new window" menu item as the primary gesture (the item
@@ -78,7 +80,7 @@ Hide panels                Ctrl+Shift+B
 Market Replay…             Ctrl+R
 ─
 Workspace ▸   Use for this tab: Scalp ✓ · Tape · Swing · Default (🗑 asks once more)
-              ─ Save as new workspace… · Rename "Scalp"… · Revert this tab
+              ─ Save as new workspace… · Rename "Scalp"…
 Panels ▸      L2 · Bubbles ✓ · Session · Paper trading ✓ · Trades
               ─ Drawing toolbar: Left ● Top Bottom Hidden
 Desk ▸        Export desk to file… · Import desk from file…
@@ -102,7 +104,7 @@ Help ▸        Keyboard shortcuts… · Replay file format… · About quantick
 | Today | Entry | Goes to | Command |
 |---|---|---|---|
 | File | New Tab… | `+` · Ctrl+T | `market.open {feed, symbol, bar, workspace, background}` |
-| File | Close Tab | × on the tab · Ctrl+W; an unsaved change is dropped with "Unsaved Scalp changes dropped · Undo" | `tab.close` |
+| File | Close Tab | × on the tab · Ctrl+W; with autosave off and edits held it asks first (below) | `tab.close {tab_id, save}` |
 | File | Market Replay… / Close Replay | `⋮` root · "Back to live" on the replay tab (keeps layout, indicators, drawings) | `replay.browser.open` · `replay.close` |
 | File | Exit | the window's ✕ | `app.exit` (command only) |
 | View | Layouts, Layout, Move chart, Hide context, legend | workspace content; the controls move to the chart header once chart-identity ships. Until then View stays | `layout.*` · `pane.legend.*` |
@@ -111,7 +113,7 @@ Help ▸        Keyboard shortcuts… · Replay file format… · About quantick
 | Workspace | Save workspace (Ctrl+Shift+S) | `⋮` "Save desk", same shortcut, same meaning | `desk.save`; a bare `workspace.save` is refused with a code naming both successors |
 | Workspace | Save as…, Open, Delete (bookmarks) | retired: the trader's `ui-state.toml` holds zero bookmarks. If missed, they return as "Saved desks" | — |
 | Workspace | Export, Import, Reset startup, Save on exit | `⋮ Desk` | `desk.export` · `desk.import` · `desk.forget` · `desk.reopen_on_launch.set` |
-| new | This tab's workspace | WORKSPACE field on the "this tab" row · right-click on the tab · `⋮ Workspace` | `tab.workspace.set` · `workspace.save_to {tab}` · `workspace.save_as` · `workspace.revert` · `workspace.rename` · `workspace.delete` · `workspace.list` |
+| new | This tab's workspace | WORKSPACE field on the "this tab" row · right-click on the tab · `⋮ Workspace` | `tab.workspace.set` · `workspace.save_to {tab}` · `workspace.save_as` · `workspace.autosave.set` · `workspace.rename` · `workspace.delete` · `workspace.list` |
 | Help | Replay file format… | `⋮ Help` with Keyboard shortcuts and About | `help.*` |
 
 ### Settings window
@@ -129,35 +131,97 @@ stays a palette command.
 Under the strip, the row that today holds feed and symbol dropdowns becomes:
 
 ```
-THIS TAB  WINZ26 · MetaTrader 5 — B3 │ WORKSPACE  [Scalp • ▾]  Save  Revert │ REC · History ▾ │ BUY 1  SELL 1   [dock icons]
+THIS TAB  WINZ26 · MetaTrader 5 — B3 │ REC · History ▾ │ BUY 1  SELL 1   [dock icons]
 ```
 
 - Feed and symbol read as a label, not dropdowns, and the words stay clickable:
   the trader asked on 2026-11-02 to keep switching a tab's market in place.
   A contract roll is "Roll to WINF27".
-- `Scalp ▾` switches this tab only. The toast reads "WINZ26 now on Tape ·
-  drawings kept · Undo". Switching never asks for confirmation.
-- Save and Revert enable only while the tab holds unsaved changes.
-- The tab title and this field read one state; a test proves they agree.
+- The workspace is not on this row nor on the toolbar: no "Save to" and no
+  "Revert" there. It shows only in the status bar's cell, `⊞ Scalp ▴`, whose
+  menu switches this tab only. The toast reads "WINZ26 now on Tape · drawings
+  kept · Undo". Switching never asks for confirmation.
+- The tab chip and the status bar cell read one state; a test proves they
+  agree.
 
-### Save model: copy on the tab, explicit save
+### Save model: auto save, or a held copy and an explicit save
 
-A tweak to a pane marks only its own tab (`Scalp •`). Nothing reaches another
-tab until "Save to Scalp", and that step names the tabs it will change before
-the click:
+The desk setting `auto_save` ("Auto save layout changes", `ui-state.toml`
+beside `save_on_exit`) decides. It is on by default, shown as a muted
+"auto save" checkbox right after the status bar's workspace cell (hover:
+"Write this tab's layout changes into its workspace as you make them") and as
+a check row in the cell's menu; `workspace.autosave.set {on}` sets it and the
+snapshot reads it as `auto_save`.
 
-```
-Saving Scalp also changes WDOZ26 · MT5.   [Save to Scalp]  [Save as new…]  [Revert]   Esc
-```
-
-- Chosen over shared-live (2 of 3 reviewers): a change that jumps to another
-  chart mid-tape, possibly in a torn-off window the trader is working from, is
-  worse than a forgotten amber dot.
-- On exit the tab's copy comes back next launch still marked `•`. Nothing is
-  written into a named workspace without "Save to".
+- **On:** a layout change is written into the tab's workspace after the 1 s
+  quiet the layouts file already waits; tabs on the same workspace follow. The
+  toast "Scalp saved · WDOZ26 follows" appears only when another tab followed.
+  Nothing is pending, so nothing is marked and closing never asks, except
+  for a tab whose copy is not in its workspace, which never reads saved:
+  a write that did not reach the disk (it toasts once and is retried each
+  quiet second, until another tab saves that workspace first); a second tab
+  on a workspace holding edits (one copy is written: of every tab there
+  holding edits, due or not, the active tab's, else the lowest tab id's); and
+  a copy a restart brought back differing. Such a tab holds its edits as with
+  auto save off: marked, never written unasked (not by a later edit, a
+  close, a switch or the exit), closing it or exiting asks, a switch drops it
+  with the "changes dropped" toast, and its Save is the trader's choice.
+- **Off:** the change is held on the tab. The cell wears the amber mark and a
+  blue "Save" chip (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
+  Scalp" row (its hover names the tabs that follow) write it. Drawings and
+  anchored studies are held too, and Save writes the tab's own drawing sets
+  (the ones its panes show; every other set stays as the file has it, still
+  held for its own tab) after the workspace; the mark lights for either. A
+  Save lands whole or not at all: a failed workspace write writes no drawing,
+  and a failed drawing write puts the workspace back; it answers
+  `workspace.write_failed` and the mark stays: nothing reads as saved before
+  it is on disk. Close without saving puts a held set back to the file's
+  version unless another open tab shows it. A drawing counts as held when
+  the trader changed it; a dated anchor's bar offset is re-derived from its
+  market time on a flow bar-size or timeframe change and on a relaunch, and
+  an id is the pane's, so neither marks.
+  Turning auto save on with edits held saves them at once, one tab per
+  workspace as above, then every held drawing; a save that fails there leaves
+  auto save on, journals the setting and each save that landed, and answers
+  `workspace.write_failed` naming them (`auto_save`, `saved`), the failed tab
+  marked and retried.
+- There is no Revert: `workspace.revert` answers `workspace.revert_removed`,
+  naming `workspace.save_to` and `workspace.autosave.set`. A workspace switch
+  with edits held keeps today's "changes dropped" toast.
+- Closing a tab, a torn-off window or the app with edits held asks, one tab at
+  a time: "Close WINZ26" — "This tab changed its layout since Scalp was last
+  saved (RSI, CVD, 3 drawings). Saving also changes WDOZ26." — Cancel /
+  Close without saving / Save to Scalp, right-aligned, Save in the accent;
+  the question stands over every chart overlay and nothing under it takes a
+  click while it is up. Enter saves, Esc cancels the whole
+  close (a tab already answered stays closed, nothing after it closes).
+  `tab.close {tab_id, save}` is the named form and asks the same question:
+  without `save` it answers `workspace.unsaved_edits` (with the workspace,
+  followers and changes) and does not close; the window's last tab answers
+  `workspace.last_tab` before anything is saved or written. Closing a
+  torn-off window while another window stays asks nothing, because its tabs
+  move into that window; closing the last window is the exit, which asks for
+  every tab in strip order and keeps them all in the desk for the next
+  launch. The exit applies no answer until the last one is in: Cancel on any
+  tab leaves every tab, on screen and in the stores, as it stood. Once all
+  are answered the saves (and pending write-throughs) land first, in strip
+  order, then the discards, so a save that fails ends the exit before
+  anything is let go. Save writes the tab's workspace and drawing sets; Close
+  without saving leaves both as saved and lets the tab's held recipe go too,
+  so the next launch opens it on its workspace, not on the dropped edits.
+  With autosave on, or nothing held, no close asks: a pending write-through
+  is written first, on exit too, one copy per workspace by the rule above;
+  a tab autosave did not write asks like a held one. The window's last tab
+  stays open and its close asks nothing, so no answer is thrown away.
+- What counts as a change: indicators (add, remove, settings, style), panes
+  (add, remove, divider, kind), the layout strip (new, switch, rename,
+  delete), layers, footprint style, drawings, anchored studies. Never a
+  change: pane timeframe, flow bar size, bubbles, history reach, zoom, scroll,
+  selection. Pane timeframes are kept on the tab, as flow bar size is, and a
+  workspace switch never changes them. A new tab on a market opens its
+  context charts on the timeframes that market remembers (its open tab's,
+  else the ones its tab closed on), as it opens on the market's flow bar.
 - "Save as new…" names a workspace for this tab alone; the other tabs stay.
-- Closing a tab with unsaved changes gives no prompt: the toast "Unsaved
-  Scalp changes dropped · Undo".
 - Deleting a workspace in use moves its tabs to Default and the toast names
   them; the last workspace cannot be deleted. Delete asks a second click.
 
@@ -204,7 +268,8 @@ The approved palette from the Market Shelf brief, with these changes:
 
 `market.open {feed, symbol, bar, workspace, background}`,
 `tab.workspace.set {tab, name}`, `workspace.save_to {tab}` (returns the tabs
-it changed), `workspace.save_as {tab, name}`, `workspace.revert {tab}`,
+it changed), `workspace.save_as {tab, name}`, `workspace.autosave.set {on}`,
+`tab.close {tab_id, save}`,
 `workspace.rename {name, to}`, `workspace.delete {name}`, `workspace.list`
 (each name with the tabs using it), `desk.save`, `desk.export`, `desk.import`,
 `desk.forget`, `desk.reopen_on_launch.set`, `replay.close {tab}`,
@@ -223,7 +288,7 @@ on today's model; phase 3 is the model change.
 | 1 | Undecorated window; tab strip in the title bar with drawn window controls and drag region; `⋮` with today's entries regrouped (Workspace, Panels, Desk, Help); Agent pill; clickable clock; View stays until chart-identity ships | S |
 | 2 | Settings window with sections; one command registry behind menu, right-click and `>` palette | M |
 | 3 | Drawings and anchored studies move to a per-market store keyed by asset + venue, panes addressed by role; migration with golden fixtures; old bundle exports still import  Built: `market-settings.toml`, `crates/workspace/src/market_settings.rs`. A layout switch no longer touches drawings; two context charts on one bar rule show one set; a legacy context pane index waits as `context-slot:N` until the pane at that address claims it | L |
-| 4 | Workspace per tab: `SavedTab` gains a workspace id and its own unsaved state; the "this tab" row control; tab title suffix; save bar; palette selectors; first-launch migration seeds one workspace per open tab, named "from WINZ26" and deduplicated, so nothing changes on screen on day one | L |
+| 4 | Workspace per tab: `SavedTab` gains a workspace id and its own unsaved state; the "this tab" row control; tab title suffix; save bar; palette selectors; first-launch migration seeds one workspace per open tab, named after the tab's layout ("Fluxo") or its bare symbol and deduplicated with a number, so nothing changes on screen on day one | L |
 | 5 | Tab tear-off by drag into its own window; closing it returns the tab | M |
 
 ## Open decisions recorded here
@@ -253,7 +318,7 @@ agreement, disagreement and decision.
 - Data honesty: a replay tab always says REPLAY; a market that has not
   streamed shows no price.
 - No capability reachable by mouse alone: every row above has a named command.
-- The tab title and the "this tab" workspace field read one state, proven by
+- The tab chip and the status bar's workspace cell read one state, proven by
   a test.
 - Nothing in `app` holds the workspace list, the market settings store or the
   command registry; they are headless (`workspace`, `drawings`,

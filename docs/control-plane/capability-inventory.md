@@ -128,6 +128,7 @@ capability that cannot change application state.
 | `session.pnl_display.set` | 1 | `session` | no | `cockpit` |
 | `settings.open` | 1 | `settings` | no | `cockpit`, `cockpit.layout` |
 | `snapshot.read` | 1 | `snapshot` | yes | `observe` |
+| `tab.close` | 1 | `tab` | no | `cockpit`, `cockpit.desk` |
 | `tab.market.set` | 1 | `tab` | no | `cockpit`, `cockpit.recover` |
 | `tab.workspace.set` | 1 | `tab` | no | `cockpit`, `cockpit.layout` |
 | `trade.instrument.set_money` | 1 | `trade` | no | `trade` |
@@ -137,6 +138,7 @@ capability that cannot change application state.
 | `trade.risk.set` | 1 | `trade` | no | `trade` |
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
+| `workspace.autosave.set` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.delete` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.list` | 1 | `workspace` | yes | `observe`, `observe.workspace` |
 | `workspace.new` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
@@ -145,4 +147,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-120 capabilities registered.
+122 capabilities registered.

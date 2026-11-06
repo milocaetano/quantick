@@ -94,7 +94,7 @@ const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::
     egui::Key::S,
 );
 /// Saves the active tab's edits to its workspace; with none it does nothing.
-const SAVE_TO_WORKSPACE_SHORTCUT: egui::KeyboardShortcut =
+pub(crate) const SAVE_TO_WORKSPACE_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
 /// Opens the status bar cell's workspace menu. Not Alt: Alt is the sell
 /// modifier.
@@ -200,12 +200,7 @@ impl QuantickApp {
             .control_access
             .as_ref()
             .is_some_and(crate::control::ControlAccess::is_enabled);
-        let action = super::title_bar::draw(
-            ctx,
-            &self.runtime.tabs,
-            &self.runtime.workspace.book,
-            &mut self.chrome.title_bar,
-        );
+        let action = super::title_bar::draw(ctx, &self.runtime.tabs, &mut self.chrome.title_bar);
         super::native_windows::apply_tab_action(self, action);
         if std::mem::take(&mut self.chrome.title_bar.kebab_clicked) {
             self.chrome.window_menu.toggle(ctx.viewport_id(), false);
@@ -216,6 +211,7 @@ impl QuantickApp {
         draw_window_menu(self, ctx, &mut commands);
         settings_window::show(self, ctx, &mut commands);
         workspace_rows::name_dialog(self, ctx, &mut commands);
+        super::native_windows::close_prompt(self, ctx);
         for command in commands {
             apply_menu_command_on(self, ctx, command);
         }
@@ -369,6 +365,7 @@ pub(super) fn workspace_cell(
         rows.chip_menu(ctx, cell, &mut menu, keys, &mut commands);
     }
     app.chrome.window_menu.tab_workspace = menu;
+    commands.extend(status.workspace_commands().map(MenuCommand::Workspace));
     for command in commands {
         apply_menu_command_on(app, ctx, command);
     }

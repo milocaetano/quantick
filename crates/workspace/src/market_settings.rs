@@ -13,7 +13,7 @@
 //! lose it.
 use crate::layout_document::{LayoutBook, LegacyDrawings, SavedDrawing, SavedOrigin};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The market settings filename inside the cockpit home.
 pub const MARKET_SETTINGS_FILE: &str = "market-settings.toml";
@@ -244,6 +244,49 @@ impl MarketSettings {
         self.drawings.iter().map(|set| set.items.len()).sum()
     }
 
+    /// How many of `key`'s drawings the trader changed since `saved`: added,
+    /// removed or edited, whichever side counts more. The sets are compared
+    /// as multisets, so a duplicated mark counts as one added. What the chart
+    /// derives is not an edit (see [`settled`]): a re-cut or a relaunch that
+    /// moved a dated anchor's bar offset counts nothing.
+    ///
+    /// Linear in the common case: the equal ends (a mark added, moved or
+    /// erased leaves the rest in place) are walked once, and only the middle
+    /// is balanced, keyed by each entry's `Debug` text, which tells apart every
+    /// entry `==` does but `-0.0` from `0.0`.
+    #[must_use]
+    pub fn drawing_changes(&self, saved: &Self, key: &DrawingKey) -> usize {
+        let now: Vec<SavedDrawing> = self.drawings(key).iter().map(settled).collect();
+        let then: Vec<SavedDrawing> = saved.drawings(key).iter().map(settled).collect();
+        let head = now.iter().zip(&then).take_while(|(a, b)| a == b).count();
+        let (now, then) = (&now[head..], &then[head..]);
+        let ends = now.iter().rev().zip(then.iter().rev());
+        let tail = ends.take_while(|(a, b)| a == b).count();
+        let (now, then) = (&now[..now.len() - tail], &then[..then.len() - tail]);
+        let mut balance: BTreeMap<String, isize> = BTreeMap::new();
+        for (entries, sign) in [(now, 1), (then, -1)] {
+            for entry in entries {
+                *balance.entry(format!("{entry:?}")).or_default() += sign;
+            }
+        }
+        let side = |positive: bool| -> usize {
+            let counts = balance
+                .values()
+                .filter(|n| (**n > 0) == positive && **n != 0);
+            counts.map(|n| n.unsigned_abs()).sum()
+        };
+        side(false).max(side(true))
+    }
+
+    /// Put `key`'s drawings back to what `saved` holds.
+    pub fn restore(&mut self, saved: &Self, key: &DrawingKey) {
+        self.drawings.retain(|set| !set.is(key));
+        let items = saved.drawings(key).to_vec();
+        if !items.is_empty() {
+            self.insert(key, items);
+        }
+    }
+
     /// Every key the store holds drawings for, in key order.
     pub fn keys(&self) -> impl Iterator<Item = DrawingKey> + '_ {
         self.drawings.iter().map(DrawingSet::key)
@@ -425,6 +468,23 @@ fn same_mark(held: &SavedDrawing, item: &SavedDrawing) -> bool {
         drawing
     };
     plain(held) == plain(item)
+}
+
+/// An entry as the trader made it, without what the chart derives: its id is
+/// the holding pane's, and a dated anchor's bar offset is re-derived from its
+/// market time on every re-cut (flow bar size, timeframe) and relaunch. An
+/// undated anchor keeps its offset, the only thing that places it.
+fn settled(entry: &SavedDrawing) -> SavedDrawing {
+    let mut entry = entry.clone();
+    entry.id = None;
+    for point in entry
+        .points
+        .iter_mut()
+        .filter(|point| point.time_ms.is_some())
+    {
+        point.bar = 0.0;
+    }
+    entry
 }
 
 /// An entry's tool and anchors as a migration found them. FNV-1a: stable across

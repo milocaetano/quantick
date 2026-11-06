@@ -18,6 +18,9 @@ fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u64, u64) {
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
     let (first, second) = (app.runtime.tabs.id_at(0), app.runtime.tabs.id_at(1));
     run_frame(&mut app, &egui::Context::default());
+    // Held edits are what these tests read: autosave off, as the trader who
+    // unticks it. `autosave_on_never_marks_an_edit` covers the default.
+    app.runtime.workspace.book.book_mut().set_autosave(false);
     (app, first, second)
 }
 
@@ -222,7 +225,7 @@ fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() 
         let store = &app.runtime.workspace.book;
         let state = store.book().tab_state(tab).expect("seeded");
         assert!(!state.modified, "a seeded tab reads as clean");
-        assert!(state.workspace.starts_with("from "));
+        assert!(!state.workspace.starts_with("from "), "no seed prefix");
         assert_eq!(
             store.book().recipe(state.workspace),
             live_recipe(&app.runtime, tab).as_ref(),
@@ -242,21 +245,69 @@ fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() 
     }
 }
 
+/// The chip names the market the status bar names, and no workspace or mark:
+/// the cell's mark is the snapshot's, with autosave off and an edit held.
 #[test]
 fn chip_and_snapshot_read_one_state() {
     let layouts = crate::scratch::ScratchFile::new("workspace-one-state", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
+    app.runtime.workspace.book.book_mut().set_autosave(false);
     edit_split(&mut app, first, 0.31);
-    let indices = [0, 1];
-    let chips =
-        crate::app::title_bar::chips_of(&app.runtime.tabs, &app.runtime.workspace.book, &indices);
-    for (tab, chip) in [first, second].into_iter().zip(&chips) {
-        let (workspace, modified) = app.tab_workspace_row(tab);
-        assert_eq!(chip.workspace, workspace);
-        assert_eq!(chip.modified, modified);
+    let labels: Vec<String> = crate::app::title_bar::chips_of(&app.runtime.tabs, &[0, 1])
+        .iter()
+        .map(|chip| chip.label.to_owned())
+        .collect();
+    for (index, tab) in [first, second].into_iter().enumerate() {
+        app.runtime.tabs.select(index);
+        let status = app.status_model();
+        let (symbol, venue) = quantick_workspace::arrangement::strip::chip_parts(&labels[index]);
+        assert_eq!(
+            (symbol, venue),
+            (status.symbol.as_str(), status.venue.as_str())
+        );
+        assert_eq!(status.modified, app.tab_workspace_row(tab).1);
     }
-    assert!(chips[0].modified);
-    assert!(!chips[1].modified);
+    assert!(app.tab_workspace_row(first).1 && !app.tab_workspace_row(second).1);
+}
+
+/// Autosave on, the default: an edit is written through, never held, so
+/// neither the book nor the status cell ever marks it.
+#[test]
+fn autosave_on_never_marks_an_edit() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-autosave-on", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.workspace.book.book_mut().set_autosave(true);
+    app.runtime.tabs.select(0);
+    edit_split(&mut app, first, 0.31);
+    frames(&mut app, 2);
+    assert!(!app.runtime.workspace.book.tab_row(first).1);
+    assert!(!app.status_model().modified);
+}
+
+/// A command reads the active tab before it acts. An edit first seen there
+/// starts autosave's quiet second, as one the frame sees does, or it would
+/// never be written through.
+#[test]
+fn an_edit_a_command_reads_first_is_due_for_write_through() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-command-read", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.workspace.book.book_mut().set_autosave(true);
+    app.runtime.tabs.select(0);
+    frames(&mut app, 2);
+    app.runtime
+        .tabs
+        .by_id_mut(first)
+        .expect("an open tab")
+        .split_fraction = 0.27;
+    let read_first = quantick_session::workspace_menu::WorkspaceCommand::BeginSaveAs;
+    crate::app::tab_workspaces::apply_workspace_command(&mut app, read_first);
+    let later = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    let due = app.runtime.workspace.book.sync_mut().take_due(later);
+    assert_eq!(
+        due,
+        [first],
+        "the command's reading armed the write-through"
+    );
 }
 
 #[test]
@@ -628,26 +679,32 @@ fn a_menu_switch_and_delete_journal_what_the_control_calls_do() {
     assert_eq!(app.runtime.workspace.book.tab_row(tab).0, "Default");
 }
 
-/// The tab chip and the status bar's workspace cell read one row: the same
-/// name and the same edited mark, on a clean tab and on an edited one. Home
-/// shows no cell.
+/// The status bar's workspace cell reads the book's row: the same name and
+/// mark, on a clean tab and on an edited one, and never a mark with autosave
+/// on. Home shows no cell.
 #[test]
 fn chip_and_status_cell_read_one_state() {
     let layouts = crate::scratch::ScratchFile::new("workspace-cell-state", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
+    app.runtime.workspace.book.set_autosave(true);
     edit_split(&mut app, first, 0.31);
-    let chips: Vec<_> =
-        crate::app::title_bar::chips_of(&app.runtime.tabs, &app.runtime.workspace.book, &[0, 1])
-            .into_iter()
-            .map(|chip| (Some(chip.workspace), chip.modified))
-            .collect();
+    assert!(
+        !app.runtime.workspace.book.tab_row(first).1,
+        "autosave on never marks"
+    );
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    edit_split(&mut app, first, 0.42);
     for (index, tab) in [first, second].into_iter().enumerate() {
         app.runtime.tabs.select(index);
         assert_eq!(app.runtime.tabs.active_id(), tab);
         let status = app.status_model();
-        assert_eq!((status.workspace, status.modified), chips[index]);
+        let (workspace, modified) = app.runtime.workspace.book.tab_row(tab);
+        assert_eq!(
+            (status.workspace, status.modified),
+            (Some(workspace), modified)
+        );
     }
-    assert!(chips[0].1 && !chips[1].1);
+    assert!(app.runtime.workspace.book.tab_row(first).1);
     let surface = &mut app.chrome.title_bar.surface;
     super::super::home_wiring::show_home(&app.runtime.tabs, surface);
     assert_eq!(app.status_model().workspace, None, "no cell on Home");
@@ -722,5 +779,259 @@ fn a_new_workspace_reads_clean_after_real_frames() {
             .context_panes
             .iter()
             .all(|pane| pane.indicators.is_empty())
+    );
+}
+
+/// Autosave off: a level drawn on the chart marks the tab and waits in memory;
+/// Save writes the market file with the recipe and the mark clears.
+#[test]
+fn autosave_off_holds_a_drawing_until_save_writes_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let layouts = crate::scratch::ScratchFile::new("workspace-held-drawing", "layouts.toml");
+    app.runtime
+        .workspace
+        .set_layouts_path(layouts.to_path_buf());
+    app.runtime.workspace.layouts_mut().set_blocked(false);
+    (app.runtime.workspace.layouts_mut().market_mut()).set_blocked(false);
+    frames(&mut app, 2);
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    let tab = app.runtime.tabs.active_id();
+    save_tab_to(&mut app, tab).expect("the canvas saved first");
+    frames(&mut app, 1);
+    let state = app.runtime.workspace.book.book().tab_state(tab);
+    assert!(!state.expect("adopted").modified, "nothing held yet");
+    place_level(&mut app, PaneSide::Flow, 100.0);
+    frames(&mut app, 2);
+    let market = app
+        .runtime
+        .workspace
+        .layouts()
+        .market()
+        .path()
+        .to_path_buf();
+    let book = app.runtime.workspace.book.book();
+    assert!(book.tab_state(tab).expect("adopted").modified, "the mark");
+    let held = book.unsaved_edits(tab).expect("closing asks").changes;
+    assert_eq!(held, ["1 drawing"]);
+    assert!(!market.exists(), "held: nothing reached the disk");
+    save_tab_to(&mut app, tab).expect("saved");
+    let state = app.runtime.workspace.book.book().tab_state(tab);
+    assert!(!state.expect("adopted").modified, "Save clears the mark");
+    let written = std::fs::read_to_string(&market).expect("Save wrote the market file");
+    assert!(written.contains("horizontal-line"), "{written}");
+}
+
+/// A flow bar-size change re-cuts the series, so a saved level's bar offset
+/// moves with it. That is the chart re-deriving its anchor from market time,
+/// not the trader editing the drawing: nothing marks and nothing is held.
+#[test]
+fn a_flow_bar_size_change_never_counts_as_a_drawing_edit() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let layouts = crate::scratch::ScratchFile::new("workspace-recut-drawing", "layouts.toml");
+    app.runtime
+        .workspace
+        .set_layouts_path(layouts.to_path_buf());
+    app.runtime.workspace.layouts_mut().set_blocked(false);
+    (app.runtime.workspace.layouts_mut().market_mut()).set_blocked(false);
+    frames(&mut app, 2);
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    let tab = app.runtime.tabs.active_id();
+    let slot = app.active_tab().pane(PaneSide::Flow).slots() / 2;
+    let flow = app.active_tab().pane(PaneSide::Flow);
+    let time = flow.slot_open_time(slot).expect("bars to anchor on");
+    let tool = crate::drawings::DrawingTool::by_id("horizontal-line").expect("the tool");
+    #[allow(clippy::cast_precision_loss)]
+    let point = crate::drawings::ChartPoint {
+        bar: slot as f32,
+        price: 100.0,
+        time_ms: Some(time),
+    };
+    let flow = app.active_tab_mut().pane_mut(PaneSide::Flow);
+    assert!(flow.drawings.place(tool, point), "a level places");
+    frames(&mut app, 2);
+    save_tab_to(&mut app, tab).expect("saved");
+    frames(&mut app, 1);
+    let held = |app: &QuantickApp| app.runtime.workspace.book.book().unsaved_edits(tab);
+    assert_eq!(held(&app), None, "Save left nothing held");
+    let wider = quantick_engine::bar_registry::BUILTIN_BARS.parse("tick:3");
+    let tab_mut = app.active_tab_mut();
+    assert!(
+        tab_mut
+            .set_pane_bar_spec(0, wider.expect("a tick bar"))
+            .unwrap()
+    );
+    frames(&mut app, 3);
+    let bars = |app: &QuantickApp| {
+        let marks = app.active_tab().pane(PaneSide::Flow).drawings.items();
+        marks
+            .iter()
+            .map(|mark| mark.points[0].bar)
+            .collect::<Vec<_>>()
+    };
+    #[allow(clippy::cast_precision_loss)]
+    let moved = bars(&app) != [slot as f32];
+    assert!(moved, "the re-cut moved the bar offset: {:?}", bars(&app));
+    let state = app.runtime.workspace.book.book().tab_state(tab);
+    assert!(!state.expect("adopted").modified, "a re-cut is no edit");
+    assert_eq!(held(&app), None, "and holds nothing");
+    // The next real edit writes the whole pane back, the re-cut level with
+    // it: only the new level is the trader's.
+    place_level(&mut app, PaneSide::Flow, 101.0);
+    frames(&mut app, 2);
+    let changes = held(&app).expect("the new level is held").changes;
+    assert_eq!(changes, ["1 drawing"], "the re-cut level is not counted");
+}
+
+/// The pane timeframe is the tab's: a switch onto a workspace saved from a tab
+/// on another interval keeps the pane on its own.
+#[test]
+fn a_workspace_switch_never_changes_a_pane_timeframe() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 50);
+    let tab = app.runtime.tabs.active_id();
+    let hour = quantick_engine::bar_registry::BUILTIN_BARS.parse("time:3600000");
+    app.active_tab_mut()
+        .set_pane_bar_spec(1, hour.expect("a time bar"))
+        .expect("the time pane takes it");
+    frames(&mut app, 2);
+    let timeframe = |app: &QuantickApp| {
+        app.active_tab().time_panes[0]
+            .state
+            .spec()
+            .to_config_string()
+    };
+    let before = timeframe(&app);
+    let mut five = live_recipe(&app.runtime, tab).expect("an open tab");
+    five.split_fraction = Some(0.3);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(tab, &five).expect("held");
+    book.save_as(tab, "Five").expect("a free name");
+    set_tab_workspace(&mut app, tab, "Default").expect("a known workspace");
+    frames(&mut app, 3);
+    assert_eq!(timeframe(&app), before, "Default left the interval alone");
+    set_tab_workspace(&mut app, tab, "Five").expect("a known workspace");
+    frames(&mut app, 3);
+    assert_eq!(timeframe(&app), before, "and so did Five");
+}
+
+/// A new tab on a market opens its context chart on the interval that market
+/// remembers, as it opens its flow chart on the market's bar.
+#[test]
+fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 50);
+    let hour = quantick_engine::bar_registry::BUILTIN_BARS.parse("time:3600000");
+    app.active_tab_mut()
+        .set_pane_bar_spec(1, hour.expect("a time bar"))
+        .expect("the time pane takes it");
+    frames(&mut app, 2);
+    let shown = app.active_tab().time_panes[0]
+        .state
+        .spec()
+        .to_config_string();
+    let market = (
+        app.active_tab().feed_id.clone(),
+        app.active_tab().symbol.clone(),
+    );
+    let snapshot = super::super::tabs::market_snapshot(&app);
+    let choice = snapshot.choice((&market.0, &market.1), None, None, false);
+    let choice = choice.expect("the market is listed");
+    assert_eq!(choice.context_bars, std::slice::from_ref(&shown));
+    super::super::tabs::open(&mut app, &choice, None);
+    frames(&mut app, 2);
+    // The new tab opens on its feed's canvas; its first context chart, when
+    // the trader adds one, stands on the market's timeframe.
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    frames(&mut app, 3);
+    let opened = app
+        .active_tab()
+        .time_panes
+        .first()
+        .expect("a context chart");
+    assert_eq!(opened.state.spec().to_config_string(), shown);
+}
+
+/// Autosave off: closing a chip whose tab holds edits asks first, and Enter
+/// (Save) writes the workspace to disk before the tab goes.
+#[test]
+fn a_strip_close_with_held_edits_asks_and_enter_saves_then_closes() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-close-asks", "layouts.toml");
+    let (mut app, first, second) = two_tabs(&layouts);
+    let workspace = app.runtime.workspace.book.tab_row(first).0;
+    edit_split(&mut app, first, 0.31);
+    let index = app.runtime.tabs.position(first).expect("an open tab");
+    app.apply_tab_action(crate::tabstrip::TabAction::Close(index));
+    assert_eq!(
+        app.runtime.tabs.len(),
+        2,
+        "nothing closes before the answer"
+    );
+    let queue = &app.chrome.window_menu.tab_workspace.close;
+    let prompt = quantick_control_handlers::workspace_book::close_prompt(queue).expect("asks");
+    let symbol = app.runtime.tabs.by_id(first).expect("open").symbol.clone();
+    assert_eq!(prompt.title, format!("Close {symbol}"));
+    assert_eq!(prompt.buttons[prompt.enter], format!("Save to {workspace}"));
+
+    let ctx = egui::Context::default();
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Enter)]);
+    assert!(app.runtime.tabs.by_id(first).is_none(), "the tab closed");
+    assert!(app.runtime.tabs.by_id(second).is_some());
+    let path = quantick_stores::workspaces::path_beside(layouts.as_ref());
+    let (on_disk, _) = quantick_stores::workspaces::load(&path);
+    let saved = on_disk.recipe(&workspace).expect("the workspace on disk");
+    assert_eq!(saved.split_fraction, Some(0.31));
+}
+
+/// Autosave off: the close prompt's Esc only cancels the close. The chart
+/// under it keeps its selected drawing, as the Cancel button does.
+#[test]
+fn the_close_prompt_s_esc_leaves_the_chart_s_selection_alone() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-close-esc", "layouts.toml");
+    let (mut app, _, _) = two_tabs(&layouts);
+    let tab = app.runtime.tabs.active_id();
+    let drawings = &mut app.active_tab_mut().flow_pane.drawings;
+    drawings.place(
+        drawing_tool("horizontal-line"),
+        ChartPoint::at_time(1.0, 100.0, None),
+    );
+    drawings.select(Some(0));
+    edit_split(&mut app, tab, 0.33);
+    let index = app.runtime.tabs.active_index();
+    app.apply_tab_action(crate::tabstrip::TabAction::Close(index));
+    let ctx = egui::Context::default();
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    let queue = &app.chrome.window_menu.tab_workspace.close;
+    assert!(queue.question().is_none(), "Esc cancelled the close");
+    assert!(app.runtime.tabs.by_id(tab).is_some(), "the tab stays");
+    let selected = app.active_tab().flow_pane.drawings.selected();
+    assert_eq!(selected, Some(0), "the drawing stays selected");
+}
+
+/// Autosave off: the window's close asks before the app exits, and Esc
+/// (Cancel) keeps every tab and the app.
+#[test]
+fn an_exit_with_held_edits_asks_and_esc_keeps_the_app() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-exit-asks", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    edit_split(&mut app, first, 0.29);
+    let ctx = egui::Context::default();
+    close_requested_frame(&mut app, &ctx);
+    assert!(
+        app.chrome
+            .window_menu
+            .tab_workspace
+            .close
+            .question()
+            .is_some()
+    );
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    let queue = &app.chrome.window_menu.tab_workspace.close;
+    assert!(queue.question().is_none(), "Cancel ends the exit");
+    assert_eq!(app.runtime.tabs.len(), 2);
+    assert!(
+        app.runtime.workspace.book.tab_row(first).1,
+        "the edit stays held"
     );
 }

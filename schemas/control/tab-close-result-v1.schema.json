@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    },
+    "WorkspaceSaveResult": {
+      "description": "What a save did.",
+      "properties": {
+        "changed": {
+          "description": "`false` for a repeat, which writes nothing.",
+          "type": "boolean"
+        },
+        "tabs_changed": {
+          "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+          "items": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "type": "array"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace",
+        "changed",
+        "tabs_changed"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The tab that closed, and the save made first when asked.",
+  "properties": {
+    "saved": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkspaceSaveResult"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id"
+  ],
+  "title": "TabCloseResult",
+  "type": "object"
+}

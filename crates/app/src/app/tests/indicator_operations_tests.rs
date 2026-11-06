@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::indicators::state_file::SavedKind;
-use crate::workspace_store::LayoutSave;
+use quantick_workspace::layout_commit::LayoutSave;
 
 fn assert_one_indicator_save(app: &mut QuantickApp) {
     let store = app.runtime.workspace.layouts_mut();
