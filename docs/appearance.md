@@ -6,7 +6,7 @@ Quantick's appearance contract is versioned TOML. The bundled
 resolver as an authored theme. Start with either file when writing a community
 theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
-Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Bookmap (Trail and Tape) retains the established Dark surface, liquidity ramp, bubbles and translucent candles in both builtins. Typography, spacing and layout are unchanged.
+Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Light Bookmap (Trail and Tape) uses a warm-gray `#625E59` canvas with the established liquidity ramp, bubbles and translucent candles. Light drawing defaults use amber `#D89A32`; fixed-range profiles use muted blue-gray. Dark retains its established appearance. Typography, spacing and layout are unchanged.
 
 
 ## Bookmap surface
@@ -16,15 +16,16 @@ application interface and conventional charts. `candle_fill_opacity`,
 `[bookmap.colors]` and `[bookmap.footprint_heat]` use the same validated fields as
 their root counterparts. Missing surface fields inherit the resolved parent
 values; omitting the table preserves existing authored themes. Typography is
-shared. The bundled Light document explicitly supplies the historical Dark
-surface colors and `0.20` candle opacity, independently of its name or `dark` flag.
+shared. The bundled Light document explicitly supplies its warm-gray canvas,
+amber drawing defaults and blue-gray profiles over the historical Dark market
+colors and `0.20` candle opacity, independently of its name or `dark` flag.
 `[orderflow]` continues to own liquidity and bubble colors and supports explicit
 palette snapshots as before.
 
-Only theme-owned chart fields use the surface values. Global chart settings,
-saved candle presets and scripts remain explicit overrides: saving the global
-settings preview captures that preview, and applying such a preset can override
-both Time and Bookmap. No inheritance is inferred from RGB equality. Paint scopes
+Only theme-owned chart fields use the surface values. Legacy global chart settings,
+saved candle presets and scripts remain explicit overrides: saving a chart
+settings preview captures that preview, and applying such a preset to a chart
+can override its Time or Bookmap defaults. No inheritance is inferred from RGB equality. Paint scopes
 are local to one synchronous pane draw and never modify widget visuals or fonts.
 
 ## Document
@@ -79,7 +80,7 @@ groups are:
 | `seam_line`, `seam_label`, `day_rule`, `gap_line`, `gap_label` | Tape provenance, day changes and missing-data marks |
 | `tag_bg`, `chip_ink`, `casing` | Axis/tool tags, chip text and readable underlays |
 | `draw_violet`, `draw_cyan` | Drawing colors distinct from market direction |
-| `drawing_default`, `drawing_buy`, `drawing_sell`, `drawing_vwap` | New drawing stroke/text defaults, independent of UI accent and market colors |
+| `drawing_default`, `drawing_buy`, `drawing_sell`, `drawing_vwap`, `drawing_profile` | New drawing stroke/text defaults, directional marks, anchored VWAP and fixed-range profile, independent of UI accent and market colors |
 | `loading_title`, `loading_meta`, `loading_faint`, `loading_border` | Loading text, connection dots and outlines |
 | `loading_logo_low`, `loading_logo_high` | Cached endpoints for the decorative loading logo |
 | `footprint_profile`, `footprint_total_ink`, `footprint_bevel_highlight`, `footprint_bevel_shadow` | Footprint silhouettes, totals and raised cell edges |
@@ -198,9 +199,11 @@ choice sibling while the app is closed restores startup from the original source
 Invalid or unwritable candidates leave the previous source and destination intact.
 The choice shows Dark or Light only for the exact bundled source (or initial Dark
 fallback); authored copies, even with the same name or colors, show Custom theme.
-Startup also recognizes the three exact native Light choices saved before the
-dark Bookmap correction, allowing LF or CRLF line endings, and resolves them to
-current Light. This migration applies only to the choice sibling; edited copies
+Startup also recognizes the four exact earlier native Light choices, including
+the dark Bookmap version, allowing LF or CRLF line endings, and resolves them to
+current Light. The exact earlier native Dark choice also retains its builtin
+identity after adding the profile token, with identical rendered colors.
+These migrations apply only to the choice sibling; edited copies
 and authored base files keep their source. Startup leaves the file untouched;
 the next explicit save writes the current source through the normal write gate.
 Custom source remains available through the existing API; the native menu only
@@ -266,17 +269,33 @@ Fresh chart candle colors, fill opacity, background and grid inherit independent
 Editing width or visibility leaves ownership unchanged; editing a color or fill
 opacity makes that field explicit. Choosing a built-in candle preset captures its
 candle colors and opacity but preserves canvas ownership. Restoring defaults resumes inheritance.
-Chart edits retain the existing session-only lifetime unless saved as a named
-preset. Saving a named preset captures the whole visible look, including canvas,
+Each chart owns its candle and canvas settings. Double-clicking a candle opens
+that chart's editor, whose caption identifies the chart and says "Only this
+chart". The editor keeps that target when focus changes; closing or removing
+the chart cannot redirect edits into a neighbour. Order Flow and every Time
+chart remain independent across tabs, markets and themes.
+
+Pane styles and their ownership markers travel with the saved workspace and
+restore on restart. Older workspaces without pane styles use the existing
+global style as their initial values. Inherited Time colors resolve against the
+main theme; inherited Order Flow colors resolve against its Bookmap surface.
+Saving a named preset captures the whole visible look, including canvas,
 without changing ownership of the live chart. Applying that saved preset restores
 its explicit snapshot. The stored chart document accepts per-field `ownership`
 markers (`theme` or `explicit`); missing legacy markers mean explicit.
 
 New drawings use semantic `drawing_default`, buy/sell marks use
-`drawing_buy`/`drawing_sell`, and anchored VWAP uses `drawing_vwap`. Light supplies
-black/charcoal strokes and text, neutral translucent fills derived from those
-strokes, and a white `drawing_readout_plate`. Dark retains historical defaults.
-Missing drawing keys independently inherit Dark; changing UI `accent` does not
+`drawing_buy`/`drawing_sell`, anchored VWAP uses `drawing_vwap`, and fixed-range
+profiles use `drawing_profile`. Light supplies amber strokes and text, translucent
+fills derived from those strokes, and a white `drawing_readout_plate`. Its profile
+source is `#7A8EC2`, matching the approved reference's muted blue-gray histogram:
+the reference's approximately `#B1BCD9` fill already includes the existing 0.55
+value-area row opacity over `#F5F5F5`. The profile stays in the chart and retains
+its row geometry, value-area weights, POC and double-cased outline over heatmaps.
+Dark retains historical defaults.
+Missing drawing keys independently inherit Dark; for existing authored themes,
+an omitted `drawing_profile` uses an explicitly supplied `drawing_default` on
+the same surface, preserving their previous new-profile default. Changing UI `accent` does not
 change new drawing colors. The text tool captures the `drawing` font role when created.
 Saved tool style, configuration and named default presets take precedence in that
 order; existing objects never follow subsequent theme changes. Text payloads store
@@ -381,3 +400,10 @@ context palette, inherited chart inputs and new-drawing defaults before another
 command or paint can observe the candidate. Order-flow rendering reads that
 same cached appearance snapshot; warm frames never parse TOML or reinstall font
 definitions.
+
+Candle API geometry and opacity fields use canonical decimal strings (for
+example, `"gap_px": "4.5"`), matching the control transport. RGB channels remain
+integer bytes. Read the complete `effective_style`, edit the desired fields and
+submit that document. A feed/symbol switch or replay transition retains the
+pane-owned style and retires its open editor sitting; reopen that chart
+explicitly before editing again.

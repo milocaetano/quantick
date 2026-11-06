@@ -309,6 +309,7 @@ impl Tab {
         // Rebuild every pane from scratch for the new stream, each keeping its
         // own bar spec. Retained trades from the old symbol must not leak in.
         for pane in self.panes_mut() {
+            pane.presentation.candles.market_changed();
             pane.reset_series();
         }
         self.drop_overlay_gestures();
@@ -997,6 +998,9 @@ impl Tab {
     /// running. The live selection is untouched, so closing the replay comes
     /// back to exactly the feed and symbol that were streaming before.
     pub fn open_replay(&mut self, config: &AppConfig, request: quantick_feed::ReplayRequest) {
+        for pane in self.panes_mut() {
+            pane.presentation.candles.market_changed();
+        }
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -1038,6 +1042,9 @@ impl Tab {
     pub fn close_replay(&mut self, config: &AppConfig) {
         if self.replay.take().is_none() {
             return;
+        }
+        for pane in self.panes_mut() {
+            pane.presentation.candles.market_changed();
         }
         let (feed_id, symbol) = self.active.clone();
         self.feed_id = feed_id;

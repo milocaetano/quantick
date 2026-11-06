@@ -1,7 +1,32 @@
-use super::LIGHT_SOURCES;
+use super::{DARK_SOURCE, LIGHT_SOURCES};
 use crate::appearance::{AppearanceStore, Builtin, load};
 use crate::scratch::ScratchDir;
 use quantick_appearance::{LIGHT, ResolvedTheme, Token};
+
+#[test]
+fn historical_dark_choice_retains_builtin_identity_and_rendered_values() {
+    for source in [DARK_SOURCE.to_owned(), DARK_SOURCE.replace('\n', "\r\n")] {
+        let scratch = ScratchDir::new("legacy-dark-choice");
+        let path = scratch.join("appearance.toml");
+        let choice_path = scratch.join("appearance.toml.choice.toml");
+        std::fs::write(&choice_path, &source).unwrap();
+        let store = AppearanceStore::open(path.clone());
+        assert_eq!(store.builtin(), Some(Builtin::Dark));
+        assert_eq!(store.source(), Some(quantick_appearance::DARK));
+        assert_eq!(store.resolved(), &ResolvedTheme::parse(&source).unwrap());
+        assert_eq!(std::fs::read_to_string(&choice_path).unwrap(), source);
+        let custom = format!("# Authored copy\n{source}");
+        std::fs::write(&choice_path, &custom).unwrap();
+        let store = AppearanceStore::open(path.clone());
+        assert_eq!(store.builtin(), None);
+        assert_eq!(store.source(), Some(custom.as_str()));
+        std::fs::remove_file(&choice_path).unwrap();
+        std::fs::write(&path, &source).unwrap();
+        let store = AppearanceStore::open(path);
+        assert_eq!(store.builtin(), None);
+        assert_eq!(store.source(), Some(source.as_str()));
+    }
+}
 
 #[test]
 fn historical_builtin_choices_load_current_light_without_rewriting_files() {
@@ -22,7 +47,10 @@ fn historical_builtin_choices_load_current_light_without_rewriting_files() {
                 assert!(!store.load_failed());
                 assert_eq!(
                     store.resolved().bookmap().color(Token::Canvas),
-                    dark.color(Token::Canvas)
+                    ResolvedTheme::parse(LIGHT)
+                        .unwrap()
+                        .bookmap()
+                        .color(Token::Canvas)
                 );
                 assert_eq!(
                     store.resolved().bookmap().candle_fill_opacity,

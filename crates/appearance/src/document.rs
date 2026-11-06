@@ -113,6 +113,14 @@ impl ThemeDocument {
             let field = format!("colors.{}", token.key());
             colors[token as usize] = match self.colors.get(token.key()) {
                 Some(value) => value.resolve(&field)?,
+                // Before profiles had a dedicated token, authored generic
+                // drawing colors also supplied their new-profile defaults.
+                None if token == Token::DrawingProfile
+                    && fallback.is_some()
+                    && self.colors.contains_key(Token::DrawingDefault.key()) =>
+                {
+                    colors[Token::DrawingDefault as usize]
+                }
                 None => fallback
                     .map(|theme| theme.color(token))
                     .ok_or_else(|| ThemeError::new(field, "required in a complete theme"))?,

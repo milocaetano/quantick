@@ -1,3 +1,6 @@
-# Appearance extraction remains a net reduction; retain the Bookmap UI scope adapter.
-crates/app -265
-!budget -265
+# Appearance extraction remains a net reduction after the pane-local editor.
+# The 204-line follow-up binds app-owned panes, renders their local styles,
+# captions the pinned editor and supplies source-context changes. Editor
+# invalidation, operation, reset and persistence policy remains headless.
+crates/app -61
+!budget -61

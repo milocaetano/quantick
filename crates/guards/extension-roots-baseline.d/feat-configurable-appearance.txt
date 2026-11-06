@@ -7,3 +7,6 @@ QuantickApp -5
 # Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
 QuantickApp -18
 !budget -18
+# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
+QuantickApp -4
+!budget -4

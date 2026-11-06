@@ -20,6 +20,7 @@ pub(crate) struct PaneLayerRead<'a> {
     pub(super) orderflow: Option<&'a OrderflowView>,
     pub(super) state: &'a ChartState,
     pub(super) footprint: &'a PaneFootprint,
+    pub(super) style: &'a quantick_chart::pane_style::PaneStyle,
     pub(super) drawings: &'a Drawings,
 }
 
@@ -42,7 +43,7 @@ impl PaneLayerRead<'_> {
                 .orderflow
                 .is_some_and(|owner| layer_switch(owner, switch)),
             LayerSource::Footprint => self.footprint.visible,
-            LayerSource::Grid => style.canvas.grid_enabled,
+            LayerSource::Grid => self.style.grid(style),
             LayerSource::Drawings => !self.drawings.all_hidden(),
         }
     }
@@ -64,7 +65,8 @@ impl ChartPane {
             layers: &self.layers,
             orderflow: self.orderflow.as_ref(),
             state: &self.state,
-            footprint: &self.footprint,
+            footprint: &self.presentation.footprint,
+            style: &self.presentation.candles,
             drawings: &self.drawings,
         }
     }
@@ -97,8 +99,11 @@ impl ChartPane {
                     set_layer_switch(owner, switch, effect.visible);
                 }
             }
-            LayerSource::Footprint => self.footprint.visible = effect.visible,
-            LayerSource::Grid => actions.grid = Some(effect.visible),
+            LayerSource::Footprint => self.presentation.footprint.visible = effect.visible,
+            LayerSource::Grid => {
+                actions.grid = Some(effect.visible);
+                actions.grid_pane = Some(self.id);
+            }
             LayerSource::Drawings => match effect.write {
                 VisibilityWrite::Change => self.drawings.set_all_hidden(!effect.visible),
                 VisibilityWrite::Opening => self.drawings.open_all_hidden(!effect.visible),
@@ -137,7 +142,16 @@ impl ChartPane {
             .iter()
             .copied()
             .filter(|layer| layer.persisted())
-            .map(|layer| (layer, self.layer_switched_on(layer, style)))
+            .map(|layer| {
+                (
+                    layer,
+                    if layer == ChartLayer::Grid {
+                        style.canvas.grid_enabled
+                    } else {
+                        self.layer_switched_on(layer, style)
+                    },
+                )
+            })
             .collect()
     }
     pub fn layer_mask(&self, style: &ChartStyle) -> u32 {

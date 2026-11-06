@@ -4,10 +4,12 @@ dark = false
 candle_fill_opacity = 1.0
 
 [colors]
-drawing_default = "#202020"
-drawing_buy = "#202020"
-drawing_sell = "#202020"
-drawing_vwap = "#404040"
+drawing_default = "#D89A32"
+drawing_buy = "#D89A32"
+drawing_sell = "#D89A32"
+drawing_vwap = "#D89A32"
+# The reference histogram fill (#B1BCD9) includes its existing 0.55 row opacity.
+drawing_profile = "#7A8EC2"
 flow_surface = "#eeeeee"
 flow_divider = "#bdbdbd"
 flow_ink = "#242424"
@@ -130,15 +132,16 @@ ask_tint = { premultiplied = [255, 90, 108, 255] }
 preview_grid = { premultiplied = [16, 16, 16, 16] }
 preview_path = { premultiplied = [145, 145, 145, 145] }
 
-# Bookmap retains its established dark surface independently of UI chrome.
+# Bookmap uses the approved warm-gray surface independently of the Light Time canvas.
 [bookmap]
 candle_fill_opacity = 0.20
 
 [bookmap.colors]
-drawing_default = "#8AB4F8"
-drawing_buy = "#26A69A"
-drawing_sell = "#EF5350"
-drawing_vwap = "#4DD0E1"
+drawing_default = "#D89A32"
+drawing_buy = "#D89A32"
+drawing_sell = "#D89A32"
+drawing_vwap = "#D89A32"
+drawing_profile = "#7A8EC2"
 flow_surface = "#1e2433"
 flow_divider = "#3a4357"
 flow_ink = "#e8ecf2"
@@ -154,7 +157,7 @@ flow_key_up_shadow = { premultiplied = [0, 0, 0, 128] }
 flow_key_up_ink = "#ffffff"
 flow_band_rule = "#2e3648"
 trade_selection_halo = { premultiplied = [40, 40, 40, 40] }
-candle_preview_background = "#0C0F16"
+candle_preview_background = "#625E59"
 candle_preview_bid = "#14B9E6"
 candle_preview_ask = "#F54646"
 candle_preview_buy = "#37E2B0D2"
@@ -193,7 +196,7 @@ loading_border = "#1B2330"
 footprint_profile = "#D8D8D8"
 footprint_bevel_highlight = { premultiplied = [56, 56, 56, 56] }
 footprint_bevel_shadow = { premultiplied = [0, 0, 0, 120] }
-canvas = "#131722"
+canvas = "#625E59"
 chrome = "#171B26"
 inset = "#10141D"
 control = "#232936"

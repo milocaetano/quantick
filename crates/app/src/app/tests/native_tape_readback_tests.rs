@@ -337,6 +337,10 @@ fn regional_colours(app: &QuantickApp, context: bool) -> [egui::Color32; 2] {
 }
 
 fn regional_colours_at_opacity(app: &QuantickApp, opacity: f32) -> [egui::Color32; 2] {
+    let style = app.active_tab().flow_pane.presentation.candles.resolve(
+        &app.runtime.style,
+        app.runtime.appearance.resolved().bookmap(),
+    );
     [
         egui::Color32::from_rgb(112, 185, 244),
         egui::Color32::from_rgb(232, 175, 99),
@@ -346,7 +350,7 @@ fn regional_colours_at_opacity(app: &QuantickApp, opacity: f32) -> [egui::Color3
         // Independently model the old source-over-opaque-canvas GPU result.
         let rgb = std::array::from_fn(|channel| {
             (f64::from(source[channel])
-                + f64::from(app.runtime.style.canvas.background[channel])
+                + f64::from(style.canvas.background[channel])
                     * (1.0 - f64::from(source.a()) / 255.0))
                 .round() as u8
         });

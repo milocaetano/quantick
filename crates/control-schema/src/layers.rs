@@ -19,7 +19,7 @@ pub fn set_visibility_descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::layout::descriptor(
         SET_VISIBILITY_CAPABILITY_ID,
         "Set chart layer visibility",
-        "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
+        "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects only the addressed pane. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
         generated_schema::<SetVisibilityInput>(),
     );
     descriptor.module = ModuleId::new(MODULE_ID).expect("static module ID");
@@ -80,9 +80,13 @@ impl LayerSnapshot {
                 LayerScope::FlowPane => "flow_pane",
             }
             .to_owned(),
-            persistence: match layer.0.persistence {
-                Persistence::Layers => "chart_layers",
-                Persistence::OrderflowPreset => "orderflow_preset",
+            persistence: if layer.0.source == quantick_layers::LayerSource::Grid {
+                "workspace"
+            } else {
+                match layer.0.persistence {
+                    Persistence::Layers => "chart_layers",
+                    Persistence::OrderflowPreset => "orderflow_preset",
+                }
             }
             .to_owned(),
             requested,

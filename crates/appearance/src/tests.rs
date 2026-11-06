@@ -2,6 +2,78 @@ use super::*;
 use color::{RgbaExt, WHITE};
 
 #[test]
+fn light_profile_source_reproduces_reference_fill_without_reapplying_its_alpha() {
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let source = light.color(Token::DrawingProfile);
+    assert_eq!(source.to_array(), [122, 142, 194, 255]);
+    assert_eq!(light.bookmap().color(Token::DrawingProfile), source);
+    assert_eq!(
+        ResolvedTheme::default().color(Token::DrawingProfile),
+        ResolvedTheme::default().color(Token::DrawingDefault)
+    );
+    // The reference's histogram is translucent over #F5F5F5; sampled pixels
+    // are not its source color. Keep the existing in-value-area row opacity.
+    let [r, g, b, a] = source.gamma_multiply(0.55).to_array();
+    let background = 245.0 * (1.0 - f32::from(a) / 255.0);
+    let composite = [r, g, b].map(|channel| (f32::from(channel) + background).round() as u8);
+    assert_eq!(composite, [177, 188, 217]);
+    let authored = ResolvedTheme::parse(
+        "version=1\nname='Authored profile'\n[colors]\ndrawing_profile='#123456'",
+    )
+    .unwrap();
+    assert_eq!(
+        authored.color(Token::DrawingProfile).to_array(),
+        [18, 52, 86, 255]
+    );
+}
+
+#[test]
+fn authored_generic_drawing_color_remains_the_default_profile_color_when_unspecified() {
+    let source = "version=1\nname='Existing authored theme'\n[colors]\ndrawing_default='#12345680'\n[bookmap.colors]\ndrawing_default='#654321'";
+    let theme = ResolvedTheme::parse(source).unwrap();
+    assert_eq!(
+        theme.color(Token::DrawingProfile),
+        theme.color(Token::DrawingDefault)
+    );
+    assert_eq!(
+        theme.bookmap().color(Token::DrawingProfile),
+        theme.bookmap().color(Token::DrawingDefault)
+    );
+    let mut complete = ThemeDocument::parse(DARK).unwrap();
+    complete.colors.remove("drawing_profile");
+    assert_eq!(
+        complete.resolve_complete().unwrap_err().field,
+        "colors.drawing_profile"
+    );
+}
+
+#[test]
+fn profile_defaults_respect_surface_presence_and_explicit_profile_tokens() {
+    let root = "version=1\nname='Profile surfaces'\n[colors]\ndrawing_default='#123456'\ndrawing_profile='#234567'";
+    for (surface, expected) in [
+        ("[bookmap.colors]\ncanvas='#654321'", [35, 69, 103, 255]),
+        (
+            "[bookmap.colors]\ndrawing_default='#345678'",
+            [52, 86, 120, 255],
+        ),
+        (
+            "[bookmap.colors]\ndrawing_default='#345678'\ndrawing_profile='#456789'",
+            [69, 103, 137, 255],
+        ),
+    ] {
+        let theme = ResolvedTheme::parse(&format!("{root}\n{surface}")).unwrap();
+        assert_eq!(
+            theme.color(Token::DrawingProfile).to_array(),
+            [35, 69, 103, 255]
+        );
+        assert_eq!(
+            theme.bookmap().color(Token::DrawingProfile).to_array(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn candle_opacity_defaults_boundaries_and_complete_document_requirement() {
     assert_eq!(ResolvedTheme::default().candle_fill_opacity, 0.20);
     assert_eq!(

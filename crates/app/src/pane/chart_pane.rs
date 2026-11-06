@@ -81,7 +81,7 @@ pub struct ChartPane {
     pub(super) layer_renderers: &'static render_registry::RenderRegistry,
     /// The candle footprint layer as this pane has it — see
     /// [`PaneFootprint`].
-    pub footprint: PaneFootprint,
+    pub presentation: quantick_stores::pane_style::PanePresentation,
 
     /// The bar rule this pane is on, and the parameter every other kind is
     /// holding for the trader — see [`SpecSelector`].
@@ -346,7 +346,7 @@ impl ChartPane {
             legend_collapsed: false,
             layers: quantick_layers::LayerState::new(render_registry::standard().layers()),
             layer_renderers: render_registry::standard(),
-            footprint: PaneFootprint::default(),
+            presentation: Default::default(),
             // The backfill divider opens off: a full-height rule across the candles for a boundary
             // that matters once, when reading how far the live tape goes back. Nothing is hidden
             // about the data; the mark is one click away in the layer menu.
@@ -384,7 +384,11 @@ impl ChartPane {
         &'a self,
         window: &'a crate::footprint_config::FootprintConfig,
     ) -> &'a crate::footprint_config::FootprintConfig {
-        self.footprint.config.as_ref().unwrap_or(window)
+        self.presentation
+            .footprint
+            .config
+            .as_ref()
+            .unwrap_or(window)
     }
 
     /// Put this pane on `spec` outright, selectors included. Startup-scoped: the caller is a
@@ -429,7 +433,7 @@ impl ChartPane {
         &mut self,
         config: Option<crate::footprint_config::FootprintConfig>,
     ) {
-        self.footprint.config = config;
+        self.presentation.footprint.config = config;
     }
 
     /// An egui interaction id scoped to this pane.
@@ -742,7 +746,7 @@ impl ChartPane {
         // middle-button pan added below keep answering. A primary drag with a tool armed is that
         // tool's second anchor, so it cannot also pan, which is why the middle button does.
         let primary_free = !tool_armed && !drawing_drag_consumes_gesture && !paper_gesture;
-        chrome.layers.open_chart_settings |= self.handle_canvas_gestures(
+        let candle_settings = self.handle_canvas_gestures(
             ui,
             super::canvas_gestures::CanvasInput {
                 chart: &chart,
@@ -752,6 +756,10 @@ impl ChartPane {
                 scroll_taken: chrome.paper.consumed_scroll(),
             },
         );
+        if candle_settings {
+            self.presentation.candles.request_editor();
+            chrome.layers.open_chart_settings = true;
+        }
 
         axes_and_panes::handle_axis_gestures(self, ui, &areas, chrome);
 
@@ -807,7 +815,8 @@ impl ChartPane {
                 layers: &self.layers,
                 orderflow: self.orderflow.as_ref(),
                 state: &self.state,
-                footprint: &self.footprint,
+                footprint: &self.presentation.footprint,
+                style: &self.presentation.candles,
                 drawings: &self.drawings,
             },
             capabilities,

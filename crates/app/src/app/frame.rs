@@ -400,17 +400,12 @@ impl QuantickApp {
             self.workspace_save_adapter().save_named_workspace(&name);
         }
         if let Some(style) = asks.style {
-            self.runtime.style = style;
-            self.runtime.style_revision = self.runtime.style_revision.saturating_add(1);
+            let _ = self.layer_wiring().apply_editor_style(style);
         }
         // After the assignment, never before: the log line reports the
         // appearance that is now in force, and the revision it landed on.
         if let Some(request) = asks.log_style_change {
-            super::health::emit_style_changed(
-                &self.runtime.style,
-                self.runtime.style_revision,
-                request.applied_preset,
-            );
+            self.layer_wiring().log_editor_style(request.applied_preset);
         }
         // The audition goes through the one speaker every armed instance
         // shares, and reports a sound that could not be heard exactly as a

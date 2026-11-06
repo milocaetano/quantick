@@ -331,6 +331,11 @@ mod surface_tests {
         state.apply(quantick_appearance::DARK).unwrap();
         sync(&ctx, &state);
         assert!(!Arc::ptr_eq(&bookmap(&ctx), &surface));
-        assert_eq!(get(&ctx).canvas(), surface.canvas());
+        assert_eq!(
+            get(&ctx).canvas(),
+            egui::Color32::from_rgb(0x13, 0x17, 0x22)
+        );
+        assert_ne!(get(&ctx).canvas(), surface.canvas());
+        assert_eq!(get(&other).canvas(), root.canvas());
     }
 }

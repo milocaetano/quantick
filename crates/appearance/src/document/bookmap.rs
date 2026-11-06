@@ -45,7 +45,7 @@ mod tests {
     use crate::{Appearance, DARK, LIGHT, ResolvedTheme, ThemeDocument, Token};
 
     #[test]
-    fn light_bookmap_matches_dark_without_changing_ui_or_typography() {
+    fn amber_light_bookmap_preserves_market_colors_and_keeps_time_canvas_light() {
         let dark = ResolvedTheme::default();
         let light = ResolvedTheme::parse(LIGHT).unwrap();
         assert_eq!(light.candle_fill_opacity, 1.0);
@@ -54,14 +54,23 @@ mod tests {
             dark.candle_fill_opacity
         );
         for token in Token::ALL {
+            let expected = match token {
+                Token::Canvas | Token::CandlePreviewBackground => [98, 94, 89, 255],
+                Token::DrawingDefault
+                | Token::DrawingBuy
+                | Token::DrawingSell
+                | Token::DrawingVwap => [216, 154, 50, 255],
+                Token::DrawingProfile => [122, 142, 194, 255],
+                _ => dark.color(token).to_array(),
+            };
             assert_eq!(
-                light.bookmap().color(token),
-                dark.color(token),
+                light.bookmap().color(token).to_array(),
+                expected,
                 "{}",
                 token.key()
             );
         }
-        assert_ne!(light.color(Token::Canvas), dark.color(Token::Canvas));
+        assert_eq!(light.color(Token::Canvas).to_array(), [245, 245, 245, 255]);
         assert_eq!(light.bookmap().orderflow, dark.orderflow);
         assert_eq!(light.bookmap().footprint_heat, dark.footprint_heat);
         assert_eq!(light.bookmap().typography, light.typography);

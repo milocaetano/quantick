@@ -22,9 +22,18 @@ pub struct StylePanelResponse {
 /// Draw every candle and canvas knob, and the live preview above them, into
 /// `ui` — the body of the chart settings window's Candles tab, which owns the
 /// window, its presets row and its Reset.
-pub fn draw_style_contents(ui: &mut egui::Ui, style: &mut ChartStyle) -> StylePanelResponse {
+pub fn draw_style_contents(
+    ui: &mut egui::Ui,
+    style: &mut ChartStyle,
+    bookmap: bool,
+) -> StylePanelResponse {
     let mut response = StylePanelResponse::default();
-    draw_preview(ui, style);
+    let palette = if bookmap {
+        crate::theme::bookmap(ui.ctx())
+    } else {
+        crate::theme::get(ui.ctx())
+    };
+    draw_preview(ui, style, &palette);
     ui.separator();
     draw_body_settings(
         ui,
@@ -53,7 +62,7 @@ pub fn draw_style_contents(ui: &mut egui::Ui, style: &mut ChartStyle) -> StylePa
         .clicked()
     {
         *style = ChartStyle::default();
-        style.apply_theme(&crate::theme::get(ui.ctx()).resolved);
+        style.apply_theme(&palette.resolved);
         response.changed = true;
         response.applied_preset = Some(CandlePreset::OrderFlow);
     }
@@ -276,8 +285,7 @@ pub fn draw_canvas_settings(ui: &mut egui::Ui, style: &mut ChartStyle, changed: 
     });
 }
 
-pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
-    let palette = crate::theme::get(ui.ctx());
+pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle, palette: &crate::theme::Palette) {
     ui.add_space(4.0);
     let width = ui.available_width().max(260.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 112.0), egui::Sense::hover());

@@ -41,6 +41,7 @@ mod bar_registry_tests;
 mod bare_canvas;
 mod bench_batches;
 mod calendar_history_tests;
+mod chart_settings_local_tests;
 mod chart_view_tests;
 mod control_launch_baselines;
 mod control_plane_tests;

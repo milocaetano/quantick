@@ -647,8 +647,6 @@ impl Tab {
             focused,
         );
         let chart_style = chrome.style;
-        let mut bookmap_style = *chart_style;
-        bookmap_style.apply_theme(&theme::bookmap(ui.ctx()).resolved);
         let mut chrome = PaneChrome {
             tab: tab_id,
             side: PaneSide::Flow,
@@ -678,6 +676,23 @@ impl Tab {
         chrome.paper.clear_cmd_preview();
         // Context panes carry addresses `1..`, the flow pane `0` — the order
         // `Tab::pane_at` uses, never the order they sit in.
+        let pane_styles: SmallVec<[_; MAX_CANVAS_PANES]> = time_panes
+            .iter()
+            .chain(std::iter::once(&*flow_pane))
+            .map(|pane| {
+                let palette = if pane.orderflow.is_some() {
+                    theme::bookmap(ui.ctx())
+                } else {
+                    theme::get(ui.ctx())
+                };
+                (
+                    pane.id,
+                    pane.presentation
+                        .candles
+                        .resolve(chart_style, &palette.resolved),
+                )
+            })
+            .collect();
         let context = time_panes
             .iter_mut()
             .zip(rects.context_charts.iter().copied())
@@ -704,12 +719,12 @@ impl Tab {
             chrome.paper_hud_here = side == focused;
             chrome.shared_pick = picks.for_pane(side);
             chrome.shared = SharedInteraction::default();
+            chrome.style = &pane_styles
+                .iter()
+                .find(|(id, _)| *id == pane.id)
+                .expect("visible pane style")
+                .1;
             pane.handle_navigation(ui, rect, &mut chrome);
-            chrome.style = if pane.orderflow.is_some() {
-                &bookmap_style
-            } else {
-                chart_style
-            };
             pane.draw_chart(ui.painter(), rect, &mut chrome);
             chrome.style = chart_style;
             // Whatever this pane did to the other's marks travels out of the

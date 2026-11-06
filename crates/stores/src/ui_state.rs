@@ -493,6 +493,7 @@ mod tests {
             1,
             vec![
                 SavedTab {
+                    candle_styles: Vec::new(),
                     feed: "binance".to_owned(),
                     symbol: "BTCUSDT".to_owned(),
                     layout: DeclaredLayout::TimeAndFlow,
@@ -513,6 +514,7 @@ mod tests {
                     orderflow_panel: Default::default(),
                 },
                 SavedTab {
+                    candle_styles: Vec::new(),
                     feed: "binance".to_owned(),
                     symbol: "ETHUSDT".to_owned(),
                     layout: DeclaredLayout::Flow,
@@ -996,6 +998,7 @@ mod tests {
     fn a_market_the_configuration_no_longer_offers_is_not_reopened() {
         let mut workspace = sample();
         workspace.tabs.push(SavedTab {
+            candle_styles: Vec::new(),
             feed: "a-venue-that-was-removed".to_owned(),
             symbol: "BTCUSDT".to_owned(),
             layout: DeclaredLayout::Flow,
@@ -1016,6 +1019,7 @@ mod tests {
             orderflow_panel: Default::default(),
         });
         workspace.tabs.push(SavedTab {
+            candle_styles: Vec::new(),
             feed: "binance".to_owned(),
             symbol: "A-SYMBOL-THE-VENUE-DELISTED".to_owned(),
             layout: DeclaredLayout::Flow,
@@ -1151,6 +1155,7 @@ mod tests {
             active_tab: 1,
             tabs: vec![
                 SavedTab {
+                    candle_styles: Vec::new(),
                     feed: "gone".to_owned(),
                     symbol: "BTCUSDT".to_owned(),
                     layout: DeclaredLayout::Flow,
@@ -1171,6 +1176,7 @@ mod tests {
                     orderflow_panel: Default::default(),
                 },
                 SavedTab {
+                    candle_styles: Vec::new(),
                     feed: "binance".to_owned(),
                     symbol: "ETHUSDT".to_owned(),
                     layout: DeclaredLayout::Flow,
@@ -1210,6 +1216,7 @@ mod tests {
             window: None,
             active_tab: 0,
             tabs: vec![SavedTab {
+                candle_styles: Vec::new(),
                 feed: "gone".to_owned(),
                 symbol: "BTCUSDT".to_owned(),
                 layout: DeclaredLayout::Flow,
@@ -1400,6 +1407,7 @@ time_bars = "time:60000"
     fn sample_workspace() -> Workspace {
         let mut workspace = Workspace::default();
         workspace.tabs = vec![SavedTab {
+            candle_styles: Vec::new(),
             feed: "binance".to_owned(),
             symbol: "BTCUSDT".to_owned(),
             layout: DeclaredLayout::TimeAndFlow,

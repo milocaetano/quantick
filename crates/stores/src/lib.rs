@@ -24,6 +24,7 @@ pub mod bubble_look;
 pub mod bubble_presets;
 pub mod bundle;
 pub mod candle_presets;
+pub mod candle_settings;
 pub mod chart_style;
 pub mod config;
 pub mod footprint_config;
@@ -33,6 +34,7 @@ pub mod home;
 pub mod indicator_presets;
 pub mod indicator_state;
 pub mod layouts;
+pub mod pane_style;
 pub mod paths;
 #[cfg(test)]
 mod scratch;

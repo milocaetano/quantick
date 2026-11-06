@@ -107,6 +107,7 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
             None,
             0,
             vec![ui_state::SavedTab {
+                candle_styles: Vec::new(),
                 feed: "binance".to_owned(),
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::Flow,
@@ -629,6 +630,7 @@ fn a_restored_workspace_puts_the_window_back() {
             None,
             0,
             vec![ui_state::SavedTab {
+                candle_styles: Vec::new(),
                 feed: "binance".to_owned(),
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::TimeAndFlow,

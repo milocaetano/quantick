@@ -25,6 +25,7 @@ const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
 pub(crate) mod arrangement_host;
 use arrangement_host::ArrangementHost;
 mod chart_layers_wiring;
+mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
 #[cfg(test)]

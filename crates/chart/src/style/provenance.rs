@@ -197,6 +197,10 @@ mod bookmap_tests {
         shared.apply_theme(&light);
         let mut flow = shared;
         flow.apply_theme(light.bookmap());
+        let mut expected_flow = ChartStyle::default();
+        expected_flow.canvas.background = [0x62, 0x5E, 0x59];
+        assert_eq!(flow, expected_flow);
+        flow.apply_theme(dark.bookmap());
         assert_eq!(flow, ChartStyle::default());
         assert_eq!(shared.candles.fill_opacity, 1.0);
         let saved = shared.snapshot();

@@ -6,116 +6,49 @@
 //! `quantick_chart::style::StyleEdit` — so this file is the egui half and the
 //! one place both are reached from, by the window and the control plane alike.
 
-use std::path::PathBuf;
-
-use eframe::egui;
-
 use super::{ChartSettingsTab, SettingsTab, TabResponse};
-use crate::candle_presets::{CandlePresetStore, MAX_NAME_LEN, PresetError};
+use crate::candle_presets::MAX_NAME_LEN;
+#[cfg(test)]
+use crate::candle_presets::PresetError;
 use crate::candle_view::{StylePanelResponse, draw_presets, draw_style_contents};
-use crate::style::{CandlePreset, ChartStyle, StyleEdit};
+use crate::style::ChartStyle;
 use crate::surfaces::{SurfaceEnv, SurfaceResponse};
 use crate::theme;
+use eframe::egui;
+use quantick_stores::candle_settings::CandleSettings;
 
-/// The Candles tab's state: the sitting Reset returns to, the saved looks
-/// and the half-typed name in the save field.
 pub(crate) struct CandlesTab {
-    edit: StyleEdit,
-    presets: CandlePresetStore,
-    presets_path: PathBuf,
+    pub state: CandleSettings,
     name_draft: String,
-    /// Why the last save or delete did not land, shown under the field
-    /// until the next.
     refusal: Option<String>,
 }
-
+impl std::ops::Deref for CandlesTab {
+    type Target = CandleSettings;
+    fn deref(&self) -> &CandleSettings {
+        &self.state
+    }
+}
+impl std::ops::DerefMut for CandlesTab {
+    fn deref_mut(&mut self) -> &mut CandleSettings {
+        &mut self.state
+    }
+}
 impl Default for CandlesTab {
-    /// Loads the preset file, so the list is never empty for want of a
-    /// second initialiser.
     fn default() -> Self {
-        let presets_path = crate::candle_presets::default_path();
         Self {
-            edit: StyleEdit::default(),
-            presets: CandlePresetStore::load(&presets_path),
-            presets_path,
+            state: CandleSettings::open(crate::candle_presets::default_path()),
             name_draft: String::new(),
             refusal: None,
         }
     }
 }
-
 impl CandlesTab {
-    /// A tab whose saved looks live at `presets_path` — for a test that needs
-    /// a file the disk refuses.
     #[cfg(test)]
-    pub fn with_presets_path(presets_path: PathBuf) -> Self {
+    pub fn with_presets_path(path: std::path::PathBuf) -> Self {
         Self {
-            presets: CandlePresetStore::load(&presets_path),
-            presets_path,
+            state: CandleSettings::open(path),
             ..Self::default()
         }
-    }
-
-    /// Start a sitting on `current`, unless one is under way.
-    pub fn begin(&mut self, current: ChartStyle) {
-        self.edit.begin(current);
-    }
-
-    /// Whether a sitting is under way — whether Reset has anything to
-    /// return to.
-    pub fn in_sitting(&self) -> bool {
-        self.edit.opened_on().is_some()
-    }
-
-    /// What Reset applies to `current`, if anything.
-    pub fn reset(&self, current: &ChartStyle) -> Option<ChartStyle> {
-        self.edit.reset(current)
-    }
-
-    /// The look `name` makes of `current`, and the built-in it was, if one.
-    pub fn apply(
-        &self,
-        name: &str,
-        current: &ChartStyle,
-    ) -> Option<(ChartStyle, Option<CandlePreset>)> {
-        let resolved = self.presets.resolve(name)?;
-        let preset = match resolved {
-            crate::candle_presets::Resolved::BuiltIn(preset) => Some(preset),
-            crate::candle_presets::Resolved::Custom(_) => None,
-        };
-        Some((resolved.apply_to(current), preset))
-    }
-
-    /// Save `style` as `name` and write the file. Answers the name it landed
-    /// under; a refused name or a failed write leaves the list as it was.
-    pub fn save(&mut self, name: &str, style: ChartStyle) -> Result<String, PresetError> {
-        self.presets.save_as(&self.presets_path, name, style)
-    }
-
-    /// The look saved under `name`, if one is.
-    pub fn saved(&self, name: &str) -> Option<ChartStyle> {
-        self.presets.get(name).copied()
-    }
-
-    /// Forget a saved look and write the file; answers whether there was
-    /// one. A failed write keeps it.
-    pub fn delete(&mut self, name: &str) -> Result<bool, PresetError> {
-        self.presets.delete(&self.presets_path, name)
-    }
-
-    /// The name the look answers to, if any.
-    pub fn matching(&self, style: &ChartStyle) -> Option<String> {
-        self.presets.matching(style).map(str::to_owned)
-    }
-
-    /// The saved names, alphabetically.
-    pub fn custom_names(&self) -> Vec<String> {
-        self.presets.names().map(str::to_owned).collect()
-    }
-
-    /// Read the preset file again.
-    pub fn reload_presets(&mut self) {
-        self.presets = CandlePresetStore::load(&self.presets_path);
     }
 
     /// A warning is about the last attempt: a new name typed, or anything
@@ -227,7 +160,7 @@ impl SettingsTab for CandlesTab {
     }
 
     fn closed(&mut self) {
-        self.edit.end();
+        self.state.end();
         self.refusal = None;
     }
 
@@ -235,7 +168,7 @@ impl SettingsTab for CandlesTab {
         let mut edited = *env.style;
         let row = self.presets_row(ui, &mut edited);
         ui.separator();
-        let body = draw_style_contents(ui, &mut edited);
+        let body = draw_style_contents(ui, &mut edited, env.style_bookmap);
         let changed = (row.changed || body.changed) && edited != *env.style;
         self.settle(changed);
         TabResponse {

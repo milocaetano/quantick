@@ -505,7 +505,7 @@ mod appearance_tests {
     use crate::{DrawingPayload, FontFamily, TextPayload, new_drawing_from_defaults};
 
     #[test]
-    fn light_creates_monochrome_drawings_without_recoloring_existing_or_saved_styles() {
+    fn light_creates_amber_drawings_and_blue_gray_profiles_without_recoloring_saved_styles() {
         let path = crate::scratch::thread_dir("light-drawing-defaults").join(PRESETS_FILE);
         let mut store = PresetStore::load_from(&path);
         let mut appearance = quantick_appearance::Appearance::default();
@@ -518,9 +518,12 @@ mod appearance_tests {
         store.sync_theme(&appearance);
         for (tool, existing) in crate::DRAWING_TOOLS.into_iter().zip(original) {
             let fresh = new_drawing_from_defaults(&store, tool);
-            let [r, g, b, a] = fresh.style.color.to_array();
-            assert_eq!((r, g, b, a), (r, r, r, 255), "{}", tool.id());
-            assert!(r <= 64, "{}", tool.id());
+            let expected = if tool.id() == "fixed-range-profile" {
+                [122, 142, 194, 255]
+            } else {
+                [216, 154, 50, 255]
+            };
+            assert_eq!(fresh.style.color.to_array(), expected, "{}", tool.id());
             assert_eq!(fresh.style.width_px, existing.style.width_px);
             assert_eq!(fresh.style.fill_alpha, existing.style.fill_alpha);
             assert_eq!(existing.style, tool.default_style());
@@ -536,6 +539,17 @@ mod appearance_tests {
         let mut loaded = PresetStore::load_from(&path);
         loaded.sync_theme(&appearance);
         assert_eq!(new_drawing_from_defaults(&loaded, line).style, authored);
+        let profile = crate::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "fixed-range-profile")
+            .unwrap();
+        loaded.set_default_style(profile.id(), Some(authored));
+        let mut restored = PresetStore::load_from(&path);
+        restored.sync_theme(&appearance);
+        assert_eq!(
+            new_drawing_from_defaults(&restored, profile).style,
+            authored
+        );
         assert_ne!(
             appearance
                 .resolved()

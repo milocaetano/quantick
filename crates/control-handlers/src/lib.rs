@@ -49,3 +49,4 @@ pub use tabs::{JournalAccess, TabDirectory, tab_index};
 mod test_support;
 
 pub mod appearance;
+pub mod chart_settings;

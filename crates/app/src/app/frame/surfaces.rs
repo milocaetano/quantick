@@ -78,6 +78,21 @@ pub(super) fn draw_surfaces(
     // to be, and it must not draw its first frame against an empty
     // environment.
     let staging = registry.hooks_pending();
+    let pinned = registry.chart_settings.editor.target;
+    let target_tab = pinned.and_then(|target| tabs.by_id(target.tab_id));
+    let target_pane = pinned.and_then(|target| {
+        target_tab.and_then(|tab| {
+            tab.panes()
+                .find(|(pane, _)| pane.id == target.pane_id)
+                .map(|(pane, _)| pane)
+        })
+    });
+    if let Some(target) = pinned {
+        registry.chart_settings.editor.observe(
+            target,
+            target_pane.map(|pane| pane.presentation.candles.context()),
+        );
+    }
     let focused_tab = &tabs[tabs.active_index()];
     // The bar rules the arming dialog's alarm section reads: a share of the
     // bar only means something where the rule closes on a count. Built only
@@ -124,6 +139,50 @@ pub(super) fn draw_surfaces(
     } else {
         Vec::new()
     };
+    let editor_pane = target_pane.unwrap_or(focused_pane);
+    let editor_tab = target_tab.unwrap_or(focused_tab);
+    let palette = if editor_pane.orderflow.is_some() {
+        crate::theme::bookmap(ctx)
+    } else {
+        crate::theme::get(ctx)
+    };
+    let editor_style = editor_pane
+        .presentation
+        .candles
+        .resolve(style, &palette.resolved);
+    if (staging || registry.chart_settings.is_open())
+        && registry.chart_settings.editor.target.is_none()
+    {
+        let target = quantick_chart::pane_style::StyleTarget {
+            tab_id: tabs.active_id(),
+            pane_id: editor_pane.id,
+        };
+        registry.chart_settings.editor.pin(target);
+        registry
+            .chart_settings
+            .editor
+            .observe(target, Some(editor_pane.presentation.candles.context()));
+    }
+    registry.chart_settings.target_label =
+        if let Some(target) = pinned.filter(|_| registry.chart_settings.editor.stale) {
+            format!(
+                "Unavailable chart / tab {} / pane {}",
+                target.tab_id, target.pane_id
+            )
+        } else {
+            format!(
+                "{} / {} / {} {} / pane {}",
+                editor_tab.symbol,
+                editor_tab.feed_id,
+                if editor_pane.orderflow.is_some() {
+                    "Flow"
+                } else {
+                    "Time"
+                },
+                editor_pane.state.spec().to_config_string(),
+                editor_pane.id
+            )
+        };
     let mut asks = registry.draw_all(
         ctx,
         &SurfaceEnv {
@@ -138,9 +197,10 @@ pub(super) fn draw_surfaces(
                 indicators.indicator_settings_target,
             ),
             focused_chart_area: focused_pane.frame.chart_area,
-            style,
+            style: &editor_style,
+            style_bookmap: editor_pane.orderflow.is_some(),
             footprint: focused_pane.footprint_config(footprint_config),
-            footprint_customized: focused_pane.footprint.config.is_some(),
+            footprint_customized: focused_pane.presentation.footprint.config.is_some(),
             focused_side,
             config,
             added_symbols,

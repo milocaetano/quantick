@@ -134,8 +134,8 @@ impl ChartPane {
                 state: &self.state,
                 budget: crate::frvp::fold_budget(),
                 prefix: frame.prefix,
-                partial_ladder: live_ladder(&self.footprint),
-                partial_version: self.footprint.live_version,
+                partial_ladder: live_ladder(&self.presentation.footprint),
+                partial_version: self.presentation.footprint.live_version,
                 blocked: start.footprint_blocked,
                 side_inferred: chrome.side_inferred,
                 heat_first_slot,
@@ -190,7 +190,7 @@ impl ChartPane {
             clip: painter.with_clip_rect(layout.history_rect),
             viewport: &frame.view,
             dress: CandleDress::resolve(
-                &self.footprint,
+                &self.presentation.footprint,
                 chrome,
                 start.footprint_paints,
                 frame.cw,
@@ -219,7 +219,7 @@ impl ChartPane {
             }
             if start.footprint_paints || start.candle_aggression {
                 history.footprint(
-                    &mut self.footprint,
+                    &mut self.presentation.footprint,
                     &self.state,
                     chrome,
                     depth_visible,
@@ -310,7 +310,7 @@ impl ChartPane {
             self.layer_switched_on(ChartLayer::Bubbles, chrome.style),
             self.layers.requested(ChartLayer::CandleAggression),
         );
-        let footprint_on = ((self.footprint.visible || self.wants_range_profile())
+        let footprint_on = ((self.presentation.footprint.visible || self.wants_range_profile())
             && !footprint_blocked)
             || candle_aggression;
         self.state.set_footprint_enabled(footprint_on);
@@ -340,7 +340,7 @@ impl ChartPane {
             let now = painter.ctx().input(|i| i.time);
             let closed_total = self.history_prefix.len() + self.state.bars().len();
             snapshot_live_ladder(
-                &mut self.footprint,
+                &mut self.presentation.footprint,
                 self.state.partial_footprint(),
                 closed_total,
                 now,

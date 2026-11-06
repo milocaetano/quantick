@@ -288,7 +288,11 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // pane's layer menu writes, so a validation run sees exactly what a
     // click would show.
     if app.chrome.harness.footprint() {
-        app.active_tab_mut().flow_pane.footprint.visible = true;
+        app.active_tab_mut()
+            .flow_pane
+            .presentation
+            .footprint
+            .visible = true;
     }
     // Every style by its own id, resolved through the same registry the
     // panel's selector and the TOML read. A style reachable by click but

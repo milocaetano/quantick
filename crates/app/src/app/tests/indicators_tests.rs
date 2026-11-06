@@ -311,6 +311,7 @@ fn both_panes_reopen_with_the_legend_the_trader_folded() {
             None,
             0,
             vec![ui_state::SavedTab {
+                candle_styles: Vec::new(),
                 feed: "binance".to_owned(),
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::TimeAndFlow,

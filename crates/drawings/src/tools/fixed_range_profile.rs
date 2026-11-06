@@ -557,6 +557,9 @@ impl MarkTool for FixedRangeProfile {
     fn supports_fill(&self) -> bool {
         false
     }
+    fn default_color_token(&self) -> Token {
+        Token::DrawingProfile
+    }
     /// Profile rows are prices. Started over an indicator band, the object
     /// still belongs to the candles' price axis — see `price_band_only`.
     fn price_band_only(&self) -> bool {

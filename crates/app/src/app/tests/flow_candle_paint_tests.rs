@@ -289,7 +289,7 @@ fn assert_footprint_layering(
     app.runtime.style.canvas.background = [13, 17, 23];
     app.runtime.style.ownership.background = quantick_appearance::Inheritance::Explicit;
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.footprint.config = Some(crate::footprint_config::FootprintConfig {
+    pane.presentation.footprint.config = Some(crate::footprint_config::FootprintConfig {
         style: crate::footprint_config::FootprintStyle::Split,
         ..Default::default()
     });
@@ -486,7 +486,8 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
         .retain(crate::state::BarSpec::Tick(25));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    let mut circles = None;
+    let mut dark_circles = None;
+    let mut bubble_geometry = None;
     let mut geometry = None;
     for source in [
         quantick_appearance::DARK,
@@ -514,8 +515,32 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
             "theme switching must preserve both pane layouts"
         );
         let dark = crate::style::ChartStyle::default();
-        let circles = circles.get_or_insert_with(|| regional_circles(&app, &output));
+        let circles = regional_circles(&app, &output);
         assert!(!circles.is_empty(), "the fixture must paint bubbles");
+        let current_bubble_geometry: Vec<_> = circles
+            .iter()
+            .map(|mesh| {
+                (
+                    mesh.indices.clone(),
+                    mesh.vertices
+                        .iter()
+                        .map(|vertex| (vertex.pos, vertex.uv))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            bubble_geometry.get_or_insert_with(|| current_bubble_geometry.clone()),
+            &current_bubble_geometry,
+            "the warm-gray canvas changes composited colors, never bubble geometry"
+        );
+        if source == quantick_appearance::DARK {
+            assert_eq!(
+                dark_circles.get_or_insert_with(|| circles.clone()),
+                &circles,
+                "returning to Dark restores exact bubble meshes and colors"
+            );
+        }
         let first_region = output
             .shapes
             .iter()
@@ -538,11 +563,11 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
             "the real canvas must resolve Bookmap style and palette together"
         );
         let theme = app.runtime.appearance.resolved();
-        let background = egui::Color32::from_rgb(
-            dark.canvas.background[0],
-            dark.canvas.background[1],
-            dark.canvas.background[2],
-        );
+        let [r, g, b, _] = theme
+            .bookmap()
+            .color(quantick_appearance::Token::Canvas)
+            .to_array();
+        let background = egui::Color32::from_rgb(r, g, b);
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
             egui::Shape::Rect(rect) if rect.rect == area && rect.fill == background)));
         let time = app.active_tab().time_pane().unwrap().frame.area.unwrap();

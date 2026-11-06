@@ -3,9 +3,14 @@ use quantick_appearance::Inheritance;
 use quantick_chart::style::{
     CandleBodyMode, CandleStyle, CanvasStyle, ChartColorOwnership, ChartStyle, WickColorMode,
 };
+pub use quantick_chart::style::{
+    MAX_BODY_HEIGHT, MAX_BODY_WIDTH_FRAC, MAX_CANDLE_GAP, MAX_CORNER_RADIUS, MAX_LINE_WIDTH,
+    MIN_BODY_HEIGHT, MIN_BODY_WIDTH_FRAC, MIN_CANDLE_GAP, MIN_LINE_WIDTH,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StyleFile {
     #[serde(default)]
     ownership: OwnershipFile,
@@ -14,6 +19,7 @@ pub struct StyleFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CandlesFile {
     outline_only: bool,
     bull_fill: [u8; 3],
@@ -36,12 +42,37 @@ struct CandlesFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CanvasFile {
     background_enabled: bool,
     background: [u8; 3],
     grid_enabled: bool,
     grid: [u8; 3],
     grid_opacity: f32,
+}
+
+impl StyleFile {
+    pub fn valid(&self) -> bool {
+        use quantick_chart::style::*;
+        let c = &self.candles;
+        let range =
+            |value: f32, min: f32, max: f32| value.is_finite() && (min..=max).contains(&value);
+        [
+            c.fill_opacity,
+            c.outline_opacity,
+            c.wick_opacity,
+            c.forming_opacity,
+            self.canvas.grid_opacity,
+        ]
+        .into_iter()
+        .all(|value| range(value, 0.0, 1.0))
+            && range(c.outline_width, MIN_LINE_WIDTH, MAX_LINE_WIDTH)
+            && range(c.wick_width, MIN_LINE_WIDTH, MAX_LINE_WIDTH)
+            && range(c.body_width_frac, MIN_BODY_WIDTH_FRAC, MAX_BODY_WIDTH_FRAC)
+            && range(c.gap_px, MIN_CANDLE_GAP, MAX_CANDLE_GAP)
+            && range(c.corner_radius, 0.0, MAX_CORNER_RADIUS)
+            && range(c.min_body_height, MIN_BODY_HEIGHT, MAX_BODY_HEIGHT)
+    }
 }
 
 impl From<&ChartStyle> for StyleFile {

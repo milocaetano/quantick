@@ -103,6 +103,7 @@ impl ArrangementAdapter<'_> {
                         },
                     );
                     tab.set_opening_layouts(saved.flow_layout, &saved.context_layouts);
+                    tab.restore_candle_styles(&saved.candle_styles);
                     let showing = index == active && crate::orderflow_panel::flow_pane_shown(tab);
                     tab.tape_mut().settings_panel = saved.restored_panel(chrome, showing);
                 }

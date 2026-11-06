@@ -811,6 +811,7 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
             None,
             0,
             vec![ui_state::SavedTab {
+                candle_styles: Vec::new(),
                 feed: "binance".to_owned(),
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::Flow,

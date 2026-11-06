@@ -5459,7 +5459,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Opens the chart settings window on its Candles or Footprint tab or closes it — the window a double click on the candles, the toolbar's appearance and footprint buttons and the menus open — and applies, saves, deletes or resets candle presets by name. Built-in presets change the candles and keep the canvas; saved presets are written to the candle presets file and restore the whole look. Reset restores the appearance the window opened on and needs the window open. A save or delete whose file cannot be written is undone and refused with control.capability_unavailable, retryable. Persistence differs by action: only save and delete outlive the session (they write the candle presets file); open, close, apply and reset change this session's window and appearance only, which a relaunch does not keep. The declared persistence is durable because it names the strongest effect any action can have.",
+      "description": "Drive Candles/Footprint settings for one chart. Optional target uses tab_id/pane_id from chart.summary; omission uses the pinned editor or focused pane. Focus never retargets an editor; retired panes/sources require explicit reopen. Inspect returns effective_style and theme/explicit ownership; update_candles validates that complete document atomically. Apply/reset/update affect only the target and persist with its workspace. Built-in presets keep its canvas; saved presets restore its full look. Reset requires an editor on the same pane and restores its opening look. Preset names are shared; application is local. Failed preset writes are undone and retryable. Open/close only change the session window.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -5486,6 +5486,27 @@
                 "type": "string"
               }
             ]
+          },
+          "ChartSettingsTarget": {
+            "additionalProperties": false,
+            "description": "Stable runtime address, published by chart.summary. Both IDs must still exist.",
+            "properties": {
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5501,6 +5522,17 @@
               },
               "tab": {
                 "$ref": "#/$defs/ChartSettingsTab"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ChartSettingsTarget"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -5533,6 +5565,17 @@
               },
               "name": {
                 "type": "string"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ChartSettingsTarget"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -5551,6 +5594,17 @@
               },
               "name": {
                 "type": "string"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ChartSettingsTarget"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -5584,10 +5638,340 @@
               "action": {
                 "const": "reset_candles",
                 "type": "string"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ChartSettingsTarget"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
               "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Inspect the effective local style and its per-field ownership.",
+            "properties": {
+              "action": {
+                "const": "inspect",
+                "type": "string"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ChartSettingsTarget"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Replace one pane's full style document, as returned by inspect. Invalid or\nunknown fields, non-finite values and out-of-range geometry are refused atomically.",
+            "properties": {
+              "action": {
+                "const": "update_candles",
+                "type": "string"
+              },
+              "style": {
+                "additionalProperties": false,
+                "description": "One pane's full candle/canvas style. Read effective_style, edit values and ownership together, and submit the complete document to update_candles. Geometry and opacity use canonical decimal strings with inclusive documented bounds; non-finite values are invalid.",
+                "properties": {
+                  "candles": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "bear_fill": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "bear_outline": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "body_width_frac": {
+                        "description": "Decimal [0.1, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "bull_fill": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "bull_outline": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "corner_radius": {
+                        "description": "Decimal [0, 8], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "custom_wick_color": {
+                        "type": "boolean"
+                      },
+                      "fill_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "forming_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "gap_px": {
+                        "description": "Decimal [0, 8], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "min_body_height": {
+                        "description": "Decimal [1, 12], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "outline_only": {
+                        "type": "boolean"
+                      },
+                      "outline_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "outline_width": {
+                        "description": "Decimal [0.5, 4], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "show_wicks": {
+                        "type": "boolean"
+                      },
+                      "wick": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "wick_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "wick_width": {
+                        "description": "Decimal [0.5, 4], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "outline_only",
+                      "bull_fill",
+                      "bear_fill",
+                      "bull_outline",
+                      "bear_outline",
+                      "fill_opacity",
+                      "outline_opacity",
+                      "outline_width",
+                      "show_wicks",
+                      "custom_wick_color",
+                      "wick",
+                      "wick_opacity",
+                      "wick_width",
+                      "body_width_frac",
+                      "gap_px",
+                      "corner_radius",
+                      "min_body_height",
+                      "forming_opacity"
+                    ],
+                    "type": "object"
+                  },
+                  "canvas": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "background": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "background_enabled": {
+                        "type": "boolean"
+                      },
+                      "grid": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "grid_enabled": {
+                        "type": "boolean"
+                      },
+                      "grid_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "background_enabled",
+                      "background",
+                      "grid_enabled",
+                      "grid",
+                      "grid_opacity"
+                    ],
+                    "type": "object"
+                  },
+                  "ownership": {
+                    "additionalProperties": false,
+                    "description": "Theme follows this chart surface; explicit preserves the value across themes. Omitted markers default to explicit; inspection returns all markers.",
+                    "properties": {
+                      "background": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "bear_fill": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "bear_outline": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "bull_fill": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "bull_outline": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "fill_opacity": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "grid": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "wick": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "candles",
+                  "canvas"
+                ],
+                "type": "object"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ChartSettingsTarget"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "action",
+              "style"
             ],
             "type": "object"
           }
@@ -5611,6 +5995,27 @@
                 "type": "string"
               }
             ]
+          },
+          "ChartSettingsTarget": {
+            "additionalProperties": false,
+            "description": "Stable runtime address, published by chart.summary. Both IDs must still exist.",
+            "properties": {
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5641,6 +6046,282 @@
             },
             "type": "array"
           },
+          "effective_style": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "description": "One pane's full candle/canvas style. Read effective_style, edit values and ownership together, and submit the complete document to update_candles. Geometry and opacity use canonical decimal strings with inclusive documented bounds; non-finite values are invalid.",
+                "properties": {
+                  "candles": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "bear_fill": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "bear_outline": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "body_width_frac": {
+                        "description": "Decimal [0.1, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "bull_fill": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "bull_outline": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "corner_radius": {
+                        "description": "Decimal [0, 8], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "custom_wick_color": {
+                        "type": "boolean"
+                      },
+                      "fill_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "forming_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "gap_px": {
+                        "description": "Decimal [0, 8], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "min_body_height": {
+                        "description": "Decimal [1, 12], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "outline_only": {
+                        "type": "boolean"
+                      },
+                      "outline_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "outline_width": {
+                        "description": "Decimal [0.5, 4], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "show_wicks": {
+                        "type": "boolean"
+                      },
+                      "wick": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "wick_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      },
+                      "wick_width": {
+                        "description": "Decimal [0.5, 4], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "outline_only",
+                      "bull_fill",
+                      "bear_fill",
+                      "bull_outline",
+                      "bear_outline",
+                      "fill_opacity",
+                      "outline_opacity",
+                      "outline_width",
+                      "show_wicks",
+                      "custom_wick_color",
+                      "wick",
+                      "wick_opacity",
+                      "wick_width",
+                      "body_width_frac",
+                      "gap_px",
+                      "corner_radius",
+                      "min_body_height",
+                      "forming_opacity"
+                    ],
+                    "type": "object"
+                  },
+                  "canvas": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "background": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "background_enabled": {
+                        "type": "boolean"
+                      },
+                      "grid": {
+                        "description": "sRGB red, green and blue byte values, in that order.",
+                        "items": {
+                          "maximum": 255,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "grid_enabled": {
+                        "type": "boolean"
+                      },
+                      "grid_opacity": {
+                        "description": "Decimal [0, 1], inclusive.",
+                        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "background_enabled",
+                      "background",
+                      "grid_enabled",
+                      "grid",
+                      "grid_opacity"
+                    ],
+                    "type": "object"
+                  },
+                  "ownership": {
+                    "additionalProperties": false,
+                    "description": "Theme follows this chart surface; explicit preserves the value across themes. Omitted markers default to explicit; inspection returns all markers.",
+                    "properties": {
+                      "background": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "bear_fill": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "bear_outline": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "bull_fill": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "bull_outline": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "fill_opacity": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "grid": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      },
+                      "wick": {
+                        "default": "explicit",
+                        "enum": [
+                          "theme",
+                          "explicit"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "candles",
+                  "canvas"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Effective candle/canvas values and explicit/theme ownership. This is\nthe complete style document accepted by update_candles."
+          },
           "open": {
             "description": "Whether the window is on screen.",
             "type": "boolean"
@@ -5648,10 +6329,22 @@
           "tab": {
             "$ref": "#/$defs/ChartSettingsTab",
             "description": "The tab it shows, or would show when opened."
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ChartSettingsTarget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Address whose appearance this result describes."
           }
         },
         "required": [
           "open",
+          "effective_style",
           "tab",
           "built_in_presets",
           "custom_presets",
@@ -10508,7 +11201,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
+      "description": "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects only the addressed pane. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -21329,7 +22022,7 @@
       "title": "Current selection"
     },
     {
-      "description": "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid is window-wide.",
+      "description": "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid belongs to each pane.",
       "id": "layers.visibility",
       "module_id": "layers",
       "required_permissions": [
