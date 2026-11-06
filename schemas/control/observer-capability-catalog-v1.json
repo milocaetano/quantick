@@ -5400,6 +5400,102 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Switches the second line of the last-price tag: how far the forming bar is from closing (done/target for a count rule, the time left on the market clock for a time rule, the running total for an imbalance rule). Kept for the market the pane shows (venue and asset) and saved with the market settings; every pane of that market follows. The price axis menu's first row makes the same change. On by default.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "chart.price_tag.progress.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "on": {
+            "description": "`true` prints the forming bar's progress under the last price.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "A pane on that tab, as `chart.summary` lists it: the setting belongs to\nthe market the pane shows, so every pane of that market follows."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab, as `chart.summary` lists it."
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "on"
+        ],
+        "title": "PriceTagProgressInput",
+        "type": "object"
+      },
+      "module": "chart",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "Whether the call moved it; `false` when it already stood there.",
+            "type": "boolean"
+          },
+          "on": {
+            "description": "The market's setting as it stands after the call.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "on",
+          "changed"
+        ],
+        "title": "PriceTagProgressResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs name the market before anything changes; setting the value it already has changes nothing, and chart.summary reports it as price_tag_progress.",
+      "title": "Show bar progress on the price tag",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Opens the chart settings window on its Candles or Footprint tab or closes it — the window a double click on the candles, the toolbar's appearance and footprint buttons and the menus open — and applies, saves, deletes or resets candle presets by name. Built-in presets change the candles and keep the canvas; saved presets are written to the candle presets file and restore the whole look. Reset restores the appearance the window opened on and needs the window open. A save or delete whose file cannot be written is undone and refused with control.capability_unavailable, retryable. Persistence differs by action: only save and delete outlive the session (they write the candle presets file); open, close, apply and reset change this session's window and appearance only, which a relaunch does not keep. The declared persistence is durable because it names the strongest effect any action can have.",
       "destructive": false,
       "dry_run_supported": false,
@@ -22090,6 +22186,35 @@
       ],
       "schema": {
         "$defs": {
+          "BarProgressSnapshot": {
+            "description": "The forming bar's progress in its rule's own unit.",
+            "properties": {
+              "done": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "What has accumulated: the count, the milliseconds a time bar has run,\nor an imbalance rule's signed running total."
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Where the bar closes; absent for an imbalance rule, which has no\nfixed target."
+              },
+              "unit": {
+                "description": "The unit both figures count in: `ms` for a time rule, else the rule's\nown (`ticks`, a volume or notional unit, an imbalance measure).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "done",
+              "unit"
+            ],
+            "type": "object"
+          },
           "BarSpecDto": {
             "properties": {
               "imbalance_unit": {
@@ -22162,6 +22287,17 @@
                   }
                 ]
               },
+              "bar_progress": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BarProgressSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "How far the forming bar is from closing, as the last-price tag prints\nit: a time rule's on the tab's market clock (the replay's playhead\nwhile replaying). Absent with no forming bar to read. Optional on the\nwire, as `uncounted_prints` is."
+              },
               "bar_spec": {
                 "$ref": "#/$defs/BarSpecDto"
               },
@@ -22222,6 +22358,13 @@
               "pane_index": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The pane's address within its tab — `0` the flow pane, `1..` the\ncontext stack top to bottom — the number `layout.focus` takes."
+              },
+              "price_tag_progress": {
+                "description": "Whether the last-price tag prints that progress: the setting of the\npane's market (`chart.price_tag.progress.set`). Optional on the wire.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
               },
               "side": {
                 "$ref": "#/$defs/PaneSideDto"

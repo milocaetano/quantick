@@ -54,6 +54,9 @@ const TAG_PAD: egui::Vec2 = egui::vec2(3.0, 1.0);
 /// Corner radius of a tag.
 const TAG_ROUNDING: f32 = 2.0;
 
+/// How much smaller a tag's second line is than its price, in points.
+const SECOND_LINE_SMALLER_PT: f32 = 1.0;
+
 /// How a price is written on the price axis, wherever it is written.
 ///
 /// One owner for every mark that shares this gutter — the round-number
@@ -235,23 +238,40 @@ pub(crate) fn readout(
 ///
 /// `axis_x` is the gutter's left edge, which is the chart's right edge
 /// normally and the live strip's right edge while the strip sits between them.
+/// A `second` line sits under the price, one point smaller, on the same chip —
+/// the last price's tag carrying the forming bar's progress; the price stays
+/// centred on `y` and the chip grows downward.
 pub(crate) fn paint_price_tag(
     painter: &egui::Painter,
     axis_x: f32,
     y: f32,
     text: String,
+    second: Option<String>,
     fill: egui::Color32,
     ink: egui::Color32,
 ) {
-    let galley = painter.layout_no_wrap(
-        text,
-        egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
-        ink,
-    );
+    let font = egui::FontId::monospace;
+    let galley = painter.layout_no_wrap(text, font(chart::AXIS_LABEL_FONT_PX), ink);
+    let under = second.map(|text| {
+        painter.layout_no_wrap(
+            text,
+            font(chart::AXIS_LABEL_FONT_PX - SECOND_LINE_SMALLER_PT),
+            ink,
+        )
+    });
     let text_pos = egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y - galley.size().y / 2.0);
-    let background = egui::Rect::from_min_size(text_pos - TAG_PAD, galley.size() + TAG_PAD * 2.0);
+    let under_size = under.as_ref().map_or(egui::Vec2::ZERO, |line| line.size());
+    let size = egui::vec2(
+        galley.size().x.max(under_size.x),
+        galley.size().y + under_size.y,
+    );
+    let background = egui::Rect::from_min_size(text_pos - TAG_PAD, size + TAG_PAD * 2.0);
     painter.rect_filled(background, egui::Rounding::same(TAG_ROUNDING), fill);
+    let under_pos = text_pos + egui::vec2(0.0, galley.size().y);
     painter.galley(text_pos, galley, ink);
+    if let Some(line) = under {
+        painter.galley(under_pos, line, ink);
+    }
 }
 
 /// The pointer's price on the price axis: a tick out of the canvas and the
@@ -271,6 +291,7 @@ pub(crate) fn paint_price_mark(painter: &egui::Painter, axis_x: f32, readout: &P
         axis_x,
         y,
         price_text(readout.price),
+        None,
         theme::TAG_BG,
         theme::TEXT_PRIMARY,
     );

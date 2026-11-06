@@ -59,6 +59,30 @@ fn a_time_bar_counts_down_like_tradingview() {
     assert_eq!(countdown_text(-5), "00:00");
 }
 
+/// A countdown asks for the frame its text changes on: `00:52` turns
+/// `00:51` once 52 300 ms has run down past 52 000.
+#[test]
+fn a_countdown_repaints_on_its_next_whole_second_and_a_count_never() {
+    let left = |remaining_ms| BarProgressReading::Remaining {
+        length_ms: 60_000,
+        remaining_ms,
+    };
+    assert_eq!(left(52_300).repaint_after_ms(), Some(301));
+    assert_eq!(left(52_000).repaint_after_ms(), Some(1));
+    assert_eq!(countdown_text(52_000 - 1), "00:51");
+    assert_eq!(
+        left(0).repaint_after_ms(),
+        None,
+        "a closed bucket waits for a print"
+    );
+    let count = BarProgressReading::Count {
+        done: dec("5"),
+        target: dec("10"),
+        unit: "ticks",
+    };
+    assert_eq!(count.repaint_after_ms(), None);
+}
+
 #[test]
 fn an_imbalance_bar_prints_its_signed_running_total() {
     assert_eq!(imbalance_text(dec("340")), "+340");

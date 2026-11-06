@@ -211,6 +211,9 @@ impl ChartPane {
             newest: partial.or_else(|| closed.last()),
             last_price_visible: self
                 .layer_visible(quantick_layers::ChartLayer::LastPrice, chrome.style),
+            progress: chrome
+                .price_tag
+                .reading(|at| self.state.bar_progress_at(at)),
             style: chrome.style,
         }
         .paint(self.layer_renderers);

@@ -91,10 +91,7 @@ pub(super) fn evaluate(
             .iter()
             .any(|instance| instance.alarm.is_some());
         if let Some(partial) = any_alarm.then(|| pane.state.partial().cloned()).flatten() {
-            let progress = pane
-                .state
-                .bar_progress_at(None)
-                .and_then(|reading| reading.fixed_progress());
+            let progress = quantick_chart::bar_progress::fixed(pane.state.bar_progress_at(None));
             let slot = pane.closed_slots();
             for index in 0..pane.strategies.anchors.instances.len() {
                 // Cheapest gate next, before the region is resolved: on

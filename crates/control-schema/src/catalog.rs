@@ -100,6 +100,14 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
             schema::<crate::price_axis::PriceAxisResult>(),
         ),
         (
+            "chart-price-tag-progress-input-v1.schema.json",
+            schema::<crate::price_tag_progress::PriceTagProgressInput>(),
+        ),
+        (
+            "chart-price-tag-progress-result-v1.schema.json",
+            schema::<crate::price_tag_progress::PriceTagProgressResult>(),
+        ),
+        (
             "chart-settings-input-v1.schema.json",
             schema::<crate::chart_settings::ChartSettingsInput>(),
         ),

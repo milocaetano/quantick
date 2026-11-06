@@ -638,6 +638,13 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("feed.history.cancel", 1, json!({}), Readback::Moves),
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
+        // On by default: the call turns the market's line off.
+        (
+            "chart.price_tag.progress.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
         ("chart.settings.set", 1, Value::Null, Readback::Moves),
         ("indicator.picker.set", 1, Value::Null, Readback::Moves),
         // A listing changes nothing, so no `session.journal.changed` is
@@ -1031,6 +1038,11 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "mode": { "kind": "manual", "low": "80", "high": "120" },
+            }),
+            "chart.price_tag.progress.set" => json!({
+                "tab_id": app.runtime.tabs.active_id().to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "on": false,
             }),
             "chart.tape_view.set" => {
                 // The call moves a native tape: give the flow pane one.

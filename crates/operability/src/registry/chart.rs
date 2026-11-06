@@ -51,6 +51,16 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         mapping: capability!("chart.price_axis.set"),
     },
     UiBehaviour {
+        id: "chart.price_tag.progress.set",
+        title: "Show or hide the forming bar's progress on the last-price tag",
+        reach: "the price axis menu's first row, per market",
+        keys: &[(
+            Source::Authored,
+            "a checkbox in the price axis context menu, not an entry in an action enum",
+        )],
+        mapping: capability!("chart.price_tag.progress.set"),
+    },
+    UiBehaviour {
         id: "chart.time_axis.reset",
         title: "Reset a time axis to where it opened, or the candles to a live overview",
         reach: "double-click the candles' time strip, or the tape's; double-click open canvas",

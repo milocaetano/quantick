@@ -389,6 +389,15 @@ fn a_file_from_a_newer_format_is_refused_for_its_version() {
 }
 
 #[test]
+fn a_recording_is_its_own_market() {
+    assert_eq!(shown_market(("mt5", "WINZ26"), None), ("mt5", "WINZ26"));
+    assert_eq!(
+        shown_market(("mt5", "WINZ26"), Some("WINV26")),
+        (REPLAY_FEED_KEY, "WINV26")
+    );
+}
+
+#[test]
 fn bar_progress_on_the_price_tag_is_on_until_a_market_turns_it_off() {
     let mut settings = MarketSettings::default();
     let b3 = win("MetaTrader 5 — B3");

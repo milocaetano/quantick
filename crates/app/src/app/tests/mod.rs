@@ -566,6 +566,7 @@ fn with_flow_pane<R>(
         shared: pane::SharedInteraction::default(),
         capabilities,
         side_inferred,
+        price_tag: Default::default(),
         footprint: footprint_config,
         layers: &mut workspace.layers_mut().actions,
     };

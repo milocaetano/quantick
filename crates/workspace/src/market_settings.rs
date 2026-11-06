@@ -27,6 +27,26 @@ const ROLE_CONTEXT_SLOT: &str = "context-slot:";
 /// The legacy pane address of the flow chart.
 const LEGACY_FLOW_PANE: usize = 0;
 
+/// The feed half of a market key while a tab plays a recording.
+///
+/// A recording is its own market: its prices are the recorded day's, not
+/// the live venue's, so a level drawn on it belongs to the recording's
+/// symbol under this name and never lands on the live chart of the same
+/// symbol, nor on another tab streaming it.
+pub const REPLAY_FEED_KEY: &str = "replay";
+
+/// The market a tab's panes show, as `(feed, symbol)`: the live feed's, or —
+/// while a recording plays — the recording's symbol under
+/// [`REPLAY_FEED_KEY`]. The feed thread's market does not move for a
+/// recording; the recording's symbol does.
+#[must_use]
+pub fn shown_market<'a>(
+    live: (&'a str, &'a str),
+    recording: Option<&'a str>,
+) -> (&'a str, &'a str) {
+    recording.map_or(live, |symbol| (REPLAY_FEED_KEY, symbol))
+}
+
 /// One market: a venue and the asset the config says a symbol belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MarketKey {

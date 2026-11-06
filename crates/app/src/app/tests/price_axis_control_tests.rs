@@ -430,3 +430,113 @@ fn the_tape_reset_call_and_the_tape_strip_accept_the_same_panes() {
     }
     disable_test_gateway(&mut app, &ctx);
 }
+
+const PROGRESS: &str = "chart.price_tag.progress.set";
+
+/// Every pane of the active tab as `chart.summary` reports it.
+fn summary_panes(app: &mut QuantickApp, client: &mut LocalClient) -> Vec<Value> {
+    let read = json!({"scopes":["chart.summary"]});
+    let (response, _) = unkeyed_call(app, client, "snapshot.read", read);
+    let panes = &success_result(&response)["scopes"]["chart.summary"]["value"]["panes"];
+    panes.as_array().unwrap().clone()
+}
+
+/// The call switches the setting of the market the pane shows: a retry is
+/// the same answer and no change, every pane of the tab reads it back, and
+/// both the tick flow pane and the time pane report their forming bar.
+#[test]
+fn the_price_tag_progress_call_switches_the_market_and_reads_it_back() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 40);
+    let directory = gateway_test_directory("price-tag-progress");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let tab = app.runtime.tabs.active_id().to_string();
+    let time = app.active_tab().pane(PaneSide::Time(0)).id.to_string();
+    for pane in summary_panes(&mut app, &mut client) {
+        assert_eq!(pane["price_tag_progress"], true, "on by default");
+        let progress = &pane["bar_progress"];
+        assert!(
+            progress["done"].is_string() && progress["unit"].is_string(),
+            "{pane}"
+        );
+    }
+    let off = json!({"tab_id": tab, "pane_id": time, "on": false});
+    let (first, _) = keyed_call(&mut app, &mut client, "off", PROGRESS, off.clone(), "off");
+    let (retry, _) = keyed_call(&mut app, &mut client, "off-2", PROGRESS, off.clone(), "off");
+    assert_eq!(first.outcome, retry.outcome, "a dropped answer replays");
+    assert_eq!(
+        success_result(&first),
+        json!({"tab_id": tab, "pane_id": time, "on": false, "changed": true})
+    );
+    let (again, _) = unkeyed_call(&mut app, &mut client, PROGRESS, off);
+    assert_eq!(
+        success_result(&again)["changed"],
+        false,
+        "the same value is no change"
+    );
+    for pane in summary_panes(&mut app, &mut client) {
+        assert_eq!(
+            pane["price_tag_progress"], false,
+            "the whole market follows: {pane}"
+        );
+    }
+    let (venue, symbol) = app.active_tab().active.clone();
+    let market = app.runtime.workspace.layouts().market();
+    assert!(
+        !market.bar_progress_on(&venue, &symbol),
+        "kept in the market settings"
+    );
+    assert!(
+        market.bar_progress_on("another venue", &symbol),
+        "and for that market only"
+    );
+
+    for (tab_id, pane_id) in [
+        (u64::MAX.to_string(), time.clone()),
+        (tab.clone(), u64::MAX.to_string()),
+    ] {
+        let stale = json!({"tab_id": tab_id, "pane_id": pane_id, "on": true});
+        let (unknown, _) = unkeyed_call(&mut app, &mut client, PROGRESS, stale);
+        assert_eq!(error_code(&unknown), Some(codes::INVALID_REQUEST));
+    }
+    let extra = json!({"tab_id": tab, "pane_id": time, "on": true, "colour": "red"});
+    let (invalid, _) = unkeyed_call(&mut app, &mut client, PROGRESS, extra);
+    assert_eq!(error_code(&invalid), Some(codes::INVALID_REQUEST));
+    assert!(
+        !app.runtime
+            .workspace
+            .layouts()
+            .market()
+            .bar_progress_on(&venue, &symbol)
+    );
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// The axis menu's switch lands in the market settings of the tab's market
+/// on the next frame, and never as a layout edit.
+#[test]
+fn the_axis_menu_switch_is_kept_for_that_market_only() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 40);
+    let (venue, symbol) = app.active_tab().active.clone();
+    run_frame(&mut app, &ctx);
+    let layouts = app.runtime.workspace.layouts().revision();
+    app.runtime.workspace.layers_mut().actions.bar_progress = Some(false);
+    run_frame(&mut app, &ctx);
+    let market = app.runtime.workspace.layouts().market();
+    assert!(!market.bar_progress_on(&venue, &symbol));
+    assert!(market.bar_progress_on("another venue", &symbol));
+    assert!(market.bar_progress_on(&venue, "another symbol"));
+    let after = app.runtime.workspace.layouts().revision();
+    assert_eq!(after, layouts, "not a layout edit");
+    assert_eq!(
+        app.runtime.workspace.layers_mut().actions.bar_progress,
+        None,
+        "taken once"
+    );
+}

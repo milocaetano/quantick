@@ -44,6 +44,10 @@ impl ChartPort for dyn ControlPort {
         }
     }
 
+    fn price_tag_progress(&self, tab_id: u64) -> bool {
+        self.layout_state().bar_progress_on(tab_id)
+    }
+
     fn visit_chart_pane(
         &self,
         tab_id: u64,
@@ -79,6 +83,7 @@ fn entry<'a>(
         feed_id: &tab.feed_id,
         symbol: &tab.symbol,
         pane: read,
+        market_clock_ms: tab.tape().market_now_ms(),
     }
 }
 

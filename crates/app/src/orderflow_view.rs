@@ -1083,6 +1083,11 @@ impl OrderflowView {
         self.pane_tape.lane_now_ms(self.config.native_tape())
     }
 
+    /// The market's clock for every pane config ([`PaneTape::market_now_ms`]).
+    pub(crate) fn market_now_ms(&self) -> Option<i64> {
+        self.pane_tape.market_now_ms()
+    }
+
     /// Advance the lane's clock to the host's monotonic instant
     /// ([`PaneTape::follow_live`]).
     pub(crate) fn set_live_clock_at(&mut self, applied_ms: Option<i64>, monotonic_ms: u64) {

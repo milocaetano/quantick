@@ -16,6 +16,7 @@ use crate::indicator_panel::SettingsDialog;
 use crate::pane::PaneSide;
 use crate::style::ChartStyle;
 use crate::surfaces::{StrategyPopupSurface, SurfaceEnv, SurfaceResponse, Surfaces};
+use quantick_chart::bar_progress::fixed;
 
 use super::super::TabSlot;
 
@@ -79,14 +80,7 @@ pub(super) fn draw_surfaces(
         if staging || registry.strategy_popup.is_open() {
             focused_tab
                 .sides()
-                .filter(|side| {
-                    focused_tab
-                        .pane(*side)
-                        .state
-                        .bar_progress_at(None)
-                        .and_then(|reading| reading.fixed_progress())
-                        .is_some()
-                })
+                .filter(|side| fixed(focused_tab.pane(*side).state.bar_progress_at(None)).is_some())
                 .collect()
         } else {
             SmallVec::new()

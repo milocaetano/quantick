@@ -87,6 +87,18 @@ impl BarProgressReading {
         })
     }
 
+    /// How long until the tag's text changes with no print: the next whole
+    /// second of a countdown, `None` for a reading only a print moves.
+    #[must_use]
+    pub fn repaint_after_ms(&self) -> Option<i64> {
+        match *self {
+            Self::Remaining { remaining_ms, .. } if remaining_ms > 0 => {
+                Some(remaining_ms % MS_PER_SECOND + 1)
+            }
+            _ => None,
+        }
+    }
+
     /// The unit [`done`](Self::done) and [`target`](Self::target) count in.
     #[must_use]
     pub fn unit(&self) -> &'static str {
@@ -94,6 +106,32 @@ impl BarProgressReading {
             Self::Count { unit, .. } | Self::Imbalance { unit, .. } => unit,
             Self::Remaining { .. } => TIME_UNIT,
         }
+    }
+}
+
+/// A reading as a fixed-threshold progress ([`BarProgressReading::fixed_progress`]).
+#[must_use]
+pub fn fixed(reading: Option<BarProgressReading>) -> Option<BarProgress> {
+    reading?.fixed_progress()
+}
+
+/// What the host tells a pane about its last-price tag's second line: the
+/// market's setting and the market clock to read a time rule on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TagProgress {
+    pub on: bool,
+    pub clock_ms: Option<i64>,
+}
+
+impl TagProgress {
+    /// The reading the tag prints, `read` at the host's clock; `None` while
+    /// the market has the line off.
+    #[must_use]
+    pub fn reading(
+        self,
+        read: impl FnOnce(Option<i64>) -> Option<BarProgressReading>,
+    ) -> Option<BarProgressReading> {
+        if self.on { read(self.clock_ms) } else { None }
     }
 }
 

@@ -1,5 +1,34 @@
 {
   "$defs": {
+    "BarProgressSnapshot": {
+      "description": "The forming bar's progress in its rule's own unit.",
+      "properties": {
+        "done": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "What has accumulated: the count, the milliseconds a time bar has run,\nor an imbalance rule's signed running total."
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the bar closes; absent for an imbalance rule, which has no\nfixed target."
+        },
+        "unit": {
+          "description": "The unit both figures count in: `ms` for a time rule, else the rule's\nown (`ticks`, a volume or notional unit, an imbalance measure).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "done",
+        "unit"
+      ],
+      "type": "object"
+    },
     "BarSpecDto": {
       "properties": {
         "imbalance_unit": {
@@ -72,6 +101,17 @@
             }
           ]
         },
+        "bar_progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BarProgressSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How far the forming bar is from closing, as the last-price tag prints\nit: a time rule's on the tab's market clock (the replay's playhead\nwhile replaying). Absent with no forming bar to read. Optional on the\nwire, as `uncounted_prints` is."
+        },
         "bar_spec": {
           "$ref": "#/$defs/BarSpecDto"
         },
@@ -132,6 +172,13 @@
         "pane_index": {
           "$ref": "#/$defs/WireU64",
           "description": "The pane's address within its tab — `0` the flow pane, `1..` the\ncontext stack top to bottom — the number `layout.focus` takes."
+        },
+        "price_tag_progress": {
+          "description": "Whether the last-price tag prints that progress: the setting of the\npane's market (`chart.price_tag.progress.set`). Optional on the wire.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "side": {
           "$ref": "#/$defs/PaneSideDto"
