@@ -1051,3 +1051,29 @@ fn the_light_q_has_white_faces_black_edges_and_the_teal_gradient() {
     assert_eq!(a, 255);
     assert!(g > r + 150 && g > b, "teal face: {:?}", [r, g, b]);
 }
+
+/// Dark keeps its box; Light's is square in whole physical pixels, centred
+/// alone, and right of the layout box beside the wordmark.
+#[test]
+fn the_light_mark_box_is_square_on_the_pixel_grid() {
+    use crate::tabstrip::{LIGHT_Q_SHIFT_PT, mark_box};
+    let q = egui::Rect::from_min_size(egui::pos2(19.0, 4.0), egui::vec2(22.0, 22.0));
+    for ppp in [1.0, 1.25, 1.5, 1.68, 2.0, 2.5] {
+        assert_eq!(mark_box(q, true, true, ppp), q, "Dark at {ppp}");
+        for labelled in [false, true] {
+            let mark = mark_box(q, false, labelled, ppp);
+            let physical = mark.size() * ppp;
+            let square = (physical.x - physical.y).abs() < 1e-3;
+            assert!(square, "{physical:?} at {ppp}");
+            for v in [mark.min.x, mark.min.y, mark.max.x, mark.max.y] {
+                let px = v * ppp;
+                assert!((px - px.round()).abs() < 1e-3, "{v} at {ppp}");
+            }
+            let (got, want) = match labelled {
+                true => (mark.right(), q.right() + LIGHT_Q_SHIFT_PT),
+                false => (mark.center().x, q.center().x),
+            };
+            assert!((got - want).abs() <= 1.0 / ppp, "{got} for {want} at {ppp}");
+        }
+    }
+}

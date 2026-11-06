@@ -7,8 +7,10 @@ crates/app/assets/logo-q.png uses: the glyph scaled by 4/3 about its centre
 into a 256-texel square, straight (unpremultiplied) alpha.
 
     python tools/logo/light_mark.py            # write logo-q-light.png
-    python tools/logo/light_mark.py --check    # also render today's dark Q and
-                                               # compare it with logo-q.png
+    python tools/logo/light_mark.py --check    # write nothing; fail unless the
+                                               # committed light PNG matches a
+                                               # fresh render and the dark render
+                                               # matches logo-q.png
 
 Requires Pillow and NumPy.
 """
@@ -30,14 +32,28 @@ SCALE = 4 / 3       # viewBox units to texels
 GLYPH_CENTRE = (129.5, 133.0)  # centre of the Q's rect box in viewBox units
 OUTLINE = 4         # viewBox units, drawn inside each rect
 RADIUS = 3          # viewBox units, as every rect's rx in icon.svg
-TEAL = ("#3AF0B2", "#12C68C")
 LIGHT_FADE = ("#FFFFFF", 1.0)
-DARK_FADE = ("#E6EEF6", 0.647)
 EDGE = "#000000"
+# --check tolerances, in 0..255 alpha: the dark render against logo-q.png, and
+# a fresh light render against the committed one.
+DARK_MEAN_ALPHA_DIFF = 1.5
+LIGHT_MAX_DIFF = 1
 
 
 def rgb(hex_colour):
     return np.array([int(hex_colour[i:i + 2], 16) for i in (1, 3, 5)], dtype=np.float64)
+
+
+def svg_colours():
+    """icon.svg's teal gradient stops and its faded side's fill and opacity."""
+    text = SVG.read_text(encoding="utf-8")
+    gradient = re.search(r'<linearGradient id="tg".*?</linearGradient>', text, re.S).group(0)
+    teal = tuple(re.findall(r'stop-color="(#[0-9A-Fa-f]{6})"', gradient))
+    fade = re.search(r'fill="(#[0-9A-Fa-f]{6})" fill-opacity="([0-9.]+)"', text)
+    return teal, (fade.group(1), float(fade.group(2)))
+
+
+TEAL, DARK_FADE = svg_colours()
 
 
 def svg_rects():
@@ -67,7 +83,8 @@ def mask(box, inset):
     x1, y1 = to_texels(x + w - inset, y + h - inset)
     radius = max(RADIUS - inset, 0) * SUPER * SCALE
     layer = Image.new("L", (SIZE * SUPER, SIZE * SUPER), 0)
-    ImageDraw.Draw(layer).rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=255)
+    # Pillow's bounds are inclusive pixels: the last covered one is x1 - 1.
+    ImageDraw.Draw(layer).rounded_rectangle([x0, y0, x1 - 1, y1 - 1], radius=radius, fill=255)
     return np.asarray(layer, dtype=np.float64) / 255
 
 
@@ -111,14 +128,20 @@ def downsample(premultiplied):
 
 def main():
     light = downsample(render(LIGHT_FADE, outline=True))
-    Image.fromarray(light, "RGBA").save(ASSETS / "logo-q-light.png", optimize=True)
-    print("wrote", ASSETS / "logo-q-light.png")
-    if "--check" in sys.argv:
-        dark = downsample(render(DARK_FADE, outline=False)).astype(int)
-        shipped = np.asarray(Image.open(ASSETS / "logo-q.png").convert("RGBA")).astype(int)
-        a = dark[..., 3]
-        print("dark alpha diff: max", np.abs(a - shipped[..., 3]).max(), "mean", round(np.abs(a - shipped[..., 3]).mean(), 3))
+    target = ASSETS / "logo-q-light.png"
+    if "--check" not in sys.argv:
+        Image.fromarray(light, "RGBA").save(target, optimize=True)
+        print("wrote", target)
+        return 0
+    committed = np.asarray(Image.open(target).convert("RGBA")).astype(int)
+    light_diff = int(np.abs(light.astype(int) - committed).max())
+    dark = downsample(render(DARK_FADE, outline=False)).astype(int)
+    shipped = np.asarray(Image.open(ASSETS / "logo-q.png").convert("RGBA")).astype(int)
+    dark_diff = float(np.abs(dark[..., 3] - shipped[..., 3]).mean())
+    print(f"light: max channel diff {light_diff} (limit {LIGHT_MAX_DIFF})")
+    print(f"dark: mean alpha diff {dark_diff:.3f} (limit {DARK_MEAN_ALPHA_DIFF})")
+    return 0 if light_diff <= LIGHT_MAX_DIFF and dark_diff <= DARK_MEAN_ALPHA_DIFF else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -398,7 +398,7 @@ fn draw_home_tab(
     let q = egui::Rect::from_center_size(egui::pos2(q_x, rect.center().y), HOME_Q);
     let q = ui.painter().round_rect_to_pixels(q); // One grid for the Q and its text.
     let dark = palette.resolved.dark;
-    let mark = mark_box(q, dark, label.is_some());
+    let mark = mark_box(q, dark, label.is_some(), ui.ctx().pixels_per_point());
     crate::surfaces::home::paint_logo(ui, mark, crate::surfaces::home::Logo::mark(dark));
     if let Some(([uan, tick], _)) = label {
         let mut x = q.right() + HOME_LOGO_GAP_PX;
@@ -417,24 +417,24 @@ fn draw_home_tab(
 
 /// Where the Q is drawn inside its layout box `q`. The Light theme's edged Q
 /// reads small beside the wordmark, so it grows by [`LIGHT_Q_SCALE`] about its
-/// right edge and centre line and, with the wordmark beside it, moves
-/// [`LIGHT_Q_SHIFT_PT`] toward it; the text keeps its place. Dark is `q` itself.
-pub(crate) fn mark_box(q: egui::Rect, dark: bool, labelled: bool) -> egui::Rect {
+/// centre and, with the wordmark beside it, sits with its right edge
+/// [`LIGHT_Q_SHIFT_PT`] past `q`'s, toward the text; the text keeps its place.
+/// The box is square in whole physical pixels. Dark is `q` itself.
+pub(crate) fn mark_box(q: egui::Rect, dark: bool, labelled: bool, ppp: f32) -> egui::Rect {
     if dark {
         return q;
     }
-    let size = q.size() * LIGHT_Q_SCALE;
-    let grow = size.x - q.width();
+    let side = (q.width() * LIGHT_Q_SCALE * ppp).round() / ppp;
+    let grow = side - q.width();
     let right = q.right()
         + if labelled {
             LIGHT_Q_SHIFT_PT
         } else {
             grow / 2.0
         };
-    egui::Rect::from_min_size(
-        egui::pos2(right - size.x, q.center().y - size.y / 2.0),
-        size,
-    )
+    let snap = |v: f32| (v * ppp).round() / ppp;
+    let min = egui::pos2(snap(right - side), snap(q.center().y - side / 2.0));
+    egui::Rect::from_min_size(min, egui::Vec2::splat(side))
 }
 
 /// A lit tab's sheet, or the separator an unlit one ends with when
