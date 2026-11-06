@@ -1,7 +1,7 @@
 //! The per-tab workspace at the window: one state behind chip and snapshot, an
 //! edit that stays on its tab until Save to, and a first run no one can see.
 use super::*;
-use crate::app::tab_workspaces::{live_recipe, observe_tab};
+use crate::app::tab_workspaces::{BookTabs, live_recipe};
 use quantick_control_handlers::workspace_book::{
     WorkspaceBookHost, save_tab_to, set_tab_workspace,
 };
@@ -19,6 +19,11 @@ fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u64, u64) {
     let (first, second) = (app.runtime.tabs.id_at(0), app.runtime.tabs.id_at(1));
     run_frame(&mut app, &egui::Context::default());
     (app, first, second)
+}
+
+/// Read one tab now, as the frame's upkeep does for the active one.
+fn observe_tab(app: &mut QuantickApp, tab: u64) {
+    quantick_workspace::book_upkeep::observe_tab(&mut BookTabs(app), tab);
 }
 
 fn edit_split(app: &mut QuantickApp, tab: u64, fraction: f32) {
@@ -50,7 +55,7 @@ fn ema() -> quantick_workspace::indicator_document::SavedIndicator {
 
 /// A layer the pane at `index` reads, and the state it reads in.
 fn some_layer(app: &QuantickApp, tab: u64, index: usize) -> (ChartLayer, bool) {
-    let live = live_recipe(app, tab).expect("an open tab");
+    let live = live_recipe(&app.runtime, tab).expect("an open tab");
     let (layer, on) = live
         .for_pane(index)
         .1
@@ -87,7 +92,7 @@ fn a_first_run_on_a_two_context_desk_seeds_after_every_pane_stands() {
     assert!(!state.modified, "a seeded tab reads as clean");
     let recipe = store.book().recipe(state.workspace).expect("its recipe");
     assert_eq!(recipe.context_panes.len(), 2, "both context panes");
-    assert_eq!(Some(recipe), live_recipe(&app, tab).as_ref());
+    assert_eq!(Some(recipe), live_recipe(&app.runtime, tab).as_ref());
 }
 
 /// A recipe of two context panes reaches the second pane too, which is built a
@@ -100,7 +105,7 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
     tab.set_layout(CanvasLayout::TimeTimeAndFlow);
     frames(&mut app, 4);
     let (layer, on) = some_layer(&app, first, 2);
-    let mut two = live_recipe(&app, first).expect("an open tab");
+    let mut two = live_recipe(&app.runtime, first).expect("an open tab");
     assert_eq!(two.context_panes.len(), 2);
     two.context_panes[1].indicators = vec![ema()];
     two.context_panes[1]
@@ -112,7 +117,7 @@ fn a_switch_to_a_two_pane_recipe_reaches_both_context_panes() {
 
     set_tab_workspace(&mut app, second, "Two").expect("a known workspace");
     frames(&mut app, 5);
-    let live = live_recipe(&app, second).expect("an open tab");
+    let live = live_recipe(&app.runtime, second).expect("an open tab");
     assert_eq!(live.context_panes.len(), 2);
     assert_eq!(live.context_panes[1].indicators, [ema()], "the second pane");
     assert_eq!(live.context_panes[1].layers.get(layer.id()), Some(&!on));
@@ -134,7 +139,7 @@ fn footprint_style_indicators_and_layers_stay_on_their_tab_until_save_to() {
     frames(&mut app, 3);
     let edited = app.runtime.tabs.active_id();
     let other = if edited == first { second } else { first };
-    let before = live_recipe(&app, other).expect("an open tab");
+    let before = live_recipe(&app.runtime, other).expect("an open tab");
 
     let window = app.runtime.footprint_config.clone();
     let style = crate::footprint_config::FootprintStyle::ALL
@@ -156,12 +161,12 @@ fn footprint_style_indicators_and_layers_stay_on_their_tab_until_save_to() {
     let store = &app.runtime.workspace.book;
     assert!(store.tab_row(edited).1, "the edits mark their tab");
     assert!(!store.tab_row(other).1, "and no other");
-    assert_eq!(live_recipe(&app, other).as_ref(), Some(&before));
+    assert_eq!(live_recipe(&app.runtime, other).as_ref(), Some(&before));
 
     let saved = save_tab_to(&mut app, edited).expect("saved");
     assert_eq!(saved.tabs_changed, [other]);
     frames(&mut app, 3);
-    let followed = live_recipe(&app, other).expect("an open tab");
+    let followed = live_recipe(&app.runtime, other).expect("an open tab");
     assert_eq!(followed.footprint_style.as_deref(), Some(style.id()));
     assert_eq!(followed.flow_indicators, [ema()]);
     assert_eq!(followed.layers.get(layer.id()), Some(&!on));
@@ -220,8 +225,19 @@ fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() 
         assert!(state.workspace.starts_with("from "));
         assert_eq!(
             store.book().recipe(state.workspace),
-            live_recipe(&app, tab).as_ref(),
+            live_recipe(&app.runtime, tab).as_ref(),
             "the recipe is what the tab shows"
+        );
+        assert_eq!(store.tab_row(tab), (state.workspace.to_owned(), false));
+    }
+    // The upkeep's save reached the disk: the seeds are there on a reopen.
+    let book = &app.runtime.workspace.book;
+    let reopened = quantick_stores::workspaces::WorkspaceBookStore::open_beside(&layouts);
+    for tab in [first, second] {
+        let seeded = book.book().tab_state(tab).expect("seeded").workspace;
+        assert!(
+            reopened.book().recipe(seeded).is_some(),
+            "{seeded} was saved"
         );
     }
 }
@@ -250,13 +266,13 @@ fn an_edit_on_one_tab_leaves_another_on_the_same_workspace_alone_until_save_to()
     let shared = app.runtime.workspace.book.tab_row(first).0;
     set_tab_workspace(&mut app, second, &shared).expect("a known workspace");
     frames(&mut app, 1);
-    let before = live_recipe(&app, second).expect("an open tab");
+    let before = live_recipe(&app.runtime, second).expect("an open tab");
 
     edit_split(&mut app, first, 0.31);
     observe_tab(&mut app, second);
     assert!(app.runtime.workspace.book.tab_row(first).1);
     assert!(!app.runtime.workspace.book.tab_row(second).1);
-    assert_eq!(live_recipe(&app, second).as_ref(), Some(&before));
+    assert_eq!(live_recipe(&app.runtime, second).as_ref(), Some(&before));
 
     let saved = save_tab_to(&mut app, first).expect("saved");
     assert_eq!(saved.tabs_changed, [second]);
@@ -264,7 +280,7 @@ fn an_edit_on_one_tab_leaves_another_on_the_same_workspace_alone_until_save_to()
     let store = &app.runtime.workspace.book;
     assert!(!store.tab_row(first).1);
     assert!(!store.tab_row(second).1);
-    let followed = live_recipe(&app, second).expect("an open tab");
+    let followed = live_recipe(&app.runtime, second).expect("an open tab");
     assert_eq!(followed.split_fraction, Some(0.31));
 }
 
@@ -326,7 +342,7 @@ fn a_new_tab_on_the_factory_default_keeps_its_charts_and_its_indicators() {
         "the feed's declaration"
     );
     assert!(!tab.time_panes.is_empty());
-    let live = live_recipe(&app, third).expect("an open tab");
+    let live = live_recipe(&app.runtime, third).expect("an open tab");
     assert_eq!(
         live.flow_indicators.len(),
         1,
@@ -349,7 +365,7 @@ fn switching_to_the_factory_default_is_never_a_bare_canvas() {
         ("Default".to_owned(), false),
         "the arrangement it landed on is no edit"
     );
-    let live = live_recipe(&app, first).expect("an open tab");
+    let live = live_recipe(&app.runtime, first).expect("an open tab");
     assert_eq!(live.flow_indicators, strip);
 }
 
@@ -363,7 +379,7 @@ fn a_context_pane_layer_edit_lands_on_that_pane_in_the_copy() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let live = live_recipe(&app, first).expect("an open tab");
+    let live = live_recipe(&app.runtime, first).expect("an open tab");
     let (layer, was) = live.context_panes[0]
         .layers
         .iter()
@@ -426,7 +442,7 @@ fn the_real_frame_adopts_a_restored_tab_on_its_saved_workspace() {
         app.runtime.workspace.book.tab_row(restored),
         ("Scalp".to_owned(), false)
     );
-    let live = live_recipe(&app, restored).expect("an open tab");
+    let live = live_recipe(&app.runtime, restored).expect("an open tab");
     assert_eq!(
         live.split_fraction,
         Some(0.31),
