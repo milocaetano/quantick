@@ -36,6 +36,7 @@ pub(in crate::pane) struct GridPass<'a, 'b> {
     pub scale: &'a PriceScale,
     pub claims: &'a PriceAxisClaims<'b>,
     pub style: &'a ChartStyle,
+    pub snap_horizontal: bool,
 }
 pub(in crate::pane) struct LastPricePass<'a> {
     pub painter: &'a egui::Painter,
@@ -70,9 +71,10 @@ fn grid(p: &mut GridPass<'_, '_>) {
         scale,
         claims,
         style,
+        snap_horizontal,
     } = *p;
 
-    let grid = grid_color(style);
+    let grid = egui::Stroke::new(1.0_f32, grid_color(style));
     let (lo, hi) = scale.range();
     let font = palette.axis_font(chart::AXIS_LABEL_FONT_PX);
     // Measured once per frame, the way the time strip measures its own:
@@ -90,13 +92,12 @@ fn grid(p: &mut GridPass<'_, '_>) {
         // The *line* is drawn either way: a gridline under a chip is
         // still the grid, and hiding it would put a gap in the chart
         // wherever the pointer went.
-        painter.line_segment(
-            [
-                egui::pos2(chart_rect.left(), y),
-                egui::pos2(chart_rect.right(), y),
-            ],
-            egui::Stroke::new(1.0_f32, grid),
-        );
+        let line_y = if snap_horizontal {
+            painter.round_to_pixel_center(y)
+        } else {
+            y
+        };
+        painter.hline(chart_rect.x_range(), line_y, grid);
         // The chips on this axis are the same font and padding as the
         // labels, so one extent answers for both — unlike the time strip,
         // where they differ.
@@ -112,13 +113,7 @@ fn grid(p: &mut GridPass<'_, '_>) {
         );
     }
     // The axis dividing line.
-    painter.line_segment(
-        [
-            egui::pos2(axis_x, chart_rect.top()),
-            egui::pos2(axis_x, chart_rect.bottom()),
-        ],
-        egui::Stroke::new(1.0_f32, grid),
-    );
+    painter.vline(axis_x, chart_rect.y_range(), grid);
 }
 fn last_price(p: &mut LastPricePass<'_>) {
     let LastPricePass {

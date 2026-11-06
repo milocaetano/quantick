@@ -172,6 +172,9 @@ impl ChartPane {
                 levels: &levels,
             },
             style: chrome.style,
+            snap_horizontal: !axes.resolved.dark
+                && self.orderflow.is_none()
+                && chrome.style.ownership.grid == quantick_appearance::Inheritance::Theme,
         });
         // The day rule over the grid, under the candles; none in tape-only.
         let day_turns = self.day_turns(&frame, chrome);

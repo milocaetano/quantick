@@ -50,6 +50,7 @@ mod drawing_demo_baselines;
 mod drawing_magnet_tests;
 mod drawings_tests;
 mod feeds_sources_tests;
+mod grid_pixel_tests;
 mod history_interaction_tests;
 mod history_publication_tests;
 mod history_reach_completion_tests;
