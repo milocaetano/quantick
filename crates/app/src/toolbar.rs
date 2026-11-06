@@ -46,9 +46,9 @@ pub const TOOLBAR_HEIGHT: f32 = 44.0;
 const DOCK_INSET_PX: f32 = (TOOLBAR_ICON.hit - 12.0) / 2.0;
 /// Gap between the market button and REC, in pixels.
 const MARKET_REC_GAP_PX: f32 = 10.0;
-/// The row's padding: 28 px to the miniature's frame, 12 px after the tray's glyph.
+/// The row's padding: 22 px to the miniature's frame, 12 px after the tray's glyph.
 const ROW_MARGIN: egui::Margin = egui::Margin {
-    left: 28.0 - FACE_INSET_PX,
+    left: 22.0 - FACE_INSET_PX,
     right: 12.0 - DOCK_INSET_PX,
     top: 0.0,
     bottom: 0.0,

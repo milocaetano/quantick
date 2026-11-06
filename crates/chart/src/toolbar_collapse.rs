@@ -25,7 +25,7 @@ const W_HISTORY: f32 = 150.0;
 /// One 28 px icon button (PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
 /// The layout picker, first in the row: its miniature's hit target.
-pub const W_PICKER: f32 = 54.0;
+pub const W_PICKER: f32 = 46.0;
 /// Which groups stay inline at the current width. Everything folded is
 /// reachable through the `⋯` overflow menu instead — never hidden.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,8 +194,8 @@ mod tests {
             feed_full_name: false,
             ..CollapsePlan::FULL
         };
-        assert_eq!(CollapsePlan::FULL.width(FLAT_TRADE_W), 804.0);
-        assert_eq!(shrunk.width(FLAT_TRADE_W), 714.0);
+        assert_eq!(CollapsePlan::FULL.width(FLAT_TRADE_W), 796.0);
+        assert_eq!(shrunk.width(FLAT_TRADE_W), 706.0);
     }
 
     #[test]

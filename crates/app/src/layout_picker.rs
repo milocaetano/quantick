@@ -17,10 +17,10 @@ use crate::theme;
 use crate::widgets::{CORNER_RADIUS, IconButton, TOOLBAR_ICON};
 
 /// The button's own miniature of the layout on screen, in pixels.
-const FACE_THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(46.0, 32.0);
+const FACE_THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(38.0, 26.0);
 /// The button's hit target: the miniature in a ring of the hover fill.
 pub(crate) const FACE_HIT_SIZE: egui::Vec2 =
-    egui::vec2(quantick_chart::toolbar_collapse::W_PICKER, 38.0);
+    egui::vec2(quantick_chart::toolbar_collapse::W_PICKER, 32.0);
 const _: () = assert!(
     FACE_THUMBNAIL_SIZE.x < FACE_HIT_SIZE.x
         && FACE_THUMBNAIL_SIZE.y < FACE_HIT_SIZE.y
