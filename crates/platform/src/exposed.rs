@@ -1,21 +1,38 @@
 //! The exposed native window under a physical desktop pointer, independent of pointer capture.
-#[cfg(all(windows, not(test)))]
-use super::Point;
-use super::WindowId;
 
-pub(super) fn title(window: WindowId) -> String {
-    format!("Quantick - Market window {}", window.0)
+const TITLE_PREFIX: &str = "Quantick - Market window ";
+
+/// The native title of market window `window`: the identity the exposed-window
+/// lookup and the DPI adapter read back from the OS.
+pub fn window_title(window: u64) -> String {
+    format!("{TITLE_PREFIX}{window}")
 }
 
-#[cfg(all(windows, not(test)))]
-pub(super) fn at(point: Point) -> Option<WindowId> {
+/// The number of this process's market window exposed at physical desktop
+/// pixel (`x`, `y`), by z-order, even while another window holds the mouse
+/// capture. `None` for a foreign or untitled window, a non-finite point, and
+/// on every target but Windows.
+pub fn window_at(x: f32, y: f32) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        exposed_at(x, y)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (x, y);
+        None
+    }
+}
+
+#[cfg(windows)]
+fn exposed_at(x: f32, y: f32) -> Option<u64> {
     use windows_sys::Win32::{
         Foundation::POINT,
         UI::WindowsAndMessaging::{
             GA_ROOT, GetAncestor, GetWindowTextW, GetWindowThreadProcessId, WindowFromPoint,
         },
     };
-    if !point.x.is_finite() || !point.y.is_finite() {
+    if !x.is_finite() || !y.is_finite() {
         return None;
     }
     // SAFETY: this is a read-only hit test. No returned handle is retained or dereferenced.
@@ -25,8 +42,8 @@ pub(super) fn at(point: Point) -> Option<WindowId> {
     unsafe {
         let hwnd = GetAncestor(
             WindowFromPoint(POINT {
-                x: point.x.round() as i32,
-                y: point.y.round() as i32,
+                x: x.round() as i32,
+                y: y.round() as i32,
             }),
             GA_ROOT,
         );
@@ -44,20 +61,18 @@ pub(super) fn at(point: Point) -> Option<WindowId> {
         parse(&text)
     }
 }
+
 #[cfg(any(windows, test))]
-fn parse(value: &str) -> Option<WindowId> {
-    value
-        .strip_prefix("Quantick - Market window ")?
-        .parse()
-        .ok()
-        .map(WindowId)
+fn parse(value: &str) -> Option<u64> {
+    value.strip_prefix(TITLE_PREFIX)?.parse().ok()
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn native_window_titles_map_only_our_bounded_identity_format() {
-        assert_eq!(parse(&title(WindowId(17))), Some(WindowId(17)));
+        assert_eq!(parse(&window_title(17)), Some(17));
         for title in [
             "Quantick",
             "Other app",
@@ -66,5 +81,11 @@ mod tests {
         ] {
             assert!(parse(title).is_none());
         }
+    }
+
+    #[test]
+    fn a_non_finite_point_exposes_no_window() {
+        assert_eq!(window_at(f32::NAN, 0.0), None);
+        assert_eq!(window_at(0.0, f32::INFINITY), None);
     }
 }

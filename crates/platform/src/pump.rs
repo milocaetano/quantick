@@ -6,8 +6,9 @@
 //! the ordinary eframe update still owns all processing and child painting.
 //! No extra worker, app callback, visibility change or window subclassing.
 
+/// One UI-thread timer that schedules the root's paint while it is hidden.
 #[derive(Default)]
-pub(in crate::app) struct HiddenRootPump {
+pub struct HiddenRootPump {
     #[cfg(windows)]
     hwnd: isize,
     #[cfg(windows)]
@@ -15,7 +16,8 @@ pub(in crate::app) struct HiddenRootPump {
 }
 
 impl HiddenRootPump {
-    pub(in crate::app) fn attach(&mut self, _handle: &impl raw_window_handle::HasWindowHandle) {
+    /// Bind the pump, and the root's DPI adapter, to eframe's root surface.
+    pub fn attach(&mut self, _handle: &impl raw_window_handle::HasWindowHandle) {
         #[cfg(windows)]
         {
             self.set_active(false);
@@ -26,11 +28,12 @@ impl HiddenRootPump {
                     raw_window_handle::RawWindowHandle::Win32(handle) => handle.hwnd.get(),
                     _ => 0,
                 });
-            super::dpi::attach_root(self.hwnd);
+            crate::dpi::attach_root(self.hwnd);
         }
     }
 
-    pub(in crate::app) fn set_active(&mut self, _active: bool) {
+    /// Keep posting the hidden root's paint while `active`; stop otherwise.
+    pub fn set_active(&mut self, _active: bool) {
         #[cfg(windows)]
         {
             use windows_sys::Win32::UI::WindowsAndMessaging::{KillTimer, SetTimer};
