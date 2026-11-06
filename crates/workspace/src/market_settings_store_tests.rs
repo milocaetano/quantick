@@ -169,6 +169,43 @@ fn drawing_changes_count_a_duplicate_and_ignore_equal_ends() {
     assert_eq!(saved.drawing_changes(&saved, &flow), 0);
 }
 
+/// A re-cut (flow bar size, timeframe) or a relaunch re-derives a dated
+/// anchor's bar offset from its market time, and a pane may hand a mark a
+/// fresh id: neither is the trader's edit, so a held store counts neither.
+/// An undated anchor has only its offset, so moving it still counts.
+#[test]
+fn a_re_derived_bar_offset_or_id_is_no_drawing_change() {
+    let flow = key("mt5", PaneRole::Flow);
+    let mut saved = MarketSettings::default();
+    saved.replace(&flow, vec![level(None, 100.0), level(Some(2), 90.0)], known);
+    let mut recut = vec![level(Some(7), 100.0), level(Some(2), 90.0)];
+    for mark in &mut recut {
+        mark.points[0].bar = 133.0;
+    }
+    let mut now = saved.clone();
+    now.replace(&flow, recut.clone(), known);
+    assert_eq!(now.drawing_changes(&saved, &flow), 0, "a re-cut is no edit");
+    recut.push(level(Some(9), 80.0));
+    now.replace(&flow, recut.clone(), known);
+    assert_eq!(now.drawing_changes(&saved, &flow), 1, "only the new mark");
+    let undated = |bar: f64| {
+        let mut mark = level(Some(4), 70.0);
+        mark.points[0] = SavedPoint {
+            time_ms: None,
+            price: 70.0,
+            bar,
+        };
+        mark
+    };
+    saved.replace(&flow, vec![undated(210.0)], known);
+    now.replace(&flow, vec![undated(214.0)], known);
+    assert_eq!(
+        now.drawing_changes(&saved, &flow),
+        1,
+        "its offset is its anchor"
+    );
+}
+
 /// The revision moves with every change a held count reads, and only then.
 #[test]
 fn the_revision_moves_with_what_a_held_count_reads() {

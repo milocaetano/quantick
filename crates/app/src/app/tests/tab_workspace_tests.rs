@@ -806,6 +806,68 @@ fn autosave_off_holds_a_drawing_until_save_writes_it() {
     assert!(written.contains("horizontal-line"), "{written}");
 }
 
+/// A flow bar-size change re-cuts the series, so a saved level's bar offset
+/// moves with it. That is the chart re-deriving its anchor from market time,
+/// not the trader editing the drawing: nothing marks and nothing is held.
+#[test]
+fn a_flow_bar_size_change_never_counts_as_a_drawing_edit() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let layouts = crate::scratch::ScratchFile::new("workspace-recut-drawing", "layouts.toml");
+    app.runtime
+        .workspace
+        .set_layouts_path(layouts.to_path_buf());
+    app.runtime.workspace.layouts_mut().set_blocked(false);
+    (app.runtime.workspace.layouts_mut().market_mut()).set_blocked(false);
+    frames(&mut app, 2);
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    let tab = app.runtime.tabs.active_id();
+    let slot = app.active_tab().pane(PaneSide::Flow).slots() / 2;
+    let flow = app.active_tab().pane(PaneSide::Flow);
+    let time = flow.slot_open_time(slot).expect("bars to anchor on");
+    let tool = crate::drawings::DrawingTool::by_id("horizontal-line").expect("the tool");
+    #[allow(clippy::cast_precision_loss)]
+    let point = crate::drawings::ChartPoint {
+        bar: slot as f32,
+        price: 100.0,
+        time_ms: Some(time),
+    };
+    let flow = app.active_tab_mut().pane_mut(PaneSide::Flow);
+    assert!(flow.drawings.place(tool, point), "a level places");
+    frames(&mut app, 2);
+    save_tab_to(&mut app, tab).expect("saved");
+    frames(&mut app, 1);
+    let held = |app: &QuantickApp| app.runtime.workspace.book.book().unsaved_edits(tab);
+    assert_eq!(held(&app), None, "Save left nothing held");
+    let wider = quantick_engine::bar_registry::BUILTIN_BARS.parse("tick:3");
+    let tab_mut = app.active_tab_mut();
+    assert!(
+        tab_mut
+            .set_pane_bar_spec(0, wider.expect("a tick bar"))
+            .unwrap()
+    );
+    frames(&mut app, 3);
+    let bars = |app: &QuantickApp| {
+        let marks = app.active_tab().pane(PaneSide::Flow).drawings.items();
+        marks
+            .iter()
+            .map(|mark| mark.points[0].bar)
+            .collect::<Vec<_>>()
+    };
+    #[allow(clippy::cast_precision_loss)]
+    let moved = bars(&app) != [slot as f32];
+    assert!(moved, "the re-cut moved the bar offset: {:?}", bars(&app));
+    let state = app.runtime.workspace.book.book().tab_state(tab);
+    assert!(!state.expect("adopted").modified, "a re-cut is no edit");
+    assert_eq!(held(&app), None, "and holds nothing");
+    // The next real edit writes the whole pane back, the re-cut level with
+    // it: only the new level is the trader's.
+    place_level(&mut app, PaneSide::Flow, 101.0);
+    frames(&mut app, 2);
+    let changes = held(&app).expect("the new level is held").changes;
+    assert_eq!(changes, ["1 drawing"], "the re-cut level is not counted");
+}
+
 /// The pane timeframe is the tab's: a switch onto a workspace saved from a tab
 /// on another interval keeps the pane on its own.
 #[test]

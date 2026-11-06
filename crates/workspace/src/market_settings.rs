@@ -202,9 +202,11 @@ impl MarketSettings {
         self.drawings.iter().map(|set| set.items.len()).sum()
     }
 
-    /// How many of `key`'s drawings differ from `saved`'s: added, removed or
-    /// changed, whichever side counts more. The sets are compared as
-    /// multisets, so a duplicated mark counts as one added.
+    /// How many of `key`'s drawings the trader changed since `saved`: added,
+    /// removed or edited, whichever side counts more. The sets are compared
+    /// as multisets, so a duplicated mark counts as one added. What the chart
+    /// derives is not an edit (see [`settled`]): a re-cut or a relaunch that
+    /// moved a dated anchor's bar offset counts nothing.
     ///
     /// Linear in the common case: the equal ends (a mark added, moved or
     /// erased leaves the rest in place) are walked once, and only the middle
@@ -212,8 +214,9 @@ impl MarketSettings {
     /// entry `==` does but `-0.0` from `0.0`.
     #[must_use]
     pub fn drawing_changes(&self, saved: &Self, key: &DrawingKey) -> usize {
-        let (now, then) = (self.drawings(key), saved.drawings(key));
-        let head = now.iter().zip(then).take_while(|(a, b)| a == b).count();
+        let now: Vec<SavedDrawing> = self.drawings(key).iter().map(settled).collect();
+        let then: Vec<SavedDrawing> = saved.drawings(key).iter().map(settled).collect();
+        let head = now.iter().zip(&then).take_while(|(a, b)| a == b).count();
         let (now, then) = (&now[head..], &then[head..]);
         let ends = now.iter().rev().zip(then.iter().rev());
         let tail = ends.take_while(|(a, b)| a == b).count();
@@ -423,6 +426,23 @@ fn same_mark(held: &SavedDrawing, item: &SavedDrawing) -> bool {
         drawing
     };
     plain(held) == plain(item)
+}
+
+/// An entry as the trader made it, without what the chart derives: its id is
+/// the holding pane's, and a dated anchor's bar offset is re-derived from its
+/// market time on every re-cut (flow bar size, timeframe) and relaunch. An
+/// undated anchor keeps its offset, the only thing that places it.
+fn settled(entry: &SavedDrawing) -> SavedDrawing {
+    let mut entry = entry.clone();
+    entry.id = None;
+    for point in entry
+        .points
+        .iter_mut()
+        .filter(|point| point.time_ms.is_some())
+    {
+        point.bar = 0.0;
+    }
+    entry
 }
 
 /// An entry's tool and anchors as a migration found them. FNV-1a: stable across
