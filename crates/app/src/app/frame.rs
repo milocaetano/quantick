@@ -89,6 +89,68 @@ pub(super) fn settle(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     run_scope(app, ctx, now, StageScope::Settle);
 }
 
+/// Rail shortcuts (Esc, 1, 2) and the drawing keys. Chrome panels then
+/// claim their zones outside-in (§5): menu and toolbar on top, the status
+/// line at the very bottom with the replay transport directly above it,
+/// then the edge-docked drawing rail and the right dock. The chart keeps
+/// whatever remains.
+fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    app.toolrail.handle_keys(ctx);
+    let effects = app.drawings.handle_drawing_keys(
+        &mut super::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
+        &mut app.toolrail,
+        &mut *app.audio.alerts,
+        ctx,
+        now,
+        crate::dock::holds_pointer(&app.dock, ctx),
+    );
+    effects.apply(&mut app.surfaces.toast, &mut app.toolrail);
+}
+
+/// Respawn the shown tab's feed if its feed/symbol selection changed
+/// (resets the chart) and apply its spec; a changed market moves its
+/// layouts along.
+fn apply_feed_switch(app: &mut QuantickApp) {
+    let (tab, config) = app.active_with_config();
+    let changed =
+        tab.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
+    tab.maybe_switch_feed(config);
+    app.active_tab_mut().apply_spec_changes();
+    if changed {
+        app.layout_adapter().follow_market_changes();
+    }
+}
+
+/// Settle the deferred layouts, a frame after the click that armed them,
+/// so the frame carrying the change paints its overlay first.
+fn apply_layout_switches(app: &mut QuantickApp) {
+    for (tab_id, tab) in app.runtime.tabs.iter_with_ids_mut() {
+        tab.apply_pending_layout(tab_id, &app.config, &app.runtime.style, &mut app.pane_ids);
+    }
+    // Right after panes appear and markets switch, so a pane built this
+    // frame is seeded this frame and a tab that changed symbol swaps its
+    // drawings before anything paints them.
+    app.layout_adapter().maintain_layouts();
+    super::tab_workspaces::maintain(app);
+}
+
+/// Home's page where the chart would be, with the canvas's answers seeded
+/// for the tail.
+fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &mut FrameScratch) {
+    let background = scratch
+        .background
+        .unwrap_or_else(|| pane::background_color(&app.runtime.style));
+    let popup_tab = app.runtime.tabs.active_id();
+    scratch.canvas =
+        canvas::CanvasAnswers::seeded(popup_tab, app.chrome.feed_popup_tab, &scratch.status);
+    app.drawings
+        .chrome
+        .sync_content_editing(&mut app.runtime.tabs);
+    if super::home_wiring::draw_stage(ctx, app.active_tab_mut(), background) {
+        app.surfaces.market_palette.open("", None);
+    }
+}
+
 #[cfg(test)]
 impl QuantickApp {
     /// A frame whose tail runs `stages` in the given order: the mutant-order
@@ -243,7 +305,7 @@ impl QuantickApp {
                 super::home_wiring::observe_market(&self.runtime.tabs, surface);
                 self.handle_tab_keys(ctx);
             }
-            FrameStage::MarketKeys => self.handle_market_keys(ctx, now),
+            FrameStage::MarketKeys => handle_market_keys(self, ctx, now),
             FrameStage::MenuBar => {
                 self.draw_menu_bar(ctx);
                 if let Some(access) = self.control.control_access.as_mut() {
@@ -300,12 +362,12 @@ impl QuantickApp {
                     self.resolve_drawing_response(ask, now);
                 }
             }
-            FrameStage::LayoutSwitches => self.apply_layout_switches(),
-            FrameStage::FeedSwitch => self.apply_feed_switch(),
+            FrameStage::LayoutSwitches => apply_layout_switches(self),
+            FrameStage::FeedSwitch => apply_feed_switch(self),
             FrameStage::MirrorLoadingWaits => {
                 panels::mirror_loading_waits(&self.replay_view, &mut self.runtime.tabs);
             }
-            FrameStage::HomeCanvas => self.draw_home_canvas_stage(ctx, scratch),
+            FrameStage::HomeCanvas => draw_home_canvas_stage(self, ctx, scratch),
             FrameStage::Canvas => self.draw_canvas_stage(ctx, scratch),
             FrameStage::DrawingChrome => self.draw_drawing_chrome_stage(ctx, now, scratch),
             // The menus above may have disarmed a bot over a resting retest
@@ -384,24 +446,6 @@ impl QuantickApp {
         self.chrome
             .harness
             .apply_replay_restart(&mut self.runtime.tabs, &self.config);
-    }
-
-    /// Rail shortcuts (Esc, 1, 2) and the drawing keys. Chrome panels then
-    /// claim their zones outside-in (§5): menu and toolbar on top, the status
-    /// line at the very bottom with the replay transport directly above it,
-    /// then the edge-docked drawing rail and the right dock. The chart keeps
-    /// whatever remains.
-    fn handle_market_keys(&mut self, ctx: &egui::Context, now: Instant) {
-        self.toolrail.handle_keys(ctx);
-        let effects = self.drawings.handle_drawing_keys(
-            &mut super::drawing_controller::DrawingAccess::new(&mut self.runtime.tabs),
-            &mut self.toolrail,
-            &mut *self.audio.alerts,
-            ctx,
-            now,
-            crate::dock::holds_pointer(&self.dock, ctx),
-        );
-        effects.apply(&mut self.surfaces.toast, &mut self.toolrail);
     }
 
     /// The registered surfaces, then what they asked for. The environment is
@@ -569,55 +613,6 @@ impl QuantickApp {
         }
         self.paper_settings().poll_trades_dir_picker();
         self.workspace_bundle_adapter().poll_picker();
-    }
-
-    /// Respawn the shown tab's feed if its feed/symbol selection changed
-    /// (resets the chart) and apply its spec; a changed market moves its
-    /// layouts along.
-    fn apply_feed_switch(&mut self) {
-        let (tab, config) = self.active_with_config();
-        let changed =
-            tab.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
-        tab.maybe_switch_feed(config);
-        self.active_tab_mut().apply_spec_changes();
-        if changed {
-            self.layout_adapter().follow_market_changes();
-        }
-    }
-
-    /// Settle the deferred layouts, a frame after the click that armed them,
-    /// so the frame carrying the change paints its overlay first.
-    fn apply_layout_switches(&mut self) {
-        for (tab_id, tab) in self.runtime.tabs.iter_with_ids_mut() {
-            tab.apply_pending_layout(
-                tab_id,
-                &self.config,
-                &self.runtime.style,
-                &mut self.pane_ids,
-            );
-        }
-        // Right after panes appear and markets switch, so a pane built this
-        // frame is seeded this frame and a tab that changed symbol swaps its
-        // drawings before anything paints them.
-        self.layout_adapter().maintain_layouts();
-        super::tab_workspaces::maintain(self);
-    }
-
-    /// Home's page where the chart would be, with the canvas's answers seeded
-    /// for the tail.
-    fn draw_home_canvas_stage(&mut self, ctx: &egui::Context, scratch: &mut FrameScratch) {
-        let background = scratch
-            .background
-            .unwrap_or_else(|| pane::background_color(&self.runtime.style));
-        let popup_tab = self.runtime.tabs.active_id();
-        scratch.canvas =
-            canvas::CanvasAnswers::seeded(popup_tab, self.chrome.feed_popup_tab, &scratch.status);
-        self.drawings
-            .chrome
-            .sync_content_editing(&mut self.runtime.tabs);
-        if super::home_wiring::draw_stage(ctx, self.active_tab_mut(), background) {
-            self.surfaces.market_palette.open("", None);
-        }
     }
 
     /// The chart takes whatever the panels left.
