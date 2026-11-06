@@ -150,3 +150,26 @@ pub const READBACKS: &[Readback] = &[
         &[EVERY_OPTIONAL_TEST, HISTORY_TEST],
     ),
 ];
+
+/// Published schemas of the history load and cancel.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "feed-history-load-input-v1.schema.json",
+            schema::<HistoryLoadInput>(),
+        ),
+        (
+            "feed-history-load-result-v1.schema.json",
+            schema::<HistoryLoadResult>(),
+        ),
+        (
+            "feed-history-cancel-input-v1.schema.json",
+            schema::<HistoryCancelInput>(),
+        ),
+        (
+            "feed-history-cancel-result-v1.schema.json",
+            schema::<HistoryCancelResult>(),
+        ),
+    ]
+}
