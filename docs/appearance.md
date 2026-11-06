@@ -4,7 +4,7 @@ Quantick's appearance contract is versioned TOML. The bundled
 [Dark](../crates/appearance/themes/dark.toml) and
 [Light](../crates/appearance/themes/light.toml) documents use the same parser and
 resolver as an authored theme. Start with either file when writing a community
-theme. Tools > Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
+theme. ⋮ › Settings › Display › Theme offers Dark and Light and saves the choice. Installation and distribution are outside this foundation.
 
 Light uses neutral soft-gray surfaces and buttons, near-black text, subtle gray grids, solid green bullish candles and solid black bearish candles on conventional Time charts. Light Bookmap (Trail and Tape) uses a slate `#434A52` plot with the established liquidity ramp, bubbles and translucent candles. Light drawing defaults use amber `#B5832B`; fixed-range profiles use muted blue-gray. Dark retains its established appearance. Typography, spacing and layout are unchanged.
 
@@ -101,6 +101,9 @@ Dark and Slate retain their existing grid.
 Omitting `chart_grid` preserves an explicitly supplied `control` as the grid
 default in either root or Bookmap colors; otherwise it inherits the fallback grid.
 Explicit pane colors and opacity retain their existing ownership.
+Omitting `tab_strip` takes the document's own `inset`; omitting `brand` or
+`replay_ink` takes the bundled theme of the document's `dark` mode, so an
+authored Light file written before these tokens stays Light.
 
 Typography tables use `family = "proportional"` or `"monospace"` and `size` in
 logical pixels, from 6 through 72 inclusive. Each property can be omitted.
@@ -206,7 +209,7 @@ Before a builtin choice is saved, the override selects the appearance store for
 both startup reads and an explicit source apply with `persist: true`; otherwise
 that store is `appearance.toml` in the normal cockpit directory.
 
-Tools > Theme and `appearance.apply` with `builtin` save the complete bundled
+⋮ › Settings › Display › Theme and `appearance.apply` with `builtin` save the complete bundled
 source to a sibling named `<selected filename>.choice.toml`. Startup prefers this
 sibling when present, and subsequent durable source applies write that active
 choice store. The original selected document is preserved, including an authored
@@ -375,7 +378,7 @@ Choose and remember a builtin with `appearance.apply`, version 1:
 
 `builtin` accepts `dark` or `light`. Exactly one of `builtin` and `source` is
 required. The default `persist: false` remains session-only for either input.
-A persistent builtin selection uses the same protected sibling as Tools > Theme.
+A persistent builtin selection uses the same protected sibling as ⋮ › Settings › Display › Theme.
 
 Apply a session candidate with `appearance.apply`, version 1:
 

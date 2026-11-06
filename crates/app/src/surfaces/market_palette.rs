@@ -18,7 +18,6 @@ const TOP_PX: f32 = 56.0;
 const ROW_PX: f32 = 36.0;
 const CHIP: egui::Vec2 = egui::Vec2::splat(20.0);
 const LIST_MAX_PX: f32 = 380.0;
-const SCRIM: Color32 = Color32::from_black_alpha(150);
 const RETURN: &str = egui_phosphor::regular::KEY_RETURN;
 /// The palette answers Tab and the arrows; egui must not move focus on them.
 const LOCKED: egui::EventFilter = egui::EventFilter {
@@ -295,7 +294,7 @@ impl Surface for MarketPaletteSurface {
         let scrim = scrim.fixed_pos(window.min).show(ctx, |ui| {
             let sense = egui::Sense::click_and_drag();
             let (rect, response) = ui.allocate_exact_size(window.size(), sense);
-            ui.painter().rect_filled(rect, 0.0, SCRIM);
+            ui.painter().rect_filled(rect, 0.0, colors.modal_scrim());
             response
         });
         let (width, mut market) = (WIDTH_PX.min(screen.width() - 48.0), None);

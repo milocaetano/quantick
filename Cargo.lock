@@ -2967,6 +2967,7 @@ dependencies = [
 name = "quantick-appearance"
 version = "0.1.0"
 dependencies = [
+ "quantick-workspace",
  "serde",
  "toml 0.8.20",
 ]

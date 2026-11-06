@@ -678,3 +678,17 @@ fn light_uses_neutral_surfaces_green_bulls_and_black_bears_without_typography_ch
     }
     assert_eq!(light.typography, dark.typography);
 }
+
+/// Text on an amber fill (the REPLAY tag, the chosen speed, the replay
+/// actions) reads chip_ink, at 4.5:1 in both themes.
+#[test]
+fn chip_ink_reads_on_amber_in_both_themes() {
+    for theme in [
+        ResolvedTheme::default(),
+        ResolvedTheme::parse(LIGHT).unwrap(),
+    ] {
+        let ratio =
+            contrast::contrast_ratio(theme.color(Token::ChipInk), theme.color(Token::Amber));
+        assert!(ratio >= 4.5, "{}: {ratio}", theme.name);
+    }
+}

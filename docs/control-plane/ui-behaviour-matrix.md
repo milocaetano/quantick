@@ -122,7 +122,7 @@ The three exclusion classes are closed:
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
 | `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | window menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
-| `appearance.configuration` | Apply a complete appearance configuration | Tools > Theme > Dark/Light; versioned TOML or builtin choice through the local control plane | `appearance.apply` | — |
+| `appearance.configuration` | Apply a complete appearance configuration | ⋮ › Settings › Display › Theme › Dark/Light; versioned TOML or builtin choice through the local control plane | `appearance.apply` | — |
 | `indicator.picker.open` | Open and search the indicator library | the ƒx glyph on each pane header, searchable centered modal | `indicator.picker.set` | — |
 | `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | Settings window, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |

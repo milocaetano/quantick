@@ -1,18 +1,7 @@
 //! The market tab strip's colour decisions, so every painter of a tab reads
 //! the same answer (`docs/ux/layout-appearance-2026-11-06`).
 use crate::Token;
-
-/// What a market tab's feed is doing, as the mark beside its symbol says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TabFeed {
-    Live,
-    /// Playing a recording; the tab also says so in words.
-    Replay,
-    /// A live session was lost or needs attention.
-    Disconnected,
-    /// No live session yet.
-    Stopped,
-}
+use quantick_workspace::arrangement::strip::TabFeed;
 
 /// The mark's shape: the state survives without its colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,45 +11,25 @@ pub enum MarkShape {
     Ring,
 }
 
-impl TabFeed {
-    /// A recording wins; a session needing attention reads as disconnected.
-    #[must_use]
-    pub const fn of(replaying: bool, connected: bool, attention: bool) -> Self {
-        match (replaying, attention, connected) {
-            (true, _, _) => Self::Replay,
-            (false, true, _) => Self::Disconnected,
-            (false, false, true) => Self::Live,
-            (false, false, false) => Self::Stopped,
-        }
+/// The mark a feed state wears: its shape and its ink. Which state a tab is
+/// in is `quantick_workspace`'s rule; this is only how it looks.
+#[must_use]
+pub const fn feed_shape(feed: TabFeed) -> MarkShape {
+    match feed {
+        TabFeed::Live => MarkShape::Dot,
+        TabFeed::Replay => MarkShape::Triangle,
+        TabFeed::Disconnected | TabFeed::Stopped => MarkShape::Ring,
     }
+}
 
-    #[must_use]
-    pub const fn shape(self) -> MarkShape {
-        match self {
-            Self::Live => MarkShape::Dot,
-            Self::Replay => MarkShape::Triangle,
-            Self::Disconnected | Self::Stopped => MarkShape::Ring,
-        }
-    }
-
-    /// Amber is not here: on a tab it means unsaved edits.
-    #[must_use]
-    pub const fn token(self) -> Token {
-        match self {
-            Self::Live => Token::BuyInk,
-            Self::Replay => Token::ReplayInk,
-            Self::Disconnected => Token::Warn,
-            Self::Stopped => Token::TextFaint,
-        }
-    }
-
-    /// The word printed after the symbol: a recording is never passed off as live.
-    #[must_use]
-    pub const fn word(self) -> Option<&'static str> {
-        match self {
-            Self::Replay => Some("Replay"),
-            _ => None,
-        }
+/// Amber is not here: on a tab it means unsaved edits.
+#[must_use]
+pub const fn feed_token(feed: TabFeed) -> Token {
+    match feed {
+        TabFeed::Live => Token::BuyInk,
+        TabFeed::Replay => Token::ReplayInk,
+        TabFeed::Disconnected => Token::Warn,
+        TabFeed::Stopped => Token::TextFaint,
     }
 }
 
@@ -75,7 +44,7 @@ pub const fn tab_fill(selected: bool, lit: bool) -> Option<Token> {
     }
 }
 
-/// A tab's text and glyphs: the Home wordmark's "uan", a symbol, the ×.
+/// A market tab's text and glyphs: its symbol and the ×.
 #[must_use]
 pub const fn tab_ink(lit: bool) -> Token {
     if lit {
@@ -91,7 +60,7 @@ mod tests {
     use crate::{LIGHT, ResolvedTheme, contrast::contrast_ratio};
 
     #[test]
-    fn each_feed_state_has_its_own_shape_or_colour_and_replay_its_word() {
+    fn each_feed_state_has_its_own_shape_or_colour() {
         let all = [
             TabFeed::Live,
             TabFeed::Replay,
@@ -101,23 +70,12 @@ mod tests {
         for (index, a) in all.iter().enumerate() {
             for b in &all[index + 1..] {
                 assert!(
-                    a.shape() != b.shape() || a.token() != b.token(),
+                    feed_shape(*a) != feed_shape(*b) || feed_token(*a) != feed_token(*b),
                     "{a:?} {b:?}"
                 );
-                assert_ne!(a.token(), Token::Amber, "amber means unsaved");
+                assert_ne!(feed_token(*a), Token::Amber, "amber means unsaved");
             }
         }
-        assert_eq!(TabFeed::Replay.word(), Some("Replay"));
-        assert!(all.iter().filter(|feed| feed.word().is_some()).count() == 1);
-    }
-
-    #[test]
-    fn a_recording_wins_and_attention_reads_as_disconnected() {
-        assert_eq!(TabFeed::of(true, false, true), TabFeed::Replay);
-        assert_eq!(TabFeed::of(false, true, false), TabFeed::Live);
-        assert_eq!(TabFeed::of(false, true, true), TabFeed::Disconnected);
-        assert_eq!(TabFeed::of(false, false, true), TabFeed::Disconnected);
-        assert_eq!(TabFeed::of(false, false, false), TabFeed::Stopped);
     }
 
     #[test]
@@ -151,7 +109,7 @@ mod tests {
             // Text at 4.5:1; the wordmark and the feed marks are graphics, 3:1.
             let text = [(Token::TextMuted, 4.5), (Token::ReplayInk, 4.5)];
             let marks = [TabFeed::Live, TabFeed::Disconnected, TabFeed::Stopped];
-            let graphics = marks.map(|feed| (feed.token(), 3.0));
+            let graphics = marks.map(|feed| (feed_token(feed), 3.0));
             for (ink, floor) in text
                 .into_iter()
                 .chain([(Token::Brand, 3.0)])

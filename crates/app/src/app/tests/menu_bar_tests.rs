@@ -129,6 +129,10 @@ fn settings_opens_with_the_switches_that_left_the_menus() {
         Some(SettingsSection::Display),
         "Ctrl+, and the menu row open on Display"
     );
+    // Below the strip, where `settings.open` puts it, never over the tabs.
+    let window = ctx.memory(|memory| memory.area_rect(egui::Id::new("window_settings")));
+    let below = egui::pos2(16.0, crate::app::title_bar::HEIGHT + 16.0);
+    assert_eq!(window.map(|window| window.min), Some(below));
     let mut output = output;
     for section in SettingsSection::ALL {
         click_entry(&mut app, &ctx, &output, section.title());

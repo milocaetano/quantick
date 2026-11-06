@@ -55,6 +55,7 @@ fn show_settings(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<
         .collapsible(false)
         .resizable(false)
         .fixed_size(SETTINGS_SIZE_PX)
+        .default_pos([16.0, super::super::title_bar::HEIGHT + 16.0])
         .show(ctx, |ui| {
             ui.horizontal_top(|ui| {
                 section_list(&mut app.chrome.window_menu, ui);

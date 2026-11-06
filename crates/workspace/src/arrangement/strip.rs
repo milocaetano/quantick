@@ -35,6 +35,42 @@ pub fn home_label_fits(
     markets <= slots && (markets != 1 || lone_fits)
 }
 
+/// What a market tab's feed is doing, as the mark beside its symbol says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabFeed {
+    Live,
+    /// Playing a recording; the tab also says so in words.
+    Replay,
+    /// A live session was lost and has not come back.
+    Disconnected,
+    /// No live session yet.
+    Stopped,
+}
+
+impl TabFeed {
+    /// A recording wins. A connected feed stays live even while a venue notice
+    /// asks for attention: only a feed that is not connected and needs
+    /// attention reads as lost, so a live feed is never labelled as gone.
+    #[must_use]
+    pub const fn of(replaying: bool, connected: bool, attention: bool) -> Self {
+        match (replaying, connected, attention) {
+            (true, _, _) => Self::Replay,
+            (false, true, _) => Self::Live,
+            (false, false, true) => Self::Disconnected,
+            (false, false, false) => Self::Stopped,
+        }
+    }
+
+    /// The word printed after the symbol: a recording is never passed off as live.
+    #[must_use]
+    pub const fn word(self) -> Option<&'static str> {
+        match self {
+            Self::Replay => Some("Replay"),
+            _ => None,
+        }
+    }
+}
+
 /// A chip label's market and its muted suffix: `SYMBOL · venue`.
 #[must_use]
 pub fn chip_parts(label: &str) -> (&str, &str) {
@@ -315,6 +351,29 @@ mod tests {
             split((84.451_7, 7, 591.161_87)),
             "the case still splits the two rules"
         );
+    }
+
+    #[test]
+    fn a_recording_wins_and_only_a_lost_feed_reads_as_disconnected() {
+        assert_eq!(TabFeed::of(true, false, true), TabFeed::Replay);
+        assert_eq!(TabFeed::of(true, true, false), TabFeed::Replay);
+        assert_eq!(TabFeed::of(false, true, false), TabFeed::Live);
+        // A venue notice on a connected feed: still live, never "lost".
+        assert_eq!(TabFeed::of(false, true, true), TabFeed::Live);
+        assert_eq!(TabFeed::of(false, false, true), TabFeed::Disconnected);
+        assert_eq!(TabFeed::of(false, false, false), TabFeed::Stopped);
+    }
+
+    #[test]
+    fn only_a_recording_is_named_in_words() {
+        let all = [
+            TabFeed::Live,
+            TabFeed::Replay,
+            TabFeed::Disconnected,
+            TabFeed::Stopped,
+        ];
+        let named: Vec<_> = all.iter().filter_map(|feed| feed.word()).collect();
+        assert_eq!(named, ["Replay"]);
     }
 
     #[test]

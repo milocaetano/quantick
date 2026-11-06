@@ -541,7 +541,7 @@ fn draw_estimate_and_button(panel: &mut GetDataPanel, ui: &mut egui::Ui, out_dir
                 0 | 1 => "Download".to_string(),
                 days => format!("Download {days} days"),
             };
-            let button = egui::Button::new(egui::RichText::new(text).color(palette.action_ink()))
+            let button = egui::Button::new(egui::RichText::new(text).color(palette.chip_ink()))
                 .fill(palette.amber());
             if ui
                 .add_enabled(

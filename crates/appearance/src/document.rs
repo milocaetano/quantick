@@ -128,6 +128,20 @@ impl ThemeDocument {
                 {
                     colors[Token::Control as usize]
                 }
+                // Older themes predate the strip, brand and replay tokens: the
+                // strip is the document's own inset, the other two its own
+                // mode's bundled values, so an authored Light file stays Light.
+                None if token == Token::TabStrip
+                    && fallback.is_some()
+                    && self.colors.contains_key(Token::Inset.key()) =>
+                {
+                    colors[Token::Inset as usize]
+                }
+                None if matches!(token, Token::TabStrip | Token::Brand | Token::ReplayInk)
+                    && fallback.is_some_and(|theme| theme.dark != self.dark) =>
+                {
+                    ResolvedTheme::bundled(self.dark).color(token)
+                }
                 None => fallback
                     .map(|theme| theme.color(token))
                     .ok_or_else(|| ThemeError::new(field, "required in a complete theme"))?,
@@ -217,6 +231,19 @@ impl ResolvedTheme {
             ThemeDocument::parse(crate::DARK)
                 .and_then(|document| document.resolve_complete())
                 .expect("bundled Dark theme must be complete and valid")
+        })
+    }
+
+    /// The bundled theme of one mode, for values an older document of that
+    /// mode never wrote.
+    pub fn bundled(dark: bool) -> &'static Self {
+        static LIGHT: OnceLock<ResolvedTheme> = OnceLock::new();
+        if dark {
+            return Self::bundled_dark();
+        }
+        LIGHT.get_or_init(|| {
+            // Light writes the three mode tokens, so this never asks itself.
+            ResolvedTheme::parse(crate::LIGHT).expect("bundled Light theme must be valid")
         })
     }
 

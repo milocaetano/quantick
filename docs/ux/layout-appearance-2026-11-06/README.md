@@ -23,9 +23,9 @@ New tokens, three only: `tab_strip`, `brand`, `replay_ink`. Everything else reus
 | Unsaved edit dot | `amber` | | | Mock |
 | Separator | `seam_line`, hidden next to the active or hovered tab | | | Light `border` is too heavy for a divider |
 | Keyboard focus ring | `accent`, 2 px inset | | | The accent marks focus only, never the active tab |
-| Home tab | pinned: no close, no separator after it; "uan" `text_muted`, `text_primary` when selected | | | Mock |
+| Home tab | pinned: no close, no separator after it; "uan" `text_primary` in every state, never dimmed | | | The trader forbids logo changes: the wordmark keeps the previous build's ink |
 | Home wordmark "tick" | `brand` (new) | #3AF0B2 | #007A55 | See *Open for the trader* |
-| Feed state on a tab | live: filled dot `buy_ink`; replay: filled triangle `replay_ink` (new, #C58CFF / #7F36B3) plus the word "Replay"; disconnected: hollow ring `warn`; stopped: hollow ring `text_faint` | | | Shape plus colour, so it survives colour blindness; replay stays labelled in words (data honesty); amber now means "unsaved" in tabs |
+| Feed state on a tab | live: filled dot `buy_ink`; replay: filled triangle `replay_ink` (new, #C58CFF / #7F36B3) plus the word "Replay"; disconnected: hollow ring `warn`; stopped: hollow ring `text_faint` | | | Shape plus colour, so it survives colour blindness; replay stays labelled in words (data honesty); amber now means "unsaved" in tabs. A connected feed with a venue notice stays live: only a lost connection wears the warn ring. `quantick_workspace` decides the state, `quantick_appearance` its mark |
 | Per-market colour | none | | | The symbol text is the identity; hue already means buy, sell, unsaved and replay |
 | Menu bar | `chrome`, items `text_primary`, hover `bare_hover` | | | Mock |
 | Settings window | main's `chrome::apply_palette` (`chrome` fill, `border` stroke, `widget_shadow`); fields `inset`; toggle off track `text_faint` | | | `border` is 1.5:1, under 3:1 for a control |

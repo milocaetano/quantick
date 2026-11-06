@@ -115,6 +115,30 @@ fn authored_historical_sources_and_modified_choices_remain_exact() {
     }
 }
 
+/// An authored Light file older than the strip, brand and replay tokens keeps
+/// Light for all three: the strip from its own inset, the others from Light.
+#[test]
+fn authored_light_before_the_strip_tokens_resolves_light_values() {
+    let known = include_str!("legacy-light-d4a42dc1.toml");
+    assert!(!known.contains("tab_strip") && !known.contains("brand"));
+    let scratch = ScratchDir::new("legacy-light-strip-tokens");
+    let path = scratch.join("appearance.toml");
+    std::fs::write(&path, known).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), None);
+    let (resolved, light) = (store.resolved(), ResolvedTheme::parse(LIGHT).unwrap());
+    let dark = ResolvedTheme::default();
+    assert_eq!(
+        resolved.color(Token::TabStrip).to_array(),
+        [0xE6, 0xE6, 0xE6, 255],
+        "the file's own inset"
+    );
+    for token in [Token::Brand, Token::ReplayInk] {
+        assert_eq!(resolved.color(token), light.color(token), "{}", token.key());
+        assert_ne!(resolved.color(token), dark.color(token), "{}", token.key());
+    }
+}
+
 #[test]
 fn historical_choice_loads_with_writes_refused_and_invalid_choice_stays_untouched() {
     use quantick_workspace::write_refusal::{WritesRefused, refuse_writes_on_this_thread};

@@ -5,13 +5,13 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
-use quantick_appearance::tab_strip::{MarkShape, TabFeed, tab_fill, tab_ink};
+use quantick_appearance::tab_strip::{MarkShape, feed_shape, feed_token, tab_fill, tab_ink};
 use quantick_session::tab_chip::{ChipMeasure, CloseSlot, close_slot, fit_chip, shortened_name};
 use quantick_workspace::arrangement::strip::{
-    StripSurface, chip_parts, home_label_fits, market_slots, visible_tabs,
+    StripSurface, TabFeed, chip_parts, home_label_fits, market_slots, visible_tabs,
 };
 
-use crate::theme;
+use crate::theme::{self, Palette};
 
 const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
 const CHIP_PREFERRED_WIDTH_PX: f32 = 180.0;
@@ -130,8 +130,8 @@ pub(crate) fn draw(
     let shown = fits.then_some((label, labelled));
     // A compact strip has no room for the margins: the Q alone in a square tab.
     let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
-    let mut action =
-        draw_home_tab(ui, surface.is_home(), shown, bare, drawn).then_some(TabAction::Home);
+    let mut action = draw_home_tab(ui, &palette, surface.is_home(), shown, bare, drawn)
+        .then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
     // The separator after the last unlit tab, dropped if the next one lights.
     let mut separator = None;
@@ -165,11 +165,8 @@ pub(crate) fn draw(
                     chip.label,
                 )
             });
-            let response = response.on_hover_text(if chip.feed == TabFeed::Replay {
-                format!("{} (replay)", chip.label)
-            } else {
-                chip.label.to_owned()
-            });
+            let tag = (chip.feed == TabFeed::Replay).then_some(" (replay)");
+            let response = response.on_hover_text(format!("{}{}", chip.label, tag.unwrap_or("")));
             if response.clicked() && !selected {
                 action = Some(TabAction::Activate(index));
             }
@@ -180,8 +177,6 @@ pub(crate) fn draw(
             if bounds.is_positive() {
                 drawn.tabs.push((index, bounds));
             }
-            let lit = selected || response.hovered();
-            paint_chip_face(ui, chip, body, selected, lit);
             // Reserve a stable close target so hover never shifts adjacent controls.
             {
                 let close_target = egui::Rect::from_min_size(
@@ -220,19 +215,16 @@ pub(crate) fn draw(
                         .circle_filled(center, CHIP_DOT_RADIUS_PX, palette.amber());
                 }
                 drawn.close.push(close.rect);
-                let chip_bounds = response.rect.union(close.rect).intersect(ui.clip_rect());
+                let sheet = response.rect.union(close.rect);
+                let chip_bounds = sheet.intersect(ui.clip_rect());
                 if chip_bounds.is_positive() {
                     drawn.tab_ids.push((chip.id, chip_bounds));
                 }
-                let lit = paint_tab_surface(
-                    ui,
-                    surface,
-                    response.rect.union(close.rect),
-                    selected,
-                    response.hovered() || close.hovered(),
-                    response.has_focus() || close.has_focus(),
-                    true,
-                );
+                let hovered = response.hovered() || close.hovered();
+                let pointer = (hovered, response.has_focus() || close.has_focus());
+                let lit = paint_tab_surface(ui, &palette, surface, sheet, selected, pointer, true);
+                // The face reads lit whenever its sheet is: body, × or focus.
+                paint_chip_face(ui, &palette, chip, body, selected, lit);
                 if lit && let Some(before) = separator.take() {
                     ui.painter().set(before, egui::Shape::Noop);
                 }
@@ -292,16 +284,22 @@ pub(crate) fn draw(
 /// The feed's mark, the symbol in its heavier strike, "Replay" on a recording
 /// and the workspace in muted ink, `Scalp •` with the amber mark while edited.
 /// The name is paint, never a control: the status bar's cell switches it.
-fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected: bool, lit: bool) {
-    let palette = theme::get(ui.ctx());
+fn paint_chip_face(
+    ui: &egui::Ui,
+    palette: &Palette,
+    chip: &TabChip<'_>,
+    body: egui::Rect,
+    selected: bool,
+    lit: bool,
+) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let center_y = body.center().y;
     let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
-    let feed_ink = *palette.get(chip.feed.token());
+    let feed_ink = *palette.get(feed_token(chip.feed));
     paint_feed_mark(
         &painter,
         egui::pos2(dot_x, center_y),
-        chip.feed.shape(),
+        feed_shape(chip.feed),
         feed_ink,
     );
     let (symbol, _venue_on_hover) = chip_parts(chip.label);
@@ -370,7 +368,7 @@ fn paint_feed_mark(painter: &egui::Painter, at: egui::Pos2, shape: MarkShape, in
 
 type HomeLabel = [std::sync::Arc<egui::Galley>; 2];
 
-/// After the Q, in Hack at −0.02 em: "uan" lifts when lit or active; "tick" never does.
+/// After the Q, in Hack at −0.02 em: "uan" in primary ink, "tick" in the brand.
 fn home_label(ui: &egui::Ui) -> HomeLabel {
     let font = egui::FontId::monospace(HOME_TEXT_PX);
     let mut format = egui::TextFormat::simple(font, egui::Color32::PLACEHOLDER);
@@ -384,6 +382,7 @@ fn home_label(ui: &egui::Ui) -> HomeLabel {
 /// market tab, with no close target. Returns whether it was pressed.
 fn draw_home_tab(
     ui: &mut egui::Ui,
+    palette: &Palette,
     active: bool,
     label: Option<(HomeLabel, f32)>,
     bare: f32,
@@ -399,8 +398,8 @@ fn draw_home_tab(
     let response = response.on_hover_text("Home · Ctrl+1");
     let bounds = rect.intersect(ui.clip_rect());
     drawn.home = bounds.is_positive().then_some(bounds);
-    let (hovered, focused) = (response.hovered(), response.has_focus());
-    paint_tab_surface(ui, surface, rect, active, hovered, focused, false);
+    let lit = (response.hovered(), response.has_focus());
+    paint_tab_surface(ui, palette, surface, rect, active, lit, false);
     let q_x = match label {
         Some(_) => rect.left() + HOME_PADDING_LEFT_PX + HOME_Q.x / 2.0,
         None => rect.center().x,
@@ -410,9 +409,8 @@ fn draw_home_tab(
     crate::surfaces::home::paint_logo(ui, q, true);
     if let Some(([uan, tick], _)) = label {
         let mut x = q.right() + HOME_LOGO_GAP_PX;
-        let lit = active || hovered || focused;
-        let palette = theme::get(ui.ctx());
-        for (galley, color) in [(uan, *palette.get(tab_ink(lit))), (tick, palette.brand())] {
+        // The wordmark never dims: lit or not, "uan" stays in primary ink.
+        for (galley, color) in [(uan, palette.text_primary()), (tick, palette.brand())] {
             // CSS centres the 15 px line box: the font's unrounded metrics.
             let glyph = galley.rows[0].glyphs[0];
             let y = q.center().y + glyph.font_ascent - glyph.font_height / 2.0 - glyph.pos.y;
@@ -428,14 +426,14 @@ fn draw_home_tab(
 /// `separated`. Returns whether the tab is lit.
 fn paint_tab_surface(
     ui: &egui::Ui,
+    palette: &Palette,
     slot: egui::layers::ShapeIdx,
     bounds: egui::Rect,
     selected: bool,
-    hovered: bool,
-    focused: bool,
+    (hovered, focused): (bool, bool),
     separated: bool,
 ) -> bool {
-    let (palette, painter) = (theme::get(ui.ctx()), ui.painter());
+    let painter = ui.painter();
     let mut rect = bounds;
     rect.max.y = ui.max_rect().bottom();
     let fill = tab_fill(selected, hovered || focused);

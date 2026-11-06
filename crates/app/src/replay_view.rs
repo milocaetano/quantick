@@ -1006,7 +1006,7 @@ impl ReplayView {
                 }
                 let ready = self.selected_entry().is_some();
                 let button = egui::Button::new(
-                    egui::RichText::new("Play session").color(palette.action_ink()),
+                    egui::RichText::new("Play session").color(palette.chip_ink()),
                 )
                 .fill(palette.amber());
                 if ui
@@ -1165,7 +1165,7 @@ fn speed_chip(ui: &mut egui::Ui, speed: f32, selected: bool) -> egui::Response {
     };
     let mut rich = egui::RichText::new(text).monospace().small();
     if selected {
-        rich = rich.color(palette.action_ink()).strong();
+        rich = rich.color(palette.chip_ink()).strong();
     }
     let mut button = egui::Button::new(rich).min_size(egui::vec2(30.0, 18.0));
     if selected {
@@ -1184,7 +1184,7 @@ fn badge(ui: &mut egui::Ui, text: &str) {
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(text)
-                    .color(palette.action_ink())
+                    .color(palette.chip_ink())
                     .small()
                     .strong(),
             );

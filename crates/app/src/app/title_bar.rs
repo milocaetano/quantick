@@ -97,7 +97,7 @@ pub(super) fn chips_of<'a>(
             crate::tabstrip::TabChip {
                 id,
                 label: tab.chip_label(),
-                feed: quantick_appearance::tab_strip::TabFeed::of(
+                feed: quantick_workspace::arrangement::strip::TabFeed::of(
                     tab.replay.is_some(),
                     tab.feed_connection == quantick_feed::FeedConnectionState::Connected,
                     tab.needs_attention(),
@@ -132,6 +132,8 @@ pub(crate) fn draw(
     let mut action = None;
     egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "market_title_bar")))
         .exact_height(HEIGHT)
+        // No floor rule: the active tab joins the toolbar with no bottom edge.
+        .show_separator_line(false)
         .frame(
             egui::Frame::none()
                 .fill(palette.tab_strip())
