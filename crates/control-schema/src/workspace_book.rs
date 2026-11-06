@@ -360,6 +360,61 @@ pub const READBACKS: &[Readback] = &[
     ),
 ];
 
+/// Published schemas of the workspace book.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "tab-workspace-set-input-v1.schema.json",
+            schema::<TabWorkspaceSetInput>(),
+        ),
+        (
+            "tab-workspace-set-result-v1.schema.json",
+            schema::<TabWorkspaceSetResult>(),
+        ),
+        (
+            "workspace-tab-input-v1.schema.json",
+            schema::<WorkspaceTabInput>(),
+        ),
+        (
+            "workspace-save-as-input-v1.schema.json",
+            schema::<WorkspaceSaveAsInput>(),
+        ),
+        (
+            "workspace-save-result-v1.schema.json",
+            schema::<WorkspaceSaveResult>(),
+        ),
+        (
+            "workspace-revert-result-v1.schema.json",
+            schema::<WorkspaceRevertResult>(),
+        ),
+        (
+            "workspace-rename-input-v1.schema.json",
+            schema::<WorkspaceRenameInput>(),
+        ),
+        (
+            "workspace-rename-result-v1.schema.json",
+            schema::<WorkspaceRenameResult>(),
+        ),
+        (
+            "workspace-delete-input-v1.schema.json",
+            schema::<WorkspaceDeleteInput>(),
+        ),
+        (
+            "workspace-delete-result-v1.schema.json",
+            schema::<WorkspaceDeleteResult>(),
+        ),
+        (
+            "workspace-list-input-v1.schema.json",
+            schema::<WorkspaceListInput>(),
+        ),
+        (
+            "workspace-list-result-v1.schema.json",
+            schema::<WorkspaceListResult>(),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

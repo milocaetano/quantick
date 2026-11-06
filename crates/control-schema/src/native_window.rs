@@ -77,6 +77,21 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
     &["native_window_requests_validate_authority_and_retry_without_repeating_the_effect"],
 )];
 
+/// Published schemas of the native window operations.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "native-window-input-v1.schema.json",
+            schema::<WindowInput>(),
+        ),
+        (
+            "native-window-result-v1.schema.json",
+            schema::<WindowResult>(),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

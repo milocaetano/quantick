@@ -311,3 +311,12 @@ pub fn pane_header_controls(
         ),
     ]
 }
+
+/// Published schemas of the observer scene read.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![(
+        "observer-scene-read-input-v1.schema.json",
+        schema::<SceneReadInput>(),
+    )]
+}

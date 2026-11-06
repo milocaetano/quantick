@@ -166,3 +166,18 @@ pub const READBACKS: &[Readback] = &[snapshot(
         "the_tape_window_selector_and_the_filing_call_are_one_setting",
     ],
 )];
+
+/// Published schemas of the tape view.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "chart-tape-view-input-v1.schema.json",
+            schema::<TapeViewInput>(),
+        ),
+        (
+            "chart-tape-view-result-v1.schema.json",
+            schema::<TapeViewResult>(),
+        ),
+    ]
+}
