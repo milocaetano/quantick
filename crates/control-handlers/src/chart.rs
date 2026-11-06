@@ -74,7 +74,9 @@ pub struct ChartPaneEntry<'a> {
     pub symbol: &'a str,
     pub pane: &'a dyn ChartPaneSource,
     /// The tab's market clock: the replay's playhead while replaying, the
-    /// last print advanced by the host's own time live; `None` before a print.
+    /// last print advanced by the host's own time live; `None` before a print,
+    /// and for a tab off screen, whose clock only advances while it is drawn:
+    /// such a tab reads a time rule on its trades' own time instead.
     pub market_clock_ms: Option<i64>,
 }
 

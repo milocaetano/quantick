@@ -72,9 +72,6 @@ impl ChartPort for dyn ControlPort {
     }
 }
 
-/// One pane's entry. Only the tab on screen has its market clock advanced
-/// each frame; a tab behind it reads a time rule on its trades' own time
-/// (`None`) rather than on a clock stopped where it was last drawn.
 fn entry<'a>(
     tab_id: u64,
     tab: &'a Tab,
