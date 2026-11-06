@@ -976,11 +976,11 @@ fn the_logo_is_its_own_q_only_scaled_or_plate_dropped_on_whole_pixels_at_every_z
     }
 }
 
-/// Light paints its own Q, 10% larger, its glyph tucked about a pixel from
-/// the "u"; the wordmark keeps the place Dark gives it.
+/// Light paints its own Q at Dark's size, its glyph tucked about a pixel
+/// from the "u"; the wordmark keeps the place Dark gives it.
 #[test]
-fn the_light_q_is_edged_larger_and_moved_toward_the_wordmark() {
-    use crate::tabstrip::{HOME_LOGO_GAP_PX, LIGHT_Q_SCALE, LIGHT_Q_SHIFT_PT};
+fn the_light_q_is_edged_and_moved_toward_the_wordmark() {
+    use crate::tabstrip::LIGHT_Q_SHIFT_PT;
     let mut placed = Vec::new();
     for (source, name) in [
         (quantick_appearance::DARK, "Quantick Q"),
@@ -1012,27 +1012,12 @@ fn the_light_q_is_edged_larger_and_moved_toward_the_wordmark() {
     };
     assert_eq!(light_uan, dark_uan, "the wordmark stays put");
     assert_eq!(dark.size(), egui::vec2(22.0, 22.0), "Dark is unchanged");
-    let near = |got: f32, want: f32, what: &str| {
-        assert!((got - want).abs() <= 0.5, "{what}: {got} for {want}");
-    };
-    near(
-        light.width(),
-        22.0 * LIGHT_Q_SCALE,
-        "Light Q width, pixel-snapped",
-    );
-    near(light.center().y, dark.center().y, "same centre line");
-    near(
-        light.right(),
-        dark.right() + LIGHT_Q_SHIFT_PT,
-        "moved toward the text",
-    );
-    // The glyph's right edge is texel 233 of 256: about 1 px before the "u".
-    let glyph_right = light.left() + light.width() * 233.0 / 256.0;
+    assert_eq!(light, dark.translate(egui::vec2(LIGHT_Q_SHIFT_PT, 0.0)));
+    // The glyph's right edge, icon.svg's x 206, is texel 230 of 256; the "u"
+    // galley starts just after it, and its ink one side bearing later.
+    let glyph_right = light.left() + light.width() * 230.0 / 256.0;
     let gap = light_uan - glyph_right;
-    assert!(
-        (0.0..=1.5).contains(&gap),
-        "Q to u: {gap} px (Dark {HOME_LOGO_GAP_PX} + margin)"
-    );
+    assert!((0.0..=0.5).contains(&gap), "Q to the u galley: {gap} px");
 }
 
 /// The Light Q's faded side is opaque white, its teal keeps the gradient and
@@ -1052,28 +1037,22 @@ fn the_light_q_has_white_faces_black_edges_and_the_teal_gradient() {
     assert!(g > r + 150 && g > b, "teal face: {:?}", [r, g, b]);
 }
 
-/// Dark keeps its box; Light's is square in whole physical pixels, centred
-/// alone, and right of the layout box beside the wordmark.
+/// Dark and a lone Light Q keep their box; beside the wordmark the Light Q
+/// moves toward it by whole physical pixels, so it stays on the grid.
 #[test]
-fn the_light_mark_box_is_square_on_the_pixel_grid() {
+fn the_light_mark_moves_by_whole_physical_pixels() {
     use crate::tabstrip::{LIGHT_Q_SHIFT_PT, mark_box};
-    let q = egui::Rect::from_min_size(egui::pos2(19.0, 4.0), egui::vec2(22.0, 22.0));
     for ppp in [1.0, 1.25, 1.5, 1.68, 2.0, 2.5] {
+        let on_grid = |v: f32| (v * ppp).round() / ppp;
+        let min = egui::pos2(on_grid(19.0), on_grid(4.0));
+        let q = egui::Rect::from_min_size(min, egui::Vec2::splat(on_grid(22.0)));
         assert_eq!(mark_box(q, true, true, ppp), q, "Dark at {ppp}");
-        for labelled in [false, true] {
-            let mark = mark_box(q, false, labelled, ppp);
-            let physical = mark.size() * ppp;
-            let square = (physical.x - physical.y).abs() < 1e-3;
-            assert!(square, "{physical:?} at {ppp}");
-            for v in [mark.min.x, mark.min.y, mark.max.x, mark.max.y] {
-                let px = v * ppp;
-                assert!((px - px.round()).abs() < 1e-3, "{v} at {ppp}");
-            }
-            let (got, want) = match labelled {
-                true => (mark.right(), q.right() + LIGHT_Q_SHIFT_PT),
-                false => (mark.center().x, q.center().x),
-            };
-            assert!((got - want).abs() <= 1.0 / ppp, "{got} for {want} at {ppp}");
-        }
+        assert_eq!(mark_box(q, false, false, ppp), q, "lone Light Q at {ppp}");
+        let mark = mark_box(q, false, true, ppp);
+        assert_eq!(mark.size(), q.size(), "same size at {ppp}");
+        let shift = (mark.left() - q.left()) * ppp;
+        assert!((shift - shift.round()).abs() < 1e-3, "{shift} px at {ppp}");
+        let off = (mark.left() - q.left() - LIGHT_Q_SHIFT_PT).abs();
+        assert!(off <= 0.5 / ppp, "{off} pt off at {ppp}");
     }
 }
