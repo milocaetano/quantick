@@ -492,7 +492,7 @@ pub(super) fn handle_indicator_pane_gestures(
         // the pan so it takes the double click the body would spend resetting the scale.
         if !body.collapsed {
             let header = ui.interact(
-                indicator_render::pane_header_rect(body.rect, body.collapsed),
+                indicator_render::pane_header_rect(body.rect, body.collapsed, body.header_height),
                 egui::Id::new(("pane_header", pane_id, view.slot)),
                 egui::Sense::click(),
             );

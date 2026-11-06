@@ -136,6 +136,7 @@ pub(crate) fn registered_action_versions() -> Vec<(String, u32)> {
 pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegistryError> {
     let mut registry = ProjectionRegistry::new(std::sync::Arc::new(registry::SystemClock));
     system::register(&mut registry)?;
+    quantick_control_handlers::appearance::register(&mut registry)?;
     workspace::register(&mut registry)?;
     feed::register(&mut registry)?;
     quantick_control_handlers::chart::register(&mut registry)?;

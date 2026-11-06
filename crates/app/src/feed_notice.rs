@@ -25,8 +25,8 @@
 use eframe::egui;
 
 use crate::theme;
-use quantick_feed::FeedNotice;
-use quantick_feed::stall::{Recovery, Stall};
+pub use quantick_feed::notice_report::{NoticeAction, Report, Severity, popup_still_open, report};
+use quantick_feed::stall::Recovery;
 
 /// The word when the chart is not being fed: one word for several faults, which
 /// leaves *why* to the popup one click away.
@@ -109,123 +109,6 @@ fn recovery_cost(recovery: Recovery) -> &'static str {
     }
 }
 
-/// What the person watching asked of the popup this frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum NoticeAction {
-    /// Nothing was clicked.
-    #[default]
-    None,
-    /// Respawn the transport and keep the timeline.
-    Reconnect,
-    /// Throw the timeline away and rebuild it.
-    Reload,
-}
-
-impl From<Recovery> for NoticeAction {
-    fn from(recovery: Recovery) -> Self {
-        match recovery {
-            Recovery::Reconnect => Self::Reconnect,
-            Recovery::Reload => Self::Reload,
-        }
-    }
-}
-
-/// How much of the interface a report is entitled to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    /// Something is under way and nothing is wrong yet: a first connection, a
-    /// history block still arriving. The wait has surfaces of its own.
-    Progress,
-    /// The chart is not being fed, whatever the socket believes: a transport
-    /// that never landed, one that dropped, one that stayed open while the thing
-    /// behind it went quiet, or a reason the provider named itself.
-    Offline,
-}
-
-/// What the interface has to tell the trader about one feed this frame —
-/// however it was arrived at.
-///
-/// Both sources of words end up here: the feed's own [`FeedNotice`], and the
-/// [`Stall`] this application infers when a notice stops being progress, so
-/// there is one set of words and one pair of buttons.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Report<'a> {
-    /// One line: what is happening, or what was observed.
-    pub headline: &'a str,
-    /// The single next step, when there is one to give.
-    pub next_step: Option<&'a str>,
-    /// This needs a person, it is not just quiet.
-    pub needs_user: bool,
-    /// Whether this is worth a corner at all.
-    pub severity: Severity,
-    /// The control offered first. The other is always beside it.
-    pub primary: Recovery,
-}
-
-impl Report<'_> {
-    /// The grey carrying this report's severity: lighter for a transport that is
-    /// broken however you read it than for a tape that has merely gone quiet,
-    /// which is also what a closed market looks like.
-    #[must_use]
-    pub fn accent(&self) -> egui::Color32 {
-        if self.needs_user {
-            crate::loading::GREY_LIGHT
-        } else {
-            crate::loading::GREY_MID
-        }
-    }
-
-    /// Whether the corner should carry this report.
-    #[must_use]
-    pub fn is_offline(&self) -> bool {
-        matches!(self.severity, Severity::Offline)
-    }
-}
-
-/// Build the report for a feed, or `None` when there is nothing to say.
-///
-/// `stall` is this application's own judgement, already decided against the
-/// clock by [`quantick_feed::stall::assess`]; it wins over a progress notice,
-/// because a progress notice that has been escalated is exactly the one whose
-/// words stopped being true.
-#[must_use]
-pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Report<'a>> {
-    // The provider named a specific reason. Nothing inferred improves on it,
-    // and `assess` already stands down in this case.
-    if let FeedNotice::Attention {
-        headline,
-        next_step,
-    } = notice
-    {
-        return Some(Report {
-            headline,
-            next_step: Some(next_step),
-            needs_user: true,
-            severity: Severity::Offline,
-            primary: Recovery::Reconnect,
-        });
-    }
-    if let Some(stall) = stall {
-        return Some(Report {
-            headline: &stall.headline,
-            next_step: Some(&stall.next_step),
-            needs_user: stall.needs_attention,
-            severity: Severity::Offline,
-            primary: stall.primary,
-        });
-    }
-    match notice {
-        FeedNotice::Connected | FeedNotice::Clear | FeedNotice::Attention { .. } => None,
-        FeedNotice::Reconnecting { headline } | FeedNotice::Working { headline } => Some(Report {
-            headline,
-            next_step: None,
-            needs_user: false,
-            severity: Severity::Progress,
-            primary: Recovery::Reconnect,
-        }),
-    }
-}
-
 /// Whether `QUANTICK_FEED_POPUP` asks the chart to open the popup.
 ///
 /// The popup opens on a click and on nothing else, which is exactly the rule
@@ -264,29 +147,6 @@ fn popup_open_from(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
-/// Whether the recovery popup is still up after a frame.
-///
-/// The status word is its only door, in both directions. Everything else here
-/// closes it: a click that landed somewhere else, a control that was pressed and
-/// is now under way, and a feed that recovered on its own while the trader was
-/// reading about it. With no door there is nothing to draw, in every combination.
-#[must_use]
-pub fn popup_still_open(
-    was_open: bool,
-    chip_clicked: bool,
-    offline: bool,
-    dismissed: bool,
-    action: NoticeAction,
-) -> bool {
-    if !offline {
-        return false;
-    }
-    if chip_clicked {
-        return !was_open;
-    }
-    was_open && !dismissed && action == NoticeAction::None
-}
-
 /// Where every piece of the popup lands, measured once so drawing and hit
 /// testing can never disagree about it.
 struct Geometry {
@@ -316,7 +176,12 @@ fn geometry(
     chip: egui::Rect,
     report: &Report<'_>,
 ) -> Geometry {
-    let accent = report.accent();
+    let palette = theme::get(painter.ctx());
+    let accent = if report.needs_user {
+        palette.loading_title()
+    } else {
+        palette.loading_meta()
+    };
 
     // Wrap against the width the popup will actually have, not the width it
     // would like: on a narrow chart it is clamped, and text wrapped to the
@@ -324,18 +189,13 @@ fn geometry(
     let width = POPUP_WIDTH_PX.min(area.width());
     let text_width = (width - 2.0 * PAD_PX - DOT_DIAMETER_PX - DOT_GAP_PX).max(MIN_TEXT_WIDTH_PX);
     let wrap = |text: &str, size: f32, color: egui::Color32| {
-        painter.layout(
-            text.to_owned(),
-            egui::FontId::proportional(size),
-            color,
-            text_width,
-        )
+        painter.layout(text.to_owned(), palette.body_font(size), color, text_width)
     };
-    let headline = wrap(report.headline, HEADLINE_PT, theme::TEXT_PRIMARY);
+    let headline = wrap(report.headline, HEADLINE_PT, palette.text_primary());
     let step = report
         .next_step
-        .map(|step| wrap(step, STEP_PT, theme::TEXT_MUTED));
-    let caption = wrap(RELOAD_CAPTION, CAPTION_PT, theme::TEXT_FAINT);
+        .map(|step| wrap(step, STEP_PT, palette.text_muted()));
+    let caption = wrap(RELOAD_CAPTION, CAPTION_PT, palette.text_faint());
 
     // Two buttons share the text column. On a chart too narrow for both at
     // their preferred width they shrink together rather than one of them
@@ -429,6 +289,7 @@ pub fn draw_popup(
     chip: egui::Rect,
     report: &Report<'_>,
 ) -> (NoticeAction, egui::Rect) {
+    let palette = theme::get(ui.ctx());
     let painter = ui.painter().clone();
     let Geometry {
         popup,
@@ -459,7 +320,11 @@ pub fn draw_popup(
     // rather than to the chart. Opaque, because an instruction someone has to
     // follow should not be read through candles; the accent carries the
     // severity.
-    painter.rect_filled(popup, egui::Rounding::same(CORNER_RADIUS_PX), theme::CHROME);
+    painter.rect_filled(
+        popup,
+        egui::Rounding::same(CORNER_RADIUS_PX),
+        palette.chrome(),
+    );
     painter.rect_stroke(
         popup,
         egui::Rounding::same(CORNER_RADIUS_PX),
@@ -480,13 +345,13 @@ pub fn draw_popup(
     painter.galley(
         egui::pos2(text_left, headline_top),
         headline,
-        theme::TEXT_PRIMARY,
+        palette.text_primary(),
     );
     if let Some(step) = step {
         painter.galley(
             egui::pos2(text_left, headline_top + headline_height + LINE_GAP_PX),
             step,
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
 
@@ -499,8 +364,10 @@ pub fn draw_popup(
     if ui
         .put(
             primary_rect,
-            egui::Button::new(egui::RichText::new(primary_recovery.label()).color(theme::CHIP_INK))
-                .fill(accent),
+            egui::Button::new(
+                egui::RichText::new(primary_recovery.label()).color(palette.chip_ink()),
+            )
+            .fill(accent),
         )
         .on_hover_text(recovery_cost(primary_recovery))
         .clicked()
@@ -511,7 +378,7 @@ pub fn draw_popup(
     if ui
         .put(
             secondary_rect,
-            egui::Button::new(secondary_recovery.label()).fill(theme::CONTROL),
+            egui::Button::new(secondary_recovery.label()).fill(palette.control()),
         )
         .on_hover_text(recovery_cost(secondary_recovery))
         .clicked()
@@ -521,7 +388,7 @@ pub fn draw_popup(
     painter.galley(
         egui::pos2(text_left, primary_rect.bottom() + CAPTION_GAP_PX),
         caption,
-        theme::TEXT_FAINT,
+        palette.text_faint(),
     );
     (action, popup)
 }
@@ -532,11 +399,7 @@ crate::hooks::declare_hooks!["QUANTICK_FEED_POPUP"];
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The report for a bare notice, with nothing inferred on top.
-    fn plain(notice: &FeedNotice) -> Option<Report<'_>> {
-        report(notice, None)
-    }
+    use quantick_feed::{FeedNotice, stall::Stall};
 
     /// A feed with nothing of its own to say, so the stall is the whole story.
     const CLEAR: FeedNotice = FeedNotice::Clear;
@@ -593,49 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn a_clear_notice_says_nothing() {
-        assert!(plain(&FeedNotice::Clear).is_none());
-        assert!(plain(&FeedNotice::Connected).is_none());
-    }
-
-    #[test]
-    fn progress_never_reaches_the_corner() {
-        let working = FeedNotice::working("starting the MetaTrader bridge");
-        let report = plain(&working).expect("progress is worth saying");
-        assert_eq!(
-            report.severity,
-            Severity::Progress,
-            "a first connection is not an outage"
-        );
-        assert!(
-            !report.is_offline(),
-            "the loading overlay owns a wait; the corner would say it twice"
-        );
-
-        let reconnecting = FeedNotice::reconnecting("Binance disconnected — reconnecting");
-        let report = plain(&reconnecting).expect("a reconnect is worth saying");
-        assert!(!report.is_offline());
-    }
-
-    #[test]
-    fn every_fault_lands_in_the_corner() {
-        let attention = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
-        let named = plain(&attention).expect("a named reason is always worth saying");
-        assert!(
-            named.is_offline(),
-            "the reason the provider named is an outage like any other"
-        );
-        assert!(named.needs_user, "and it needs a person");
-
-        let silent = silent_stall();
-        let inferred = from_stall(&silent);
-        assert!(
-            inferred.is_offline(),
-            "so is a tape that stopped without anyone saying why"
-        );
-    }
-
-    #[test]
     fn the_popup_grows_out_of_the_chip() {
         let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 700.0));
         let stall = silent_stall();
@@ -673,37 +493,6 @@ mod tests {
             popup.top() >= area.top() - 0.5,
             "the popup never starts above the chart: {popup:?}"
         );
-    }
-
-    /// A stall replaces the words of the progress notice it escalated, rather
-    /// than appearing beside them.
-    #[test]
-    fn a_stall_wins_over_the_progress_it_escalated() {
-        let notice = FeedNotice::working("connecting to MetaTrader 5");
-        let stall = Stall {
-            headline: "MetaTrader 5 — B3 has not connected in 30 s".to_owned(),
-            next_step: "Check that MetaTrader 5 is running.".to_owned(),
-            primary: Recovery::Reconnect,
-            needs_attention: true,
-        };
-        let report = report(&notice, Some(&stall)).expect("a stall is worth saying");
-        assert_eq!(report.headline, stall.headline);
-        assert_eq!(report.next_step, Some(stall.next_step.as_str()));
-        assert!(
-            report.is_offline(),
-            "an escalated progress notice is no longer progress"
-        );
-    }
-
-    /// A quiet tape leads with Reload and wears no alarm: silence is also what
-    /// a closed market looks like, and this branch fires two minutes after
-    /// every close.
-    #[test]
-    fn a_quiet_tape_gets_controls_and_not_an_alarm() {
-        let stall = silent_stall();
-        let report = from_stall(&stall);
-        assert!(!report.needs_user);
-        assert_eq!(report.primary, Recovery::Reload);
     }
 
     /// The bug the second rule exists for: a progress card used to be a
@@ -985,53 +774,6 @@ mod tests {
                 );
             });
         });
-    }
-
-    /// Every way the popup can close, and the one way it opens.
-    #[test]
-    fn every_way_the_popup_closes_and_the_one_way_it_opens() {
-        let shut = |chip, offline, dismissed, action| {
-            popup_still_open(false, chip, offline, dismissed, action)
-        };
-        let open = |chip, offline, dismissed, action| {
-            popup_still_open(true, chip, offline, dismissed, action)
-        };
-
-        assert!(
-            shut(true, true, false, NoticeAction::None),
-            "the chip opens it"
-        );
-        assert!(
-            !shut(false, true, false, NoticeAction::None),
-            "and nothing else does"
-        );
-        assert!(
-            !open(true, true, false, NoticeAction::None),
-            "the chip closes it again"
-        );
-        assert!(
-            open(false, true, false, NoticeAction::None),
-            "an untouched frame leaves it up"
-        );
-        assert!(
-            !open(false, true, true, NoticeAction::None),
-            "a click somewhere else puts it away"
-        );
-        assert!(
-            !open(false, false, false, NoticeAction::None),
-            "so does a feed that came back on its own"
-        );
-        for action in [NoticeAction::Reconnect, NoticeAction::Reload] {
-            assert!(
-                !open(false, true, false, action),
-                "a control that was pressed is under way, not still being read: {action:?}"
-            );
-        }
-        // No chip, no popup, whatever else is true on the frame. A click on a
-        // chip that was never drawn cannot reach this today; the rule holds it
-        // anyway rather than resting on that.
-        assert!(!shut(true, false, false, NoticeAction::None));
-        assert!(!open(true, false, false, NoticeAction::None));
     }
 
     /// The hook stands in for a click and for nothing else.

@@ -49,7 +49,8 @@ pub(crate) type ControlWindow = dyn ControlPort;
 /// Every family together — what the gateway itself needs to dispatch any
 /// capability. Handlers never take this; they name their families.
 pub(crate) trait ControlPort:
-    TabsPort
+    quantick_control_handlers::appearance::AppearancePort
+    + TabsPort
     + TabsMutPort
     + ChromePort
     + HealthPort
@@ -66,7 +67,8 @@ pub(crate) trait ControlPort:
 }
 
 impl<T> ControlPort for T where
-    T: TabsPort
+    T: quantick_control_handlers::appearance::AppearancePort
+        + TabsPort
         + TabsMutPort
         + ChromePort
         + HealthPort
@@ -85,6 +87,9 @@ impl<T> ControlPort for T where
 
 /// Tabs and panes, read: the markets, their config and drawing defaults.
 pub(crate) trait TabsPort {
+    fn appearance(&self) -> &quantick_appearance::ResolvedTheme {
+        self.tab_reads().appearance
+    }
     fn tab_reads(&self) -> TabReads<'_>;
 }
 
@@ -284,9 +289,14 @@ pub(crate) struct TabReads<'a> {
     config: &'a AppConfig,
     footprint_config: &'a crate::footprint_config::FootprintConfig,
     presets: &'a drawings::presets::PresetStore,
+    appearance: &'a quantick_appearance::ResolvedTheme,
 }
 
 impl<'a> TabReads<'a> {
+    fn with_appearance(mut self, appearance: &'a quantick_appearance::ResolvedTheme) -> Self {
+        self.appearance = appearance;
+        self
+    }
     /// The view over the window's own roots. The window's adapter builds it,
     /// and so does a test's fake window over roots it owns.
     pub(crate) fn new(
@@ -300,6 +310,7 @@ impl<'a> TabReads<'a> {
             config,
             footprint_config,
             presets,
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         }
     }
 
@@ -669,13 +680,13 @@ impl TabsPort for QuantickApp {
         self.runtime
             .resolve(&self.presentation.binding)
             .expect("bound workspace");
-        let presets = &self.drawings.presets;
         TabReads::new(
             &self.runtime.tabs,
             &self.config,
             &self.runtime.footprint_config,
-            presets,
+            &self.drawings.presets,
         )
+        .with_appearance(self.runtime.appearance.resolved())
     }
 }
 
@@ -772,6 +783,7 @@ impl LayersPort for QuantickApp {
             style_revision: &mut self.runtime.style_revision,
             footprint_config: &mut self.runtime.footprint_config,
             chart_settings: &mut self.surfaces.chart_settings,
+            appearance: &self.runtime.appearance,
         }
     }
 }
@@ -957,3 +969,19 @@ crate::hooks::declare_hooks![
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+impl quantick_control_handlers::appearance::AppearancePort for QuantickApp {
+    fn appearance_store(&self) -> &quantick_stores::appearance::AppearanceStore {
+        &self.runtime.appearance
+    }
+    fn appearance_store_mut(&mut self) -> &mut quantick_stores::appearance::AppearanceStore {
+        &mut self.runtime.appearance
+    }
+    fn publish_appearance(&mut self) {
+        super::frame::sync_appearance(
+            self.presentation.context.as_ref(),
+            &mut self.runtime,
+            &mut self.drawings.presets,
+        );
+    }
+}

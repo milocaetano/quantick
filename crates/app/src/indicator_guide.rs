@@ -11,10 +11,11 @@ const WIDTH_PX: f32 = 1.0;
 
 /// Draw the bounded, allocation-free dashed guide at an already-resolved x.
 pub(crate) fn paint(painter: &egui::Painter, rect: egui::Rect, x: f32) {
+    let palette = theme::get(painter.ctx());
     if !rect.contains(pos2(x, rect.center().y)) {
         return;
     }
-    let stroke = Stroke::new(WIDTH_PX, theme::TEXT_MUTED.gamma_multiply(0.42));
+    let stroke = Stroke::new(WIDTH_PX, palette.text_muted().gamma_multiply(0.42));
     for segment in dash_segments(rect, x) {
         painter.line_segment(segment, stroke);
     }

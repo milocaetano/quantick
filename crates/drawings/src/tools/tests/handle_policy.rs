@@ -42,6 +42,7 @@ fn precise_handle_policy_agrees_between_owner_and_mirror() {
     let points = [pos2(100.0, 100.0), pos2(500.0, 400.0)];
     let scale = crate::chart::PriceScale::from_range(0.0, 100.0, 0.0, 500.0);
     let mut ctxt = DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload: &NoPayload,
         anchors: &[],
         scale: &scale,

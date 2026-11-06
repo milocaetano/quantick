@@ -17,19 +17,24 @@
 //! every document names, and the starter scripts from `crates/app/scripts/`;
 //! both are read here at compile time only.
 
+pub mod appearance;
 pub mod bubble_asset_store;
 pub mod bubble_assets;
 pub mod bubble_look;
 pub mod bubble_presets;
 pub mod bundle;
 pub mod candle_presets;
+pub mod candle_settings;
+pub mod chart_style;
 pub mod config;
 pub mod footprint_config;
+pub mod footprint_presentation;
 pub mod footprint_presets;
 pub mod home;
 pub mod indicator_presets;
 pub mod indicator_state;
 pub mod layouts;
+pub mod pane_style;
 pub mod paths;
 #[cfg(test)]
 mod scratch;

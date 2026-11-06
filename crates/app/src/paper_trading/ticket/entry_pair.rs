@@ -51,7 +51,8 @@ fn entry_button(
     ready: bool,
     width: f32,
 ) -> Option<EntryPress> {
-    let color = theme::side_color(side);
+    let palette = theme::get(ui.ctx());
+    let color = palette.side_color(side);
     let armed = ticket.desk.armed;
     let armed_here = armed.is_some_and(|armed| armed.side == side);
     let armed_other = armed.is_some_and(|armed| armed.side != side);
@@ -71,12 +72,16 @@ fn entry_button(
     };
     let button = if armed_here {
         egui::Button::new(egui::RichText::new(label).color(color).strong())
-            .fill(theme::CONTROL)
+            .fill(palette.control())
             .stroke(egui::Stroke::new(1.5_f32, color))
     } else {
-        egui::Button::new(egui::RichText::new(label).color(theme::CHIP_INK).strong())
-            .fill(color)
-            .stroke(egui::Stroke::NONE)
+        egui::Button::new(
+            egui::RichText::new(label)
+                .color(palette.chip_ink())
+                .strong(),
+        )
+        .fill(color)
+        .stroke(egui::Stroke::NONE)
     }
     .rounding(egui::Rounding::same(3.0))
     .min_size(egui::vec2(width, 34.0));

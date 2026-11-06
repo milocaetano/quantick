@@ -252,7 +252,7 @@ impl<'a> FlowFrame<'a> {
         }
     }
 
-    /// Only the earned inner circumference crosses the configured candles.
+    /// Earned inner circumferences and labels finish the regional bubbles.
     pub(super) fn regional_perimeters(&self) {
         if let Some((frame, drawing)) = &self.regional {
             crate::orderflow_render::draw_flow_perimeters(
@@ -481,6 +481,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         // accumulation switch at the top of the frame, shared with the
         // range-profile drawings.
         let layer = crate::footprint_render::LayerFrame {
+            palette: crate::theme::get(frame.painter.ctx()),
             painter: &self.clip,
             chart_rect: frame.history_rect,
             scale: &frame.scale,

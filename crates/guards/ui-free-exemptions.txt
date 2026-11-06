@@ -10,6 +10,7 @@
 
 crates/app/src/scratch.rs test scratch directories; the scratch guard requires each crate's tests to mint them through that crate's own scratch module, so `app`'s must live in `app`, and it never touches the UI.
 crates/app/src/app/layout_wiring/indicators/guide.rs app-owned indicator pane, layout and workspace wiring cannot live in a headless crate.
+crates/app/src/app/chart_settings_wiring.rs resolves app-owned tabs and ChartPane instances and binds their styles to the settings surface; operation, reset and validation decisions live in control-handlers and stores.
 crates/app/src/control/indicator_guide.rs the registered action mutates app-owned panes and journals through the app control host.
 crates/app/src/control/drawing_magnet.rs the registered action flips the app-owned drawing rail's magnet and journals through the app control host.
 crates/app/src/candle_view.rs a facade of re-exports: it names no library because every leaf it addresses does.
@@ -17,7 +18,6 @@ crates/app/src/indicators/mod.rs a facade of re-exports: its one local leaf name
 crates/app/src/pane/render_registry/mod.rs the paint stages' dispatch table: every pass it lists paints app-owned panes and names the library in its own leaf.
 crates/app/src/pane.rs a facade of re-exports: it names no library because every leaf it addresses does.
 crates/app/src/pane/chrome.rs what one frame hands a pane around its plot area: the tool rail, the drawings and the paper account, all app-owned.
-crates/app/src/theme.rs a facade of re-exports: it names no library because every leaf it addresses does.
 crates/app/src/orderflow_render/tape_rebuild.rs the pane's tape rebuild thread; headless crates may not spawn one, and the pricing, stand-in and adoption it serves live in `quantick_orderflow::projection::TapeRebuilds`.
 crates/app/src/orderflow_view/flow_execution/runner.rs the pane's bounded FLOW worker thread; headless crates may not spawn one, and source admission, retention, request comparison and result adoption live in `quantick_orderflow::projection::flow_tape::FlowSession`.
 

@@ -2,6 +2,7 @@
 pub mod arrangement;
 pub mod arrangement_document;
 pub mod bundle;
+pub mod context_opening;
 pub mod dock;
 pub mod indicator_document;
 pub mod layout_commit;

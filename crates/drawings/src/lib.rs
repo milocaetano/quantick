@@ -96,6 +96,10 @@ pub trait ToolCatalog: Copy + PartialEq + std::fmt::Debug {
     fn default_payload(self) -> Box<dyn DrawingPayload>;
     /// The built-in look a fresh mark opens with.
     fn default_style(self) -> DrawingStyle;
+    /// Tool-owned semantic default, applied only at creation.
+    fn themed_style(self, _theme: Option<&quantick_appearance::ResolvedTheme>) -> DrawingStyle {
+        self.default_style()
+    }
     /// The band a mark whose first anchor landed in `band` belongs to.
     fn band_for(self, band: &DrawingBand) -> DrawingBand;
 }

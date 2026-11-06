@@ -372,6 +372,7 @@ pub(super) fn draw(
     ctx: &egui::Context,
     _env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
+    let palette = crate::theme::get(ctx);
     let Some(view) = quick.model.view() else {
         return DrawingChromeAsk::default();
     };
@@ -402,7 +403,7 @@ pub(super) fn draw(
         .fixed_pos(position)
         .interactable(true)
         .show(ctx, |ui| {
-            drawings::context_bar::floating_frame().show(ui, |ui| {
+            drawings::context_bar::floating_frame(&palette).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     for (action, tool) in Action::ALL.into_iter().zip(tools.into_iter().flatten()) {

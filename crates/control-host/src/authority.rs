@@ -182,7 +182,11 @@ pub const OBSERVER_SCOPE_IDS: &[(&str, &str, bool)] = &[
         "Application build and runtime identity",
         false,
     ),
-    ("observe.workspace", "Open tabs, layout, and focus", false),
+    (
+        "observe.workspace",
+        "Open tabs, layout, focus, and appearance configuration",
+        false,
+    ),
     (
         "observe.market",
         "Feed, symbol, and visible market data",
@@ -332,7 +336,7 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
         PermissionDescriptor {
             id: permission(COCKPIT_PERMISSION_ID),
             label: "Rearrange the window".to_owned(),
-            description: "Change which charts are on screen, where they sit and how wide they are. Never places or removes an object, and never touches a position.".to_owned(),
+            description: "Change which charts are on screen, where they sit, how wide they are, and their appearance configuration. Never places or removes an object, and never touches a position.".to_owned(),
             sensitive: false,
             default_grant: DefaultGrant::Prompt,
             profile_ceilings: BTreeSet::from([cockpit.clone()]),
@@ -340,7 +344,7 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
         PermissionDescriptor {
             id: permission(COCKPIT_LAYOUT_PERMISSION_ID),
             label: "Change the chart layout".to_owned(),
-            description: "Apply a layout preset, move a chart within the stack, resize a column, collapse it to its rail or expand it again, and move focus between charts.".to_owned(),
+            description: "Apply a layout preset, move a chart within the stack, resize a column, collapse it to its rail or expand it again, move focus between charts, and apply appearance configuration.".to_owned(),
             sensitive: false,
             default_grant: DefaultGrant::Prompt,
             profile_ceilings: BTreeSet::from([cockpit.clone()]),

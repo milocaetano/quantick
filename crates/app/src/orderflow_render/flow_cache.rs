@@ -36,6 +36,7 @@ struct Key<'a> {
     tick: Option<quantick_orderflow::TickLook>,
     /// The pixel density tick rims and labels follow; regional geometry is logical.
     density: Option<u32>,
+    appearance: usize,
 }
 impl Key<'_> {
     /// All but the frame and the camera: what a drawing keeps the runs of the one before by.
@@ -43,7 +44,14 @@ impl Key<'_> {
         let (min, max) = (self.clip.min, self.clip.max);
         let corners = [min.x, min.y, max.x, max.y].map(f32::to_bits);
         let tick = self.tick.map(|(style, theme)| (style.fingerprint(), theme));
-        (corners, self.backing, self.background, tick, self.density)
+        (
+            corners,
+            self.backing,
+            self.background,
+            tick,
+            self.density,
+            self.appearance,
+        )
     }
 }
 impl Hash for Key<'_> {
@@ -72,11 +80,13 @@ pub(crate) fn cached_flow(
     backing: Option<egui::Color32>,
     tick: Option<quantick_orderflow::TickLook>,
 ) -> Arc<FlowDrawing> {
+    let appearance = crate::theme::get(painter.ctx());
     let clip = history.intersect(painter.clip_rect());
     let key = Key {
         frame,
         geometry,
         clip,
+        appearance: Arc::as_ptr(&appearance) as usize,
         backing,
         background,
         tick,
@@ -100,8 +110,14 @@ pub(crate) fn cached_flow(
         });
         let displayed = viewport_frame.as_deref().unwrap_or(frame);
         let (made, held) = ((displayed, plan), previous.as_deref());
-        let mut drawing =
-            FlowDrawing::styled(made, (background, backing), tick, (painter, history), held);
+        let mut drawing = FlowDrawing::with_appearance(
+            made,
+            (background, backing),
+            tick,
+            (painter, history),
+            held,
+            appearance,
+        );
         drawing.viewport_frame = viewport_frame;
         let drawing = Arc::new(drawing);
         ctx.data_mut(|data| {

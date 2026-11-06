@@ -51,13 +51,14 @@ pub enum TabAction {
 /// with no market and nothing to draw, so the affordance is disabled and says
 /// why rather than vanishing.
 pub fn draw(ui: &mut egui::Ui, chips: &[TabChip<'_>], active: usize) -> Option<TabAction> {
+    let palette = theme::get(ui.ctx());
     let mut action = None;
     let closable = chips.len() > 1;
     for (index, chip) in chips.iter().enumerate() {
         let selected = index == active;
         let mut text = egui::RichText::new(chip.label);
         if chip.replaying {
-            text = text.color(theme::AMBER);
+            text = text.color(palette.amber());
         }
         let response = ui.selectable_label(selected, text);
         if response.clicked() && !selected {
@@ -70,7 +71,7 @@ pub fn draw(ui: &mut egui::Ui, chips: &[TabChip<'_>], active: usize) -> Option<T
                 response.rect.top() + ATTENTION_DOT_RADIUS_PX + ATTENTION_DOT_INSET_PX,
             );
             ui.painter()
-                .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::AMBER);
+                .circle_filled(center, ATTENTION_DOT_RADIUS_PX, palette.amber());
         }
         // The close affordance shows on hover, and on the active chip so a
         // keyboard-only path to it is never the only one.
@@ -238,6 +239,7 @@ impl SourcePicker {
         added: &AddedSymbols,
         open_symbols: &[(String, String)],
     ) -> PickerOutcome {
+        let palette = theme::get(ctx);
         let mut outcome = PickerOutcome::Open;
         let mut open = true;
         egui::Window::new("Open market")
@@ -289,7 +291,7 @@ impl SourcePicker {
                     ui.label(
                         egui::RichText::new("added here")
                             .small()
-                            .color(theme::TEXT_FAINT),
+                            .color(palette.text_faint()),
                     );
                     for symbol in removable {
                         ui.horizontal(|ui| {
@@ -339,7 +341,7 @@ impl SourcePicker {
                 // Why the last one was refused, under the field it was typed
                 // in — the user is one keystroke from a symbol that fits.
                 if let Some(reason) = &self.refusal {
-                    ui.label(egui::RichText::new(reason).small().color(theme::WARN));
+                    ui.label(egui::RichText::new(reason).small().color(palette.warn()));
                 }
 
                 ui.separator();

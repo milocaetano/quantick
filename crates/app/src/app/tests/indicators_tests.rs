@@ -34,7 +34,7 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
         .frame
         .chart_area
         .expect("price chart drawn");
-    let header = crate::indicator_render::pane_header_rect(band, false);
+    let header = crate::indicator_render::pane_header_rect(band, false, 18.0);
     let bar = app
         .drawings
         .chrome
@@ -311,6 +311,7 @@ fn both_panes_reopen_with_the_legend_the_trader_folded() {
             None,
             0,
             vec![ui_state::SavedTab {
+                candle_styles: Vec::new(),
                 feed: "binance".to_owned(),
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::TimeAndFlow,

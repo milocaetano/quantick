@@ -22,7 +22,7 @@ use super::{
     REPORT_GRID_MIN_H_PX, REPORT_MIN_HEIGHT_CALENDAR_PX, REPORT_MIN_HEIGHT_PX, REPORT_MIN_WIDTH_PX,
     ReportEnv, ReportResponse, ReportSnapshot, ReportState, ReportView, SourceFilter,
 };
-use crate::paper_calendar::{CalendarAction, CivilDate, DateRange, DayIndex, DaySelection, today};
+use crate::paper_calendar::{CalendarAction, CivilDate, DayIndex, DaySelection, today};
 use crate::paper_chrome::{list_symbol_folders, pill_toggle};
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -64,17 +64,7 @@ impl ReportState {
     /// only inside a paint call cannot be reported back to anyone.
     pub(crate) fn snapshot(&self) -> Option<ReportSnapshot<'_>> {
         let view = self.report_view.as_ref()?;
-        Some(ReportSnapshot {
-            symbol: self.report_symbol.as_deref(),
-            source: view.source,
-            window: view
-                .range
-                .map_or(ReportWindow::Period(view.period), ReportWindow::Dates),
-            hidden_outside: view.hidden_outside,
-            hidden_by_source: view.hidden_by_source,
-            rows: &view.rows,
-            report: &view.report,
-        })
+        Some(ReportSnapshot::new(self.report_symbol.as_deref(), view))
     }
 
     /// The `QUANTICK_PAPER_CALENDAR` hook: the report open with the month
@@ -226,6 +216,7 @@ impl ReportState {
         tz: TzOffset,
         env: &ReportEnv<'_>,
     ) -> ReportResponse {
+        let palette = theme::get(ctx);
         let mut asked = ReportResponse {
             // Anything the filter row posted before this frame leaves now,
             // whether or not the window is still open: a refusal the trader
@@ -241,10 +232,24 @@ impl ReportState {
         let mut open = true;
         let mut reload = false;
         let mut toggle_list = false;
+        let style = ctx.style();
+        let title = egui::TextStyle::Heading.resolve(&style);
+        let title_height = ctx
+            .fonts(|fonts| fonts.row_height(&title))
+            .max(style.spacing.interact_size.y);
+        let frame = egui::Frame::window(&style);
+        let max_height = (ctx.available_rect().height()
+            - title_height
+            - frame.total_margin().sum().y
+            - frame.inner_margin.sum().y)
+            .max(0.0);
         egui::Window::new("Simulated performance")
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
+            // Keep every section reachable when typography exceeds the viewport budget.
+            .vscroll(true)
+            .max_height(max_height)
             // Wide enough for every column of the trade list and tall
             // enough for the tiles, the curve and a readable page of it.
             // Both are still only a starting size — the window resizes.
@@ -253,12 +258,17 @@ impl ReportState {
             // An expanded month grid needs its own room. Without this the
             // report at its smallest pushed the tiles, the curve and the
             // disclosure lines out through the bottom of the window.
-            .min_height(if self.calendar.open {
-                REPORT_MIN_HEIGHT_CALENDAR_PX
-            } else {
-                REPORT_MIN_HEIGHT_PX
-            })
+            .min_height(
+                (if self.calendar.open {
+                    REPORT_MIN_HEIGHT_CALENDAR_PX
+                } else {
+                    REPORT_MIN_HEIGHT_PX
+                })
+                .min(max_height),
+            )
             .show(ctx, |ui| {
+                #[cfg(any(feature = "scenario-harness", test))]
+                self.scroll_probe.report(ui);
                 reload = self.draw_report_filters(ui, &mut asked);
                 self.draw_report_calendar(ui, tz);
                 // The rows above can retire the view — a picked day, a
@@ -303,12 +313,14 @@ impl ReportState {
                                 draw_side_grid(ui, &view.report);
                                 draw_exit_reason_grid(ui, &view.report);
                             });
+                        #[cfg(any(feature = "scenario-harness", test))]
+                        self.scroll_probe.rows(ui);
                     }
                     _ => {
                         ui.add_space(8.0);
                         ui.label(
                             egui::RichText::new("No saved trades for this filter.")
-                                .color(theme::TEXT_PRIMARY),
+                                .color(palette.text_primary()),
                         );
                         let scope = self
                             .report_symbol
@@ -341,7 +353,11 @@ impl ReportState {
                                 self.report_period.phrase(),
                             )
                         };
-                        ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
+                        ui.label(
+                            egui::RichText::new(text)
+                                .color(palette.text_support())
+                                .small(),
+                        );
                         let default_symbol =
                             (!env.symbol.is_empty()).then(|| env.symbol.to_owned());
                         if (self.report_period != ReportPeriod::All
@@ -369,7 +385,7 @@ impl ReportState {
                                  silently dropped.",
                                 history.unreadable_files, history.problem_rows,
                             ))
-                            .color(theme::WARN)
+                            .color(palette.warn())
                             .small(),
                         );
                     }
@@ -379,15 +395,17 @@ impl ReportState {
                             history.rows.len(),
                             history.files
                         ))
-                        .color(theme::TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                     );
                 }
-                ui.label(
+                let _footer = ui.label(
                     egui::RichText::new(env.pnl.footnote())
-                        .color(theme::TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                 );
+                #[cfg(any(feature = "scenario-harness", test))]
+                self.scroll_probe.footer(ui, _footer.rect);
             });
         if toggle_list {
             self.report_list_open = !self.report_list_open;
@@ -410,11 +428,12 @@ impl ReportState {
     /// history must be re-read; anything it wants the *host* to do goes
     /// into `asked`.
     fn draw_report_filters(&mut self, ui: &mut egui::Ui, asked: &mut ReportResponse) -> bool {
+        let palette = theme::get(ui.ctx());
         let mut reload = false;
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("Symbol")
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
             let selected = self
@@ -444,7 +463,7 @@ impl ReportState {
             ui.separator();
             ui.label(
                 egui::RichText::new("Source")
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
             for source in SourceFilter::PILLS {
@@ -457,7 +476,7 @@ impl ReportState {
             ui.separator();
             ui.label(
                 egui::RichText::new("Period")
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
             // A picked calendar range takes the cut over, so no pill may
@@ -578,7 +597,11 @@ impl ReportState {
                 ),
                 (None, None) => "no saved trades in this scope".to_owned(),
             };
-            ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
+            ui.label(
+                egui::RichText::new(text)
+                    .color(palette.text_support())
+                    .small(),
+            );
         }
         reload
     }
@@ -588,6 +611,7 @@ impl ReportState {
     /// layout it always had; expanded it answers "which days did I trade,
     /// and what happened on the 12th" without a text field.
     fn draw_report_calendar(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
+        let palette = theme::get(ui.ctx());
         ui.horizontal(|ui| {
             let picked = self.calendar.selection.range();
             let label = match picked {
@@ -611,7 +635,7 @@ impl ReportState {
                         range.days(),
                         self.report_view.as_ref().map_or(0, |view| view.rows.len()),
                     ))
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
                 );
                 if ui
@@ -624,7 +648,7 @@ impl ReportState {
             } else if self.report_days.is_empty() {
                 ui.label(
                     egui::RichText::new("no days on record in this scope")
-                        .color(theme::TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                 );
             } else if let (Some(oldest), Some(newest)) =
@@ -643,7 +667,7 @@ impl ReportState {
                         oldest.iso(),
                         newest.iso(),
                     ))
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
                 );
             }
@@ -654,43 +678,28 @@ impl ReportState {
         // The grid is drawn from a cached day index, so an open calendar
         // costs a fixed 42 cells per frame however long the history is.
         let mut calendar = self.calendar;
-        let action = crate::paper_calendar::draw_month(
-            ui,
-            &self.report_days,
-            &mut calendar,
-            egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
-            // Only reached when nothing on disk names a month. The
-            // calendar module is deliberately clock-free, so the host —
-            // which may read a clock — says where "no history at all"
-            // should open.
-            today(tz),
-        );
+        let action = egui::ScrollArea::both()
+            .id_salt("report_calendar_grid")
+            .max_height(ui.available_height().max(0.0) * 0.45)
+            .show(ui, |ui| {
+                crate::paper_calendar::draw_month(
+                    ui,
+                    &self.report_days,
+                    &mut calendar,
+                    egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
+                    // Only reached when nothing on disk names a month. The
+                    // calendar module is deliberately clock-free, so the host —
+                    // which may read a clock — says where "no history at all"
+                    // should open.
+                    today(tz),
+                )
+            })
+            .inner;
         // The grid reports a pick; applying it is the named action's job,
         // never the paint's — the click and the hook take one path.
         self.calendar.month = calendar.month;
         if action == Some(CalendarAction::SelectionChanged) {
             self.pick_report_dates(calendar.selection);
-        }
-    }
-}
-
-/// Which filter is cutting the report. Exclusive by construction: a
-/// picked range takes over from the pills rather than intersecting with
-/// them, so exactly one of these is ever in force.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReportWindow {
-    /// Days the trader picked on the calendar.
-    Dates(DateRange),
-    /// The anchor-relative period pills.
-    Period(ReportPeriod),
-}
-
-impl ReportWindow {
-    /// The window in one phrase — absolute dates, or the pill's wording.
-    pub(crate) fn label(self) -> String {
-        match self {
-            Self::Dates(range) => range.label(),
-            Self::Period(period) => period.phrase(),
         }
     }
 }

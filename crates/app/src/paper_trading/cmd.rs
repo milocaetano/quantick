@@ -22,9 +22,10 @@ pub(super) fn draw_cmd_trading_settings(
     ruler: &mut Ruler,
     account: &Core,
 ) -> bool {
+    let palette = theme::get(ui.ctx());
     let mut changed = false;
     ui.add_space(4.0);
-    ui.label(caption("CMD TRADING"));
+    ui.label(caption(&palette, "CMD TRADING"));
     ui.horizontal(|ui| {
         if pill_toggle(
             ui,
@@ -39,7 +40,11 @@ pub(super) fn draw_cmd_trading_settings(
             changed = true;
         }
         for (word, slot) in [("Buy", true), ("Sell", false)] {
-            ui.label(egui::RichText::new(word).color(theme::TEXT_MUTED).small());
+            ui.label(
+                egui::RichText::new(word)
+                    .color(palette.text_muted())
+                    .small(),
+            );
             let current = if slot { settings.buy } else { settings.sell };
             egui::ComboBox::from_id_salt(("cmd_trading_modifier", word))
                 .width(64.0)
@@ -65,7 +70,7 @@ pub(super) fn draw_cmd_trading_settings(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Place")
-                .color(theme::TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         );
         let current = settings.kind;
@@ -88,7 +93,11 @@ pub(super) fn draw_cmd_trading_settings(
                  the price, limit and stop place only that one and show nothing where \
                  it cannot rest",
             );
-        ui.label(egui::RichText::new("Step").color(theme::TEXT_MUTED).small());
+        ui.label(
+            egui::RichText::new("Step")
+                .color(palette.text_muted())
+                .small(),
+        );
         // The empty field shows this instrument's own default as a hint,
         // so blank reads as "follows the instrument" rather than as
         // nothing. A tick is what the ladder speaks, and saying what one
@@ -117,7 +126,11 @@ pub(super) fn draw_cmd_trading_settings(
             fmt_decimal(tick),
             fmt_decimal(derived),
         ));
-        ui.label(egui::RichText::new("pts").color(theme::TEXT_FAINT).small());
+        ui.label(
+            egui::RichText::new("pts")
+                .color(palette.text_faint())
+                .small(),
+        );
     });
     if settings.enabled && settings.kind != CmdEntryKind::Auto {
         // A stated kind is valid on one side of the market only, so the
@@ -133,7 +146,7 @@ pub(super) fn draw_cmd_trading_settings(
                     "above it to buy, below it to sell"
                 },
             ))
-            .color(theme::TEXT_SUPPORT)
+            .color(palette.text_support())
             .small(),
         );
     }
@@ -144,7 +157,7 @@ pub(super) fn draw_cmd_trading_settings(
             egui::RichText::new(
                 "buy and sell share a key - the gesture stays hidden until they differ",
             )
-            .color(theme::AMBER)
+            .color(palette.amber())
             .small(),
         );
     } else if settings.enabled {
@@ -160,7 +173,7 @@ pub(super) fn draw_cmd_trading_settings(
                 settings.buy.label(),
                 settings.sell.label(),
             ))
-            .color(theme::TEXT_SUPPORT)
+            .color(palette.text_support())
             .small(),
         );
     }

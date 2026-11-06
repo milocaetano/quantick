@@ -7,7 +7,7 @@
 //! tab and the layout code do.
 
 use eframe::egui;
-use quantick_chart::flow_band::{FlowRect, flow_pane_layout};
+use quantick_chart::flow_band::{FlowRect, flow_pane_layout_scaled};
 
 pub use quantick_chart_interaction::pane::PaneSide;
 
@@ -41,8 +41,9 @@ pub struct FlowPaneAreas {
 
 /// Carve the flow pane's band, side headers and framed chart out of its area.
 #[must_use]
-pub fn split_flow_pane(area: egui::Rect) -> FlowPaneAreas {
-    let layout = flow_pane_layout(area.left(), area.top(), area.right(), area.bottom());
+pub fn split_flow_pane(area: egui::Rect, scale: f32) -> FlowPaneAreas {
+    let layout =
+        flow_pane_layout_scaled(area.left(), area.top(), area.right(), area.bottom(), scale);
     let rect = |r: FlowRect| {
         egui::Rect::from_min_max(egui::pos2(r.left, r.top), egui::pos2(r.right, r.bottom))
     };
@@ -84,8 +85,8 @@ pub fn clamp_pane_fraction(fraction: f32) -> f32 {
 /// chart. The header is a strip rather than an overlay so it is never painted
 /// across market data.
 #[must_use]
-pub fn split_pane_header(area: egui::Rect) -> PaneHeaderAreas {
-    let split_y = (area.top() + crate::time_header::HEIGHT_PX).min(area.bottom());
+pub fn split_pane_header(area: egui::Rect, height: f32) -> PaneHeaderAreas {
+    let split_y = (area.top() + height).min(area.bottom());
     PaneHeaderAreas {
         header: egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),
         chart: egui::Rect::from_min_max(egui::pos2(area.left(), split_y), area.max),

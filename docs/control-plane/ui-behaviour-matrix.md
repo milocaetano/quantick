@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 83 |
+| Reachable by capability | 84 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 3 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **142** |
+| **Total** | **143** |
 
-85 of the 142 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 57 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+86 of the 143 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 57 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -109,6 +109,7 @@ The three exclusion classes are closed:
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
 | `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `appearance.configuration` | Apply a complete appearance configuration | Tools > Theme > Dark/Light; versioned TOML or builtin choice through the local control plane | `appearance.apply` | — |
 | `indicator.picker.open` | Open and search the indicator library | the ƒx glyph on each pane header, searchable centered modal | `indicator.picker.set` | — |
 | `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Tools menu, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
@@ -216,7 +217,7 @@ matrix fails the build.
 | `layout_preset` | 4 |
 | `notice_action` | 2 |
 | `hotkey` | 19 |
-| `menu_entry` | 28 |
+| `menu_entry` | 29 |
 | `scripted_menu` | 0 |
 | `authored` | 57 |
 
@@ -308,5 +309,8 @@ disagree with.
 | `notice_action` | `None` | the feed notice's "nothing was clicked" variant: an absence, not a behaviour |
 | `scripted_menu` | `workspace` | a capture hook that opens the Workspace menu so a screenshot can see it. It performs nothing the menu's own entries do not |
 | `scripted_menu` | `history` | a capture hook that opens the toolbar's history caret. The behaviour behind it is `history.reach.set` |
+| `scripted_menu` | `theme` | a capture hook opening the native Theme menu; appearance.apply owns its choices |
+| `scripted_menu` | `theme-dark` | a scripted native Dark click; appearance.apply owns the same publication |
+| `scripted_menu` | `theme-light` | a scripted native Light click; appearance.apply owns the same publication |
 
-10 entries.
+13 entries.

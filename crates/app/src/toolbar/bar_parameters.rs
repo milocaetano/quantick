@@ -39,6 +39,7 @@ pub(crate) fn draw_kinds(
 }
 
 pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarInputAvailability) {
+    let palette = theme::get(ui.ctx());
     let config = selection.spec();
     let definition = config.definition();
     for choice in definition.choices {
@@ -73,9 +74,9 @@ pub(crate) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
         for (label, preset) in editor.presets {
             let selected = value == Decimal::from(*preset);
             let (fill, ink) = if selected {
-                (theme::ACCENT, theme::CHIP_INK)
+                (palette.accent(), palette.chip_ink())
             } else {
-                (theme::CONTROL, theme::TEXT_MUTED)
+                (palette.control(), palette.text_muted())
             };
             let chip = ui.add(
                 egui::Button::new(egui::RichText::new(*label).color(ink).small())

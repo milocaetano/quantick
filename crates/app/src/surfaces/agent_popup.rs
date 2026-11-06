@@ -47,6 +47,7 @@ impl Surface for AgentPopupSurface {
     }
 
     fn draw(&mut self, ctx: &egui::Context, _env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        let palette = theme::get(ctx);
         let id = self.id();
         let mut open = true;
         let mut dismissed = false;
@@ -72,7 +73,7 @@ impl Surface for AgentPopupSurface {
                     ui.label(
                         egui::RichText::new(format!("Sent by {}", popup.author))
                             .small()
-                            .color(theme::TEXT_SUPPORT),
+                            .color(palette.text_support()),
                     );
                     if ui.button("Dismiss").clicked() {
                         dismissed = true;

@@ -96,13 +96,14 @@ impl ObjectNotes {
     }
 
     fn show(self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         if let Some(author) = &self.author {
             // Data honesty, where the trader decides what to do with the
             // object: an assistant's mark never passes for their own.
             ui.label(
                 egui::RichText::new(format!("Placed by {author} - not by you."))
                     .small()
-                    .color(theme::TEXT_SUPPORT),
+                    .color(palette.text_support()),
             );
         }
         if self.locked {
@@ -111,14 +112,14 @@ impl ObjectNotes {
                     "Locked - protected from accidental moves. Style stays editable.",
                 )
                 .small()
-                .color(theme::TEXT_SUPPORT),
+                .color(palette.text_support()),
             );
         }
         if self.hidden {
             ui.label(
                 egui::RichText::new("Hidden - Show brings it back.")
                     .small()
-                    .color(theme::TEXT_SUPPORT),
+                    .color(palette.text_support()),
             );
         }
     }
@@ -138,6 +139,7 @@ struct ScopeToggle<'a> {
 impl ScopeToggle<'_> {
     /// Returns whether the scope changed.
     fn show(self, ui: &mut egui::Ui) -> bool {
+        let palette = theme::get(ui.ctx());
         let edited = self.edited;
         let shareable = edited.shareable();
         let mut shared = edited.scope == drawings::DrawingScope::AllCharts;
@@ -166,7 +168,7 @@ impl ScopeToggle<'_> {
             ui.label(
                 egui::RichText::new(sharing_hint)
                     .small()
-                    .color(theme::TEXT_SUPPORT),
+                    .color(palette.text_support()),
             );
         }
         changed

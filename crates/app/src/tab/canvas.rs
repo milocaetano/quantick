@@ -255,6 +255,7 @@ impl Tab {
         frame: &CanvasFrame,
         chrome: &mut CanvasChrome<'_>,
     ) -> PaneRects {
+        let palette = theme::get(ui.ctx());
         let context_shown = frame.context_shown;
         let bar_inputs = crate::toolbar::available_bar_inputs(
             chrome.capabilities,
@@ -304,20 +305,23 @@ impl Tab {
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
                 if self.context_stack.heights[slot].is_collapsed() {
                     ui.painter()
-                        .rect_filled(*band, egui::Rounding::ZERO, theme::CHROME);
+                        .rect_filled(*band, egui::Rounding::ZERO, palette.chrome());
                     ui.painter().rect_filled(
                         egui::Rect::from_center_size(
                             band.center(),
                             egui::vec2(RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX),
                         ),
                         egui::Rounding::same(1.0),
-                        theme::TEXT_MUTED,
+                        palette.text_muted(),
                     );
                     rects.context_charts.push(None);
                     continue;
                 }
                 let pane_areas = split_pane_layout_strip(*band);
-                let areas = split_pane_header(pane_areas.body);
+                let areas = split_pane_header(
+                    pane_areas.body,
+                    palette.layout(crate::time_header::HEIGHT_PX),
+                );
                 self.draw_time_header(ui, slot, areas.header, bar_inputs, job_slot.take());
                 rects
                     .context_charts
@@ -326,9 +330,12 @@ impl Tab {
         }
         rects.flow_areas = frame.show_flow.then(|| {
             let pane_areas = split_pane_layout_strip(frame.flow_band);
-            let areas = split_flow_pane(pane_areas.body);
-            ui.painter()
-                .rect_filled(pane_areas.body, egui::Rounding::ZERO, theme::FLOW_SURFACE);
+            let areas = split_flow_pane(pane_areas.body, palette.layout(1.0));
+            ui.painter().rect_filled(
+                pane_areas.body,
+                egui::Rounding::ZERO,
+                palette.flow_surface(),
+            );
             self.draw_flow_header(ui, areas.band, chrome);
             rects.flow_side_row = Some((areas.side_row, bar_inputs));
             self.flow_pane.frame.side_row = Some(areas.side_row);
@@ -639,6 +646,7 @@ impl Tab {
             *paper_drag_pane,
             focused,
         );
+        let chart_style = chrome.style;
         let mut chrome = PaneChrome {
             tab: tab_id,
             side: PaneSide::Flow,
@@ -668,6 +676,23 @@ impl Tab {
         chrome.paper.clear_cmd_preview();
         // Context panes carry addresses `1..`, the flow pane `0` — the order
         // `Tab::pane_at` uses, never the order they sit in.
+        let pane_styles: SmallVec<[_; MAX_CANVAS_PANES]> = time_panes
+            .iter()
+            .chain(std::iter::once(&*flow_pane))
+            .map(|pane| {
+                let palette = if pane.orderflow.is_some() {
+                    theme::bookmap(ui.ctx())
+                } else {
+                    theme::get(ui.ctx())
+                };
+                (
+                    pane.id,
+                    pane.presentation
+                        .candles
+                        .resolve(chart_style, &palette.resolved),
+                )
+            })
+            .collect();
         let context = time_panes
             .iter_mut()
             .zip(rects.context_charts.iter().copied())
@@ -694,8 +719,14 @@ impl Tab {
             chrome.paper_hud_here = side == focused;
             chrome.shared_pick = picks.for_pane(side);
             chrome.shared = SharedInteraction::default();
+            chrome.style = &pane_styles
+                .iter()
+                .find(|(id, _)| *id == pane.id)
+                .expect("visible pane style")
+                .1;
             pane.handle_navigation(ui, rect, &mut chrome);
             pane.draw_chart(ui.painter(), rect, &mut chrome);
+            chrome.style = chart_style;
             // Whatever this pane did to the other's marks travels out of the
             // loop: the store it belongs to is the pane that is not borrowed
             // right now.
@@ -723,6 +754,7 @@ impl Tab {
         frame: &CanvasFrame,
         rects: &PaneRects,
     ) {
+        let palette = theme::get(ui.ctx());
         let area = frame.area;
         if let Some(rail) = frame.collapsed_rail {
             self.draw_collapsed_rail(tab_id, ui, rail, area, false);
@@ -756,7 +788,7 @@ impl Tab {
                 egui::pos2(focused.left(), focused.top() + FOCUS_RULE_PX / 2.0),
                 egui::pos2(focused.right(), focused.top() + FOCUS_RULE_PX / 2.0),
             ],
-            egui::Stroke::new(FOCUS_RULE_PX, theme::ACCENT),
+            egui::Stroke::new(FOCUS_RULE_PX, palette.accent()),
         );
     }
 
@@ -919,8 +951,17 @@ impl Tab {
         let Some(position) = pressed else { return };
         // A header line governs its own pane wherever focus sits: changing a
         // pane's bars from there never moves focus. Only the chart below takes it.
-        let on_header = |band: &egui::Rect| split_pane_header(*band).header.contains(position);
-        let on_flow_header = split_flow_pane(flow_area).header.contains(position);
+        let on_header = |band: &egui::Rect| {
+            split_pane_header(
+                *band,
+                crate::theme::get(ui.ctx()).layout(crate::time_header::HEIGHT_PX),
+            )
+            .header
+            .contains(position)
+        };
+        let on_flow_header = split_flow_pane(flow_area, crate::theme::get(ui.ctx()).layout(1.0))
+            .header
+            .contains(position);
         if on_flow_header || context_bands.iter().any(on_header) {
             return;
         }
@@ -1023,12 +1064,13 @@ impl Tab {
         drawn_width: f32,
         canvas_width: f32,
     ) {
+        let palette = theme::get(ui.ctx());
         #[cfg(test)]
         {
             self.canvas_divider = Some(divider);
         }
         ui.painter()
-            .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
+            .rect_filled(divider, egui::Rounding::ZERO, palette.border());
         // Namespaced by tab for the same reason a pane namespaces its own ids
         // (see [`crate::pane`]): egui keeps drag state per id, so one shared
         // id would let a drag started on this tab's divider carry on into the
@@ -1101,6 +1143,7 @@ impl Tab {
     /// exchange height while every other boundary stays put. Registered after
     /// the pane bodies so a resize wins over the chart pan beneath its handle.
     fn draw_context_dividers(&mut self, tab_id: u64, ui: &egui::Ui, dividers: &[egui::Rect]) {
+        let palette = theme::get(ui.ctx());
         #[cfg(test)]
         self.context_dividers.extend(dividers.iter().copied());
 
@@ -1108,7 +1151,7 @@ impl Tab {
             let upper_collapsed = self.context_stack.heights[index].is_collapsed();
             let lower_collapsed = self.context_stack.heights[index + 1].is_collapsed();
             ui.painter()
-                .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
+                .rect_filled(divider, egui::Rounding::ZERO, palette.border());
             let handle = ui
                 .interact(
                     divider.expand2(egui::vec2(
@@ -1159,15 +1202,16 @@ impl Tab {
 /// the chart starts after), and a grip in the colour a reader knows means
 /// "chrome you can take hold of", lit while `hot`.
 pub(crate) fn paint_rail(painter: &egui::Painter, rail: egui::Rect, edge_x: f32, hot: bool) {
-    painter.rect_filled(rail, egui::Rounding::ZERO, theme::CHROME);
-    let stroke = egui::Stroke::new(1.0_f32, theme::BORDER);
+    let palette = theme::get(painter.ctx());
+    painter.rect_filled(rail, egui::Rounding::ZERO, palette.chrome());
+    let stroke = egui::Stroke::new(1.0_f32, palette.border());
     painter.vline(edge_x, rail.y_range(), stroke);
     let size = egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX);
     let grip = egui::Rect::from_center_size(rail.center(), size);
     let colour = if hot {
-        theme::ACCENT
+        palette.accent()
     } else {
-        theme::TEXT_MUTED
+        palette.text_muted()
     };
     painter.rect_filled(grip, egui::Rounding::same(1.0), colour);
 }

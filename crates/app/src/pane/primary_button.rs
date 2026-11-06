@@ -206,7 +206,7 @@ pub(super) fn pane_chrome_hit(areas: &PlotAreas, pos: egui::Pos2) -> bool {
             indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed).contains(pos)
             // The header opens the pane's settings; like the chevron and
             // the divider, arming a drawing tool must not silently kill it.
-            || indicator_render::pane_header_rect(slot.rect, slot.collapsed).contains(pos)
+            || indicator_render::pane_header_rect(slot.rect, slot.collapsed, slot.header_height).contains(pos)
             || (pos.y - slot.rect.top()).abs() <= PANE_DIVIDER_HANDLE_PX
         })
 }

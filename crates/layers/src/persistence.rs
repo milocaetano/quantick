@@ -52,6 +52,8 @@ impl SavedLayers {
 #[derive(Debug, Default)]
 pub struct LayerActions {
     pub grid: Option<bool>,
+    /// The pane whose canvas requested the grid change.
+    pub grid_pane: Option<u64>,
     pub indicators_changed: bool,
     pub footprint_changed: bool,
     pub open_footprint_settings: bool,

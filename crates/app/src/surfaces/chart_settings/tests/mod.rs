@@ -22,7 +22,10 @@ fn draw(
 
 fn pending(open: bool, now: Instant) -> ChartSettingsSurface {
     ChartSettingsSurface {
-        open,
+        session: quantick_control_handlers::chart_settings::ChartSettingsSession {
+            open,
+            ..Default::default()
+        },
         log_pending: true,
         last_change: Some(now),
         ..ChartSettingsSurface::default()

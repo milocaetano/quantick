@@ -3,7 +3,7 @@ use quantick_orderflow::projection::{
     PriceWindow,
     flow_tape::{FlowReference, FlowTapeView, project_flow_tape},
 };
-use quantick_orderflow::{HeatmapTheme, TickBubbleStyle, TickReferenceMode};
+use quantick_orderflow::{TickBubbleStyle, TickReferenceMode};
 
 fn source() -> Arc<FlowTapeFrame> {
     Arc::new(project_flow_tape(
@@ -42,7 +42,10 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
         label_min_radius: 8.0,
         opacity: 0.9,
     };
-    let look = Some((tick, HeatmapTheme::default()));
+    let look = Some((
+        tick,
+        quantick_orderflow::config::theme::PaletteChoice::default(),
+    ));
     let mut state = FlowPaintState::default();
     assert!(state.frame_for(&source, look, 1.0).is_none());
     state.record(&source, Some(&display), look, 1.0);
@@ -60,7 +63,7 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
             max_radius: 48.0,
             ..tick
         },
-        HeatmapTheme::default(),
+        quantick_orderflow::config::theme::PaletteChoice::default(),
     ));
     assert!(state.frame_for(&source, changed, 1.0).is_none());
     let legacy = Some((
@@ -68,7 +71,7 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
             viewport_scale: None,
             ..tick
         },
-        HeatmapTheme::default(),
+        quantick_orderflow::config::theme::PaletteChoice::default(),
     ));
     assert!(Arc::ptr_eq(
         &state.frame_for(&source, legacy, 1.0).unwrap(),

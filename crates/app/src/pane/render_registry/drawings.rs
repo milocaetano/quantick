@@ -202,6 +202,7 @@ impl DrawingPass<'_> {
         let chart_rect = egui_rect(band.rect);
         let clipped = painter.with_clip_rect(chart_rect);
         let fonts = TextFonts(painter.ctx());
+        let appearance = crate::theme::get(painter.ctx());
         // One buffer for every object of the pass, cleared between them.
         let mut scene = MarkScene::default();
         for (index, drawing) in self.drawings.items().iter().enumerate() {
@@ -222,6 +223,7 @@ impl DrawingPass<'_> {
             // mirrored marks use for the same reason.
             let style = quantick_drawings::painted_style(drawing);
             let ctxt = DrawContext {
+                appearance: &appearance.resolved,
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,
                 scale,
@@ -275,6 +277,7 @@ impl DrawingPass<'_> {
         let chart_rect = egui_rect(band.rect);
         let clipped = painter.with_clip_rect(chart_rect);
         let fonts = TextFonts(painter.ctx());
+        let appearance = crate::theme::get(painter.ctx());
         // With hide-all engaged the finished object would be invisible, so
         // the rubber-band must not pretend otherwise (audit M8) — placement
         // itself releases hide-all when it commits, in `place_with`.
@@ -296,6 +299,7 @@ impl DrawingPass<'_> {
                 anchors.push(hover);
             }
             let ctxt = DrawContext {
+                appearance: &appearance.resolved,
                 payload: draft.payload.as_ref(),
                 anchors: &anchors,
                 scale,

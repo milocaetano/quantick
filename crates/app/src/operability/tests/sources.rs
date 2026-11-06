@@ -85,9 +85,9 @@ fn production(text: &str) -> &str {
 ///
 /// Panics when the declaration is not found or yields nothing: a scan that
 /// matches zero variants would let every row in the table look claimed.
-fn enum_variants(name: &str) -> Vec<String> {
+fn enum_variants(owner: &str, name: &str) -> Vec<String> {
     let header = format!("enum {name} {{");
-    let declarations: Vec<(String, String, usize)> = app_sources()
+    let declarations: Vec<(String, String, usize)> = crate_sources(owner)
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path)
@@ -104,7 +104,7 @@ fn enum_variants(name: &str) -> Vec<String> {
         .collect();
     assert!(
         !declarations.is_empty(),
-        "no file under crates/app/src declares `enum {name}`"
+        "no file under crates/{owner}/src declares `enum {name}`"
     );
     // Exactly one, or the name does not identify a registry. `Tool` is short
     // enough that a second `enum Tool` elsewhere in the crate would silently
@@ -151,8 +151,12 @@ fn enum_variants(name: &str) -> Vec<String> {
 
 /// Every production `.rs` file under `crates/app/src`, test trees excluded.
 fn app_sources() -> Vec<PathBuf> {
+    crate_sources("app")
+}
+
+fn crate_sources(owner: &str) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    let root = workspace_root().join("crates/app/src");
+    let root = workspace_root().join("crates").join(owner).join("src");
     let mut stack = vec![root];
     while let Some(directory) = stack.pop() {
         let entries = std::fs::read_dir(&directory)
@@ -288,6 +292,7 @@ pub(crate) const COMPUTED_MENU_LABELS: usize = 12;
 
 /// The actual owners that render the menu bar and its workspace file actions.
 const MENU_SOURCES: &[&str] = &[
+    "crates/app/src/theme/choice.rs",
     "crates/app/src/app/menu_bar.rs",
     "crates/app/src/app/menu_bar/menus.rs",
     "crates/app/src/app/workspace_bundle_adapter.rs",
@@ -351,19 +356,19 @@ fn menu_labels() -> (Vec<String>, usize) {
 pub(crate) fn registered() -> Vec<Registered> {
     let mut entries = Vec::new();
 
-    for variant in enum_variants("ToolbarAction") {
+    for variant in enum_variants("app", "ToolbarAction") {
         entries.push(Registered::new(Source::ToolbarAction, variant));
     }
-    for variant in enum_variants("StripAction") {
+    for variant in enum_variants("app", "StripAction") {
         entries.push(Registered::new(Source::StripAction, variant));
     }
-    for variant in enum_variants("TabAction") {
+    for variant in enum_variants("app", "TabAction") {
         entries.push(Registered::new(Source::TabAction, variant));
     }
-    for variant in enum_variants("ToolboxDock") {
+    for variant in enum_variants("app", "ToolboxDock") {
         entries.push(Registered::new(Source::ToolboxDock, variant));
     }
-    for variant in enum_variants("NoticeAction") {
+    for variant in enum_variants("feed", "NoticeAction") {
         entries.push(Registered::new(Source::NoticeAction, variant));
     }
 
@@ -380,7 +385,7 @@ pub(crate) fn registered() -> Vec<Registered> {
     // `[Tool::Pointer, Tool::Crosshair]` here would let a third non-drawing
     // tool ship unclaimed with this guard green, which is the failure the
     // guard exists to catch.
-    for variant in enum_variants("Tool") {
+    for variant in enum_variants("app", "Tool") {
         entries.push(Registered::new(Source::RailTool, variant));
     }
     for preset in crate::canvas_layout::LAYOUT_PRESETS {

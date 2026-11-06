@@ -71,6 +71,7 @@ impl Surface for WorkspaceNameSurface {
     }
 
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        let palette = theme::get(ctx);
         let id = self.id();
         let Some(mut entry) = self.entry.take() else {
             return SurfaceResponse::default();
@@ -116,7 +117,7 @@ impl Surface for WorkspaceNameSurface {
                 {
                     ui.label(
                         egui::RichText::new(format!("Replaces the saved \"{clean}\"."))
-                            .color(theme::AMBER),
+                            .color(palette.amber()),
                     );
                 }
                 ui.horizontal(|ui| {

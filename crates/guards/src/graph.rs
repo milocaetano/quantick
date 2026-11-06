@@ -56,6 +56,7 @@ use crate::Finding;
 /// same shape in prose and in a diagram, for a reader; this is the copy a
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
+    ("appearance", &[]),
     ("anchored-studies", &["engine", "indicators"]),
     // Queue discipline and progress counts between an owner and a worker;
     // told the time, and whether the worker unwound.
@@ -69,6 +70,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     (
         "chart",
         &[
+            "appearance",
             "chart-interaction",
             "civil",
             "engine",
@@ -88,6 +90,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     (
         "drawings",
         &[
+            "appearance",
             "anchored-studies",
             "chart",
             "chart-interaction",
@@ -154,7 +157,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // The order-flow engine reads bars from `engine` and depth events from
     // `orderbook`, and is told the time by its caller. It sits beside
     // `indicators`: something the chart draws and `backtest` may consume.
-    ("orderflow", &["engine", "orderbook"]),
+    ("orderflow", &["appearance", "engine", "orderbook"]),
     ("replay", &["civil", "engine"]),
     // One tab's reaching back behind a command bus: venue candles and the
     // trade-history run, over the source vocabulary. Told the time; its feed
@@ -191,6 +194,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     (
         "stores",
         &[
+            "appearance",
             "chart",
             "engine",
             "indicators",

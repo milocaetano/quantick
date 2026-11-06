@@ -14,7 +14,7 @@ use eframe::egui;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_engine::BarFootprint;
 use quantick_orderbook::BookLevel;
-use quantick_orderflow::engine::{CaptureStatus, ProjectionRequest, VisibleOrderflow};
+use quantick_orderflow::engine::{ProjectionRequest, VisibleOrderflow};
 use quantick_orderflow::projection::{PaneGeometry, normalized_area_size};
 use quantick_orderflow::tape_view::TapeEnd;
 use quantick_orderflow::{HeatmapProjection, LiveEdge};
@@ -26,25 +26,12 @@ use crate::live_strip;
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
     draw_compact_legend_avoiding, draw_heatmap_background, draw_liquidity_events,
-    draw_live_lane_marks, theme_bubble_rgb,
+    draw_live_lane_marks,
 };
 use crate::orderflow_worker::BookCommand;
 use crate::viewport::Viewport;
 
 use super::{OrderflowView, VisibleBarTimeline};
-
-pub(super) fn status_color(status: &CaptureStatus) -> egui::Color32 {
-    match status {
-        CaptureStatus::Live { .. } => crate::theme::BUY,
-        CaptureStatus::Connecting | CaptureStatus::Buffering | CaptureStatus::SnapshotFetching => {
-            crate::theme::AMBER
-        }
-        CaptureStatus::Disabled => crate::theme::TEXT_MUTED,
-        CaptureStatus::Resyncing { .. }
-        | CaptureStatus::Disconnected { .. }
-        | CaptureStatus::Error => crate::theme::WARN,
-    }
-}
 
 impl OrderflowView {
     /// `frame`'s layout over the chart, the strip the pane carved left of the
@@ -70,7 +57,11 @@ impl OrderflowView {
         lane_width: f32,
         background: egui::Color32,
     ) {
-        let style = OrderflowRenderStyle::from_config(&self.config, background.to_array());
+        let style = OrderflowRenderStyle::with_appearance(
+            &self.config,
+            background.to_array(),
+            &crate::theme::get(painter.ctx()).resolved.orderflow,
+        );
         crate::orderflow_render::draw_lane_boundary(painter, rect, lane_width, &style);
     }
 
@@ -147,7 +138,11 @@ impl OrderflowView {
     ) {
         let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
         let layout = layout.with_inverted(inverted);
-        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        let style = OrderflowRenderStyle::with_appearance(
+            &self.config,
+            canvas_background.to_array(),
+            &crate::theme::get(painter.ctx()).resolved.orderflow,
+        );
         // The frame's book is today's: a held tape draws its own beside it.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
@@ -187,8 +182,11 @@ impl OrderflowView {
     ) {
         let layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
         let layout = layout.with_inverted(inverted);
-        let mut style =
-            OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        let mut style = OrderflowRenderStyle::with_appearance(
+            &self.config,
+            canvas_background.to_array(),
+            &crate::theme::get(painter.ctx()).resolved.orderflow,
+        );
         // FLOW owns tick-candle executions even when the Tape lane is hidden.
         style.aggression_layer &= !self.flow_execution_replaces_history();
         style.bubbles.display_scale = style.bubbles.display_scale.painted(tick_chart);
@@ -334,8 +332,11 @@ impl OrderflowView {
         tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
     ) -> Option<egui::Rect> {
         let mut layout = self.projected((chart_rect, viewport, total_bars), frame, lane_width_px);
-        let mut style =
-            OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        let mut style = OrderflowRenderStyle::with_appearance(
+            &self.config,
+            canvas_background.to_array(),
+            &crate::theme::get(painter.ctx()).resolved.orderflow,
+        );
         style.legend_top_inset = top_inset_px;
         if self.flow_execution_replaces_history() && !style.live_lane.tape_only {
             // FLOW has its own unboxed palette key; retain the historical L2 key.
@@ -380,19 +381,22 @@ impl OrderflowView {
         bar_open_ms: Option<i64>,
         forming: Option<&BarFootprint>,
     ) {
+        let palette = crate::theme::get(painter.ctx());
         self.sync_published();
         painter.rect_filled(strip, egui::Rounding::ZERO, canvas_background);
         painter.line_segment(
             [strip.left_top(), strip.left_bottom()],
             egui::Stroke::new(
                 1.0_f32,
-                crate::theme::TEXT_MUTED.gamma_multiply(live_strip::STRIP_BORDER_ALPHA),
+                palette
+                    .text_muted()
+                    .gamma_multiply(live_strip::STRIP_BORDER_ALPHA),
             ),
         );
 
         let ladder = self.published.ladder.clone();
         let frame = self.published.frame.clone();
-        let colors = theme_bubble_rgb(self.config.theme);
+        let colors = self.config.palette.bubble_rgb(&palette.resolved.orderflow);
         let clip = painter.with_clip_rect(strip);
         let rows_left = strip.left() + live_strip::STRIP_ROW_INSET_PX;
 
@@ -484,8 +488,8 @@ impl OrderflowView {
                 egui::pos2(strip.center().x, strip.top() + 10.0),
                 egui::Align2::CENTER_CENTER,
                 "no book",
-                egui::FontId::proportional(10.0),
-                crate::theme::TEXT_MUTED,
+                palette.label_font(10.0),
+                palette.text_muted(),
             );
         }
     }

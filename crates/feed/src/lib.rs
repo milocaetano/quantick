@@ -38,6 +38,7 @@ pub mod hyperliquid;
 pub mod log_sink;
 pub mod metatrader;
 pub mod mt5_bridge;
+pub mod notice_report;
 pub mod ohlcv_plan;
 pub mod replay;
 pub mod replay_download;

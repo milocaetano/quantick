@@ -11,6 +11,8 @@ use quantick_workspace::lifetime::{
 };
 
 pub(super) struct WorkspaceRuntime {
+    pub(super) chart_theme: quantick_chart::style::ChartThemeSync,
+    pub(super) appearance: quantick_stores::appearance::AppearanceStore,
     pub(super) lifetime: WorkspaceLifetime,
     pub(super) tabs: super::ArrangementHost,
     pub(super) indicators: super::indicator_manager::IndicatorState,
@@ -23,6 +25,63 @@ pub(super) struct WorkspaceRuntime {
 }
 
 impl WorkspaceRuntime {
+    pub(super) fn new(
+        tab: crate::tab::Tab,
+        trades_dir: std::path::PathBuf,
+        reach_span_minutes: u32,
+    ) -> Self {
+        // Resolve each startup path once: the owned store writes where it loaded.
+        let symbols_path = crate::symbols_file::default_path();
+        let footprint_settings_path = crate::footprint_config::settings_path();
+        let indicator_presets_path = crate::indicators::preset_file::default_path();
+        let loaded = super::layout_wiring::LayoutAdapter::load_layouts(
+            &crate::layouts::default_path(),
+            &crate::indicators::state_file::default_path(),
+        );
+        let layouts = crate::workspace_store::LayoutStore::new(
+            loaded.0,
+            crate::layouts::default_path(),
+            loaded.1,
+        );
+        Self {
+            chart_theme: Default::default(),
+            appearance: crate::theme::store::load(),
+            lifetime: WorkspaceLifetime::new(super::WORKSPACE_ID),
+            tabs: super::ArrangementHost::new(
+                super::WORKSPACE_ID,
+                quantick_workspace::arrangement::TabId(super::FIRST_TAB_ID),
+                tab,
+            ),
+            indicators: super::indicator_manager::IndicatorState::new(
+                super::WORKSPACE_ID,
+                super::FIRST_TAB_ID,
+                &indicator_presets_path,
+            ),
+            footprint_config: crate::footprint_config::load(&footprint_settings_path),
+            style: crate::style::ChartStyle::default(),
+            style_revision: 0,
+            history: super::tabs::HistorySettings {
+                progressive_history: true,
+                history_reach: quantick_feed::history_reach::HistoryReach::default(),
+                history_reach_span_minutes: reach_span_minutes,
+                venue_lead_in: false,
+            },
+            tz: crate::timezone::TzOffset::default(),
+            workspace: crate::workspace_store::WorkspaceStore::new(
+                crate::workspace_store::StorePaths {
+                    symbols: symbols_path,
+                    chart_layers: crate::chart_layers::default_path(),
+                    footprint_settings: footprint_settings_path,
+                    indicator_presets: indicator_presets_path,
+                    ui_state: crate::ui_state::default_path(),
+                    bubble_assets: crate::bubble_presets::assets_path(),
+                },
+                layouts,
+                trades_dir,
+            ),
+        }
+    }
+
     /// Settings retain the pane they captured, regardless of window or focus.
     pub(super) fn draw_indicator_settings(
         &mut self,
@@ -96,6 +155,7 @@ impl WorkspaceRuntime {
 
 /// Native rendering identity stays outside the process-owned workspace payload.
 pub(super) struct WindowPresentation {
+    pub(super) context: Option<egui::Context>,
     pub(super) binding: WorkspaceView,
 }
 impl WindowPresentation {
@@ -104,7 +164,10 @@ impl WindowPresentation {
             .lifetime
             .bind_view(ViewId(0))
             .expect("initial workspace view");
-        let mut presentation = Self { binding };
+        let mut presentation = Self {
+            binding,
+            context: None,
+        };
         presentation
             .rebind(owner, egui::ViewportId::ROOT)
             .expect("initial native binding");

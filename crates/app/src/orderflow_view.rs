@@ -910,8 +910,9 @@ impl OrderflowView {
             // Same-frame tape facts; heavy book history stays on the worker.
             let print = self.pane_tape.record(trade, &self.config);
             if let Some(epoch) = print.opens {
-                self.worker
-                    .send(BookCommand::ApplyVisualConfig(self.config.clone()));
+                self.worker.send(BookCommand::ApplyVisualConfig(Box::new(
+                    self.config.clone(),
+                )));
                 self.worker.send(BookCommand::TapeEpoch(epoch));
             }
             self.worker.send(BookCommand::TapeTrade {
@@ -1061,17 +1062,20 @@ impl OrderflowView {
             // Stage the bucket: visual changes apply now, the destructive
             // grouping reset only after the feed accepts the restart command.
             self.pending_capture_grouping_previous = Some(before.price_grouping);
-            self.worker
-                .send(BookCommand::ApplyVisualConfig(self.config.clone()));
+            self.worker.send(BookCommand::ApplyVisualConfig(Box::new(
+                self.config.clone(),
+            )));
         } else if capture_grouping_changed {
             self.last_seen_base = self.config.price_grouping;
-            self.worker
-                .send(BookCommand::ApplyVisualConfig(self.config.clone()));
+            self.worker.send(BookCommand::ApplyVisualConfig(Box::new(
+                self.config.clone(),
+            )));
             self.worker
                 .send(BookCommand::ApplyGroupingNow(self.config.price_grouping));
         } else {
-            self.worker
-                .send(BookCommand::ApplyVisualConfig(self.config.clone()));
+            self.worker.send(BookCommand::ApplyVisualConfig(Box::new(
+                self.config.clone(),
+            )));
         }
         restart_required
     }
@@ -1153,11 +1157,24 @@ impl OrderflowView {
         self.worker.send(BookCommand::TapeEpoch(epoch));
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_named_preset(&mut self, name: &str, spheres: bool) -> Result<bool, String> {
+        self.apply_named_preset_with(
+            name,
+            spheres,
+            &quantick_appearance::ResolvedTheme::bundled_dark().orderflow,
+        )
+    }
+    pub(crate) fn apply_named_preset_with(
+        &mut self,
+        name: &str,
+        spheres: bool,
+        appearance: &quantick_appearance::orderflow::OrderflowAppearance,
+    ) -> Result<bool, String> {
         let before = self.config.clone();
-        let changed = self
-            .look
-            .apply_named_preset(name, &mut self.config, spheres)?;
+        let changed =
+            self.look
+                .apply_named_preset_with(name, &mut self.config, spheres, appearance)?;
         if changed {
             self.commit_config_changes(before);
         }
@@ -1628,6 +1645,7 @@ mod tests {
         let before = view.config.clone();
         let mut presets = embedded();
         presets.upsert(BubblePreset {
+            palette: quantick_orderflow::config::theme::PaletteChoice::Inherited,
             name: "wide".to_owned(),
             tick_bubbles: None,
             cluster_ms: 100,

@@ -18,6 +18,7 @@ use crate::chart::PriceScale;
 use crate::indicators::IndicatorView;
 use crate::theme;
 use crate::viewport::Viewport;
+use quantick_chart::indicator_views::format_value;
 
 /// Marker radius for [`PlotStyle::Circles`] / arm length for
 /// [`PlotStyle::Cross`], in pixels.
@@ -40,11 +41,6 @@ const ZERO_LINE_ALPHA: f32 = 0.3;
 const PANE_RULE_WIDTH_PX: f32 = 1.0;
 /// Inset of a pane's corner labels from its own edges, in pixels.
 const PANE_LABEL_INSET_PX: egui::Vec2 = egui::vec2(6.0, 3.0);
-/// Above this magnitude a headline value is shown with fewer decimals: a
-/// five-figure price needs no hundredths.
-const LARGE_VALUE_THRESHOLD: f64 = 1000.0;
-/// Decimals shown at or above [`LARGE_VALUE_THRESHOLD`].
-const LARGE_VALUE_DECIMALS: usize = 1;
 /// Marker size (triangle half-height / circle radius), in pixels.
 const MARKER_SIZE_PX: f32 = 4.0;
 /// Gap between a bar's extreme and its above/below marker, in pixels.
@@ -111,7 +107,7 @@ pub(crate) fn pane_disclosure_rect(band: Rect, collapsed: bool) -> Rect {
 /// collapsed pane, whose whole strip *is* the disclosure and which therefore
 /// reads its double click from there.
 #[must_use]
-pub(crate) fn pane_header_rect(band: Rect, collapsed: bool) -> Rect {
+pub(crate) fn pane_header_rect(band: Rect, collapsed: bool, height: f32) -> Rect {
     if collapsed {
         return Rect::NOTHING;
     }
@@ -119,10 +115,7 @@ pub(crate) fn pane_header_rect(band: Rect, collapsed: bool) -> Rect {
     let left = disclosure.right().min(band.right());
     Rect::from_min_max(
         egui::pos2(left, band.top()),
-        egui::pos2(
-            band.right(),
-            (band.top() + disclosure.height()).min(band.bottom()),
-        ),
+        egui::pos2(band.right(), (band.top() + height).min(band.bottom())),
     )
 }
 
@@ -293,6 +286,7 @@ pub(crate) fn draw_pane(
     end: usize,
     partial_slot: Option<usize>,
 ) {
+    let palette = theme::get(painter.ctx());
     let pane = frame.rect;
     // The pane is the plot area *and* the lane band beside it: one strip of
     // canvas from the chart's left edge to its gutter. Anything less leaves a
@@ -307,7 +301,7 @@ pub(crate) fn draw_pane(
         [band.left_top(), band.right_top()],
         Stroke::new(
             PANE_RULE_WIDTH_PX,
-            theme::TEXT_MUTED.gamma_multiply(PANE_FRAME_ALPHA),
+            palette.text_muted().gamma_multiply(PANE_FRAME_ALPHA),
         ),
     );
     // The rule that closes the pane's right edge is drawn whatever the pane
@@ -331,8 +325,8 @@ pub(crate) fn draw_pane(
             band.center(),
             egui::Align2::CENTER_CENTER,
             format!("{} — warming up", view.label()),
-            egui::FontId::proportional(PANE_LABEL_FONT_PX),
-            theme::TEXT_MUTED,
+            palette.label_font(PANE_LABEL_FONT_PX),
+            palette.text_muted(),
         );
         return;
     };
@@ -349,7 +343,7 @@ pub(crate) fn draw_pane(
             [pos2(band.left(), y), pos2(band.right(), y)],
             Stroke::new(
                 PANE_RULE_WIDTH_PX,
-                theme::TEXT_MUTED.gamma_multiply(ZERO_LINE_ALPHA),
+                palette.text_muted().gamma_multiply(ZERO_LINE_ALPHA),
             ),
         );
     }
@@ -382,50 +376,61 @@ pub(crate) fn draw_pane(
         end,
     );
 
-    painter.text(
-        pane.left_top() + PANE_LABEL_INSET_PX,
-        egui::Align2::LEFT_TOP,
-        format!("{EXPANDED_CHEVRON} {}", view.label()),
-        egui::FontId::proportional(PANE_LABEL_FONT_PX),
-        theme::TEXT_MUTED,
-    );
-    if let Some(last) = last_value(view) {
-        painter.text(
-            band.right_top() + egui::vec2(-PANE_LABEL_INSET_PX.x, PANE_LABEL_INSET_PX.y),
-            egui::Align2::RIGHT_TOP,
-            format_value(last),
-            egui::FontId::monospace(PANE_LABEL_FONT_PX),
-            theme::TEXT_MUTED,
-        );
-    }
+    draw_pane_heading(painter, band, view, false);
 }
 
-/// A pane with no room for its curve: its name on the left, its live value on
-/// the right, and a chevron saying the curve is one click away.
-///
-/// The value is what the user added the indicator *for*, so it survives the
-/// collapse — a strip that hid the number too would be an indicator switched
-/// off without being asked. The chevron points right, the direction a closed
-/// disclosure points.
 fn draw_collapsed_pane(painter: &egui::Painter, band: Rect, view: &IndicatorView) {
-    let font = egui::FontId::proportional(PANE_LABEL_FONT_PX);
-    let y = band.center().y;
-    painter.text(
+    draw_pane_heading(painter, band, view, true);
+}
+
+fn draw_pane_heading(painter: &egui::Painter, band: Rect, view: &IndicatorView, collapsed: bool) {
+    let palette = theme::get(painter.ctx());
+    let painter = painter.with_clip_rect(band);
+    let value = last_value(view).map(format_value).unwrap_or_default();
+    let font = palette.axis_font(PANE_LABEL_FONT_PX);
+    let value_width = painter
+        .layout_no_wrap(value.clone(), font.clone(), palette.text_muted())
+        .size()
+        .x
+        .min(band.width() * 0.5);
+    let y = if collapsed {
+        band.center().y
+    } else {
+        band.top() + PANE_LABEL_INSET_PX.y
+    };
+    let left = if collapsed {
+        egui::Align2::LEFT_CENTER
+    } else {
+        egui::Align2::LEFT_TOP
+    };
+    let right = if collapsed {
+        egui::Align2::RIGHT_CENTER
+    } else {
+        egui::Align2::RIGHT_TOP
+    };
+    let chevron = if collapsed {
+        COLLAPSED_CHEVRON
+    } else {
+        EXPANDED_CHEVRON
+    };
+    theme::text_fitted(
+        &painter,
         pos2(band.left() + PANE_LABEL_INSET_PX.x, y),
-        egui::Align2::LEFT_CENTER,
-        format!("{COLLAPSED_CHEVRON} {}", view.label()),
-        font,
-        theme::TEXT_MUTED,
+        left,
+        format!("{chevron} {}", view.label()),
+        palette.label_font(PANE_LABEL_FONT_PX),
+        palette.text_muted(),
+        band.width() - value_width - 3.0 * PANE_LABEL_INSET_PX.x,
     );
-    if let Some(last) = last_value(view) {
-        painter.text(
-            pos2(band.right() - PANE_LABEL_INSET_PX.x, y),
-            egui::Align2::RIGHT_CENTER,
-            format_value(last),
-            egui::FontId::monospace(PANE_LABEL_FONT_PX),
-            theme::TEXT_MUTED,
-        );
-    }
+    theme::text_fitted(
+        &painter,
+        pos2(band.right() - PANE_LABEL_INSET_PX.x, y),
+        right,
+        value,
+        font,
+        palette.text_muted(),
+        value_width,
+    );
 }
 
 /// A pane's line-shaped plots across the live lane: the committed steps of
@@ -523,9 +528,10 @@ fn draw_pane_axis(
     scale: &PriceScale,
     band: Rect,
 ) {
+    let palette = theme::axes(painter.ctx());
     let pane = frame.rect;
     let (lo, hi) = scale.range();
-    let font = egui::FontId::monospace(crate::chart::AXIS_LABEL_FONT_PX);
+    let font = palette.axis_font(crate::chart::AXIS_LABEL_FONT_PX);
     for (tick, label) in crate::chart::axis_labels(lo, hi, pane.height()) {
         let y = scale.y(tick);
         clipped.line_segment(
@@ -544,7 +550,7 @@ fn draw_pane_axis(
             egui::Align2::LEFT_CENTER,
             label,
             font.clone(),
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
 }
@@ -599,14 +605,6 @@ fn value_range(view: &IndicatorView, start: usize, end: usize) -> Option<(f64, f
         }
     }
     (lo.is_finite() && hi.is_finite()).then_some((lo, hi))
-}
-
-fn format_value(v: f64) -> String {
-    if v.abs() >= LARGE_VALUE_THRESHOLD {
-        format!("{v:.*}", LARGE_VALUE_DECIMALS)
-    } else {
-        quantick_engine::display::display_f64(v)
-    }
 }
 
 /// Draw all plots of one view with a shared y mapping.
@@ -881,6 +879,7 @@ pub(crate) fn draw_objects(
     // galley builds per frame for labels that are mostly off-screen. The
     // test is overlap, not containment: a line that starts left of the
     // window and ends right of it crosses the whole screen.
+    let palette = theme::get(painter.ctx());
     let visible_span = |lo: i64, hi: i64| {
         let (lo, hi) = (lo.min(hi), lo.max(hi));
         hi >= 0 && (lo as usize) < end && (hi as usize) >= start
@@ -935,7 +934,7 @@ pub(crate) fn draw_objects(
         let anchor = pos2(x.x(label.x as usize), y_of(label.y));
         let galley = painter.layout_no_wrap(
             label.text.clone(),
-            egui::FontId::proportional(OBJECT_LABEL_FONT),
+            palette.body_font(OBJECT_LABEL_FONT),
             color32(label.text_color),
         );
         let size = galley.size() + egui::vec2(OBJECT_LABEL_PAD * 2.0, OBJECT_LABEL_PAD * 2.0);
@@ -1035,6 +1034,7 @@ fn draw_shape_markers(
     bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
 ) {
     use quantick_indicators::{MarkerLocation, MarkerShape};
+    let palette = theme::get(painter.ctx());
     for (row, value) in plot.cells() {
         if value.is_nan() {
             continue;
@@ -1113,7 +1113,7 @@ fn draw_shape_markers(
                 center + egui::vec2(0.0, offset),
                 anchor,
                 text,
-                egui::FontId::proportional(OBJECT_LABEL_FONT),
+                palette.body_font(OBJECT_LABEL_FONT),
                 color,
             );
         }
@@ -1266,13 +1266,6 @@ mod tests {
             pane_auto_range(&view(vec![vec![f64::NAN]], None), 0, 1).is_none(),
             "nothing computed yet is nothing to scale — and no axis to draw"
         );
-    }
-
-    #[test]
-    fn format_value_drops_decimals_only_at_price_scale() {
-        assert_eq!(format_value(1234.5678), "1234.6");
-        assert_eq!(format_value(0.12345), "0.12");
-        assert_eq!(format_value(-9999.99), "-10000.0");
     }
 
     fn painted(draw: impl Fn(&egui::Painter)) -> String {

@@ -69,6 +69,7 @@ impl MarkTool for ArrowMarkDown {
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(MarkPayload::default())
     }
+    fn default_color_token(&self) -> quantick_appearance::Token { quantick_appearance::Token::DrawingSell }
     fn default_color(&self) -> Option<PremultipliedRgba> {
         Some(theme::SELL)
     }

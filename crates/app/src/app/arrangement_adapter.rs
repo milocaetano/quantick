@@ -234,7 +234,11 @@ impl ArrangementAdapter<'_> {
         #[cfg(any(feature = "scenario-harness", test))]
         {
             if self.harness.footprint() {
-                self.active_tab_mut().flow_pane.footprint.visible = true;
+                self.active_tab_mut()
+                    .flow_pane
+                    .presentation
+                    .footprint
+                    .visible = true;
             }
             if let Some(px) = self.harness.candle_width() {
                 self.active_tab_mut()
@@ -413,6 +417,7 @@ impl ArrangementRead<'_> {
             .tabs
             .iter()
             .map(|tab| ui_state::SavedTab {
+                candle_styles: tab.candle_styles(),
                 feed: tab.feed_id.clone(),
                 symbol: tab.symbol.clone(),
                 layout: tab.layout.into(),

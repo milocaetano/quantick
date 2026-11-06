@@ -51,3 +51,5 @@ pub mod trade;
 pub mod workspace;
 
 pub mod indicator_picker;
+
+pub mod appearance;

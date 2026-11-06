@@ -10,11 +10,12 @@ use quantick_sim::history::SessionSource;
 use quantick_sim::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
-use super::super::ledger::{LedgerPage, draw_totals_strip};
+use super::super::ledger::draw_totals_strip;
 use super::super::rows::{TradeMeta, draw_day_header, draw_ledger_row};
 use super::super::sessions::{SessionHead, draw_session_head};
 use crate::paper_calendar::CivilDate;
 use crate::timezone::TzOffset;
+use quantick_paper::report::ledger_rows::LedgerPage;
 
 /// The docked trades panel's width in the trader's screenshot.
 const NARROW_PX: f32 = 300.0;
@@ -43,7 +44,20 @@ fn short_four() -> ClosedTrade {
 /// Paints `draw` into a frameless panel `width` wide and returns every
 /// non-empty piece of text it painted, with where it painted it.
 fn painted_text(width: f32, mut draw: impl FnMut(&mut egui::Ui)) -> Vec<(String, egui::Rect)> {
+    painted_text_with_theme(width, None, &mut draw)
+}
+
+fn painted_text_with_theme(
+    width: f32,
+    source: Option<&str>,
+    mut draw: impl FnMut(&mut egui::Ui),
+) -> Vec<(String, egui::Rect)> {
     let ctx = egui::Context::default();
+    if let Some(source) = source {
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(source).unwrap();
+        crate::theme::sync(&ctx, &appearance);
+    }
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
@@ -208,4 +222,43 @@ fn the_totals_strip_at_the_docked_width_keeps_its_net() {
         has(&texts, net) || has(&texts, "+5056.20 BRL"),
         "the net is never cut: {texts:?}"
     );
+}
+
+#[test]
+fn enlarged_light_trade_rows_keep_primary_text_apart() {
+    let source = format!(
+        "{}\n[typography.monospace]\nsize=24.0",
+        quantick_appearance::LIGHT
+    );
+    assert_eq!(
+        quantick_appearance::ResolvedTheme::parse(&source)
+            .unwrap()
+            .typography
+            .get(quantick_appearance::FontRole::Monospace)
+            .size,
+        24.0
+    );
+    let trade = short_four();
+    let tags = [];
+    let meta = TradeMeta {
+        session: None,
+        trade_ref: TradeRef::default(),
+        source: Some(SessionSource::Replay),
+        tags: &tags,
+        pnl: PnlReader::plain().of("WINZ26"),
+    };
+    for width in [240.0, 300.0, 640.0] {
+        let texts = painted_text_with_theme(width, Some(&source), |ui| {
+            draw_ledger_row(
+                ui,
+                &trade,
+                meta,
+                Some("WINZ26"),
+                false,
+                false,
+                TzOffset::new(0),
+            );
+        });
+        assert_apart(&texts, width);
+    }
 }

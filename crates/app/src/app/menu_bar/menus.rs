@@ -546,7 +546,7 @@ pub(super) fn show_tools_menu(
     record_deals: impl FnOnce(&mut egui::Ui),
     commands: &mut Vec<MenuCommand>,
 ) {
-    ui.menu_button("Tools", |ui| {
+    let menu = ui.menu_button("Tools", |ui| {
         if ui.button("Appearance…").clicked() {
             commands.push(MenuCommand::OpenAppearance);
             ui.close_menu();
@@ -557,6 +557,7 @@ pub(super) fn show_tools_menu(
             ui.close_menu();
         }
     });
+    crate::theme::choice::record(&menu.response, "Tools");
 }
 
 /// Help: the one reference a trader needs away from the chart.
@@ -578,4 +579,9 @@ pub(super) fn show_agent_access_indicator(
     if enabled && ui.button("Agent access: on").clicked() {
         commands.push(MenuCommand::OpenAgentAccess);
     }
+}
+
+pub(super) fn draw_tools_content(app: &mut super::QuantickApp, ui: &mut egui::Ui) {
+    crate::theme::choice::show(ui, app);
+    super::super::deal_recording_wiring::draw_toggle(app, ui);
 }

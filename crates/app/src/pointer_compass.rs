@@ -146,10 +146,11 @@ pub(crate) fn time_tag(
     readout: &PointerReadout,
     tz: TzOffset,
 ) -> Option<(TimeChip, String)> {
+    let palette = theme::axes(painter.ctx());
     let bar = readout.bar?;
     let full = crate::plot_area::fmt_pointer_time(bar.open_time_unix_ms, bar.interval_ms, tz);
-    let font = egui::FontId::monospace(chart::TIME_LABEL_FONT_PX);
-    let galley = painter.layout_no_wrap(full.clone(), font, theme::TEXT_PRIMARY);
+    let font = palette.axis_font(chart::TIME_LABEL_FONT_PX);
+    let galley = painter.layout_no_wrap(full.clone(), font, palette.text_primary());
     // Monospace: one character of the full tag measures every shorter form.
     let char_width = galley.size().x / full.chars().count().max(1) as f32;
     let room = strip.width() - 2.0 * TAG_PAD.x;
@@ -243,11 +244,8 @@ pub(crate) fn paint_price_tag(
     fill: egui::Color32,
     ink: egui::Color32,
 ) {
-    let galley = painter.layout_no_wrap(
-        text,
-        egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
-        ink,
-    );
+    let palette = theme::axes(painter.ctx());
+    let galley = painter.layout_no_wrap(text, palette.axis_font(chart::AXIS_LABEL_FONT_PX), ink);
     let text_pos = egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y - galley.size().y / 2.0);
     let background = egui::Rect::from_min_size(text_pos - TAG_PAD, galley.size() + TAG_PAD * 2.0);
     painter.rect_filled(background, egui::Rounding::same(TAG_ROUNDING), fill);
@@ -261,18 +259,19 @@ pub(crate) fn paint_price_tag(
 /// one more axis label: it joins the height the mouse is at to the number
 /// beside it, over the six pixels of gutter between them.
 pub(crate) fn paint_price_mark(painter: &egui::Painter, axis_x: f32, readout: &PointerReadout) {
+    let palette = theme::axes(painter.ctx());
     let y = readout.position.y;
     painter.line_segment(
         [egui::pos2(axis_x, y), egui::pos2(axis_x + TICK_PX, y)],
-        egui::Stroke::new(1.0_f32, theme::TEXT_PRIMARY),
+        egui::Stroke::new(1.0_f32, palette.text_primary()),
     );
     paint_price_tag(
         painter,
         axis_x,
         y,
         price_text(readout.price),
-        theme::TAG_BG,
-        theme::TEXT_PRIMARY,
+        palette.tag_bg(),
+        palette.text_primary(),
     );
 }
 
@@ -295,6 +294,7 @@ pub(crate) fn paint_time_mark(
     readout: &PointerReadout,
     tz: TzOffset,
 ) {
+    let palette = theme::axes(painter.ctx());
     let Some((TimeChip { centre, .. }, text)) = time_tag(painter, strip, readout, tz) else {
         return;
     };
@@ -306,7 +306,7 @@ pub(crate) fn paint_time_mark(
             egui::pos2(centre, strip.top()),
             egui::pos2(centre, strip.top() + TICK_PX),
         ],
-        egui::Stroke::new(1.0_f32, theme::TEXT_PRIMARY),
+        egui::Stroke::new(1.0_f32, palette.text_primary()),
     );
     // Always the full instant, whatever density the strip's own labels are
     // written at. The strip drops seconds when it runs out of room for six
@@ -315,8 +315,8 @@ pub(crate) fn paint_time_mark(
     // week or month chart, to the date. Shortened only when the strip is.
     let galley = painter.layout_no_wrap(
         text,
-        egui::FontId::monospace(chart::TIME_LABEL_FONT_PX),
-        theme::TEXT_PRIMARY,
+        palette.axis_font(chart::TIME_LABEL_FONT_PX),
+        palette.text_primary(),
     );
     let size = galley.size();
     let text_pos = egui::pos2(centre - size.x / 2.0, strip.center().y - size.y / 2.0);
@@ -324,9 +324,9 @@ pub(crate) fn paint_time_mark(
     painter.rect_filled(
         background,
         egui::Rounding::same(TAG_ROUNDING),
-        theme::TAG_BG,
+        palette.tag_bg(),
     );
-    painter.galley(text_pos, galley, theme::TEXT_PRIMARY);
+    painter.galley(text_pos, galley, palette.text_primary());
 }
 
 /// What the pointer's compass will draw this frame, and where.

@@ -119,6 +119,7 @@ impl Surface for BarSwitchSurface {
     }
 
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        let palette = theme::get(ctx);
         if self.open.is_none() {
             self.open_on_digit(ctx, env);
         }
@@ -209,7 +210,7 @@ impl Surface for BarSwitchSurface {
             }
             open.selected = open.selected.min(last);
             if candidates.is_empty() {
-                ui.label(egui::RichText::new("no bar at this size").color(theme::TEXT_SUPPORT));
+                ui.label(egui::RichText::new("no bar at this size").color(palette.text_support()));
             }
             for (index, config) in candidates.iter().enumerate() {
                 let row = ui.selectable_label(index == open.selected, config.quick_label());

@@ -65,12 +65,13 @@ pub fn draw(
     paper: &mut PaperTrading,
     scale: &PriceScale,
 ) {
+    let palette = theme::get(ctx);
     let Some(summary) = paper.position_summary() else {
         return;
     };
     let side_color = match summary.side {
-        Side::Buy => theme::BUY,
-        Side::Sell => theme::SELL,
+        Side::Buy => palette.buy(),
+        Side::Sell => palette.sell(),
     };
     let entry_y = scale.y(summary.avg_price.to_f64().unwrap_or_default());
     let drift = entry_drift(entry_y, chart_rect.top(), chart_rect.bottom());
@@ -88,8 +89,8 @@ pub fn draw(
             // said once, loudly, by the rail on the left edge and the solid
             // side tag — the chip language of the price gutter.
             let card = egui::Frame::none()
-                .fill(theme::INSET)
-                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                .fill(palette.inset())
+                .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                 .rounding(egui::Rounding::same(4.0))
                 .inner_margin(egui::Margin {
                     left: 12.0,
@@ -107,7 +108,7 @@ pub fn draw(
                             .show(ui, |ui| {
                                 ui.label(
                                     egui::RichText::new(format!("SIM {word} {qty}"))
-                                        .color(theme::CHIP_INK)
+                                        .color(palette.chip_ink())
                                         .strong()
                                         .small(),
                                 );
@@ -115,7 +116,7 @@ pub fn draw(
                         ui.label(
                             egui::RichText::new(format!("@ {}", fmt_decimal(summary.avg_price)))
                                 .monospace()
-                                .color(theme::TEXT_PRIMARY),
+                                .color(palette.text_primary()),
                         );
                         if let Some(open) = summary.open_points {
                             ui.label(
@@ -124,7 +125,7 @@ pub fn draw(
                                 )
                                 .monospace()
                                 .strong()
-                                .color(points_color(open)),
+                                .color(points_color(&palette, open)),
                             )
                             .on_hover_text(
                                 "open profit at the last print, in the figure the ticket \
@@ -136,18 +137,18 @@ pub fn draw(
                         ui.label(
                             egui::RichText::new(caret)
                                 .small()
-                                .color(theme::TEXT_SUPPORT),
+                                .color(palette.text_support()),
                         );
                     }
                     ui.horizontal(|ui| {
                         let quiet = |label: &str| {
                             egui::Button::new(
                                 egui::RichText::new(label)
-                                    .color(theme::TEXT_PRIMARY)
+                                    .color(palette.text_primary())
                                     .small(),
                             )
-                            .fill(theme::CONTROL)
-                            .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                            .fill(palette.control())
+                            .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                             .rounding(egui::Rounding::same(3.0))
                         };
                         if ui

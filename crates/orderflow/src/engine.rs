@@ -1075,7 +1075,7 @@ impl BookEngine {
             show_unattributed_reductions = self.config.show_unattributed_reductions,
             show_gaps = self.config.show_gaps,
             liquidity_correlation_ms = self.config.liquidity_correlation_ms,
-            theme = ?self.config.theme,
+            theme = ?self.config.palette,
             capture_grouping_changed,
             action,
             "heatmap configuration changed"

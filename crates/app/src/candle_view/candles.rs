@@ -35,8 +35,8 @@ pub struct BarSlot {
 
 /// Draw one candle from pure geometry and a resolved paint description.
 ///
-/// The heatmap and regional FLOW circles precede this function; native Tape
-/// and ordinary aggression layers keep their own later passes. Candle body
+/// The heatmap precedes this function; regional FLOW circles, native Tape
+/// and ordinary aggression layers follow it. Candle body
 /// mode and alpha always come from the configured style.
 ///
 /// `bar_paint` is the colour an indicator asked this bar to wear (Pine's

@@ -167,7 +167,7 @@ impl QuantickApp {
             .exact_height(MENU_BAR_HEIGHT)
             .frame(
                 egui::Frame::none()
-                    .fill(theme::CHROME)
+                    .fill(theme::get(ctx).chrome())
                     .inner_margin(egui::Margin::symmetric(6.0, 4.0)),
             )
             .show(ctx, |ui| {
@@ -210,7 +210,7 @@ impl QuantickApp {
         menus::show_tools_menu(
             ui,
             access_label,
-            |ui| super::deal_recording_wiring::draw_toggle(self, ui),
+            |ui| menus::draw_tools_content(self, ui),
             commands,
         );
         menus::show_help_menu(ui, commands);

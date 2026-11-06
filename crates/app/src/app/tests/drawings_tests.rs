@@ -1,3 +1,4 @@
+use crate::theme;
 mod pane_model_tests;
 
 use super::bare_canvas::{app_with_history, app_with_history_and_launch};

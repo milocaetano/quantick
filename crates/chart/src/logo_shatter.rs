@@ -429,8 +429,34 @@ fn coverage(alpha: &[u8], side: usize, scale: f32, cell: f32, column: usize, row
     sum as f32 / (area * 255.0)
 }
 
+/// Cache the decorative grey coordinate against configurable endpoints on theme changes.
+pub fn palette(
+    theme: &quantick_appearance::ResolvedTheme,
+) -> [quantick_appearance::PremultipliedRgba; 256] {
+    use quantick_appearance::{PremultipliedRgba, Token};
+    let low = theme.color(Token::LoadingLogoLow).to_array();
+    let high = theme.color(Token::LoadingLogoHigh).to_array();
+    std::array::from_fn(|grey| {
+        let t = ((grey as f32 - GREY_LOW) / GREY_SPAN).clamp(0.0, 1.0);
+        PremultipliedRgba::from_premultiplied(std::array::from_fn(|i| {
+            (f32::from(low[i]) + (f32::from(high[i]) - f32::from(low[i])) * t).round() as u8
+        }))
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dark_logo_coordinates_keep_the_original_greys_and_light_recolors_them() {
+        let dark = super::palette(&quantick_appearance::ResolvedTheme::default());
+        let light = super::palette(
+            &quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap(),
+        );
+        for grey in 150..=210_u8 {
+            assert_eq!(dark[usize::from(grey)].to_array(), [grey, grey, grey, 255]);
+            assert_ne!(dark[usize::from(grey)], light[usize::from(grey)]);
+        }
+    }
     use super::*;
 
     /// A disc on a clear square: a logo with no plate.

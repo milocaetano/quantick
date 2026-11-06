@@ -51,6 +51,8 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 /// an interrupted call placed is attributed to.
 const CLIENT_NAME: &str = "quantick integration test";
 
+#[path = "appearance_control_tests.rs"]
+mod appearance_control;
 #[path = "asset_bubbles_save_tests.rs"]
 mod asset_bubbles_save_tests;
 #[path = "bubble_preset_control_tests.rs"]
@@ -618,6 +620,12 @@ const LAYOUT_V2: u32 = 2;
 /// store this test is about.
 fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
+        (
+            "appearance.apply",
+            1,
+            json!({"source": "version = 1\nname = 'Retry appearance'"}),
+            Readback::Moves,
+        ),
         // First, while the tab's feed still pages: the feed rows below
         // retire it. The load starts a run; the cancel ends it.
         (

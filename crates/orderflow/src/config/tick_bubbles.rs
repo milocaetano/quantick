@@ -26,7 +26,9 @@ impl super::HeatmapConfig {
     /// The tick spheres this config draws, with the theme they are painted in.
     #[must_use]
     pub fn tick_look(&self) -> Option<TickLook> {
-        self.volume_dots.tick_bubbles.map(|tick| (tick, self.theme))
+        self.volume_dots
+            .tick_bubbles
+            .map(|tick| (tick, self.palette))
     }
 
     /// Native groups whose fixed scale must survive navigation.
@@ -160,7 +162,7 @@ mod grouping_tests {
 }
 
 /// Tick spheres as a pane paints them: their style and the pane's theme.
-pub type TickLook = (TickBubbleStyle, super::HeatmapTheme);
+pub type TickLook = (TickBubbleStyle, super::theme::PaletteChoice);
 
 /// How the candle spheres choose their common quantity scale.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

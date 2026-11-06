@@ -1,3 +1,4 @@
+use crate::theme;
 mod pane_model_tests;
 
 // The `pane.rs` unit tests, moved out of the file so a session opening
@@ -1794,7 +1795,7 @@ fn a_double_click_on_a_pane_header_asks_for_that_indicators_settings() {
     let areas = test_areas(&pane, TEST_PLOT);
     let slot = areas.indicator_panes.first().copied().expect("one pane");
     assert!(!slot.collapsed, "the fixture pane has room for its curve");
-    let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed);
+    let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed, slot.header_height);
     let expected = pane.indicators.all()[0].slot;
 
     assert_eq!(
@@ -2038,7 +2039,7 @@ fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
     let pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
     let areas = test_areas(&pane, TEST_PLOT);
     let slot = areas.indicator_panes.first().expect("one pane");
-    let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed);
+    let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed, slot.header_height);
     let chevron = indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed);
 
     assert!(header.is_positive(), "an open pane has a header row");
@@ -2057,7 +2058,7 @@ fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
 
     // A collapsed strip has no header of its own: the strip *is* the
     // disclosure, and reads its double click from there.
-    assert!(!indicator_render::pane_header_rect(slot.rect, true).is_positive());
+    assert!(!indicator_render::pane_header_rect(slot.rect, true, slot.header_height).is_positive());
 }
 
 /// A CVD level and a price level can be one pixel apart on screen and
@@ -2441,7 +2442,7 @@ fn the_live_chip_sits_inside_the_strips_right_end() {
 #[test]
 fn the_time_pane_header_costs_the_chart_its_own_height() {
     let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 600.0));
-    let areas = split_pane_header(area);
+    let areas = split_pane_header(area, crate::time_header::HEIGHT_PX);
     assert_eq!(areas.header.height(), crate::time_header::HEIGHT_PX);
     assert_eq!(
         areas.header.bottom(),
