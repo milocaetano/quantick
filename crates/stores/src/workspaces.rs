@@ -149,12 +149,13 @@ impl WorkspaceBookStore {
         &mut self.sync
     }
 
-    /// The book and the window's side of it, together.
+    /// The book and the window's side of it, together, to read.
     #[must_use]
     pub fn parts(&self) -> (&WorkspaceBook, &TabRecipeSync) {
         (&self.book, &self.sync)
     }
 
+    /// The book and the window's side of it, together, to change.
     pub fn parts_mut(&mut self) -> (&mut WorkspaceBook, &mut TabRecipeSync) {
         (&mut self.book, &mut self.sync)
     }
@@ -194,9 +195,13 @@ impl WorkspaceBookStore {
     /// Write what the frame's upkeep asked for. A refused write leaves the
     /// seeded workspaces for this session only, and says so in the log.
     pub fn save_upkeep(&self, save: UpkeepSave) {
-        if save == UpkeepSave::Nothing {
-            return;
+        match save {
+            UpkeepSave::Nothing => {}
+            UpkeepSave::SeededBook => self.save_seeds(),
         }
+    }
+
+    fn save_seeds(&self) {
         if let Err(reason) = self.persist() {
             tracing::warn!(target: "quantick::app", schema_version = 1_u8,
                 event_code = "WORKSPACES_SEED_NOT_SAVED", reason = %reason,

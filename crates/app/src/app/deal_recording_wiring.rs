@@ -2,7 +2,7 @@
 
 use crate::deal_recording::{self, DealRecorder};
 
-use super::QuantickApp;
+use super::{ArrangementHost, QuantickApp};
 
 fn recorder_for(
     app: &mut QuantickApp,
@@ -61,9 +61,9 @@ pub(super) fn default_for(app: &QuantickApp) -> bool {
 }
 
 /// Save the default and apply it to undecided recorders.
-pub(crate) fn set_default(app: &mut QuantickApp, enabled: bool) {
-    app.chrome.record_deals = Some(enabled);
-    for tab in app.runtime.tabs.iter_mut() {
-        tab.deal_recorder.set_default(enabled);
+pub(crate) fn set_default(saved: &mut Option<bool>, tabs: &mut ArrangementHost, on: bool) {
+    *saved = Some(on);
+    for tab in tabs.iter_mut() {
+        tab.deal_recorder.set_default(on);
     }
 }

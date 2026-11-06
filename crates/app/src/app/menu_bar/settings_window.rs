@@ -9,7 +9,7 @@ use crate::control::ControlAccess;
 use crate::theme;
 use crate::timezone::TzOffset;
 
-use super::super::{QuantickApp, deal_recording_wiring};
+use super::super::{QuantickApp, deal_recording_wiring as deals};
 use super::commands::MenuCommand;
 use super::{
     CLOSE_TAB_SHORTCUT, DOCK_SHORTCUT, HOME_SHORTCUT, LEGEND_SHORTCUT, NEW_TAB_SHORTCUT,
@@ -166,9 +166,9 @@ fn row_control(
             }
         }
         SettingRow::RecordDeals => {
-            let mut on = deal_recording_wiring::default_for(app);
+            let mut on = deals::default_for(app);
             if switch(ui, &mut on, true, row).changed() {
-                deal_recording_wiring::set_default(app, on);
+                deals::set_default(&mut app.chrome.record_deals, &mut app.runtime.tabs, on);
             }
         }
         SettingRow::AgentSwitch => {

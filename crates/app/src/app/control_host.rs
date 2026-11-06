@@ -29,6 +29,7 @@ use quantick_control_handlers::market_palette::TabOpening;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_workspace::market_list::OpenChoice;
 
+use super::deal_recording_wiring as deals;
 use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
 use crate::dock::Dock;
@@ -937,8 +938,8 @@ impl ScriptsPort for QuantickApp {
 }
 
 impl RecordingPort for QuantickApp {
-    fn set_deal_recording_default(&mut self, enabled: bool) {
-        super::deal_recording_wiring::set_default(self, enabled);
+    fn set_deal_recording_default(&mut self, on: bool) {
+        deals::set_default(&mut self.chrome.record_deals, &mut self.runtime.tabs, on);
     }
 }
 

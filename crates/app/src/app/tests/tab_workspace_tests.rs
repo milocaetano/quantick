@@ -228,6 +228,17 @@ fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() 
             live_recipe(&app.runtime, tab).as_ref(),
             "the recipe is what the tab shows"
         );
+        assert_eq!(store.tab_row(tab), (state.workspace.to_owned(), false));
+    }
+    // The upkeep's save reached the disk: the seeds are there on a reopen.
+    let book = &app.runtime.workspace.book;
+    let reopened = quantick_stores::workspaces::WorkspaceBookStore::open_beside(&layouts);
+    for tab in [first, second] {
+        let seeded = book.book().tab_state(tab).expect("seeded").workspace;
+        assert!(
+            reopened.book().recipe(seeded).is_some(),
+            "{seeded} was saved"
+        );
     }
 }
 

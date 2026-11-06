@@ -5,7 +5,7 @@ use quantick_control_handlers::desk::DeskAct;
 use quantick_control_schema::settings_sections::SettingsSection;
 
 use super::workspace_save_adapter::WorkspaceSaveAdapter;
-use super::{QuantickApp, workspace_runtime::WorkspaceRuntime};
+use super::{QuantickApp, menu_bar::WindowMenuState, workspace_runtime::WorkspaceRuntime};
 
 /// Carry out one call; see [`quantick_control_handlers::desk::DeskHost`] for
 /// what the answer means.
@@ -41,8 +41,7 @@ pub(super) fn apply(app: &mut QuantickApp, act: DeskAct) -> bool {
 }
 
 /// The status-bar clock's door: Settings, on Display, on the clicked window.
-pub(super) fn open_settings_on(app: &mut QuantickApp, ctx: &egui::Context) {
-    let menu = &mut app.chrome.window_menu;
+pub(super) fn open_settings_on(menu: &mut WindowMenuState, ctx: &egui::Context) {
     menu.open_settings(ctx.viewport_id(), SettingsSection::Display);
     ctx.request_repaint();
 }

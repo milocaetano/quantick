@@ -1,5 +1,5 @@
 //! Native geometry conversion and the control adapter over the retained workspace.
-use super::{NativeWindows, QuantickApp, WindowId, present};
+use super::{ArrangementHost, NativeWindows, QuantickApp, WindowId, present};
 use eframe::egui;
 use quantick_control::{error::ControlError, wire::WireU64};
 use quantick_control_handlers::native_window::NativeWindowHost;
@@ -31,13 +31,10 @@ fn drag(native: &NativeWindows) -> DragSnapshot {
         source_window_id: active.map(|drag| WireU64::new(drag.source().0)),
     }
 }
-fn target(app: &QuantickApp, id: Option<WireU64>) -> Result<WindowId, ControlError> {
-    let id = id.map_or(app.runtime.tabs.windows().focused(), |id| {
-        WindowId(id.get())
-    });
-    app.runtime
-        .tabs
-        .windows()
+fn target(tabs: &ArrangementHost, id: Option<WireU64>) -> Result<WindowId, ControlError> {
+    let windows = tabs.windows();
+    let id = id.map_or(windows.focused(), |id| WindowId(id.get()));
+    windows
         .window(id)
         .ok_or_else(|| invalid(WindowError::MissingWindow))?;
     Ok(id)
@@ -72,10 +69,10 @@ pub(super) fn observe(native: &mut NativeWindows, ctx: &egui::Context, window: W
 
 impl NativeWindowHost for QuantickApp {
     fn pin_capture_window(&self, requested: Option<WireU64>) -> Result<WireU64, ControlError> {
-        target(self, requested).map(|window| WireU64::new(window.0))
+        target(&self.runtime.tabs, requested).map(|window| WireU64::new(window.0))
     }
     fn present_capture_window(&mut self, window: WireU64) -> Result<WireU64, ControlError> {
-        let window = target(self, Some(window))?;
+        let window = target(&self.runtime.tabs, Some(window))?;
         let previous = self.runtime.tabs.windows().presented();
         present(self, window);
         Ok(WireU64::new(previous.0))
@@ -97,7 +94,7 @@ impl NativeWindowHost for QuantickApp {
         request_targeted_native_window(self, input)
     }
     fn market_windows(&self) -> WindowsSnapshot {
-        market_windows(self)
+        market_windows(&self.runtime.tabs, &self.presentation.native)
     }
     fn place_native_window(
         &mut self,
@@ -117,7 +114,7 @@ fn request_targeted_native_window(
     app: &mut QuantickApp,
     input: WindowInput,
 ) -> Result<WireU64, ControlError> {
-    let window = target(app, input.window_id)?;
+    let window = target(&app.runtime.tabs, input.window_id)?;
     let focused = app.runtime.tabs.windows().focused();
     present(app, window);
     let outcome = app.chrome.title_bar.requests.request(input.state);
@@ -125,8 +122,8 @@ fn request_targeted_native_window(
     outcome?;
     Ok(WireU64::new(window.0))
 }
-fn market_windows(app: &QuantickApp) -> WindowsSnapshot {
-    let model = app.runtime.tabs.windows();
+fn market_windows(tabs: &ArrangementHost, native: &NativeWindows) -> WindowsSnapshot {
+    let model = tabs.windows();
     WindowsSnapshot {
         native_drop_targeting: if cfg!(windows) {
             "exposed_same_process_window"
@@ -137,7 +134,7 @@ fn market_windows(app: &QuantickApp) -> WindowsSnapshot {
         focused_window_id: Some(WireU64::new(model.focused().0)),
         presented_window_id: Some(WireU64::new(model.presented().0)),
         omitted_windows: WireU64::new(model.windows().len().saturating_sub(MAX_WINDOWS) as u64),
-        drag: drag(&app.presentation.native),
+        drag: drag(native),
         windows: model
             .windows()
             .iter()
@@ -154,7 +151,7 @@ fn market_windows(app: &QuantickApp) -> WindowsSnapshot {
                 omitted_tabs: WireU64::new(
                     window.tabs().len().saturating_sub(MAX_TABS_PER_WINDOW) as u64
                 ),
-                observed: app.presentation.native.observed.get(&window.id).cloned(),
+                observed: native.observed.get(&window.id).cloned(),
             })
             .collect(),
     }
@@ -164,7 +161,7 @@ fn place_native_window(
     input: PlacementInput,
 ) -> Result<PlacementResult, ControlError> {
     let placement = input.placement.validate()?;
-    let window = target(app, input.window_id)?;
+    let window = target(&app.runtime.tabs, input.window_id)?;
     if app
         .presentation
         .native
@@ -204,7 +201,7 @@ fn operate_market_tabs(
             window: WindowId(input.window_id.get()),
         },
         TabOperation::Close(input) => Command::Close {
-            window: target(app, input.window_id)?,
+            window: target(&app.runtime.tabs, input.window_id)?,
         },
         TabOperation::Reorder(input) => Command::Reorder {
             tab: TabId(input.tab_id.get()),
