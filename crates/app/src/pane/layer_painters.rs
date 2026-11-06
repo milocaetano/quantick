@@ -105,12 +105,18 @@ impl ChartPane {
         // The market's own chip. `draw_last_price` refuses to draw one off the
         // pane, and `PriceScale::y` extrapolates rather than clamping, so the
         // claim has to be bounded the same way or panning the last price out
-        // of view would leave a hole at the top of the axis.
+        // of view would leave a hole at the top of the axis. A chip carrying
+        // the forming bar's progress grows down a row, and claims it.
         if self.layer_visible(ChartLayer::LastPrice, chrome.style)
             && let Some(bar) = partial.or_else(|| closed.last())
             && let Some(price) = bar.close.to_f64()
+            && let Some(y) = on_axis(scale.y(price))
         {
-            price_claims.extend(on_axis(scale.y(price)));
+            let progress = chrome
+                .price_tag
+                .reading(|at| self.state.bar_progress_at(at));
+            let second = progress.map(|_| pointer_compass::second_line_height(painter));
+            price_claims.extend(pointer_compass::price_tag_claims(y, second));
         }
         AxisChips {
             compass,
@@ -211,6 +217,9 @@ impl ChartPane {
             newest: partial.or_else(|| closed.last()),
             last_price_visible: self
                 .layer_visible(quantick_layers::ChartLayer::LastPrice, chrome.style),
+            progress: chrome
+                .price_tag
+                .reading(|at| self.state.bar_progress_at(at)),
             style: chrome.style,
         }
         .paint(self.layer_renderers);

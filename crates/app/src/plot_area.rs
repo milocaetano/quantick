@@ -18,8 +18,6 @@ use eframe::egui;
 
 use crate::timezone::TzOffset;
 
-/// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
-const AXIS_GUTTER: f32 = 64.0;
 /// Height of the bottom time-axis strip, in pixels (§5 zone 6).
 const TIME_STRIP: f32 = 24.0;
 /// Space outside the plot, including the compact tape-only header.
@@ -43,7 +41,8 @@ pub fn plot_split(
 ) -> PlotAreas {
     let plot = area.shrink(PLOT_PADDING_PX);
     let strip_width = live_strip_width.max(0.0);
-    let gutter_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
+    // The price-axis gutter (§5 zone 9).
+    let gutter_x = (plot.right() - crate::chart::PRICE_GUTTER_PX).max(plot.left() + 20.0);
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
     let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
     let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));

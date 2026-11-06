@@ -92,6 +92,33 @@ impl MarketSettingsStore {
         (self.asset)(venue, symbol)
     }
 
+    /// The market `symbol` on `venue` is, as this document keys it.
+    #[must_use]
+    pub fn market_key(&self, venue: &str, symbol: &str) -> MarketKey {
+        MarketKey {
+            venue: venue.to_owned(),
+            asset: self.asset(venue, symbol),
+        }
+    }
+
+    /// Whether that market's last-price tag carries the forming bar's progress.
+    #[must_use]
+    pub fn bar_progress_on(&self, venue: &str, symbol: &str) -> bool {
+        let market = self.market_key(venue, symbol);
+        self.settings.bar_progress_on(&market)
+    }
+
+    /// Switch it, and owe the file a save when that changed anything; `true`
+    /// when it did, so a repeated call is no change and no save.
+    pub fn set_bar_progress(&mut self, venue: &str, symbol: &str, on: bool, now: Instant) -> bool {
+        let market = self.market_key(venue, symbol);
+        let changed = self.settings.set_bar_progress(&market, on);
+        if changed {
+            self.policy.mark_changed(now);
+        }
+        changed
+    }
+
     #[must_use]
     pub fn settings(&self) -> &MarketSettings {
         &self.settings

@@ -128,6 +128,26 @@ pub trait BarBuilder: Send {
         None
     }
 
+    /// The instant, in epoch milliseconds, at which the in-progress bar's own
+    /// bucket ends — what a countdown subtracts the market clock from.
+    ///
+    /// `None` — the default — for a rule that is not on a clock, and while no
+    /// bar is forming. The builder never reads a clock itself: the caller
+    /// brings the time, so the same trades still give the same answer.
+    fn closes_at_ms(&self) -> Option<i64> {
+        None
+    }
+
+    /// The signed accumulation an adaptive imbalance rule has run up since its
+    /// last close: buys add, sells subtract, in the rule's own unit.
+    ///
+    /// `None` — the default — for every rule that is not an imbalance rule.
+    /// There is no fixed target to pair it with, which is why it is not a
+    /// [`BarProgress`].
+    fn running_imbalance(&self) -> Option<Decimal> {
+        None
+    }
+
     /// The optional deal-counter input port. `None` means this rule is driven
     /// entirely by prints.
     fn deal_counter_input(&mut self) -> Option<&mut dyn DealCounterInput> {

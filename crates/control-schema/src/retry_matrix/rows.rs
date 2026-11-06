@@ -31,6 +31,7 @@ pub const FAMILIES: &[&[Readback]] = &[
     crate::desk::READBACKS,
     crate::workspace_book::READBACKS,
     crate::price_axis::READBACKS,
+    crate::price_tag_progress::READBACKS,
     crate::home_tab::READBACKS,
     crate::native_window::READBACKS,
     crate::market_windows::READBACKS,

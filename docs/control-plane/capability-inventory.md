@@ -41,6 +41,7 @@ capability that cannot change application state.
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
 | `catalog.remove` | 1 | `catalog` | no | `cockpit`, `cockpit.desk` |
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
+| `chart.price_tag.progress.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.settings.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.tape_view.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.time_axis.reset` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
@@ -145,4 +146,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-120 capabilities registered.
+121 capabilities registered.

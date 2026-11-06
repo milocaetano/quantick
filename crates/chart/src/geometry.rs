@@ -13,7 +13,7 @@ use quantick_engine::Bar;
 use rust_decimal::prelude::ToPrimitive as _;
 
 pub use crate::constants::{
-    AUTO_PAD_FRAC, AXIS_LABEL_FONT_PX, AXIS_LABEL_GAP_PX, TIME_LABEL_FONT_PX,
+    AUTO_PAD_FRAC, AXIS_LABEL_FONT_PX, AXIS_LABEL_GAP_PX, PRICE_GUTTER_PX, TIME_LABEL_FONT_PX,
 };
 use crate::constants::{
     AXIS_LABEL_MIN_GAP_PX, AXIS_LABEL_SPACING_PX, AXIS_MAX_DECIMALS, AXIS_MAX_TICKS,

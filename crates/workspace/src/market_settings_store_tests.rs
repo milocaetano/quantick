@@ -1,9 +1,11 @@
 //! The held store: autosave off keeps drawings and anchored studies in memory
 //! until Save.
-use super::MarketSettingsStore;
+use super::{AssetResolver, MarketSettingsStore};
 use crate::layout_commit::LayoutSave;
 use crate::layout_document::{SavedBand, SavedDrawing, SavedPoint};
 use crate::market_settings::{DrawingKey, MarketKey, MarketSettings, PaneRole};
+use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 fn key(venue: &str, role: PaneRole) -> DrawingKey {
@@ -248,4 +250,25 @@ fn close_without_saving_drops_only_what_no_open_pane_shows() {
     assert!(!store.is_dirty(), "nothing is owed once nothing differs");
     store.set_held(false);
     assert_eq!(store.take_flush(), LayoutSave::Wait);
+}
+
+/// The switch is kept per asset: two symbols of one asset share it, the
+/// same asset on another venue does not, and only a change owes a save.
+#[test]
+fn bar_progress_is_kept_per_market_and_only_a_change_is_saved() {
+    let assets: AssetResolver = Rc::new(|_, symbol: &str| symbol[..3].to_owned());
+    let mut store =
+        MarketSettingsStore::new(MarketSettings::default(), PathBuf::from("m.toml"), false)
+            .with_assets(assets);
+    let now = Instant::now();
+    assert!(store.bar_progress_on("mt5", "WINZ26"), "on by default");
+    assert!(store.set_bar_progress("mt5", "WINZ26", false, now));
+    assert!(store.is_dirty(), "a change owes the file a save");
+    assert!(!store.bar_progress_on("mt5", "WING27"), "the same asset");
+    assert!(store.bar_progress_on("replay", "WINZ26"), "another venue");
+    assert!(store.bar_progress_on("mt5", "WDOZ26"), "another asset");
+
+    let _ = store.take_flush();
+    assert!(!store.set_bar_progress("mt5", "WING27", false, now));
+    assert!(!store.is_dirty(), "a repeat is no change and no save");
 }

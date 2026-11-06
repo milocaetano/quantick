@@ -2094,16 +2094,15 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
     assert!(note.contains("the venue has nothing older"), "{note}");
 }
 
-/// (i) The status bar names all three sources, in the order the chart puts
-/// them in.
+/// (i) The venue prefix is counted apart from the bars built from prints,
+/// in the order the chart puts them in.
 #[test]
-fn the_status_bar_counts_venue_bars_separately() {
+fn the_venue_prefix_is_counted_apart_from_the_built_bars() {
     let ctx = egui::Context::default();
     let (mut app, events, _commands) = history_app(&ctx);
-    let point = pane_point(&app, PaneSide::Time(0));
-    click_chart(&mut app, &ctx, point);
+    let venue_bars = |app: &QuantickApp, side| app.active_tab().pane(side).history_prefix.len();
     assert_eq!(
-        app.status_model().venue_bars,
+        venue_bars(&app, PaneSide::Time(0)),
         0,
         "nothing to disclose before the reply"
     );
@@ -2117,16 +2116,16 @@ fn the_status_bar_counts_venue_bars_separately() {
         .unwrap();
     app.drain_tabs();
 
-    let status = app.status_model();
-    assert_eq!(status.venue_bars, 120);
+    assert_eq!(venue_bars(&app, PaneSide::Time(0)), 120);
+    let time = app.active_tab().pane(PaneSide::Time(0));
     assert!(
-        status.backfilled_bars > 0,
+        time.state
+            .backfill_boundary()
+            .is_some_and(|built| built > 0),
         "and the trade-derived counts are still their own"
     );
     // The flow pane beside it has no prefix and says nothing about one.
-    let point = pane_point(&app, PaneSide::Flow);
-    click_chart(&mut app, &ctx, point);
-    assert_eq!(app.status_model().venue_bars, 0);
+    assert_eq!(venue_bars(&app, PaneSide::Flow), 0);
 }
 
 /// (j) A venue bucket covering the same window as the first engine bar

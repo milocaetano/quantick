@@ -40,6 +40,7 @@ pub mod orderflow;
 pub mod orderflow_settings;
 pub mod pnl_display;
 pub mod price_axis;
+pub mod price_tag_progress;
 pub mod readback;
 pub mod recovery;
 pub mod retry_matrix;

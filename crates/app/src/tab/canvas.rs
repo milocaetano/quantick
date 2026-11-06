@@ -42,6 +42,9 @@ pub struct CanvasChrome<'a> {
     /// Whether the source infers the aggressor side (see
     /// [`PaneChrome::side_inferred`]). Resolved once, like `capabilities`.
     pub side_inferred: bool,
+    /// Whether the tab's market prints the forming bar's progress on its
+    /// last-price tag. Resolved once, like `capabilities`.
+    pub bar_progress: bool,
     /// The footprint layer's signal tunables (see [`PaneChrome::footprint`]).
     pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
@@ -592,6 +595,7 @@ impl Tab {
         // Focus as an address, so the loop below compares like with like
         // however many panes it walks.
         let focused = self.focused_side().index();
+        let clock_ms = self.tape().market_now_ms();
         let Self {
             flow_pane,
             time_panes,
@@ -661,6 +665,10 @@ impl Tab {
             feed_gaps: &feed_gaps[..],
             capabilities: chrome.capabilities,
             side_inferred: chrome.side_inferred,
+            price_tag: quantick_chart::bar_progress::TagProgress {
+                on: chrome.bar_progress,
+                clock_ms,
+            },
             footprint: chrome.footprint,
             layers: chrome.layers,
         };

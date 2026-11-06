@@ -1,0 +1,31 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "on": {
+      "description": "`true` prints the forming bar's progress under the last price.",
+      "type": "boolean"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "A pane on that tab, as `chart.summary` lists it: the setting belongs to\nthe market the pane shows, so every pane of that market follows."
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab, as `chart.summary` lists it."
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "on"
+  ],
+  "title": "PriceTagProgressInput",
+  "type": "object"
+}

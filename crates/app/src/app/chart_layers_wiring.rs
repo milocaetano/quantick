@@ -134,10 +134,14 @@ impl LayerWiring<'_> {
     /// What a pane's layer menu could not switch itself.
     ///
     /// Drained right after the canvas, so the frame that clicked the entry is
-    /// the frame that applies it. Both wishes reach the real owner — the shared
-    /// style, the indicator state file — instead of a second copy on the pane.
+    /// the frame that applies it. Each wish reaches the real owner — the shared
+    /// style, the indicator state file, the market settings — instead of a
+    /// second copy on the pane.
     pub(crate) fn apply_actions(&mut self) {
         let actions = std::mem::take(&mut self.workspace.layers_mut().actions);
+        if let Some(on) = actions.bar_progress {
+            self.set_bar_progress(self.tabs.id_at(self.tabs.active_index()), on);
+        }
         if let Some(visible) = actions.grid {
             self.style.canvas.grid_enabled = visible;
             // The appearance panel's own edits bump this; the renderer and the
