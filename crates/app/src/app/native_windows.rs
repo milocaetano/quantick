@@ -8,14 +8,10 @@ use quantick_workspace::arrangement::{
 };
 use std::{collections::BTreeMap, time::Instant};
 mod control;
-#[cfg(windows)]
-mod dpi;
-mod exposed;
-mod pump;
 
 #[derive(Default)]
 pub(super) struct NativeWindows {
-    pub(super) pump: pump::HiddenRootPump,
+    pub(super) pump: quantick_platform::HiddenRootPump,
     current: WindowId,
     capture_scene: Option<quantick_control_schema::scene::SceneSnapshot>,
     titles: BTreeMap<WindowId, TitleBarState>,
@@ -112,7 +108,7 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
         // eframe reapplies builders after sibling/root output, so a one-shot
         // Visible(true) cannot undo the initial hidden builder permanently.
         let builder = egui::ViewportBuilder::default()
-            .with_title(exposed::title(window))
+            .with_title(quantick_platform::window_title(window.0))
             .with_decorations(false)
             .with_inner_size([1100.0, 760.0])
             .with_min_inner_size([340.0, 240.0])
@@ -187,8 +183,9 @@ fn exit_when_settled(app: &mut QuantickApp, ctx: &egui::Context) -> bool {
 }
 
 pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId, now: Instant) {
-    #[cfg(windows)]
-    dpi::attach_child(window);
+    if window != WindowId::ROOT {
+        quantick_platform::attach_dpi_child(window.0);
+    }
     if ctx.input(|input| input.viewport().close_requested()) {
         if app.runtime.tabs.windows().windows().len() == 1 && !app.presentation.native.final_exit {
             let tabs = app.runtime.tabs.iter_with_ids().map(|(id, _)| id).collect();
@@ -221,7 +218,9 @@ pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId
     }
     present(app, window);
     if !app.presentation.native.observed.contains_key(&window) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(exposed::title(window)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+            quantick_platform::window_title(window.0),
+        ));
     }
     #[cfg(test)]
     {
@@ -456,7 +455,8 @@ fn finish_drag(app: &mut QuantickApp, ctx: &egui::Context) {
 
 fn eligible_strips(native: &NativeWindows, point: Point) -> Option<Vec<Strip>> {
     #[cfg(all(windows, not(test)))]
-    let exposure = tab_drag::Exposure::Native(exposed::at(point));
+    let exposure =
+        tab_drag::Exposure::Native(quantick_platform::window_at(point.x, point.y).map(WindowId));
     #[cfg(test)]
     let exposure = tab_drag::Exposure::Native(native.exposed_for_test);
     #[cfg(all(not(windows), not(test)))]

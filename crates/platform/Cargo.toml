@@ -1,0 +1,25 @@
+[package]
+name = "quantick-platform"
+description = "The OS-window exception: safe calls over the native window APIs app needs and egui does not supply"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The root surface handle eframe offers `main`, read for its HWND alone.
+raw-window-handle = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# The Win32 window, subclass and version calls. Other targets link nothing:
+# every function here is a no-op or `None` there. The three areas beyond the
+# workspace union are this crate's alone.
+windows-sys = { workspace = true, features = [
+    "Wdk_System_SystemServices",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
+] }
+
+[lints]
+workspace = true

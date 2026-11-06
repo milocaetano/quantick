@@ -207,6 +207,15 @@ recalibration: the seven-minute ceilings, host, toolchain, jobs, protocol,
 top-three selection and representatives are unchanged, and the PR's own
 ordinary exact-final-head run must pass every one.
 
+The platform member-only amendment (authorized by the trader on 2026-11-05 for
+the OS-window exception crate on `feat/quantick-new-layout`) binds root SHA256
+`76aebf4d2e880f923a87bc1fbe6037137b25baeeb52bf524de63538c8eddb09b`.
+Relative to the session identity above, only the `crates/platform` member is
+added; all other parsed manifest values are equal. This is applicability, not
+recalibration: the seven-minute ceilings, host, toolchain, jobs, protocol,
+top-three selection and representatives are unchanged, and the PR's own
+ordinary exact-final-head run must pass every one.
+
 The drawings top-three change (#662, under the #660 authorization for
 feature #659) happened when the tools moved into `quantick-drawings`: by the
 frozen lexer it holds 7,241 production lines to `guards`' 5,898, so the

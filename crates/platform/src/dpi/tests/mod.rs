@@ -1,12 +1,19 @@
 use super::*;
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, GetWindowRect, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW,
-    SetWindowPos,
+use windows_sys::Win32::UI::{
+    Shell::SUBCLASSPROC,
+    WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, GetWindowRect, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW,
+        SetWindowPos,
+    },
 };
 
+// Not the windows-sys binding: that imports by name, and the System32
+// comctl32 a manifest-less test binary loads exports GetWindowSubclass by
+// ordinal only, so the binary would fail to start. The import library
+// resolves the ordinal. Production never reads a subclass back.
 #[link(name = "comctl32")]
 unsafe extern "system" {
-    fn GetWindowSubclass(hwnd: HWND, callback: Subclass, id: usize, data: *mut usize) -> i32;
+    fn GetWindowSubclass(hwnd: HWND, callback: SUBCLASSPROC, id: usize, data: *mut usize) -> i32;
 }
 
 #[derive(Default)]
@@ -17,9 +24,9 @@ struct Backend {
     destroy: Cell<bool>,
 }
 
-fn hidden(window: WindowId) -> HWND {
+fn hidden(window: u64) -> HWND {
     let class: Vec<_> = "STATIC\0".encode_utf16().collect();
-    let title: Vec<_> = format!("{}\0", exposed::title(window))
+    let title: Vec<_> = format!("{}\0", crate::window_title(window))
         .encode_utf16()
         .collect();
     // SAFETY: the built-in class copies the names and creates a hidden test window.
@@ -103,7 +110,7 @@ fn state(hwnd: HWND) -> Rc<State> {
     // SAFETY: query our own live subclass and retain its typed Rc for inspection.
     unsafe {
         assert_ne!(
-            GetWindowSubclass(hwnd, dispatch, SUBCLASS_ID, &raw mut data),
+            GetWindowSubclass(hwnd, Some(dispatch), SUBCLASS_ID, &raw mut data),
             0
         );
         Rc::increment_strong_count(data as *const State);
@@ -116,7 +123,7 @@ fn dpi_nested_resize_uses_os_rect_then_restores_scope_and_releases_on_destroy() 
     if !windows_11() {
         return;
     }
-    let window = WindowId(9051);
+    let window = 9051;
     let hwnd = hidden(window);
     let backend_state = Backend {
         nested: Cell::new(true),
@@ -125,7 +132,7 @@ fn dpi_nested_resize_uses_os_rect_then_restores_scope_and_releases_on_destroy() 
     // SAFETY: synchronous callbacks borrow this local until the window is destroyed.
     unsafe {
         assert_ne!(
-            SetWindowSubclass(hwnd, backend, 1, &raw const backend_state as usize),
+            SetWindowSubclass(hwnd, Some(backend), 1, &raw const backend_state as usize),
             0
         );
     }
@@ -186,10 +193,10 @@ fn dpi_nested_resize_uses_os_rect_then_restores_scope_and_releases_on_destroy() 
         weak.upgrade().is_none(),
         "destruction releases subclass ownership"
     );
-    assert!(!INSTALLED.with(|map| map.borrow().contains_key(&window)));
+    assert!(!INSTALLED.with(|map| map.borrow().contains_key(&Key::Child(window))));
     let replacement = hidden(window);
     attach_child(window);
-    assert!(INSTALLED.with(|map| map.borrow().contains_key(&window)));
+    assert!(INSTALLED.with(|map| map.borrow().contains_key(&Key::Child(window))));
     unsafe {
         DestroyWindow(replacement);
     }
@@ -200,15 +207,15 @@ fn destruction_during_dpi_dispatch_keeps_outer_state_alive_until_return() {
     if !windows_11() {
         return;
     }
-    let hwnd = hidden(WindowId(9052));
+    let hwnd = hidden(9052);
     let backend_state = Backend {
         destroy: Cell::new(true),
         ..Backend::default()
     };
     unsafe {
-        SetWindowSubclass(hwnd, backend, 1, &raw const backend_state as usize);
+        SetWindowSubclass(hwnd, Some(backend), 1, &raw const backend_state as usize);
     }
-    install(hwnd, WindowId(9052));
+    install(hwnd, Key::Child(9052));
     let weak = Rc::downgrade(&state(hwnd));
     let rect = RECT {
         left: -1000,
@@ -226,15 +233,15 @@ fn destruction_during_dpi_dispatch_keeps_outer_state_alive_until_return() {
     }
     assert_eq!(backend_state.events.get(), 1);
     assert!(weak.upgrade().is_none());
-    assert!(!INSTALLED.with(|map| map.borrow().contains_key(&WindowId(9052))));
+    assert!(!INSTALLED.with(|map| map.borrow().contains_key(&Key::Child(9052))));
 }
 
 #[test]
 fn registration_refuses_another_ui_threads_window() {
-    let hwnd = hidden(WindowId(9053));
+    let hwnd = hidden(9053);
     let address = hwnd as isize;
     std::thread::spawn(move || {
-        install(address as HWND, WindowId(9053));
+        install(address as HWND, Key::Child(9053));
         assert!(INSTALLED.with(|map| map.borrow().is_empty()));
     })
     .join()
@@ -242,7 +249,7 @@ fn registration_refuses_another_ui_threads_window() {
     let mut data = 0;
     unsafe {
         assert_eq!(
-            GetWindowSubclass(hwnd, dispatch, SUBCLASS_ID, &raw mut data),
+            GetWindowSubclass(hwnd, Some(dispatch), SUBCLASS_ID, &raw mut data),
             0
         );
         DestroyWindow(hwnd);

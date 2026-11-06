@@ -57,19 +57,19 @@ fn an_untouched_window_reports_no_edit_on_either_tab() {
 }
 
 /// One window, one flag: the doors switch the tab rather than stacking a
-/// second window, and the toolbar's flip closes only the tab it opens.
+/// second window, and closing remembers the tab for the next opening.
 #[test]
 fn every_door_reaches_the_one_window() {
     let style = ChartStyle::default();
     let mut surface = ChartSettingsSurface::default();
     surface.open(ChartSettingsTab::Footprint, style);
     assert!(surface.is_open_on(ChartSettingsTab::Footprint));
-    surface.toggle(ChartSettingsTab::Candles, style);
+    surface.open(ChartSettingsTab::Candles, style);
     assert!(
         surface.is_open_on(ChartSettingsTab::Candles),
-        "flipped to candles"
+        "switched to candles"
     );
-    surface.toggle(ChartSettingsTab::Candles, style);
+    surface.close();
     assert!(!surface.is_open());
     assert_eq!(surface.tab(), ChartSettingsTab::Candles, "remembered");
 }
@@ -142,16 +142,16 @@ fn closing_the_window_logs_without_waiting() {
     assert!(!ChartSettingsSurface::default().should_log(now));
 }
 
-/// Closed from the toolbar between frames, the window still flushes the
+/// Closed between frames, the window still flushes the
 /// edit on its next draw, once, naming the preset a click applied.
 #[test]
-fn closing_from_the_toolbar_still_records_the_edit() {
+fn closing_between_frames_still_records_the_edit() {
     let ctx = egui::Context::default();
     let style = ChartStyle::default();
     let now = Instant::now();
     let mut surface = pending(true, now);
     surface.pending_preset = Some(crate::style::CandlePreset::Classic);
-    surface.toggle(ChartSettingsTab::Candles, style);
+    surface.close();
     assert!(!surface.is_open());
     let response = draw(&mut surface, &ctx, &env(&style, now));
     assert_eq!(

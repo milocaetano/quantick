@@ -122,7 +122,7 @@ The three exclusion classes are closed:
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
 | `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | window menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
 | `indicator.picker.open` | Open and search the indicator library | the ƒx glyph on each pane header, searchable centered modal | `indicator.picker.set` | — |
-| `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Settings window, a double click on a candle | `chart.settings.set` | — |
+| `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | Settings window, a double click on a candle | `chart.settings.set` | — |
 | `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
 | `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicator picker | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
 | `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, window menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -226,7 +226,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 17 |
+| `toolbar_action` | 16 |
 | `strip_action` | 6 |
 | `tab_action` | 4 |
 | `dock_tab` | 3 |

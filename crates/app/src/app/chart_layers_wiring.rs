@@ -131,11 +131,6 @@ impl LayerWiring<'_> {
         self.chart_settings.open(tab, *self.style);
     }
 
-    /// The toolbar's flip of the chart settings at `tab`.
-    pub(crate) fn toggle_settings(&mut self, tab: ChartSettingsTab) {
-        self.chart_settings.toggle(tab, *self.style);
-    }
-
     /// What a pane's layer menu could not switch itself.
     ///
     /// Drained right after the canvas, so the frame that clicked the entry is
