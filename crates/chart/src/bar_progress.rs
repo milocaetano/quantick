@@ -15,8 +15,14 @@ use quantick_engine::{BarBuilder, BarProgress};
 pub const TIME_UNIT: &str = "ms";
 
 /// A target from which a count is printed in thousands, millions or billions:
-/// below it the figures stay whole, so a 2000-tick bar reads `522/2000`.
-const COMPACT_FROM: i64 = 100_000;
+/// below it the figures stay whole, so a 2000-tick bar reads `522/2000`. Low
+/// enough that a five-figure target fits the price gutter (`12.3K/20K`).
+const COMPACT_FROM: i64 = 10_000;
+
+/// The longest a countdown waits for its next frame, in wall milliseconds.
+/// Its second is market time, which a replay above 1x runs faster than the
+/// wall: waiting the full market second would leave the text seconds behind.
+const REPAINT_AT_MOST_MS: i64 = 250;
 
 const MS_PER_SECOND: i64 = 1_000;
 const SECONDS_PER_MINUTE: i64 = 60;
@@ -80,20 +86,21 @@ impl BarProgressReading {
     /// what share of the bar is formed: `None` for an imbalance rule, which
     /// has no target to take a share of.
     #[must_use]
-    pub fn fixed_progress(&self) -> Option<BarProgress> {
+    pub fn fixed_progress(self) -> Option<BarProgress> {
         Some(BarProgress {
             done: self.done(),
             target: self.target()?,
         })
     }
 
-    /// How long until the tag's text changes with no print: the next whole
-    /// second of a countdown, `None` for a reading only a print moves.
+    /// How long until the tag should be painted again with no print: the
+    /// next whole second of a countdown, at most [`REPAINT_AT_MOST_MS`] so a
+    /// fast replay keeps up; `None` for a reading only a print moves.
     #[must_use]
     pub fn repaint_after_ms(&self) -> Option<i64> {
         match *self {
             Self::Remaining { remaining_ms, .. } if remaining_ms > 0 => {
-                Some(remaining_ms % MS_PER_SECOND + 1)
+                Some((remaining_ms % MS_PER_SECOND + 1).min(REPAINT_AT_MOST_MS))
             }
             _ => None,
         }
@@ -109,12 +116,6 @@ impl BarProgressReading {
     }
 }
 
-/// A reading as a fixed-threshold progress ([`BarProgressReading::fixed_progress`]).
-#[must_use]
-pub fn fixed(reading: Option<BarProgressReading>) -> Option<BarProgress> {
-    reading?.fixed_progress()
-}
-
 /// What the host tells a pane about its last-price tag's second line: the
 /// market's setting and the market clock to read a time rule on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -125,7 +126,8 @@ pub struct TagProgress {
 
 impl TagProgress {
     /// The reading the tag prints, `read` at the host's clock; `None` while
-    /// the market has the line off.
+    /// the market has the line off. Asked twice a frame: by the axis claim
+    /// for the chip's second row, and by the chip's painter.
     #[must_use]
     pub fn reading(
         self,
@@ -139,7 +141,9 @@ impl TagProgress {
 ///
 /// A time rule counts down from its own bucket end; with no clock it falls
 /// back on the time of the trades seen, which freezes in a quiet stretch
-/// rather than inventing time. `None` while no bar is forming on a time rule,
+/// rather than inventing time. A clock past the bucket end with no print to
+/// open the next bar rolls over into the bucket the clock stands in, as
+/// TradingView's bar clock does, instead of resting on `00:00`. `None` while no bar is forming on a time rule,
 /// and for a rule that reports nothing.
 #[must_use]
 pub fn read(
@@ -156,7 +160,7 @@ pub fn read(
         let length_ms = whole_ms(progress.target)?;
         let seen = whole_ms(progress.done)?;
         let remaining_ms = clock_ms
-            .map_or(length_ms - seen, |now| closes_at.saturating_sub(now))
+            .map_or(length_ms - seen, |now| left_at(now, closes_at, length_ms))
             .clamp(0, length_ms);
         return Some(BarProgressReading::Remaining {
             length_ms,
@@ -170,20 +174,34 @@ pub fn read(
     })
 }
 
+/// What is left of the bucket the clock stands in: of the forming one before
+/// `closes_at`, of a later one the same length after it.
+fn left_at(now: i64, closes_at: i64, length_ms: i64) -> i64 {
+    if now < closes_at || length_ms <= 0 {
+        return closes_at.saturating_sub(now);
+    }
+    length_ms - now.saturating_sub(closes_at) % length_ms
+}
+
 fn whole_ms(value: Decimal) -> Option<i64> {
     i64::try_from(value.trunc()).ok()
 }
 
-/// `522/2000`, `312/500`, `1.2M/2.0M`: both figures in the target's unit.
+/// `522/2000`, `312/500`, `1.2M/2M`: both figures in the target's unit, the
+/// count at one place and the target, usually round, without a dead `.0`.
 #[must_use]
 pub fn count_text(done: Decimal, target: Decimal) -> String {
     match compact_scale(target.abs()) {
         Some((divisor, suffix)) => format!(
             "{}{suffix}/{}{suffix}",
             one_place(done / divisor),
-            one_place(target / divisor)
+            display_decimal(cut(target / divisor, 1))
         ),
-        None => format!("{}/{}", plain(done), display_decimal(target)),
+        None => format!(
+            "{}/{}",
+            display_decimal(cut(done, 2)),
+            display_decimal(target)
+        ),
     }
 }
 
@@ -200,15 +218,24 @@ pub fn countdown_text(remaining_ms: i64) -> String {
     }
 }
 
-/// `+340`, `-120`, `0`; compact from a hundred thousand like a count.
+/// `+340`, `-120`, `0`; compact from ten thousand like a count. The sign is
+/// the printed figure's: a total cut to zero prints `0`, never `+0`.
 #[must_use]
 pub fn imbalance_text(running: Decimal) -> String {
-    let sign = if running > Decimal::ZERO { "+" } else { "" };
-    let figure = match compact_scale(running.abs()) {
-        Some((divisor, suffix)) => format!("{}{suffix}", one_place(running / divisor)),
-        None => plain(running),
+    let (figure, suffix) = match compact_scale(running.abs()) {
+        Some((divisor, suffix)) => (cut(running / divisor, 1), suffix),
+        None => (cut(running, 2), ""),
     };
-    format!("{sign}{figure}")
+    if figure.is_zero() {
+        return "0".to_owned();
+    }
+    let sign = if figure > Decimal::ZERO { "+" } else { "" };
+    let figure = if suffix.is_empty() {
+        display_decimal(figure)
+    } else {
+        format!("{figure:.1}")
+    };
+    format!("{sign}{figure}{suffix}")
 }
 
 fn compact_scale(magnitude: Decimal) -> Option<(Decimal, &'static str)> {
@@ -224,13 +251,12 @@ fn compact_scale(magnitude: Decimal) -> Option<(Decimal, &'static str)> {
 
 /// One decimal place, cut toward zero: a bar at 1.99M has not reached 2.0M.
 fn one_place(value: Decimal) -> String {
-    let cut = value.round_dp_with_strategy(1, RoundingStrategy::ToZero);
-    format!("{cut:.1}")
+    format!("{:.1}", cut(value, 1))
 }
 
-/// Up to two places, cut toward zero, trailing zeros dropped.
-fn plain(value: Decimal) -> String {
-    display_decimal(value.round_dp_with_strategy(2, RoundingStrategy::ToZero))
+/// `value` cut toward zero at `places`: a figure never claims more than came.
+fn cut(value: Decimal, places: u32) -> Decimal {
+    value.round_dp_with_strategy(places, RoundingStrategy::ToZero)
 }
 
 #[cfg(test)]

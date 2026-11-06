@@ -39,6 +39,7 @@ use smallvec::SmallVec;
 use crate::chart::{self, PriceScale};
 use crate::theme;
 use crate::timezone::TzOffset;
+pub(crate) use quantick_chart::price_tag::{self, claimed, price_tag_claims};
 
 /// How far the tick leading into a tag reaches out of the chart, in pixels.
 ///
@@ -49,13 +50,10 @@ const TICK_PX: f32 = 5.0;
 
 /// Padding around a tag's text, in pixels — the last-price chip's own, so the
 /// three marks that can share this axis are the same size.
-const TAG_PAD: egui::Vec2 = egui::vec2(3.0, 1.0);
+const TAG_PAD: egui::Vec2 = egui::vec2(price_tag::TAG_PAD_X_PX, 1.0);
 
 /// Corner radius of a tag.
 const TAG_ROUNDING: f32 = 2.0;
-
-/// How much smaller a tag's second line is than its price, in points.
-const SECOND_LINE_SMALLER_PT: f32 = 1.0;
 
 /// How a price is written on the price axis, wherever it is written.
 ///
@@ -81,41 +79,18 @@ pub(crate) fn price_text(price: f64) -> String {
 /// compass found `09:33:1` and `09:34:26` interleaved on the time axis, which
 /// reads as neither.
 ///
-/// Two, and no more: this holds the chips an axis draws *itself* — the
-/// pointer's tag and the last-price chip. The levels a drawing declares are
-/// already gathered for painting, so they are chained in at the check rather
-/// than copied in here, which is what keeps this from spilling onto the heap
-/// once per frame on a chart with a few levels drawn on it.
-pub(crate) type AxisClaims = SmallVec<[f32; 2]>;
+/// Four, and no more: the chips an axis draws *itself* — the pointer's tag,
+/// the crosshair's and the last price's, two rows while it carries progress.
+/// The levels a drawing declares are chained in at the check rather than
+/// copied in here, which is what keeps this from spilling onto the heap once
+/// per frame on a chart with a few levels drawn on it.
+pub(crate) type AxisClaims = SmallVec<[f32; 4]>;
 
-/// Whether a gridline label centred at `at` would share pixels with a chip
-/// already written on this axis, and should therefore stand aside.
-///
-/// `label` and `chip` are the two extents along the axis — heights on the
-/// price axis, widths on the time strip. They are asked for separately
-/// because they are not the same: the time strip drops its own labels to
-/// `HH:MM` when it runs out of room while the pointer's chip stays `HH:MM:SS`,
-/// so a rule that assumed one size left a 30 px label overlapping a 54 px chip
-/// by a dozen pixels — the very interleaving this exists to remove.
-///
-/// Two boxes touch once their centres are within half of each extent, plus
-/// the padding a chip wears over its text.
-///
-/// The claims arrive as an iterator so a caller can chain the axis's own chips
-/// onto the levels it has already gathered, instead of building a third list
-/// every frame. Each is the coordinate the chip will *actually* be drawn at —
-/// not the pointer's, which the time strip clamps away from near its edges.
-#[must_use]
-pub(crate) fn claimed(
-    at: f32,
-    label: f32,
-    chip: f32,
-    claims: impl IntoIterator<Item = f32>,
-) -> bool {
-    let clearance = (label + chip) / 2.0 + TAG_PAD.x;
-    claims
-        .into_iter()
-        .any(|claim| (claim - at).abs() < clearance)
+/// How tall a tag's second line is at its full size, as `price_tag_claims` claims it.
+pub(crate) fn second_line_height(painter: &egui::Painter) -> f32 {
+    let font = egui::FontId::monospace(price_tag::SECOND_LINE_PX);
+    let line = painter.layout_no_wrap("0".to_owned(), font, theme::TEXT_MUTED);
+    line.size().y
 }
 
 /// The pointer's time chip on the time strip: where it is centred and how
@@ -240,7 +215,8 @@ pub(crate) fn readout(
 /// normally and the live strip's right edge while the strip sits between them.
 /// A `second` line sits under the price, one point smaller, on the same chip —
 /// the last price's tag carrying the forming bar's progress; the price stays
-/// centred on `y` and the chip grows downward.
+/// centred on `y` and the chip grows downward. A line too wide for the gutter
+/// is set smaller until it fits.
 pub(crate) fn paint_price_tag(
     painter: &egui::Painter,
     axis_x: f32,
@@ -253,11 +229,13 @@ pub(crate) fn paint_price_tag(
     let font = egui::FontId::monospace;
     let galley = painter.layout_no_wrap(text, font(chart::AXIS_LABEL_FONT_PX), ink);
     let under = second.map(|text| {
-        painter.layout_no_wrap(
-            text,
-            font(chart::AXIS_LABEL_FONT_PX - SECOND_LINE_SMALLER_PT),
-            ink,
-        )
+        let line = painter.layout_no_wrap(text.clone(), font(price_tag::SECOND_LINE_PX), ink);
+        match price_tag::second_line_font_px(line.size().x) {
+            size if size < price_tag::SECOND_LINE_PX => {
+                painter.layout_no_wrap(text, font(size), ink)
+            }
+            _ => line,
+        }
     });
     let text_pos = egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y - galley.size().y / 2.0);
     let under_size = under.as_ref().map_or(egui::Vec2::ZERO, |line| line.size());
@@ -404,65 +382,6 @@ mod tests {
 
     fn read(at: egui::Pos2, bar: Option<PointerBar>) -> Option<PointerReadout> {
         readout(Some(at), CHART, &scale(), bar)
-    }
-
-    /// The rule the captures found: a chip and a gridline label on the same
-    /// row read as neither. The round number stands aside — it is the part
-    /// nobody needs, and the chip is the answer somebody asked for.
-    #[test]
-    fn a_label_under_a_chip_stands_aside() {
-        let label = 14.0_f32;
-        let chip = [400.0_f32];
-        assert!(claimed(400.0, label, label, chip), "dead on the chip");
-        assert!(
-            claimed(408.0, label, label, chip),
-            "half a label away, touching"
-        );
-        assert!(
-            !claimed(430.0, label, label, chip),
-            "two labels clear, so the round number is worth writing"
-        );
-        // The axis's own chips and the levels a drawing declared are one
-        // question asked of two lists, chained rather than copied together.
-        let levels = [520.0_f32, 700.0];
-        assert!(claimed(521.0, label, label, chip.into_iter().chain(levels)));
-        assert!(!claimed(
-            600.0,
-            label,
-            label,
-            chip.into_iter().chain(levels)
-        ));
-    }
-
-    /// The time strip thins its own labels to `HH:MM` when it runs out of
-    /// room while the pointer's chip stays `HH:MM:SS`, so the two extents are
-    /// asked for separately. A rule that took the label's size for both let a
-    /// 30 px label sit a dozen pixels inside a 54 px chip — the interleaving
-    /// this exists to remove, back again on exactly the narrow strip that
-    /// needed it most.
-    #[test]
-    fn a_narrow_strips_short_label_still_clears_the_full_width_chip() {
-        let (short, full) = (30.0_f32, 54.0_f32);
-        let chip = [400.0_f32];
-        assert!(
-            claimed(358.0, short, full, chip),
-            "42 px away, and the two boxes overlap by a dozen"
-        );
-        assert!(
-            !claimed(358.0, short, short, chip),
-            "which the old rule, measuring the label twice, allowed through"
-        );
-        assert!(claimed(400.0, short, full, chip));
-        assert!(!claimed(340.0, short, full, chip), "clear of the chip");
-    }
-
-    /// No claims, nothing hidden: an axis with no chip on it labels every
-    /// gridline exactly as it always did.
-    #[test]
-    fn an_axis_nothing_claims_hides_nothing() {
-        for at in [0.0_f32, 123.0, 999.0] {
-            assert!(!claimed(at, 14.0, 14.0, AxisClaims::new()));
-        }
     }
 
     /// Over the candles, the height is a price and the axis can say which.

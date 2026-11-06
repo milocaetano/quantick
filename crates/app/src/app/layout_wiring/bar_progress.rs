@@ -11,12 +11,14 @@ impl LayoutRead<'_> {
     }
 }
 
-impl LayoutAdapter<'_> {
+impl crate::app::chart_layers_wiring::LayerWiring<'_> {
     /// Switch the progress line on tab `tab`'s market's price tag, saved with
     /// the market settings; whether it changed, `None` for a tab that is gone.
+    /// The one writer, for the named call and the axis menu's drained wish.
     pub(crate) fn set_bar_progress(&mut self, tab: u64, on: bool) -> Option<bool> {
-        let (venue, symbol) = Self::market_of(self.tabs.by_id(tab)?);
+        let (venue, symbol) = LayoutAdapter::market_of(self.tabs.by_id(tab)?);
         let now = std::time::Instant::now();
-        Some((self.store.market_mut()).set_bar_progress(venue, symbol, on, now))
+        let market = self.workspace.layouts_mut().market_mut();
+        Some(market.set_bar_progress(venue, symbol, on, now))
     }
 }

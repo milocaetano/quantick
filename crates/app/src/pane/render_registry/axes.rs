@@ -158,7 +158,8 @@ fn last_price(p: &mut LastPricePass<'_>) {
         LAST_PRICE_GAP_PX,
     ));
 
-    // A countdown changes with no print: ask for the frame its text turns on.
+    // A countdown changes with no print: ask for the frame its text turns on,
+    // at most a quarter second away so a fast replay's clock keeps up.
     if let Some(ms) = progress.and_then(|reading| reading.repaint_after_ms()) {
         let after = std::time::Duration::from_millis(ms.unsigned_abs());
         painter.ctx().request_repaint_after(after);

@@ -39,7 +39,8 @@ impl ChartPort for dyn ControlPort {
                     focused: tab_index == active && focused == side,
                 };
                 let read = PaneRead { tab, pane, config };
-                visit(entry(tab_id, tab, side, &read), framing);
+                let on_screen = tab_index == active;
+                visit(entry(tab_id, tab, side, &read, on_screen), framing);
             }
         }
     }
@@ -56,6 +57,7 @@ impl ChartPort for dyn ControlPort {
     ) -> Result<(), MissingPane> {
         let reads = self.tab_reads();
         let tab = reads.tabs().by_id(tab_id).ok_or(MissingPane::Tab)?;
+        let on_screen = reads.tabs().id_at(reads.active_tab_index()) == tab_id;
         let (pane, side) = tab
             .panes()
             .find(|(pane, _)| pane.id == pane_id)
@@ -65,16 +67,20 @@ impl ChartPort for dyn ControlPort {
             pane,
             config: reads.config(),
         };
-        visit(entry(tab_id, tab, side, &read));
+        visit(entry(tab_id, tab, side, &read, on_screen));
         Ok(())
     }
 }
 
+/// One pane's entry. Only the tab on screen has its market clock advanced
+/// each frame; a tab behind it reads a time rule on its trades' own time
+/// (`None`) rather than on a clock stopped where it was last drawn.
 fn entry<'a>(
     tab_id: u64,
     tab: &'a Tab,
     side: PaneSide,
     read: &'a PaneRead<'a>,
+    on_screen: bool,
 ) -> ChartPaneEntry<'a> {
     ChartPaneEntry {
         tab_id,
@@ -83,7 +89,7 @@ fn entry<'a>(
         feed_id: &tab.feed_id,
         symbol: &tab.symbol,
         pane: read,
-        market_clock_ms: tab.tape().market_now_ms(),
+        market_clock_ms: on_screen.then(|| tab.tape().market_now_ms()).flatten(),
     }
 }
 

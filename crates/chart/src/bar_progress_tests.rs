@@ -34,19 +34,29 @@ fn count_rules_print_done_over_target() {
         "0.12/5",
         "cut, never rounded up"
     );
-    assert_eq!(count_text(dec("99999"), dec("99999")), "99999/99999");
+    assert_eq!(count_text(dec("9999"), dec("9999")), "9999/9999");
 }
 
 #[test]
 fn large_targets_print_in_the_targets_unit() {
-    assert_eq!(count_text(dec("1250000"), dec("2000000")), "1.2M/2.0M");
+    assert_eq!(count_text(dec("1250000"), dec("2000000")), "1.2M/2M");
     assert_eq!(
         count_text(dec("1999999"), dec("2000000")),
-        "1.9M/2.0M",
-        "1.99M has not reached 2.0M"
+        "1.9M/2M",
+        "1.99M has not reached 2M"
     );
-    assert_eq!(count_text(dec("31200"), dec("500000")), "31.2K/500.0K");
+    assert_eq!(count_text(dec("31200"), dec("500000")), "31.2K/500K");
     assert_eq!(count_text(dec("700000000"), dec("1500000000")), "0.7B/1.5B");
+}
+
+/// A five-figure target compacts, so the line fits the 64 px price gutter:
+/// whole figures would print `4999.99/10000` and `12345/20000`.
+#[test]
+fn a_five_figure_target_prints_compact() {
+    assert_eq!(count_text(dec("4999.99"), dec("10000")), "4.9K/10K");
+    assert_eq!(count_text(dec("12345"), dec("20000")), "12.3K/20K");
+    assert_eq!(count_text(dec("99999"), dec("99999")), "99.9K/99.9K");
+    assert_eq!(count_text(dec("4999.99"), dec("5000")), "4999.99/5000");
 }
 
 #[test]
@@ -60,21 +70,19 @@ fn a_time_bar_counts_down_like_tradingview() {
 }
 
 /// A countdown asks for the frame its text changes on: `00:52` turns
-/// `00:51` once 52 300 ms has run down past 52 000.
+/// `00:51` once 52 100 ms has run down past 52 000. Never later than a
+/// quarter second, which a replay at 4x turns into a market second.
 #[test]
 fn a_countdown_repaints_on_its_next_whole_second_and_a_count_never() {
     let left = |remaining_ms| BarProgressReading::Remaining {
         length_ms: 60_000,
         remaining_ms,
     };
-    assert_eq!(left(52_300).repaint_after_ms(), Some(301));
+    assert_eq!(left(52_100).repaint_after_ms(), Some(101));
     assert_eq!(left(52_000).repaint_after_ms(), Some(1));
+    assert_eq!(left(52_900).repaint_after_ms(), Some(REPAINT_AT_MOST_MS));
     assert_eq!(countdown_text(52_000 - 1), "00:51");
-    assert_eq!(
-        left(0).repaint_after_ms(),
-        None,
-        "a closed bucket waits for a print"
-    );
+    assert_eq!(left(0).repaint_after_ms(), None, "nothing left to count");
     let count = BarProgressReading::Count {
         done: dec("5"),
         target: dec("10"),
@@ -89,6 +97,16 @@ fn an_imbalance_bar_prints_its_signed_running_total() {
     assert_eq!(imbalance_text(dec("-120")), "-120");
     assert_eq!(imbalance_text(Decimal::ZERO), "0");
     assert_eq!(imbalance_text(dec("-2500000")), "-2.5M");
+    assert_eq!(imbalance_text(dec("12345")), "+12.3K");
+}
+
+/// The sign is the printed figure's: a total cut to zero carries none.
+#[test]
+fn an_imbalance_cut_to_zero_prints_no_sign() {
+    assert_eq!(imbalance_text(dec("0.004")), "0");
+    assert_eq!(imbalance_text(dec("-0.004")), "0");
+    assert_eq!(imbalance_text(dec("0.019")), "+0.01");
+    assert_eq!(imbalance_text(dec("-0.019")), "-0.01");
 }
 
 #[test]
@@ -117,7 +135,7 @@ fn a_volume_and_a_dollar_chart_read_in_their_measure() {
     let dollar = chart_after(BarSpec::Dollar(dec("2000000")), &trades)
         .bar_progress_at(None)
         .unwrap();
-    assert_eq!(dollar.tag_text(), "0.0M/2.0M");
+    assert_eq!(dollar.tag_text(), "0.0M/2M");
     assert_eq!(dollar.done(), dec("250.0"));
 }
 
@@ -134,16 +152,32 @@ fn a_time_chart_counts_down_from_its_own_bucket_on_the_market_clock() {
         "bucket 120000..180000"
     );
     assert_eq!(at(Some(179_400)).tag_text(), "00:00");
-    assert_eq!(
-        at(Some(200_000)).tag_text(),
-        "00:00",
-        "never negative past the end"
-    );
     assert_eq!(at(Some(128_000)).done(), dec("8000"));
     assert_eq!(at(Some(128_000)).target(), Some(dec("60000")));
     assert_eq!(at(Some(128_000)).unit(), TIME_UNIT);
     // No clock: the trades' own time, which a quiet stretch freezes.
     assert_eq!(at(None).tag_text(), "00:55");
+}
+
+/// Past the bucket end with no print the clock rolls into the bucket it
+/// stands in, as TradingView's does, and keeps asking for its next second.
+#[test]
+fn a_time_chart_past_its_bucket_with_no_print_rolls_over() {
+    let chart = chart_after(
+        BarSpec::Time(60_000),
+        &[trade(1, 125_000, "100", "1", Side::Buy)],
+    );
+    let at = |clock| chart.bar_progress_at(Some(clock)).unwrap();
+    assert_eq!(
+        at(180_000).tag_text(),
+        "01:00",
+        "the next bucket opens whole"
+    );
+    assert_eq!(at(200_000).tag_text(), "00:40", "bucket 180000..240000");
+    assert_eq!(at(200_000).repaint_after_ms(), Some(1));
+    assert_eq!(at(359_500).tag_text(), "00:00");
+    assert_eq!(at(359_900).repaint_after_ms(), Some(101), "still ticking");
+    assert_eq!(at(390_250).tag_text(), "00:29", "five buckets on");
 }
 
 #[test]

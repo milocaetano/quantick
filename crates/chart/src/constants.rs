@@ -80,6 +80,10 @@ pub const TIME_LABEL_FONT_PX: f32 = 10.0;
 /// gutter and every pane's, so the numbers form one column down the chart.
 pub const AXIS_LABEL_GAP_PX: f32 = 6.0;
 
+/// Width of the right-hand price gutter, in pixels: the room a price tag's
+/// chip has to fit in.
+pub const PRICE_GUTTER_PX: f32 = 64.0;
+
 /// Tick label font size, in pixels. Shared for the same reason.
 pub const AXIS_LABEL_FONT_PX: f32 = 11.0;
 

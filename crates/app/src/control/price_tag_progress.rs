@@ -13,7 +13,7 @@ impl PriceTagProgressPort for dyn ControlPort {
         on: bool,
     ) -> Result<bool, ControlError> {
         pane(self, WireU64::new(tab), WireU64::new(id))?;
-        let changed = self.layout_adapter().set_bar_progress(tab, on);
+        let changed = self.layer_wiring().set_bar_progress(tab, on);
         changed.ok_or_else(|| invalid("the tab closed while the call ran"))
     }
 }

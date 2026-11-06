@@ -765,9 +765,6 @@ impl QuantickApp {
                 // The grid, the indicator state and the price tag's progress
                 // belong to the window or the market, not to the pane whose
                 // menu switched them.
-                if let Some(on) = self.runtime.workspace.layers_mut().actions.bar_progress {
-                    self.layout_adapter().set_bar_progress(tab_id, on);
-                }
                 self.layer_wiring().apply_actions();
                 let tab = self.active_tab();
                 canvas::overlays(ui, area, tab, &self.config, stall, now_ms, &mut answers);

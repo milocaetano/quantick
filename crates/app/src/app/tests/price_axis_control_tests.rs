@@ -540,3 +540,21 @@ fn the_axis_menu_switch_is_kept_for_that_market_only() {
         "taken once"
     );
 }
+
+/// `apply_actions` is the one drain of the pane menus' wishes: any caller of
+/// it, not only the frame, writes the price tag's switch to the market
+/// rather than dropping it with the rest of the taken actions.
+#[test]
+fn every_drain_of_the_layer_actions_writes_the_progress_switch() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 40);
+    let (venue, symbol) = app.active_tab().active.clone();
+    app.runtime.workspace.layers_mut().actions.bar_progress = Some(false);
+    app.layer_wiring().apply_actions();
+    let market = app.runtime.workspace.layouts().market();
+    assert!(!market.bar_progress_on(&venue, &symbol));
+    assert_eq!(
+        app.runtime.workspace.layers_mut().actions.bar_progress,
+        None
+    );
+}
