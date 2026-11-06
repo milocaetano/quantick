@@ -14,6 +14,7 @@
 //! child modules, which never see the window.
 
 use super::{AlertsPort, GatewayPort, LayersPort, LayoutPort, PaperPort};
+use quantick_chart_interaction::frame_plan::StageScope;
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_feed::stall::Stall;
 use std::time::{Duration, Instant};
@@ -56,144 +57,98 @@ struct FrameScratch {
     canvas: canvas::CanvasAnswers,
 }
 
-/// Process work is scheduled by the root even when its native shell is hidden.
-/// This traversal executes each source, gateway and worker stage once, never
-/// once per market window. The ordinary single-frame test door remains intact.
-pub(super) fn process(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
-    let mut scratch = FrameScratch::default();
-    let mut tail = Some(FrameTailPlan::stages());
-    for stage in FramePlan::stages() {
-        #[cfg(any(feature = "control-harness", test))]
-        if stage == FrameStage::EvidenceHook {
-            app.run_frame_stage(
-                stage,
-                ctx,
-                now,
-                &mut scratch,
-                &mut quantick_feed::spawn_live,
-                &mut tail,
-            );
-            continue;
-        }
-        if stage.needs_presentation() {
-            continue;
-        }
-        match stage {
-            FrameStage::IndicatorSurfaces => app.service_indicator_requests(),
-            FrameStage::FeedAndLayoutSwitches => {
-                for (tab_id, tab) in app.runtime.tabs.iter_with_ids_mut() {
-                    tab.apply_pending_layout(
-                        tab_id,
-                        &app.config,
-                        &app.runtime.style,
-                        &mut app.pane_ids,
-                    );
-                }
-                app.layout_adapter().maintain_layouts();
-                super::tab_workspaces::maintain(app);
-            }
-            FrameStage::StrategyCleanup | FrameStage::Tail => {}
-            _ => app.run_frame_stage(
-                stage,
-                ctx,
-                now,
-                &mut scratch,
-                &mut quantick_feed::spawn_live,
-                &mut tail,
-            ),
-        }
-    }
-}
-
-/// Only input, paint and the active view's consequences run for each viewport.
-pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+/// One pass over `scope`: every stage the plan declares there, in its order,
+/// through the one executor. A window's pass stops if that window closes
+/// under it.
+fn run_scope(app: &mut QuantickApp, ctx: &egui::Context, now: Instant, scope: StageScope) {
     let window = app.runtime.tabs.windows().presented();
     let mut scratch = FrameScratch::default();
-    let mut tail = Some([
-        FrameTailStage::DrawPaperReport,
-        FrameTailStage::PublishFeedPopup,
-    ]);
-    for stage in FramePlan::stages() {
-        if app.runtime.tabs.windows().window(window).is_none() {
+    let mut tail = Some(FrameTailPlan::stages());
+    for stage in FramePlan::stages_in(scope) {
+        if scope.ends_with_its_window() && app.runtime.tabs.windows().window(window).is_none() {
             break;
         }
-        match stage {
-            #[cfg(any(feature = "control-harness", test))]
-            FrameStage::EvidenceHook => {}
-            FrameStage::IndicatorSurfaces => {
-                if !super::home_wiring::hides(app, stage) {
-                    app.draw_indicator_surfaces(ctx);
-                }
-            }
-            FrameStage::FeedAndLayoutSwitches => {
-                let (tab, config) = app.active_with_config();
-                let changed = tab.replay.is_none()
-                    && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
-                tab.maybe_switch_feed(config);
-                app.active_tab_mut().apply_spec_changes();
-                if changed {
-                    app.layout_adapter().follow_market_changes();
-                }
-            }
-            FrameStage::StrategyCleanup => app.active_tab_mut().apply_strategy_cleanup(),
-            FrameStage::Tail => {
-                app.run_frame_tail(
-                    ctx,
-                    now,
-                    &scratch.canvas,
-                    &mut quantick_feed::spawn_live,
-                    [FrameTailStage::ApplyNoticeAction],
-                );
-                super::frame_tail::settle_active_paper_panel(
-                    &mut app.runtime.tabs,
-                    &mut app.surfaces.toast,
-                    now,
-                );
-                app.run_frame_stage(
-                    stage,
-                    ctx,
-                    now,
-                    &mut scratch,
-                    &mut quantick_feed::spawn_live,
-                    &mut tail,
-                );
-            }
-            stage if stage.needs_presentation() => app.run_frame_stage(
-                stage,
-                ctx,
-                now,
-                &mut scratch,
-                &mut quantick_feed::spawn_live,
-                &mut tail,
-            ),
-            _ => {}
-        }
+        let spawn = &mut quantick_feed::spawn_live;
+        app.run_frame_stage(stage, ctx, now, &mut scratch, spawn, &mut tail);
     }
 }
 
+/// Sources, gateway and workers, once a tick, never once per market window:
+/// scheduled by the root even when its native shell is hidden.
+pub(super) fn process(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    run_scope(app, ctx, now, StageScope::Tick);
+}
+
+/// Only input, paint and the shown tab's consequences run for each viewport.
+pub(super) fn paint(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    run_scope(app, ctx, now, StageScope::Window);
+}
+
+/// The tabs no window shows, once, after every window painted.
 pub(super) fn settle(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
-    let selected: Vec<_> = app
-        .runtime
-        .tabs
-        .windows()
-        .windows()
-        .iter()
-        .map(|window| window.selected().0)
-        .collect();
-    for (id, tab) in app.runtime.tabs.iter_with_ids_mut() {
-        if !selected.contains(&id) {
-            tab.apply_strategy_cleanup();
-        }
-    }
-    if let Some(note) = app.audio.play_pending(&mut app.runtime.tabs) {
-        app.alerts().show_toast(note);
-    }
-    super::frame_tail::settle_background_paper_panels(
-        &mut app.runtime.tabs,
-        &mut app.surfaces.toast,
+    run_scope(app, ctx, now, StageScope::Settle);
+}
+
+/// Rail shortcuts (Esc, 1, 2) and the drawing keys. Chrome panels then
+/// claim their zones outside-in (§5): menu and toolbar on top, the status
+/// line at the very bottom with the replay transport directly above it,
+/// then the edge-docked drawing rail and the right dock. The chart keeps
+/// whatever remains.
+fn handle_market_keys(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    app.toolrail.handle_keys(ctx);
+    let effects = app.drawings.handle_drawing_keys(
+        &mut super::drawing_controller::DrawingAccess::new(&mut app.runtime.tabs),
+        &mut app.toolrail,
+        &mut *app.audio.alerts,
+        ctx,
         now,
+        crate::dock::holds_pointer(&app.dock, ctx),
     );
-    ctx.request_repaint_after(Duration::from_millis(16));
+    effects.apply(&mut app.surfaces.toast, &mut app.toolrail);
+}
+
+/// Respawn the shown tab's feed if its feed/symbol selection changed
+/// (resets the chart) and apply its spec; a changed market moves its
+/// layouts along.
+fn apply_feed_switch(app: &mut QuantickApp) {
+    let (tab, config) = app.active_with_config();
+    let changed =
+        tab.replay.is_none() && (tab.active.0 != tab.feed_id || tab.active.1 != tab.symbol);
+    tab.maybe_switch_feed(config);
+    app.active_tab_mut().apply_spec_changes();
+    if changed {
+        app.layout_adapter().follow_market_changes();
+    }
+}
+
+/// Settle the deferred layouts, a frame after the click that armed them,
+/// so the frame carrying the change paints its overlay first.
+fn apply_layout_switches(app: &mut QuantickApp) {
+    for (tab_id, tab) in app.runtime.tabs.iter_with_ids_mut() {
+        tab.apply_pending_layout(tab_id, &app.config, &app.runtime.style, &mut app.pane_ids);
+    }
+    // Right after panes appear and markets switch, so a pane built this
+    // frame is seeded this frame and a tab that changed symbol swaps its
+    // drawings before anything paints them.
+    app.layout_adapter().maintain_layouts();
+    super::tab_workspaces::maintain(app);
+}
+
+/// Home's page where the chart would be, with the canvas's answers seeded
+/// for the tail.
+fn draw_home_canvas_stage(app: &mut QuantickApp, ctx: &egui::Context, scratch: &mut FrameScratch) {
+    let background = scratch
+        .background
+        .unwrap_or_else(|| pane::background_color(&app.runtime.style));
+    let popup_tab = app.runtime.tabs.active_id();
+    scratch.canvas =
+        canvas::CanvasAnswers::seeded(popup_tab, app.chrome.feed_popup_tab, &scratch.status);
+    app.drawings
+        .chrome
+        .sync_content_editing(&mut app.runtime.tabs);
+    if super::home_wiring::draw_stage(ctx, app.active_tab_mut(), background) {
+        app.surfaces.market_palette.open("", None);
+    }
 }
 
 #[cfg(test)]
@@ -343,15 +298,24 @@ impl QuantickApp {
                 self.maybe_emit_summary(now, ctx);
                 self.workspace_save_adapter().maintain_workspace(ctx);
             }
-            FrameStage::TopChrome => self.draw_top_chrome(ctx, now, scratch),
-            // Requests first, so a double click on a pane or a curve opens
-            // the dialog on the same frame the gesture happened.
-            FrameStage::IndicatorSurfaces => {
-                self.service_indicator_requests();
-                if presented {
-                    self.draw_indicator_surfaces(ctx);
+            FrameStage::TabKeys => {
+                scratch.background = Some(pane::background_color(&self.runtime.style));
+                self.surfaces.indicator_picker.capture_keyboard(ctx);
+                let surface = &mut self.chrome.title_bar.surface;
+                super::home_wiring::observe_market(&self.runtime.tabs, surface);
+                self.handle_tab_keys(ctx);
+            }
+            FrameStage::MarketKeys => handle_market_keys(self, ctx, now),
+            FrameStage::MenuBar => {
+                self.draw_menu_bar(ctx);
+                if let Some(access) = self.control.control_access.as_mut() {
+                    access.draw_panel(ctx);
                 }
             }
+            FrameStage::HomeToolbar => super::home_wiring::stand_in_for_toolbar(self),
+            FrameStage::Toolbar => self.draw_toolbar(ctx),
+            FrameStage::IndicatorSurfaces => self.service_indicator_requests(),
+            FrameStage::IndicatorDialogs => self.draw_indicator_surfaces(ctx),
             FrameStage::StrategyPopupRequests => surfaces::open_requested_strategy_popups(
                 &mut self.runtime.tabs,
                 &mut self.surfaces.strategy_popup,
@@ -398,26 +362,18 @@ impl QuantickApp {
                     self.resolve_drawing_response(ask, now);
                 }
             }
-            FrameStage::FeedAndLayoutSwitches => self.apply_feed_and_layout_switches(),
+            FrameStage::LayoutSwitches => apply_layout_switches(self),
+            FrameStage::FeedSwitch => apply_feed_switch(self),
             FrameStage::MirrorLoadingWaits => {
                 panels::mirror_loading_waits(&self.replay_view, &mut self.runtime.tabs);
             }
+            FrameStage::HomeCanvas => draw_home_canvas_stage(self, ctx, scratch),
             FrameStage::Canvas => self.draw_canvas_stage(ctx, scratch),
             FrameStage::DrawingChrome => self.draw_drawing_chrome_stage(ctx, now, scratch),
             // The menus above may have disarmed a bot over a resting retest
             // limit; its cancel goes to the simulator on this same frame, not
-            // on the next print. Every tab, not just the active one: a menu
-            // click and a tab switch can land on the same frame, and the old
-            // tab's feed keeps running — its cancel must not sit stranded
-            // until the tab is looked at again.
-            FrameStage::StrategyCleanup => {
-                for tab in self.runtime.tabs.iter_mut() {
-                    tab.apply_strategy_cleanup();
-                }
-                if let Some(note) = self.audio.play_pending(&mut self.runtime.tabs) {
-                    self.alerts().show_toast(note);
-                }
-            }
+            // on the next print.
+            FrameStage::StrategyCleanup => self.active_tab_mut().apply_strategy_cleanup(),
             FrameStage::Tail => {
                 if let Some(tail) = tail.take() {
                     self.run_frame_tail(ctx, now, &scratch.canvas, spawn, tail);
@@ -425,6 +381,19 @@ impl QuantickApp {
             }
             // Live feed: keep polling the channel ~60×/s without busy-spinning.
             FrameStage::RequestRepaint => ctx.request_repaint_after(Duration::from_millis(16)),
+            FrameStage::BackgroundStrategyCleanup => {
+                super::frame_tail::clean_up_background_strategies(&mut self.runtime.tabs);
+            }
+            FrameStage::PlayAlerts => {
+                if let Some(note) = self.audio.play_pending(&mut self.runtime.tabs) {
+                    self.alerts().show_toast(note);
+                }
+            }
+            FrameStage::BackgroundPaperPanels => super::frame_tail::settle_background_paper_panels(
+                &mut self.runtime.tabs,
+                &mut self.surfaces.toast,
+                now,
+            ),
         }
     }
 
@@ -477,39 +446,6 @@ impl QuantickApp {
         self.chrome
             .harness
             .apply_replay_restart(&mut self.runtime.tabs, &self.config);
-    }
-
-    /// Chrome panels claim their zones outside-in (§5): menu and toolbar on
-    /// top here, the status line at the very bottom with the replay
-    /// transport directly above it, then the edge-docked drawing rail and the
-    /// right dock. The chart keeps whatever remains.
-    fn draw_top_chrome(&mut self, ctx: &egui::Context, now: Instant, scratch: &mut FrameScratch) {
-        scratch.background = Some(pane::background_color(&self.runtime.style));
-        self.surfaces.indicator_picker.capture_keyboard(ctx);
-        super::home_wiring::observe_market(&self.runtime.tabs, &mut self.chrome.title_bar.surface);
-        self.handle_tab_keys(ctx);
-        if !self.chrome.title_bar.surface.is_home() {
-            // Rail shortcuts (Esc, 1, 2) first: no widget holds the keyboard yet.
-            self.toolrail.handle_keys(ctx);
-            let effects = self.drawings.handle_drawing_keys(
-                &mut super::drawing_controller::DrawingAccess::new(&mut self.runtime.tabs),
-                &mut self.toolrail,
-                &mut *self.audio.alerts,
-                ctx,
-                now,
-                crate::dock::holds_pointer(&self.dock, ctx),
-            );
-            effects.apply(&mut self.surfaces.toast, &mut self.toolrail);
-        }
-        self.draw_menu_bar(ctx);
-        if let Some(access) = self.control.control_access.as_mut() {
-            access.draw_panel(ctx);
-        }
-        if self.chrome.title_bar.surface.is_home() {
-            super::home_wiring::stand_in_for_toolbar(self);
-        } else {
-            self.draw_toolbar(ctx);
-        }
     }
 
     /// The registered surfaces, then what they asked for. The environment is
@@ -679,29 +615,6 @@ impl QuantickApp {
         self.workspace_bundle_adapter().poll_picker();
     }
 
-    /// Respawn the feed if the feed/symbol selection changed (resets the
-    /// chart), then settle the deferred layouts, a frame after the click
-    /// that armed them, so the frame carrying the change paints its overlay
-    /// first.
-    fn apply_feed_and_layout_switches(&mut self) {
-        let (tab, config) = self.active_with_config();
-        tab.maybe_switch_feed(config);
-        for (tab_id, tab) in self.runtime.tabs.iter_with_ids_mut() {
-            tab.apply_pending_layout(
-                tab_id,
-                &self.config,
-                &self.runtime.style,
-                &mut self.pane_ids,
-            );
-        }
-        // Right after panes appear and markets switch, so a pane built this
-        // frame is seeded this frame and a tab that changed symbol swaps its
-        // drawings before anything paints them.
-        self.layout_adapter().maintain_layouts();
-        super::tab_workspaces::maintain(self);
-        self.active_tab_mut().apply_spec_changes();
-    }
-
     /// The chart takes whatever the panels left.
     fn draw_canvas_stage(&mut self, ctx: &egui::Context, scratch: &mut FrameScratch) {
         let background = scratch
@@ -724,13 +637,6 @@ impl QuantickApp {
             .chrome
             .sync_content_editing(&mut self.runtime.tabs);
         let (stall, now_ms) = (scratch.stall.as_ref(), scratch.now_ms);
-        if self.chrome.title_bar.surface.is_home() {
-            scratch.canvas = answers;
-            if super::home_wiring::draw_stage(ctx, self.active_tab_mut(), background) {
-                self.surfaces.market_palette.open("", None);
-            }
-            return;
-        }
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(background))
             .show(ctx, |ui| {
@@ -780,9 +686,6 @@ impl QuantickApp {
         now: Instant,
         scratch: &FrameScratch,
     ) {
-        if self.chrome.title_bar.surface.is_home() {
-            return;
-        }
         if scratch.canvas.begin_text_edit {
             self.drawings.chrome.request_text_edit();
         }
@@ -810,7 +713,7 @@ impl QuantickApp {
             chip_rect: &mut self.chrome.feed_chip_rect,
             popup_tab: &mut self.chrome.feed_popup_tab,
         }
-        .execute(
+        .execute_watched(
             super::frame_tail::FrameTailInput {
                 presentation: presented.then_some(ctx),
                 now,
