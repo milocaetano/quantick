@@ -13,8 +13,8 @@
 //! tab holds edits it carries the amber mark and a `Save` pill (Ctrl+S). Right
 //! after it, a muted "auto save" check turns autosave on or off
 //! (`workspace.autosave.set`). The timezone picker sits at the right end. A
-//! `Reconnect`/`Reload` pair once stood in the
-//! provenance section, because the notice card refused to cover a working
+//! `Reconnect`/`Reload` pair once stood in the provenance section, because
+//! the notice card refused to cover a working
 //! chart, and a terminal that froze mid-session left the trader nothing to
 //! press anywhere in the window. The offline chip in the chart's bottom-right
 //! corner answers that better: it is in one place whatever the chart holds, so
@@ -357,9 +357,8 @@ fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusR
     response.workspace_cell = Some(cell.rect);
     response.workspace_clicked = cell.clicked();
     if model.modified {
-        let keys = ui
-            .ctx()
-            .format_shortcut(&crate::app::SAVE_TO_WORKSPACE_SHORTCUT);
+        let shortcut = &crate::app::SAVE_TO_WORKSPACE_SHORTCUT;
+        let keys = ui.ctx().format_shortcut(shortcut);
         let pill = egui::Button::new(egui::RichText::new(text::SAVE_PILL).color(theme::AMBER))
             .rounding(SAVE_PILL_ROUNDING_PX);
         let hover = text::save_pill_hover(workspace, &keys);
@@ -367,9 +366,8 @@ fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusR
     }
     let mut on = model.autosave;
     let label = egui::RichText::new(text::AUTOSAVE_LABEL).color(theme::TEXT_MUTED);
-    let check = ui
-        .checkbox(&mut on, label)
-        .on_hover_text(text::AUTOSAVE_HOVER);
+    let check = ui.checkbox(&mut on, label);
+    let check = check.on_hover_text(text::AUTOSAVE_HOVER);
     response.autosave_set = check.changed().then_some(on);
     ui.separator();
 }

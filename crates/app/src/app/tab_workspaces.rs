@@ -31,9 +31,9 @@ pub(super) fn maintain(app: &mut QuantickApp) {
 }
 
 /// Run `act` journaled as the trader's hand, toasting each note it answers.
-fn as_hand(
+fn as_hand<I: IntoIterator<Item = String>>(
     app: &mut QuantickApp,
-    act: impl FnOnce(&mut QuantickApp, ops::Journal<'_, crate::control::ControlAccess>) -> Vec<String>,
+    act: impl FnOnce(&mut QuantickApp, ops::Journal<'_, crate::control::ControlAccess>) -> I,
 ) {
     let mut access = app.control.control_access.take();
     let hand = access.as_mut().and_then(|access| access.hand_actor());
@@ -86,10 +86,7 @@ impl TabRecipeHost for BookTabs<'_> {
     fn recipe_tab_layout(&self, id: u64) -> Option<String> {
         let layouts = self.0.layout_state();
         let shown = layouts.pane_layout(id, PaneSide::Flow);
-        layouts
-            .layouts()
-            .get(shown)
-            .map(|layout| layout.name.clone())
+        Some(layouts.layouts().get(shown)?.name.clone())
     }
     fn new_tab_recipe(&self, id: u64) -> WorkspaceRecipe {
         let app = &*self.0;
@@ -251,9 +248,7 @@ pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: WorkspaceC
     let symbol = app.active_tab().symbol.clone();
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
     as_hand(app, |app, to| {
-        Vec::from_iter(ops::apply_row_command(
-            app, to, &mut menu, tab, &symbol, command,
-        ))
+        ops::apply_row_command(app, to, &mut menu, tab, &symbol, command)
     });
     app.chrome.window_menu.tab_workspace = menu;
 }
