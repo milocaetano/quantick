@@ -27,6 +27,7 @@ use quantick_control::error::ControlError;
 use quantick_control_handlers::desk::DeskAct;
 use quantick_control_handlers::market_palette::TabOpening;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_stores::{market_settings::MarketSettingsStore, workspaces::WorkspaceBookStore};
 use quantick_workspace::market_list::OpenChoice;
 
 use crate::config::AppConfig;
@@ -783,17 +784,17 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
 }
 
 impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickApp {
-    fn workspace_book(&mut self) -> Option<&mut quantick_stores::workspaces::WorkspaceBook> {
-        Some(self.runtime.workspace.book.book_mut())
+    fn workspace_store(&mut self) -> Option<&mut WorkspaceBookStore> {
+        Some(&mut self.runtime.workspace.book)
     }
-    fn persist_workspace_book(&mut self) -> Result<(), String> {
-        self.runtime.workspace.book.persist()
+    fn workspace_store_ref(&self) -> Option<&WorkspaceBookStore> {
+        Some(&self.runtime.workspace.book)
+    }
+    fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
+        Some(self.runtime.workspace.layouts_mut().market_mut())
     }
     fn show_tab_recipe(&mut self, tab: u64, recipe: &quantick_stores::workspaces::WorkspaceRecipe) {
         super::tab_workspaces::show_recipe(self, tab, recipe);
-    }
-    fn workspace_book_ref(&self) -> Option<&quantick_stores::workspaces::WorkspaceBook> {
-        Some(self.runtime.workspace.book.book())
     }
     fn persist_workspace_autosave(&mut self, on: bool) -> Result<(), String> {
         self.workspace_save_adapter().write_auto_save(on)

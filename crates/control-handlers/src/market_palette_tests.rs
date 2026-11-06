@@ -50,6 +50,7 @@ impl Host {
                 asset: "BTCUSDT".to_owned(),
                 workspace: "Default".to_owned(),
                 bar: "tick:50".to_owned(),
+                context_bars: Vec::new(),
                 replay: false,
                 streaming: true,
                 price: None,
@@ -331,6 +332,7 @@ fn the_palette_settles_an_add_by_adding_then_opening_and_a_refusal_adds_nothing(
         feed_id: "binance".to_owned(),
         symbol: symbol.to_owned(),
         bar: "tick:50".to_owned(),
+        context_bars: Vec::new(),
         inherit_bar: false,
         workspace: "Default".to_owned(),
         background: false,
@@ -362,6 +364,7 @@ fn an_add_with_a_bad_bar_or_workspace_adds_nothing() {
         feed_id: "binance".to_owned(),
         symbol: "SOLUSDT".to_owned(),
         bar: "tick".to_owned(),
+        context_bars: Vec::new(),
         inherit_bar: false,
         workspace: "Default".to_owned(),
         background: false,
@@ -370,6 +373,7 @@ fn an_add_with_a_bad_bar_or_workspace_adds_nothing() {
     assert!(refused.unwrap_err().starts_with("Bars tick"));
     let elsewhere = OpenChoice {
         bar: "tick:50".to_owned(),
+        context_bars: Vec::new(),
         workspace: "Nope".to_owned(),
         ..choice
     };

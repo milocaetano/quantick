@@ -30,9 +30,10 @@ use quantick_control_schema::workspace_book::{
     workspace_save_as_descriptor, workspace_save_to_descriptor,
 };
 use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, WorkspaceMenuState};
+use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
     CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome, SaveOutcome, SetOutcome,
-    UnsavedEdits, WorkspaceBook, WorkspaceRecipe, WorkspaceRefusal,
+    UnsavedEdits, WorkspaceBook, WorkspaceBookStore, WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -48,19 +49,38 @@ fn unavailable() -> ControlError {
 /// What the window lends these calls. The defaults answer for a host without a
 /// book.
 pub trait WorkspaceBookHost {
+    /// The book and its file, which the three defaults below reach.
+    fn workspace_store(&mut self) -> Option<&mut WorkspaceBookStore> {
+        None
+    }
+    fn workspace_store_ref(&self) -> Option<&WorkspaceBookStore> {
+        None
+    }
     /// The book the open tabs live on.
     fn workspace_book(&mut self) -> Option<&mut WorkspaceBook> {
-        None
+        self.workspace_store().map(WorkspaceBookStore::book_mut)
     }
     /// Write the recipes; `Err` is why nothing reached the disk.
     fn persist_workspace_book(&mut self) -> Result<(), String> {
-        Err("the workspaces are unavailable".to_owned())
+        (self.workspace_store_ref()).map_or_else(
+            || Err("the workspaces are unavailable".to_owned()),
+            WorkspaceBookStore::persist,
+        )
     }
     /// Put a recipe on a tab's charts.
     fn show_tab_recipe(&mut self, _tab: u64, _recipe: &WorkspaceRecipe) {}
     /// The book, for reading.
     fn workspace_book_ref(&self) -> Option<&WorkspaceBook> {
+        self.workspace_store_ref().map(WorkspaceBookStore::book)
+    }
+    /// The drawings and anchored studies a Save writes with the recipe.
+    fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
         None
+    }
+    /// Write what [`Self::workspace_market`] holds back now; answers whether
+    /// it reached the disk.
+    fn commit_workspace_market(&mut self) -> bool {
+        self.workspace_market().is_some_and(market_settings::commit)
     }
     /// The tab's workspace and whether it holds edits, as the snapshot reads it.
     fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
@@ -333,11 +353,33 @@ pub fn save_tab_to<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     tab: u64,
 ) -> Result<SaveOutcome, ControlError> {
-    let outcome = written(app, |book| book.save_to(tab), |saved| saved.changed)?;
+    let mut outcome = written(app, |book| book.save_to(tab), |saved| saved.changed)?;
     if outcome.changed {
         show(app, &outcome.tabs_changed)?;
     }
+    outcome.changed |= commit_market(app);
     Ok(outcome)
+}
+
+/// Save's other half: the drawings and anchored studies autosave off held back
+/// reach their file right after the recipe. Answers whether they were written.
+fn commit_market<H: WorkspaceBookHost + ?Sized>(app: &mut H) -> bool {
+    let wrote = app.commit_workspace_market();
+    if wrote && let Some(book) = app.workspace_book() {
+        book.clear_held_drawings();
+    }
+    wrote
+}
+
+/// Close without saving: the closed tab's held drawings go back to the file's
+/// version, unless another open tab still shows that set.
+fn discard_market<H: WorkspaceBookHost + ?Sized>(app: &mut H, closed: &[DrawingKey], tab: u64) {
+    let open = book(app)
+        .map(|book| book.drawing_keys_except(tab))
+        .unwrap_or_default();
+    if let Some(market) = app.workspace_market() {
+        market.discard(closed, &open);
+    }
 }
 
 /// Make a new workspace of a tab's copy.
@@ -349,7 +391,9 @@ pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
     tab: u64,
     name: &str,
 ) -> Result<SaveOutcome, ControlError> {
-    written(app, |book| book.save_as(tab, name), |saved| saved.changed)
+    let mut outcome = written(app, |book| book.save_as(tab, name), |saved| saved.changed)?;
+    outcome.changed |= commit_market(app);
+    Ok(outcome)
 }
 
 /// Make a new, empty workspace, put the tab on it and redraw the tab.
@@ -424,11 +468,15 @@ pub fn set_autosave<H: WorkspaceBookHost + ?Sized>(
         book(app)?.set_autosave(!on);
         return Err(write_failed(reason));
     }
+    if let Some(market) = app.workspace_market() {
+        market.set_held(!on);
+    }
     let mut saved = Vec::new();
     if on {
         for tab in book(app)?.differing_tabs() {
             saved.push(save_tab_to(app, tab)?);
         }
+        commit_market(app);
     }
     Ok((true, saved))
 }
@@ -451,10 +499,17 @@ pub fn close_tab<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         (Some(_), Some(true)) => Some(save_to_journaled(app, to, tab)?),
         _ => None,
     };
+    let (drop_held, keys) = (
+        !book(app)?.autosave() && saved.is_none(),
+        book(app)?.drawing_keys(tab).to_vec(),
+    );
     if !app.close_market_tab(tab) {
         let mut error = ControlError::invalid_request("the window's last tab stays open");
         error.context.details = Some(json!({ "code": LAST_TAB_CODE }));
         return Err(error);
+    }
+    if drop_held {
+        discard_market(app, &keys, tab);
     }
     journal(
         to,

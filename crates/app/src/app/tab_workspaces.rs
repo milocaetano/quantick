@@ -7,6 +7,7 @@ use std::time::Instant;
 use quantick_control_handlers::workspace_book as ops;
 use quantick_layers::{ChartLayer, recipe_layers};
 use quantick_session::workspace_menu::WorkspaceCommand;
+use quantick_stores::market_settings::{DrawingKey, MarketSettingsStore};
 use quantick_stores::tab_recipes::{self, TabRecipeHost};
 use quantick_stores::workspaces::{WorkspaceBookStore, WorkspaceRecipe, capture_recipe};
 
@@ -139,6 +140,14 @@ impl TabRecipeHost for BookTabs<'_> {
     }
     fn apply_recipe_indicators(&mut self, id: u64, recipe: &WorkspaceRecipe) {
         apply_recipe_indicators(self.0, id, recipe);
+    }
+    fn tab_drawing_keys(&self, id: u64) -> Vec<DrawingKey> {
+        let panes = self.0.runtime.tabs.by_id(id).into_iter();
+        let keys = panes.flat_map(|tab| tab.panes().map(|(pane, _)| &pane.layout));
+        Vec::from_iter(keys.filter_map(|layout| layout.drawings_key.clone()))
+    }
+    fn recipe_market(&mut self) -> Option<&mut MarketSettingsStore> {
+        Some(self.0.runtime.workspace.layouts_mut().market_mut())
     }
 }
 

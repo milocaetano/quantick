@@ -107,14 +107,9 @@ fn close_without_saving_drops_only_what_no_open_pane_shows() {
     store.set_held(true);
     draw(&mut store, &flow);
     draw(&mut store, &time);
-    let now = Instant::now();
-    assert!(!store.discard(
-        std::slice::from_ref(&time),
-        std::slice::from_ref(&time),
-        now
-    ));
+    assert!(!store.discard(std::slice::from_ref(&time), std::slice::from_ref(&time)));
     assert_eq!(store.held_changes([&time]), 2, "an open twin keeps it");
-    assert!(store.discard(&[flow.clone(), time.clone()], &[], now));
+    assert!(store.discard(&[flow.clone(), time.clone()], &[]));
     assert!(store.settings().drawings(&flow).is_empty());
     assert!(!store.is_dirty(), "nothing is owed once nothing differs");
     store.set_held(false);

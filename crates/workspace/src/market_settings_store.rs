@@ -1,7 +1,7 @@
 //! The market settings document at its resolved path, under the commit policy.
 use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
-    market_settings::{DrawingKey, MARKET_SETTINGS_FILE, MarketSettings},
+    market_settings::{DrawingKey, MARKET_SETTINGS_FILE, MarketKey, MarketSettings},
 };
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -60,6 +60,19 @@ impl MarketSettingsStore {
     #[must_use]
     pub fn assets(&self) -> AssetResolver {
         Rc::clone(&self.asset)
+    }
+
+    /// A contract roll on `venue` from one symbol to another: their assets'
+    /// markets, and how many drawings [`MarketSettings::carry_market`] copied
+    /// onto the second.
+    pub fn carry_roll(&mut self, venue: &str, from: &str, to: &str) -> (MarketKey, usize) {
+        let of = |asset: String| MarketKey {
+            venue: venue.to_owned(),
+            asset,
+        };
+        let (from, to) = (of(self.asset(venue, from)), of(self.asset(venue, to)));
+        let carried = self.settings.carry_market(&from, &to);
+        (to, carried)
     }
 
     /// The asset `symbol` belongs to on `venue`.
@@ -156,14 +169,15 @@ impl MarketSettingsStore {
     /// Close without saving: put every key in `closed` that no pane in `open`
     /// still shows back to the file's version. Once nothing differs, nothing is
     /// owed. Answers whether anything was dropped.
-    pub fn discard(&mut self, closed: &[DrawingKey], open: &[DrawingKey], now: Instant) -> bool {
+    pub fn discard(&mut self, closed: &[DrawingKey], open: &[DrawingKey]) -> bool {
         let mut dropped = false;
         for key in closed.iter().filter(|key| !open.contains(key)) {
             dropped |= self.settings.drawing_changes(&self.saved, key) > 0;
             self.settings.restore(&self.saved, key);
         }
         if self.settings == self.saved {
-            self.policy.settle(false, now);
+            // The pending change is consumed unwritten: the file already holds this.
+            let _ = self.policy.take_flush();
         }
         dropped
     }

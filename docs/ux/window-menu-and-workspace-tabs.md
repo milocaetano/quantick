@@ -161,8 +161,10 @@ snapshot reads it as `auto_save`.
   "Save" pill (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
   Scalp" row (its hover names the tabs that follow) write it. Drawings and
   anchored studies are held too, and Save writes the workspace and the market
-  settings together; the mark lights for either. Turning auto save on with
-  edits held saves them at once.
+  settings together (the whole market file, so a set no open tab shows is
+  written too); the mark lights for either. Close without saving puts a held
+  set back to the file's version unless another open tab shows it. Turning
+  auto save on with edits held saves them at once.
 - There is no Revert: `workspace.revert` answers `workspace.revert_removed`,
   naming `workspace.save_to` and `workspace.autosave.set`. A workspace switch
   with edits held keeps today's "changes dropped" toast.
@@ -178,7 +180,9 @@ snapshot reads it as `auto_save`.
   delete), layers, footprint style, drawings, anchored studies. Never a
   change: pane timeframe, flow bar size, bubbles, history reach, zoom, scroll,
   selection. Pane timeframes are kept on the tab, as flow bar size is, and a
-  workspace switch never changes them.
+  workspace switch never changes them. A new tab on a market opens its
+  context charts on the timeframes that market remembers (its open tab's,
+  else the ones its tab closed on), as it opens on the market's flow bar.
 - "Save as new…" names a workspace for this tab alone; the other tabs stay.
 - Deleting a workspace in use moves its tabs to Default and the toast names
   them; the last workspace cannot be deleted. Delete asks a second click.

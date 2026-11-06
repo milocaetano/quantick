@@ -116,6 +116,7 @@ fn settle_strip(app: &mut QuantickApp, (palette, closed): super::arrangement_ada
             at: stamp.get(11..).unwrap_or_default().to_owned(),
             price: last_price(&tab),
             bar: tab.flow_pane.state.spec().to_config_string(),
+            context_bars: super::arrangement_adapter::saved_tab_of(&tab).context_bars,
         };
         app.surfaces.market_palette.recent.closed(closed);
     }
@@ -137,6 +138,7 @@ pub(super) fn market_snapshot(app: &QuantickApp) -> list::MarketSnapshot {
             asset: app.config.market_asset(&tab.feed_id, &tab.symbol),
             workspace: book.tab_row(tabs.id_at(index)).0,
             bar: tab.flow_pane.state.spec().to_config_string(),
+            context_bars: super::arrangement_adapter::saved_tab_of(tab).context_bars,
             replay: tab.replay.is_some(),
             streaming: tab.latest_trade_ms.is_some(),
             price: last_price(tab),
@@ -165,6 +167,8 @@ pub(super) fn focus_tab(app: &mut QuantickApp, index: usize) {
 pub(super) fn open(app: &mut QuantickApp, choice: &list::OpenChoice, bar: Option<Bars>) -> u64 {
     let shown = app.runtime.tabs.active_index();
     (app.arrangement_adapter()).open_tab(choice.feed_id.clone(), choice.symbol.clone(), bar);
+    let timeframes = super::saved_context_intervals(&choice.context_bars, None);
+    app.active_tab_mut().open_context_on(&timeframes);
     let tab = app.runtime.tabs.active_id();
     let sync = app.runtime.workspace.book.sync_mut();
     sync.join(tab, choice.arrival());

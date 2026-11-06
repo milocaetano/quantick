@@ -7,6 +7,7 @@ use serde_json::json;
 
 use super::*;
 use crate::test_support::{FakeAccess, FakeWindow};
+use quantick_stores::market_settings::MarketSettings;
 
 struct FakeHost {
     book: WorkspaceBook,
@@ -16,6 +17,9 @@ struct FakeHost {
     shown: Vec<u64>,
     desk_writes: Vec<bool>,
     closed: Vec<u64>,
+    market: Option<MarketSettingsStore>,
+    /// What the fake's market commit wrote: the file it stands in for.
+    market_written: Option<MarketSettings>,
 }
 
 impl TabDirectory for FakeHost {
@@ -62,6 +66,20 @@ impl WorkspaceBookHost for FakeHost {
         self.closed.push(tab);
         true
     }
+    fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
+        self.market.as_mut()
+    }
+    fn commit_workspace_market(&mut self) -> bool {
+        let Some(market) = self.market.as_mut() else {
+            return false;
+        };
+        let owed = market.is_dirty();
+        let _ = market.take_commit();
+        if owed {
+            self.market_written = Some(market.settings().clone());
+        }
+        owed
+    }
 }
 
 /// Two open tabs the book has adopted, autosave off so an edit is held.
@@ -84,6 +102,8 @@ fn autosaving() -> (FakeHost, FakeAccess, ActorContext) {
         shown: Vec::new(),
         desk_writes: Vec::new(),
         closed: Vec::new(),
+        market: None,
+        market_written: None,
     };
     (host, FakeAccess::with_budget(0), FakeWindow::assistant())
 }
@@ -692,4 +712,82 @@ fn tab_close_with_autosave_on_never_asks() {
     let closed = close(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap();
     assert_eq!(closed["tab_id"], "1");
     assert_eq!((host.closed.as_slice(), host.writes), ([1].as_slice(), 1));
+}
+
+const DRAWN: &str = "version = 1\n\n[[drawings]]\nvenue = \"mt5\"\nasset = \"WINZ26\"\nrole = \"flow\"\n\n[[drawings.items]]\ntool = \"horizontal-line\"\nband = { axis = \"price\" }\ncolor = [255, 200, 0, 255]\nwidth_px = 1.5\nfill_alpha = 0\npoints = [{ time_ms = 1000, price = 67000.5, bar = 3.0 }]\n";
+
+fn flow_key() -> DrawingKey {
+    DrawingKey::of_pane("mt5", "WINZ26".to_owned(), None)
+}
+
+/// A market file holding one level, the store held as autosave off holds it,
+/// and tab 1's flow chart with that level erased: one drawing waits for Save.
+fn with_held_drawing(host: &mut FakeHost) {
+    let saved = market_settings::parse_settings(DRAWN).unwrap();
+    let path = std::path::PathBuf::from("market-settings.toml");
+    let mut market = MarketSettingsStore::new(saved, path, false);
+    market.set_held(true);
+    market
+        .settings_mut()
+        .restore(&MarketSettings::default(), &flow_key());
+    market.mark_changed(std::time::Instant::now());
+    let held = market.held_changes([&flow_key()]);
+    host.market = Some(market);
+    host.book.note_drawings(1, vec![flow_key()], held);
+}
+
+/// Whether the market file the fake wrote, if any, still holds the level.
+fn file_has_the_level(host: &FakeHost) -> Option<bool> {
+    let written = host.market_written.as_ref()?;
+    Some(!written.drawings(&flow_key()).is_empty())
+}
+
+/// Autosave off: a held drawing alone marks the tab; Save writes the market
+/// file with the recipe and the mark clears.
+#[test]
+fn save_to_writes_held_drawings_and_clears_the_mark() {
+    let (mut host, mut access, actor) = parts();
+    with_held_drawing(&mut host);
+    assert!(host.book.tab_state(1).unwrap().modified);
+    let saved = save_to(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap();
+    assert_eq!(saved["changed"], true, "the drawings were written");
+    assert_eq!(file_has_the_level(&host), Some(false));
+    assert!(!host.book.tab_state(1).unwrap().modified);
+    assert_eq!(host.book.unsaved_edits(1), None);
+}
+
+/// Close without saving puts the file's version back; the prompt counted it.
+#[test]
+fn tab_close_without_saving_drops_held_drawings() {
+    let (mut host, mut access, actor) = parts();
+    with_held_drawing(&mut host);
+    let refused = close(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap_err();
+    let details = refused.context.details.clone().unwrap();
+    assert_eq!(details["changes"], json!(["1 drawing"]));
+    let value = json!({ "tab_id": "1", "save": false });
+    close(&mut host, &mut access, &actor, &value).unwrap();
+    let market = host.market.as_ref().unwrap();
+    assert_eq!(
+        market.settings().drawings(&flow_key()).len(),
+        1,
+        "the level is back"
+    );
+    assert!(!market.is_dirty(), "nothing is owed");
+    assert_eq!(
+        file_has_the_level(&host),
+        None,
+        "the file was never touched"
+    );
+}
+
+/// Turning autosave on writes held drawings at once and stops holding.
+#[test]
+fn autosave_on_writes_held_drawings_at_once() {
+    let (mut host, mut access, actor) = parts();
+    with_held_drawing(&mut host);
+    autosave_set(&mut host, &mut access, &actor, &json!({ "on": true })).unwrap();
+    assert_eq!(file_has_the_level(&host), Some(false));
+    assert!(!host.market.as_ref().unwrap().is_held());
+    autosave_set(&mut host, &mut access, &actor, &json!({ "on": false })).unwrap();
+    assert!(host.market.as_ref().unwrap().is_held(), "off holds again");
 }

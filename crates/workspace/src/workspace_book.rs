@@ -17,6 +17,7 @@
 use crate::arrangement_document::{LAYOUT_UNRECORDED, SavedTab};
 use crate::indicator_document::SavedIndicator;
 use crate::layout_document::{LayoutBook, LayoutId};
+use crate::market_settings::DrawingKey;
 use crate::workspace_recipe::{ContextPaneRecipe, FACTORY_SUMMARY, WorkspaceRecipe};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -237,6 +238,27 @@ pub struct WorkspaceBook {
     /// The desk's `auto_save`, told at launch: not in this file.
     #[serde(skip, default = "autosave_default")]
     autosave: bool,
+    /// What each tab's panes hold of the market store, as the frame last read
+    /// it: the window's, never this file's.
+    #[serde(skip)]
+    drawings: BTreeMap<u64, TabDrawings>,
+}
+
+/// The drawing sets (anchored studies among them) a tab's panes hold, and how
+/// many of their drawings wait for Save while autosave is off.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct TabDrawings {
+    keys: Vec<DrawingKey>,
+    held: usize,
+}
+
+/// How a close prompt names held drawings: `1 drawing`, `3 drawings`.
+fn drawings_change(held: usize) -> String {
+    if held == 1 {
+        "1 drawing".to_owned()
+    } else {
+        format!("{held} drawings")
+    }
 }
 
 /// Autosave is the opening default.
@@ -252,6 +274,7 @@ impl Default for WorkspaceBook {
             renamed: BTreeMap::new(),
             tabs: BTreeMap::new(),
             autosave: autosave_default(),
+            drawings: BTreeMap::new(),
         }
     }
 }
@@ -372,8 +395,47 @@ impl WorkspaceBook {
         let state = self.tabs.get(&tab)?;
         Some(TabWorkspaceState {
             workspace: &state.workspace,
-            modified: !self.autosave && self.is_modified(state),
+            modified: !self.autosave && (self.is_modified(state) || self.held_drawings(tab) > 0),
         })
+    }
+
+    /// The frame's reading of a tab: the drawing sets its panes hold, and how
+    /// many of their drawings wait for Save.
+    pub fn note_drawings(&mut self, tab: u64, keys: Vec<DrawingKey>, held: usize) {
+        self.drawings.insert(tab, TabDrawings { keys, held });
+    }
+
+    /// How many of the tab's drawings and anchored studies wait for Save:
+    /// none while autosave is on, whatever the frame last noted.
+    #[must_use]
+    pub fn held_drawings(&self, tab: u64) -> usize {
+        let held = self.drawings.get(&tab).map_or(0, |drawings| drawings.held);
+        if self.autosave { 0 } else { held }
+    }
+
+    /// The drawing sets the tab's panes hold.
+    #[must_use]
+    pub fn drawing_keys(&self, tab: u64) -> &[DrawingKey] {
+        self.drawings
+            .get(&tab)
+            .map_or(&[], |drawings| drawings.keys.as_slice())
+    }
+
+    /// Every set some tab other than `except` holds: what a close without
+    /// saving leaves alone.
+    #[must_use]
+    pub fn drawing_keys_except(&self, except: u64) -> Vec<DrawingKey> {
+        let others = self.drawings.iter().filter(|(tab, _)| **tab != except);
+        others
+            .flat_map(|(_, drawings)| drawings.keys.clone())
+            .collect()
+    }
+
+    /// Save wrote the market file: nothing is held back any more.
+    pub fn clear_held_drawings(&mut self) {
+        for drawings in self.drawings.values_mut() {
+            drawings.held = 0;
+        }
     }
 
     /// Whether edits are written through as they are made.
@@ -412,13 +474,14 @@ impl WorkspaceBook {
     #[must_use]
     pub fn unsaved_edits(&self, tab: u64) -> Option<UnsavedEdits> {
         let state = self.tabs.get(&tab)?;
-        if self.autosave || !self.is_modified(state) {
+        let (modified, held) = (self.is_modified(state), self.held_drawings(tab));
+        if self.autosave || !(modified || held > 0) {
             return None;
         }
-        let changes = self
-            .baseline(state)
+        let mut changes = (self.baseline(state).filter(|_| modified))
             .map(|base| state.copy.changes_from(base))
             .unwrap_or_default();
+        changes.extend((held > 0).then(|| drawings_change(held)));
         Some(UnsavedEdits {
             workspace: state.workspace.clone(),
             followers: self.save_to_preview(tab).unwrap_or_default(),
@@ -496,6 +559,7 @@ impl WorkspaceBook {
     /// A tab closed: nothing of it stays. Its edits go with it.
     pub fn close_tab(&mut self, tab: u64) {
         self.tabs.remove(&tab);
+        self.drawings.remove(&tab);
     }
 
     /// A tab the desk brought back, following a rename since. A workspace the

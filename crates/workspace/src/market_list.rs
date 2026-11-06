@@ -77,6 +77,8 @@ pub struct OpenMarket {
     pub workspace: String,
     /// The flow pane's bar, as `kind:size`.
     pub bar: String,
+    /// The context charts' bars, top first: the pane timeframes.
+    pub context_bars: Vec<String>,
     pub replay: bool,
     /// Whether a trade has arrived.
     pub streaming: bool,
@@ -95,6 +97,8 @@ pub struct ClosedMarket {
     pub price: Option<String>,
     /// The bar the tab showed when it closed, as `kind:size`.
     pub bar: String,
+    /// The context charts' bars it closed on, top first.
+    pub context_bars: Vec<String>,
 }
 
 /// The markets closed lately, newest first.
@@ -188,6 +192,7 @@ impl MarketSnapshot {
             feed_id: feed_id.to_owned(),
             symbol: symbol.to_owned(),
             bar: bar.unwrap_or_default(),
+            context_bars: row.context_bars,
             inherit_bar,
             workspace,
             background,
@@ -211,6 +216,16 @@ impl MarketSnapshot {
 pub fn market_bar(world: &MarketWorld<'_>, feed_id: &str, symbol: &str) -> Option<String> {
     let market = find_market(world, feed_id, symbol)?;
     catalog_row(world, market)?.bar
+}
+
+/// The pane timeframes a market remembers, as [`market_bar`] remembers its
+/// flow bar: its first open tab's context charts, else the ones its tab last
+/// closed on. Empty when it has none: a new tab then opens as any new tab does.
+#[must_use]
+pub fn market_context_bars(world: &MarketWorld<'_>, feed_id: &str, symbol: &str) -> Vec<String> {
+    let market = find_market(world, feed_id, symbol);
+    let row = market.and_then(|market| catalog_row(world, market));
+    row.map(|row| row.context_bars).unwrap_or_default()
 }
 
 /// What a row says about its market.
@@ -287,6 +302,9 @@ pub struct MarketRow {
     /// The bar the market remembers, as [`market_bar`] answers; `None` when
     /// a tab opened from here takes the active tab's.
     pub bar: Option<String>,
+    /// The context charts the market remembers, as [`market_context_bars`]
+    /// answers; empty when a tab opened from here takes a new tab's.
+    pub context_bars: Vec<String>,
     pub status: MarketStatus,
     pub price: Option<String>,
     /// The price is the last one a closed tab showed.
@@ -568,6 +586,7 @@ impl SwitchTarget {
             asset,
             user_added: false,
             bar: None,
+            context_bars: Vec::new(),
             status: MarketStatus::Roll {
                 from: self.symbol.clone(),
                 refused: roll.refusal.is_some(),
@@ -804,6 +823,9 @@ fn catalog_row(world: &MarketWorld<'_>, market: &CatalogMarket) -> Option<Market
         bar: (tabs.first().map(|tab| tab.bar.clone()))
             .or_else(|| closed.map(|closed| closed.bar.clone()))
             .or_else(|| venue.bar.clone()),
+        context_bars: (tabs.first().map(|tab| tab.context_bars.clone()))
+            .or_else(|| closed.map(|closed| closed.context_bars.clone()))
+            .unwrap_or_default(),
         status: MarketStatus::Live,
         price: None,
         price_dim: false,
@@ -848,6 +870,7 @@ fn replay_row(tab: &OpenMarket) -> MarketRow {
         asset: tab.asset.clone(),
         user_added: false,
         bar: Some(tab.bar.clone()),
+        context_bars: tab.context_bars.clone(),
         status: MarketStatus::Replay,
         price: tab.price.clone(),
         price_dim: false,
@@ -868,6 +891,7 @@ fn add_row(venue: &Venue, symbol: &str) -> MarketRow {
         asset: symbol.to_owned(),
         user_added: false,
         bar: venue.bar.clone(),
+        context_bars: Vec::new(),
         status: MarketStatus::Add,
         price: None,
         price_dim: false,
@@ -893,6 +917,9 @@ pub struct OpenChoice {
     pub symbol: String,
     /// The bar the tab opens on, as `kind:size`.
     pub bar: String,
+    /// The context charts the tab opens on, top first: the market's own (see
+    /// [`market_context_bars`]); empty takes what any new tab takes.
+    pub context_bars: Vec<String>,
     /// The market has no bar of its own and nobody named one: `bar` is the
     /// active tab's, shown, and the open names none so the new tab takes it
     /// the way every new tab does.
@@ -1239,6 +1266,7 @@ impl MarketPalette {
             feed_id: row.feed_id.clone(),
             symbol: row.symbol.clone(),
             bar,
+            context_bars: row.context_bars.clone(),
             inherit_bar: self.bar.is_none() && row.bar.is_none(),
             workspace: self.workspace.clone(),
             background,

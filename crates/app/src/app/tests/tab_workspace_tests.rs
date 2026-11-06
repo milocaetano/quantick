@@ -739,3 +739,112 @@ fn a_new_workspace_reads_clean_after_real_frames() {
             .all(|pane| pane.indicators.is_empty())
     );
 }
+
+/// Autosave off: a level drawn on the chart marks the tab and waits in memory;
+/// Save writes the market file with the recipe and the mark clears.
+#[test]
+fn autosave_off_holds_a_drawing_until_save_writes_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let layouts = crate::scratch::ScratchFile::new("workspace-held-drawing", "layouts.toml");
+    app.runtime
+        .workspace
+        .set_layouts_path(layouts.to_path_buf());
+    app.runtime.workspace.layouts_mut().set_blocked(false);
+    (app.runtime.workspace.layouts_mut().market_mut()).set_blocked(false);
+    frames(&mut app, 2);
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    let tab = app.runtime.tabs.active_id();
+    save_tab_to(&mut app, tab).expect("the canvas saved first");
+    frames(&mut app, 1);
+    let state = app.runtime.workspace.book.book().tab_state(tab);
+    assert!(!state.expect("adopted").modified, "nothing held yet");
+    place_level(&mut app, PaneSide::Flow, 100.0);
+    frames(&mut app, 2);
+    let market = app
+        .runtime
+        .workspace
+        .layouts()
+        .market()
+        .path()
+        .to_path_buf();
+    let book = app.runtime.workspace.book.book();
+    assert!(book.tab_state(tab).expect("adopted").modified, "the mark");
+    let held = book.unsaved_edits(tab).expect("closing asks").changes;
+    assert_eq!(held, ["1 drawing"]);
+    assert!(!market.exists(), "held: nothing reached the disk");
+    save_tab_to(&mut app, tab).expect("saved");
+    let state = app.runtime.workspace.book.book().tab_state(tab);
+    assert!(!state.expect("adopted").modified, "Save clears the mark");
+    let written = std::fs::read_to_string(&market).expect("Save wrote the market file");
+    assert!(written.contains("horizontal-line"), "{written}");
+}
+
+/// The pane timeframe is the tab's: a switch onto a workspace saved from a tab
+/// on another interval keeps the pane on its own.
+#[test]
+fn a_workspace_switch_never_changes_a_pane_timeframe() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 50);
+    let tab = app.runtime.tabs.active_id();
+    let hour = quantick_engine::bar_registry::BUILTIN_BARS.parse("time:3600000");
+    app.active_tab_mut()
+        .set_pane_bar_spec(1, hour.expect("a time bar"))
+        .expect("the time pane takes it");
+    frames(&mut app, 2);
+    let timeframe = |app: &QuantickApp| {
+        app.active_tab().time_panes[0]
+            .state
+            .spec()
+            .to_config_string()
+    };
+    let before = timeframe(&app);
+    let mut five = live_recipe(&app, tab).expect("an open tab");
+    five.split_fraction = Some(0.3);
+    let book = app.runtime.workspace.book.book_mut();
+    book.observe(tab, &five).expect("held");
+    book.save_as(tab, "Five").expect("a free name");
+    set_tab_workspace(&mut app, tab, "Default").expect("a known workspace");
+    frames(&mut app, 3);
+    assert_eq!(timeframe(&app), before, "Default left the interval alone");
+    set_tab_workspace(&mut app, tab, "Five").expect("a known workspace");
+    frames(&mut app, 3);
+    assert_eq!(timeframe(&app), before, "and so did Five");
+}
+
+/// A new tab on a market opens its context chart on the interval that market
+/// remembers, as it opens its flow chart on the market's bar.
+#[test]
+fn a_new_tab_on_a_market_opens_on_the_timeframe_it_remembers() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 50);
+    let hour = quantick_engine::bar_registry::BUILTIN_BARS.parse("time:3600000");
+    app.active_tab_mut()
+        .set_pane_bar_spec(1, hour.expect("a time bar"))
+        .expect("the time pane takes it");
+    frames(&mut app, 2);
+    let shown = app.active_tab().time_panes[0]
+        .state
+        .spec()
+        .to_config_string();
+    let market = (
+        app.active_tab().feed_id.clone(),
+        app.active_tab().symbol.clone(),
+    );
+    let snapshot = super::super::tabs::market_snapshot(&app);
+    let choice = snapshot.choice((&market.0, &market.1), None, None, false);
+    let choice = choice.expect("the market is listed");
+    assert_eq!(choice.context_bars, std::slice::from_ref(&shown));
+    super::super::tabs::open(&mut app, &choice, None);
+    frames(&mut app, 2);
+    // The new tab opens on its feed's canvas; its first context chart, when
+    // the trader adds one, stands on the market's timeframe.
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    frames(&mut app, 3);
+    let opened = app
+        .active_tab()
+        .time_panes
+        .first()
+        .expect("a context chart");
+    assert_eq!(opened.state.spec().to_config_string(), shown);
+}

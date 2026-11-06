@@ -66,6 +66,7 @@ fn open(tab_id: u64, position: usize, feed_id: &str, symbol: &str) -> OpenMarket
         asset: symbol.to_owned(),
         workspace: "Default".to_owned(),
         bar: "tick:50".to_owned(),
+        context_bars: Vec::new(),
         replay: false,
         streaming: true,
         price: Some("75,984.3".to_owned()),
@@ -159,6 +160,7 @@ fn recent_comes_first_open_tabs_then_recently_closed_and_start_here_goes() {
         at: "10:02".to_owned(),
         price: Some("3,412.8".to_owned()),
         bar: "tick:50".to_owned(),
+        context_bars: Vec::new(),
     });
     fixture.recent.closed(ClosedMarket {
         feed_id: "b3".to_owned(),
@@ -166,6 +168,7 @@ fn recent_comes_first_open_tabs_then_recently_closed_and_start_here_goes() {
         at: "18:29".to_owned(),
         price: Some("5,412.0".to_owned()),
         bar: "tick:2000".to_owned(),
+        context_bars: Vec::new(),
     });
     let listing = fixture.list("");
     assert_eq!(
@@ -351,6 +354,7 @@ fn a_row_reads_its_status_price_and_rate_from_what_the_window_knows() {
         at: "18:29".to_owned(),
         price: Some("5,412.0".to_owned()),
         bar: "tick:2000".to_owned(),
+        context_bars: Vec::new(),
     });
     let listing = fixture.list("");
     let row = |feed: &str, symbol: &str| {
@@ -604,6 +608,45 @@ fn fixture_without_tabs() -> Fixture {
     Fixture::new()
 }
 
+/// The pane timeframes are the market's, kept as its flow bar is: its first
+/// open tab's, else what its tab closed on, else none; a choice carries them.
+#[test]
+fn a_market_remembers_its_pane_timeframes_as_it_remembers_its_bar() {
+    let mut fixture = Fixture::new();
+    let mut win = open(3, 1, "b3", "WINZ26");
+    win.context_bars = vec!["time:5m".to_owned(), "time:1h".to_owned()];
+    fixture.open = vec![win.clone()];
+    assert_eq!(
+        market_context_bars(&fixture.world(), "b3", "WINZ26"),
+        win.context_bars
+    );
+    fixture.open.clear();
+    fixture.recent.extend(Some(ClosedMarket {
+        feed_id: "b3".to_owned(),
+        symbol: "WINZ26".to_owned(),
+        at: "18:29".to_owned(),
+        price: None,
+        bar: win.bar.clone(),
+        context_bars: vec!["time:15m".to_owned()],
+    }));
+    assert_eq!(
+        market_context_bars(&fixture.world(), "b3", "WINZ26"),
+        ["time:15m"]
+    );
+    assert!(market_context_bars(&fixture.world(), "binance", "ETHUSDT").is_empty());
+    let snapshot = MarketSnapshot {
+        venues: fixture.venues.clone(),
+        markets: fixture.markets.clone(),
+        recent: fixture.recent.clone(),
+        workspaces: vec!["Default".to_owned()],
+        ..MarketSnapshot::default()
+    };
+    let choice = snapshot
+        .choice(("b3", "WINZ26"), None, None, false)
+        .unwrap();
+    assert_eq!(choice.context_bars, ["time:15m"]);
+}
+
 /// The bar a row offers is the market's own: the bar its tab showed when it
 /// closed outlives the tab, and only a market never seen falls back to its
 /// venue's `default_bars`, then to nothing.
@@ -624,6 +667,7 @@ fn a_closed_market_remembers_the_bar_it_was_last_shown_on() {
         at: "18:29".to_owned(),
         price: None,
         bar: win.bar.clone(),
+        context_bars: Vec::new(),
     }));
     let listing = fixture.list("");
     let row = |feed: &str, symbol: &str| {
@@ -656,6 +700,7 @@ fn recent_markets_keep_the_newest_close_once_and_stop_at_the_limit() {
         at: at.to_owned(),
         price: None,
         bar: "tick:50".to_owned(),
+        context_bars: Vec::new(),
     };
     for index in 0..RECENT_CLOSED_LIMIT + 3 {
         recent.closed(closed(&format!("S{index}"), "09:00"));
@@ -705,6 +750,7 @@ mod palette_tests {
             feed_id: "binance".to_owned(),
             symbol: "BTCUSDT".to_owned(),
             bar: "tick:50".to_owned(),
+            context_bars: Vec::new(),
             inherit_bar: false,
             workspace: "Swing".to_owned(),
             background: false,
@@ -826,6 +872,7 @@ mod palette_tests {
             feed_id: "binance".to_owned(),
             symbol: "ETHUSDT".to_owned(),
             bar: "tick:50".to_owned(),
+            context_bars: Vec::new(),
             inherit_bar: false,
             workspace: "Swing".to_owned(),
             background: true,
@@ -966,6 +1013,7 @@ mod palette_tests {
             feed_id: "binance".to_owned(),
             symbol: "SOLUSDT".to_owned(),
             bar: "tick:50".to_owned(),
+            context_bars: Vec::new(),
             inherit_bar: false,
             workspace: DEFAULT_WORKSPACE.to_owned(),
             background: false,

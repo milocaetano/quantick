@@ -31,6 +31,7 @@ fn tab(tab_id: u64, feed_id: &str, symbol: &str, replay: bool) -> OpenMarket {
         asset: symbol.to_owned(),
         workspace: "Scalp".to_owned(),
         bar: "tick:2000".to_owned(),
+        context_bars: Vec::new(),
         replay,
         streaming: true,
         price: None,

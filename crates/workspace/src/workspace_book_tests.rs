@@ -192,6 +192,57 @@ fn with_autosave_off_the_close_prompt_names_what_would_be_lost() {
     assert_eq!(book.unsaved_edits(2), None, "a clean tab closes at once");
 }
 
+fn flow_key() -> DrawingKey {
+    DrawingKey::of_pane("mt5", "WIN*".to_owned(), None)
+}
+
+/// Autosave off: drawings held back light the mark on their own, the prompt
+/// counts them after the recipe's changes, and no recipe follower is named.
+#[test]
+fn held_drawings_mark_the_tab_and_the_prompt_counts_them() {
+    let mut book = two_tabs_on_scalp();
+    book.note_drawings(2, vec![flow_key()], 3);
+    assert_eq!(state(&book, 2), ("Scalp".to_owned(), true));
+    assert_eq!(
+        book.unsaved_edits(2),
+        Some(UnsavedEdits {
+            workspace: "Scalp".to_owned(),
+            followers: Vec::new(),
+            changes: vec!["3 drawings".to_owned()],
+        })
+    );
+    let mut held = recipe(DeclaredLayout::Time);
+    held.flow_indicators = vec![ema()];
+    book.observe(1, &held).unwrap();
+    book.note_drawings(1, vec![flow_key()], 1);
+    let changes = book.unsaved_edits(1).unwrap().changes;
+    assert_eq!(changes, ["EMA", "panes", "1 drawing"]);
+    assert_eq!(book.drawing_keys_except(1), vec![flow_key()]);
+    book.clear_held_drawings();
+    assert_eq!(
+        state(&book, 2),
+        ("Scalp".to_owned(), false),
+        "Save wrote them"
+    );
+    assert_eq!(book.unsaved_edits(2), None);
+    assert_eq!(book.drawing_keys(2), [flow_key()], "the sets stay known");
+    book.close_tab(2);
+    assert!(
+        book.drawing_keys(2).is_empty(),
+        "a closed tab holds nothing"
+    );
+}
+
+/// Autosave on: a count the frame notes never marks.
+#[test]
+fn with_autosave_on_held_drawings_never_mark() {
+    let mut book = two_tabs_on_scalp();
+    book.set_autosave(true);
+    book.note_drawings(2, vec![flow_key()], 2);
+    assert_eq!(state(&book, 2), ("Scalp".to_owned(), false));
+    assert_eq!(book.unsaved_edits(2), None);
+}
+
 #[test]
 fn rename_carries_its_tabs_and_default_cannot_be_renamed() {
     let mut book = two_tabs_on_scalp();

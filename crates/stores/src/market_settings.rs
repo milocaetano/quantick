@@ -3,9 +3,11 @@ use crate::layouts;
 use quantick_workspace::layout_commit::LayoutSave;
 use quantick_workspace::layout_document::LayoutBook;
 use quantick_workspace::layout_store::LayoutStore;
-pub use quantick_workspace::market_settings::MARKET_SETTINGS_FILE;
-use quantick_workspace::market_settings::{AbsorbReport, MarketSettings, parse_settings, to_text};
-use quantick_workspace::market_settings_store::{AssetResolver, MarketSettingsStore};
+use quantick_workspace::market_settings::{AbsorbReport, to_text};
+pub use quantick_workspace::market_settings::{DrawingKey, MARKET_SETTINGS_FILE};
+pub use quantick_workspace::market_settings::{MarketSettings, parse_settings};
+use quantick_workspace::market_settings_store::AssetResolver;
+pub use quantick_workspace::market_settings_store::MarketSettingsStore;
 use quantick_workspace::write_refusal::guard_write;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -182,6 +184,39 @@ pub fn reload(
         |venue, symbol| assets(venue, symbol),
     );
     kept_back
+}
+
+/// The frame's write: the layouts file and the market file, each once its own
+/// debounce has settled. A held market store waits for Save.
+pub fn save_settled(store: &mut LayoutStore, now: std::time::Instant) {
+    let layouts = store.take_save(now);
+    let market = store.market_mut().take_save(now);
+    act_on_both(store, layouts, market);
+}
+
+/// Both files now, whatever the debounce says: the way out on exit and the
+/// moment before an export reads them. A held market store still waits.
+pub fn flush(store: &mut LayoutStore) {
+    let layouts = store.take_flush();
+    let market = store.market_mut().take_flush();
+    act_on_both(store, layouts, market);
+}
+
+fn act_on_both(store: &LayoutStore, layouts: LayoutSave, market: LayoutSave) {
+    layouts::act_on(store.path(), store.book(), layouts);
+    act_on(store.market(), market);
+}
+
+/// Save's other half: what the store holds back reaches its file now, held or
+/// not. Answers whether it was written.
+pub fn commit(market: &mut MarketSettingsStore) -> bool {
+    match market.take_commit() {
+        LayoutSave::Write => save(market.path(), market.settings()),
+        decision => {
+            act_on(market, decision);
+            false
+        }
+    }
 }
 
 /// Carry out what the commit policy decided; see [`crate::layouts::act_on`].

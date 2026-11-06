@@ -42,11 +42,11 @@ use quantick_workspace::session::{LayoutEffect, PaneFacts, Selection};
 use std::time::Instant;
 
 use crate::indicator_worker::{IndicatorCommand, SlotId};
-use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId, MarketKey};
+use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId};
 use crate::pane::{ChartPane, DrawingDrag, PaneIndex, PaneSide};
 
 use super::TabSlot;
-use crate::workspace_store::{LayoutSave, LayoutStore};
+use crate::workspace_store::LayoutStore;
 use quantick_stores::market_settings;
 
 mod indicators;
@@ -202,12 +202,6 @@ impl LayoutAdapter<'_> {
         self.store.mark_changed(Instant::now());
     }
 
-    /// Carry out what the two stores decided.
-    fn act_on(&mut self, layouts: LayoutSave, market: LayoutSave) {
-        layouts::act_on(self.store.path(), self.layouts(), layouts);
-        market_settings::act_on(self.store.market(), market);
-    }
-
     fn mark_market_dirty(&mut self) {
         self.store.market_mut().mark_changed(Instant::now());
     }
@@ -221,18 +215,14 @@ impl LayoutAdapter<'_> {
         self.seed_new_panes();
         self.follow_market_changes();
         self.persist_changed_drawings();
-        let layouts = self.store.take_save(Instant::now());
-        let market = self.store.market_mut().take_save(Instant::now());
-        self.act_on(layouts, market);
+        market_settings::save_settled(self.store, Instant::now());
     }
 
     /// Write the file now, whatever the debounce says — the way out on exit,
     /// and the moment before a bundle export reads it.
     pub(super) fn flush_layouts(&mut self) {
         self.persist_changed_drawings();
-        let layouts = self.store.take_flush();
-        let market = self.store.market_mut().take_flush();
-        self.act_on(layouts, market);
+        market_settings::flush(self.store);
     }
 
     // ------------------------------------------------------------------
@@ -796,13 +786,7 @@ impl LayoutAdapter<'_> {
     /// contract before this.
     pub(crate) fn carry_market_drawings(&mut self, feed: &str, from: &str, to: &str) -> usize {
         self.persist_changed_drawings();
-        let market = self.store.market_mut();
-        let of = |asset: String| MarketKey {
-            venue: feed.to_owned(),
-            asset,
-        };
-        let (from, to) = (of(market.asset(feed, from)), of(market.asset(feed, to)));
-        let carried = market.settings_mut().carry_market(&from, &to);
+        let (to, carried) = self.store.market_mut().carry_roll(feed, from, to);
         if carried == 0 {
             return 0;
         }

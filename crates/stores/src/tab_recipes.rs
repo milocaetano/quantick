@@ -4,6 +4,8 @@
 //! is `quantick_workspace::workspace_sync`'s or the book's.
 
 use crate::workspaces::{SeedTab, TabAdoption, WorkspaceBookStore, WorkspaceRecipe};
+use quantick_workspace::market_settings::DrawingKey;
+use quantick_workspace::market_settings_store::MarketSettingsStore;
 use std::time::Instant;
 
 /// What the window lends the book's upkeep.
@@ -39,6 +41,14 @@ pub trait TabRecipeHost {
     fn apply_recipe_switches(&mut self, tab: u64, recipe: &WorkspaceRecipe);
     /// Each pane by role takes the recipe's set, onto a layout entry only it holds.
     fn apply_recipe_indicators(&mut self, tab: u64, recipe: &WorkspaceRecipe);
+    /// The drawing sets (anchored studies among them) the tab's panes hold.
+    fn tab_drawing_keys(&self, _tab: u64) -> Vec<DrawingKey> {
+        Vec::new()
+    }
+    /// The market store those sets live in; `None` for a host without drawings.
+    fn recipe_market(&mut self) -> Option<&mut MarketSettingsStore> {
+        None
+    }
 }
 
 /// What the frame owes the book, once its panes are built and seeded. Answers
@@ -46,6 +56,7 @@ pub trait TabRecipeHost {
 /// it is off.
 pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H, now: Instant) -> Vec<u64> {
     adopt_tabs(host);
+    note_drawings(host);
     apply_pending_recipes(host);
     let active = host.active_recipe_tab();
     let tabs = host.recipe_tabs();
@@ -63,6 +74,39 @@ pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H, now: Instant) -> Vec<u6
             .collect()
     } else {
         Vec::new()
+    }
+}
+
+/// The market store waits for Save while autosave is off, and the book learns
+/// what each tab's drawings hold back, so its mark and close prompt count them.
+///
+/// Per frame, so autosave on reads no pane (nothing is held, nothing marks)
+/// and a store owing no write compares no drawing.
+pub fn note_drawings<H: TabRecipeHost + ?Sized>(host: &mut H) {
+    let held = !host.recipe_store().book().autosave();
+    let Some(market) = host.recipe_market() else {
+        return;
+    };
+    market.set_held(held);
+    if !held {
+        return;
+    }
+    let tabs = host.recipe_tabs().into_iter();
+    let keys: Vec<(u64, Vec<DrawingKey>)> =
+        tabs.map(|tab| (tab, host.tab_drawing_keys(tab))).collect();
+    let Some(market) = host.recipe_market().filter(|market| market.is_dirty()) else {
+        let book = host.recipe_store_mut().book_mut();
+        keys.into_iter()
+            .for_each(|(tab, keys)| book.note_drawings(tab, keys, 0));
+        return;
+    };
+    let counts: Vec<usize> = keys
+        .iter()
+        .map(|(_, keys)| market.held_changes(keys))
+        .collect();
+    let book = host.recipe_store_mut().book_mut();
+    for ((tab, keys), held) in keys.into_iter().zip(counts) {
+        book.note_drawings(tab, keys, held);
     }
 }
 
@@ -244,6 +288,7 @@ mod tests {
         /// How many recipes were built off the tab.
         builds: std::cell::Cell<usize>,
         layout: Option<String>,
+        market: Option<MarketSettingsStore>,
     }
 
     impl TabRecipeHost for OneTab {
@@ -288,6 +333,12 @@ mod tests {
         }
         fn apply_recipe_switches(&mut self, _tab: u64, _recipe: &WorkspaceRecipe) {}
         fn apply_recipe_indicators(&mut self, _tab: u64, _recipe: &WorkspaceRecipe) {}
+        fn tab_drawing_keys(&self, _tab: u64) -> Vec<DrawingKey> {
+            vec![flow_key()]
+        }
+        fn recipe_market(&mut self) -> Option<&mut MarketSettingsStore> {
+            self.market.as_mut()
+        }
     }
 
     fn one_tab(test: &str) -> OneTab {
@@ -298,6 +349,7 @@ mod tests {
             applied: 0,
             builds: std::cell::Cell::new(0),
             layout: None,
+            market: None,
         }
     }
 
@@ -413,5 +465,34 @@ mod tests {
         assert!(host.store.tab_row(7).1, "the cell's mark");
         let edits = host.store.book().unsaved_edits(7).expect("closing asks");
         assert_eq!(edits.changes, vec!["panes".to_owned()]);
+    }
+
+    const DRAWN: &str = "version = 1\n\n[[drawings]]\nvenue = \"mt5\"\nasset = \"WINV26\"\nrole = \"flow\"\n\n[[drawings.items]]\ntool = \"horizontal-line\"\nband = { axis = \"price\" }\ncolor = [255, 200, 0, 255]\nwidth_px = 1.5\nfill_alpha = 0\npoints = [{ time_ms = 1000, price = 67000.5, bar = 3.0 }]\n";
+
+    fn flow_key() -> DrawingKey {
+        DrawingKey::of_pane("mt5", "WINV26".to_owned(), None)
+    }
+
+    /// Autosave off holds the market store and the book counts what the tab's
+    /// panes hold back; autosave on lets it through and nothing is counted.
+    #[test]
+    fn autosave_off_holds_the_market_store_and_counts_the_tab_s_drawings() {
+        let mut host = one_tab("tab_recipes_held_drawings");
+        let saved = quantick_workspace::market_settings::parse_settings(DRAWN).unwrap();
+        let path = std::path::PathBuf::from("market-settings.toml");
+        let mut market = MarketSettingsStore::new(saved, path, false);
+        let cleared = quantick_workspace::market_settings::MarketSettings::default();
+        market.settings_mut().restore(&cleared, &flow_key());
+        market.mark_changed(Instant::now());
+        host.market = Some(market);
+        host.store.book_mut().set_autosave(false);
+        maintain(&mut host, Instant::now());
+        assert!(host.market.as_ref().unwrap().is_held());
+        assert_eq!(host.store.book().held_drawings(7), 1, "the erased level");
+        assert_eq!(host.store.book().drawing_keys(7), [flow_key()]);
+        host.store.book_mut().set_autosave(true);
+        maintain(&mut host, Instant::now());
+        assert!(!host.market.as_ref().unwrap().is_held());
+        assert_eq!(host.store.book().held_drawings(7), 0);
     }
 }

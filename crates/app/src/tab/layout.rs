@@ -231,6 +231,19 @@ impl Tab {
     ///
     /// Startup-scoped, like [`Self::apply_feed_declared_layout`]: the only
     /// caller is the app restoring a workspace into a tab it has just opened.
+    /// The intervals the context charts not built yet open on, top first.
+    /// None leaves what they would open on: the timeframe is the tab's.
+    pub fn open_context_on(&mut self, context_intervals_ms: &[i64]) {
+        // The top chart's interval is also the one every slot past the list
+        // opens on, which is what a one-chart file has always meant.
+        let Some(ms) = context_intervals_ms.first() else {
+            return;
+        };
+        self.time_pane_opening_interval_ms = *ms;
+        let intervals = context_intervals_ms.iter().copied();
+        self.context_opening_intervals_ms = intervals.take(MAX_CONTEXT_PANES).collect();
+    }
+
     pub fn restore_canvas(
         &mut self,
         layout: CanvasLayout,
@@ -240,16 +253,7 @@ impl Tab {
         context_intervals_ms: &[i64],
         legends: LegendFold,
     ) {
-        // The top chart's interval is also the one every slot past the list
-        // opens on, which is what a one-chart file has always meant.
-        if let Some(ms) = context_intervals_ms.first() {
-            self.time_pane_opening_interval_ms = *ms;
-        }
-        self.context_opening_intervals_ms = context_intervals_ms
-            .iter()
-            .copied()
-            .take(MAX_CONTEXT_PANES)
-            .collect();
+        self.open_context_on(context_intervals_ms);
         self.set_layout(layout);
         // *After* `set_layout`, for the reason the focus below is: a switch
         // opens the column it just revealed, which is right for a menu click
