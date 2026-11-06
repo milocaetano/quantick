@@ -387,3 +387,36 @@ fn a_file_from_a_newer_format_is_refused_for_its_version() {
         Err(SettingsError::Malformed(_))
     ));
 }
+
+#[test]
+fn bar_progress_on_the_price_tag_is_on_until_a_market_turns_it_off() {
+    let mut settings = MarketSettings::default();
+    let b3 = win("MetaTrader 5 — B3");
+    let other = win("Replay");
+    assert!(settings.bar_progress_on(&b3), "on by default");
+    assert!(settings.set_bar_progress(&b3, false), "a change");
+    assert!(
+        !settings.set_bar_progress(&b3, false),
+        "the same answer is no change"
+    );
+    assert!(!settings.bar_progress_on(&b3));
+    assert!(
+        settings.bar_progress_on(&other),
+        "one market's switch leaves another's"
+    );
+
+    let text = toml::to_string_pretty(&settings).unwrap();
+    let read: MarketSettings = toml::from_str(&text).unwrap();
+    assert!(
+        !read.bar_progress_on(&b3),
+        "the switch round-trips:\n{text}"
+    );
+    assert!(read.bar_progress_on(&other));
+
+    assert!(settings.set_bar_progress(&b3, true));
+    assert_eq!(
+        toml::to_string_pretty(&settings).unwrap(),
+        toml::to_string_pretty(&MarketSettings::default()).unwrap(),
+        "back on leaves nothing in the file"
+    );
+}

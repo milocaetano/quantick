@@ -79,7 +79,14 @@ pub(super) fn draw_surfaces(
         if staging || registry.strategy_popup.is_open() {
             focused_tab
                 .sides()
-                .filter(|side| focused_tab.pane(*side).state.progress().is_some())
+                .filter(|side| {
+                    focused_tab
+                        .pane(*side)
+                        .state
+                        .bar_progress_at(None)
+                        .and_then(|reading| reading.fixed_progress())
+                        .is_some()
+                })
                 .collect()
         } else {
             SmallVec::new()

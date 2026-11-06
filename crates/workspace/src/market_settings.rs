@@ -142,6 +142,10 @@ pub struct MarketSettings {
     version: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     drawings: Vec<DrawingSet>,
+    /// Markets whose last-price tag leaves out the forming bar's progress.
+    /// The default is on, so only a market switched off is written, sorted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    bar_progress_off: Vec<MarketKey>,
 }
 
 impl Default for MarketSettings {
@@ -149,11 +153,34 @@ impl Default for MarketSettings {
         Self {
             version: FORMAT_VERSION,
             drawings: Vec::new(),
+            bar_progress_off: Vec::new(),
         }
     }
 }
 
 impl MarketSettings {
+    /// Whether `market`'s last-price tag carries the forming bar's progress.
+    #[must_use]
+    pub fn bar_progress_on(&self, market: &MarketKey) -> bool {
+        self.bar_progress_off.binary_search(market).is_err()
+    }
+
+    /// Switch the progress line on `market`'s price tag; `true` when that
+    /// changed anything, so the caller knows whether to save.
+    pub fn set_bar_progress(&mut self, market: &MarketKey, on: bool) -> bool {
+        match (self.bar_progress_off.binary_search(market), on) {
+            (Ok(at), true) => {
+                self.bar_progress_off.remove(at);
+                true
+            }
+            (Err(at), false) => {
+                self.bar_progress_off.insert(at, market.clone());
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// The drawings kept for `key`; none is an empty slice.
     #[must_use]
     pub fn drawings(&self, key: &DrawingKey) -> &[SavedDrawing] {

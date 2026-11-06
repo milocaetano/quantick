@@ -15,6 +15,7 @@
 //! `app` are held with: the engine's counting allocator, re-exported here and
 //! installed by each test binary.
 
+pub mod bar_progress;
 pub mod connection_state;
 mod constants;
 pub mod day_turn;
