@@ -101,4 +101,5 @@ a bound.
 | 714 | 2026-10-23 | feat/quick-range-indicator-bands | main | 20224 | 22 | `crates/app/src/indicator_render.rs` (842) |
 | 719 | 2026-10-23 | fix/replay-ui-freeze | main | 29527 | 17 | `crates/app/src/replay_get_data.rs` (962) |
 | 737 | 2026-11-01 | feat/chrome-market-titlebar | main | 29705 | 20 | `crates/app/src/replay_view.rs` (791) |
+| 769 | 2026-11-06 | fix/layout-schema-catalog | feat/quantick-new-layout | 5083 | 17 | `crates/control-schema/src/orderflow.rs` (571) |
 | 770 | 2026-11-06 | feat/layout-platform-crate | feat/quantick-new-layout | 2977 | 6 | `crates/app/src/app/frame.rs` (569) |

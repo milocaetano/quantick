@@ -73,6 +73,26 @@ pub const READBACKS: &[crate::readback::Readback] = &[
     ),
 ];
 
+/// Published schemas of the home tab.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        ("home-show-input-v1.schema.json", schema::<HomeShowInput>()),
+        (
+            "home-show-result-v1.schema.json",
+            schema::<HomeShowResult>(),
+        ),
+        (
+            "home-leave-input-v1.schema.json",
+            schema::<HomeLeaveInput>(),
+        ),
+        (
+            "home-leave-result-v1.schema.json",
+            schema::<HomeLeaveResult>(),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
