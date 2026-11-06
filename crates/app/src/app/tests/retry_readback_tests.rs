@@ -722,6 +722,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Stays,
         ),
+        ("orderflow.bubbles.reset", 1, Value::Null, Readback::Moves),
         (
             "orderflow.bubbles.tick.set",
             1,
@@ -1011,7 +1012,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 app.symbol_catalog().add(&feed, "RETRYUSDT").unwrap();
                 json!({ "feed": feed, "symbol": "RETRYUSDT" })
             }
-            "orderflow.bubbles.tick.set" | "orderflow.bubbles.preset.apply" => {
+            "orderflow.bubbles.tick.set"
+            | "orderflow.bubbles.preset.apply"
+            | "orderflow.bubbles.reset" => {
                 let config: crate::config::AppConfig =
                     toml::from_str(quantick_stores::config::EMBEDDED_DEFAULT).unwrap();
                 let presets = quantick_stores::bubble_presets::embedded();
@@ -1022,14 +1025,22 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     &presets,
                     false,
                 );
-                app.active_tab_mut()
-                    .tape_mut()
-                    .bind_asset(binding, &settings);
-                json!({
+                let tape = app.active_tab_mut().tape_mut();
+                tape.bind_asset(binding, &settings);
+                let ids = json!({
                     "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": app.active_tab().flow_pane.id.to_string(),
-                    "preset": "Binance BTC Spot spheres",
-                })
+                });
+                if capability == "orderflow.bubbles.reset" {
+                    // Off the factory look, so the reset moves the readback.
+                    let tape = app.active_tab_mut().tape_mut();
+                    assert!(tape.apply_preset("dense tape", false));
+                    ids
+                } else {
+                    let mut payload = ids;
+                    payload["preset"] = json!("Binance BTC Spot spheres");
+                    payload
+                }
             }
             "feed.source.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),

@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 111 |
+| Reachable by capability | 112 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **165** |
+| **Total** | **166** |
 
-97 of the 165 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 68 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+97 of the 166 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 69 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -117,6 +117,7 @@ The three exclusion classes are closed:
 | `orderflow.bubbles.size.set` | Adjust Tape and tick-chart bubble size independently | drag a sample bubble on the flow pane's header; double-click it for 1x | `orderflow.bubbles.size.set` | — |
 | `orderflow.bubbles.tick.set` | Select tick-chart spheres for a config-mode asset independently of the tape | Bubbles settings, Tick chart spheres preset picker | `orderflow.bubbles.tick.set` | — |
 | `orderflow.bubbles.preset.apply` | Apply or reapply a named whole bubble look | Bubbles settings, whole-look preset picker | `orderflow.bubbles.preset.apply` | — |
+| `orderflow.bubbles.reset` | Reset the bubble look to the asset's factory preset | Bubbles settings, reset bubble visuals | `orderflow.bubbles.reset` | — |
 | `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
 | `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | window menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
@@ -241,7 +242,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 46 |
 | `scripted_menu` | 0 |
-| `authored` | 68 |
+| `authored` | 69 |
 
 ## Appendix: rows no registry stands behind
 
@@ -290,6 +291,7 @@ declares nothing here is a guard failure.
 | `orderflow.bubbles.size.set` | independent sample bubbles appear while their bubble display is active |
 | `orderflow.bubbles.tick.set` | chart-only preset picker under the whole-look presets |
 | `orderflow.bubbles.preset.apply` | whole-look preset selection permits same-name reapplication |
+| `orderflow.bubbles.reset` | the reset button at the foot of the Bubbles settings |
 | `indicator.picker.open` | the glyph is a pane header widget, not an entry in the toolbar's action enum |
 | `appearance.candle_presets` | the Candles tab's preset row, save field and Reset are widgets, not registry entries |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |

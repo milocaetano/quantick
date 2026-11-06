@@ -200,19 +200,24 @@ fn reloading_keeps_the_settings_an_asset_made_its_own() {
     assert!(status.contains("keeps its own settings"), "{status}");
 }
 
-/// Review round 1, finding 8: the panel says what happens — restored
-/// defaults are kept for the asset, not left unsaved.
+/// Review round 1, finding 8: the panel says what happens. The reset
+/// returns the mini index to its factory look and says so; over the shipped
+/// presets that is the look it opens on, so its own settings are dropped.
 #[test]
-fn restored_defaults_are_kept_for_the_asset_and_say_so() {
+fn the_reset_returns_the_asset_to_its_factory_look_and_says_so() {
     let mut view = bound_win();
+    assert!(ignore_opening(&mut view, true));
+    view.sync_asset(false);
+    let asset = |view: &OrderflowView| view.look.asset().expect("bound").source();
+    assert_eq!(asset(&view), AssetSource::Stored, "the edit is filed");
     view.press_reset_bubble_visuals_for_test();
     let status = view.look.status().expect("a status");
-    assert!(!status.contains("not saved"), "{status}");
-    view.sync_asset(false);
-    assert_eq!(
-        view.look.asset().expect("bound").source(),
-        AssetSource::Stored
+    assert!(
+        status.contains("factory look 'mini index regions'"),
+        "{status}"
     );
+    view.sync_asset(false);
+    assert_eq!(asset(&view), AssetSource::Declared);
 }
 
 /// Review #19/#29: the sphere picker asks the rule tick.set asks. A mode
