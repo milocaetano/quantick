@@ -478,6 +478,19 @@ pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
             schema::<WorkspaceRevertResult>(),
         ),
         (
+            "workspace-autosave-input-v1.schema.json",
+            schema::<WorkspaceAutosaveInput>(),
+        ),
+        (
+            "workspace-autosave-result-v1.schema.json",
+            schema::<WorkspaceAutosaveResult>(),
+        ),
+        ("tab-close-input-v1.schema.json", schema::<TabCloseInput>()),
+        (
+            "tab-close-result-v1.schema.json",
+            schema::<TabCloseResult>(),
+        ),
+        (
             "workspace-rename-input-v1.schema.json",
             schema::<WorkspaceRenameInput>(),
         ),
