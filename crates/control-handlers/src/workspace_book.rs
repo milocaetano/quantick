@@ -160,7 +160,11 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
             return submit_name_dialog(host, &mut to, menu, symbol);
         }
         WorkspaceCommand::Close(scope, tabs) => {
-            menu.close.request(scope, tabs);
+            if menu.close.request(scope, tabs)
+                && let Some(book) = host.workspace_book()
+            {
+                book.outvote_rivals();
+            }
             return run_close(host, &mut to, &mut menu.close);
         }
         WorkspaceCommand::AnswerClose(answer) => {
@@ -380,8 +384,9 @@ pub fn set_tab_workspace<H: WorkspaceBookHost + ?Sized>(
 }
 
 /// Write a tab's edits into its workspace and redraw the tabs that follow.
-/// The tab's held drawings reach their file first: a market write that fails
-/// leaves the recipe unwritten too, so a Save lands whole or not at all. A
+/// The recipe is written first, then the tab's held drawings: a recipe write
+/// that fails writes no drawing, and a market write that fails puts the
+/// recipe back, so a Save lands whole or not at all and the mark stays. A
 /// recipe write that fails with autosave on marks the tab, which the frame
 /// retries.
 ///
@@ -391,17 +396,46 @@ pub fn save_tab_to<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     tab: u64,
 ) -> Result<SaveOutcome, ControlError> {
-    let wrote = commit_market(app, tab)?;
+    let before = book(app)?.clone();
     let saved = written(app, |book| book.save_to(tab), |saved| saved.changed);
     if saved.as_ref().is_err_and(failed_write) {
         note_failed(app, tab);
     }
     let mut outcome = saved?;
+    let wrote = commit_market_whole(app, tab, before, outcome.changed)?;
     if outcome.changed {
         show(app, &outcome.tabs_changed)?;
     }
     outcome.changed |= wrote;
     Ok(outcome)
+}
+
+/// A Save's second half, once its recipe landed: the tab's held drawings. A
+/// market write that fails puts the book back as it stood `before` the save,
+/// in memory and, when the recipe was written, on disk.
+///
+/// # Errors
+/// The market file was not written.
+fn commit_market_whole<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+    before: WorkspaceBook,
+    recipe_written: bool,
+) -> Result<bool, ControlError> {
+    let mut error = match commit_market(app, tab) {
+        Ok(wrote) => return Ok(wrote),
+        Err(error) => error,
+    };
+    if recipe_written {
+        *book(app)? = before;
+        if let Err(reason) = app.persist_workspace_book() {
+            error.message = format!(
+                "{}; the workspaces file could not be put back either: {reason}",
+                error.message
+            );
+        }
+    }
+    Err(error)
 }
 
 /// A save of `tab` did not reach the disk: with autosave on it reads modified
@@ -464,7 +498,8 @@ fn discard_market<H: WorkspaceBookHost + ?Sized>(app: &mut H, closed: &[DrawingK
     }
 }
 
-/// Make a new workspace of a tab's copy, its held drawings written first.
+/// Make a new workspace of a tab's copy, then write its held drawings, whole
+/// or not at all as [`save_tab_to`] does.
 ///
 /// # Errors
 /// The name is refused, no such tab, no book, or a write failed.
@@ -474,11 +509,13 @@ pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
     name: &str,
 ) -> Result<SaveOutcome, ControlError> {
     // Asked of a copy first: a refused name writes no drawing either.
-    let trial = book(app)?.clone().save_as(tab, name);
-    trial.map_err(|refusal| refused(&refusal))?;
-    let wrote = commit_market(app, tab)?;
+    let before = book(app)?.clone();
+    before
+        .clone()
+        .save_as(tab, name)
+        .map_err(|refusal| refused(&refusal))?;
     let mut outcome = written(app, |book| book.save_as(tab, name), |saved| saved.changed)?;
-    outcome.changed |= wrote;
+    outcome.changed |= commit_market_whole(app, tab, before, outcome.changed)?;
     Ok(outcome)
 }
 
@@ -497,14 +534,15 @@ pub fn new_tab_workspace<H: WorkspaceBookHost + ?Sized>(
 }
 
 /// With autosave on, write a tab's pending edit through before anything moves
-/// it: a switch or a close never drops what autosave was about to save.
+/// it: a switch or a close never drops what autosave was about to save. Only
+/// the copy autosave would write ([`WorkspaceBook::flushes`]): an outvoted or
+/// failed copy is held edits, so a close asks and a switch drops it.
 fn flush<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     tab: u64,
 ) -> Result<(), ControlError> {
-    let held = book(app)?;
-    if held.autosave() && held.differs(tab) {
+    if book(app)?.flushes(tab) {
         save_to_journaled(app, to, tab)?;
     }
     Ok(())
@@ -606,7 +644,8 @@ pub fn set_autosave<H: WorkspaceBookHost + ?Sized>(
 }
 
 /// What closing a tab does with its held edits: `None` asks, and refuses with
-/// [`UNSAVED_EDITS_CODE`] while it holds any; autosave on writes them first.
+/// [`UNSAVED_EDITS_CODE`] while it holds any; autosave on writes a pending
+/// edit first, and asks for a copy it did not write.
 ///
 /// # Errors
 /// Edits held and no decision, no book, a failed save, or the last tab.
@@ -660,9 +699,10 @@ fn unsaved(asked: &CloseQuestion) -> ControlError {
     error
 }
 
-/// The question closing `tab` asks: `None` while autosave is on or the tab
-/// holds no edits. `tab.close` refuses with this same question, so the call
-/// and the window's prompt cannot disagree on when to ask.
+/// The question closing `tab` asks: `None` when the tab holds no edits (with
+/// autosave on, unless its copy is one autosave did not write). `tab.close`
+/// refuses with this same question, so the call and the window's prompt
+/// cannot disagree on when to ask.
 pub fn close_question<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     tab: u64,
@@ -705,13 +745,24 @@ pub fn close_prompt(queue: &CloseQueue) -> Option<Prompt> {
 
 /// Carry a close as far as it goes without the trader: settle each tab that
 /// asks nothing and stop at the first question. A step that fails ends the
-/// close and answers why; the window's last tab staying open is no news.
+/// close and answers why; the window's last tab staying open is no news, and
+/// it asks nothing first: the close would refuse it, so no answer, Save
+/// included, would be carried out.
 fn run_close<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     queue: &mut CloseQueue,
 ) -> Option<String> {
-    while let CloseStep::Settle { tab, save, scope } = queue.next(|tab| close_question(app, tab)) {
+    let tabs = queue.scope() == Some(CloseScope::Tabs);
+    let ask = |app: &mut H, tab| {
+        let stays = tabs && !app.close_market_tab(tab, false);
+        if stays {
+            None
+        } else {
+            close_question(app, tab)
+        }
+    };
+    while let CloseStep::Settle { tab, save, scope } = queue.next(|tab| ask(app, tab)) {
         let settled = match scope {
             CloseScope::Tabs => close_tab(app, to, tab, save).map(drop),
             CloseScope::App => settle_in_place(app, to, tab, save),
@@ -741,9 +792,13 @@ fn settle_in_place<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
             if book(app)?.discard_edits(tab) {
                 show(app, &[tab])?;
             }
-            let keys = book(app)?.drawing_keys(tab).to_vec();
-            discard_market(app, &keys, tab);
-            recount_held(app);
+            // With autosave on nothing is held: the market's own debounce
+            // writes what the panes show.
+            if !book(app)?.autosave() {
+                let keys = book(app)?.drawing_keys(tab).to_vec();
+                discard_market(app, &keys, tab);
+                recount_held(app);
+            }
             Ok(())
         }
         None => flush(app, to, tab),

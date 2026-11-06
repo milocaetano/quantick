@@ -109,6 +109,12 @@ impl CloseQueue {
         true
     }
 
+    /// What the close in flight covers.
+    #[must_use]
+    pub fn scope(&self) -> Option<CloseScope> {
+        self.request.as_ref().map(|request| request.scope)
+    }
+
     /// The question waiting for an answer.
     #[must_use]
     pub fn question(&self) -> Option<&CloseQuestion> {

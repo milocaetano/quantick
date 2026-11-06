@@ -656,12 +656,17 @@ fn an_outvoted_tab_reads_modified_with_autosave_on() {
     one.flow_indicators = vec![ema()];
     book.observe(1, &one).unwrap();
     book.observe(2, &recipe(DeclaredLayout::Flow)).unwrap();
+    let mut lowest = book.clone();
     assert_eq!(
         book.autosave_winners(&[1, 2], 2),
         [2],
         "the active tab wins"
     );
-    assert_eq!(book.autosave_winners(&[2, 1], 9), [1], "else the lowest id");
+    assert_eq!(
+        lowest.autosave_winners(&[2, 1], 9),
+        [1],
+        "else the lowest id"
+    );
     book.save_to(2).unwrap();
     assert!(book.differs(1));
     assert_eq!(book.unsynced(1), Some(Unsynced::Outvoted));
@@ -728,4 +733,69 @@ fn a_drawing_count_is_current_only_at_its_revision_and_sets() {
         !book.drawings_current(1, &[flow_key()], 7),
         "told without one"
     );
+}
+
+/// Tabs 1 and 2 on `Scalp`, autosave on, both holding a different edit.
+fn contested() -> WorkspaceBook {
+    let mut book = two_tabs_on_scalp();
+    book.set_autosave(true);
+    book.observe(1, &recipe(DeclaredLayout::Time)).unwrap();
+    book.observe(2, &recipe(DeclaredLayout::Flow)).unwrap();
+    book
+}
+
+/// Only tab 2 is due, but the active tab 1 holds edits on the same workspace:
+/// the winner is weighed over every differing tab there, so tab 2 is not
+/// written and reads modified.
+#[test]
+fn a_due_tab_never_beats_the_active_tab_that_is_not_due() {
+    let mut book = contested();
+    assert!(book.autosave_winners(&[2], 1).is_empty());
+    assert_eq!(book.unsynced(2), Some(Unsynced::Outvoted));
+    assert_eq!(state(&book, 2), ("Scalp".to_owned(), true));
+    assert_eq!(book.autosave_winners(&[1], 1), [1], "the active tab's turn");
+}
+
+/// An outvoted copy is never written by autosave, however often it comes due,
+/// and closing it asks as a held edit does.
+#[test]
+fn an_outvoted_tab_is_never_written_through_and_its_close_asks() {
+    let mut book = contested();
+    assert_eq!(book.autosave_winners(&[1, 2], 1), [1]);
+    book.save_to(1).unwrap();
+    assert!(book.autosave_winners(&[2], 1).is_empty());
+    assert!(book.autosave_winners(&[2], 2).is_empty(), "active or not");
+    let asked = book.unsaved_edits(2).expect("its close asks");
+    assert_eq!(asked.workspace, "Scalp");
+}
+
+/// A write that failed is not retried over a later save of its workspace by
+/// another tab: the failed copy turns outvoted, marked, and is never written.
+#[test]
+fn a_failed_copy_is_outvoted_once_another_tab_saves_its_workspace() {
+    let mut book = contested();
+    book.note_write_failed(1);
+    book.save_to(2).unwrap();
+    assert_eq!(book.unsynced(1), Some(Unsynced::Outvoted));
+    assert!(book.failed_writes().is_empty(), "no retry is owed");
+    assert!(book.autosave_winners(&[1], 1).is_empty());
+    assert_eq!(state(&book, 1), ("Scalp".to_owned(), true));
+}
+
+/// After a restart with autosave on, a tab whose copy the desk kept differing
+/// is not in its workspace: it reads modified, asks on close and is never
+/// written unasked. A clean tab restores clean.
+#[test]
+fn a_restored_copy_that_differs_reads_modified_with_autosave_on() {
+    let mut next = two_tabs_on_scalp();
+    next.set_autosave(true);
+    next.close_tab(1);
+    next.close_tab(2);
+    next.restore_tab(1, "Scalp", Some(recipe(DeclaredLayout::Flow)));
+    next.restore_tab(2, "Scalp", None);
+    assert_eq!(state(&next, 1), ("Scalp".to_owned(), true));
+    assert_eq!(next.unsynced(1), Some(Unsynced::Outvoted));
+    assert!(next.unsaved_edits(1).is_some());
+    assert!(next.autosave_winners(&[1], 1).is_empty());
+    assert_eq!(state(&next, 2), ("Scalp".to_owned(), false));
 }

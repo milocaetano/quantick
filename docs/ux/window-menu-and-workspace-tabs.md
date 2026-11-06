@@ -156,22 +156,27 @@ snapshot reads it as `auto_save`.
 - **On:** a layout change is written into the tab's workspace after the 1 s
   quiet the layouts file already waits; tabs on the same workspace follow. The
   toast "Scalp saved · WDOZ26 follows" appears only when another tab followed.
-  Nothing is pending, so nothing is marked and closing never asks, with two
-  honest exceptions: a write that did not reach the disk marks the tab, toasts
-  once and is retried each quiet second until it lands; and when two tabs on
-  one workspace both hold edits, one copy is written (the active tab's, else
-  the lowest tab id's) and the other tab keeps its edits, marked, until it is
-  saved, edited again or switched. A tab whose copy is not in its workspace
-  never reads saved.
+  Nothing is pending, so nothing is marked and closing never asks, except
+  for a tab whose copy is not in its workspace, which never reads saved:
+  a write that did not reach the disk (it toasts once and is retried each
+  quiet second, until another tab saves that workspace first); a second tab
+  on a workspace holding edits (one copy is written: of every tab there
+  holding edits, due or not, the active tab's, else the lowest tab id's); and
+  a copy a restart brought back differing. Such a tab holds its edits as with
+  auto save off: marked, never written unasked (not by a later edit, a
+  close, a switch or the exit), closing it or exiting asks, a switch drops it
+  with the "changes dropped" toast, and its Save is the trader's choice.
 - **Off:** the change is held on the tab. The cell wears the amber mark and a
   "Save" pill (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
   Scalp" row (its hover names the tabs that follow) write it. Drawings and
   anchored studies are held too, and Save writes the tab's own drawing sets
   (the ones its panes show; every other set stays as the file has it, still
-  held for its own tab) and then the workspace; the mark lights for either. A
-  Save whose write fails answers `workspace.write_failed` and the mark stays:
-  nothing reads as saved before it is on disk. Close without saving puts a
-  held set back to the file's version unless another open tab shows it.
+  held for its own tab) after the workspace; the mark lights for either. A
+  Save lands whole or not at all: a failed workspace write writes no drawing,
+  and a failed drawing write puts the workspace back; it answers
+  `workspace.write_failed` and the mark stays: nothing reads as saved before
+  it is on disk. Close without saving puts a held set back to the file's
+  version unless another open tab shows it.
   Turning auto save on with edits held saves them at once, one tab per
   workspace as above, then every held drawing; a save that fails there leaves
   auto save on, journals the setting and each save that landed, and answers
@@ -200,7 +205,9 @@ snapshot reads it as `auto_save`.
   without saving leaves both as saved and lets the tab's held recipe go too,
   so the next launch opens it on its workspace, not on the dropped edits.
   With autosave on, or nothing held, no close asks: a pending write-through
-  is written first, on exit too.
+  is written first, on exit too, one copy per workspace by the rule above;
+  a tab autosave did not write asks like a held one. The window's last tab
+  stays open and its close asks nothing, so no answer is thrown away.
 - What counts as a change: indicators (add, remove, settings, style), panes
   (add, remove, divider, kind), the layout strip (new, switch, rename,
   delete), layers, footprint style, drawings, anchored studies. Never a

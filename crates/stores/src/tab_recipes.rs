@@ -69,6 +69,7 @@ pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H, now: Instant) -> Vec<u6
         watch_tab(host, id, now);
     }
     let (book, sync) = host.recipe_store_mut().parts_mut();
+    book.note_active(active);
     if !book.autosave() {
         return Vec::new();
     }

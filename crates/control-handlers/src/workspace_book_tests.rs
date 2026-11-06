@@ -24,6 +24,8 @@ struct FakeHost {
     market_fails: bool,
     /// The workspaces file takes this many more writes, then refuses.
     book_writes_left: Option<usize>,
+    /// The book as the workspaces file last took it.
+    persisted: Option<WorkspaceBook>,
 }
 
 impl TabDirectory for FakeHost {
@@ -50,6 +52,7 @@ impl WorkspaceBookHost for FakeHost {
             *left -= 1;
         }
         self.writes += 1;
+        self.persisted = Some(self.book.clone());
         Ok(())
     }
     fn show_tab_recipe(&mut self, tab: u64, _recipe: &WorkspaceRecipe) {
@@ -121,6 +124,7 @@ fn autosaving() -> (FakeHost, FakeAccess, ActorContext) {
         market_written: None,
         market_fails: false,
         book_writes_left: None,
+        persisted: None,
     };
     (host, FakeAccess::with_budget(0), FakeWindow::assistant())
 }
@@ -984,12 +988,14 @@ fn a_save_commits_only_its_own_tab_s_drawings() {
 }
 
 /// A Save whose market write fails says so with `workspace.write_failed`,
-/// writes no recipe either, and the mark stays.
+/// puts the recipe it wrote back, in memory and in the file, and the mark
+/// stays.
 #[test]
 fn a_save_whose_market_write_fails_reports_it_and_stays_marked() {
     let (mut host, mut access, actor) = parts();
     with_held_drawing(&mut host);
     edit(&mut host, 1);
+    let before = host.book.recipe(DEFAULT_WORKSPACE).cloned();
     host.market_fails = true;
     let value = json!({ "tab_id": "1" });
     let error = save_to(&mut host, &mut access, &actor, &value).unwrap_err();
@@ -999,7 +1005,11 @@ fn a_save_whose_market_write_fails_reports_it_and_stays_marked() {
         "{}",
         error.message
     );
-    assert_eq!((host.writes, access.events.len()), (0, 0));
+    assert_eq!(access.events.len(), 0);
+    assert_eq!(host.writes, 2, "the recipe, then the recipe put back");
+    let file = host.persisted.as_ref().unwrap().recipe(DEFAULT_WORKSPACE);
+    assert_eq!(file.cloned(), before, "the file holds the old recipe");
+    assert_eq!(host.book.recipe(DEFAULT_WORKSPACE).cloned(), before);
     assert!(
         host.book.tab_state(1).unwrap().modified,
         "nothing reads saved"
@@ -1217,5 +1227,129 @@ fn autosave_on_writes_one_tab_per_workspace_and_marks_the_other() {
     assert!(
         host.book.tab_state(2).unwrap().modified,
         "never differing unmarked"
+    );
+}
+
+fn scalp_style(host: &FakeHost) -> Option<String> {
+    host.book.recipe("Scalp").unwrap().footprint_style.clone()
+}
+
+/// Tabs 1 and 2 on Scalp, tab 1 on heatmap and tab 2 on volume, then autosave
+/// on: tab 1 (active) won Scalp and tab 2 holds its copy, outvoted.
+fn outvoted_on_scalp() -> (FakeHost, FakeAccess, ActorContext) {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let value = json!({ "tab_id": "2", "name": "Scalp" });
+    set(&mut host, &mut access, &actor, &value).unwrap();
+    edit_to(&mut host, 1, "heatmap");
+    edit_to(&mut host, 2, "volume");
+    autosave_set(&mut host, &mut access, &actor, &json!({ "on": true })).unwrap();
+    assert_eq!(scalp_style(&host).as_deref(), Some("heatmap"));
+    access.events.clear();
+    (host, access, actor)
+}
+
+/// Closing the outvoted tab asks, and Close without saving leaves the
+/// winner's Scalp as it was: nothing is written implicitly.
+#[test]
+fn closing_an_outvoted_tab_asks_and_never_overwrites_the_winner() {
+    let (mut host, mut access, actor) = outvoted_on_scalp();
+    let writes = host.writes;
+    let refused = close(&mut host, &mut access, &actor, &json!({ "tab_id": "2" })).unwrap_err();
+    assert_eq!(detail(&refused), UNSAVED_EDITS_CODE);
+    assert_eq!(scalp_style(&host).as_deref(), Some("heatmap"));
+    assert_eq!(host.tabs, [1, 2]);
+    let value = json!({ "tab_id": "2", "save": false });
+    close(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(host.closed, [2]);
+    assert_eq!(scalp_style(&host).as_deref(), Some("heatmap"));
+    assert_eq!(host.writes, writes, "nothing written");
+}
+
+/// A switch drops the outvoted copy, as a held edit is dropped, and says so.
+#[test]
+fn switching_an_outvoted_tab_drops_its_copy_and_keeps_the_winner() {
+    let (mut host, mut access, actor) = outvoted_on_scalp();
+    let value = json!({ "tab_id": "2", "name": DEFAULT_WORKSPACE });
+    let moved = set(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(moved["dropped_edits"], true);
+    assert_eq!(scalp_style(&host).as_deref(), Some("heatmap"));
+}
+
+/// An exit asks for the outvoted tab; its Close without saving keeps Scalp.
+#[test]
+fn an_exit_with_autosave_on_asks_for_an_outvoted_tab() {
+    let (mut host, mut access, actor) = outvoted_on_scalp();
+    let mut menu = WorkspaceMenuState::default();
+    let exit = WorkspaceCommand::Close(CloseScope::App, vec![1, 2]);
+    row(&mut host, &mut access, &actor, &mut menu, exit);
+    assert_eq!(close_prompt(&menu.close).unwrap().title, "Close SYM2");
+    let discard = CloseAnswer::CloseWithoutSaving;
+    answer(&mut host, &mut access, &actor, &mut menu, discard);
+    assert!(menu.close.take_exit());
+    assert_eq!(scalp_style(&host).as_deref(), Some("heatmap"));
+}
+
+/// Two tabs on one workspace both on their way, autosave on, then exit: one
+/// copy is written (the lowest id's, as no tab is active here), never both in
+/// strip order, and the other tab asks.
+#[test]
+fn an_exit_writes_one_pending_copy_per_workspace_and_asks_for_the_other() {
+    let (mut host, mut access, actor) = autosaving();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    let value = json!({ "tab_id": "2", "name": "Scalp" });
+    set(&mut host, &mut access, &actor, &value).unwrap();
+    edit_to(&mut host, 1, "heatmap");
+    edit_to(&mut host, 2, "volume");
+    let mut menu = WorkspaceMenuState::default();
+    let exit = WorkspaceCommand::Close(CloseScope::App, vec![1, 2]);
+    row(&mut host, &mut access, &actor, &mut menu, exit);
+    let prompt = close_prompt(&menu.close).expect("the copy not written asks");
+    assert_eq!(prompt.title, "Close SYM2");
+    let discard = CloseAnswer::CloseWithoutSaving;
+    answer(&mut host, &mut access, &actor, &mut menu, discard);
+    assert!(menu.close.take_exit());
+    assert_eq!(scalp_style(&host).as_deref(), Some("heatmap"));
+}
+
+/// A Save whose recipe write fails writes no drawing either: Save lands whole
+/// or not at all, and the mark stays.
+#[test]
+fn a_save_whose_recipe_write_fails_writes_no_drawing() {
+    let (mut host, mut access, actor) = parts();
+    with_held_drawing(&mut host);
+    edit(&mut host, 1);
+    host.write_fails = true;
+    let value = json!({ "tab_id": "1" });
+    let error = save_to(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&error), WRITE_FAILED_CODE);
+    assert_eq!(file_has_the_level(&host), None, "the market file untouched");
+    assert_eq!(host.book.held_drawings(1), 1);
+    assert!(host.book.tab_state(1).unwrap().modified);
+}
+
+/// The window's last tab: the strip's close asks nothing (the close would be
+/// refused, so a Save answer would be thrown away), writes nothing and keeps
+/// the tab and its edits.
+#[test]
+fn the_window_s_last_tab_asks_nothing_and_keeps_its_edits() {
+    let (mut host, mut access, actor) = parts();
+    host.tabs = vec![1];
+    edit(&mut host, 1);
+    let mut menu = WorkspaceMenuState::default();
+    let close_one = WorkspaceCommand::Close(CloseScope::Tabs, vec![1]);
+    assert_eq!(
+        row(&mut host, &mut access, &actor, &mut menu, close_one),
+        None
+    );
+    assert!(
+        close_prompt(&menu.close).is_none(),
+        "no question to throw away"
+    );
+    assert_eq!((host.writes, host.closed.len()), (0, 0));
+    assert!(host.book.tab_state(1).unwrap().modified);
+    assert!(
+        menu.close.request(CloseScope::Tabs, [1]),
+        "nothing in flight"
     );
 }

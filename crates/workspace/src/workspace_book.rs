@@ -7,9 +7,10 @@
 //!
 //! With [`WorkspaceBook::autosave`] on (the default) the window writes every
 //! edit through after a quiet second, so no tab reads as holding edits unless
-//! autosave could not write it ([`Unsynced`]); with it off a tab holds them,
-//! marked, until Save to. There is no revert: a workspace switch drops held
-//! edits, and closing the tab asks first.
+//! autosave did not write it ([`Unsynced`]): such a copy is treated as held
+//! edits are with autosave off, never written unasked. With it off a tab holds
+//! them, marked, until Save to. There is no revert: a workspace switch drops
+//! held edits, and closing the tab asks first.
 //!
 //! The recipes persist in their own file; the per-tab state persists on
 //! [`SavedTab`] in the desk, so an edited tab survives a restart still marked.
@@ -245,19 +246,28 @@ pub struct WorkspaceBook {
     drawings: BTreeMap<u64, TabDrawings>,
     /// Tabs whose differing copy autosave did not write: marked even with
     /// autosave on, so a copy that is not in its workspace never reads saved.
+    /// Not in a file: a restart finds them again ([`Self::restore_tab`]).
     #[serde(skip)]
     unsynced: BTreeMap<u64, Unsynced>,
+    /// The tab the window shows, as the frame last told it: whose copy
+    /// autosave writes where two tabs on one workspace hold edits.
+    #[serde(skip)]
+    active: Option<u64>,
 }
 
-/// Why a tab's copy differs from its workspace with autosave on.
+/// Why a tab's copy differs from its workspace with autosave on. Either way
+/// the tab is treated as holding edits with autosave off: marked, never
+/// written unasked, and closing it asks; its Save is the trader's choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unsynced {
     /// The write-through did not reach the disk: the window retries it after
-    /// the quiet second.
+    /// the quiet second, until another tab saves the workspace first, which
+    /// makes it [`Self::Outvoted`].
     Failed,
-    /// Another tab on the same workspace was written instead (the active tab,
-    /// else the lowest id): this one keeps its edits, marked, until it saves,
-    /// edits again or switches.
+    /// Another tab's copy is the workspace's (the active tab's, else the
+    /// lowest id's, of every tab there holding edits), or the copy came back
+    /// from a restart differing: autosave never writes this one. It stays
+    /// until it is saved, switched or closed, or matches its workspace again.
     Outvoted,
 }
 
@@ -296,6 +306,7 @@ impl Default for WorkspaceBook {
             autosave: autosave_default(),
             drawings: BTreeMap::new(),
             unsynced: BTreeMap::new(),
+            active: None,
         }
     }
 }
@@ -524,31 +535,78 @@ impl WorkspaceBook {
             .collect()
     }
 
-    /// Of `tabs`, the ones autosave writes: the differing ones, one per
-    /// workspace, `active` where it is among them, else the lowest id. In id
-    /// order. Writing two copies into one workspace would leave the first
-    /// differing and unmarked, so the others are marked [`Unsynced::Outvoted`]
-    /// here, before any write: they read modified even if the winner's write
-    /// then fails.
+    /// Of `tabs`, the ones autosave writes now, in id order. An outvoted copy
+    /// is never written. Of the others, a tab is written only when it is its
+    /// workspace's winner among every tab there whose copy differs and is not
+    /// outvoted, due or not: `active` where it is one, else the lowest id.
+    /// Writing two copies into one workspace would leave the first differing
+    /// and unmarked, so every other differing tab of `tabs` is marked
+    /// [`Unsynced::Outvoted`] here, before any write: it reads modified even
+    /// if the winner's write then fails, and closing it asks.
     pub fn autosave_winners(&mut self, tabs: &[u64], active: u64) -> Vec<u64> {
+        self.winners(tabs, Some(active))
+    }
+
+    fn winners(&mut self, tabs: &[u64], active: Option<u64>) -> Vec<u64> {
         let mut ordered: Vec<u64> = tabs.to_vec();
         ordered.sort_unstable();
         ordered.dedup();
-        ordered.retain(|tab| self.differs(*tab));
-        let mut winners: BTreeMap<String, u64> = BTreeMap::new();
-        for tab in &ordered {
-            let workspace = self.tabs[tab].workspace.clone();
-            let held = winners.entry(workspace).or_insert(*tab);
-            if *tab == active {
-                *held = *tab;
+        ordered.retain(|tab| self.differs(*tab) && !self.outvoted(*tab));
+        let mut chosen = Vec::new();
+        for tab in ordered {
+            if self.winner(tab, active) == Some(tab) {
+                chosen.push(tab);
+            } else {
+                self.unsynced.insert(tab, Unsynced::Outvoted);
             }
         }
-        let mut chosen: Vec<u64> = winners.into_values().collect();
-        chosen.sort_unstable();
-        for tab in ordered.into_iter().filter(|tab| !chosen.contains(tab)) {
-            self.unsynced.entry(tab).or_insert(Unsynced::Outvoted);
-        }
         chosen
+    }
+
+    fn outvoted(&self, tab: u64) -> bool {
+        self.unsynced.get(&tab) == Some(&Unsynced::Outvoted)
+    }
+
+    /// The tab whose copy autosave writes into `tab`'s workspace: of every tab
+    /// there whose copy differs and is not outvoted, `active`, else the lowest id.
+    fn winner(&self, tab: u64, active: Option<u64>) -> Option<u64> {
+        let workspace = &self.tabs.get(&tab)?.workspace;
+        let rivals: Vec<u64> = (self.tabs.iter())
+            .filter(|(id, state)| {
+                state.workspace == *workspace && self.is_modified(state) && !self.outvoted(**id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        active
+            .filter(|active| rivals.contains(active))
+            .or_else(|| rivals.first().copied())
+    }
+
+    /// The frame's word on which tab the window shows.
+    pub fn note_active(&mut self, tab: u64) {
+        self.active = Some(tab);
+    }
+
+    /// With autosave on, whether a close, switch or exit writes `tab`'s edit,
+    /// still on its way, before it moves the tab: only its workspace's winner
+    /// (as [`Self::autosave_winners`] weighs it, against the active tab the
+    /// frame told). A tab that loses is marked outvoted here, so its close
+    /// asks; an outvoted or failed copy is never written unasked.
+    pub fn flushes(&mut self, tab: u64) -> bool {
+        if !self.autosave || !self.differs(tab) || self.unsynced(tab).is_some() {
+            return false;
+        }
+        self.winners(&[tab], self.active) == [tab]
+    }
+
+    /// With autosave on, mark outvoted every tab holding edits that is not
+    /// its workspace's winner: what a close or exit runs before it asks, so
+    /// the copy autosave will not write asks instead of being written over.
+    pub fn outvote_rivals(&mut self) {
+        if self.autosave {
+            let tabs = self.differing_tabs();
+            self.winners(&tabs, self.active);
+        }
     }
 
     /// Close without saving where the tab stays (an exit): its copy goes back
@@ -597,13 +655,19 @@ impl WorkspaceBook {
             .is_some_and(|state| self.is_modified(state))
     }
 
-    /// What closing the tab would lose: `None` while autosave is on or the tab
-    /// holds nothing, so closing never asks.
+    /// What closing the tab would lose: `None` when the tab holds nothing, so
+    /// closing never asks. With autosave on only a copy autosave did not
+    /// write ([`Unsynced`]) holds anything; the rest is on its way.
     #[must_use]
     pub fn unsaved_edits(&self, tab: u64) -> Option<UnsavedEdits> {
         let state = self.tabs.get(&tab)?;
         let (modified, held) = (self.is_modified(state), self.held_drawings(tab));
-        if self.autosave || !(modified || held > 0) {
+        let holds = if self.autosave {
+            self.unsynced(tab).is_some()
+        } else {
+            modified || held > 0
+        };
+        if !holds {
             return None;
         }
         let mut changes = (self.baseline(state).filter(|_| modified))
@@ -694,7 +758,9 @@ impl WorkspaceBook {
     /// A tab the desk brought back, following a rename since. A workspace the
     /// book no longer has hands it to `Default`, keeping the copy it is given,
     /// marked; the window gives what the tab shows when the desk kept none, so
-    /// a lost workspace never lays `Default` over the tab.
+    /// a lost workspace never lays `Default` over the tab. With autosave on a
+    /// copy that differs did not reach its workspace before the restart: it
+    /// is [`Unsynced::Outvoted`], marked and never written unasked.
     pub fn restore_tab(&mut self, tab: u64, workspace: &str, copy: Option<WorkspaceRecipe>) {
         let name = self
             .resolve(workspace)
@@ -702,6 +768,10 @@ impl WorkspaceBook {
             .to_owned();
         let copy = copy.unwrap_or_else(|| self.recipes.get(&name).cloned().unwrap_or_default());
         self.tabs.insert(tab, TabWorkspace::on(&name, copy));
+        self.unsynced.remove(&tab);
+        if self.autosave && self.differs(tab) {
+            self.unsynced.insert(tab, Unsynced::Outvoted);
+        }
     }
 
     /// The first run: one workspace per open tab, named after the layout the
@@ -754,6 +824,10 @@ impl WorkspaceBook {
             return Ok(false);
         }
         state.copy = live.clone();
+        // A copy back on its workspace holds nothing: its next edit is new.
+        if !self.differs(tab) {
+            self.unsynced.remove(&tab);
+        }
         Ok(true)
     }
 
@@ -834,10 +908,16 @@ impl WorkspaceBook {
         self.recipes.insert(workspace.clone(), recipe);
         self.unsynced.remove(&tab);
         // A tab on this workspace with edits of its own keeps them, now told
-        // against this recipe: marked with autosave on too, never silent.
+        // against this recipe: marked with autosave on too, never silent, and
+        // outvoted, a failed write included, so no retry writes it over this.
         for other in self.tabs_on(&workspace) {
-            if other != tab && self.differs(other) {
-                self.unsynced.entry(other).or_insert(Unsynced::Outvoted);
+            if other == tab {
+                continue;
+            }
+            if self.differs(other) {
+                self.unsynced.insert(other, Unsynced::Outvoted);
+            } else {
+                self.unsynced.remove(&other);
             }
         }
         Ok(SaveOutcome {
@@ -975,6 +1055,13 @@ impl WorkspaceBook {
                 outcome.adopted.push(*tab);
             } else {
                 outcome.kept_edits.push(*tab);
+            }
+        }
+        // With autosave on a kept copy is not in `Default`: marked, and
+        // written only when the trader saves it.
+        if self.autosave {
+            for tab in &outcome.kept_edits {
+                self.unsynced.insert(*tab, Unsynced::Outvoted);
             }
         }
         Ok(outcome)
