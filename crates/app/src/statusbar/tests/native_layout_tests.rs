@@ -5,6 +5,8 @@ fn model(replaying: bool) -> StatusModel {
     StatusModel {
         workspace: Some("Scalp".to_owned()),
         modified: true,
+        autosave: false,
+        save_shortcut: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S),
         venue: if replaying {
             "Recorded session"
         } else {

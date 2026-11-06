@@ -300,7 +300,8 @@ fn the_first_run_seeds_one_workspace_per_tab_deduplicated_and_unmodified() {
     }
     assert_eq!(book.recipe("Fluxo"), Some(&live));
     assert!(
-        book.seed_first_run(vec![seed(1, None, "WINV26")]).is_empty(),
+        book.seed_first_run(vec![seed(1, None, "WINV26")])
+            .is_empty(),
         "a seeded tab is left alone"
     );
 }
@@ -525,10 +526,7 @@ fn each_listed_workspace_says_its_panes_interval_and_indicator_count() {
         [
             ("Default".to_owned(), "as the feed opens".to_owned()),
             ("Scalp".to_owned(), "Time · Flow".to_owned()),
-            (
-                "Swing".to_owned(),
-                "Time · Time · Flow · 4 ind".to_owned()
-            ),
+            ("Swing".to_owned(), "Time · Time · Flow · 4 ind".to_owned()),
         ]
     );
 }

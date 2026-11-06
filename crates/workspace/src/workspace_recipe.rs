@@ -240,13 +240,21 @@ impl WorkspaceRecipe {
         };
         let sets = |recipe: &Self| -> Vec<Vec<SavedIndicator>> {
             std::iter::once(recipe.flow_indicators.clone())
-                .chain(recipe.context_panes.iter().map(|pane| pane.indicators.clone()))
+                .chain(
+                    recipe
+                        .context_panes
+                        .iter()
+                        .map(|pane| pane.indicators.clone()),
+                )
                 .collect()
         };
         let (mine, theirs) = (sets(self), sets(base));
         for slot in 0..mine.len().max(theirs.len()) {
             let (held, was) = (mine.get(slot), theirs.get(slot));
-            let (held, was) = (held.map_or(&[][..], Vec::as_slice), was.map_or(&[][..], Vec::as_slice));
+            let (held, was) = (
+                held.map_or(&[][..], Vec::as_slice),
+                was.map_or(&[][..], Vec::as_slice),
+            );
             for indicator in held.iter().filter(|one| !was.contains(one)) {
                 note(indicator.kind.display_name());
             }
@@ -260,7 +268,11 @@ impl WorkspaceRecipe {
                 recipe.split_fraction.map(f32::to_bits),
                 recipe.context_collapsed,
                 recipe.flow_collapsed,
-                recipe.context_heights.iter().map(|h| h.to_bits()).collect::<Vec<_>>(),
+                recipe
+                    .context_heights
+                    .iter()
+                    .map(|h| h.to_bits())
+                    .collect::<Vec<_>>(),
                 recipe.context_panes_collapsed.clone(),
                 recipe.context_panes.len(),
             )

@@ -99,6 +99,8 @@ impl QuantickApp {
         statusbar::StatusModel {
             workspace: (!self.chrome.title_bar.surface.is_home()).then_some(row.0),
             modified: row.1,
+            autosave: self.runtime.workspace.book.book().autosave(),
+            save_shortcut: super::menu_bar::SAVE_TO_WORKSPACE_SHORTCUT,
             venue: if self.active_tab().replay.is_some() {
                 "recording".to_owned()
             } else {

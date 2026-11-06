@@ -5,7 +5,9 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
-use quantick_session::tab_chip::{ChipMeasure, CloseSlot, close_slot, fit_chip, shortened_name};
+use quantick_session::tab_chip::{
+    ChipMeasure, CloseSlot, broker_name, close_slot, fit_chip, shortened_name,
+};
 use quantick_workspace::arrangement::strip::{
     StripSurface, TabFeedDot, chip_parts, home_label_fits, market_slots, visible_tabs,
 };
@@ -32,10 +34,6 @@ const ADD_WIDTH_PX: f32 = 30.0;
 const CHIP_PADDING_LEFT_PX: f32 = 10.0;
 const CHIP_DOT_RADIUS_PX: f32 = 3.0;
 const CHIP_DOT_GAP_PX: f32 = 7.0;
-/// The gap between the workspace name and the edited mark.
-const NAME_MARK_GAP_PT: f32 = 3.0;
-/// What marks a tab holding edits.
-const EDITED_MARK: &str = "\u{2022}";
 /// How far a second strike of the symbol sits from the first. The bundled face
 /// has one weight, and this is what reads as 600 at 13 pt.
 const SEMIBOLD_STRIKE_PX: f32 = 0.35;
@@ -58,12 +56,8 @@ pub struct TabChip<'a> {
     pub label: &'a str,
     /// Whether this tab is playing a recording rather than streaming.
     pub replaying: bool,
-    /// The dot's state. Amber stays reserved for an edited tab.
+    /// The dot's state.
     pub dot: TabFeedDot,
-    /// The workspace the tab uses.
-    pub workspace: String,
-    /// Whether the tab holds edits it has not saved to that workspace.
-    pub modified: bool,
 }
 
 /// What the strip asked the window to do.
@@ -179,7 +173,7 @@ pub(crate) fn draw(
                 drawn.tabs.push((index, bounds));
             }
             let lit = selected || response.hovered();
-            paint_chip_face(ui, chip, body, selected, lit);
+            paint_chip_face(ui, chip, body, lit);
             // Reserve a stable close target so hover never shifts adjacent controls.
             {
                 let close_target = egui::Rect::from_min_size(
@@ -187,7 +181,7 @@ pub(crate) fn draw(
                     egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
                 );
                 let hovered = response.hovered() || ui.rect_contains_pointer(close_target);
-                let slot = close_slot(selected, hovered, chip.modified);
+                let slot = close_slot(selected, hovered);
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
@@ -205,11 +199,6 @@ pub(crate) fn draw(
                         "The last tab stays open — a window with no market has nothing to show",
                     )
                 };
-                if slot == CloseSlot::Mark {
-                    let center = close.rect.center();
-                    ui.painter()
-                        .circle_filled(center, CHIP_DOT_RADIUS_PX, theme::AMBER);
-                }
                 drawn.close.push(close.rect);
                 let chip_bounds = response.rect.union(close.rect).intersect(ui.clip_rect());
                 if chip_bounds.is_positive() {
@@ -275,10 +264,10 @@ pub(crate) fn draw(
     action
 }
 
-/// The dot, the symbol in its heavier strike and the workspace in muted ink,
-/// `Scalp •` with the amber mark while edited. The name is paint, never a
-/// control: the status bar's cell switches the workspace.
-fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected: bool, lit: bool) {
+/// The dot, the symbol in its heavier strike and the broker in muted ink:
+/// `• WINZ26 MetaTrader 5`. No workspace and no mark: the status bar's cell
+/// shows both.
+fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, lit: bool) {
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let center_y = body.center().y;
     let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
@@ -291,7 +280,8 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
             TabFeedDot::Replay => theme::REPLAY,
         },
     );
-    let (symbol, _venue_on_hover) = chip_parts(chip.label);
+    let (symbol, venue) = chip_parts(chip.label);
+    let broker = broker_name(venue);
     let ink = if chip.replaying {
         theme::REPLAY
     } else if lit {
@@ -309,40 +299,27 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
     painter.galley(at, galley.clone(), ink);
     painter.galley(at + egui::vec2(SEMIBOLD_STRIKE_PX, 0.0), galley, ink);
 
-    let mark = chip
-        .modified
-        .then(|| laid(EDITED_MARK.to_owned(), SUFFIX_TEXT_PX, theme::AMBER));
-    let gapped = |galley: &Option<std::sync::Arc<egui::Galley>>| {
-        galley
-            .as_ref()
-            .map_or(0.0, |galley| galley.size().x + NAME_MARK_GAP_PT)
-    };
     let name_ink = theme::TEXT_MUTED;
     let name_width = |letters: usize| {
-        let cut = shortened_name(&chip.workspace, letters);
+        let cut = shortened_name(broker, letters);
         laid(cut, SUFFIX_TEXT_PX, name_ink).size().x
     };
     let fit = fit_chip(&ChipMeasure {
         available: body.width(),
         symbol: text_x - body.left() + symbol_width + CHIP_DOT_GAP_PX,
-        mark: gapped(&mark),
-        active: selected,
         close: 0.0,
-        name_letters: chip.workspace.chars().count(),
+        name_letters: broker.chars().count(),
         name_width: &name_width,
     });
-    let mut x = text_x + symbol_width + CHIP_DOT_GAP_PX;
-    let name = (fit.name_letters > 0).then(|| {
-        laid(
-            shortened_name(&chip.workspace, fit.name_letters),
+    if fit.name_letters > 0 {
+        let galley = laid(
+            shortened_name(broker, fit.name_letters),
             SUFFIX_TEXT_PX,
             name_ink,
-        )
-    });
-    for galley in [name, mark.filter(|_| fit.mark)].into_iter().flatten() {
+        );
+        let x = text_x + symbol_width + CHIP_DOT_GAP_PX;
         let at = egui::pos2(x, center_y - galley.size().y / 2.0);
-        x += galley.size().x + NAME_MARK_GAP_PT;
-        painter.galley(at, galley, theme::TEXT_MUTED);
+        painter.galley(at, galley, name_ink);
     }
 }
 

@@ -14,6 +14,8 @@ struct FakeHost {
     writes: usize,
     write_fails: bool,
     shown: Vec<u64>,
+    desk_writes: Vec<bool>,
+    closed: Vec<u64>,
 }
 
 impl TabDirectory for FakeHost {
@@ -42,10 +44,35 @@ impl WorkspaceBookHost for FakeHost {
     fn show_tab_recipe(&mut self, tab: u64, _recipe: &WorkspaceRecipe) {
         self.shown.push(tab);
     }
+    fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
+        tabs.iter().map(|tab| format!("SYM{tab}")).collect()
+    }
+    fn persist_workspace_autosave(&mut self, on: bool) -> Result<(), String> {
+        if self.write_fails {
+            return Err("saving is off".to_owned());
+        }
+        self.desk_writes.push(on);
+        Ok(())
+    }
+    fn close_market_tab(&mut self, tab: u64) -> bool {
+        if self.tabs.len() < 2 {
+            return false;
+        }
+        self.tabs.retain(|open| *open != tab);
+        self.closed.push(tab);
+        true
+    }
 }
 
-/// Two open tabs the book has adopted.
+/// Two open tabs the book has adopted, autosave off so an edit is held.
 fn parts() -> (FakeHost, FakeAccess, ActorContext) {
+    let (mut host, access, actor) = autosaving();
+    host.book.set_autosave(false);
+    (host, access, actor)
+}
+
+/// Two open tabs on a book with autosave on, as a fresh desk opens.
+fn autosaving() -> (FakeHost, FakeAccess, ActorContext) {
     let mut book = WorkspaceBook::default();
     book.open_tab(1);
     book.open_tab(2);
@@ -55,13 +82,15 @@ fn parts() -> (FakeHost, FakeAccess, ActorContext) {
         writes: 0,
         write_fails: false,
         shown: Vec::new(),
+        desk_writes: Vec::new(),
+        closed: Vec::new(),
     };
     (host, FakeAccess::with_budget(0), FakeWindow::assistant())
 }
 
 fn edit(host: &mut FakeHost, tab: u64) {
     let edited = WorkspaceRecipe {
-        context_bars: vec!["time:1m".to_owned()],
+        footprint_style: Some("heatmap".to_owned()),
         ..WorkspaceRecipe::default()
     };
     host.book.observe(tab, &edited).unwrap();
@@ -95,8 +124,6 @@ fn journal_rows_carry_tab_ids_as_strings() {
     set(&mut host, &mut access, &actor, &value).unwrap();
     edit(&mut host, 1);
     save_to(&mut host, &mut access, &actor, &json!({})).unwrap();
-    host.book.observe(1, &WorkspaceRecipe::default()).unwrap();
-    revert(&mut host, &mut access, &actor, &json!({})).unwrap();
     delete(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let field = |kind: &str, name: &str| {
         access
@@ -107,7 +134,6 @@ fn journal_rows_carry_tab_ids_as_strings() {
             .unwrap()
     };
     assert_eq!(field(TAB_WORKSPACE_SET_EVENT_KIND, "tab_id"), json!("2"));
-    assert_eq!(field(WORKSPACE_REVERTED_EVENT_KIND, "tab_id"), json!("1"));
     assert_eq!(
         field(WORKSPACE_DELETED_EVENT_KIND, "moved"),
         json!(["1", "2"])
@@ -370,7 +396,7 @@ fn delete_moves_tabs_to_default_keeps_edits_and_a_repeat_is_refused() {
 }
 
 #[test]
-fn rename_answers_the_cleaned_name_and_revert_drops_edits_once() {
+fn rename_answers_the_cleaned_name_and_revert_is_refused() {
     let (mut host, mut access, actor) = parts();
     save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
     let value = json!({ "name": "Scalp", "to": " The  open " });
@@ -382,12 +408,22 @@ fn rename_answers_the_cleaned_name_and_revert_drops_edits_once() {
     assert_eq!(same["changed"], false);
 
     edit(&mut host, 1);
-    let reverted = revert(&mut host, &mut access, &actor, &json!({})).unwrap();
-    assert_eq!(reverted["changed"], true);
-    assert_eq!(reverted["workspace"], "The open");
-    assert_eq!(host.shown, [1]);
-    let again = revert(&mut host, &mut access, &actor, &json!({})).unwrap();
-    assert_eq!(again["changed"], false);
+    let before = host.book.clone();
+    let journaled = access.events.len();
+    let refused = revert(&mut host, &mut access, &actor, &json!({})).unwrap_err();
+    assert_eq!(detail(&refused), "workspace.revert_removed");
+    assert!(
+        refused.message.contains("workspace.save_to"),
+        "{}",
+        refused.message
+    );
+    assert!(
+        refused.message.contains("workspace.autosave.set"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(host.book, before, "the edit stays held");
+    assert_eq!(access.events.len(), journaled);
 }
 
 #[test]
@@ -413,9 +449,10 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     set(&mut host, &mut access, &actor, &value).unwrap();
     edit(&mut host, 1);
     save_to(&mut host, &mut access, &actor, &json!({})).unwrap();
-    host.book.observe(2, &WorkspaceRecipe::default()).unwrap();
-    let value = json!({ "tab_id": "2" });
-    revert(&mut host, &mut access, &actor, &value).unwrap();
+    edit(&mut host, 2);
+    let value = json!({ "tab_id": "2", "save": false });
+    close(&mut host, &mut access, &actor, &value).unwrap();
+    autosave_set(&mut host, &mut access, &actor, &json!({ "on": true })).unwrap();
     let value = json!({ "name": "Scalp", "to": "Open" });
     rename(&mut host, &mut access, &actor, &value).unwrap();
     delete(&mut host, &mut access, &actor, &json!({ "name": "Open" })).unwrap();
@@ -423,12 +460,13 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
     for row in READBACKS {
         let kind = row.event.unwrap();
+        let field = row.field.strip_prefix("payload.").unwrap();
         assert!(
             access
                 .events
                 .iter()
                 .filter(|event| event.kind.as_str() == kind)
-                .all(|event| event.payload.get("workspace").is_some()),
+                .all(|event| event.payload.get(field).is_some()),
             "{kind}"
         );
         assert!(
@@ -548,4 +586,106 @@ fn the_new_call_on_a_tab_still_opening_is_refused_retryably() {
     assert_eq!(detail(&error), TAB_NOT_READY_CODE);
     assert_eq!(host.book, before);
     assert_eq!((host.writes, access.events.len()), (0, 0));
+}
+
+/// Turning autosave on writes every held edit at once and the desk once; a
+/// repeat changes nothing.
+#[test]
+fn autosave_on_saves_the_pending_edits_and_a_repeat_is_no_change() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    assert!(host.book.tab_state(1).unwrap().modified);
+    let on = autosave_set(&mut host, &mut access, &actor, &json!({ "on": true })).unwrap();
+    assert_eq!(on["auto_save"], true);
+    assert_eq!(on["changed"], true);
+    assert_eq!(on["saved"][0]["workspace"], DEFAULT_WORKSPACE);
+    assert_eq!(host.desk_writes, [true]);
+    assert!(!host.book.differs(1), "the edit reached its workspace");
+    assert!(!host.book.tab_state(1).unwrap().modified);
+    let again = autosave_set(&mut host, &mut access, &actor, &json!({ "on": true })).unwrap();
+    assert_eq!(
+        (again["changed"].clone(), host.desk_writes.len()),
+        (json!(false), 1)
+    );
+}
+
+/// A desk write that fails takes the choice back and saves nothing.
+#[test]
+fn a_failed_desk_write_keeps_autosave_as_it_was() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    host.write_fails = true;
+    autosave_set(&mut host, &mut access, &actor, &json!({ "on": true })).unwrap_err();
+    assert!(!host.book.autosave());
+    assert!(host.book.tab_state(1).unwrap().modified);
+    assert!(access.events.is_empty());
+}
+
+/// With autosave on an edit never marks, and the write-through saves it.
+#[test]
+fn autosave_on_writes_through_and_never_marks() {
+    let (mut host, mut access, actor) = autosaving();
+    edit(&mut host, 1);
+    assert!(!host.book.tab_state(1).unwrap().modified);
+    assert!(host.book.unsaved_edits(1).is_none());
+    let notes = write_through(&mut host, Some((&mut access, &actor)), &[1]);
+    assert_eq!(
+        notes,
+        ["Default saved \u{b7} SYM2 follows"],
+        "tab 2 follows"
+    );
+    assert!(!host.book.differs(1));
+    assert_eq!(host.writes, 1);
+    let value = json!({ "tab_id": "2", "name": "Default" });
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Solo" })).unwrap();
+    set(&mut host, &mut access, &actor, &value).unwrap();
+    edit(&mut host, 1);
+    let notes = write_through(&mut host, Some((&mut access, &actor)), &[1]);
+    assert!(notes.is_empty(), "no toast without followers: {notes:?}");
+}
+
+/// `tab.close` with edits held and no flag refuses and keeps the tab; `save`
+/// true writes then closes, false closes and the workspace keeps its recipe.
+#[test]
+fn tab_close_refuses_unsaved_edits_then_obeys_the_flag() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    let value = json!({ "tab_id": "1" });
+    let refused = close(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&refused), "workspace.unsaved_edits");
+    let details = refused.context.details.clone().unwrap();
+    assert_eq!(details["workspace"], DEFAULT_WORKSPACE);
+    assert_eq!(details["followers"], json!(["SYM2"]));
+    assert_eq!(host.tabs, [1, 2], "the tab stays open");
+    assert!(access.events.is_empty());
+
+    let value = json!({ "tab_id": "1", "save": true });
+    let closed = close(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(closed["tab_id"], "1");
+    assert_eq!(closed["saved"]["workspace"], DEFAULT_WORKSPACE);
+    assert_eq!(host.closed, [1]);
+    assert_eq!(host.writes, 1);
+}
+
+#[test]
+fn tab_close_without_saving_leaves_the_workspace_as_it_was() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    let before = host.book.recipe(DEFAULT_WORKSPACE).cloned();
+    let value = json!({ "tab_id": "1", "save": false });
+    let closed = close(&mut host, &mut access, &actor, &value).unwrap();
+    assert_eq!(closed["saved"], Value::Null);
+    assert_eq!(host.closed, [1]);
+    assert_eq!(host.writes, 0);
+    assert_eq!(host.book.recipe(DEFAULT_WORKSPACE).cloned(), before);
+}
+
+/// Autosave on: a close never asks; the pending edit is written first.
+#[test]
+fn tab_close_with_autosave_on_never_asks() {
+    let (mut host, mut access, actor) = autosaving();
+    edit(&mut host, 1);
+    let closed = close(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap();
+    assert_eq!(closed["tab_id"], "1");
+    assert_eq!((host.closed.as_slice(), host.writes), ([1].as_slice(), 1));
 }

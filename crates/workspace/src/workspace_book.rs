@@ -402,7 +402,9 @@ impl WorkspaceBook {
     /// Whether the tab's copy differs from its workspace, whatever autosave says.
     #[must_use]
     pub fn differs(&self, tab: u64) -> bool {
-        self.tabs.get(&tab).is_some_and(|state| self.is_modified(state))
+        self.tabs
+            .get(&tab)
+            .is_some_and(|state| self.is_modified(state))
     }
 
     /// What closing the tab would lose: `None` while autosave is on or the tab

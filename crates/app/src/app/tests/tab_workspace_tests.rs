@@ -226,21 +226,29 @@ fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() 
     }
 }
 
+/// The chip names the market the status bar names, and no workspace or mark:
+/// the cell's mark is the snapshot's, with autosave off and an edit held.
 #[test]
 fn chip_and_snapshot_read_one_state() {
     let layouts = crate::scratch::ScratchFile::new("workspace-one-state", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
+    app.runtime.workspace.book.book_mut().set_autosave(false);
     edit_split(&mut app, first, 0.31);
-    let indices = [0, 1];
-    let chips =
-        crate::app::title_bar::chips_of(&app.runtime.tabs, &app.runtime.workspace.book, &indices);
-    for (tab, chip) in [first, second].into_iter().zip(&chips) {
-        let (workspace, modified) = app.tab_workspace_row(tab);
-        assert_eq!(chip.workspace, workspace);
-        assert_eq!(chip.modified, modified);
+    let labels: Vec<String> = crate::app::title_bar::chips_of(&app.runtime.tabs, &[0, 1])
+        .iter()
+        .map(|chip| chip.label.to_owned())
+        .collect();
+    for (index, tab) in [first, second].into_iter().enumerate() {
+        app.runtime.tabs.select(index);
+        let status = app.status_model();
+        let (symbol, venue) = quantick_workspace::arrangement::strip::chip_parts(&labels[index]);
+        assert_eq!(
+            (symbol, venue),
+            (status.symbol.as_str(), status.venue.as_str())
+        );
+        assert_eq!(status.modified, app.tab_workspace_row(tab).1);
     }
-    assert!(chips[0].modified);
-    assert!(!chips[1].modified);
+    assert!(app.tab_workspace_row(first).1 && !app.tab_workspace_row(second).1);
 }
 
 #[test]
@@ -612,26 +620,31 @@ fn a_menu_switch_and_delete_journal_what_the_control_calls_do() {
     assert_eq!(app.runtime.workspace.book.tab_row(tab).0, "Default");
 }
 
-/// The tab chip and the status bar's workspace cell read one row: the same
-/// name and the same edited mark, on a clean tab and on an edited one. Home
-/// shows no cell.
+/// The status bar's workspace cell reads the book's row: the same name and
+/// mark, on a clean tab and on an edited one, and never a mark with autosave
+/// on. Home shows no cell.
 #[test]
 fn chip_and_status_cell_read_one_state() {
     let layouts = crate::scratch::ScratchFile::new("workspace-cell-state", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
     edit_split(&mut app, first, 0.31);
-    let chips: Vec<_> =
-        crate::app::title_bar::chips_of(&app.runtime.tabs, &app.runtime.workspace.book, &[0, 1])
-            .into_iter()
-            .map(|chip| (Some(chip.workspace), chip.modified))
-            .collect();
+    assert!(
+        !app.runtime.workspace.book.tab_row(first).1,
+        "autosave on never marks"
+    );
+    app.runtime.workspace.book.book_mut().set_autosave(false);
+    edit_split(&mut app, first, 0.42);
     for (index, tab) in [first, second].into_iter().enumerate() {
         app.runtime.tabs.select(index);
         assert_eq!(app.runtime.tabs.active_id(), tab);
         let status = app.status_model();
-        assert_eq!((status.workspace, status.modified), chips[index]);
+        let (workspace, modified) = app.runtime.workspace.book.tab_row(tab);
+        assert_eq!(
+            (status.workspace, status.modified),
+            (Some(workspace), modified)
+        );
     }
-    assert!(chips[0].1 && !chips[1].1);
+    assert!(app.runtime.workspace.book.tab_row(first).1);
     let surface = &mut app.chrome.title_bar.surface;
     super::super::home_wiring::show_home(&app.runtime.tabs, surface);
     assert_eq!(app.status_model().workspace, None, "no cell on Home");

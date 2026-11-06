@@ -37,6 +37,7 @@ use crate::timezone::TzOffset;
 use quantick_chart::connection_state::StatusWord;
 use quantick_feed::FeedLatency;
 use quantick_orderflow as orderflow;
+use quantick_session::workspace_menu::WorkspaceCommand;
 
 /// Height of the status line, in pixels (§5 zone 7).
 pub const STATUS_BAR_HEIGHT: f32 = 28.0;
@@ -48,8 +49,10 @@ const CELL_SPACING_PX: f32 = 8.0;
 const DOT_WORD_GAP_PX: f32 = 4.0;
 /// Gap between the workspace cell's name, mark and caret, in pixels.
 const WORKSPACE_GAP_PX: f32 = 4.0;
-/// The mark of a tab holding unsaved workspace edits, as on its chip.
+/// The mark of a tab holding unsaved workspace edits.
 const EDITED_MARK: &str = "\u{2022}";
+/// The Save pill's corner radius: a pill, not a square button.
+const SAVE_PILL_ROUNDING_PX: f32 = 8.0;
 
 /// Replay figures for the provenance section, read from the transport link.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,8 +71,13 @@ pub struct StatusModel {
     /// The tab's workspace, the row its chip reads; `None` on Home, where
     /// the cell is absent.
     pub workspace: Option<String>,
-    /// Whether the tab holds unsaved workspace edits: the amber mark.
+    /// Whether the tab holds unsaved workspace edits: the amber mark and the
+    /// Save pill. Never while `autosave` is on.
     pub modified: bool,
+    /// "auto save layout changes", the checkbox after the cell.
+    pub autosave: bool,
+    /// The keys the Save pill's hover names.
+    pub save_shortcut: egui::KeyboardShortcut,
     /// Display name of the venue (or the session, while replaying).
     pub venue: String,
     /// The streamed symbol.
@@ -245,6 +253,19 @@ pub struct StatusResponse {
     pub workspace_cell: Option<egui::Rect>,
     /// The workspace cell was clicked: it opens and closes its menu.
     pub workspace_clicked: bool,
+    /// The auto save checkbox was flipped to this.
+    pub autosave_set: Option<bool>,
+    /// The cell's Save pill was pressed.
+    pub save_clicked: bool,
+}
+
+impl StatusResponse {
+    /// The workspace calls the cell's checkbox and pill asked for, in order.
+    pub fn workspace_commands(&self) -> impl Iterator<Item = WorkspaceCommand> {
+        let save = self.save_clicked.then_some(WorkspaceCommand::SaveTo);
+        save.into_iter()
+            .chain(self.autosave_set.map(WorkspaceCommand::SetAutosave))
+    }
 }
 
 /// What the feed-state cell, after the workspace cell, shows this frame.
@@ -334,6 +355,19 @@ fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusR
         .on_hover_text(text::CELL_HOVER);
     response.workspace_cell = Some(cell.rect);
     response.workspace_clicked = cell.clicked();
+    if model.modified {
+        let keys = ui.ctx().format_shortcut(&model.save_shortcut);
+        let pill = egui::Button::new(egui::RichText::new(text::SAVE_PILL).color(theme::AMBER))
+            .rounding(SAVE_PILL_ROUNDING_PX);
+        let hover = text::save_pill_hover(workspace, &keys);
+        response.save_clicked = ui.add(pill).on_hover_text(hover).clicked();
+    }
+    let mut on = model.autosave;
+    let label = egui::RichText::new(text::AUTOSAVE_LABEL).color(theme::TEXT_MUTED);
+    let check = ui
+        .checkbox(&mut on, label)
+        .on_hover_text(text::AUTOSAVE_HOVER);
+    response.autosave_set = check.changed().then_some(on);
     ui.separator();
 }
 
@@ -782,6 +816,8 @@ mod tests {
             let model = StatusModel {
                 workspace: None,
                 modified: false,
+                autosave: true,
+                save_shortcut: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S),
                 venue: "Binance".to_owned(),
                 symbol: "BTCUSDT".to_owned(),
                 replay: replaying.then_some(ReplayFigures {
@@ -886,6 +922,8 @@ mod tests {
         let model = StatusModel {
             workspace: None,
             modified: false,
+            autosave: true,
+            save_shortcut: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S),
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,

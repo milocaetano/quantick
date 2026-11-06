@@ -34,7 +34,9 @@ pub enum DocumentEdit {
     ReplayFolder(Option<String>),
     ReplayDayBefore(bool),
     Favorites(Vec<String>),
-    ClearStartup { favorites: Vec<String> },
+    ClearStartup {
+        favorites: Vec<String>,
+    },
 }
 
 /// Private authoritative session state; no collection or flag has a mutable view.

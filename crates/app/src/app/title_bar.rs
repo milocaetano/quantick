@@ -64,11 +64,10 @@ const AGENT_OUTLINE_PX: f32 = 1.0;
 const AGENT_OUTLINE_INSET: egui::Vec2 = egui::vec2(3.0, 5.0);
 const AGENT_TEXT_PX: f32 = 11.0;
 
-/// One chip per tab of this strip. The workspace and its mark read the row the
-/// snapshot reads, so the two cannot disagree.
+/// One chip per tab of this strip: dot, symbol and broker, read off the tab.
+/// The workspace and its mark are the status bar cell's alone.
 pub(super) fn chips_of<'a>(
     tabs: &'a super::arrangement_host::ArrangementHost,
-    workspaces: &quantick_stores::workspaces::WorkspaceBookStore,
     indices: &[usize],
 ) -> Vec<crate::tabstrip::TabChip<'a>> {
     indices
@@ -76,7 +75,6 @@ pub(super) fn chips_of<'a>(
         .map(|index| {
             let tab = &tabs[*index];
             let id = tabs.id_at(*index);
-            let (workspace, modified) = workspaces.tab_row(id);
             crate::tabstrip::TabChip {
                 id,
                 label: tab.chip_label(),
@@ -86,8 +84,6 @@ pub(super) fn chips_of<'a>(
                     tab.feed_connection == quantick_feed::FeedConnectionState::Connected
                         && !tab.needs_attention(),
                 ),
-                workspace,
-                modified,
             }
         })
         .collect()
@@ -96,14 +92,13 @@ pub(super) fn chips_of<'a>(
 pub(crate) fn draw(
     ctx: &egui::Context,
     tabs: &super::arrangement_host::ArrangementHost,
-    workspaces: &quantick_stores::workspaces::WorkspaceBookStore,
     title: &mut TitleBarState,
 ) -> Option<crate::tabstrip::TabAction> {
     resize::draw(ctx);
     let active = tabs.presented_index();
     title.strip.allow_close_last = tabs.plan_close(tabs.active_index()).is_ok();
     let indices: Vec<_> = tabs.window_indices(tabs.windows().presented()).collect();
-    let chips = chips_of(tabs, workspaces, &indices);
+    let chips = chips_of(tabs, &indices);
     if let Some(state) = title.requests.take() {
         send_state(ctx, state);
     }

@@ -58,7 +58,9 @@ pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H, now: Instant) -> Vec<u6
     let store = host.recipe_store_mut();
     let due = store.sync_mut().take_due(now);
     if store.book().autosave() {
-        due.into_iter().filter(|tab| store.book().differs(*tab)).collect()
+        due.into_iter()
+            .filter(|tab| store.book().differs(*tab))
+            .collect()
     } else {
         Vec::new()
     }
@@ -384,11 +386,17 @@ mod tests {
         maintain(&mut host, start);
         maintain(&mut host, start);
         host.shows.split_fraction = Some(0.3);
-        assert!(maintain(&mut host, start).is_empty(), "not inside the second");
-        assert_eq!(host.store.tab_row(7).1, false, "never marked");
+        assert!(
+            maintain(&mut host, start).is_empty(),
+            "not inside the second"
+        );
+        assert!(!host.store.tab_row(7).1, "never marked");
         let due = maintain(&mut host, start + AUTOSAVE_QUIET);
         assert_eq!(due, vec![7]);
-        assert!(maintain(&mut host, start + AUTOSAVE_QUIET * 2).is_empty(), "taken once");
+        assert!(
+            maintain(&mut host, start + AUTOSAVE_QUIET * 2).is_empty(),
+            "taken once"
+        );
     }
 
     /// Autosave off: the edit is held, marked, and nothing is due.
@@ -402,7 +410,7 @@ mod tests {
         host.shows.split_fraction = Some(0.3);
         maintain(&mut host, start);
         assert!(maintain(&mut host, start + AUTOSAVE_QUIET * 3).is_empty());
-        assert_eq!(host.store.tab_row(7).1, true, "the cell's mark");
+        assert!(host.store.tab_row(7).1, "the cell's mark");
         let edits = host.store.book().unsaved_edits(7).expect("closing asks");
         assert_eq!(edits.changes, vec!["panes".to_owned()]);
     }
