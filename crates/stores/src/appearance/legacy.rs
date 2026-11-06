@@ -8,8 +8,9 @@
 //! Dark's fixture is also the unmodified 66aa9abc source, before drawing_profile.
 //! 7ec67e50: exact Light/Dark sources before the independent chart grid color.
 //! d4a42dc1: exact Light/Dark sources before the tab strip, brand and replay tokens.
+//! ab24b5e3: dc9dd4d48a5122ac41e7d7ac40e3a3c0d34882dc (white canvas, slate order flow).
 
-const LIGHT_SOURCES: [&str; 7] = [
+const LIGHT_SOURCES: [&str; 8] = [
     include_str!("legacy-light-e4a9249b.toml"),
     include_str!("legacy-light-e24a42a3.toml"),
     include_str!("legacy-light-8bb894e1.toml"),
@@ -17,6 +18,7 @@ const LIGHT_SOURCES: [&str; 7] = [
     include_str!("legacy-light-90d18edf.toml"),
     include_str!("legacy-light-7ec67e50.toml"),
     include_str!("legacy-light-d4a42dc1.toml"),
+    include_str!("legacy-light-ab24b5e3.toml"),
 ];
 const DARK_SOURCES: [&str; 3] = [
     include_str!("legacy-dark-66aa9abc.toml"),
