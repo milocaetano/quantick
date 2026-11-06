@@ -51,15 +51,19 @@ impl CollapsePlan {
     }
 
     /// Estimated width of the toolbar under this plan. The `⋯` slot is
-    /// always reserved: it appears exactly when something folds, so counting
-    /// it conditionally would make the first fold width-neutral and leave
-    /// the planner skipping straight past it. `trade_width` comes in as a
-    /// parameter: TRADE reserves its open-state width (the toolbar's `W_TRADE`).
-    /// The layout picker sits beside SOURCE and never folds, so it is always
-    /// counted.
+    /// counted only when something folds, because that is when it is drawn.
+    /// Folding PANELS alone trades its icon for `⋯` in the same width, so
+    /// that fold saves nothing and the planner goes on to fold HISTORY with
+    /// it. A tray hidden behind `⋯` for zero pixels gained would be a fold
+    /// the row never needed. `trade_width` comes in as a parameter: TRADE
+    /// reserves its open-state width (the toolbar's `W_TRADE`). The layout
+    /// picker sits beside SOURCE and never folds, so it is always counted.
     #[must_use]
     pub fn width(self, trade_width: f32) -> f32 {
-        let mut width = W_SLACK + W_ICON + W_ICON;
+        let mut width = W_SLACK + W_ICON;
+        if self.overflow_needed() {
+            width += W_ICON;
+        }
         width += if self.feed_full_name {
             W_SOURCE_FULL
         } else {
@@ -161,12 +165,18 @@ mod tests {
         assert_eq!(last_stage, 0, "the sweep must reach the unfolded plan");
     }
 
+    /// PANELS alone would trade its icon for `⋯` and gain nothing, so one
+    /// pixel short of the full plan folds PANELS and HISTORY together.
     #[test]
-    fn panels_fold_first_and_alone_at_a_mildly_tight_width() {
-        // One pixel short of the full plan: exactly PANELS moves to overflow.
+    fn panels_never_fold_alone_for_nothing() {
         let full_width = CollapsePlan::FULL.width(FLAT_TRADE_W);
+        let panels_only = CollapsePlan {
+            panels_inline: false,
+            ..CollapsePlan::FULL
+        };
+        assert_eq!(panels_only.width(FLAT_TRADE_W), full_width);
         let plan = collapse_plan(full_width - 1.0, FLAT_TRADE_W);
-        assert_eq!(stage(plan), Some(1));
+        assert_eq!(stage(plan), Some(2));
         assert!(plan.overflow_needed());
     }
 
@@ -178,8 +188,8 @@ mod tests {
             feed_full_name: false,
             ..CollapsePlan::FULL
         };
-        assert_eq!(CollapsePlan::FULL.width(FLAT_TRADE_W), 764.0);
-        assert_eq!(shrunk.width(FLAT_TRADE_W), 674.0);
+        assert_eq!(CollapsePlan::FULL.width(FLAT_TRADE_W), 736.0);
+        assert_eq!(shrunk.width(FLAT_TRADE_W), 646.0);
     }
 
     #[test]

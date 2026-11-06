@@ -189,7 +189,7 @@ Left, *what am I looking at*:
   replay the group is replaced by the amber session label; you cannot pick a
   venue without closing the recording first (existing behaviour, kept).
 - **LAYOUT** — the layout picker, beside SOURCE. Its face is a miniature of
-  the layout on screen; a hand-arranged row shows the generic layout icon.
+  the layout on screen.
 - **HISTORY** — one `+ older ▾` split button; the page size moves into its
   menu. Gated by the `history_paging` capability.
 
@@ -199,7 +199,8 @@ own header line (§11):
 - **PANELS** — shows/hides the dock; a tray, so it never reads as a second
   layout button.
 - **⋯ overflow** — collapse target; the toolbar never wraps. Collapse order:
-  PANELS → HISTORY → TRADE → feed name shrinks to its initial. Never folded:
+  PANELS → HISTORY → TRADE → feed name shrinks to its initial. PANELS never
+  folds alone, since trading its icon for `⋯` saves no width. Never folded:
   the symbol and LAYOUT.
 
 The appearance dialog (candles, canvas, grid) has no toolbar button: the chart

@@ -721,19 +721,28 @@ mod tests {
 
     use super::*;
 
-    /// With bars, indicators and layers gone from the row, every group fits a
-    /// 1280 px window at TRADE's reserved width. REC needs more: beside it, 1280 px
-    /// folds PANELS into the overflow, and 1920 px folds nothing.
+    /// With bars, indicators and layers gone from the row, every group fits
+    /// the 1100 px first-launch window and a 1280 px one at TRADE's reserved
+    /// width, REC included: the tray stays at the right edge.
     #[test]
     fn nothing_folds_at_the_common_window_widths() {
-        let rec = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX;
+        // What `draw` takes off for REC: the button and the spacing after it.
+        let rec = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX
+            + egui::Spacing::default().item_spacing.x;
         let margins = 16.0;
-        for available in [1280.0 - margins, 1920.0 - margins, 1920.0 - margins - rec] {
-            assert_eq!(collapse_plan(available, W_TRADE), CollapsePlan::FULL);
+        for available in [
+            1100.0 - margins,
+            1280.0 - margins,
+            1280.0 - margins - rec,
+            1920.0 - margins,
+            1920.0 - margins - rec,
+        ] {
+            assert_eq!(
+                collapse_plan(available, W_TRADE),
+                CollapsePlan::FULL,
+                "{available} px"
+            );
         }
-        let with_rec = collapse_plan(1280.0 - margins - rec, W_TRADE);
-        assert!(!with_rec.panels_inline);
-        assert!(with_rec.history_inline && with_rec.trade_inline);
     }
 
     /// Opening a position never changes what folds: at every window width,
