@@ -39,8 +39,8 @@ use quantick_session::{HistoryPagingOff, fmt_history_span};
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 
-/// How far the tray's glyph sits inside its hit target.
-const DOCK_INSET_PX: f32 = (TOOLBAR_ICON.hit - TOOLBAR_ICON.glyph) / 2.0;
+/// How far the tray's ink sits inside its 28 px hit target (12 px measured).
+const DOCK_INSET_PX: f32 = (TOOLBAR_ICON.hit - 12.0) / 2.0;
 /// Gap between the market button and REC, in pixels.
 const MARKET_REC_GAP_PX: f32 = 10.0;
 /// The row's padding: 28 px to the miniature's frame, 12 px after the tray's glyph.
