@@ -3,7 +3,6 @@
 //! `main` is one line in `main.rs`; everything it has to read, refuse or
 //! spawn first lives here, beside the launch inputs it reads.
 
-use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
 use quantick_feed as feed;
@@ -291,9 +290,7 @@ pub(crate) fn run() -> eframe::Result {
             // Chrome glyphs come from the bundled Phosphor icon font; the
             // design tokens point egui's own widgets at the chrome palette.
             // Both are installed once, before the first frame.
-            let mut fonts = egui::FontDefinitions::default();
-            egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-            cc.egui_ctx.set_fonts(fonts);
+            crate::theme::install_fonts(&cc.egui_ctx);
             crate::theme::apply(&cc.egui_ctx);
             let mut app = crate::app::QuantickApp::new_with_workspace(
                 config, feed_id, symbol, spec, feed, workspace, launch,

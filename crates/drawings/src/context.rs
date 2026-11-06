@@ -38,6 +38,8 @@ pub enum ValueUnit<'a> {
 /// that projected them (log-scaled tools compute prices, then project).
 #[derive(Clone, Copy)]
 pub struct DrawContext<'a> {
+    /// Ambient decoration only; authored style and payload stay independent.
+    pub appearance: &'a quantick_appearance::ResolvedTheme,
     pub payload: &'a dyn DrawingPayload,
     pub anchors: &'a [ChartPoint],
     pub scale: &'a PriceScale,

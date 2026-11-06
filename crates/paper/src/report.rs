@@ -21,10 +21,13 @@ use crate::format::sanitize_symbol;
 use quantick_civil::{CivilDate, DAY_MS, DateRange, TzOffset};
 
 pub mod fit;
+pub mod layout;
 pub mod ledger_state;
 pub mod readout;
+pub mod scroll_probe;
 pub mod session_edit;
 pub mod sessions;
+pub mod snapshot;
 
 pub use readout::EquityWalk;
 
@@ -443,3 +446,6 @@ impl ReportView {
 
 #[cfg(test)]
 mod tests;
+
+pub mod calendar;
+pub mod ledger_rows;

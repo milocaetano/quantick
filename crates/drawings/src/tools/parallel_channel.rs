@@ -625,6 +625,7 @@ mod tests {
         ];
         let scale = quantick_chart::geometry::PriceScale::from_range(0.0, 600.0, 0.0, 600.0);
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: &ChannelPayload::default(),
             anchors: &[],
             scale: &scale,

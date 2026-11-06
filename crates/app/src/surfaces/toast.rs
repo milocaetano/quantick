@@ -189,6 +189,7 @@ impl Surface for ToastSurface {
     }
 
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        let palette = theme::get(ctx);
         let id = self.id();
         // Expire first, so the borrow taken below is only ever of a toast that
         // is still on screen.
@@ -217,8 +218,8 @@ impl Surface for ToastSurface {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::none()
-                    .fill(theme::TAG_BG)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .fill(palette.tag_bg())
+                    .stroke(egui::Stroke::new(1.0_f32, palette.border()))
                     .rounding(6.0_f32)
                     .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                     .show(ui, |ui| {

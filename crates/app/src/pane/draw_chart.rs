@@ -1,14 +1,8 @@
 //! The paint frame: [`ChartPane::draw_chart`], the order the layers go down
 //! in, and the stages it runs them through.
 //!
-//! The frame is a staged pipeline. Two opening stages write the pane before
-//! anything borrows its series: [`ChartPane::begin_frame`] (the published
-//! resets, the footprint switch and the ladder snapshot) and
-//! [`ChartPane::lay_out`] (the plot split, the live lane and the viewport
-//! clamp), which returns the frame's geometry as one [`FrameLayout`] value.
-//! [`FrameLayout::resolve`] then borrows the series into the [`DrawFrame`]
-//! every painter reads, and from there on `self.state` stays borrowed for
-//! the whole frame.
+//! [`ChartPane::begin_frame`] resets and snapshots; [`ChartPane::lay_out`] splits
+//! and clamps. [`FrameLayout::resolve`] lends the series to each [`DrawFrame`] painter.
 //!
 //! Under that borrow a step that writes a field cannot be a `&mut self`
 //! method, so each writing stage is an owner type in `frame_stages.rs` —
@@ -56,6 +50,10 @@ impl ChartPane {
         area: egui::Rect,
         chrome: &mut PaneChrome<'_>,
     ) {
+        let _surface = self
+            .orderflow
+            .as_ref()
+            .map(|_| theme::bookmap_scope(painter.ctx()));
         let renderers = self.layer_renderers;
         let mut start = self.begin_frame(painter, area, chrome);
         let flow_execution = self
@@ -66,14 +64,32 @@ impl ChartPane {
         if flow_execution {
             start.candle_aggression = false;
         }
-        let Some(layout) = self.lay_out(area, chrome) else {
-            return;
+        self.frame.axis_metrics = quantick_appearance::AxisMetrics::new(
+            &crate::theme::get(painter.ctx()).resolved.typography,
+        );
+        let layout = self.lay_out(area, chrome);
+        let axes = theme::axes(painter.ctx());
+        let light_flow = self.orderflow.is_some() && !axes.resolved.dark;
+        let fill = |rect, color| painter.rect_filled(rect, egui::Rounding::ZERO, color);
+        let background = if light_flow {
+            axes.canvas()
+        } else {
+            start.canvas_background
         };
-        // The flow pane's time axis stands on the frame's tone: its chart's dark ends at the plot.
-        if self.orderflow.is_some() {
-            let axis = area.with_min_y(layout.areas.time_strip.top());
-            painter.rect_filled(axis, egui::Rounding::ZERO, theme::FLOW_SURFACE);
+        fill(area, background);
+        if let (Some(gutter), Some(strip)) = (self.frame.price_gutter, self.frame.time_strip) {
+            if light_flow {
+                let plot = area
+                    .shrink(crate::plot_area::PLOT_PADDING_PX)
+                    .with_max_x(gutter.left())
+                    .with_max_y(strip.top());
+                fill(plot, start.canvas_background);
+            }
+            if self.orderflow.is_some() && layout.is_some() && !light_flow {
+                fill(area.with_min_y(strip.top()), axes.flow_surface());
+            }
         }
+        let Some(layout) = layout else { return };
         let tape_range = self
             .orderflow
             .as_ref()
@@ -123,8 +139,8 @@ impl ChartPane {
                 state: &self.state,
                 budget: crate::frvp::fold_budget(),
                 prefix: frame.prefix,
-                partial_ladder: live_ladder(&self.footprint),
-                partial_version: self.footprint.live_version,
+                partial_ladder: live_ladder(&self.presentation.footprint),
+                partial_version: self.presentation.footprint.live_version,
                 blocked: start.footprint_blocked,
                 side_inferred: chrome.side_inferred,
                 heat_first_slot,
@@ -139,10 +155,7 @@ impl ChartPane {
             price: price_claims,
             time: time_chip,
         } = self.axis_claims(&frame, chrome);
-        // Gathered once, read twice: the axis stands aside for these just
-        // below, and the same list is what gets painted onto the gutter
-        // further down. Borrowed out of the pane so the container survives
-        // the frame and the next one refills it rather than reallocating.
+        // Share the levels between grid claims and gutter marks; retain the allocation.
         let mut levels = std::mem::take(&mut self.price_axis_levels);
         self.fill_price_axis_levels(&frame, chrome, &mut levels);
 
@@ -159,6 +172,9 @@ impl ChartPane {
                 levels: &levels,
             },
             style: chrome.style,
+            snap_horizontal: !axes.resolved.dark
+                && self.orderflow.is_none()
+                && chrome.style.ownership.grid == quantick_appearance::Inheritance::Theme,
         });
         // The day rule over the grid, under the candles; none in tape-only.
         let day_turns = self.day_turns(&frame, chrome);
@@ -178,7 +194,15 @@ impl ChartPane {
             frame: &frame,
             clip: painter.with_clip_rect(layout.history_rect),
             viewport: &frame.view,
-            dress: CandleDress::resolve(&self.footprint, chrome, start.footprint_paints, frame.cw),
+            dress: CandleDress::resolve(
+                &self.presentation.footprint,
+                chrome,
+                start.footprint_paints,
+                frame.cw,
+                crate::theme::get(frame.painter.ctx())
+                    .footprint_text
+                    .width_scale(),
+            ),
         };
         let mut carved = std::mem::take(&mut self.frame.bands);
         let clear_depth = flow.projected() && depth_visible;
@@ -190,9 +214,8 @@ impl ChartPane {
             self.carve_bands(&layout, &mut carved);
             let price_band = carved.get(..1).unwrap_or_default();
             self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
-            if !flow_execution {
-                renderers.candles(&mut candle_pass);
-            }
+            // Candle fills, outlines and wicks share one pass beneath bubbles.
+            renderers.candles(&mut candle_pass);
             if flow_execution {
                 flow.regional_context(
                     self.orderflow.as_ref(),
@@ -201,7 +224,7 @@ impl ChartPane {
             }
             if start.footprint_paints || start.candle_aggression {
                 history.footprint(
-                    &mut self.footprint,
+                    &mut self.presentation.footprint,
                     &self.state,
                     chrome,
                     depth_visible,
@@ -210,7 +233,6 @@ impl ChartPane {
             }
             if flow_execution {
                 flow.regional_aggressions();
-                renderers.candles(&mut candle_pass);
                 flow.regional_perimeters();
             }
             history.overlay(&self.indicators);
@@ -248,8 +270,6 @@ impl ChartPane {
         let nothing_in_view = nothing_in_view(&frame);
         self.paint_canvas_chrome(&frame, axis_x, nothing_in_view, compass.as_ref(), chrome);
 
-        // The levels' container, back on the pane for the next frame to
-        // refill rather than reallocate.
         self.price_axis_levels = levels;
 
         // Cache the auto range + height for next frame's input handler, which
@@ -260,8 +280,7 @@ impl ChartPane {
         self.frame.chart_top = chart_rect.top();
     }
 
-    /// The frame's opening writes: the values published per frame reset, the
-    /// canvas cleared, and the footprint ladders switched and snapshotted.
+    /// Reset the frame's published values and snapshot the footprint ladders.
     fn begin_frame(
         &mut self,
         painter: &egui::Painter,
@@ -274,7 +293,6 @@ impl ChartPane {
         // says where it is.
         self.frame.area = Some(area);
         let canvas_background = background_color(chrome.style);
-        painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
         // The ladders accumulate only while something consumes them: the
         // footprint layer, or a fixed-range-profile drawing (placed or being
@@ -293,7 +311,7 @@ impl ChartPane {
             self.layer_switched_on(ChartLayer::Bubbles, chrome.style),
             self.layers.requested(ChartLayer::CandleAggression),
         );
-        let footprint_on = ((self.footprint.visible || self.wants_range_profile())
+        let footprint_on = ((self.presentation.footprint.visible || self.wants_range_profile())
             && !footprint_blocked)
             || candle_aggression;
         self.state.set_footprint_enabled(footprint_on);
@@ -323,7 +341,7 @@ impl ChartPane {
             let now = painter.ctx().input(|i| i.time);
             let closed_total = self.history_prefix.len() + self.state.bars().len();
             snapshot_live_ladder(
-                &mut self.footprint,
+                &mut self.presentation.footprint,
                 self.state.partial_footprint(),
                 closed_total,
                 now,
@@ -595,13 +613,14 @@ impl ChartPane {
     /// already says which pane has focus: one accent hairline on the top
     /// edge. Painted after the drawings so a dense band cannot bury it.
     fn paint_band_hint(&self, painter: &egui::Painter) {
+        let palette = theme::get(painter.ctx());
         if let Some(hint) = self.gestures.band_hint {
             painter.line_segment(
                 [
                     egui::pos2(hint.left(), hint.top() + 0.5),
                     egui::pos2(hint.right(), hint.top() + 0.5),
                 ],
-                egui::Stroke::new(1.0_f32, theme::ACCENT),
+                egui::Stroke::new(1.0_f32, palette.accent()),
             );
         }
     }

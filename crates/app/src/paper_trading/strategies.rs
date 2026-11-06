@@ -26,11 +26,12 @@ pub(super) fn draw_strategy_row(
     account: &mut Core,
     editor: &mut StrategyEditor,
 ) -> bool {
+    let palette = theme::get(ui.ctx());
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Strategy")
-                .color(theme::TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         )
         .on_hover_text(
@@ -71,7 +72,7 @@ pub(super) fn draw_strategy_row(
     if let Some(strategy) = account.selected_order_strategy() {
         ui.label(
             egui::RichText::new(strategy.summary())
-                .color(theme::TEXT_SUPPORT)
+                .color(palette.text_support())
                 .small(),
         );
         // An armed ladder that cannot resolve draws nothing on the
@@ -82,7 +83,7 @@ pub(super) fn draw_strategy_row(
         if let Err(error) = strategy.validate() {
             ui.label(
                 egui::RichText::new(format!("not armed - {}", error.advice()))
-                    .color(theme::AMBER)
+                    .color(palette.amber())
                     .small(),
             );
         }
@@ -105,6 +106,7 @@ pub(super) fn draw_strategy_editor(
     account: &mut Core,
     editor: &mut StrategyEditor,
 ) -> bool {
+    let palette = theme::get(ctx);
     if !editor.open {
         return false;
     }
@@ -127,7 +129,7 @@ pub(super) fn draw_strategy_editor(
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.set_min_width(150.0);
-                    ui.label(caption("STRATEGIES"));
+                    ui.label(caption(&palette, "STRATEGIES"));
                     for index in 0..account.order_strategies().len() {
                         let selected = editor.editing == Some(index);
                         let name = account.order_strategies()[index].name.clone();
@@ -175,10 +177,11 @@ pub(super) fn draw_strategy_editor(
 
 /// The open strategy's name and rungs.
 fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usize>) -> bool {
+    let palette = theme::get(ui.ctx());
     let Some(index) = editing else {
         ui.label(
             egui::RichText::new("No strategy yet - New starts one.")
-                .color(theme::TEXT_SUPPORT)
+                .color(palette.text_support())
                 .small(),
         );
         return false;
@@ -188,7 +191,11 @@ fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usi
     };
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Name").color(theme::TEXT_MUTED).small());
+        ui.label(
+            egui::RichText::new("Name")
+                .color(palette.text_muted())
+                .small(),
+        );
         if ui
             .add(egui::TextEdit::singleline(&mut strategy.name).desired_width(200.0))
             .changed()
@@ -200,16 +207,24 @@ fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usi
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Qty %")
-                .color(theme::TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         );
         ui.add_space(38.0);
-        ui.label(egui::RichText::new("Gain").color(theme::TEXT_MUTED).small());
+        ui.label(
+            egui::RichText::new("Gain")
+                .color(palette.text_muted())
+                .small(),
+        );
         ui.add_space(34.0);
-        ui.label(egui::RichText::new("Loss").color(theme::TEXT_MUTED).small());
+        ui.label(
+            egui::RichText::new("Loss")
+                .color(palette.text_muted())
+                .small(),
+        );
         ui.label(
             egui::RichText::new("ticks")
-                .color(theme::TEXT_FAINT)
+                .color(palette.text_faint())
                 .small(),
         );
     });
@@ -261,14 +276,14 @@ fn draw_strategy_rows(ui: &mut egui::Ui, account: &mut Core, editing: Option<usi
         Ok(()) => {
             ui.label(
                 egui::RichText::new("ready - the shares add up")
-                    .color(theme::TEXT_SUPPORT)
+                    .color(palette.text_support())
                     .small(),
             );
         }
         Err(error) => {
             ui.label(
                 egui::RichText::new(error.advice())
-                    .color(theme::AMBER)
+                    .color(palette.amber())
                     .small(),
             );
         }

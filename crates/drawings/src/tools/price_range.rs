@@ -52,6 +52,7 @@ impl MarkTool for PriceRange {
             style,
             points,
             Measured {
+                appearance: ctxt.appearance,
                 anchors: ctxt.anchors,
                 axes: PRICE_ONLY,
                 unit: ctxt.unit,

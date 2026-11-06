@@ -26,6 +26,7 @@ use crate::theme;
 /// WIN RATE, PROFIT FACTOR — each with its denominator under it, so every
 /// tile is a self-explaining fact rather than a floating statistic.
 pub(super) fn draw_report_tiles(ui: &mut egui::Ui, view: &ReportView) {
+    let palette = theme::get(ui.ctx());
     let report = &view.report;
     let width = ((ui.available_width() - 2.0 * TILE_GUTTER_PX) / 3.0).max(80.0);
     ui.horizontal(|ui| {
@@ -36,7 +37,7 @@ pub(super) fn draw_report_tiles(ui: &mut egui::Ui, view: &ReportView) {
             "NET",
             view.net_text.0.clone(),
             "",
-            points_color(view.net_tint),
+            points_color(&palette, view.net_tint),
             format!("{} trades · {}", report.trades, view.net_text.1),
         );
         draw_tile(
@@ -47,7 +48,7 @@ pub(super) fn draw_report_tiles(ui: &mut egui::Ui, view: &ReportView) {
                 .win_rate_pct
                 .map_or_else(|| "—".to_owned(), |rate| fmt_decimal(rate.round_dp(0))),
             "%",
-            theme::TEXT_PRIMARY,
+            palette.text_primary(),
             format!(
                 "{} W · {} L · {} scratch",
                 report.wins, report.losses, report.scratches
@@ -61,7 +62,7 @@ pub(super) fn draw_report_tiles(ui: &mut egui::Ui, view: &ReportView) {
                 .profit_factor
                 .map_or_else(|| "—".to_owned(), fmt_points),
             "",
-            theme::TEXT_PRIMARY,
+            palette.text_primary(),
             format!(
                 "+{} / -{}",
                 fmt_points(report.gross_profit),
@@ -81,31 +82,42 @@ fn draw_tile(
     value_color: egui::Color32,
     subline: String,
 ) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TILE_HEIGHT_PX), egui::Sense::hover());
+    let palette = theme::get(ui.ctx());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, palette.layout(TILE_HEIGHT_PX)),
+        egui::Sense::hover(),
+    );
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let painter = ui.painter();
-    painter.rect_filled(rect, egui::Rounding::same(4.0), theme::INSET);
+    response.on_hover_text(format!("{label}: {value}{unit} ? {subline}"));
+    let painter = &ui.painter().with_clip_rect(rect);
+    let room = (rect.width() - 24.0).max(0.0);
+    painter.rect_filled(rect, egui::Rounding::same(4.0), palette.inset());
     painter.rect_stroke(
         rect,
         egui::Rounding::same(4.0),
-        egui::Stroke::new(1.0_f32, theme::BORDER),
+        egui::Stroke::new(1.0_f32, palette.border()),
     );
-    painter.text(
-        rect.min + egui::vec2(12.0, 6.0),
+    theme::text_fitted(
+        painter,
+        rect.min + egui::vec2(12.0, palette.layout(6.0)),
         egui::Align2::LEFT_TOP,
         label,
-        egui::FontId::monospace(10.0),
-        theme::TEXT_FAINT,
+        palette.mono_font(10.0),
+        palette.text_faint(),
+        room,
     );
-    let value_galley = painter.layout_no_wrap(
-        value,
-        egui::FontId::monospace(HEADLINE_FONT_PX),
-        value_color,
+    let value = elide_to_width(
+        &value,
+        room - text_width(painter, unit, &palette.mono_font(11.0))
+            - if unit.is_empty() { 0.0 } else { 4.0 },
+        |text| text_width(painter, text, &palette.mono_font(HEADLINE_FONT_PX)),
     );
+    let value_galley =
+        painter.layout_no_wrap(value, palette.mono_font(HEADLINE_FONT_PX), value_color);
     let value_w = value_galley.size().x;
-    let baseline = rect.top() + 38.0;
+    let baseline = rect.top() + palette.layout(38.0);
     painter.galley(
         egui::pos2(rect.left() + 12.0, baseline - value_galley.size().y),
         value_galley,
@@ -116,38 +128,25 @@ fn draw_tile(
             egui::pos2(rect.left() + 12.0 + value_w + 4.0, baseline - 2.0),
             egui::Align2::LEFT_BOTTOM,
             unit,
-            egui::FontId::monospace(11.0),
-            theme::TEXT_MUTED,
+            palette.mono_font(11.0),
+            palette.text_muted(),
         );
     }
-    painter.text(
-        egui::pos2(rect.left() + 12.0, rect.bottom() - 6.0),
+    theme::text_fitted(
+        painter,
+        egui::pos2(rect.left() + 12.0, rect.bottom() - palette.layout(6.0)),
         egui::Align2::LEFT_BOTTOM,
         subline,
-        egui::FontId::monospace(10.0),
-        theme::TEXT_FAINT,
+        palette.mono_font(10.0),
+        palette.text_faint(),
+        room,
     );
 }
 
 /// The trade list's columns: caption and width in pixels, in paint order.
 /// One table, so the header row and every trade row can only ever agree
 /// about where a column begins.
-const TRADE_LIST_COLUMNS: [(&str, f32); 11] = [
-    ("#", 38.0),
-    ("DATE", 70.0),
-    ("TIME", 58.0),
-    ("SYMBOL", 66.0),
-    ("SIDE", 56.0),
-    ("ENTRY → EXIT", 122.0),
-    ("HELD", 52.0),
-    ("EXIT", 74.0),
-    ("P&L", 196.0),
-    ("EQUITY", 96.0),
-    // Not a hover: under Source "Both" a practice trade and a real one
-    // are otherwise the same row, and a replay result readable as a real
-    // one is the worst thing this window could do.
-    ("SOURCE", 58.0),
-];
+use quantick_paper::report::layout::TRADE_LIST_COLUMNS;
 
 /// One trade-list row's height. Tight on purpose: this is a table to scan,
 /// not a list to browse.
@@ -164,9 +163,11 @@ fn trade_list_width() -> f32 {
 /// Paint one row of cells on the shared column grid, each cut to its own
 /// column rather than allowed to run into the next one.
 fn paint_list_row(painter: &egui::Painter, rect: egui::Rect, cells: &[(String, egui::Color32)]) {
-    let font = egui::FontId::monospace(10.0);
+    let palette = theme::get(painter.ctx());
+    let font = palette.mono_font(10.0);
     let mut x = rect.left();
     for ((text, color), (_, width)) in cells.iter().zip(TRADE_LIST_COLUMNS) {
+        let width = palette.layout(width);
         let room = width - 2.0 * TRADE_LIST_CELL_PAD_PX;
         painter.text(
             egui::pos2(x + TRADE_LIST_CELL_PAD_PX, rect.center().y),
@@ -189,12 +190,13 @@ fn paint_list_row(painter: &egui::Painter, rect: egui::Rect, cells: &[(String, e
 /// can be thousands of trades — and only the rows on screen are ever laid
 /// out. Returns whether the section's collapse control was clicked.
 pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
+    let palette = theme::get(ui.ctx());
     let mut toggled = false;
     ui.horizontal(|ui| {
-        ui.label(caption("TRADES BEHIND THIS CURVE"));
+        ui.label(caption(&palette, "TRADES BEHIND THIS CURVE"));
         ui.label(
             egui::RichText::new(format!("{}", view.rows.len()))
-                .color(theme::TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -219,13 +221,13 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
     if !open {
         return toggled;
     }
-    let width = trade_list_width();
+    let width = palette.layout(trade_list_width());
     // Wide by nature — ten columns of facts — and long by nature too. It
     // scrolls both ways inside a bounded strip rather than pushing the
     // window wider, clipping a number in half, or growing until the metric
     // grids beneath it are out of reach. Row zero is the header, so it
     // rides the same column grid and the same horizontal scroll.
-    egui::ScrollArea::both()
+    let _viewport = egui::ScrollArea::both()
         .id_salt("paper_report_trade_list")
         .max_height(REPORT_LIST_MAX_H_PX)
         // Vertically it shrinks to its content: a five-trade window must
@@ -233,12 +235,12 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
         .auto_shrink([false, true])
         .show_rows(
             ui,
-            REPORT_LIST_ROW_H_PX,
+            palette.layout(REPORT_LIST_ROW_H_PX),
             view.rows.len() + 1,
             |ui, range| {
                 for index in range {
                     let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(width, REPORT_LIST_ROW_H_PX),
+                        egui::vec2(width, palette.layout(REPORT_LIST_ROW_H_PX)),
                         egui::Sense::hover(),
                     );
                     if !ui.is_rect_visible(rect) {
@@ -247,7 +249,7 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                     if index == 0 {
                         let cells: Vec<(String, egui::Color32)> = TRADE_LIST_COLUMNS
                             .iter()
-                            .map(|(label, _)| ((*label).to_owned(), theme::TEXT_FAINT))
+                            .map(|(label, _)| ((*label).to_owned(), palette.text_faint()))
                             .collect();
                         paint_list_row(ui.painter(), rect, &cells);
                         ui.painter().line_segment(
@@ -255,7 +257,7 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                                 egui::pos2(rect.left(), rect.bottom()),
                                 egui::pos2(rect.right(), rect.bottom()),
                             ],
-                            egui::Stroke::new(1.0_f32, theme::BORDER),
+                            egui::Stroke::new(1.0_f32, palette.border()),
                         );
                         continue;
                     }
@@ -272,27 +274,27 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                         .unwrap_or(Decimal::ZERO);
                     if response.hovered() {
                         ui.painter()
-                            .rect_filled(rect, egui::Rounding::ZERO, theme::BORDER);
+                            .rect_filled(rect, egui::Rounding::ZERO, palette.border());
                     } else if ordinal % 2 == 1 {
                         ui.painter()
-                            .rect_filled(rect, egui::Rounding::ZERO, theme::INSET);
+                            .rect_filled(rect, egui::Rounding::ZERO, palette.inset());
                     }
-                    let muted = theme::TEXT_MUTED;
+                    let muted = palette.text_muted();
                     let cells = [
-                        (format!("{}", ordinal + 1), theme::TEXT_FAINT),
+                        (format!("{}", ordinal + 1), palette.text_faint()),
                         (
                             CivilDate::from_ms(trade.closed_ms, view.tz).iso(),
-                            theme::TEXT_PRIMARY,
+                            palette.text_primary(),
                         ),
                         (crate::plot_area::fmt_time(trade.closed_ms, view.tz), muted),
-                        (row.symbol.clone(), theme::TEXT_PRIMARY),
+                        (row.symbol.clone(), palette.text_primary()),
                         (
                             format!(
                                 "{} {}",
                                 position_word(trade.side),
                                 fmt_decimal(trade.quantity)
                             ),
-                            theme::side_color(trade.side),
+                            palette.side_color(trade.side),
                         ),
                         (
                             format!(
@@ -309,20 +311,20 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                         (trade.exit_reason.as_str().replace('_', " "), muted),
                         (
                             view.trade_text(ordinal).to_owned(),
-                            points_color(trade.pnl_points),
+                            points_color(&palette, trade.pnl_points),
                         ),
-                        (view.equity.text(index), points_color(equity)),
+                        (view.equity.text(index), points_color(&palette, equity)),
                         match row.source {
                             Some(history::SessionSource::Live) => {
-                                ("live".to_owned(), theme::TEXT_FAINT)
+                                ("live".to_owned(), palette.text_faint())
                             }
                             Some(history::SessionSource::Replay) => {
-                                ("replay".to_owned(), theme::WARN)
+                                ("replay".to_owned(), palette.warn())
                             }
                             // Unrecorded is not "live": a file from before
                             // the source line existed says so with a mark
                             // that reads as absence, never as a fact.
-                            None => ("—".to_owned(), theme::TEXT_FAINT),
+                            None => ("—".to_owned(), palette.text_faint()),
                         },
                     ];
                     paint_list_row(ui.painter(), rect, &cells);
@@ -351,6 +353,13 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
             },
         );
     ui.add_space(6.0);
+    #[cfg(any(feature = "scenario-harness", test))]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new("report_trade_viewport"),
+            _viewport.inner_rect.intersect(ui.clip_rect()),
+        )
+    });
     toggled
 }
 
@@ -358,6 +367,7 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
 /// blanks (`—`) where a ratio has no denominator. Every value here has a
 /// structurally fixed sign, so none of them is coloured.
 pub(super) fn draw_report_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
+    let palette = theme::get(ui.ctx());
     let blank = || "—".to_owned();
     let pts = |value: Decimal| format!("{} pts", fmt_points(value));
     let opt_pts = |value: Option<Decimal>| {
@@ -370,7 +380,7 @@ pub(super) fn draw_report_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
         .spacing([16.0, 4.0])
         .show(ui, |ui| {
             let mut row = |label: &str, value: String, explain: &str| {
-                ui.label(egui::RichText::new(label).color(theme::TEXT_MUTED))
+                ui.label(egui::RichText::new(label).color(palette.text_muted()))
                     .on_hover_text(explain.to_owned());
                 ui.label(value);
                 ui.end_row();
@@ -498,8 +508,9 @@ pub(super) fn draw_report_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
 
 /// Long and short, side by side, with the core metrics in each column.
 pub(super) fn draw_side_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
+    let palette = theme::get(ui.ctx());
     ui.add_space(8.0);
-    ui.label(caption("LONG VS SHORT"));
+    ui.label(caption(&palette, "LONG VS SHORT"));
     fn opt_plain(value: Option<Decimal>) -> String {
         value.map_or_else(|| "—".to_owned(), fmt_points)
     }
@@ -534,11 +545,11 @@ pub(super) fn draw_side_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
         .spacing([16.0, 4.0])
         .show(ui, |ui| {
             ui.label("");
-            ui.label(egui::RichText::new("LONG").color(theme::BUY).small());
-            ui.label(egui::RichText::new("SHORT").color(theme::SELL).small());
+            ui.label(egui::RichText::new("LONG").color(palette.buy()).small());
+            ui.label(egui::RichText::new("SHORT").color(palette.sell()).small());
             ui.end_row();
             for (label, value_of) in &side_rows {
-                ui.label(egui::RichText::new(*label).color(theme::TEXT_MUTED));
+                ui.label(egui::RichText::new(*label).color(palette.text_muted()));
                 ui.label(value_of(&report.long));
                 ui.label(value_of(&report.short));
                 ui.end_row();
@@ -548,11 +559,12 @@ pub(super) fn draw_side_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
 
 /// How trades that left one way performed — count and net per exit reason.
 pub(super) fn draw_exit_reason_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
+    let palette = theme::get(ui.ctx());
     if report.by_exit_reason.is_empty() {
         return;
     }
     ui.add_space(8.0);
-    ui.label(caption("BY EXIT REASON"));
+    ui.label(caption(&palette, "BY EXIT REASON"));
     egui::Grid::new("paper_report_reasons")
         .num_columns(3)
         .spacing([16.0, 4.0])
@@ -560,7 +572,7 @@ pub(super) fn draw_exit_reason_grid(ui: &mut egui::Ui, report: &PerformanceRepor
             for reason in &report.by_exit_reason {
                 ui.label(
                     egui::RichText::new(reason.reason.as_str().replace('_', " "))
-                        .color(theme::TEXT_MUTED),
+                        .color(palette.text_muted()),
                 );
                 ui.label(format!("{} trade(s)", reason.trades));
                 ui.label(format!("{} pts", fmt_signed_points(reason.net_points)));

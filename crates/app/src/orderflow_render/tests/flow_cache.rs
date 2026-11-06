@@ -109,7 +109,10 @@ fn tick_spheres_stand_on_their_executions() {
             geometry(),
             crate::theme::CANVAS,
             None,
-            Some((tick, quantick_orderflow::HeatmapTheme::default())),
+            Some((
+                tick,
+                quantick_orderflow::config::theme::PaletteChoice::default(),
+            )),
         ));
     });
     let drawing = drawn.unwrap();
@@ -144,6 +147,7 @@ fn key(frame: &Arc<FlowTapeFrame>) -> Key<'_> {
         tick: None,
         background: crate::theme::CANVAS,
         density: None,
+        appearance: 0,
     }
 }
 
@@ -173,6 +177,7 @@ fn paint_at_density(
             .layer_painter(egui::LayerId::background())
             .with_clip_rect(key.clip);
         let actual = Key {
+            appearance: Arc::as_ptr(&crate::theme::get(ctx)) as usize,
             clip: history().intersect(painter.clip_rect()),
             density: key.tick.map(|_| pixels_per_point.to_bits()),
             ..key
@@ -233,7 +238,7 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
             label_min_radius: 8.0,
             opacity: 0.9,
         },
-        quantick_orderflow::HeatmapTheme::default(),
+        quantick_orderflow::config::theme::PaletteChoice::default(),
     ));
     let (sphere, shapes) = paint(&ctx, styled);
     let (warm, repeated) = paint(&ctx, styled);
@@ -280,7 +285,10 @@ fn viewport_tick_mesh_and_readback_follow_the_current_camera_before_worker_publi
         opacity: 0.9,
     };
     let mut a = key(&frame);
-    a.tick = Some((style, quantick_orderflow::HeatmapTheme::default()));
+    a.tick = Some((
+        style,
+        quantick_orderflow::config::theme::PaletteChoice::default(),
+    ));
     let (first, first_shapes) = paint(&ctx, a);
     let first_draw = first.mesh.get().unwrap();
     let first_frame = first_draw.viewport_frame.as_ref().unwrap();
@@ -371,12 +379,17 @@ fn tick_spheres_follow_the_pane_theme() {
             label_min_radius: 8.0,
             opacity: 1.0,
         },
-        quantick_orderflow::HeatmapTheme::default(),
+        quantick_orderflow::config::theme::PaletteChoice::default(),
     ));
     let blind = Key {
-        tick: bookmap
-            .tick
-            .map(|(style, _)| (style, quantick_orderflow::HeatmapTheme::ColorBlind)),
+        tick: bookmap.tick.map(|(style, _)| {
+            (
+                style,
+                quantick_orderflow::config::theme::PaletteChoice::Historical(
+                    quantick_orderflow::HeatmapTheme::ColorBlind,
+                ),
+            )
+        }),
         ..bookmap
     };
     let (default_entry, default_shapes) = paint(&ctx, bookmap);
@@ -751,4 +764,72 @@ fn a_resize_leaves_no_last_painted_slot_per_frame_behind() {
         slots.push(ctx.data(|data| data.len()));
     }
     assert_eq!(slots[4], slots[23], "temp data per frame: {slots:?}");
+}
+
+#[test]
+fn appearance_changes_rebuild_meshes_but_retries_and_rejected_changes_reuse_them() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let mut appearance = quantick_appearance::Appearance::default();
+    crate::theme::sync(&ctx, &appearance);
+    let (dark, dark_shapes) = paint(&ctx, key(&frame));
+    appearance
+        .apply("version = 1\nname = 'Flow'\n[colors]\nflow_buy = '#A04080'")
+        .unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    let (changed, changed_shapes) = paint(&ctx, key(&frame));
+    assert!(!Arc::ptr_eq(&dark, &changed));
+    assert_ne!(dark_shapes, changed_shapes);
+    assert_eq!(
+        dark.mesh.get().unwrap().plan,
+        changed.mesh.get().unwrap().plan
+    );
+    crate::theme::sync(&ctx, &appearance);
+    let (warm, warm_shapes) = paint(&ctx, key(&frame));
+    assert!(Arc::ptr_eq(&changed, &warm));
+    assert_eq!(changed_shapes, warm_shapes);
+    assert!(appearance.apply("version = 99\nname = 'Rejected'").is_err());
+    crate::theme::sync(&ctx, &appearance);
+    assert!(Arc::ptr_eq(&changed, &paint(&ctx, key(&frame)).0));
+    appearance.apply("version = 1\nname = 'Font'\n[colors]\nflow_buy = '#A04080'\n[typography.chart_label]\nsize = 22\nfamily = 'monospace'").unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    let (font, _) = paint(&ctx, key(&frame));
+    assert!(!Arc::ptr_eq(&changed, &font));
+    assert!(Arc::ptr_eq(&font, &paint(&ctx, key(&frame)).0));
+}
+
+#[test]
+fn tick_separator_palette_changes_rebuild_cached_meshes_and_keep_snapshots() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let mut appearance = quantick_appearance::Appearance::default();
+    crate::theme::sync(&ctx, &appearance);
+    let mut k = key(&frame);
+    k.tick = Some((
+        quantick_orderflow::TickBubbleStyle {
+            viewport_scale: None,
+            reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+            reference_quantity: 9000.0,
+            max_radius: 12.0,
+            label_min_radius: 8.0,
+            opacity: 0.9,
+        },
+        quantick_orderflow::config::theme::PaletteChoice::Inherited,
+    ));
+    let (dark, dark_shapes) = paint(&ctx, k);
+    appearance
+        .apply("version=1\nname='separator'\n[orderflow.colors]\nseparator='#FF00CCAA'")
+        .unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    let (changed, shapes) = paint(&ctx, k);
+    assert!(!Arc::ptr_eq(&dark, &changed));
+    assert_ne!(dark_shapes, shapes);
+    assert!(Arc::ptr_eq(&changed, &paint(&ctx, k).0));
+    let snapshot = appearance.resolved().orderflow;
+    k.tick.as_mut().unwrap().1 =
+        quantick_orderflow::config::theme::PaletteChoice::Snapshot(snapshot);
+    let (_, saved_shapes) = paint(&ctx, k);
+    appearance.apply(quantick_appearance::DARK).unwrap();
+    crate::theme::sync(&ctx, &appearance);
+    assert_eq!(saved_shapes, paint(&ctx, k).1);
 }

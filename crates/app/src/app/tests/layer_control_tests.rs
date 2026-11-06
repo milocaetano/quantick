@@ -55,8 +55,12 @@ fn additive_layer_traverses_discovery_admission_and_common_operation() {
     assert_eq!(error_code(&stale), Some(codes::INVALID_REQUEST));
     let payload = layer_input(&app, "grid", false);
     let (grid, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
-    assert_eq!(success_result(&grid)["layer"]["scope"], "window");
-    assert!(!app.runtime.style.canvas.grid_enabled);
+    assert_eq!(success_result(&grid)["layer"]["scope"], "pane");
+    assert!(
+        !app.active_tab()
+            .flow_pane
+            .layer_switched_on(ChartLayer::Grid, &app.runtime.style)
+    );
     let payload = layer_input(&app, "tape_chart", false);
     let (off, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
     assert!(matches!(off.outcome, ResponseOutcome::Success { .. }));

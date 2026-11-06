@@ -45,34 +45,9 @@ pub const DEFAULT_CANDLE_GAP: f32 = 2.0;
 /// worse than a bar touching its neighbour, so the gap yields before the body.
 pub const MIN_BODY_WIDTH_PX: f32 = 1.0;
 
-/// An 8-bit RGBA colour with its colour channels premultiplied by alpha — the
-/// byte layout a GPU painter stores, kept here without the painter's type.
-///
-/// Opaque colours read as plain RGB. A translucent one is premultiplied: the
-/// conversion from straight alpha is the renderer's (it is gamma-aware), so
-/// this type never performs it and only carries the bytes it was given.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PremultipliedRgba([u8; 4]);
-
-impl PremultipliedRgba {
-    /// An opaque colour.
-    #[must_use]
-    pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
-        Self([r, g, b, 255])
-    }
-
-    /// Already-premultiplied channels, in `[r, g, b, a]` order.
-    #[must_use]
-    pub const fn from_premultiplied(rgba: [u8; 4]) -> Self {
-        Self(rgba)
-    }
-
-    /// The premultiplied channels, in `[r, g, b, a]` order.
-    #[must_use]
-    pub const fn to_array(self) -> [u8; 4] {
-        self.0
-    }
-}
+pub use quantick_appearance::PremultipliedRgba;
+mod provenance;
+pub use provenance::{ChartColorOwnership, ChartThemeSync};
 
 const DEFAULT_BACKGROUND: [u8; 3] = [19, 23, 34];
 const DEFAULT_GRID: [u8; 3] = [35, 41, 54];
@@ -515,6 +490,8 @@ impl Default for CanvasStyle {
 /// Complete chart appearance, keeping candle and canvas concerns separate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChartStyle {
+    /// Per-field provenance; geometry and visibility are always authored.
+    pub ownership: ChartColorOwnership,
     /// Candle-specific appearance.
     pub candles: CandleStyle,
     /// Background and grid appearance.
@@ -524,6 +501,7 @@ pub struct ChartStyle {
 impl Default for ChartStyle {
     fn default() -> Self {
         Self {
+            ownership: ChartColorOwnership::inherited(),
             candles: CandlePreset::OrderFlow.style(),
             canvas: CanvasStyle::default(),
         }

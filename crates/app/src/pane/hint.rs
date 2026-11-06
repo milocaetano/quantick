@@ -19,8 +19,6 @@ pub const HINT_PAD_Y_PX: f32 = 3.0;
 
 pub const HINT_RADIUS_PX: f32 = 3.0;
 
-pub const HINT_PLATE: egui::Color32 = egui::Color32::from_rgba_premultiplied(14, 18, 26, 216);
-
 /// Tell the trader what the next click does, beside the cursor.
 ///
 /// A tool that knows says so in words (`placement_hint`); one that does not
@@ -34,6 +32,7 @@ pub fn paint_placement_hint(
     tool: drawings::DrawingTool,
     placed: usize,
 ) {
+    let palette = theme::get(painter.ctx());
     let required = tool.required_points();
     if required < 2 || placed == 0 || placed >= required {
         return;
@@ -43,8 +42,8 @@ pub fn paint_placement_hint(
         .map_or_else(|| format!("{placed}/{required}"), str::to_owned);
     let galley = painter.layout_no_wrap(
         text,
-        egui::FontId::proportional(HINT_TEXT_PX),
-        theme::TEXT_PRIMARY,
+        palette.label_font(HINT_TEXT_PX),
+        palette.text_primary(),
     );
     let size = galley.size() + egui::vec2(2.0 * HINT_PAD_X_PX, 2.0 * HINT_PAD_Y_PX);
     // Flip to the other side of the cursor rather than let the chip leave the
@@ -57,10 +56,14 @@ pub fn paint_placement_hint(
         min.y = cursor.y - HINT_CURSOR_OFFSET_PX.y - size.y;
     }
     let plate = egui::Rect::from_min_size(min, size);
-    painter.rect_filled(plate, egui::Rounding::same(HINT_RADIUS_PX), HINT_PLATE);
+    painter.rect_filled(
+        plate,
+        egui::Rounding::same(HINT_RADIUS_PX),
+        palette.drawing_readout_plate(),
+    );
     painter.galley(
         plate.min + egui::vec2(HINT_PAD_X_PX, HINT_PAD_Y_PX),
         galley,
-        theme::TEXT_PRIMARY,
+        palette.text_primary(),
     );
 }

@@ -28,13 +28,20 @@ fn popup_id(ui: &egui::Ui) -> egui::Id {
 }
 
 /// The button's colours for a state: (fill, ink, border).
-fn palette(state: RecState) -> (egui::Color32, egui::Color32, egui::Color32) {
+fn rec_palette(
+    palette: &crate::theme::Palette,
+    state: RecState,
+) -> (egui::Color32, egui::Color32, egui::Color32) {
     match state {
-        RecState::Recording => (theme::REC, theme::CHIP_INK, theme::REC),
-        RecState::Stale => (theme::AMBER, theme::CHIP_INK, theme::AMBER),
-        RecState::Off => (theme::CONTROL, theme::TEXT_MUTED, theme::BORDER),
-        RecState::Recorded => (theme::CONTROL, theme::TEXT_MUTED, theme::TEXT_FAINT),
-        RecState::Unsupported => (theme::CONTROL, theme::TEXT_FAINT, theme::BORDER),
+        RecState::Recording => (palette.rec(), palette.chip_ink(), palette.rec()),
+        RecState::Stale => (palette.amber(), palette.chip_ink(), palette.amber()),
+        RecState::Off => (palette.control(), palette.text_muted(), palette.border()),
+        RecState::Recorded => (
+            palette.control(),
+            palette.text_muted(),
+            palette.text_faint(),
+        ),
+        RecState::Unsupported => (palette.control(), palette.text_faint(), palette.border()),
     }
 }
 
@@ -49,12 +56,13 @@ pub fn draw_button(
     pane_kind: impl Into<&'static BarDefinition>,
     request_open: bool,
 ) -> Option<DealRecordingAction> {
+    let palette = theme::get(ui.ctx());
     let pane_kind = pane_kind.into();
     if !view.supported() {
         return None;
     }
     let mut action = None;
-    let (fill, ink, border) = palette(view.state);
+    let (fill, ink, border) = rec_palette(&palette, view.state);
     let text = egui::RichText::new(view.button_label()).color(ink).strong();
     let button = ui
         .add(
@@ -93,6 +101,7 @@ fn draw_popover(
     pane_kind: impl Into<&'static BarDefinition>,
     action: &mut Option<DealRecordingAction>,
 ) {
+    let palette = theme::get(ui.ctx());
     let pane_kind = pane_kind.into();
     ui.label(egui::RichText::new(view.headline()).strong());
     ui.label(
@@ -100,7 +109,7 @@ fn draw_popover(
             "MetaTrader reports the exchange's own deal counter. quantick reads it every \
              poll and cuts a trades bar every N deals — where ProfitChart's Trades chart cuts.",
         )
-        .color(theme::TEXT_MUTED)
+        .color(palette.text_muted())
         .small(),
     );
     ui.add_space(4.0);
@@ -109,7 +118,7 @@ fn draw_popover(
         .spacing([12.0, 2.0])
         .show(ui, |ui| {
             let row = |ui: &mut egui::Ui, key: &str, value: String| {
-                ui.label(egui::RichText::new(key).color(theme::TEXT_MUTED));
+                ui.label(egui::RichText::new(key).color(palette.text_muted()));
                 ui.label(egui::RichText::new(value).monospace());
                 ui.end_row();
             };
@@ -160,7 +169,7 @@ fn draw_popover(
                 .into_iter()
                 .rev()
                 .collect();
-            ui.label(egui::RichText::new("folder").color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new("folder").color(palette.text_muted()));
             ui.label(egui::RichText::new(format!("…/{}", tail.join("/"))).monospace())
                 .on_hover_text(view.dir.display().to_string());
             ui.end_row();
@@ -175,7 +184,7 @@ fn draw_popover(
             );
         });
     if let Some(error) = &view.error {
-        ui.label(egui::RichText::new(error).color(theme::WARN).small());
+        ui.label(egui::RichText::new(error).color(palette.warn()).small());
     }
     ui.add_space(4.0);
     ui.label(
@@ -183,7 +192,7 @@ fn draw_popover(
             "Prints before the recording started have no deal count and form no trades \
              bar. Days you did not record open as tick or time only.",
         )
-        .color(theme::TEXT_MUTED)
+        .color(palette.text_muted())
         .small(),
     );
     ui.add_space(6.0);
@@ -192,7 +201,7 @@ fn draw_popover(
             RecState::Recording | RecState::Stale => {
                 if ui
                     .add(egui::Button::new(
-                        egui::RichText::new("Stop recording").color(theme::WARN),
+                        egui::RichText::new("Stop recording").color(palette.warn()),
                     ))
                     .clicked()
                 {
@@ -205,10 +214,10 @@ fn draw_popover(
                     .add(
                         egui::Button::new(
                             egui::RichText::new("Start recording")
-                                .color(theme::CHIP_INK)
+                                .color(palette.chip_ink())
                                 .strong(),
                         )
-                        .fill(theme::REC),
+                        .fill(palette.rec()),
                     )
                     .clicked()
                 {
@@ -220,7 +229,7 @@ fn draw_popover(
                 ui.label(
                     egui::RichText::new("no deal counter on this source yet")
                         .small()
-                        .color(theme::TEXT_MUTED),
+                        .color(palette.text_muted()),
                 )
                 .on_hover_text("a recorded day still opens from the list below");
             }
@@ -241,7 +250,7 @@ fn draw_popover(
         ui.label(
             egui::RichText::new("RECORDED DAYS")
                 .small()
-                .color(theme::TEXT_MUTED),
+                .color(palette.text_muted()),
         );
         draw_days(ui, view, action);
     }
@@ -257,6 +266,7 @@ pub fn draw_days(
     view: &RecordingView,
     action: &mut Option<DealRecordingAction>,
 ) {
+    let palette = theme::get(ui.ctx());
     for (index, day) in view.days.iter().enumerate() {
         let loaded = view.loaded_days.contains(&day.day);
         let recording_now = view.path.as_deref() == Some(day.path.as_path());
@@ -272,9 +282,9 @@ pub fn draw_days(
                     .monospace()
                     .small()
                     .color(if loaded || recording_now {
-                        theme::TEXT_PRIMARY
+                        palette.text_primary()
                     } else {
-                        theme::TEXT_MUTED
+                        palette.text_muted()
                     });
             if recording_now {
                 ui.label(label)

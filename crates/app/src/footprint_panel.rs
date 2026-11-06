@@ -63,6 +63,7 @@ pub enum PanelOutcome {
 /// it draws and answers whether one of them moved. A new knob docks in the
 /// section it belongs to, and the section order is read here in one place.
 pub fn draw(ui: &mut egui::Ui, input: PanelInput<'_>) -> PanelOutcome {
+    let palette = theme::get(ui.ctx());
     let PanelInput {
         config,
         presets,
@@ -82,8 +83,8 @@ pub fn draw(ui: &mut egui::Ui, input: PanelInput<'_>) -> PanelOutcome {
                 "this chart follows your last setup"
             }
         ))
-        .size(10.5)
-        .color(theme::TEXT_MUTED),
+        .font(palette.body_font(10.5))
+        .color(palette.text_muted()),
     );
     changed |= PresetsSection {
         config,
@@ -116,10 +117,11 @@ fn section_heading(ui: &mut egui::Ui, heading: &str) {
 
 /// A muted inline caption in front of a value.
 fn caption(ui: &mut egui::Ui, text: &str) {
+    let palette = theme::get(ui.ctx());
     ui.label(
         egui::RichText::new(text)
-            .size(11.0)
-            .color(theme::TEXT_MUTED),
+            .font(palette.body_font(11.0))
+            .color(palette.text_muted()),
     );
 }
 
@@ -133,6 +135,7 @@ struct PresetsSection<'a> {
 
 impl PresetsSection<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
+        let palette = theme::get(ui.ctx());
         let Self {
             config,
             presets,
@@ -146,8 +149,8 @@ impl PresetsSection<'_> {
             if names.is_empty() {
                 ui.label(
                     egui::RichText::new("none saved yet")
-                        .size(11.0)
-                        .color(theme::TEXT_FAINT),
+                        .font(palette.body_font(11.0))
+                        .color(palette.text_faint()),
                 );
             }
             for name in names {
@@ -194,8 +197,8 @@ impl PresetsSection<'_> {
                     // say so rather than dropping the click silently.
                     ui.label(
                         egui::RichText::new("preset list is full")
-                            .size(10.5)
-                            .color(theme::WARN),
+                            .font(palette.body_font(10.5))
+                            .color(palette.warn()),
                     );
                 }
             }
@@ -211,6 +214,7 @@ struct StyleSection<'a> {
 
 impl StyleSection<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
+        let palette = theme::get(ui.ctx());
         let config = self.config;
         let mut changed = false;
         section_heading(ui, "Style");
@@ -244,8 +248,8 @@ impl StyleSection<'_> {
                     egui::RichText::new(
                         "three numbers a row needs a wide candle: below about 126 px this draws \"both sides\" instead, and the chart legend names both",
                     )
-                    .size(10.5)
-                    .color(theme::TEXT_MUTED),
+                    .font(palette.body_font(10.5))
+                    .color(palette.text_muted()),
                 );
                 changed |= ui
                     .checkbox(&mut config.cluster_show_total, "row total column")

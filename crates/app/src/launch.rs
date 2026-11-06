@@ -51,6 +51,8 @@ pub(crate) struct OperatorPaths {
     pub trades_dir: Option<OsString>,
     /// `QUANTICK_BUBBLES`: an explicit bubble presets file.
     pub bubbles: Option<OsString>,
+    /// `QUANTICK_THEME`: the appearance configuration file for this run.
+    pub theme: Option<OsString>,
 }
 
 /// Everything the executable reads before it builds anything.
@@ -96,6 +98,7 @@ impl LaunchConfig {
                 indicators_dir,
                 trades_dir: lookup("QUANTICK_TRADES_DIR"),
                 bubbles: lookup("QUANTICK_BUBBLES"),
+                theme: lookup("QUANTICK_THEME"),
             },
             #[cfg(any(feature = "scenario-harness", test))]
             window: window::WindowHooks::capture(&mut lookup),
@@ -228,7 +231,8 @@ crate::hooks::declare_hooks![
     "QUANTICK_INDICATORS_DIR",
     "QUANTICK_LOG_FORMAT",
     "QUANTICK_REPLAY_DIR",
-    "QUANTICK_TRADES_DIR"
+    "QUANTICK_TRADES_DIR",
+    "QUANTICK_THEME"
 ];
 
 /// Size the window opens at when nothing asks for another.

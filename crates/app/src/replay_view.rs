@@ -23,14 +23,9 @@ use quantick_replay::format;
 use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError, library};
 
 use crate::replay_get_data::{GetDataAction, GetDataPanel};
-use crate::theme::{AMBER, CHROME, CONTROL, TEXT_MUTED, TEXT_PRIMARY, WARN};
+use crate::theme;
 use quantick_feed::replay_download;
 use quantick_feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
-
-/// The accent this feature owns: the same amber the chart already uses for the
-/// backfill/live divider, so "this is not live data" reads the same way twice.
-/// Borrowed rather than repeated, so the two can never drift apart.
-const REPLAY_ACCENT: egui::Color32 = AMBER;
 
 /// Height of the transport strip, in pixels — part of the status system, one
 /// line directly above the status bar (`docs/ux/ui-design-model.md` §8).
@@ -676,6 +671,7 @@ impl ReplayView {
 
     /// Draw the session browser, starting a load if one was asked for.
     fn draw_browser(&mut self, ctx: &egui::Context, market: &MarketMenu<'_>) {
+        let palette = theme::get(ctx);
         if !self.browser_open {
             return;
         }
@@ -691,7 +687,7 @@ impl ReplayView {
             .default_height(460.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(TEXT_PRIMARY);
+                ui.visuals_mut().override_text_color = Some(palette.text_primary());
                 self.draw_tab_strip(ui, market);
                 ui.add_space(8.0);
                 self.draw_folder_row(ui);
@@ -771,9 +767,10 @@ impl ReplayView {
     }
 
     fn draw_folder_row(&mut self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         ui.label(
             egui::RichText::new("Replay folder")
-                .color(TEXT_MUTED)
+                .color(palette.text_muted())
                 .small(),
         );
         ui.horizontal(|ui| {
@@ -812,10 +809,15 @@ impl ReplayView {
     /// Draw the session list. Returns whether one was double-clicked, which is
     /// the same request as picking it and pressing **Play session**.
     fn draw_session_list(&mut self, ui: &mut egui::Ui) -> bool {
+        let palette = theme::get(ui.ctx());
         let mut open_requested = false;
-        ui.label(egui::RichText::new("Sessions").color(TEXT_MUTED).small());
+        ui.label(
+            egui::RichText::new("Sessions")
+                .color(palette.text_muted())
+                .small(),
+        );
         let frame = egui::Frame::none()
-            .fill(egui::Color32::from_black_alpha(60))
+            .fill(palette.replay_well())
             .inner_margin(8.0)
             .rounding(4.0);
 
@@ -826,7 +828,7 @@ impl ReplayView {
                 ui.vertical_centered(|ui| {
                     ui.label(
                         egui::RichText::new("Choose the folder holding your recorded sessions.")
-                            .color(TEXT_MUTED),
+                            .color(palette.text_muted()),
                     );
                 });
                 return;
@@ -834,13 +836,15 @@ impl ReplayView {
             if library.sessions.is_empty() {
                 ui.add_space(24.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(egui::RichText::new("No sessions in this folder.").color(WARN));
+                    ui.label(
+                        egui::RichText::new("No sessions in this folder.").color(palette.warn()),
+                    );
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(
                             "quantick reads one CSV per session day, in a folder per instrument.",
                         )
-                        .color(TEXT_MUTED)
+                        .color(palette.text_muted())
                         .small(),
                     );
                 });
@@ -872,7 +876,7 @@ impl ReplayView {
                             for note in &entry.notes {
                                 ui.label(
                                     egui::RichText::new(format!("    {note}"))
-                                        .color(TEXT_MUTED)
+                                        .color(palette.text_muted())
                                         .small(),
                                 );
                             }
@@ -884,6 +888,7 @@ impl ReplayView {
     }
 
     fn draw_problems(&mut self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         let Some(library) = self.library.as_ref() else {
             return;
         };
@@ -899,21 +904,21 @@ impl ReplayView {
                 .count()
                 .max(1)
         );
-        egui::CollapsingHeader::new(egui::RichText::new(header).color(WARN))
+        egui::CollapsingHeader::new(egui::RichText::new(header).color(palette.warn()))
             .default_open(library.sessions.is_empty())
             .show(ui, |ui| {
                 for problem in &library.problems {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(
                             egui::RichText::new(problem.subject())
-                                .color(TEXT_PRIMARY)
+                                .color(palette.text_primary())
                                 .monospace(),
                         );
-                        ui.label(egui::RichText::new(&problem.detail).color(TEXT_MUTED));
+                        ui.label(egui::RichText::new(&problem.detail).color(palette.text_muted()));
                     });
                     ui.label(
                         egui::RichText::new(format!("    {}", problem.advice()))
-                            .color(TEXT_MUTED)
+                            .color(palette.text_muted())
                             .small(),
                     );
                     ui.add_space(4.0);
@@ -922,13 +927,18 @@ impl ReplayView {
     }
 
     fn draw_format_help(&mut self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         let label = if self.show_format {
             "Hide the file format"
         } else {
             "Show the file format"
         };
         if ui
-            .link(egui::RichText::new(label).color(TEXT_MUTED).small())
+            .link(
+                egui::RichText::new(label)
+                    .color(palette.text_muted())
+                    .small(),
+            )
             .clicked()
         {
             self.show_format = !self.show_format;
@@ -937,7 +947,7 @@ impl ReplayView {
             return;
         }
         egui::Frame::none()
-            .fill(egui::Color32::from_black_alpha(90))
+            .fill(palette.replay_inset())
             .inner_margin(8.0)
             .rounding(4.0)
             .show(ui, |ui| {
@@ -949,7 +959,7 @@ impl ReplayView {
                             egui::RichText::new(format::FORMAT_HELP)
                                 .monospace()
                                 .small()
-                                .color(TEXT_MUTED),
+                                .color(palette.text_muted()),
                         );
                     });
             });
@@ -958,13 +968,14 @@ impl ReplayView {
     /// The bottom row: speed to start at, and the button that starts playback.
     /// Returns whether the load was asked for.
     fn draw_start_row(&mut self, ui: &mut egui::Ui) -> bool {
+        let palette = theme::get(ui.ctx());
         if let Some(error) = &self.error {
             egui::Frame::none()
-                .fill(egui::Color32::from_rgba_unmultiplied(90, 30, 25, 120))
+                .fill(palette.replay_error())
                 .inner_margin(8.0)
                 .rounding(4.0)
                 .show(ui, |ui| {
-                    ui.label(egui::RichText::new(error).color(WARN).small());
+                    ui.label(egui::RichText::new(error).color(palette.warn()).small());
                 });
             ui.add_space(6.0);
         }
@@ -976,7 +987,11 @@ impl ReplayView {
         // half. Speeds and the button first, because that is the pair a trader
         // ends on, then the two questions about how it opens.
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Start at").color(TEXT_MUTED).small());
+            ui.label(
+                egui::RichText::new("Start at")
+                    .color(palette.text_muted())
+                    .small(),
+            );
             for speed in SPEEDS {
                 let selected = (self.speed - speed).abs() < f32::EPSILON;
                 if speed_chip(ui, speed, selected).clicked() {
@@ -991,9 +1006,9 @@ impl ReplayView {
                 }
                 let ready = self.selected_entry().is_some();
                 let button = egui::Button::new(
-                    egui::RichText::new("Play session").color(egui::Color32::BLACK),
+                    egui::RichText::new("Play session").color(palette.chip_ink()),
                 )
-                .fill(REPLAY_ACCENT);
+                .fill(palette.amber());
                 if ui
                     .add_enabled(ready, button)
                     .on_disabled_hover_text("Pick a session from the list first")
@@ -1025,6 +1040,7 @@ impl ReplayView {
     /// The transport strip: one 30 px row directly above the status bar while
     /// a session is playing — part of the status system, not an island (§8).
     fn draw_transport(&mut self, ctx: &egui::Context, link: &ReplayLink) -> Option<ReplayAction> {
+        let palette = theme::get(ctx);
         let mut action = None;
         let status = &link.status;
 
@@ -1032,11 +1048,11 @@ impl ReplayView {
             .exact_height(TRANSPORT_HEIGHT)
             .frame(
                 egui::Frame::none()
-                    .fill(CHROME)
+                    .fill(palette.chrome())
                     .inner_margin(egui::Margin::symmetric(10.0, 3.0)),
             )
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(TEXT_PRIMARY);
+                ui.visuals_mut().override_text_color = Some(palette.text_primary());
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     if ui
@@ -1056,7 +1072,7 @@ impl ReplayView {
                         (icons::PLAY, "Play (Space)", ReplayControl::Play)
                     };
                     if ui
-                        .button(egui::RichText::new(label).color(REPLAY_ACCENT))
+                        .button(egui::RichText::new(label).color(palette.amber()))
                         .on_hover_text(hint)
                         .clicked()
                     {
@@ -1064,23 +1080,23 @@ impl ReplayView {
                     }
 
                     badge(ui, "REPLAY");
-                    ui.label(egui::RichText::new(link.label()).color(TEXT_PRIMARY));
+                    ui.label(egui::RichText::new(link.label()).color(palette.text_primary()));
                     // Two days on one chart is never left to be inferred from
                     // the bars: the recording says which day was joined in
                     // front of it, or why none was when one was there to join.
                     if let Some(joined) = link.session.day_before_label() {
-                        ui.label(egui::RichText::new(format!("+ {joined}")).color(TEXT_MUTED).small())
+                        ui.label(egui::RichText::new(format!("+ {joined}")).color(palette.text_muted()).small())
                             .on_hover_text(
                                 "The day before, joined in front of this session: its order flow is already on the chart, and play starts on the day you picked",
                             );
                     } else if let Some(problem) = link.session.day_before_problem.as_ref() {
-                        ui.label(egui::RichText::new("no day before").color(WARN).small())
+                        ui.label(egui::RichText::new("no day before").color(palette.warn()).small())
                             .on_hover_text(format!("{}\n{}", problem.detail, problem.advice));
                     }
                     ui.label(
                         egui::RichText::new(link.clock_text(self.scrub))
                             .monospace()
-                            .color(REPLAY_ACCENT),
+                            .color(palette.amber()),
                     );
 
                     for speed in SPEEDS {
@@ -1111,7 +1127,7 @@ impl ReplayView {
                                 thousands(played),
                                 thousands(total)
                             ))
-                            .color(TEXT_MUTED)
+                            .color(palette.text_muted())
                             .small(),
                         );
                         // The seek track takes every pixel left between the
@@ -1141,6 +1157,7 @@ impl ReplayView {
 
 /// A small speed button, e.g. `10×`.
 fn speed_chip(ui: &mut egui::Ui, speed: f32, selected: bool) -> egui::Response {
+    let palette = theme::get(ui.ctx());
     let text = if speed.fract() == 0.0 {
         format!("{speed:.0}×")
     } else {
@@ -1148,25 +1165,26 @@ fn speed_chip(ui: &mut egui::Ui, speed: f32, selected: bool) -> egui::Response {
     };
     let mut rich = egui::RichText::new(text).monospace().small();
     if selected {
-        rich = rich.color(egui::Color32::BLACK).strong();
+        rich = rich.color(palette.chip_ink()).strong();
     }
     let mut button = egui::Button::new(rich).min_size(egui::vec2(30.0, 18.0));
     if selected {
-        button = button.fill(REPLAY_ACCENT);
+        button = button.fill(palette.amber());
     }
     ui.add(button)
 }
 
 /// The amber `REPLAY` tag: the one loud thing on the bar.
 fn badge(ui: &mut egui::Ui, text: &str) {
+    let palette = theme::get(ui.ctx());
     egui::Frame::none()
-        .fill(REPLAY_ACCENT)
+        .fill(palette.amber())
         .inner_margin(egui::Margin::symmetric(6.0, 1.0))
         .rounding(3.0)
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(text)
-                    .color(egui::Color32::BLACK)
+                    .color(palette.chip_ink())
                     .small()
                     .strong(),
             );
@@ -1181,6 +1199,7 @@ fn badge(ui: &mut egui::Ui, text: &str) {
 /// emitting one per dragged frame would re-ingest the whole recording at frame
 /// rate — hundreds of megabytes a second on a full trading day.
 fn seek_track(ui: &mut egui::Ui, progress: f32, scrub: &mut Option<f32>) -> Option<f32> {
+    let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, TRACK_HEIGHT + 8.0),
@@ -1204,9 +1223,9 @@ fn seek_track(ui: &mut egui::Ui, progress: f32, scrub: &mut Option<f32>) -> Opti
     };
 
     let painter = ui.painter();
-    painter.rect_filled(track, 3.0, CONTROL);
+    painter.rect_filled(track, 3.0, palette.control());
     let filled = egui::Rect::from_min_size(track.min, egui::vec2(width * shown, TRACK_HEIGHT));
-    painter.rect_filled(filled, 3.0, REPLAY_ACCENT);
+    painter.rect_filled(filled, 3.0, palette.amber());
     painter.circle_filled(
         egui::pos2(filled.right(), track.center().y),
         if response.hovered() || held {
@@ -1214,7 +1233,7 @@ fn seek_track(ui: &mut egui::Ui, progress: f32, scrub: &mut Option<f32>) -> Opti
         } else {
             HANDLE_RADIUS
         },
-        REPLAY_ACCENT,
+        palette.amber(),
     );
 
     if response.drag_stopped() || response.clicked() {

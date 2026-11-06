@@ -288,7 +288,11 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // pane's layer menu writes, so a validation run sees exactly what a
     // click would show.
     if app.chrome.harness.footprint() {
-        app.active_tab_mut().flow_pane.footprint.visible = true;
+        app.active_tab_mut()
+            .flow_pane
+            .presentation
+            .footprint
+            .visible = true;
     }
     // Every style by its own id, resolved through the same registry the
     // panel's selector and the TOML read. A style reachable by click but
@@ -666,6 +670,13 @@ fn dock_and_report(app: &mut QuantickApp, env: &ScenarioInputs) {
     {
         app.active_tab_mut().paper.account_mut().autostart_report();
     }
+    if let Some(value) = env.var("QUANTICK_PAPER_REPORT_SCROLL") {
+        app.active_tab_mut()
+            .paper
+            .account_mut()
+            .report
+            .arm_scroll_probe(&value);
+    }
     // The calendar the report grew: reachable open, on a chosen day or
     // a chosen span, with no clicks at all.
     if let Some(spec) = env.var("QUANTICK_PAPER_CALENDAR") {
@@ -890,6 +901,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_PAPER_CALENDAR",
     "QUANTICK_PAPER_REPORT_AUTOSTART",
     "QUANTICK_PAPER_REPORT_LIST",
+    "QUANTICK_PAPER_REPORT_SCROLL",
     "QUANTICK_PRICE_RANGE",
     "QUANTICK_PROGRESSIVE_HISTORY",
     "QUANTICK_REPLAY_AUTOSTART",

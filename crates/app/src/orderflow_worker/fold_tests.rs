@@ -49,13 +49,9 @@ fn prints_depth_and_configuration_keep_their_place() {
         fold_parked(&mut layout, print()).is_some(),
         "a print after a layout"
     );
-    let mut config = BookCommand::ApplyVisualConfig(HeatmapConfig::default());
+    let mut config = BookCommand::ApplyVisualConfig(Box::default());
     assert!(
-        fold_parked(
-            &mut config,
-            BookCommand::ApplyVisualConfig(HeatmapConfig::default())
-        )
-        .is_some(),
+        fold_parked(&mut config, BookCommand::ApplyVisualConfig(Box::default())).is_some(),
         "a configuration change can prune history; the next one must not skip it"
     );
 }

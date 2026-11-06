@@ -7,21 +7,18 @@
 //! the trader tuning against something the chart never produces.
 
 use crate::orderflow_render::constants::{
-    PREVIEW_CANVAS_BACKGROUND, PREVIEW_LARGE_PRINT_SIZE, PREVIEW_MATCHED_FRACTION,
-    PREVIEW_SMALL_PRINT_SIZE, PREVIEW_SUMMARY_BUY_SHARE,
+    PREVIEW_LARGE_PRINT_SIZE, PREVIEW_MATCHED_FRACTION, PREVIEW_SMALL_PRINT_SIZE,
+    PREVIEW_SUMMARY_BUY_SHARE,
 };
 use eframe::egui;
 use quantick_engine::Side;
-use quantick_orderbook::BookSide;
-use quantick_orderflow::{BubbleStyle, HeatmapConfig, HeatmapTheme};
+use quantick_orderflow::{BubbleStyle, HeatmapConfig};
 
 use super::bubbles::{
     BubbleColors, BubbleMark, bubble_radius, draw_bubble, front_half_length, trail_rect,
 };
 use super::layout::EventBand;
-use super::{
-    OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, resting_rgb, rgba, thermal_rgb,
-};
+use super::{OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, rgba};
 
 /// Deterministic visual sample used by the settings panel and screenshot tests.
 ///
@@ -33,8 +30,8 @@ use super::{
 /// Painted back to front: the frame and grid, the resting walls, the price
 /// path, the two reductions, the sample prints and the legend.
 pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::Response {
-    let width = ui.available_width().clamp(240.0, 680.0);
-    let desired = egui::vec2(width, 196.0);
+    let width = ui.available_width().clamp(0.0, 680.0);
+    let desired = egui::vec2(width, crate::theme::get(ui.ctx()).label_space(196.0));
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
         return response;
@@ -54,7 +51,13 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
         canvas.draw_sample_prints(config);
     }
     if config.show_legend {
-        draw_preview_legend(&canvas.painter, rect, &canvas.palette, canvas.style.theme);
+        draw_preview_legend(
+            &canvas.painter,
+            rect,
+            &canvas.palette,
+            &canvas.style,
+            &canvas.appearance,
+        );
     }
     response.on_hover_text(
         "Deterministic visual sample: green/red dots are confirmed trades; \
@@ -69,6 +72,7 @@ struct PreviewCanvas {
     painter: egui::Painter,
     style: OrderflowRenderStyle,
     palette: Palette,
+    appearance: std::sync::Arc<crate::theme::Palette>,
     /// The whole preview, title and legend included.
     rect: egui::Rect,
     /// The plot area every normalized coordinate below maps into.
@@ -77,18 +81,29 @@ struct PreviewCanvas {
 
 impl PreviewCanvas {
     fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig) -> Self {
-        let style = OrderflowRenderStyle::from_config(config, PREVIEW_CANVAS_BACKGROUND.to_array())
-            .sanitized();
-        let palette = super::palette_for_theme(style.theme);
+        let appearance = crate::theme::bookmap(ui.ctx());
+        let mut style =
+            OrderflowRenderStyle::from_config(config, appearance.canvas().to_array()).sanitized();
+        style.resolve_palette(config.palette, &appearance.resolved.orderflow);
+        let palette = style.colors(super::premultiplied);
         let painter = ui.painter().with_clip_rect(rect);
         let chart = egui::Rect::from_min_max(
-            rect.left_top() + egui::vec2(8.0, 24.0),
-            rect.right_bottom() - egui::vec2(8.0, if config.show_legend { 30.0 } else { 8.0 }),
+            rect.left_top() + egui::vec2(8.0, appearance.label_space(24.0)),
+            rect.right_bottom()
+                - egui::vec2(
+                    8.0,
+                    if config.show_legend {
+                        appearance.label_space(30.0)
+                    } else {
+                        8.0
+                    },
+                ),
         );
         Self {
             painter,
             style,
             palette,
+            appearance,
             rect,
             chart,
         }
@@ -117,12 +132,14 @@ impl PreviewCanvas {
         );
 
         let title = egui::pos2(rect.left() + 9.0, rect.top() + 7.0);
-        painter.text(
+        crate::theme::text_fitted(
+            painter,
             title,
             egui::Align2::LEFT_TOP,
             "synthetic order-flow preview",
-            egui::FontId::proportional(10.0),
+            self.appearance.label_font(10.0),
             palette.muted_text,
+            (rect.width() - 18.0).max(0.0),
         );
 
         let chart = self.chart;
@@ -130,7 +147,7 @@ impl PreviewCanvas {
             let y = self.y(step as f32 / 5.0);
             painter.line_segment(
                 [egui::pos2(chart.left(), y), egui::pos2(chart.right(), y)],
-                egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(16)),
+                egui::Stroke::new(0.5_f32, palette.preview_grid),
             );
         }
     }
@@ -139,23 +156,11 @@ impl PreviewCanvas {
     fn draw_resting_walls(&self, opacity: f32) {
         // Each tuple is `(y, height, x0, x1, intensity, side)`. Segment boundaries
         // make additions and reductions visible without animation or live data.
-        let segments = [
-            (0.16, 0.034, 0.00, 0.48, 0.34, BookSide::Ask),
-            (0.16, 0.034, 0.48, 0.76, 0.73, BookSide::Ask),
-            (0.27, 0.042, 0.00, 0.58, 0.92, BookSide::Ask),
-            (0.27, 0.042, 0.58, 0.98, 0.40, BookSide::Ask),
-            (0.39, 0.030, 0.08, 0.88, 0.50, BookSide::Ask),
-            (0.61, 0.032, 0.00, 0.44, 0.36, BookSide::Bid),
-            (0.61, 0.032, 0.44, 1.00, 0.66, BookSide::Bid),
-            (0.72, 0.045, 0.00, 0.43, 0.88, BookSide::Bid),
-            (0.72, 0.045, 0.43, 0.82, 0.24, BookSide::Bid),
-            (0.84, 0.032, 0.10, 1.00, 0.54, BookSide::Bid),
-        ];
         let style = &self.style;
         let mut heat_mesh = egui::Mesh::default();
-        for (y, height, x0, x1, intensity, side) in segments {
+        for (y, height, x0, x1, intensity, side) in quantick_orderflow::config::preview::WALLS {
             let band = normalized_rect(self.chart, x0, x1, y - height / 2.0, y + height / 2.0);
-            let rgb = resting_rgb(style.theme, side, intensity);
+            let rgb = style.resting_rgb(side, intensity);
             let alpha = opacity.clamp(0.0, 1.0) * 0.94;
             let glow = egui::Rect::from_min_max(
                 egui::pos2(band.left(), band.top() - 0.7),
@@ -176,22 +181,13 @@ impl PreviewCanvas {
     /// A subdued price path gives the liquidity/trade interaction context while
     /// keeping the preview focused on the order-flow layers.
     fn draw_price_path(&self) {
-        let price_points = [
-            (0.00, 0.59),
-            (0.15, 0.57),
-            (0.29, 0.63),
-            (0.43, 0.68),
-            (0.56, 0.53),
-            (0.66, 0.29),
-            (0.79, 0.36),
-            (1.00, 0.25),
-        ]
-        .into_iter()
-        .map(|(x, y)| egui::pos2(self.x(x), self.y(y)))
-        .collect();
+        let price_points = quantick_orderflow::config::preview::PATH
+            .into_iter()
+            .map(|(x, y)| egui::pos2(self.x(x), self.y(y)))
+            .collect();
         self.painter.add(egui::Shape::line(
             price_points,
-            egui::Stroke::new(1.1_f32, egui::Color32::from_white_alpha(145)),
+            egui::Stroke::new(1.1_f32, self.palette.preview_path),
         ));
     }
 
@@ -382,11 +378,18 @@ fn draw_preview_legend(
     painter: &egui::Painter,
     bounds: egui::Rect,
     palette: &Palette,
-    theme: HeatmapTheme,
+    style: &OrderflowRenderStyle,
+    appearance: &crate::theme::Palette,
 ) {
-    let baseline = bounds.bottom() - 13.0;
+    let baseline = bounds.bottom() - appearance.label_space(13.0);
     let mut x = bounds.left() + 10.0;
-    let font = egui::FontId::proportional(9.5);
+    let font = appearance.label_font(9.5);
+    let width = |text: &str| {
+        painter
+            .layout_no_wrap(text.into(), font.clone(), palette.legend_text)
+            .size()
+            .x
+    };
 
     let heat_rect = egui::Rect::from_min_size(egui::pos2(x, baseline - 4.0), egui::vec2(34.0, 7.0));
     let mut mesh = egui::Mesh::default();
@@ -405,22 +408,27 @@ fn draw_preview_legend(
                     heat_rect.bottom(),
                 ),
             ),
-            rgba(thermal_rgb(theme, t0), 1.0),
-            rgba(thermal_rgb(theme, t1), 1.0),
+            rgba(style.thermal_rgb(t0), 1.0),
+            rgba(style.thermal_rgb(t1), 1.0),
         );
     }
     painter.add(egui::Shape::mesh(mesh));
     x += 39.0;
-    painter.text(
+    crate::theme::text_fitted(
+        painter,
         egui::pos2(x, baseline),
         egui::Align2::LEFT_CENTER,
         "liquidity",
         font.clone(),
         palette.legend_text,
+        bounds.right() - x - 8.0,
     );
-    x += 54.0;
+    x += 54.0_f32.max(width("liquidity") + 8.0);
 
     for (color, label) in [(palette.buy, "buy"), (palette.sell, "sell")] {
+        if x + 11.0 + width(label) > bounds.right() {
+            return;
+        }
         painter.circle_filled(
             egui::pos2(x + 4.0, baseline),
             4.0,
@@ -438,11 +446,13 @@ fn draw_preview_legend(
             font.clone(),
             palette.legend_text,
         );
-        x += 41.0;
+        x += 41.0_f32.max(width(label) + 19.0);
     }
 
     // On narrow settings windows the hover text remains the complete legend.
-    if x + 200.0 > bounds.right() {
+    if x + 200.0_f32.max(width("aligned depletion") + width("unattributed L2 reduction") + 26.0)
+        > bounds.right()
+    {
         return;
     }
     painter.line_segment(
@@ -459,7 +469,7 @@ fn draw_preview_legend(
         font.clone(),
         palette.legend_text,
     );
-    x += 105.0;
+    x += 105.0_f32.max(width("aligned depletion") + 17.0);
     painter.line_segment(
         [
             egui::pos2(x + 3.0, baseline - 5.0),
@@ -474,4 +484,34 @@ fn draw_preview_legend(
         font,
         palette.legend_text,
     );
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    #[test]
+    fn preview_uses_bookmap_surface_and_preserves_outer_light_ui() {
+        let ctx = egui::Context::default();
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        crate::theme::sync(&ctx, &appearance);
+        let root = crate::theme::get(&ctx);
+        let surface = crate::theme::bookmap(&ctx);
+        let visuals = ctx.style().visuals.clone();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let canvas = PreviewCanvas::new(ui, ui.max_rect(), &HeatmapConfig::default());
+                assert_eq!(canvas.style.canvas_background, surface.canvas().to_array());
+                assert_ne!(canvas.style.canvas_background, root.canvas().to_array());
+                assert_eq!(
+                    canvas.palette.legend_text,
+                    super::super::premultiplied(surface.resolved.orderflow.legend_text)
+                );
+                canvas.draw_frame();
+                assert_eq!(crate::theme::get(ctx).canvas(), root.canvas());
+                assert_eq!(ctx.style().visuals, visuals);
+            });
+        });
+    }
 }

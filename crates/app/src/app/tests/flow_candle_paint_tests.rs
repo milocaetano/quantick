@@ -19,7 +19,7 @@ fn painted_bodies(output: &egui::FullOutput, colour: egui::Color32) -> Vec<(usiz
 }
 
 #[test]
-fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() {
+fn flow_keeps_configured_fills_indicator_alpha_and_one_candle_pass_beneath_bubbles() {
     let ctx = egui::Context::default();
     let (mut app, events, _commands, _book) = test_app();
     app.active_tab_mut().flow_pane.set_layer_visible(
@@ -56,6 +56,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
     );
     app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
     app.runtime.style.candles.fill_opacity = 0.6;
+    app.runtime.style.ownership.fill_opacity = quantick_appearance::Inheritance::Explicit;
     app.runtime.style.candles.forming_opacity = 0.5;
     settled_frame(&mut app, &ctx);
     let pane = &mut app.active_tab_mut().flow_pane;
@@ -103,7 +104,10 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
     });
     let output = settled_flow_frame(&mut app, &ctx);
     let circles = regional_circles(&app, &output);
-    assert!(!circles.is_empty(), "regional volume precedes the candles");
+    assert!(
+        !circles.is_empty(),
+        "the fixture must paint regional volume"
+    );
     let context_colours = regional_colours(&app, true);
     let peak_colours = regional_colours(&app, false);
     for expected in [context_colours, peak_colours] {
@@ -140,10 +144,10 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
             .sum::<rust_decimal::Decimal>(),
         122.into()
     );
-    let last_circle = output
+    let first_circle = output
         .shapes
         .iter()
-        .rposition(|shape| {
+        .position(|shape| {
             matches!(&shape.shape,
         egui::Shape::Mesh(mesh) if circles.contains(mesh))
         })
@@ -163,6 +167,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         egui::Color32::from_rgba_unmultiplied(19, 73, 223, 76),
         egui::Color32::from_rgba_unmultiplied(231, 147, 31, 38),
     ];
+    let mut overlaps_bubble = false;
     for colour in colours {
         let bodies = painted_bodies(&output, colour);
         assert_eq!(
@@ -171,23 +176,37 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
             "one filled body at configured/script/forming alpha: {colour:?}"
         );
         assert!(
-            bodies[0].0 > last_circle,
-            "regional circles precede the normal filled candle"
+            bodies[0].0 < first_circle,
+            "regional circles cover the normal filled candle"
         );
         let rect = bodies[0].1;
-        let outlines = output
+        overlaps_bubble |= circles
+            .iter()
+            .any(|mesh| mesh.calc_bounds().intersects(rect));
+        let outlines: Vec<_> = output
             .shapes
             .iter()
-            .filter(|shape| {
+            .enumerate()
+            .filter_map(|(index, shape)| {
                 matches!(&shape.shape,
             egui::Shape::Rect(outline) if outline.rect==rect && outline.stroke.width>0.0)
+                .then_some(index)
             })
-            .count();
+            .collect();
         assert_eq!(
-            outlines, 1,
+            outlines.len(),
+            1,
             "a second silhouette must not compound candle alpha"
         );
+        assert!(
+            outlines[0] < first_circle,
+            "bubbles also cover candle outlines"
+        );
     }
+    assert!(
+        overlaps_bubble,
+        "the fixture must include a candle covered by bubbles"
+    );
     assert!(
         regional_labels(&output).is_empty(),
         "exact quantities stay on passive hover"
@@ -264,12 +283,14 @@ fn assert_footprint_layering(
     plain: usize,
 ) {
     // Context is beneath footprint; highlighted sectors follow it. Exactly one
-    // normal candle pass stays last, with every source fact and radius retained.
+    // normal candle pass stays beneath both, with every source fact and radius retained.
     let original_colours = [regional_colours(app, true), regional_colours(app, false)];
     app.runtime.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
     app.runtime.style.canvas.background = [13, 17, 23];
+    app.runtime.style.ownership.background = quantick_appearance::Inheritance::Explicit;
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.footprint
+    pane.presentation
+        .footprint
         .config
         .set_own(Some(crate::footprint_config::FootprintConfig {
             style: crate::footprint_config::FootprintStyle::Split,
@@ -325,7 +346,7 @@ fn assert_footprint_layering(
             matches!(&shape.shape, egui::Shape::Mesh(mesh) if isolated.contains(mesh)).then_some(i)
         })
         .collect();
-    let last_region = *region_indices.last().unwrap();
+    let first_region = *region_indices.first().unwrap();
     let profiles: Vec<_> = footprint.shapes.iter().enumerate().filter_map(|(i, shape)| {
         matches!(&shape.shape, egui::Shape::Rect(rect) if history.contains(rect.rect.center()) &&
             [0.60, 0.95].iter().any(|alpha| rect.fill == egui::Color32::from_gray(0xD8).gamma_multiply(*alpha))
@@ -385,7 +406,7 @@ fn assert_footprint_layering(
         plain,
         "the inherited dressed body fill paints once"
     );
-    assert!(bodies.iter().all(|(index, _)| *index > last_region));
+    assert!(bodies.iter().all(|(index, _)| *index < first_region));
     let outline_colors = [true, false].map(|up| {
         let [r, g, b, a] = dressed.resolved(up, false).outline;
         egui::Color32::from_rgba_unmultiplied(r, g, b, a)
@@ -396,7 +417,7 @@ fn assert_footprint_layering(
         ).then_some(index)
     }).collect();
     assert_eq!(outlines.len(), 4, "each closed candle outline paints once");
-    assert!(outlines.iter().all(|index| *index > last_region));
+    assert!(outlines.iter().all(|index| *index < first_region));
 }
 
 #[test]
@@ -452,5 +473,190 @@ fn flow_legend_puts_no_key_on_the_tape_and_preserves_depth_and_hide_switches() {
         keys(&settled_flow_frame(&mut app, &ctx))
             .iter()
             .all(|(label, _)| label != "Buy" && label != "Sell")
+    );
+}
+
+#[test]
+fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_candles_solid() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(1400);
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    native_split(&mut app);
+    // The price wrap inside tick(25) bars supplies real upper/lower wicks.
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(25));
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    let mut dark_circles = None;
+    let mut bubble_geometry = None;
+    let mut geometry = None;
+    for source in [
+        quantick_appearance::DARK,
+        quantick_appearance::LIGHT,
+        quantick_appearance::DARK,
+    ] {
+        app.runtime
+            .appearance
+            .apply_candidate(source, false)
+            .unwrap();
+        run_frame(&mut app, &ctx);
+        let output = settled_flow_frame(&mut app, &ctx);
+        let pane = &app.active_tab().flow_pane;
+        let area = pane.frame.area.unwrap();
+        let current_geometry = (
+            area,
+            pane.frame.chart_rect,
+            pane.frame.lane_divider_x,
+            pane.frame.candles_right,
+            app.active_tab().time_pane().unwrap().frame.area,
+        );
+        assert_eq!(
+            *geometry.get_or_insert(current_geometry),
+            current_geometry,
+            "theme switching must preserve both pane layouts"
+        );
+        let dark = crate::style::ChartStyle::default();
+        let circles = regional_circles(&app, &output);
+        assert!(!circles.is_empty(), "the fixture must paint bubbles");
+        let current_bubble_geometry: Vec<_> = circles
+            .iter()
+            .map(|mesh| {
+                (
+                    mesh.indices.clone(),
+                    mesh.vertices
+                        .iter()
+                        .map(|vertex| (vertex.pos, vertex.uv))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            bubble_geometry.get_or_insert_with(|| current_bubble_geometry.clone()),
+            &current_bubble_geometry,
+            "the slate canvas changes composited colors, never bubble geometry"
+        );
+        if source == quantick_appearance::DARK {
+            assert_eq!(
+                dark_circles.get_or_insert_with(|| circles.clone()),
+                &circles,
+                "returning to Dark restores exact bubble meshes and colors"
+            );
+        }
+        let first_region = output
+            .shapes
+            .iter()
+            .position(
+                |shape| matches!(&shape.shape, egui::Shape::Mesh(mesh) if circles.contains(mesh)),
+            )
+            .expect("theme switching must preserve the Bookmap bubbles");
+        let history = pane
+            .frame
+            .chart_rect
+            .unwrap()
+            .with_max_x(pane.frame.candles_right.unwrap());
+        assert_candle_parts_beneath_regions(&output, history, dark.candles, first_region);
+        let rgba = dark.candles.resolved(true, false).fill.unwrap();
+        let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+        assert!(
+            painted_bodies(&output, color)
+                .iter()
+                .any(|(_, body)| area.contains(body.center())),
+            "the real canvas must resolve Bookmap style and palette together"
+        );
+        let theme = app.runtime.appearance.resolved();
+        let [r, g, b, _] = theme
+            .bookmap()
+            .color(quantick_appearance::Token::Canvas)
+            .to_array();
+        let background = egui::Color32::from_rgb(r, g, b);
+        let plot = if theme.dark {
+            area
+        } else {
+            area.shrink(crate::plot_area::PLOT_PADDING_PX)
+                .with_max_x(pane.frame.price_gutter.unwrap().left())
+                .with_max_y(pane.frame.time_strip.unwrap().top())
+        };
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Rect(rect) if rect.rect == plot && rect.fill == background)));
+        let time = app.active_tab().time_pane().unwrap().frame.area.unwrap();
+        let rgba = app
+            .runtime
+            .style
+            .candles
+            .resolved(true, false)
+            .fill
+            .unwrap();
+        let color = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+        assert!(
+            painted_bodies(&output, color)
+                .iter()
+                .any(|(_, body)| time.contains(body.center()))
+        );
+        assert_eq!(
+            crate::theme::get(&ctx).resolved,
+            *theme,
+            "Bookmap scope must end before other UI paints"
+        );
+    }
+}
+
+fn assert_candle_parts_beneath_regions(
+    output: &egui::FullOutput,
+    history: egui::Rect,
+    style: crate::style::CandleStyle,
+    first_region: usize,
+) {
+    let colors: Vec<_> = [true, false]
+        .into_iter()
+        .flat_map(|up| [true, false].map(|forming| style.resolved(up, forming)))
+        .collect();
+    let color = |[r, g, b, a]: [u8; 4]| egui::Color32::from_rgba_unmultiplied(r, g, b, a);
+    let mut counts = [0; 3];
+    for (index, shape) in output.shapes.iter().enumerate() {
+        let part = match &shape.shape {
+            egui::Shape::Rect(rect) if history.contains(rect.rect.center()) => {
+                if rect.stroke.width > 0.0
+                    && colors
+                        .iter()
+                        .any(|paint| color(paint.outline) == rect.stroke.color)
+                {
+                    Some(1)
+                } else if colors
+                    .iter()
+                    .any(|paint| paint.fill.map(color) == Some(rect.fill))
+                {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
+            egui::Shape::LineSegment { points, stroke }
+                if points[0].x == points[1].x
+                    && history.contains(points[0])
+                    && history.contains(points[1])
+                    && colors.iter().any(|paint| {
+                        paint
+                            .wick
+                            .map(|rgba| egui::epaint::ColorMode::Solid(color(rgba)))
+                            == Some(stroke.color.clone())
+                    }) =>
+            {
+                Some(2)
+            }
+            _ => None,
+        };
+        if let Some(part) = part {
+            counts[part] += 1;
+            assert!(
+                index < first_region,
+                "every candle part must paint beneath bubbles"
+            );
+        }
+    }
+    assert!(
+        counts.iter().all(|count| *count > 0),
+        "fixture must paint candle fills, outlines and wicks: {counts:?}"
     );
 }

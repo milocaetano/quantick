@@ -1,5 +1,7 @@
 //! Exact footprint grouping and compact quantity/zone presentation, shared
 //! by chart adapters without a renderer.
+pub mod heat;
+
 use quantick_engine::{BarFootprint, FootprintLevel, Side, StackedZone};
 use rust_decimal::{
     Decimal,

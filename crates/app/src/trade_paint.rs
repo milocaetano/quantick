@@ -58,8 +58,6 @@ const CONNECTOR_GAP_PX: f32 = 3.0;
 const CONNECTOR_ALPHA: u8 = 115;
 /// Emphasis width of a selected trade's connector.
 const SELECTED_CONNECTOR_WIDTH_PX: f32 = 1.5;
-/// The drawings' halo treatment, for the selected trade's marks.
-const SELECTION_HALO_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(40, 40, 40, 40);
 /// How far past a mark's edge the selection halo reaches.
 const SELECTION_HALO_EXTRA_PX: f32 = 3.5;
 /// At most this many trades paint, newest first; past it the paint is
@@ -100,6 +98,7 @@ pub(crate) fn draw(
     slot_at_time: impl Fn(i64) -> Option<usize>,
     x_at_slot: impl Fn(usize) -> f32,
 ) {
+    let palette = theme::get(frame.painter.ctx());
     let painter = frame.painter.with_clip_rect(frame.chart_rect);
     let mut marks: Vec<Mark<'_>> = Vec::new();
     let mut drawn = 0usize;
@@ -124,7 +123,7 @@ pub(crate) fn draw(
         let is_selected = selected == Some(index);
         // Win, loss or scratch — the one hue the whole round trip wears;
         // direction is carried by the entry mark's shape instead.
-        let color = points_color(trade.pnl_points);
+        let color = points_color(&palette, trade.pnl_points);
         let connector = if is_selected {
             egui::Stroke::new(SELECTED_CONNECTOR_WIDTH_PX, color)
         } else {
@@ -186,8 +185,8 @@ pub(crate) fn draw(
             frame.chart_rect.left_bottom() + egui::vec2(8.0, -24.0),
             egui::Align2::LEFT_BOTTOM,
             note,
-            egui::FontId::proportional(10.0),
-            theme::TEXT_FAINT,
+            palette.label_font(10.0),
+            palette.text_faint(),
         );
     }
     if let Some(pointer) = frame.pointer
@@ -265,10 +264,11 @@ fn draw_entry_mark(
         egui::pos2(at.x + half, base_y),
     ];
     if selected {
+        let halo = theme::get(painter.ctx()).trade_selection_halo();
         painter.add(egui::Shape::convex_polygon(
             points.clone(),
-            SELECTION_HALO_COLOR,
-            egui::Stroke::new(SELECTION_HALO_EXTRA_PX, SELECTION_HALO_COLOR),
+            halo,
+            egui::Stroke::new(SELECTION_HALO_EXTRA_PX, halo),
         ));
     }
     painter.add(egui::Shape::convex_polygon(
@@ -295,10 +295,11 @@ fn draw_exit_mark(
         egui::pos2(at.x - r, at.y),
     ];
     if selected {
+        let halo = theme::get(painter.ctx()).trade_selection_halo();
         painter.add(egui::Shape::convex_polygon(
             points.clone(),
-            SELECTION_HALO_COLOR,
-            egui::Stroke::new(SELECTION_HALO_EXTRA_PX, SELECTION_HALO_COLOR),
+            halo,
+            egui::Stroke::new(SELECTION_HALO_EXTRA_PX, halo),
         ));
     }
     painter.add(egui::Shape::convex_polygon(
@@ -316,8 +317,9 @@ fn draw_tooltip(
     pointer: egui::Pos2,
     trade: &ClosedTrade,
 ) {
-    let font = egui::FontId::monospace(11.0);
-    let caption = egui::FontId::monospace(10.0);
+    let palette = theme::get(painter.ctx());
+    let font = palette.axis_font(11.0);
+    let caption = palette.axis_font(10.0);
     let head = format!(
         "{} {} · {} → {} · {}",
         position_word(trade.side),
@@ -332,8 +334,8 @@ fn draw_tooltip(
         crate::plot_area::fmt_time(trade.closed_ms, frame.tz),
         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
     );
-    let head_galley = painter.layout_no_wrap(head, font, theme::TEXT_PRIMARY);
-    let detail_galley = painter.layout_no_wrap(detail, caption, theme::TEXT_MUTED);
+    let head_galley = painter.layout_no_wrap(head, font, palette.text_primary());
+    let detail_galley = painter.layout_no_wrap(detail, caption, palette.text_muted());
     let head_height = head_galley.size().y;
     let width = head_galley.size().x.max(detail_galley.size().x) + 16.0;
     let height = head_height + detail_galley.size().y + 14.0;
@@ -344,16 +346,16 @@ fn draw_tooltip(
         .max(frame.chart_rect.left());
     origin.y = origin.y.max(frame.chart_rect.top());
     let rect = egui::Rect::from_min_size(origin, egui::vec2(width, height));
-    painter.rect_filled(rect, egui::Rounding::same(4.0), theme::TAG_BG);
+    painter.rect_filled(rect, egui::Rounding::same(4.0), palette.tag_bg());
     painter.galley(
         rect.min + egui::vec2(8.0, 4.0),
         head_galley,
-        theme::TEXT_PRIMARY,
+        palette.text_primary(),
     );
     painter.galley(
         rect.min + egui::vec2(8.0, head_height + 8.0),
         detail_galley,
-        theme::TEXT_MUTED,
+        palette.text_muted(),
     );
 }
 

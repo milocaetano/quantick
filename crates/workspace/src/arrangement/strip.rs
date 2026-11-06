@@ -35,21 +35,43 @@ pub fn home_label_fits(
     markets <= slots && (markets != 1 || lone_fits)
 }
 
-/// What a market tab's dot says: the feed's state, never the selection.
+/// What a market tab's feed is doing, as the mark beside its symbol says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TabFeedDot {
+pub enum TabFeed {
     Live,
-    Stopped,
+    /// Connected, but the venue reports a failure behind the open socket, such
+    /// as a terminal closed: the canvas shows the notice, so the tab is not live.
+    Attention,
+    /// Playing a recording; the tab also says so in words.
     Replay,
+    /// A live session was lost and has not come back.
+    Disconnected,
+    /// No live session yet.
+    Stopped,
 }
 
-/// The dot of a tab playing a recording, or else of its feed.
-#[must_use]
-pub const fn tab_feed_dot(replaying: bool, live: bool) -> TabFeedDot {
-    match (replaying, live) {
-        (true, _) => TabFeedDot::Replay,
-        (false, true) => TabFeedDot::Live,
-        (false, false) => TabFeedDot::Stopped,
+impl TabFeed {
+    /// A recording wins. A connected feed that needs attention is neither live
+    /// nor lost: its socket is open while its venue reports a failure. Only a
+    /// feed that is not connected and needs attention reads as lost.
+    #[must_use]
+    pub const fn of(replaying: bool, connected: bool, attention: bool) -> Self {
+        match (replaying, connected, attention) {
+            (true, _, _) => Self::Replay,
+            (false, true, false) => Self::Live,
+            (false, true, true) => Self::Attention,
+            (false, false, true) => Self::Disconnected,
+            (false, false, false) => Self::Stopped,
+        }
+    }
+
+    /// The word printed after the symbol: a recording is never passed off as live.
+    #[must_use]
+    pub const fn word(self) -> Option<&'static str> {
+        match self {
+            Self::Replay => Some("Replay"),
+            _ => None,
+        }
     }
 }
 
@@ -336,11 +358,27 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_dot_says_the_feed_and_replay_wins() {
-        assert_eq!(tab_feed_dot(false, true), TabFeedDot::Live);
-        assert_eq!(tab_feed_dot(false, false), TabFeedDot::Stopped);
-        assert_eq!(tab_feed_dot(true, true), TabFeedDot::Replay);
-        assert_eq!(tab_feed_dot(true, false), TabFeedDot::Replay);
+    fn a_recording_wins_and_a_venue_notice_is_neither_live_nor_lost() {
+        assert_eq!(TabFeed::of(true, false, true), TabFeed::Replay);
+        assert_eq!(TabFeed::of(true, true, false), TabFeed::Replay);
+        assert_eq!(TabFeed::of(false, true, false), TabFeed::Live);
+        // A venue notice on a connected feed: neither live nor "lost".
+        assert_eq!(TabFeed::of(false, true, true), TabFeed::Attention);
+        assert_eq!(TabFeed::of(false, false, true), TabFeed::Disconnected);
+        assert_eq!(TabFeed::of(false, false, false), TabFeed::Stopped);
+    }
+
+    #[test]
+    fn only_a_recording_is_named_in_words() {
+        let all = [
+            TabFeed::Live,
+            TabFeed::Attention,
+            TabFeed::Replay,
+            TabFeed::Disconnected,
+            TabFeed::Stopped,
+        ];
+        let named: Vec<_> = all.iter().filter_map(|feed| feed.word()).collect();
+        assert_eq!(named, ["Replay"]);
     }
 
     #[test]

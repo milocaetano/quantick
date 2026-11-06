@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::readback::{EVERY_OPTIONAL_TEST, Readback, journal};
 
+mod style_schema;
+pub mod style_wire;
+
 pub const CHART_SETTINGS_CAPABILITY_ID: &str = "chart.settings.set";
 
 pub const CHART_SETTINGS_EVENT_KIND: &str = "chart.settings.changed";
@@ -37,27 +40,63 @@ impl ChartSettingsTab {
     }
 }
 
+/// Stable runtime address, published by chart.summary. Both IDs must still exist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChartSettingsTarget {
+    pub tab_id: quantick_control::wire::WireU64,
+    pub pane_id: quantick_control::wire::WireU64,
+}
+
 /// One thing to do with the window or its candle presets.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ChartSettingsInput {
     /// Put the window on screen at `tab`. Opening starts a sitting: the
     /// appearance at that moment is what `reset_candles` returns to.
-    Open { tab: ChartSettingsTab },
+    Open {
+        tab: ChartSettingsTab,
+        #[serde(default)]
+        target: Option<ChartSettingsTarget>,
+    },
     /// Take the window off screen and end the sitting.
     Close,
     /// Apply a built-in candle preset (by label or snake_case value) or a
     /// saved one (by name). A built-in changes the candles and keeps the
     /// canvas; a saved one brings back candles and canvas.
-    ApplyCandlePreset { name: String },
+    ApplyCandlePreset {
+        name: String,
+        #[serde(default)]
+        target: Option<ChartSettingsTarget>,
+    },
     /// Save the chart's current look under `name`, replacing a saved look of
     /// that name. Built-in names are refused.
-    SaveCandlePreset { name: String },
+    SaveCandlePreset {
+        name: String,
+        #[serde(default)]
+        target: Option<ChartSettingsTarget>,
+    },
     /// Forget a saved look. Built-ins cannot be deleted.
     DeleteCandlePreset { name: String },
     /// Restore the appearance the window opened on. Refused while the window
     /// is closed: there is no sitting to return to.
-    ResetCandles,
+    ResetCandles {
+        #[serde(default)]
+        target: Option<ChartSettingsTarget>,
+    },
+    /// Inspect the effective local style and its per-field ownership.
+    Inspect {
+        #[serde(default)]
+        target: Option<ChartSettingsTarget>,
+    },
+    /// Replace one pane's full style document, as returned by inspect. Invalid or
+    /// unknown fields, non-finite values and out-of-range geometry are refused atomically.
+    UpdateCandles {
+        #[serde(default)]
+        target: Option<ChartSettingsTarget>,
+        #[schemars(schema_with = "style_schema::chart_style")]
+        style: serde_json::Value,
+    },
 }
 
 /// The window and the candle presets after the call.
@@ -65,6 +104,12 @@ pub enum ChartSettingsInput {
 pub struct ChartSettingsResult {
     /// Whether the window is on screen.
     pub open: bool,
+    /// Address whose appearance this result describes.
+    pub target: Option<ChartSettingsTarget>,
+    /// Effective candle/canvas values and explicit/theme ownership. This is
+    /// the complete style document accepted by update_candles.
+    #[schemars(schema_with = "style_schema::optional_chart_style")]
+    pub effective_style: Option<serde_json::Value>,
     /// The tab it shows, or would show when opened.
     pub tab: ChartSettingsTab,
     /// The preset the chart's look answers to: a built-in label when the
@@ -87,7 +132,7 @@ pub fn descriptor() -> CapabilityDescriptor {
         CHART_SETTINGS_CAPABILITY_ID,
         crate::chart::MODULE_ID,
         "Drive the chart settings window",
-        "Opens the chart settings window on its Candles or Footprint tab or closes it — the window a double click on the candles, the toolbar's appearance and footprint buttons and the menus open — and applies, saves, deletes or resets candle presets by name. Built-in presets change the candles and keep the canvas; saved presets are written to the candle presets file and restore the whole look. Reset restores the appearance the window opened on and needs the window open. A save or delete whose file cannot be written is undone and refused with control.capability_unavailable, retryable. Persistence differs by action: only save and delete outlive the session (they write the candle presets file); open, close, apply and reset change this session's window and appearance only, which a relaunch does not keep. The declared persistence is durable because it names the strongest effect any action can have.",
+        "Drive Candles/Footprint settings for one chart. Optional target uses tab_id/pane_id from chart.summary; omission uses the pinned editor or focused pane. Focus never retargets an editor; retired panes/sources require explicit reopen. Inspect returns effective_style and theme/explicit ownership; update_candles validates that complete document atomically. Apply/reset/update affect only the target and persist with its workspace. Built-in presets keep its canvas; saved presets restore its full look. Reset requires an editor on the same pane and restores its opening look. Preset names are shared; application is local. Failed preset writes are undone and retryable. Open/close only change the session window.",
         "Every action names the state it wants: opening an open window, applying the preset already shown, saving the same look under the same name or resetting an unchanged sitting are harmless, and the result reports the window and the presets as they stand.",
     );
     // One persistence per capability: the strongest effect any action has.

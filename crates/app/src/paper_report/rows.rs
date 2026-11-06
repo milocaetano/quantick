@@ -5,23 +5,16 @@
 //! test, with no state of its own - what to draw arrives as an argument, and
 //! what the pointer did leaves as a return value.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
-use quantick_paper::pnl::SymbolPnl;
 use quantick_paper::report::fit::{count_and_net, fit_head, fit_line};
-use quantick_paper::report::sessions::{
-    SessionKey, SessionLabel, SessionRow, TradeRef, group_by_day_and_session, place_session_rows,
-    source_word,
-};
 use quantick_sim::ClosedTrade;
-use quantick_sim::history::SessionSource;
 use rust_decimal::Decimal;
 
-use super::sessions::{SessionHead, source_glyph};
+use super::sessions::source_glyph;
 use super::{
     DAY_HEADER_INSET_PX, DAY_HEADER_TEXT_X_PX, DETAIL_GAP_PX, DETAIL_RIGHT_PAD_PX,
     LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, OpenRow, SIDE_RAIL_WIDTH_PX,
@@ -31,69 +24,9 @@ use crate::paper_chrome::{fmt_decimal, fmt_duration_ms, points_color, position_w
 use crate::theme;
 use crate::timezone::TzOffset;
 
-/// One virtualised ledger line.
-pub(super) enum LedgerRow<'a> {
-    /// A group caption and its count.
-    Header(&'static str, usize),
-    /// A civil day's caption: the date, how many of the rows under it
-    /// closed on that day, what they netted, and whether it is folded
-    /// shut. A ledger of bare clock times cannot answer "which session was
-    /// that" — the day header is where the answer lives, it carries the
-    /// day's result for free, and clicking it folds the day away.
-    Day(CivilDate, usize, (Decimal, String), bool),
-    /// A session's own row inside its day — every session a file holds.
-    SessionHead(SessionHead),
-    /// The rename or delete row standing where its session's row was.
-    Inline,
-    /// A closed trade from this session's simulator: selectable, and its
-    /// round trip is on the current tape.
-    Session(usize, &'a ClosedTrade, TradeMeta<'a>),
-    /// A row loaded from an earlier session's journal. Selectable for its
-    /// tags; its tape is not the one on screen, so it never navigates.
-    Earlier(&'a str, &'a ClosedTrade, TradeMeta<'a>),
-    /// This session's trades the filter hides — said, never dropped.
-    HiddenLive(usize),
-    /// The control that reveals the next page of saved history, carrying
-    /// how many trades are still held back.
-    More(usize),
-}
-
-/// What the session layer knows of one trade row.
-#[derive(Clone, Copy)]
-pub(super) struct TradeMeta<'a> {
-    /// The session file it is in; `None` when no file under the trades
-    /// folder took it.
-    pub(super) session: Option<&'a SessionKey>,
-    /// Which trade of that file it is.
-    pub(super) trade_ref: TradeRef,
-    pub(super) source: Option<SessionSource>,
-    pub(super) tags: &'a [String],
-    /// How its P&L is worded, bound to its own symbol.
-    pub(super) pnl: SymbolPnl<'a>,
-}
-
-/// One trade before it is cut into rows.
-pub(super) struct Item<'a> {
-    pub(super) trade: &'a ClosedTrade,
-    pub(super) symbol: &'a str,
-    /// Its index among this session's closed trades; `None` for a saved row.
-    pub(super) live: Option<usize>,
-    pub(super) meta: TradeMeta<'a>,
-}
-
-/// How the list folds and shows sessions while rows are cut.
-pub(super) struct GroupView<'s> {
-    pub(super) collapsed_days: &'s BTreeSet<i64>,
-    pub(super) collapsed_sessions: &'s BTreeSet<SessionKey>,
-    /// The session F2 and Del act on.
-    pub(super) focused: Option<&'s SessionKey>,
-    /// The session whose row an inline rename or delete replaces.
-    pub(super) editing: Option<&'s SessionKey>,
-    pub(super) labels: &'s BTreeMap<SessionKey, SessionLabel>,
-    /// Sessions a tab still journals to.
-    pub(super) live: &'s BTreeSet<SessionKey>,
-    pub(super) tz: TzOffset,
-}
+pub(super) use quantick_paper::report::ledger_rows::{
+    GroupView, Item, LedgerRow, TradeMeta, push_groups,
+};
 
 /// What one painted ledger row reported back.
 #[derive(Default)]
@@ -104,81 +37,13 @@ pub(super) struct LedgerRowResponse {
     pub(super) response: Option<egui::Response>,
 }
 
-/// Cut `items` (newest first) into rows: a header per civil day, then each
-/// session's own row where [`place_session_rows`] gives it one, then the
-/// trades. `inline_placed` carries the one inline editor across the lists
-/// of one ledger.
-pub(super) fn push_groups<'a>(
-    rows: &mut Vec<LedgerRow<'a>>,
-    items: &'a [Item<'a>],
-    view: &GroupView<'_>,
-    inline_placed: &mut bool,
-) {
-    let mut days = group_by_day_and_session(
-        items
-            .iter()
-            .map(|item| (item.meta.session, item.meta.pnl, item.trade)),
-        view.tz,
-    );
-    place_session_rows(&mut days, view.editing, view.collapsed_days, inline_placed);
-    for day in days {
-        let folded = view.collapsed_days.contains(&day.day.day_number());
-        rows.push(LedgerRow::Day(
-            day.day,
-            day.count,
-            (day.tint, day.net_text),
-            folded,
-        ));
-        // A folded day builds no trade rows at all — the header keeps the
-        // date, the count and the net, so the day is summarised rather
-        // than merely hidden, and the frame does not pay for what it does
-        // not show.
-        if folded {
-            continue;
-        }
-        for session in day.sessions {
-            let first = &items[session.items[0]];
-            if session.row != SessionRow::Bare
-                && let Some(key) = &session.key
-            {
-                if session.row == SessionRow::Inline {
-                    rows.push(LedgerRow::Inline);
-                } else {
-                    rows.push(LedgerRow::SessionHead(SessionHead {
-                        key: key.clone(),
-                        label: view.labels.get(key).map_or_else(
-                            || source_word(first.meta.source).to_owned(),
-                            |label| label.text.clone(),
-                        ),
-                        source: first.meta.source,
-                        count: session.count,
-                        net: (session.tint, session.net_text.clone()),
-                        folded: view.collapsed_sessions.contains(key),
-                        focused: view.focused == Some(key),
-                        live: view.live.contains(key),
-                    }));
-                }
-                if view.collapsed_sessions.contains(key) {
-                    continue;
-                }
-            }
-            rows.extend(session.items.iter().map(|&index| {
-                let item = &items[index];
-                match item.live {
-                    Some(live) => LedgerRow::Session(live, item.trade, item.meta),
-                    None => LedgerRow::Earlier(item.symbol, item.trade, item.meta),
-                }
-            }));
-        }
-    }
-}
-
 /// A group caption inside the virtualised list, sharing the fixed row
 /// height so `show_rows` stays honest about where every row is.
 pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
+    let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::hover(),
     );
     if !ui.is_rect_visible(rect) {
@@ -188,8 +53,8 @@ pub(super) fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
         egui::pos2(rect.left() + 2.0, rect.bottom() - 4.0),
         egui::Align2::LEFT_BOTTOM,
         format!("{label} · {count}"),
-        egui::FontId::monospace(10.0),
-        theme::TEXT_FAINT,
+        palette.mono_font(10.0),
+        palette.text_faint(),
     );
 }
 
@@ -205,9 +70,10 @@ pub(super) fn draw_day_header(
     net: &(Decimal, String),
     folded: bool,
 ) -> bool {
+    let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::click(),
     );
     if !ui.is_rect_visible(rect) {
@@ -222,9 +88,9 @@ pub(super) fn draw_day_header(
         band,
         egui::Rounding::ZERO,
         if response.hovered() {
-            theme::BORDER
+            palette.border()
         } else {
-            theme::INSET
+            palette.inset()
         },
     );
     painter.line_segment(
@@ -232,7 +98,7 @@ pub(super) fn draw_day_header(
             egui::pos2(rect.left(), band.top()),
             egui::pos2(rect.right(), band.top()),
         ],
-        egui::Stroke::new(1.0_f32, theme::BORDER),
+        egui::Stroke::new(1.0_f32, palette.border()),
     );
     // The caret is the affordance: a header that folds must look like it
     // folds, or the click is a secret.
@@ -244,29 +110,29 @@ pub(super) fn draw_day_header(
         } else {
             icons::CARET_DOWN
         },
-        egui::FontId::proportional(10.0),
-        theme::TEXT_FAINT,
+        palette.body_font(10.0),
+        palette.text_faint(),
     );
     // A narrow panel shortens the date first, then drops the points
     // qualifier; the count and the money net always stay whole.
     let rights = count_and_net(count, &net.1);
     let date_color = if folded {
-        theme::TEXT_FAINT
+        palette.text_faint()
     } else {
-        theme::TEXT_MUTED
+        palette.text_muted()
     };
     let ends = [
-        rect.left() + DAY_HEADER_TEXT_X_PX,
+        rect.left() + palette.layout(DAY_HEADER_TEXT_X_PX),
         rect.right() - 6.0,
         band.center().y,
     ];
     paint_fitted(
         painter,
-        egui::FontId::monospace(10.0),
+        palette.mono_font(10.0),
         ends,
         &[&date.long(), &date.short()],
         &[&rights[0], &rights[1]],
-        [date_color, points_color(net.0)],
+        [date_color, points_color(&palette, net.0)],
     );
     response
         .on_hover_text(format!(
@@ -282,9 +148,10 @@ pub(super) fn draw_day_header(
 /// many trades are still held back, so the end of the list is never
 /// mistaken for the end of the history.
 pub(super) fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
+    let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::click(),
     );
     if !ui.is_rect_visible(rect) {
@@ -295,17 +162,17 @@ pub(super) fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
         body,
         egui::Rounding::same(4.0),
         if response.hovered() {
-            theme::BORDER
+            palette.border()
         } else {
-            theme::CONTROL
+            palette.control()
         },
     );
     ui.painter().text(
         body.center(),
         egui::Align2::CENTER_CENTER,
         format!("{}  show older · {remaining} more saved", icons::CARET_DOWN),
-        egui::FontId::monospace(10.0),
-        theme::TEXT_MUTED,
+        palette.mono_font(10.0),
+        palette.text_muted(),
     );
     response
         .on_hover_text(format!(
@@ -317,21 +184,22 @@ pub(super) fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
 /// The pinned open-position row: sunken, live open points on the right,
 /// the current mark standing in for the exit.
 pub(super) fn draw_open_row(ui: &mut egui::Ui, open: &OpenRow, symbol: Option<&str>) {
+    let palette = theme::get(ui.ctx());
     let summary = &open.summary;
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::hover(),
     );
     if !ui.is_rect_visible(rect) {
         return;
     }
     let painter = ui.painter();
-    painter.rect_filled(rect, egui::Rounding::ZERO, theme::INSET);
+    painter.rect_filled(rect, egui::Rounding::ZERO, palette.inset());
     for y in [rect.top(), rect.bottom()] {
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            egui::Stroke::new(1.0_f32, palette.border()),
         );
     }
     painter.rect_filled(
@@ -340,7 +208,7 @@ pub(super) fn draw_open_row(ui: &mut egui::Ui, open: &OpenRow, symbol: Option<&s
             egui::pos2(rect.left() + SIDE_RAIL_WIDTH_PX, rect.bottom()),
         ),
         egui::Rounding::ZERO,
-        theme::side_color(summary.side),
+        palette.side_color(summary.side),
     );
     let exit = open.mark_price.map_or_else(|| "…".to_owned(), fmt_decimal);
     let held = open
@@ -391,22 +259,36 @@ struct RowLines {
 }
 
 fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
-    let font = egui::FontId::monospace(11.0);
+    let painter = &painter.with_clip_rect(rect);
+    let palette = theme::get(painter.ctx());
+    let font = palette.mono_font(11.0);
     let x = rect.left() + SIDE_RAIL_WIDTH_PX + 6.0;
-    let y1 = rect.top() + 9.0;
-    let y2 = rect.top() + 24.0;
-    let color = theme::side_color(lines.side);
-    let head = painter.layout_no_wrap(lines.head, font.clone(), color);
-    let route_x = x + head.size().x + 8.0;
-    painter.galley(egui::pos2(x, y1 - head.size().y / 2.0), head, color);
+    let y1 = rect.top() + palette.layout(9.0);
+    let y2 = rect.top() + palette.layout(24.0);
+    let color = palette.side_color(lines.side);
     // The right end is laid out first, right to left - P&L, tag, source
     // marker - each with the gap to its left. Only the tag may drop; the
     // route gets what is left.
     let piece = |text, font, color, gap| (painter.layout_no_wrap(text, font, color), color, gap);
-    let points = (lines.points)
-        .map(|(points, text)| piece(text, font.clone(), points_color(points), DETAIL_GAP_PX));
-    let tag = (lines.tag).map(|tag| piece(tag, font.clone(), theme::TEXT_FAINT, 4.0));
-    let glyph_font = egui::FontId::proportional(10.0);
+    let points = (lines.points).map(|(points, text)| {
+        piece(
+            quantick_paper::report::fit::elide_to_width(
+                &text,
+                (rect.right()
+                    - x
+                    - DETAIL_RIGHT_PAD_PX
+                    - 2.0 * DETAIL_GAP_PX
+                    - palette.layout(12.0))
+                .max(0.0),
+                |text| text_width(painter, text, &font),
+            ),
+            font.clone(),
+            points_color(&palette, points),
+            DETAIL_GAP_PX,
+        )
+    });
+    let tag = (lines.tag).map(|tag| piece(tag, font.clone(), palette.text_faint(), 4.0));
+    let glyph_font = palette.body_font(10.0);
     let marker = (lines.marker)
         .map(|(glyph, color)| piece(glyph.to_owned(), glyph_font, color, DETAIL_GAP_PX));
     let span = |piece: &Option<(Arc<egui::Galley>, _, f32)>| {
@@ -416,6 +298,14 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     };
     let mut right = rect.right() - DETAIL_RIGHT_PAD_PX;
     let fixed = span(&points) + span(&marker);
+    let head = quantick_paper::report::fit::elide_to_width(
+        &lines.head,
+        (right - x - fixed + DETAIL_GAP_PX).max(0.0),
+        |text| text_width(painter, text, &font),
+    );
+    let head = painter.layout_no_wrap(head, font.clone(), color);
+    let route_x = x + head.size().x + 8.0;
+    painter.galley(egui::pos2(x, y1 - head.size().y / 2.0), head, color);
     let fit = fit_head(right - route_x, fixed, span(&tag), &lines.route, |text| {
         text_width(painter, text, &font)
     });
@@ -425,7 +315,7 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
         egui::Align2::LEFT_CENTER,
         fit.route,
         font,
-        theme::TEXT_MUTED,
+        palette.text_muted(),
     );
     for (galley, color, gap) in [points, tag.filter(|_| fit.tag), marker]
         .into_iter()
@@ -438,14 +328,14 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     // The detail line and its stamp share one row from opposite ends.
     let ends = [x, rect.right() - DETAIL_RIGHT_PAD_PX, y2];
     let stamp = lines.stamp.as_deref().unwrap_or_default();
-    let font = egui::FontId::monospace(10.0);
+    let font = palette.mono_font(10.0);
     paint_fitted(
         painter,
         font,
         ends,
         &[&lines.detail],
         &[stamp],
-        [theme::TEXT_FAINT; 2],
+        [palette.text_faint(); 2],
     );
 }
 
@@ -481,8 +371,9 @@ pub(super) fn paint_fitted(
 /// How wide `text` paints in `font` - the measure the ledger's fitting
 /// decisions in [`quantick_paper::report::fit`] are made with.
 pub(super) fn text_width(painter: &egui::Painter, text: &str, font: &egui::FontId) -> f32 {
+    let palette = theme::get(painter.ctx());
     painter
-        .layout_no_wrap(text.to_owned(), font.clone(), theme::TEXT_FAINT)
+        .layout_no_wrap(text.to_owned(), font.clone(), palette.text_faint())
         .size()
         .x
 }
@@ -501,9 +392,10 @@ pub(super) fn draw_ledger_row(
     session: bool,
     tz: TzOffset,
 ) -> LedgerRowResponse {
+    let palette = theme::get(ui.ctx());
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::vec2(width, palette.layout(LEDGER_ROW_HEIGHT_PX)),
         egui::Sense::click(),
     );
     if !ui.is_rect_visible(rect) {
@@ -516,11 +408,11 @@ pub(super) fn draw_ledger_row(
         ui.painter().rect_filled(
             rect,
             egui::Rounding::ZERO,
-            theme::active_tint(theme::ACCENT),
+            theme::active_tint(palette.accent()),
         );
     } else if response.hovered() {
         ui.painter()
-            .rect_filled(rect, egui::Rounding::ZERO, theme::BORDER);
+            .rect_filled(rect, egui::Rounding::ZERO, palette.border());
     }
     ui.painter().rect_filled(
         egui::Rect::from_min_max(
@@ -528,7 +420,7 @@ pub(super) fn draw_ledger_row(
             egui::pos2(rect.left() + SIDE_RAIL_WIDTH_PX, rect.bottom()),
         ),
         egui::Rounding::ZERO,
-        theme::side_color(trade.side),
+        palette.side_color(trade.side),
     );
     let mut detail = ledger_detail(trade, tz);
     if !meta.tags.is_empty() {
@@ -555,13 +447,13 @@ pub(super) fn draw_ledger_row(
             // Compact: the day header directly above carries the year.
             stamp: Some(CivilDate::from_ms(trade.closed_ms, tz).short()),
             tag: symbol.map(str::to_owned),
-            marker: source_glyph(meta.source),
+            marker: source_glyph(&palette, meta.source),
         },
     );
     let mut navigate = false;
     if session && response.hovered() {
         let nav_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.right() - 14.0, rect.top() + 24.0),
+            egui::pos2(rect.right() - 14.0, rect.top() + palette.layout(24.0)),
             egui::vec2(16.0, 14.0),
         );
         let nav = ui
@@ -576,11 +468,11 @@ pub(super) fn draw_ledger_row(
             nav_rect.center(),
             egui::Align2::CENTER_CENTER,
             icons::ARROW_UP_RIGHT,
-            egui::FontId::proportional(11.0),
+            palette.body_font(11.0),
             if nav.hovered() {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             },
         );
         navigate = nav.clicked();

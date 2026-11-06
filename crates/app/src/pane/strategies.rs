@@ -270,6 +270,7 @@ pub(super) fn paint_strategy_badge(
     all_hidden: bool,
     closed_slots: usize,
 ) {
+    let palette = theme::get(painter.ctx());
     let Some(first) = points.first() else {
         return;
     };
@@ -278,11 +279,11 @@ pub(super) fn paint_strategy_badge(
     });
     use quantick_strategy::ArmedState;
     let color = match instance.armed.state() {
-        ArmedState::Armed => theme::ACCENT,
-        ArmedState::Fired { .. } => theme::AMBER,
-        ArmedState::InPosition => theme::BUY,
-        ArmedState::Done => theme::TEXT_MUTED,
-        ArmedState::Disarmed { .. } => theme::TEXT_FAINT,
+        ArmedState::Armed => palette.accent(),
+        ArmedState::Fired { .. } => palette.amber(),
+        ArmedState::InPosition => palette.buy(),
+        ArmedState::Done => palette.text_muted(),
+        ArmedState::Disarmed { .. } => palette.text_faint(),
     };
     /// Badge label size — the small-annotation size the band chips use.
     const BADGE_FONT_PX: f32 = 11.0;
@@ -298,7 +299,7 @@ pub(super) fn paint_strategy_badge(
     let position = anchor + egui::vec2(BADGE_PAD_X_PX - 1.0, -BADGE_LIFT_PX);
     // A whisper of ground behind the label so it stays readable over
     // candles; galley first, box after, text last.
-    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(BADGE_FONT_PX), color);
+    let galley = painter.layout_no_wrap(text, palette.label_font(BADGE_FONT_PX), color);
     let rect = egui::Rect::from_min_size(
         position - egui::vec2(BADGE_PAD_X_PX, galley.size().y + BADGE_PAD_Y_PX + 1.0),
         galley.size() + egui::vec2(2.0 * BADGE_PAD_X_PX, 2.0 * BADGE_PAD_Y_PX),
@@ -306,7 +307,7 @@ pub(super) fn paint_strategy_badge(
     painter.rect_filled(
         rect,
         BADGE_CORNER_PX,
-        theme::CANVAS.gamma_multiply(BADGE_GROUND_ALPHA),
+        palette.canvas().gamma_multiply(BADGE_GROUND_ALPHA),
     );
     painter.galley(
         rect.min + egui::vec2(BADGE_PAD_X_PX, BADGE_PAD_Y_PX),

@@ -399,7 +399,7 @@ pub struct Tab {
     /// The layout each context pane opens on, by slot, from a restored
     /// workspace. A slot past the end takes what a fresh pane takes: the
     /// focused pane's layout.
-    context_opening_layouts: SmallVec<[Option<u64>; MAX_CONTEXT_PANES]>,
+    context_opening: quantick_workspace::context_opening::ContextOpening,
     /// Whether the time pane opens with its indicator legend folded, for the
     /// same reason the interval above is stashed: a restored workspace names
     /// the fold a frame before the pane it belongs to exists.
@@ -506,7 +506,7 @@ impl Tab {
             time_panes: SmallVec::new(),
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             context_opening_intervals_ms: SmallVec::new(),
-            context_opening_layouts: SmallVec::new(),
+            context_opening: Default::default(),
             time_pane_opening_legend_collapsed: false,
             pending_context_panes: 0,
             layout: CanvasLayout::Single,

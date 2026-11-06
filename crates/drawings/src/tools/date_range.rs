@@ -54,6 +54,7 @@ impl MarkTool for DateRange {
             style,
             points,
             Measured {
+                appearance: ctxt.appearance,
                 anchors: ctxt.anchors,
                 axes: TIME_ONLY,
                 unit: ctxt.unit,

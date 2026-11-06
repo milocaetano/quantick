@@ -42,6 +42,7 @@ pub(crate) fn object_row(
     index: usize,
     ask: &mut DrawingChromeAsk,
 ) -> Vec<(&'static str, egui::Rect)> {
+    let palette = theme::get(ui.ctx());
     #[cfg_attr(not(test), allow(unused_mut))]
     let mut rects = Vec::new();
     ui.horizontal(|ui| {
@@ -56,7 +57,7 @@ pub(crate) fn object_row(
             ui.label(
                 egui::RichText::new("assistant")
                     .small()
-                    .color(theme::TEXT_SUPPORT),
+                    .color(palette.text_support()),
             )
             .on_hover_text(format!("Placed by {author}, not by you"));
         }
@@ -75,7 +76,7 @@ pub(crate) fn object_row(
             let text = egui::RichText::new(chip).small();
             match row.band.hint() {
                 Some(hint) => {
-                    ui.label(text.color(theme::AMBER)).on_hover_text(hint);
+                    ui.label(text.color(palette.amber())).on_hover_text(hint);
                 }
                 None => {
                     ui.label(text);

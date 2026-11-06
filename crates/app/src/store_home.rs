@@ -53,6 +53,14 @@ pub(crate) use quantick_workspace::write_refusal::{
 /// `paper_state` is here.
 pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     CockpitStore {
+        key: "appearance",
+        file: quantick_stores::appearance::THEME_FILE,
+        validate: quantick_stores::appearance::validate,
+        path: crate::theme::store::path,
+        in_bundle: false,
+        local_keys: &[],
+    },
+    CockpitStore {
         key: "ui_state",
         file: crate::ui_state::UI_STATE_FILE,
         validate: crate::ui_state::validate,
@@ -362,7 +370,11 @@ pub(crate) fn consolidate_once() -> Option<RescueSummary> {
     };
     #[cfg(not(any(feature = "scenario-harness", test)))]
     let overridden = |_: &str| false;
-    let summary = rescue_into(&home, Path::new("."), COCKPIT_STORES, &overridden)?;
+    let summary = rescue_into(&home, Path::new("."), COCKPIT_STORES, &|file| {
+        overridden(file)
+            || (file == quantick_stores::appearance::THEME_FILE
+                && crate::launch::operator_paths().theme.is_some())
+    })?;
     let _ = RESCUE_NOTICE.set(rescue_toast(&summary, &home));
     Some(summary)
 }

@@ -124,10 +124,11 @@ impl Rig {
                 values: Vec::new(),
             },
         });
-        rig.book.send(BookCommand::ApplyVisualConfig(HeatmapConfig {
-            show_aggressions: true,
-            ..HeatmapConfig::default()
-        }));
+        rig.book
+            .send(BookCommand::ApplyVisualConfig(Box::new(HeatmapConfig {
+                show_aggressions: true,
+                ..HeatmapConfig::default()
+            })));
         rig.book.send(BookCommand::SetEnabled {
             enabled: true,
             generation_floor: GENERATION,

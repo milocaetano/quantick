@@ -8,6 +8,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::report::fit::{first_fact, fit_line};
+use quantick_paper::report::ledger_rows::LedgerPage;
 use quantick_paper::report::ledger_state::{
     LedgerEdit, LedgerView, LedgerViewChange, SessionPress,
 };
@@ -21,8 +22,8 @@ use super::rows::{
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
-    LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerTotals, ReportEnv,
-    ReportState, TOTALS_STRIP_PX,
+    LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerTotals, ReportEnv, ReportState,
+    TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
 use crate::paper_chrome::{caption, list_symbol_folders, points_color};
@@ -128,6 +129,7 @@ impl ReportState {
         tz: TzOffset,
         env: &ReportEnv<'_>,
     ) -> Option<LedgerAction> {
+        let palette = theme::get(ui.ctx());
         if self.history_cache.is_none() {
             self.reload_ledger(env);
         }
@@ -140,9 +142,9 @@ impl ReportState {
             .state
             .ensure_cut(self.history_cache.as_ref(), tz);
         ui.horizontal(|ui| {
-            ui.label(caption("TRADE"));
+            ui.label(caption(&palette, "TRADE"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(caption("P&L"));
+                ui.label(caption(&palette, "P&L"));
             });
         });
         ui.separator();
@@ -150,7 +152,7 @@ impl ReportState {
         // The open position rides above the scroll — panning through
         // history must never hide the trade you are in.
         if let Some(open) = &env.open {
-            ui.label(caption("OPEN"));
+            ui.label(caption(&palette, "OPEN"));
             let symbol = (!env.symbol.is_empty()).then_some(env.symbol);
             draw_open_row(ui, open, symbol);
         }
@@ -278,7 +280,8 @@ impl ReportState {
         };
         let shown = live.len() + cut.kept.len();
         let rows_listed = live.len() + saved.len();
-        let list_height = (ui.available_height() - TOTALS_STRIP_PX * 3.0).max(LEDGER_ROW_HEIGHT_PX);
+        let list_height = (ui.available_height() - palette.layout(TOTALS_STRIP_PX) * 3.0)
+            .max(palette.layout(LEDGER_ROW_HEIGHT_PX));
         // Session rows carry the chart's own instrument; a ledger row that
         // does not name its market is unreadable the moment a second tab
         // exists.
@@ -286,7 +289,7 @@ impl ReportState {
         if rows.is_empty() {
             ui.label(
                 egui::RichText::new("Nothing matches the filter.")
-                    .color(theme::TEXT_MUTED)
+                    .color(palette.text_muted())
                     .small(),
             );
         }
@@ -351,6 +354,7 @@ impl ReportState {
     /// Scope row: which instrument's saved history the ledger lists, the
     /// re-read button and the fold-every-day switch.
     fn draw_scope_row(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) {
+        let palette = theme::get(ui.ctx());
         let mut reload = false;
         let mut picked: Option<LedgerScope> = None;
         ui.horizontal(|ui| {
@@ -359,8 +363,7 @@ impl ReportState {
                 .width(LEDGER_SCOPE_COMBO_PX)
                 .selected_text(
                     egui::RichText::new(self.ledger_scope.label(&chart))
-                        .monospace()
-                        .size(11.0),
+                        .font(palette.mono_font(11.0)),
                 )
                 .show_ui(ui, |ui| {
                     let mut option = |ui: &mut egui::Ui, scope: LedgerScope| {
@@ -419,6 +422,7 @@ impl ReportState {
 
     /// Nothing closed and nothing open: say so, and offer the ticket.
     fn draw_empty_state(&self, ui: &mut egui::Ui, env: &ReportEnv<'_>) -> Option<LedgerAction> {
+        let palette = theme::get(ui.ctx());
         ui.add_space(12.0);
         let headline = match self.ledger_scope.folder(env.symbol) {
             Some(symbol) if !symbol.is_empty() => {
@@ -426,12 +430,12 @@ impl ReportState {
             }
             _ => "No simulated trades yet.".to_owned(),
         };
-        ui.label(egui::RichText::new(headline).color(theme::TEXT_PRIMARY));
+        ui.label(egui::RichText::new(headline).color(palette.text_primary()));
         ui.label(
             egui::RichText::new(
                 "Close a position and it lands here - this session and every saved one.",
             )
-            .color(theme::TEXT_SUPPORT)
+            .color(palette.text_support())
             .small(),
         );
         ui.add_space(4.0);
@@ -476,6 +480,7 @@ impl ReportState {
     /// The honesty line under the ledger: unreadable files and skipped rows
     /// are counted, never silently dropped.
     fn draw_ledger_disclosure(&self, ui: &mut egui::Ui) {
+        let palette = theme::get(ui.ctx());
         let Some(cache) = &self.history_cache else {
             return;
         };
@@ -487,7 +492,7 @@ impl ReportState {
                 "{} file(s) unreadable, {} row(s) skipped - counted, never silently dropped.",
                 cache.unreadable_files, cache.problem_rows,
             ))
-            .color(theme::WARN)
+            .color(palette.warn())
             .small(),
         );
     }
@@ -536,16 +541,22 @@ struct RowPresses {
 
 impl RowList<'_, '_> {
     fn show(mut self, ui: &mut egui::Ui, list_height: f32) -> RowPresses {
+        let palette = theme::get(ui.ctx());
         let mut presses = RowPresses::default();
         let output = egui::ScrollArea::vertical()
             .id_salt("paper_trades_ledger")
             .auto_shrink([false, false])
             .max_height(list_height)
-            .show_rows(ui, LEDGER_ROW_HEIGHT_PX, self.rows.len(), |ui, range| {
-                for index in range {
-                    self.row(ui, index, &mut presses);
-                }
-            });
+            .show_rows(
+                ui,
+                palette.layout(LEDGER_ROW_HEIGHT_PX),
+                self.rows.len(),
+                |ui, range| {
+                    for index in range {
+                        self.row(ui, index, &mut presses);
+                    }
+                },
+            );
         // Keys belong to the ledger only while the pointer is over it and
         // nothing is being typed: a trading hotkey is never taken. The
         // chart's Del and Backspace stand down while the pointer is on the
@@ -668,6 +679,7 @@ pub(super) fn draw_totals_strip(
     page: LedgerPage,
     rows_listed: usize,
 ) {
+    let palette = theme::get(ui.ctx());
     ui.horizontal(|ui| {
         let win_rate = totals
             .win_rate()
@@ -692,7 +704,7 @@ pub(super) fn draw_totals_strip(
         ui.label(
             egui::RichText::new(fit.left)
                 .monospace()
-                .color(theme::TEXT_MUTED),
+                .color(palette.text_muted()),
         )
         .on_hover_text(
             "every trade in scope - this session plus the saved history, whether or not \
@@ -703,7 +715,7 @@ pub(super) fn draw_totals_strip(
                 egui::RichText::new(fit.right)
                     .monospace()
                     .strong()
-                    .color(points_color(net.1)),
+                    .color(points_color(&palette, net.1)),
             );
         });
     });
@@ -755,30 +767,6 @@ pub enum LedgerAction {
     /// Rename, tag or delete a session. The host applies it for every tab,
     /// the same way the `session.journal.set` capability does.
     Edit(JournalEdit),
-}
-
-/// How much saved history the ledger is showing and how much it is
-/// holding back. Pure so the count printed on the "show older" control and
-/// the rows above it can never disagree — a button promising trades that
-/// are not there is worse than no button.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct LedgerPage {
-    /// Saved trades rendered, newest first.
-    pub(super) shown: usize,
-    /// Saved trades loaded but not yet revealed.
-    pub(super) remaining: usize,
-}
-
-impl LedgerPage {
-    /// `pages` pages of [`LEDGER_PAGE_TRADES`] each, clamped to `total`.
-    /// Page zero is treated as one: the ledger always shows something.
-    pub(super) fn of(total: usize, pages: usize) -> Self {
-        let shown = LEDGER_PAGE_TRADES.saturating_mul(pages.max(1)).min(total);
-        Self {
-            shown,
-            remaining: total.saturating_sub(shown),
-        }
-    }
 }
 
 #[cfg(test)]

@@ -83,6 +83,7 @@ fn profile_handle(app: &QuantickApp, index: usize) -> egui::Pos2 {
         .map(|point| target(app, point.bar, point.price))
         .collect();
     let drawing_context = crate::drawings::DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload: drawing.payload.as_ref(),
         anchors: &drawing.points,
         scale: &scale,

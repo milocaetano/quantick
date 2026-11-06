@@ -16,8 +16,8 @@ use quantick_paper::desk::geometry::{
 pub(crate) use quantick_paper::desk::geometry::{clamp_tag_center, dodged_chip_y};
 
 use super::{
-    CLOSE_DIVIDER_ALPHA, DRAG_HALO_COLOR, DRAG_HALO_EXTRA_WIDTH_PX, GUTTER_NOTCH_PX,
-    LINE_DRAG_WIDTH_PX, LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
+    CLOSE_DIVIDER_ALPHA, DRAG_HALO_EXTRA_WIDTH_PX, GUTTER_NOTCH_PX, LINE_DRAG_WIDTH_PX,
+    LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
 };
 use crate::chart::PriceScale;
 use crate::theme;
@@ -25,6 +25,7 @@ use crate::theme;
 /// The frame geometry every paper paint helper reads: one struct so a tag,
 /// a chip and a line can never disagree about where the plot ends.
 pub(super) struct PaintCtx<'a> {
+    pub(super) palette: std::sync::Arc<theme::Palette>,
     pub(super) painter: &'a egui::Painter,
     pub(super) chart_rect: egui::Rect,
     /// Right edge of the tag band (`tag_band`: the candles' band, or the
@@ -78,7 +79,10 @@ impl PaintCtx<'_> {
         if dragged {
             self.painter.line_segment(
                 points,
-                egui::Stroke::new(width + DRAG_HALO_EXTRA_WIDTH_PX, DRAG_HALO_COLOR),
+                egui::Stroke::new(
+                    width + DRAG_HALO_EXTRA_WIDTH_PX,
+                    self.palette.trade_selection_halo(),
+                ),
             );
         }
         let stroke = egui::Stroke::new(width, color);
@@ -98,14 +102,21 @@ impl PaintCtx<'_> {
     /// chip's geometry. The line stays at its true price; only the chip
     /// dodges the reserved last-price row.
     pub(super) fn gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
-        self.chip(y, color, text, (color, theme::CHIP_INK, egui::Stroke::NONE));
+        let palette = &self.palette;
+        self.chip(
+            y,
+            color,
+            text,
+            (color, palette.chip_ink(), egui::Stroke::NONE),
+        );
     }
 
     /// Hollow: a `color` border and ink on the chart's ground, for a level
     /// that is no order (the aim's echo).
     pub(super) fn hollow_gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
+        let palette = &self.palette;
         let border = egui::Stroke::new(LINE_WIDTH_PX, color);
-        self.chip(y, color, text, (theme::CANVAS, color, border));
+        self.chip(y, color, text, (palette.canvas(), color, border));
     }
 
     fn chip(&self, y: f32, color: Color32, text: &str, look: (Color32, Color32, Stroke)) {
@@ -118,7 +129,7 @@ impl PaintCtx<'_> {
         );
         let galley =
             self.painter
-                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), ink);
+                .layout_no_wrap(text.to_owned(), self.palette.mono_font(11.0), ink);
         let text_pos = egui::pos2(self.axis_x + 6.0, chip_y - galley.size().y / 2.0);
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
@@ -173,10 +184,11 @@ impl PaintCtx<'_> {
         with_close: bool,
         ghost: bool,
     ) {
-        let ink = if ghost { fill } else { theme::CHIP_INK };
+        let palette = &self.palette;
+        let ink = if ghost { fill } else { palette.chip_ink() };
         let galley =
             self.painter
-                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), ink);
+                .layout_no_wrap(text.to_owned(), self.palette.mono_font(11.0), ink);
         let half = TAG_HEIGHT_PX / 2.0;
         let center_y = clamp_tag_center(y, self.chart_rect.top(), self.chart_rect.bottom());
         let right = self.tag_right - TAG_GAP_PX;
@@ -188,7 +200,7 @@ impl PaintCtx<'_> {
         );
         if ghost {
             self.painter
-                .rect_filled(full, egui::Rounding::same(3.0), theme::INSET);
+                .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
             self.painter.rect_stroke(
                 full,
                 egui::Rounding::same(3.0),
@@ -211,7 +223,7 @@ impl PaintCtx<'_> {
             button.center(),
             egui::Align2::CENTER_CENTER,
             "×",
-            egui::FontId::monospace(11.0),
+            palette.mono_font(11.0),
             ink,
         );
         // A hairline of ink between the words and the ✕, so the zone reads
@@ -221,15 +233,7 @@ impl PaintCtx<'_> {
                 egui::pos2(button.left(), full.top() + 4.0),
                 egui::pos2(button.left(), full.bottom() - 4.0),
             ],
-            egui::Stroke::new(
-                1.0_f32,
-                egui::Color32::from_rgba_unmultiplied(
-                    ink.r(),
-                    ink.g(),
-                    ink.b(),
-                    CLOSE_DIVIDER_ALPHA,
-                ),
-            ),
+            egui::Stroke::new(1.0_f32, theme::with_opacity(ink, CLOSE_DIVIDER_ALPHA)),
         );
     }
 
@@ -244,7 +248,8 @@ impl PaintCtx<'_> {
         side_text: &str,
         points: Option<(String, egui::Color32)>,
     ) -> egui::Rect {
-        let font = egui::FontId::monospace(11.0);
+        let palette = &self.palette;
+        let font = palette.mono_font(11.0);
         let side_galley =
             self.painter
                 .layout_no_wrap(side_text.to_owned(), font.clone(), side_color);
@@ -267,11 +272,11 @@ impl PaintCtx<'_> {
             egui::pos2(right, center_y + half),
         );
         self.painter
-            .rect_filled(full, egui::Rounding::same(3.0), theme::INSET);
+            .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
         self.painter.rect_stroke(
             full,
             egui::Rounding::same(3.0),
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            egui::Stroke::new(1.0_f32, palette.border()),
         );
         // The side rail rides the card's left edge.
         self.painter.rect_filled(
@@ -306,11 +311,11 @@ impl PaintCtx<'_> {
             button.center(),
             egui::Align2::CENTER_CENTER,
             "×",
-            egui::FontId::monospace(11.0),
+            palette.mono_font(11.0),
             if over_button {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             },
         );
         // A hairline between the words and the ✕ zone.
@@ -319,7 +324,7 @@ impl PaintCtx<'_> {
                 egui::pos2(button.left(), full.top() + 3.0),
                 egui::pos2(button.left(), full.bottom() - 3.0),
             ],
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            egui::Stroke::new(1.0_f32, palette.border()),
         );
         full
     }
@@ -327,23 +332,24 @@ impl PaintCtx<'_> {
     /// A labelled `SL`/`TP` handle on the entry line: quiet control fill,
     /// the leg's own colour on hover.
     pub(super) fn bracket_handle(&self, rect: egui::Rect, label: &str, leg_color: egui::Color32) {
+        let palette = &self.palette;
         let hovered = self.pointer.is_some_and(|pointer| rect.contains(pointer));
         self.painter
-            .rect_filled(rect, egui::Rounding::same(3.0), theme::CONTROL);
+            .rect_filled(rect, egui::Rounding::same(3.0), palette.control());
         self.painter.rect_stroke(
             rect,
             egui::Rounding::same(3.0),
-            egui::Stroke::new(1.0_f32, if hovered { leg_color } else { theme::BORDER }),
+            egui::Stroke::new(1.0_f32, if hovered { leg_color } else { palette.border() }),
         );
         self.painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
             label,
-            egui::FontId::monospace(9.0),
+            palette.mono_font(9.0),
             if hovered {
-                theme::TEXT_PRIMARY
+                palette.text_primary()
             } else {
-                theme::TEXT_MUTED
+                palette.text_muted()
             },
         );
     }

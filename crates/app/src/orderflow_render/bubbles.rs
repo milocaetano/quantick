@@ -8,19 +8,18 @@
 
 use crate::orderflow_render::constants::{
     FOLD_RING_ALPHA, FOLD_RING_GAP, FOLD_RING_WIDTH, LABEL_FONT_SCALE, LABEL_MAX_FONT_PX,
-    LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, LABEL_MIN_FONT_PX, LABEL_SHADOW_ALPHA,
-    LABEL_SHADOW_OFFSET_PX, PIE_START_ANGLE,
+    LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, LABEL_MIN_FONT_PX, LABEL_SHADOW_OFFSET_PX,
+    PIE_START_ANGLE,
 };
 use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::config::crown::{
-    CROWN_BACKING_ALPHA, CROWN_BACKING_PX, CROWN_MIN_ARC_PX, CROWN_PIP_RADIUS_PX, CROWN_WHITE_MIX,
-    crown_alpha, crown_center_angle, crown_geometry,
+    CROWN_BACKING_PX, CROWN_MIN_ARC_PX, CROWN_PIP_RADIUS_PX, CROWN_WHITE_MIX, crown_alpha,
+    crown_center_angle, crown_geometry,
 };
 pub(super) use quantick_orderflow::config::dressing::{
-    HOLLOW_FILL_ALPHA, RIM_ALPHA, SEPARATOR_RING_ALPHA, SPHERE_LIGHT_OFFSET, front_half_length,
-    halo_alpha, hollow_ring_width, impact_ring_alpha, separator_ring_width, sphere_segments,
-    trail_half_height,
+    HOLLOW_FILL_ALPHA, RIM_ALPHA, SPHERE_LIGHT_OFFSET, front_half_length, halo_alpha,
+    hollow_ring_width, impact_ring_alpha, separator_ring_width, sphere_segments, trail_half_height,
 };
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, INV_PHI,
@@ -49,6 +48,8 @@ pub(super) struct BubbleColors {
     /// from [`front`](Self::front), so consumption reads as the same event
     /// hotter instead of introducing a third hue — unless the panel explicitly
     /// overrode the consumption colour, which stays the one door to change it.
+    crown_backing: egui::Color32,
+    pub(super) separator: egui::Color32,
     crown_buy: egui::Color32,
     crown_sell: egui::Color32,
 }
@@ -73,6 +74,8 @@ impl BubbleColors {
             // The trail is the front's own glow, so it follows it by default.
             trail: bubbles.trail_color.map_or(front, opaque_rgb),
             text: bubbles.label_color.map_or(palette.bubble_text, opaque_rgb),
+            crown_backing: palette.crown_backing,
+            separator: palette.separator,
             crown_buy: crown_of(buy),
             crown_sell: crown_of(sell),
         }
@@ -111,7 +114,7 @@ fn draw_crown(
     radius: f32,
     side: Side,
     matched: f32,
-    color: egui::Color32,
+    (color, backing): (egui::Color32, egui::Color32),
 ) {
     if !center.is_finite() || !radius.is_finite() || radius <= 0.0 {
         return;
@@ -142,10 +145,7 @@ fn draw_crown(
         .collect();
     painter.add(egui::Shape::line(
         points.clone(),
-        egui::Stroke::new(
-            geometry.width + CROWN_BACKING_PX,
-            egui::Color32::from_black_alpha(CROWN_BACKING_ALPHA),
-        ),
+        egui::Stroke::new(geometry.width + CROWN_BACKING_PX, backing),
     ));
     painter.add(egui::Shape::line(
         points,
@@ -384,7 +384,7 @@ fn draw_bubble_with_light_offset(
         painter.circle_stroke(
             center,
             radius + hair / 2.0,
-            egui::Stroke::new(hair, egui::Color32::from_black_alpha(SEPARATOR_RING_ALPHA)),
+            egui::Stroke::new(hair, colors.separator),
         );
     }
     if hollow {
@@ -494,7 +494,7 @@ fn draw_bubble_with_light_offset(
             radius,
             side,
             matched_fraction,
-            colors.crown_for_side(side),
+            (colors.crown_for_side(side), colors.crown_backing),
         ),
         // The old vertical front, for a preset that asked for it by name. It
         // outgrows its own bubble by construction, so it stays behind the
@@ -626,7 +626,8 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         style.bubbles.max_radius = frame.max_radius;
     }
     let bubbles = &style.bubbles;
-    let palette = super::palette_for_theme(style.theme);
+    let appearance = crate::theme::get(painter.ctx());
+    let palette = style.colors(super::premultiplied);
     let colors = BubbleColors::resolve(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
 
@@ -818,7 +819,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 bubbles.show_trade_count,
             )
         {
-            let font = egui::FontId::proportional(
+            let font = appearance.label_font(
                 (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
             );
             let galley = clip.layout_no_wrap(label, font, colors.text);
@@ -829,7 +830,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 clip.galley_with_override_text_color(
                     pos + LABEL_SHADOW_OFFSET_PX,
                     galley.clone(),
-                    egui::Color32::from_black_alpha(LABEL_SHADOW_ALPHA),
+                    appearance.quantity_shadow(),
                 );
                 clip.galley(pos, galley, colors.text);
             }

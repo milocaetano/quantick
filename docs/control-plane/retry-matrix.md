@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 64 |
+| deduplicated per connection | 65 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **97** |
+| **Total** | **98** |
 
 ## Capabilities
 
@@ -135,6 +135,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `annotate.remove` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].drawing_id` | the named `annotation_id` is no longer listed; when the pane's `drawings_truncated` is set an unlisted id proves nothing, so read `events.read` `annotate.object.removed` from the pre-call cursor, which is journaled only for a removal that happened | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.trend_line.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.zone.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
+| `appearance.apply` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `appearance.state` | `source` | the active source matches the candidate; durable reports the last successful load/save | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `attention.mark.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `attention.mark.created` | `payload.note` | an event after the pre-call cursor carries the call's own `note`; send a note unique to the call, since an unnoted mark (the trader's shortcut included) matches any other | `an_interrupted_attention_mark_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `catalog.remove` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `sources[].symbols` | the feed's symbols no longer list the symbol | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `chart.price_axis.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport` | The target pane reports manual framing with the requested price_range, or automatic fitting after reset. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane` |
@@ -220,4 +221,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-97 mutable capabilities registered, 97 with a readback.
+98 mutable capabilities registered, 98 with a readback.

@@ -136,6 +136,7 @@ impl LayoutAdapter<'_> {
     /// consumed here, so neither reaches the chart's own key handling —
     /// and nothing else on the window is touched while it is up.
     pub(in crate::app) fn draw_layout_delete_confirm(&mut self, ctx: &eframe::egui::Context) {
+        let palette = crate::theme::get(ctx);
         use eframe::egui;
         let Some(id) = *self.delete_confirm else {
             return;
@@ -166,7 +167,7 @@ impl LayoutAdapter<'_> {
                 ui.label(
                     egui::RichText::new(what)
                         .small()
-                        .color(crate::theme::TEXT_SUPPORT),
+                        .color(palette.text_support()),
                 );
                 ui.horizontal(|ui| {
                     if ui.button("Delete").clicked() {

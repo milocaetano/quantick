@@ -21,7 +21,7 @@ use crate::indicator_worker::{IndicatorWorker, LaneTransport, SlotId};
 use crate::indicators::{IndicatorViews, PaneSizing};
 use crate::orderflow_view::OrderflowView;
 use crate::pane_header::draw_docked_capsule;
-use crate::plot_area::{PlotAreas, plot_split};
+use crate::plot_area::{PlotAreas, plot_split_with_metrics};
 use crate::price_view::PriceView;
 use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::style::ChartStyle;
@@ -81,7 +81,7 @@ pub struct ChartPane {
     pub(super) layer_renderers: &'static render_registry::RenderRegistry,
     /// The candle footprint layer as this pane has it — see
     /// [`PaneFootprint`].
-    pub footprint: PaneFootprint,
+    pub presentation: quantick_stores::pane_style::PanePresentation,
 
     /// The bar rule this pane is on, and the parameter every other kind is
     /// holding for the trader — see [`SpecSelector`].
@@ -346,7 +346,7 @@ impl ChartPane {
             legend_collapsed: false,
             layers: quantick_layers::LayerState::new(render_registry::standard().layers()),
             layer_renderers: render_registry::standard(),
-            footprint: PaneFootprint::default(),
+            presentation: Default::default(),
             // The backfill divider opens off: a full-height rule across the candles for a boundary
             // that matters once, when reading how far the live tape goes back. Nothing is hidden
             // about the data; the mark is one click away in the layer menu.
@@ -384,7 +384,7 @@ impl ChartPane {
         &'a self,
         window: &'a crate::footprint_config::FootprintConfig,
     ) -> &'a crate::footprint_config::FootprintConfig {
-        self.footprint.config.resolve(window)
+        self.presentation.footprint.config.resolve(window)
     }
 
     /// Put this pane on `spec` outright, selectors included. Startup-scoped: the caller is a
@@ -429,7 +429,7 @@ impl ChartPane {
         &mut self,
         config: Option<crate::footprint_config::FootprintConfig>,
     ) {
-        self.footprint.config.set_own(config);
+        self.presentation.footprint.config.set_own(config);
     }
 
     /// An egui interaction id scoped to this pane.
@@ -473,10 +473,11 @@ impl ChartPane {
     /// the renderer can never disagree about a boundary; `lay_out` puts the strip on the trail.
     pub(super) fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
         let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
-        let mut areas = plot_split(
+        let mut areas = plot_split_with_metrics(
             area,
             gutter_strip_px(self.plot_lane_view(), self.live_strip_width(capabilities)),
             self.indicators.pane_sizing(&mut sizing),
+            self.frame.axis_metrics,
         );
         areas.capsules = self.frame.capsules;
         areas
@@ -562,6 +563,8 @@ impl ChartPane {
         let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
+        self.frame.axis_metrics =
+            quantick_appearance::AxisMetrics::new(&crate::theme::get(ui.ctx()).resolved.typography);
         self.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
         self.frame.chart_area = Some(areas.chart);
@@ -739,7 +742,7 @@ impl ChartPane {
         // middle-button pan added below keep answering. A primary drag with a tool armed is that
         // tool's second anchor, so it cannot also pan, which is why the middle button does.
         let primary_free = !tool_armed && !drawing_drag_consumes_gesture && !paper_gesture;
-        chrome.layers.open_chart_settings |= self.handle_canvas_gestures(
+        let candle_settings = self.handle_canvas_gestures(
             ui,
             super::canvas_gestures::CanvasInput {
                 chart: &chart,
@@ -749,6 +752,10 @@ impl ChartPane {
                 scroll_taken: chrome.paper.consumed_scroll(),
             },
         );
+        if candle_settings {
+            self.presentation.candles.request_editor();
+            chrome.layers.open_chart_settings = true;
+        }
 
         axes_and_panes::handle_axis_gestures(self, ui, &areas, chrome);
 
@@ -804,7 +811,8 @@ impl ChartPane {
                 layers: &self.layers,
                 orderflow: self.orderflow.as_ref(),
                 state: &self.state,
-                footprint: &self.footprint,
+                footprint: &self.presentation.footprint,
+                style: &self.presentation.candles,
                 drawings: &self.drawings,
             },
             capabilities,
@@ -1125,7 +1133,7 @@ impl ChartPane {
         let glyph = |toggle| self.header_glyph(toggle, chrome.style, chrome.capabilities);
         let capsule =
             Some(Capsule::of(CapsuleSide::Time, glyph, None)).filter(|c| !c.is_empty())?;
-        let height = crate::time_header::HEIGHT_PX;
+        let height = crate::theme::get(ui.ctx()).layout(crate::time_header::HEIGHT_PX);
         let header = egui::Rect::from_x_y_ranges(area.x_range(), area.top() - height..=area.top());
         let (mut intent, painted) = (None, &mut self.frame.header_controls);
         let at = (CapsuleSide::Time, self.id);
@@ -1176,8 +1184,11 @@ impl ChartPane {
             .area
             .map_or(row, |area| row.with_max_x(area.right()));
         // The row's fill, and the rule closing it against the chart.
-        ui.painter()
-            .rect_filled(row, egui::Rounding::ZERO, crate::theme::CANVAS);
+        ui.painter().rect_filled(
+            row,
+            egui::Rounding::ZERO,
+            crate::theme::get(ui.ctx()).canvas(),
+        );
         crate::pane_header::paint_rule(ui, row);
         let state = self.flow_header_state();
         let shown = state.map(|state| state.shown_view);

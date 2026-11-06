@@ -31,6 +31,7 @@ use super::{DrawingController, DrawingReadAccess};
 /// call sites draws the list, and building a row per object for the site that
 /// does not would be a per-frame allocation for a window nobody is looking at.
 fn drawing_env<'a>(
+    ctx: &egui::Context,
     host: &'a DrawingReadAccess<'_>,
     toolrail: &ToolRail,
     presets: &'a drawings::presets::PresetStore,
@@ -49,7 +50,12 @@ fn drawing_env<'a>(
             return None;
         }
         let band = drawings::egui_rect(host.band(selection.drawing)?.rect);
-        let header = crate::indicator_render::pane_header_rect(band, false);
+        let header = crate::indicator_render::pane_header_rect(
+            band,
+            false,
+            quantick_appearance::AxisMetrics::new(&crate::theme::get(ctx).resolved.typography)
+                .indicator_header,
+        );
         Some(egui::Rect::from_min_max(
             egui::pos2(
                 band.left(),
@@ -219,7 +225,7 @@ impl DrawingController {
         read: DrawingViewCosts<'_>,
         floating: bool,
     ) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
-        let env = drawing_env(host, tools, &self.presets, read);
+        let env = drawing_env(ctx, host, tools, &self.presets, read);
         let current = floating
             .then(|| host.current_range_owner(self.chrome.quick_range.owner()))
             .flatten();

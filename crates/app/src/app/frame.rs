@@ -76,6 +76,9 @@ fn run_scope(app: &mut QuantickApp, ctx: &egui::Context, now: Instant, scope: St
 /// Sources, gateway and workers, once a tick, never once per market window:
 /// scheduled by the root even when its native shell is hidden.
 pub(super) fn process(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
+    // Every viewport shares this context; the appearance publishes once a frame.
+    app.presentation.context = Some(ctx.clone());
+    sync_appearance(Some(ctx), &mut app.runtime, &mut app.drawings.presets);
     run_scope(app, ctx, now, StageScope::Tick);
 }
 
@@ -215,6 +218,8 @@ impl QuantickApp {
         stages: impl IntoIterator<Item = FrameStage>,
         tail: T,
     ) {
+        self.presentation.context = Some(ctx.clone());
+        sync_appearance(Some(ctx), &mut self.runtime, &mut self.drawings.presets);
         let mut scratch = FrameScratch::default();
         let mut tail = Some(tail);
         for stage in stages {
@@ -475,17 +480,12 @@ impl QuantickApp {
             self.apply_toolbar_action(action);
         }
         if let Some(style) = asks.style {
-            self.runtime.style = style;
-            self.runtime.style_revision = self.runtime.style_revision.saturating_add(1);
+            let _ = self.layer_wiring().apply_editor_style(style);
         }
         // After the assignment, never before: the log line reports the
         // appearance that is now in force, and the revision it landed on.
         if let Some(request) = asks.log_style_change {
-            super::health::emit_style_changed(
-                &self.runtime.style,
-                self.runtime.style_revision,
-                request.applied_preset,
-            );
+            self.layer_wiring().log_editor_style(request.applied_preset);
         }
         // The audition goes through the one speaker every armed instance
         // shares, and reports a sound that could not be heard exactly as a
@@ -775,5 +775,23 @@ impl QuantickApp {
             self.runtime.workspace.session_mut().inspector_moved();
         }
         effects.apply(&mut self.surfaces.toast, &mut self.toolrail);
+    }
+}
+
+/// Publish already-validated per-owner defaults before any frame operation creates or paints objects.
+pub(super) fn sync_appearance(
+    ctx: Option<&egui::Context>,
+    runtime: &mut super::workspace_runtime::WorkspaceRuntime,
+    presets: &mut quantick_drawings::presets::PresetStore,
+) {
+    if let Some(ctx) = ctx {
+        crate::theme::sync(ctx, &runtime.appearance);
+    }
+    presets.sync_theme(&runtime.appearance);
+    if runtime
+        .chart_theme
+        .sync(&mut runtime.style, &runtime.appearance)
+    {
+        runtime.style_revision = runtime.style_revision.saturating_add(1);
     }
 }

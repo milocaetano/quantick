@@ -55,7 +55,7 @@ fn the_divider_grab_stops_at_the_carved_side_row() {
     pane.orderflow.as_mut().unwrap().set_lane_enabled(true);
     for height in [40.0, 60.0, 600.0] {
         let body = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(1000.0, height));
-        let areas = crate::pane::split_flow_pane(body);
+        let areas = crate::pane::split_flow_pane(body, 1.0);
         pane.frame.area = Some(areas.chart);
         pane.frame.side_row = None;
         pane.lay_out_lane(areas.chart);

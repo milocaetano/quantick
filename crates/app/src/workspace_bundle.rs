@@ -77,6 +77,7 @@ mod tests {
     /// A cockpit on disk: one valid file per store, in a scratch folder.
     fn cockpit(dir: &Path) {
         let files = [
+            ("appearance.toml", quantick_appearance::DARK),
             ("ui-state.toml", "version = 1\nactive_tab = 0\ntabs = []\n"),
             ("indicators-state.toml", "version = 1\nindicators = []\n"),
             (

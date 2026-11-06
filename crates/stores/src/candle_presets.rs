@@ -25,9 +25,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use quantick_chart::style::{
-    CandleBodyMode, CandlePreset, CandleStyle, CanvasStyle, ChartStyle, WickColorMode,
-};
+use crate::chart_style::StyleFile;
+use quantick_chart::style::{CandlePreset, ChartStyle};
 use serde::{Deserialize, Serialize};
 
 /// The file's name inside the durable cockpit home.
@@ -124,10 +123,11 @@ impl Resolved {
     #[must_use]
     pub fn apply_to(self, current: &ChartStyle) -> ChartStyle {
         match self {
-            Self::BuiltIn(preset) => ChartStyle {
-                candles: preset.style(),
-                canvas: current.canvas,
-            },
+            Self::BuiltIn(preset) => {
+                let mut style = *current;
+                style.apply_preset(preset);
+                style
+            }
             Self::Custom(style) => style,
         }
     }
@@ -234,7 +234,7 @@ impl CandlePresetStore {
     pub fn matching(&self, style: &ChartStyle) -> Option<&str> {
         self.presets
             .iter()
-            .find(|(_, saved)| *saved == style)
+            .find(|(_, saved)| **saved == style.snapshot())
             .map(|(name, _)| name.as_str())
             .or_else(|| CandlePreset::detect(&style.candles).map(CandlePreset::label))
     }
@@ -252,7 +252,7 @@ impl CandlePresetStore {
         if self.presets.len() >= MAX_PRESETS && !self.presets.contains_key(name) {
             return Err(SaveRefusal::Full);
         }
-        self.presets.insert(name.to_owned(), style);
+        self.presets.insert(name.to_owned(), style.snapshot());
         Ok(name.to_owned())
     }
 
@@ -350,126 +350,10 @@ struct PresetsFile {
     presets: BTreeMap<String, StyleFile>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct StyleFile {
-    candles: CandlesFile,
-    canvas: CanvasFile,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct CandlesFile {
-    outline_only: bool,
-    bull_fill: [u8; 3],
-    bear_fill: [u8; 3],
-    bull_outline: [u8; 3],
-    bear_outline: [u8; 3],
-    fill_opacity: f32,
-    outline_opacity: f32,
-    outline_width: f32,
-    show_wicks: bool,
-    custom_wick_color: bool,
-    wick: [u8; 3],
-    wick_opacity: f32,
-    wick_width: f32,
-    body_width_frac: f32,
-    gap_px: f32,
-    corner_radius: f32,
-    min_body_height: f32,
-    forming_opacity: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct CanvasFile {
-    background_enabled: bool,
-    background: [u8; 3],
-    grid_enabled: bool,
-    grid: [u8; 3],
-    grid_opacity: f32,
-}
-
-impl From<&ChartStyle> for StyleFile {
-    fn from(style: &ChartStyle) -> Self {
-        let c = &style.candles;
-        let v = &style.canvas;
-        Self {
-            candles: CandlesFile {
-                outline_only: c.body_mode == CandleBodyMode::OutlineOnly,
-                bull_fill: c.bull_fill,
-                bear_fill: c.bear_fill,
-                bull_outline: c.bull_outline,
-                bear_outline: c.bear_outline,
-                fill_opacity: c.fill_opacity,
-                outline_opacity: c.outline_opacity,
-                outline_width: c.outline_width,
-                show_wicks: c.show_wicks,
-                custom_wick_color: c.wick_color_mode == WickColorMode::Custom,
-                wick: c.wick,
-                wick_opacity: c.wick_opacity,
-                wick_width: c.wick_width,
-                body_width_frac: c.body_width_frac,
-                gap_px: c.gap_px,
-                corner_radius: c.corner_radius,
-                min_body_height: c.min_body_height,
-                forming_opacity: c.forming_opacity,
-            },
-            canvas: CanvasFile {
-                background_enabled: v.background_enabled,
-                background: v.background,
-                grid_enabled: v.grid_enabled,
-                grid: v.grid,
-                grid_opacity: v.grid_opacity,
-            },
-        }
-    }
-}
-
-impl From<StyleFile> for ChartStyle {
-    fn from(file: StyleFile) -> Self {
-        let c = file.candles;
-        let v = file.canvas;
-        Self {
-            candles: CandleStyle {
-                body_mode: if c.outline_only {
-                    CandleBodyMode::OutlineOnly
-                } else {
-                    CandleBodyMode::Filled
-                },
-                bull_fill: c.bull_fill,
-                bear_fill: c.bear_fill,
-                bull_outline: c.bull_outline,
-                bear_outline: c.bear_outline,
-                fill_opacity: c.fill_opacity,
-                outline_opacity: c.outline_opacity,
-                outline_width: c.outline_width,
-                show_wicks: c.show_wicks,
-                wick_color_mode: if c.custom_wick_color {
-                    WickColorMode::Custom
-                } else {
-                    WickColorMode::MatchOutline
-                },
-                wick: c.wick,
-                wick_opacity: c.wick_opacity,
-                wick_width: c.wick_width,
-                body_width_frac: c.body_width_frac,
-                gap_px: c.gap_px,
-                corner_radius: c.corner_radius,
-                min_body_height: c.min_body_height,
-                forming_opacity: c.forming_opacity,
-            },
-            canvas: CanvasStyle {
-                background_enabled: v.background_enabled,
-                background: v.background,
-                grid_enabled: v.grid_enabled,
-                grid: v.grid,
-                grid_opacity: v.grid_opacity,
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_chart::style::WickColorMode;
 
     fn path() -> std::path::PathBuf {
         crate::scratch::thread_dir("candle-presets").join(PRESETS_FILE)
@@ -484,7 +368,7 @@ mod tests {
         style.candles.gap_px = 3.5;
         style.canvas.grid_enabled = false;
         style.canvas.background = [1, 2, 3];
-        style
+        style.snapshot()
     }
 
     #[test]
@@ -679,5 +563,40 @@ mod tests {
         // match is the exact one.
         store.insert("day", current).unwrap();
         assert_eq!(store.matching(&current), Some("day"));
+    }
+}
+
+#[cfg(test)]
+mod inheritance_tests {
+    use super::*;
+    #[test]
+    fn saved_preset_captures_the_whole_visible_look_without_mutating_the_live_owner() {
+        let path = crate::scratch::thread_dir("appearance-preset").join(PRESETS_FILE);
+        let mut live = ChartStyle::default();
+        live.candles.wick_width = 2.0;
+        let mut store = CandlePresetStore::default();
+        store.save_as(&path, "authored", live).unwrap();
+        let loaded = CandlePresetStore::load(&path);
+        let mut saved = loaded.resolve("authored").unwrap().apply_to(&live);
+        let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        assert!(!saved.apply_theme(&light));
+        assert_eq!(saved.candles.bull_fill, live.candles.bull_fill);
+        assert_eq!(saved.candles.fill_opacity, 0.20);
+        assert!(live.apply_theme(&light));
+        assert_eq!(live.candles.fill_opacity, 1.0);
+        assert_eq!(live.candles.wick_width, 2.0);
+        assert_ne!(live.canvas.background, saved.canvas.background);
+        store.save_as(&path, "solid light", live).unwrap();
+        live.candles.fill_opacity = 0.20;
+        live.ownership.fill_opacity = quantick_appearance::Inheritance::Explicit;
+        store.save_as(&path, "edited opacity", live).unwrap();
+        let loaded = CandlePresetStore::load(&path);
+        for (name, expected) in [("solid light", 1.0), ("edited opacity", 0.20)] {
+            let mut saved = loaded.resolve(name).unwrap().apply_to(&live);
+            assert!(!saved.apply_theme(&quantick_appearance::ResolvedTheme::default()));
+            assert_eq!(saved.candles.fill_opacity, expected);
+            assert!(!saved.apply_theme(&light));
+            assert_eq!(saved.candles.fill_opacity, expected);
+        }
     }
 }

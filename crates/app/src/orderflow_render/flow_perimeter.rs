@@ -1,5 +1,4 @@
 //! FLOW silhouettes inside the earned radius, above candle bodies.
-use super::constants::{FLOW_BUY, FLOW_SELL};
 use crate::orderflow_render::constants::{
     FLOW_OPENING_LABEL_FONT_PX, FLOW_OPENING_LABEL_SHADOW_OFFSET,
 };
@@ -18,6 +17,7 @@ pub(crate) fn draw_flow_perimeters(
     frame: &FlowTapeFrame,
     presentation: &FlowPresentation,
 ) {
+    let palette = crate::theme::get(painter.ctx());
     let clip = painter.with_clip_rect(history);
     for region in presentation
         .regions
@@ -29,7 +29,7 @@ pub(crate) fn draw_flow_perimeters(
         let (buy, sell) = dot.side_shares();
         let mut mesh = egui::Mesh::default();
         let mut angle = f64::from(super::PIE_START_ANGLE);
-        for (share, color) in [(buy, FLOW_BUY), (sell, FLOW_SELL)] {
+        for (share, color) in [(buy, palette.flow_buy()), (sell, palette.flow_sell())] {
             let sweep = share * std::f64::consts::TAU;
             add_perimeter(&mut mesh, disc, angle, sweep, color, true);
             angle += sweep;
@@ -45,8 +45,8 @@ pub(crate) fn draw_flow_perimeters(
                 quantick_engine::display::display_decimal(dot.mark.quantity),
                 if clipped { " (clipped)" } else { "" }
             ),
-            egui::FontId::monospace(FLOW_OPENING_LABEL_FONT_PX),
-            crate::theme::TEXT_PRIMARY,
+            palette.axis_font(FLOW_OPENING_LABEL_FONT_PX),
+            palette.text_primary(),
         );
         if label.size().x <= history.width() && label.size().y <= history.height() {
             let origin = history
@@ -56,9 +56,9 @@ pub(crate) fn draw_flow_perimeters(
             clip.galley_with_override_text_color(
                 origin + FLOW_OPENING_LABEL_SHADOW_OFFSET,
                 label.clone(),
-                egui::Color32::BLACK,
+                palette.text_shadow(),
             );
-            clip.galley(origin, label, crate::theme::TEXT_PRIMARY);
+            clip.galley(origin, label, palette.text_primary());
         }
     }
 }

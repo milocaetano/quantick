@@ -5,12 +5,13 @@
 
 use eframe::egui;
 
-use quantick_chart::indicator_views::{COLLAPSED_PANE_HEIGHT_PX, MAX_PANES, PaneSizing};
+use quantick_chart::indicator_views::{COLLAPSED_PANE_HEIGHT_PX, PaneSizing};
 
 /// Shortest the candles may be squeezed to by the pane band. The candles are
 /// what the panes are *about*; a band that leaves them a sliver has inverted
 /// the chart.
-pub const MIN_CHART_HEIGHT_PX: f32 = 120.0;
+#[cfg(test)]
+pub use quantick_chart::indicator_views::MIN_CHART_HEIGHT_PX;
 
 /// One pane's band, and whether it is showing its curve or only its name.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,6 +22,7 @@ pub struct PaneSlot {
     /// value are still written, because those are what the user added the
     /// indicator for.
     pub collapsed: bool,
+    pub header_height: f32,
 }
 
 /// Carve the pane band off the bottom of the chart rect.
@@ -42,39 +44,18 @@ pub struct PaneSlot {
 /// silently absent.
 ///
 /// Pure, so the split is unit-testable without a display.
+#[cfg(test)]
 pub fn split_panes(chart: egui::Rect, sizing: &[PaneSizing]) -> (egui::Rect, Vec<PaneSlot>) {
-    let count = sizing.len().min(MAX_PANES);
-    if count == 0 {
-        return (chart, Vec::new());
-    }
-    let band_height = chart.height().max(0.0);
-    // Strips are mandatory chrome; only the expansion above a strip has to be
-    // negotiated for.
-    let mandatory = COLLAPSED_PANE_HEIGHT_PX * count as f32;
-    let mut budget = (band_height - MIN_CHART_HEIGHT_PX - mandatory).max(0.0);
-
-    // Explicit choices are served first, in two passes over the same order:
-    // a pane the user dragged or expanded by hand must get its height even
-    // when the automatic ones above it would have spent the budget. Without
-    // this, clicking a collapsed strip open is a click that does nothing.
-    let mut heights = vec![COLLAPSED_PANE_HEIGHT_PX; count];
-    for explicit in [true, false] {
-        for (index, sizing) in sizing[..count].iter().enumerate() {
-            if matches!(sizing, PaneSizing::Manual(_)) != explicit {
-                continue;
-            }
-            if matches!(sizing, PaneSizing::Collapsed) {
-                continue;
-            }
-            let desired = sizing.desired(band_height);
-            let extra = desired - COLLAPSED_PANE_HEIGHT_PX;
-            if extra <= budget {
-                budget -= extra;
-                heights[index] = desired;
-            }
-        }
-    }
-
+    split_panes_with_header(chart, sizing, 18.0)
+}
+pub fn split_panes_with_header(
+    chart: egui::Rect,
+    sizing: &[PaneSizing],
+    header_height: f32,
+) -> (egui::Rect, Vec<PaneSlot>) {
+    let strip_height = COLLAPSED_PANE_HEIGHT_PX * (header_height / 18.0);
+    let heights =
+        quantick_chart::indicator_views::pane_heights(chart.height(), sizing, strip_height);
     let total: f32 = heights.iter().sum();
     let chart_bottom = (chart.bottom() - total).max(chart.top());
     let shrunk = egui::Rect::from_min_max(chart.min, egui::pos2(chart.right(), chart_bottom));
@@ -89,7 +70,8 @@ pub fn split_panes(chart: egui::Rect, sizing: &[PaneSizing]) -> (egui::Rect, Vec
             top += height;
             PaneSlot {
                 rect,
-                collapsed: height <= COLLAPSED_PANE_HEIGHT_PX,
+                header_height,
+                collapsed: height <= strip_height,
             }
         })
         .collect();

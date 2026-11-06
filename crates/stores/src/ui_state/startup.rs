@@ -24,6 +24,7 @@ pub fn reconcile_startup(
                 .feed(&config.default_feed)
                 .expect("validated startup feed");
             SavedTab {
+                candle_styles: Vec::new(),
                 feed: config.default_feed.clone(),
                 symbol: config.default_symbol.clone(),
                 layout: feed.default_layout.unwrap_or(DeclaredLayout::Flow),

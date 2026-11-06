@@ -27,8 +27,6 @@ use crate::indicator_render;
 #[cfg(test)]
 use crate::plot_area::split_time_strip;
 #[cfg(test)]
-use crate::theme;
-#[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 #[cfg(test)]
 use quantick_drawings::gesture::MAGNET_REACH_PX;
@@ -110,10 +108,10 @@ use hint::paint_placement_hint;
 #[cfg(test)]
 pub(crate) use painting::live_chip_rect as test_live_chip_rect;
 use painting::{
-    LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX, LAST_PRICE_CHIP_TEXT,
-    LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, SCROLL_ZOOM_PX, SEAM_DASH_PX,
-    SEAM_GAP_PX, SEAM_LABEL_INSET_PX, SEAM_LABEL_PT, draw_dashed_vertical, draw_live_chip,
-    lane_rungs, live_chip_rect,
+    LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX, LAST_PRICE_DASH_PX,
+    LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, SCROLL_ZOOM_PX, SEAM_DASH_PX, SEAM_GAP_PX,
+    SEAM_LABEL_INSET_PX, SEAM_LABEL_PT, draw_dashed_vertical, draw_live_chip, lane_rungs,
+    live_chip_rect,
 };
 pub use painting::{background_color, grid_color};
 use price_axis::PriceAxisClaims;

@@ -98,3 +98,5 @@ mod tape_clock_tests;
 
 #[cfg(test)]
 mod tape_view_tests;
+
+pub mod status_appearance;

@@ -12,6 +12,7 @@ publish.workspace = true
 doctest = false
 
 [dependencies]
+quantick-appearance = { path = "../appearance" }
 quantick-anchored-studies = { path = "../anchored-studies" }
 quantick-chart = { path = "../chart" }
 quantick-chart-interaction = { path = "../chart-interaction" }

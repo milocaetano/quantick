@@ -52,3 +52,4 @@ pub use quantick_engine::work_meter;
 static TEST_ALLOCATOR: work_meter::Counting = work_meter::Counting;
 
 pub mod pane_series;
+pub mod pane_style;
