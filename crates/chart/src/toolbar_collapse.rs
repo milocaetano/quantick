@@ -6,8 +6,14 @@
 // Width estimates for the overflow rule, in pixels. egui sizes widgets while
 // drawing them, so the plan is decided up front from these; they only need to
 // be right enough that folding starts before clipping does.
-/// Margins, separators and inter-group spacing.
-const W_SLACK: f32 = 90.0;
+/// Air on each side of a group separator, in pixels, measured to what the
+/// eye sees: a button's body, the picker's frame, the tray's glyph.
+pub const SEPARATOR_AIR_PX: f32 = 16.0;
+/// Width of a group separator's line, in pixels.
+pub const SEPARATOR_WIDTH_PX: f32 = 1.0;
+/// The four group separators with their air; the row's padding is outside
+/// the width the plan is given.
+const W_SLACK: f32 = 4.0 * (2.0 * SEPARATOR_AIR_PX + SEPARATOR_WIDTH_PX);
 /// SOURCE: the market button (venue letter, symbol, `· venue`, caret) with
 /// the venue's full name. Measured 21 px under the eyebrow and two menus it
 /// replaced, at both widths.
@@ -16,10 +22,10 @@ const W_SOURCE_FULL: f32 = 330.0;
 const W_SOURCE_SHRUNK: f32 = 240.0;
 /// The `History: <target> ▾` split button.
 const W_HISTORY: f32 = 150.0;
-/// One 28 px icon button (the layout picker, PANELS, or the overflow `⋯`).
-/// The separator in front of the picker is one of the separators
-/// [`W_SLACK`] already holds.
+/// One 28 px icon button (PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
+/// The layout picker, first in the row: its miniature's hit target.
+const W_PICKER: f32 = 54.0;
 /// Which groups stay inline at the current width. Everything folded is
 /// reachable through the `⋯` overflow menu instead — never hidden.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,10 +63,10 @@ impl CollapsePlan {
     /// it. A tray hidden behind `⋯` for zero pixels gained would be a fold
     /// the row never needed. `trade_width` comes in as a parameter: TRADE
     /// reserves its open-state width (the toolbar's `W_TRADE`). The layout
-    /// picker sits beside SOURCE and never folds, so it is always counted.
+    /// picker leads the row and never folds, so it is always counted.
     #[must_use]
     pub fn width(self, trade_width: f32) -> f32 {
-        let mut width = W_SLACK + W_ICON;
+        let mut width = W_SLACK + W_PICKER;
         if self.overflow_needed() {
             width += W_ICON;
         }
@@ -188,8 +194,8 @@ mod tests {
             feed_full_name: false,
             ..CollapsePlan::FULL
         };
-        assert_eq!(CollapsePlan::FULL.width(FLAT_TRADE_W), 736.0);
-        assert_eq!(shrunk.width(FLAT_TRADE_W), 646.0);
+        assert_eq!(CollapsePlan::FULL.width(FLAT_TRADE_W), 804.0);
+        assert_eq!(shrunk.width(FLAT_TRADE_W), 714.0);
     }
 
     #[test]

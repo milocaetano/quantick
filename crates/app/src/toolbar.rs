@@ -1,13 +1,14 @@
 //! The context toolbar: *what am I looking at* on the left, *what is drawn
 //! on it* on the right (`docs/ux/ui-design-model.md` §6).
 //!
-//! Left: the tab's market as a dropdown button that opens the palette in
-//! switch mode (or the amber session label while replaying), the layout
-//! picker wearing a miniature of the layout on screen, and HISTORY (a
-//! `+ older ▾` split button whose menu holds the page size). Right, alone at
-//! the edge: PANELS (dock show/hide, a tray). Between HISTORY and the right
-//! edge sits TRADE — the simulated BUY/SELL market buttons
-//! (`docs/ux/paper-trading.md`). Appearance has no toolbar button: the chart
+//! Left to right, each group behind a full-height separator: the layout
+//! picker wearing a miniature of the layout on screen; the tab's market as a
+//! dropdown button that opens the palette in switch mode (or the amber
+//! session label while replaying), with REC beside it; HISTORY (a
+//! `+ older ▾` split button whose menu holds the page size). Free space,
+//! then right-aligned TRADE — the simulated BUY/SELL market buttons
+//! (`docs/ux/paper-trading.md`) — and, alone at the edge, PANELS (dock
+//! show/hide, a tray). Appearance has no toolbar button: the chart
 //! itself and the Settings window open it. The toolbar never wraps:
 //! [`collapse_plan`] folds groups into the `⋯` overflow menu in the §6 order —
 //! PANELS → HISTORY → TRADE → the feed name shrinks to its initial. The symbol
@@ -22,7 +23,9 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::config::FeedCapabilities;
-use quantick_chart::toolbar_collapse::{CollapsePlan, collapse_plan};
+use quantick_chart::toolbar_collapse::{
+    CollapsePlan, SEPARATOR_AIR_PX, SEPARATOR_WIDTH_PX, collapse_plan,
+};
 use quantick_engine::bar_selection::BarInputAvailability;
 pub(crate) mod bar_parameters;
 use crate::theme;
@@ -35,16 +38,28 @@ use quantick_session::{HistoryPagingOff, fmt_history_span};
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 
+/// Padding from the window's left edge to the miniature's frame, in pixels.
+const ROW_PAD_LEFT_PX: f32 = 28.0;
+/// Padding from the tray's glyph to the window's right edge, in pixels.
+const ROW_PAD_RIGHT_PX: f32 = 12.0;
+/// How far the tray's glyph sits inside its hit target.
+const DOCK_INSET_PX: f32 = (TOOLBAR_ICON.hit - TOOLBAR_ICON.glyph) / 2.0;
+/// Gap between the market button and REC, in pixels.
+const MARKET_REC_GAP_PX: f32 = 10.0;
+
 /// One TRADE button's own horizontal padding, in pixels.
 const TRADE_BUTTON_PAD_PX: f32 = 16.0;
 /// Estimated width of one strong glyph in a TRADE button, in pixels: upper
 /// case and digits, wider than the average label glyph.
 const TRADE_GLYPH_PX: f32 = 8.0;
-/// The one width both entry buttons wear, in every position state: room
-/// for the longest face the paper desk ever writes
-/// ([`ENTRY_FACE_MAX_CHARS`]), so a press lands where it landed flat.
-const TRADE_ENTRY_WIDTH_PX: f32 =
-    TRADE_BUTTON_PAD_PX + ENTRY_FACE_MAX_CHARS as f32 * TRADE_GLYPH_PX;
+/// The one size both entry buttons wear, in every position state, so a press
+/// lands where it landed flat; wide enough for the longest face.
+const TRADE_ENTRY_SIZE: egui::Vec2 = egui::vec2(128.0, 30.0);
+const _: () = assert!(
+    TRADE_ENTRY_SIZE.x >= TRADE_BUTTON_PAD_PX + ENTRY_FACE_MAX_CHARS as f32 * TRADE_GLYPH_PX
+);
+/// Gap between two TRADE buttons, in pixels.
+const TRADE_GAP_PX: f32 = 8.0;
 /// Characters the close button shows before it cuts with `…`: room for
 /// `× Close 999 SHORT`. The whole label is always in its hover.
 const TRADE_CLOSE_FACE_CHARS: usize = 17;
@@ -61,7 +76,8 @@ const TRADE_REVERSE_WIDTH_PX: f32 =
 /// close and reverse, reserved flat too. Opening or closing a position then
 /// never changes what folds, so nothing left of TRADE - and nothing in it -
 /// moves when a fill lands.
-const W_TRADE: f32 = 2.0 * TRADE_ENTRY_WIDTH_PX + TRADE_CLOSE_WIDTH_PX + TRADE_REVERSE_WIDTH_PX;
+const W_TRADE: f32 =
+    2.0 * TRADE_ENTRY_SIZE.x + TRADE_CLOSE_WIDTH_PX + TRADE_REVERSE_WIDTH_PX + 3.0 * TRADE_GAP_PX;
 
 /// The amber label that replaces SOURCE while a recording plays.
 pub struct ReplaySource {
@@ -197,24 +213,28 @@ pub enum ToolbarAction {
 pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction> {
     let palette = theme::get(ctx);
     let mut actions = Vec::new();
+    let picker_inset = crate::layout_picker::FACE_INSET_PX;
+    let margin = egui::Margin {
+        left: ROW_PAD_LEFT_PX - picker_inset,
+        right: ROW_PAD_RIGHT_PX - DOCK_INSET_PX,
+        ..Default::default()
+    };
     egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "toolbar")))
         .exact_height(TOOLBAR_HEIGHT)
         .frame(
             egui::Frame::none()
                 .fill(palette.chrome())
-                .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
+                .inner_margin(margin),
         )
         .show(ctx, |ui| {
             let rec_width = if model.deal_recording.is_some() {
-                crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX + ui.spacing().item_spacing.x
+                crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX + MARKET_REC_GAP_PX
             } else {
                 0.0
             };
             let plan = collapse_plan(ui.available_width() - rec_width, W_TRADE);
             ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                draw_source(ui, model, plan, &mut actions);
-                ui.separator();
+                ui.spacing_mut().item_spacing.x = 0.0;
                 if let Some(preset) = crate::layout_picker::draw(
                     ui,
                     crate::layout_picker::PickerModel {
@@ -225,14 +245,15 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 ) {
                     actions.push(ToolbarAction::SetLayout(preset));
                 }
+                row_separator(ui, SEPARATOR_AIR_PX - picker_inset, SEPARATOR_AIR_PX);
+                ui.spacing_mut().item_spacing.x = MARKET_REC_GAP_PX;
+                draw_source(ui, model, plan, &mut actions);
+                ui.spacing_mut().item_spacing.x = 0.0;
                 if plan.history_inline {
-                    ui.separator();
+                    row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
                     draw_history(ui, model, &mut actions);
                 }
-                if plan.trade_inline {
-                    ui.separator();
-                    draw_trade(ui, &model.paper, &mut actions);
-                }
+                // The right run grows inwards, opening free space after HISTORY.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if plan.overflow_needed() {
                         draw_overflow(ui, model, plan, &mut actions);
@@ -246,10 +267,26 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                             actions.push(ToolbarAction::ToggleDock);
                         }
                     }
+                    row_separator(ui, SEPARATOR_AIR_PX - DOCK_INSET_PX, SEPARATOR_AIR_PX);
+                    if plan.trade_inline {
+                        draw_trade(ui, &model.paper, &mut actions);
+                        row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
+                    }
                 });
             });
         });
     actions
+}
+
+/// A group separator: the row's height but one pixel, in the stroke egui's
+/// own separator wears, with `before` pixels of air on the side drawn so far.
+fn row_separator(ui: &mut egui::Ui, before: f32, after: f32) {
+    ui.add_space(before);
+    let size = egui::vec2(SEPARATOR_WIDTH_PX, TOOLBAR_HEIGHT - 1.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, 0.0, theme::get(ui.ctx()).border());
+    ui.add_space(after);
 }
 
 /// The market button (venue letter, symbol, muted venue, caret) whose click
@@ -554,7 +591,7 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
     let entry = |ui: &mut egui::Ui, label: &str, fill: egui::Color32, enabled: bool| {
         ui.add_enabled_ui(enabled, |ui| {
             ui.add_sized(
-                egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0),
+                TRADE_ENTRY_SIZE,
                 egui::Button::new(
                     egui::RichText::new(label)
                         .color(palette.chip_ink())
@@ -570,60 +607,67 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
     };
     let enabled = paper.blocked.is_none();
     let locked = paper.blocked.as_deref().unwrap_or_default();
-    let buy = entry(ui, &paper.buy.face, palette.buy(), enabled)
-        .on_hover_text(&paper.buy.hover)
-        .on_disabled_hover_text(locked);
-    if buy.clicked() {
-        actions.push(ToolbarAction::PaperBuy);
-    }
-    let sell = entry(ui, &paper.sell.face, palette.sell(), enabled)
-        .on_hover_text(&paper.sell.hover)
-        .on_disabled_hover_text(locked);
-    if sell.clicked() {
-        actions.push(ToolbarAction::PaperSell);
-    }
-    // The exit controls, on the same surface as the entries: an open
-    // position must never require a dock dive to leave or flip (audit pain
-    // 1, B2). Outlined, not filled — leaving is deliberate, never the
-    // loudest thing on the bar. Fixed widths too, so a flip from LONG to
-    // SHORT never slides the reverse. Close is never locked: leaving adds
-    // no risk. The reverse opens a position, so the entries' lock holds it.
-    if let Some(close) = &paper.close {
-        let outlined = |ui: &mut egui::Ui, text: String, width: f32, enabled: bool| {
-            ui.add_enabled_ui(enabled, |ui| {
-                ui.add_sized(
-                    egui::vec2(width, 24.0),
-                    egui::Button::new(
-                        egui::RichText::new(text)
-                            .color(palette.text_primary())
-                            .strong(),
+    // Right-aligned: the exits open left of the entries, which never move.
+    let flat = 2.0 * TRADE_ENTRY_SIZE.x + TRADE_GAP_PX;
+    let width = if paper.close.is_some() { W_TRADE } else { flat };
+    let row = egui::Layout::left_to_right(egui::Align::Center);
+    ui.allocate_ui_with_layout(egui::vec2(width, TRADE_ENTRY_SIZE.y), row, |ui| {
+        ui.spacing_mut().item_spacing.x = TRADE_GAP_PX;
+        // The exit controls, on the same surface as the entries: an open
+        // position must never require a dock dive to leave or flip (audit
+        // pain 1, B2). Outlined, not filled — leaving is deliberate. Fixed
+        // widths too, so a flip never slides the reverse. Close is never
+        // locked; the reverse opens a position, so the entries' lock holds it.
+        if let Some(close) = &paper.close {
+            let outlined = |ui: &mut egui::Ui, text: String, width: f32, enabled: bool| {
+                ui.add_enabled_ui(enabled, |ui| {
+                    ui.add_sized(
+                        egui::vec2(width, 24.0),
+                        egui::Button::new(
+                            egui::RichText::new(text)
+                                .color(palette.text_primary())
+                                .strong(),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Truncate)
+                        .fill(palette.control())
+                        .stroke(egui::Stroke::new(1.0_f32, palette.border()))
+                        .rounding(egui::Rounding::same(3.0)),
                     )
-                    .wrap_mode(egui::TextWrapMode::Truncate)
-                    .fill(palette.control())
-                    .stroke(egui::Stroke::new(1.0_f32, palette.border()))
-                    .rounding(egui::Rounding::same(3.0)),
-                )
-            })
-            .inner
-        };
-        let button = outlined(ui, format!("× {close}"), TRADE_CLOSE_WIDTH_PX, true).on_hover_text(
-            format!("{close}: exit the open simulated position at the next print (market)"),
-        );
-        if button.clicked() {
-            actions.push(ToolbarAction::PaperClose);
+                })
+                .inner
+            };
+            let button = outlined(ui, format!("× {close}"), TRADE_CLOSE_WIDTH_PX, true)
+                .on_hover_text(format!(
+                    "{close}: exit the open simulated position at the next print (market)"
+                ));
+            if button.clicked() {
+                actions.push(ToolbarAction::PaperClose);
+            }
+            let reverse = outlined(
+                ui,
+                TRADE_REVERSE_LABEL.to_owned(),
+                TRADE_REVERSE_WIDTH_PX,
+                enabled,
+            )
+            .on_hover_text(&paper.reverse_hover)
+            .on_disabled_hover_text(locked);
+            if reverse.clicked() {
+                actions.push(ToolbarAction::PaperReverse);
+            }
         }
-        let reverse = outlined(
-            ui,
-            TRADE_REVERSE_LABEL.to_owned(),
-            TRADE_REVERSE_WIDTH_PX,
-            enabled,
-        )
-        .on_hover_text(&paper.reverse_hover)
-        .on_disabled_hover_text(locked);
-        if reverse.clicked() {
-            actions.push(ToolbarAction::PaperReverse);
+        let buy = entry(ui, &paper.buy.face, palette.buy(), enabled)
+            .on_hover_text(&paper.buy.hover)
+            .on_disabled_hover_text(locked);
+        if buy.clicked() {
+            actions.push(ToolbarAction::PaperBuy);
         }
-    }
+        let sell = entry(ui, &paper.sell.face, palette.sell(), enabled)
+            .on_hover_text(&paper.sell.hover)
+            .on_disabled_hover_text(locked);
+        if sell.clicked() {
+            actions.push(ToolbarAction::PaperSell);
+        }
+    });
 }
 
 /// The `⋯` menu holding every folded group, in a fixed order so muscle
@@ -715,21 +759,21 @@ mod tests {
 
     use super::*;
 
-    /// With bars, indicators and layers gone from the row, every group fits
-    /// the 1100 px first-launch window and a 1280 px one at TRADE's reserved
-    /// width, REC included: the tray stays at the right edge.
+    /// The row's horizontal padding, which the plan never sees.
+    const ROW_MARGINS: f32 =
+        ROW_PAD_LEFT_PX - crate::layout_picker::FACE_INSET_PX + ROW_PAD_RIGHT_PX - DOCK_INSET_PX;
+
+    /// What `draw` takes off for REC: the button and the gap before it.
+    const REC_WIDTH: f32 = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX + MARKET_REC_GAP_PX;
+
+    /// Every group fits a 1280 px window and a 1920 px one with REC, at
+    /// TRADE's reserved width: the tray stays at the right edge.
     #[test]
     fn nothing_folds_at_the_common_window_widths() {
-        // What `draw` takes off for REC: the button and the spacing after it.
-        let rec = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX
-            + egui::Spacing::default().item_spacing.x;
-        let margins = 16.0;
         for available in [
-            1100.0 - margins,
-            1280.0 - margins,
-            1280.0 - margins - rec,
-            1920.0 - margins,
-            1920.0 - margins - rec,
+            1280.0 - ROW_MARGINS,
+            1920.0 - ROW_MARGINS,
+            1920.0 - ROW_MARGINS - REC_WIDTH,
         ] {
             assert_eq!(
                 collapse_plan(available, W_TRADE),
@@ -737,6 +781,52 @@ mod tests {
                 "{available} px"
             );
         }
+    }
+
+    /// The 1100 px first-launch window no longer holds the full row since
+    /// the trade buttons and the picker grew: PANELS and HISTORY fold into
+    /// `⋯` together and TRADE stays.
+    #[test]
+    fn the_first_launch_window_folds_panels_and_history() {
+        let plan = collapse_plan(1100.0 - ROW_MARGINS, W_TRADE);
+        assert!(!plan.panels_inline && !plan.history_inline);
+        assert!(plan.trade_inline);
+    }
+
+    /// The row draws picker, market, history, trade, panels, left to right:
+    /// asserted on the painted shapes of a full-width toolbar, with the
+    /// picker's custom-layout glyph standing for its face.
+    #[test]
+    fn the_row_draws_picker_market_history_trade_panels() {
+        let shapes = toolbar_shapes(flat_trade(true), 1920.0);
+        let (buy, sell) = entry_rects(&shapes);
+        let (buy, sell) = (buy.expect("BUY inline"), sell.expect("SELL inline"));
+        let text_x = |needle: &str| {
+            shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.text().contains(needle) => {
+                        Some(text.pos.x)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{needle} was not painted"))
+        };
+        let order = [
+            text_x(icons::LAYOUT),
+            text_x("BTCUSDT"),
+            text_x("History"),
+            buy.left(),
+            sell.left(),
+            text_x(icons::TRAY),
+        ];
+        assert!(
+            order.is_sorted(),
+            "picker, market, history, BUY, SELL, tray: {order:?}"
+        );
+        assert_eq!(sell.left() - buy.right(), TRADE_GAP_PX);
+        assert_eq!(buy.size(), TRADE_ENTRY_SIZE);
+        assert!(order[5] > 1920.0 - 40.0, "the tray sits at the right edge");
     }
 
     /// Opening a position never changes what folds: at every window width,
@@ -1043,7 +1133,8 @@ mod tests {
         for _ in 0..2 {
             let output = ctx.run(input(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.horizontal(|ui| {
+                    // Right to left, as in the toolbar's right-hand run.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                         let mut actions = Vec::new();
                         draw_trade(ui, paper, &mut actions);
                         assert!(actions.is_empty(), "no clicks, no actions");
@@ -1134,8 +1225,8 @@ mod tests {
             ),
         ];
         let (flat, _) = paint_trade(&states[0]);
-        assert_eq!(flat.buy.width(), TRADE_ENTRY_WIDTH_PX);
-        assert_eq!(flat.sell.width(), TRADE_ENTRY_WIDTH_PX);
+        assert_eq!(flat.buy.width(), TRADE_ENTRY_SIZE.x);
+        assert_eq!(flat.sell.width(), TRADE_ENTRY_SIZE.x);
         assert_eq!((flat.close, flat.reverse), (None, None));
         let (long, _) = paint_trade(&states[1]);
         let close = long.close.expect("close painted");
@@ -1232,7 +1323,8 @@ mod tests {
             };
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.horizontal(|ui| draw_trade(ui, paper, &mut actions));
+                    let rtl = egui::Layout::right_to_left(egui::Align::Min);
+                    ui.with_layout(rtl, |ui| draw_trade(ui, paper, &mut actions));
                 });
             });
         }
