@@ -11,9 +11,9 @@
 pub const SEPARATOR_AIR_PX: f32 = 16.0;
 /// Width of a group separator's line, in pixels.
 pub const SEPARATOR_WIDTH_PX: f32 = 1.0;
-/// The four group separators with their air; the row's padding is outside
-/// the width the plan is given.
-const W_SLACK: f32 = 4.0 * (2.0 * SEPARATOR_AIR_PX + SEPARATOR_WIDTH_PX);
+/// One group separator with its air. Only drawn separators are counted:
+/// one after the picker, one before HISTORY, two around TRADE.
+const W_SEPARATOR: f32 = 2.0 * SEPARATOR_AIR_PX + SEPARATOR_WIDTH_PX;
 /// SOURCE: the market button (venue letter, symbol, `· venue`, caret) with
 /// the venue's full name. Measured 21 px under the eyebrow and two menus it
 /// replaced, at both widths.
@@ -25,7 +25,7 @@ const W_HISTORY: f32 = 150.0;
 /// One 28 px icon button (PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
 /// The layout picker, first in the row: its miniature's hit target.
-const W_PICKER: f32 = 54.0;
+pub const W_PICKER: f32 = 54.0;
 /// Which groups stay inline at the current width. Everything folded is
 /// reachable through the `⋯` overflow menu instead — never hidden.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +66,7 @@ impl CollapsePlan {
     /// picker leads the row and never folds, so it is always counted.
     #[must_use]
     pub fn width(self, trade_width: f32) -> f32 {
-        let mut width = W_SLACK + W_PICKER;
+        let mut width = W_PICKER + W_SEPARATOR;
         if self.overflow_needed() {
             width += W_ICON;
         }
@@ -76,10 +76,10 @@ impl CollapsePlan {
             W_SOURCE_SHRUNK
         };
         if self.history_inline {
-            width += W_HISTORY;
+            width += W_SEPARATOR + W_HISTORY;
         }
         if self.trade_inline {
-            width += trade_width;
+            width += 2.0 * W_SEPARATOR + trade_width;
         }
         if self.panels_inline {
             width += W_ICON;

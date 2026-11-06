@@ -23,6 +23,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::config::FeedCapabilities;
+use crate::layout_picker::FACE_INSET_PX;
 use quantick_chart::toolbar_collapse::{
     CollapsePlan, SEPARATOR_AIR_PX, SEPARATOR_WIDTH_PX, collapse_plan,
 };
@@ -38,14 +39,17 @@ use quantick_session::{HistoryPagingOff, fmt_history_span};
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 
-/// Padding from the window's left edge to the miniature's frame, in pixels.
-const ROW_PAD_LEFT_PX: f32 = 28.0;
-/// Padding from the tray's glyph to the window's right edge, in pixels.
-const ROW_PAD_RIGHT_PX: f32 = 12.0;
 /// How far the tray's glyph sits inside its hit target.
 const DOCK_INSET_PX: f32 = (TOOLBAR_ICON.hit - TOOLBAR_ICON.glyph) / 2.0;
 /// Gap between the market button and REC, in pixels.
 const MARKET_REC_GAP_PX: f32 = 10.0;
+/// The row's padding: 28 px to the miniature's frame, 12 px after the tray's glyph.
+const ROW_MARGIN: egui::Margin = egui::Margin {
+    left: 28.0 - FACE_INSET_PX,
+    right: 12.0 - DOCK_INSET_PX,
+    top: 0.0,
+    bottom: 0.0,
+};
 
 /// One TRADE button's own horizontal padding, in pixels.
 const TRADE_BUTTON_PAD_PX: f32 = 16.0;
@@ -58,6 +62,8 @@ const TRADE_ENTRY_SIZE: egui::Vec2 = egui::vec2(128.0, 30.0);
 const _: () = assert!(
     TRADE_ENTRY_SIZE.x >= TRADE_BUTTON_PAD_PX + ENTRY_FACE_MAX_CHARS as f32 * TRADE_GLYPH_PX
 );
+/// Gap between History's main button and its caret, in pixels.
+const HISTORY_SPLIT_GAP_PX: f32 = 6.0;
 /// Gap between two TRADE buttons, in pixels.
 const TRADE_GAP_PX: f32 = 8.0;
 /// Characters the close button shows before it cuts with `…`: room for
@@ -213,18 +219,12 @@ pub enum ToolbarAction {
 pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction> {
     let palette = theme::get(ctx);
     let mut actions = Vec::new();
-    let picker_inset = crate::layout_picker::FACE_INSET_PX;
-    let margin = egui::Margin {
-        left: ROW_PAD_LEFT_PX - picker_inset,
-        right: ROW_PAD_RIGHT_PX - DOCK_INSET_PX,
-        ..Default::default()
-    };
     egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "toolbar")))
         .exact_height(TOOLBAR_HEIGHT)
         .frame(
             egui::Frame::none()
                 .fill(palette.chrome())
-                .inner_margin(margin),
+                .inner_margin(ROW_MARGIN),
         )
         .show(ctx, |ui| {
             let rec_width = if model.deal_recording.is_some() {
@@ -245,10 +245,11 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 ) {
                     actions.push(ToolbarAction::SetLayout(preset));
                 }
-                row_separator(ui, SEPARATOR_AIR_PX - picker_inset, SEPARATOR_AIR_PX);
-                ui.spacing_mut().item_spacing.x = MARKET_REC_GAP_PX;
-                draw_source(ui, model, plan, &mut actions);
-                ui.spacing_mut().item_spacing.x = 0.0;
+                row_separator(ui, SEPARATOR_AIR_PX - FACE_INSET_PX, SEPARATOR_AIR_PX);
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.x = MARKET_REC_GAP_PX;
+                    draw_source(ui, model, plan, &mut actions);
+                });
                 if plan.history_inline {
                     row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
                     draw_history(ui, model, &mut actions);
@@ -267,8 +268,8 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                             actions.push(ToolbarAction::ToggleDock);
                         }
                     }
-                    row_separator(ui, SEPARATOR_AIR_PX - DOCK_INSET_PX, SEPARATOR_AIR_PX);
                     if plan.trade_inline {
+                        row_separator(ui, SEPARATOR_AIR_PX - DOCK_INSET_PX, SEPARATOR_AIR_PX);
                         draw_trade(ui, &model.paper, &mut actions);
                         row_separator(ui, SEPARATOR_AIR_PX, SEPARATOR_AIR_PX);
                     }
@@ -278,8 +279,8 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
     actions
 }
 
-/// A group separator: the row's height but one pixel, in the stroke egui's
-/// own separator wears, with `before` pixels of air on the side drawn so far.
+/// A group separator: the row's height but one pixel, in the palette's
+/// border colour, with `before` pixels of air on the side drawn so far.
 fn row_separator(ui: &mut egui::Ui, before: f32, after: f32) {
     ui.add_space(before);
     let size = egui::vec2(SEPARATOR_WIDTH_PX, TOOLBAR_HEIGHT - 1.0);
@@ -413,6 +414,7 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     if load.clicked() {
         actions.push(history_button_action(&model.history));
     }
+    ui.add_space(HISTORY_SPLIT_GAP_PX);
     let caret = ui.add_enabled_ui(menu, |ui| {
         ui.menu_button(icons::CARET_DOWN, |ui| {
             draw_history_menu(ui, model, actions);
@@ -760,8 +762,7 @@ mod tests {
     use super::*;
 
     /// The row's horizontal padding, which the plan never sees.
-    const ROW_MARGINS: f32 =
-        ROW_PAD_LEFT_PX - crate::layout_picker::FACE_INSET_PX + ROW_PAD_RIGHT_PX - DOCK_INSET_PX;
+    const ROW_MARGINS: f32 = ROW_MARGIN.left + ROW_MARGIN.right;
 
     /// What `draw` takes off for REC: the button and the gap before it.
     const REC_WIDTH: f32 = crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX + MARKET_REC_GAP_PX;
@@ -783,14 +784,62 @@ mod tests {
         }
     }
 
-    /// The 1100 px first-launch window no longer holds the full row since
-    /// the trade buttons and the picker grew: PANELS and HISTORY fold into
-    /// `⋯` together and TRADE stays.
+    /// The 1100 px first-launch window, and 1280 px with REC, no longer hold
+    /// the full row since the trade buttons and the picker grew: PANELS and
+    /// HISTORY fold into `⋯` together and TRADE stays inline.
     #[test]
-    fn the_first_launch_window_folds_panels_and_history() {
-        let plan = collapse_plan(1100.0 - ROW_MARGINS, W_TRADE);
-        assert!(!plan.panels_inline && !plan.history_inline);
-        assert!(plan.trade_inline);
+    fn a_narrow_window_folds_panels_and_history_but_keeps_trade() {
+        for available in [1100.0 - ROW_MARGINS, 1280.0 - ROW_MARGINS - REC_WIDTH] {
+            let plan = collapse_plan(available, W_TRADE);
+            assert!(
+                !plan.panels_inline && !plan.history_inline,
+                "{available} px"
+            );
+            assert!(plan.trade_inline, "{available} px");
+        }
+    }
+
+    /// Separator air is exact on both sides of every separator: the gap a
+    /// group draws inside it never trails into the air after it.
+    #[test]
+    fn every_separator_has_its_air_on_both_sides() {
+        let shapes = toolbar_shapes(flat_trade(true), 1920.0);
+        let rules: Vec<egui::Rect> = shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Rect(rect)
+                    if rect.rect.width() == SEPARATOR_WIDTH_PX
+                        && rect.rect.height() == TOOLBAR_HEIGHT - 1.0 =>
+                {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rules.len(), 4, "four full-height separators: {rules:?}");
+        let (buy, _) = entry_rects(&shapes);
+        assert_eq!(
+            rules[3].right() + SEPARATOR_AIR_PX,
+            buy.expect("BUY").left()
+        );
+        let history = shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Rect(rect)
+                    if rect.rect.left() > rules[1].right()
+                        && rect.rect.right() < rules[2].left() =>
+                {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .map(|rect| rect.left())
+            .fold(f32::INFINITY, f32::min);
+        assert_eq!(
+            history - rules[1].right(),
+            SEPARATOR_AIR_PX,
+            "air after the History rule"
+        );
     }
 
     /// The row draws picker, market, history, trade, panels, left to right:
