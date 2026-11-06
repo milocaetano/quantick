@@ -134,9 +134,14 @@ pub fn get(ctx: &egui::Context) -> Arc<Palette> {
     })
 }
 
-/// Axis and interface colors, independent of the active plot paint scope.
-pub fn ui(ctx: &egui::Context) -> Arc<Palette> {
-    ctx.data_mut(|data| cached(data).value.ui.clone())
+/// Light axes use interface ink; Dark retains the authored plot palette.
+pub fn axes(ctx: &egui::Context) -> Arc<Palette> {
+    ctx.data_mut(|data| {
+        let root = cached(data).value.ui.clone();
+        data.get_temp::<Arc<Palette>>(surface_key())
+            .filter(|_| root.resolved.dark)
+            .unwrap_or(root)
+    })
 }
 
 fn surface_key() -> egui::Id {
@@ -313,11 +318,11 @@ mod surface_tests {
         {
             let _outer = bookmap_scope(&ctx);
             assert!(Arc::ptr_eq(&get(&ctx), &surface));
-            assert!(Arc::ptr_eq(&ui(&ctx), &root));
+            assert!(Arc::ptr_eq(&axes(&ctx), &root));
             assert_eq!(get(&other).canvas(), root.canvas());
             {
                 let _inner = bookmap_scope(&ctx);
-                assert!(Arc::ptr_eq(&ui(&ctx), &root));
+                assert!(Arc::ptr_eq(&axes(&ctx), &root));
             }
             assert!(Arc::ptr_eq(&get(&ctx), &surface));
             assert_eq!(ctx.style().visuals, visuals);

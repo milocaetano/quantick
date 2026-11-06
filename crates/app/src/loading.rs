@@ -10,12 +10,8 @@ use quantick_chart::connection_state::{ATTEMPT_DOT_MS, Dot, DotLook, OverlayWord
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
 use quantick_chart::logo_shatter::{LogoRun, symbol_seed};
 
-/// The stacking of the connection surfaces, named once: `menu > tooltip >
-/// loading-slot, overlay > chart`. Sharing a layer with the chart would leave
-/// their order to egui's hash map, so they stand one order above it, below
-/// windows and menus. The slot lives in the header strip and the overlay below
-/// it, so they never meet. egui ranks its tooltips above its popups, so a chip's
-/// tooltip stands down while a menu is open ([`dot_hover`]).
+/// `menu > tooltip > loading-slot, overlay > chart`; keep the chart below this
+/// layer, and suppress chip tooltips while a popup is open ([`dot_hover`]).
 const LOADING_ORDER: egui::Order = egui::Order::PanelResizeLine;
 
 /// The inline spinner's diameter, in pixels.
@@ -28,6 +24,7 @@ const TITLE_GAP_PX: f32 = 6.0;
 const META_PT: f32 = 11.0;
 const CONTROL_GAP_PX: f32 = 12.0;
 const CONTROL_PT: f32 = 12.0;
+const OVERLAY_PAD_PX: f32 = 8.0;
 /// The label a press on the overlay answers to: same word as the popup's.
 pub const RECONNECT_LABEL: &str = "Reconnect";
 
@@ -51,10 +48,7 @@ const PULSE_REPAINT: std::time::Duration = std::time::Duration::from_millis(50);
 const LOGO_REPAINT: std::time::Duration = std::time::Duration::from_millis(16);
 const DOT_REPAINT: std::time::Duration = std::time::Duration::from_millis(ATTEMPT_DOT_MS as u64);
 
-/// A spinner + `label…` pair added to the current layout, for embedding in
-/// windows and toolbars. Adds two widgets rather than opening its own row, so
-/// the caller's layout (including right-to-left rows) keeps deciding where
-/// they land.
+/// A spinner + `label…` pair of widgets in the caller's layout.
 pub fn inline(ui: &mut egui::Ui, label: &str) {
     let palette = crate::theme::get(ui.ctx());
     ui.add(
@@ -65,8 +59,7 @@ pub fn inline(ui: &mut egui::Ui, label: &str) {
     ui.label(egui::RichText::new(format!("{label}…")).color(palette.loading_title()));
 }
 
-/// Whether the machine asked for no decorative motion: the Windows client-area
-/// animation setting, or the harness hook. Read once.
+/// Windows client-area animation preference or the harness hook, read once.
 #[must_use]
 pub fn reduced_motion() -> bool {
     static READ: OnceLock<bool> = OnceLock::new();
@@ -176,8 +169,7 @@ fn logo_mesh(ui: &egui::Ui, rect: egui::Rect, symbol: &str, now: i64, tab: u64) 
     mesh
 }
 
-/// `text` as wide as its walking dots at their widest, `...`, the missing dots in
-/// clear ink: placed by that width, a walk never moves the words it follows.
+/// Reserve the walking dots' full width with clear ink so words never shift.
 fn steady(
     palette: &crate::theme::Palette,
     fonts: &Fonts,
@@ -262,8 +254,7 @@ fn lay_out_overlay(
     }
 }
 
-/// Whether the overlay's control stands wholly inside `rect`. When it does not,
-/// the overlay draws none and the status bar offers Reconnect instead.
+/// A clipped control is omitted; the status bar then offers Reconnect instead.
 pub fn reconnect_fits(
     ctx: &egui::Context,
     rect: egui::Rect,
@@ -275,9 +266,7 @@ pub fn reconnect_fits(
         .is_some_and(|(_, hit)| rect.contains_rect(hit))
 }
 
-/// The shattering logo across `rect` with the words under it, painted without
-/// an input region but for the one control. Answers the control's rect and
-/// whether it was pressed.
+/// Paint the logo and words; only the returned reconnect rect takes input.
 pub fn draw_overlay(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -294,6 +283,18 @@ pub fn draw_overlay(
     let mut y = group.top;
     let centred = |width: f32| rect.center().x - width / 2.0;
     let size = group.title.size();
+    if !palette.resolved.dark {
+        let meta = group.meta.size();
+        let width = size.x.max(meta.x);
+        let mut plate = egui::Rect::from_min_size(
+            egui::pos2(centred(width), y),
+            egui::vec2(width, size.y + TITLE_GAP_PX + meta.y),
+        );
+        if let Some((_, hit)) = &group.control {
+            plate = plate.union(*hit);
+        }
+        painter.rect_filled(plate.expand(OVERLAY_PAD_PX), 4.0, palette.canvas());
+    }
     painter.galley(
         egui::pos2(centred(size.x), y),
         group.title,
@@ -600,8 +601,11 @@ mod tests {
     #[test]
     fn the_overlay_control_answers_a_real_press() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
-        let press_at = |at: Option<egui::Pos2>| {
+        let press_at = |source: &str, at: Option<egui::Pos2>| {
             let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
             let frame = |events: Vec<egui::Event>| {
                 let mut answer = (None, false);
                 let _ = ctx.run(
@@ -628,10 +632,24 @@ mod tests {
             };
             let _ = frame(vec![egui::Event::PointerMoved(at)]);
             let _ = frame(vec![button(true)]);
-            frame(vec![button(false)]).1
+            let result = frame(vec![button(false)]);
+            assert_eq!(
+                result.0,
+                Some(control),
+                "painting never moves the hit region"
+            );
+            (control, result.1)
         };
-        assert!(press_at(None));
-        assert!(!press_at(Some(egui::pos2(20.0, 20.0))));
+        let dark = press_at(quantick_appearance::DARK, None);
+        let light = press_at(quantick_appearance::LIGHT, None);
+        assert!(dark.1 && light.1);
+        assert_eq!(
+            dark.0, light.0,
+            "Light backing preserves the reconnect target"
+        );
+        for source in [quantick_appearance::DARK, quantick_appearance::LIGHT] {
+            assert!(!press_at(source, Some(egui::pos2(20.0, 20.0))).1);
+        }
     }
 
     /// The overlay paints a drag through: only its one control takes a press,

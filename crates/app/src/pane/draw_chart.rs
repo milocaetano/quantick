@@ -1,14 +1,8 @@
 //! The paint frame: [`ChartPane::draw_chart`], the order the layers go down
 //! in, and the stages it runs them through.
 //!
-//! The frame is a staged pipeline. Two opening stages write the pane before
-//! anything borrows its series: [`ChartPane::begin_frame`] (the published
-//! resets, the footprint switch and the ladder snapshot) and
-//! [`ChartPane::lay_out`] (the plot split, the live lane and the viewport
-//! clamp), which returns the frame's geometry as one [`FrameLayout`] value.
-//! [`FrameLayout::resolve`] then borrows the series into the [`DrawFrame`]
-//! every painter reads, and from there on `self.state` stays borrowed for
-//! the whole frame.
+//! [`ChartPane::begin_frame`] resets and snapshots; [`ChartPane::lay_out`] splits
+//! and clamps. [`FrameLayout::resolve`] lends the series to each [`DrawFrame`] painter.
 //!
 //! Under that borrow a step that writes a field cannot be a `&mut self`
 //! method, so each writing stage is an owner type in `frame_stages.rs` —
@@ -74,11 +68,11 @@ impl ChartPane {
             &crate::theme::get(painter.ctx()).resolved.typography,
         );
         let layout = self.lay_out(area, chrome);
-        let ui = theme::ui(painter.ctx());
-        let light_flow = self.orderflow.is_some() && !ui.resolved.dark;
+        let axes = theme::axes(painter.ctx());
+        let light_flow = self.orderflow.is_some() && !axes.resolved.dark;
         let fill = |rect, color| painter.rect_filled(rect, egui::Rounding::ZERO, color);
         let background = if light_flow {
-            ui.canvas()
+            axes.canvas()
         } else {
             start.canvas_background
         };
@@ -91,8 +85,8 @@ impl ChartPane {
                     .with_max_y(strip.top());
                 fill(plot, start.canvas_background);
             }
-            if self.orderflow.is_some() && (layout.is_some() || light_flow) {
-                fill(area.with_min_y(strip.top()), ui.flow_surface());
+            if self.orderflow.is_some() && layout.is_some() && !light_flow {
+                fill(area.with_min_y(strip.top()), axes.flow_surface());
             }
         }
         let Some(layout) = layout else { return };

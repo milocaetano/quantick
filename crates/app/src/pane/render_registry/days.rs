@@ -65,7 +65,7 @@ pub(in crate::pane) struct DaySeparatorPass<'a> {
     pub named: Vec<day_turn::WrittenDate>,
 }
 fn day_separator(p: &mut DaySeparatorPass<'_>) {
-    let palette = theme::ui(p.painter.ctx());
+    let palette = theme::axes(p.painter.ctx());
     let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
     let (painter, chip, tz) = (p.painter, p.chip, p.tz);
     let (left, right) = (p.history.left(), p.history.right());

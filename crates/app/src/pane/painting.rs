@@ -137,7 +137,7 @@ pub fn live_chip_rect(history_strip: egui::Rect) -> egui::Rect {
 /// of the price gutter, because this too is a statement about the axis.
 /// Accent, not amber: it is a control, not a provenance statement.
 pub fn draw_live_chip(painter: &egui::Painter, rect: egui::Rect) {
-    let palette = theme::ui(painter.ctx());
+    let palette = theme::axes(painter.ctx());
     painter.rect_filled(rect, egui::Rounding::same(3.0), palette.accent());
     painter.text(
         rect.center(),

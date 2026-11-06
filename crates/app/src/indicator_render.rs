@@ -528,7 +528,7 @@ fn draw_pane_axis(
     scale: &PriceScale,
     band: Rect,
 ) {
-    let palette = theme::ui(painter.ctx());
+    let palette = theme::axes(painter.ctx());
     let pane = frame.rect;
     let (lo, hi) = scale.range();
     let font = palette.axis_font(crate::chart::AXIS_LABEL_FONT_PX);

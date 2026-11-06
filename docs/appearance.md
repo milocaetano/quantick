@@ -25,7 +25,11 @@ palette snapshots as before.
 Only theme-owned chart fields use the surface values. Legacy global chart settings,
 saved candle presets and scripts remain explicit overrides: saving a chart
 settings preview captures that preview, and applying such a preset to a chart
-can override its Time or Bookmap defaults. No inheritance is inferred from RGB equality. Axis gutters, timestamp strips and their labels use the root interface palette.
+can override its Time or Bookmap defaults. No inheritance is inferred from RGB equality.
+Light axis gutters, timestamp strips and labels use the root interface palette;
+their backing matches the Time canvas. Dark retains authored Bookmap axis colors
+and timestamp surfaces. Empty Light panes back the loading text and reconnect
+control with the root canvas so the same message stays readable across mixed plots.
 Light confines the Bookmap canvas to the plot, including before data arrives;
 Dark retains its existing frame. Candle colors and chart marks keep the surface
 palette. Paint scopes
