@@ -66,8 +66,9 @@ impl BubbleLook {
     /// The panel's reset: put the bound asset's factory look
     /// ([`AssetBinding::factory_look`]) on `config`, the look a fresh open
     /// shows — its tick spheres and an inherited palette, which follows the
-    /// theme, included — and name it. Only the look: the pane's native tape
-    /// and tape only are its mode and stay. With no asset bound the code
+    /// theme, included, and the native tape as the look sets it — and name
+    /// it. Only the look: tape only is the pane's view and stays. With no
+    /// asset bound the code
     /// defaults are restored ([`BubbleLook::defaults_restored`]). The asset
     /// on screen files the change at the next sync. Returns whether
     /// anything changed: a screen already on that look is left alone, and
@@ -91,7 +92,6 @@ impl BubbleLook {
         let key = binding.key().to_owned();
         let mut desired = config.clone();
         look.apply_to(&mut desired);
-        desired.live_lane.native_tape = config.live_lane.native_tape;
         desired.live_lane.tape_only = config.live_lane.tape_only;
         desired.sanitize();
         let named = if look.name.is_empty() {

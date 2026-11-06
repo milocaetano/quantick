@@ -354,12 +354,10 @@ fn fresh_look(market: (&str, &str), presets: &BubblePresetFile) -> BubblePreset 
     settings.look
 }
 
-/// `config` in `look` as the reset wears it: the look only, the pane's mode
-/// kept.
+/// `config` in `look` as the reset wears it: the look only, tape only kept.
 fn reset_to(config: &HeatmapConfig, look: &BubblePreset) -> HeatmapConfig {
     let mut expected = config.clone();
     look.apply_to(&mut expected);
-    expected.live_lane.native_tape = config.live_lane.native_tape;
     expected.live_lane.tape_only = config.live_lane.tape_only;
     expected.sanitize();
     expected
@@ -434,22 +432,39 @@ fn the_reset_wears_the_assets_shipped_factory_look_and_files_it() {
     }
 }
 
-/// The reset puts back the look, not the pane's mode: a tape-only pane stays
-/// tape only, and the native tape stays as the trader switched it.
+/// The reset puts back the look, not the pane's view: a tape-only pane stays
+/// tape only. The native tape is the look's, as a fresh open sets it.
 #[test]
-fn the_reset_keeps_the_panes_mode() {
+fn the_reset_keeps_tape_only_and_wears_the_factory_native_tape() {
     let market = ("binance-futures", "BTCUSDT.p");
+    let factory = fresh_look(market, &embedded());
+    assert!(factory.live_lane.native_tape, "the shipped look's tape");
     let store = AssetBubblesStore::default().shared();
     let mut screen = bound(&store, market, &embedded());
-    let native_tape = !screen.config.live_lane.native_tape;
     edit(&mut screen, |config| {
         config.live_lane.tape_only = true;
-        config.live_lane.native_tape = native_tape;
+        config.live_lane.native_tape = false;
     });
     tune(&mut screen);
     assert!(screen.look.restore_factory(&mut screen.config));
     assert!(screen.config.live_lane.tape_only, "still tape only");
-    assert_eq!(screen.config.live_lane.native_tape, native_tape);
+    assert!(
+        screen.config.live_lane.native_tape,
+        "the factory native tape"
+    );
+
+    let win = ("metatrader-b3", "WINZ26");
+    let factory = fresh_look(win, &embedded());
+    assert!(factory.live_lane.native_tape, "the mini index's tape");
+    let mut screen = bound(&AssetBubblesStore::default().shared(), win, &embedded());
+    let picked = "consumption focus";
+    assert!(screen.look.apply_preset(picked, &mut screen.config, false));
+    assert!(!screen.config.live_lane.native_tape, "{picked} has none");
+    assert!(screen.look.restore_factory(&mut screen.config));
+    assert!(
+        screen.config.live_lane.native_tape,
+        "WIN's native tape is back"
+    );
 }
 
 /// The factory look's spheres come with it whatever pane resets: the mini
