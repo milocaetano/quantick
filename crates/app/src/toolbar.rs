@@ -33,7 +33,10 @@ use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::RunStatus;
-use quantick_paper::desk::ticket::ENTRY_FACE_MAX_CHARS;
+use quantick_paper::desk::{
+    TRADE_CLOSE_WIDTH_PX, TRADE_ENTRY_WIDTH_PX, TRADE_GAP_PX, TRADE_REVERSE_LABEL,
+    TRADE_REVERSE_WIDTH_PX, W_TRADE,
+};
 use quantick_session::{HistoryPagingOff, fmt_history_span};
 
 /// Height of the toolbar, in pixels (§5 zone 2).
@@ -51,38 +54,8 @@ const ROW_MARGIN: egui::Margin = egui::Margin {
     bottom: 0.0,
 };
 
-/// One TRADE button's own horizontal padding, in pixels.
-const TRADE_BUTTON_PAD_PX: f32 = 16.0;
-/// Estimated width of one strong glyph in a TRADE button, in pixels: upper
-/// case and digits, wider than the average label glyph.
-const TRADE_GLYPH_PX: f32 = 8.0;
-/// The one width both entry buttons wear, in every position state: room
-/// for the longest face the paper desk ever writes
-/// ([`ENTRY_FACE_MAX_CHARS`]), so a press lands where it landed flat.
-const TRADE_ENTRY_WIDTH_PX: f32 =
-    TRADE_BUTTON_PAD_PX + ENTRY_FACE_MAX_CHARS as f32 * TRADE_GLYPH_PX;
 /// Gap between History's main button and its caret, in pixels.
 const HISTORY_SPLIT_GAP_PX: f32 = 6.0;
-/// Gap between two TRADE buttons, in pixels.
-const TRADE_GAP_PX: f32 = 6.0;
-/// Characters the close button shows before it cuts with `…`: room for
-/// `× Close 999 SHORT`. The whole label is always in its hover.
-const TRADE_CLOSE_FACE_CHARS: usize = 17;
-/// The close button's fixed width, so the reverse beside it never moves on
-/// a flip from LONG to SHORT or on a size change.
-const TRADE_CLOSE_WIDTH_PX: f32 =
-    TRADE_BUTTON_PAD_PX + TRADE_CLOSE_FACE_CHARS as f32 * TRADE_GLYPH_PX;
-/// The reverse button's face.
-const TRADE_REVERSE_LABEL: &str = "Reverse";
-/// The reverse button's fixed width.
-const TRADE_REVERSE_WIDTH_PX: f32 =
-    TRADE_BUTTON_PAD_PX + TRADE_REVERSE_LABEL.len() as f32 * TRADE_GLYPH_PX;
-/// TRADE's width in the collapse plan: the entry pair and the open-state
-/// close and reverse, reserved flat too. Opening or closing a position then
-/// never changes what folds, so nothing left of TRADE - and nothing in it -
-/// moves when a fill lands.
-const W_TRADE: f32 =
-    2.0 * TRADE_ENTRY_WIDTH_PX + TRADE_CLOSE_WIDTH_PX + TRADE_REVERSE_WIDTH_PX + 3.0 * TRADE_GAP_PX;
 
 /// The amber label that replaces SOURCE while a recording plays.
 pub struct ReplaySource {
@@ -408,7 +381,7 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
             paging,
             egui::Button::new(history_button_label(&model.history)),
         )
-        .on_hover_text(history_button_hover(&model.history))
+        .on_hover_text(model.history.status.button_hover(model.history.main))
         .on_disabled_hover_text(history_disabled_hover(model));
     if load.clicked() {
         actions.push(history_button_action(&model.history));
@@ -466,25 +439,6 @@ fn history_button_action(button: &HistoryButton) -> ToolbarAction {
         ToolbarAction::CancelHistory
     } else {
         ToolbarAction::LoadHistory(button.main)
-    }
-}
-
-/// What one press of the button does right now. One owner, read by the bar's
-/// button and the overflow entry alike.
-fn history_button_hover(button: &HistoryButton) -> String {
-    match button.status {
-        RunStatus::Idle => format!(
-            "History: load back {} \u{2014} {}. The menu beside it has the other targets.",
-            button.main.label(),
-            button.main.hover()
-        ),
-        RunStatus::Queued(_) => "waiting for the session to finish loading, then this \
-             target starts; click or Esc to cancel"
-            .to_owned(),
-        RunStatus::Loading(_) | RunStatus::Paused(_) => "the chart stays as it is while \
-             pages arrive and is rebuilt once at the end; click or Esc to cancel and keep \
-             what arrived"
-            .to_owned(),
     }
 }
 
@@ -696,7 +650,7 @@ fn draw_overflow(
                     paging,
                     egui::Button::new(history_button_label(&model.history)),
                 )
-                .on_hover_text(history_button_hover(&model.history))
+                .on_hover_text(model.history.status.button_hover(model.history.main))
                 .on_disabled_hover_text(history_disabled_hover(model));
             if load.clicked() {
                 actions.push(history_button_action(&model.history));

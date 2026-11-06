@@ -83,6 +83,27 @@ impl RunStatus {
             Self::Paused(_) => "paused",
         }
     }
+
+    /// What one press of the History button does right now, given the
+    /// target its main click loads. One owner, read by the toolbar's button
+    /// and its overflow entry alike.
+    #[must_use]
+    pub fn button_hover(&self, main: HistoryReach) -> String {
+        match self {
+            Self::Idle => format!(
+                "History: load back {} \u{2014} {}. The menu beside it has the other targets.",
+                main.label(),
+                main.hover()
+            ),
+            Self::Queued(_) => "waiting for the session to finish loading, then this \
+                 target starts; click or Esc to cancel"
+                .to_owned(),
+            Self::Loading(_) | Self::Paused(_) => "the chart stays as it is while \
+                 pages arrive and is rebuilt once at the end; click or Esc to cancel and keep \
+                 what arrived"
+                .to_owned(),
+        }
+    }
 }
 
 /// One tab's history run.
