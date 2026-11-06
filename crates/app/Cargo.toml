@@ -111,6 +111,9 @@ rodio = { workspace = true }
 # catalogue. `MessageBeep` is the sound Windows itself uses, and a platform
 # without one reports that instead of pretending (see `audio/platform.rs`).
 windows-sys = { workspace = true }
+# The OS-window exception: the DPI adapter, the hidden-root paint pump and
+# the exposed-window lookup, behind safe calls.
+quantick-platform = { path = "../platform" }
 
 [dev-dependencies]
 # The gate clock the worker tests park a real worker on, and the ledger
