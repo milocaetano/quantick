@@ -6,9 +6,9 @@
 //! because the window menu is their only production reader — the paper
 //! shortcuts are re-exported to `super` for the tests that name them.
 
-use super::{GatewayPort, LayoutPort};
+use super::{GatewayPort, LayersPort, LayoutPort};
 use crate::chart_layers::shortcuts;
-use crate::orderflow_panel as panel;
+use crate::{orderflow_panel as panel, surfaces::ChartSettingsTab::Candles};
 use eframe::egui;
 use quantick_control_schema::settings_sections::SettingsSection;
 use quantick_control_schema::window_menu::KEBAB_CONTROL;
@@ -275,14 +275,14 @@ impl QuantickApp {
             MenuCommand::ForgetWorkspace => {
                 self.workspace_save_adapter().forget_workspace();
             }
-            MenuCommand::ExportDesk => super::desk_wiring::open_export(self),
+            MenuCommand::ExportDesk => super::desk_wiring::open_export(&mut self.runtime),
             MenuCommand::ImportDesk => self.runtime.workspace.picker_mut().open_import(),
             MenuCommand::OpenRecentDesk(path) => {
                 self.workspace_bundle_adapter().import_workspace_from(&path);
             }
             MenuCommand::RevealDesk => self.workspace_bundle_adapter().reveal_cockpit_home(),
             MenuCommand::SetSaveOnExit(save_on_exit) => {
-                super::desk_wiring::write_reopen(self, save_on_exit);
+                super::desk_wiring::write_reopen(self.workspace_save_adapter(), save_on_exit);
             }
             MenuCommand::PaperMarket(side) => self.active_tab_mut().paper.market(side),
             MenuCommand::PaperReverse => self.active_tab_mut().paper.reverse_position(),
@@ -301,7 +301,7 @@ impl QuantickApp {
             MenuCommand::SetProgressiveHistory(on) => self.runtime.history.progressive_history = on,
             MenuCommand::SetVenueLeadIn(on) => self.runtime.history.venue_lead_in = on,
             MenuCommand::SetTimezone(tz) => self.runtime.tz = tz,
-            MenuCommand::OpenAppearance => settings_window::open_appearance(self),
+            MenuCommand::OpenAppearance => self.layer_wiring().open_settings(Candles),
             MenuCommand::OpenAgentAccess => {
                 if let Some(access) = self.control.control_access.as_mut() {
                     access.open_panel();

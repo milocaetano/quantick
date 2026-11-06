@@ -103,4 +103,6 @@ a bound.
 | 737 | 2026-11-01 | feat/chrome-market-titlebar | main | 29705 | 20 | `crates/app/src/replay_view.rs` (791) |
 | 769 | 2026-11-06 | fix/layout-schema-catalog | feat/quantick-new-layout | 5083 | 17 | `crates/control-schema/src/orderflow.rs` (571) |
 | 770 | 2026-11-06 | feat/layout-platform-crate | feat/quantick-new-layout | 2977 | 6 | `crates/app/src/app/frame.rs` (569) |
+| 771 | 2026-11-06 | fix/layout-frame-scopes | feat/quantick-new-layout | 6008 | 5 | `crates/app/src/app/control_host.rs` (664) |
+| 772 | 2026-11-06 | fix/layout-book-upkeep | feat/quantick-new-layout | 21605 | 16 | `crates/stores/src/config.rs` (659) |
 | 774 | 2026-11-06 | feat/workspace-autosave | feat/quantick-new-layout | 31729 | 53 | `crates/app/src/control/gateway/server.rs` (1205) |

@@ -1,6 +1,7 @@
 //! Headless workspace document and layout-session policy.
 pub mod arrangement;
 pub mod arrangement_document;
+pub mod book_upkeep;
 pub mod bundle;
 pub mod canvas_layout;
 pub mod dock;

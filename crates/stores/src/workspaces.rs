@@ -1,5 +1,6 @@
 //! The workspaces file: validation and guarded disk persistence, beside the
 //! layouts file. The book itself is [`quantick_workspace::workspace_book`].
+use quantick_workspace::book_upkeep::UpkeepSave;
 use quantick_workspace::write_refusal::guard_write;
 use std::path::{Path, PathBuf};
 
@@ -158,7 +159,13 @@ impl WorkspaceBookStore {
         &mut self.sync
     }
 
-    /// The book and the window's side of it, together.
+    /// The book and the window's side of it, together, to read.
+    #[must_use]
+    pub fn parts(&self) -> (&WorkspaceBook, &TabRecipeSync) {
+        (&self.book, &self.sync)
+    }
+
+    /// The book and the window's side of it, together, to change.
     pub fn parts_mut(&mut self) -> (&mut WorkspaceBook, &mut TabRecipeSync) {
         (&mut self.book, &mut self.sync)
     }
@@ -195,6 +202,24 @@ impl WorkspaceBookStore {
             ));
         }
         save(&self.path, &self.book)
+    }
+
+    /// Write what the frame's upkeep asked for. A refused write leaves the
+    /// seeded workspaces for this session only, and says so in the log.
+    pub fn save_upkeep(&self, save: UpkeepSave) {
+        match save {
+            UpkeepSave::Nothing => {}
+            UpkeepSave::SeededBook => self.save_seeds(),
+        }
+    }
+
+    fn save_seeds(&self) {
+        if let Err(reason) = self.persist() {
+            tracing::warn!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "WORKSPACES_SEED_NOT_SAVED", reason = %reason,
+                action = "seeded_for_this_session_only",
+                "the workspaces seeded from the open tabs were not saved");
+        }
     }
 }
 
@@ -234,6 +259,20 @@ mod tests {
         store.book_mut().save_as(7, "Scalp").unwrap();
         assert_eq!(store.tab_row(7), ("Scalp".to_owned(), false));
         store.persist().unwrap();
+        let reopened = WorkspaceBookStore::open_beside(&dir.join("layouts.toml"));
+        assert!(reopened.book().recipe("Scalp").is_some());
+    }
+
+    /// The upkeep's word decides the write: nothing to save leaves the disk alone.
+    #[test]
+    fn the_store_writes_only_what_the_upkeep_asks_for() {
+        let dir = ScratchDir::new("workspaces-upkeep-save");
+        let mut store = WorkspaceBookStore::open_beside(&dir.join("layouts.toml"));
+        store.book_mut().open_tab(7);
+        store.book_mut().save_as(7, "Scalp").unwrap();
+        store.save_upkeep(UpkeepSave::Nothing);
+        assert!(!dir.join(WORKSPACES_FILE).exists());
+        store.save_upkeep(UpkeepSave::SeededBook);
         let reopened = WorkspaceBookStore::open_beside(&dir.join("layouts.toml"));
         assert!(reopened.book().recipe("Scalp").is_some());
     }

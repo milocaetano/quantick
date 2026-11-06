@@ -549,7 +549,7 @@ fn flush<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 }
 
 /// Autosave's write-through for the tabs the frame found quiet (one per
-/// workspace, as `quantick_stores::tab_recipes::maintain` chose them),
+/// workspace, as `quantick_workspace::book_upkeep::maintain` chose them),
 /// journaled as the hand that edited. Answers the toasts: one only where
 /// other tabs follow, or why a write failed, once: a failed tab reads
 /// modified and the frame retries it each quiet second.

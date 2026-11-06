@@ -38,7 +38,6 @@ mod scratch;
 pub mod script_library;
 pub mod symbol_catalog;
 pub mod symbols_file;
-pub mod tab_recipes;
 pub mod ui_state;
 pub mod workspaces;
 

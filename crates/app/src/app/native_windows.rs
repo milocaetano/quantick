@@ -1,5 +1,5 @@
 //! Native viewport adapters over one retained workspace and headless membership.
-use super::{QuantickApp, title_bar::TitleBarState};
+use super::{ArrangementHost, QuantickApp, title_bar::TitleBarState};
 use eframe::egui;
 use quantick_session::{close_queue::*, workspace_menu::WorkspaceCommand};
 use quantick_workspace::arrangement::{
@@ -140,7 +140,7 @@ pub(super) fn draw(app: &mut QuantickApp, ctx: &egui::Context, now: Instant) {
     {
         app.presentation.native.gesture.cancel();
     }
-    finish_drag(app, ctx);
+    finish_drag(&mut app.presentation.native, &mut app.runtime.tabs, ctx);
     let focused = app.runtime.tabs.windows().focused();
     present(app, focused);
     super::frame::settle(app, ctx, now);
@@ -402,8 +402,7 @@ fn observe_strip(app: &mut QuantickApp, ctx: &egui::Context, window: WindowId) {
     }
 }
 
-fn finish_drag(app: &mut QuantickApp, ctx: &egui::Context) {
-    let native = &mut app.presentation.native;
+fn finish_drag(native: &mut NativeWindows, tabs: &mut ArrangementHost, ctx: &egui::Context) {
     if native.gesture.active().is_none() {
         return;
     }
@@ -432,11 +431,7 @@ fn finish_drag(app: &mut QuantickApp, ctx: &egui::Context) {
     if !drop.eligible {
         return;
     }
-    if let Ok(result) = app
-        .runtime
-        .tabs
-        .commit_tab_drag(drag, drop.target, drop.position)
-    {
+    if let Ok(result) = tabs.commit_tab_drag(drag, drop.target, drop.position) {
         if drop.target == TransferTarget::NewWindow {
             // Native builder positions are reapplied using the destination
             // monitor's scale. Retain physical pixels until that scale is known.

@@ -15,12 +15,14 @@ use eframe::egui;
 #[cfg(test)]
 use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
-use crate::tabstrip::TabAction;
+use crate::{surfaces::MarketPaletteSurface, tabstrip::TabAction, timezone::TzOffset};
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
+use quantick_stores::symbol_catalog::SymbolCatalog as Catalog;
 use quantick_workspace::market_list as list;
 
-use super::{QuantickApp, TabSlot};
+use super::title_bar::TitleBarState;
+use super::{ArrangementHost, QuantickApp, TabSlot, arrangement_adapter::StripAsk};
 
 pub(super) fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64> {
     quantick_stores::ui_state::saved_context_intervals(
@@ -71,7 +73,7 @@ impl QuantickApp {
                 self.apply_tab_action(TabAction::Close(self.runtime.tabs.active_index()));
             }
             let asked = self.arrangement_adapter().apply_tab_keys(keys);
-            settle_strip(self, asked);
+            settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
         }
     }
 
@@ -84,7 +86,7 @@ impl QuantickApp {
             return super::tab_workspaces::apply_workspace_command(self, close);
         }
         let asked = self.arrangement_adapter().apply_tab_action(action);
-        settle_strip(self, asked);
+        settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
     }
 }
 
@@ -96,7 +98,7 @@ pub(super) fn close_now(app: &mut QuantickApp, index: usize, close: bool) -> boo
     }
     let asked = (app.arrangement_adapter()).apply_tab_action(TabAction::Close(index));
     let closed = asked.1.is_some();
-    settle_strip(app, asked);
+    settle_strip(&mut app.surfaces.market_palette, app.runtime.tz, asked);
     closed
 }
 
@@ -130,10 +132,10 @@ impl QuantickApp {
 }
 
 /// A live market a close took goes to Recent with its bar; `+` opens the palette.
-fn settle_strip(app: &mut QuantickApp, (palette, closed): super::arrangement_adapter::StripAsk) {
+fn settle_strip(palette: &mut MarketPaletteSurface, tz: TzOffset, (open, closed): StripAsk) {
     if let Some(tab) = closed.filter(|tab| tab.replay.is_none()) {
         let now = crate::metrics::wall_clock_ms();
-        let stamp = quantick_civil::fmt_offset_minute(now, app.runtime.tz);
+        let stamp = quantick_civil::fmt_offset_minute(now, tz);
         let closed = list::ClosedMarket {
             feed_id: tab.feed_id.clone(),
             symbol: tab.symbol.clone(),
@@ -142,10 +144,10 @@ fn settle_strip(app: &mut QuantickApp, (palette, closed): super::arrangement_ada
             bar: tab.flow_pane.state.spec().to_config_string(),
             context_bars: super::arrangement_adapter::saved_tab_of(&tab).context_bars,
         };
-        app.surfaces.market_palette.recent.closed(closed);
+        palette.recent.closed(closed);
     }
-    if palette {
-        app.surfaces.market_palette.open("", None);
+    if open {
+        palette.open("", None);
     }
 }
 
@@ -182,9 +184,9 @@ pub(super) fn market_snapshot(app: &QuantickApp) -> list::MarketSnapshot {
 }
 
 /// Bring the tab at `index` forward, off Home.
-pub(super) fn focus_tab(app: &mut QuantickApp, index: usize) {
-    app.runtime.tabs.select(index);
-    app.chrome.title_bar.surface.show_market();
+pub(super) fn focus_tab(tabs: &mut ArrangementHost, bar: &mut TitleBarState, index: usize) {
+    tabs.select(index);
+    bar.surface.show_market();
 }
 
 /// Open `choice` on `bar` (none: `adopt_tab`'s), its workspace left as the tab's arrival.
@@ -201,10 +203,10 @@ pub(super) fn open(app: &mut QuantickApp, choice: &list::OpenChoice, bar: Option
 }
 
 /// Add a symbol to a feed's list, or take one out.
-pub(super) fn edit_catalog(app: &mut QuantickApp, market: (&str, &str), add: bool) -> Refusable {
+pub(super) fn edit_catalog(mut catalog: Catalog, market: (&str, &str), add: bool) -> Refusable {
     match add {
-        true => app.symbol_catalog().add(market.0, market.1),
-        false => app.symbol_catalog().remove(market.0, market.1),
+        true => catalog.add(market.0, market.1),
+        false => catalog.remove(market.0, market.1),
     }
 }
 

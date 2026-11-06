@@ -46,10 +46,11 @@ pub(super) fn stand_in_for_toolbar(app: &mut super::QuantickApp) {
     app.workspace_bundle_adapter().poll_picker();
 }
 
-/// Home hides the market, so the chrome that acts on it hides too.
+/// Home hides the market, so the stages that act on it stand down and Home's
+/// own stand-ins run in their place: the one place a frame asks, per stage,
+/// as the plan declares it.
 pub(super) fn hides(app: &super::QuantickApp, stage: super::frame::FrameStage) -> bool {
-    use super::frame::FrameStage::{Dock, DrawingRail, PinnedInspector};
-    matches!(stage, Dock | DrawingRail | PinnedInspector) && app.chrome.title_bar.surface.is_home()
+    !stage.home().runs(app.chrome.title_bar.surface.is_home())
 }
 
 /// Moving between surfaces only stands down for text entry: it closes nothing, a
