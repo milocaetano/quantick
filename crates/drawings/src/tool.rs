@@ -418,6 +418,16 @@ pub enum PointerHint {
     ResizeSide { handle: usize },
 }
 
+/// The style an object is painted in on the active canvas: its own, with a
+/// colour that has vanished there swapped for the theme's legible one. The
+/// saved style is untouched — see [`quantick_appearance::contrast::legible`].
+fn legible(style: DrawingStyle, ctxt: &DrawContext<'_>) -> DrawingStyle {
+    DrawingStyle {
+        color: ctxt.appearance.legible_drawing(style.color),
+        ..style
+    }
+}
+
 /// A cheap, copyable reference to one registered implementation.
 #[derive(Clone, Copy)]
 pub struct DrawingTool(pub(crate) &'static dyn MarkTool);
@@ -650,6 +660,7 @@ impl DrawingTool {
         points: &[Px],
         ctxt: &DrawContext<'_>,
     ) {
+        let style = legible(style, ctxt);
         self.0.paint_under(painter, chart_rect, style, points, ctxt);
     }
 
@@ -665,6 +676,7 @@ impl DrawingTool {
         ctxt: &DrawContext<'_>,
         show_handles: bool,
     ) {
+        let style = legible(style, ctxt);
         if ctxt.selected {
             let halo_style = DrawingStyle {
                 color: ctxt.appearance.color(Token::DrawingSelectionHalo),

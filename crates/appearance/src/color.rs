@@ -133,6 +133,18 @@ impl RgbaExt for PremultipliedRgba {
 
 /// Compose a presentation opacity with configured alpha, in straight color space.
 pub fn with_opacity(color: PremultipliedRgba, opacity: u8) -> PremultipliedRgba {
+    let a = color.a();
+    if a == 0 {
+        return TRANSPARENT;
+    }
+    let [r, g, b, _] = opaque(color).to_array();
+    let alpha = (f32::from(a) * f32::from(opacity) / 255.0).round() as u8;
+    rgba_unmultiplied(r, g, b, alpha)
+}
+
+/// The colour's own hue at full opacity: what it is, apart from how faintly
+/// it is laid down. A transparent colour has no hue and answers transparent.
+pub fn opaque(color: PremultipliedRgba) -> PremultipliedRgba {
     let [r, g, b, a] = color.to_array();
     if a == 0 {
         return TRANSPARENT;
@@ -140,6 +152,5 @@ pub fn with_opacity(color: PremultipliedRgba, opacity: u8) -> PremultipliedRgba 
     let straight = |channel| {
         gamma_u8_from_linear_f32(linear_f32_from_gamma_u8(channel) / (f32::from(a) / 255.0))
     };
-    let alpha = (f32::from(a) * f32::from(opacity) / 255.0).round() as u8;
-    rgba_unmultiplied(straight(r), straight(g), straight(b), alpha)
+    PremultipliedRgba::from_rgb(straight(r), straight(g), straight(b))
 }
