@@ -56,16 +56,15 @@ const TRADE_BUTTON_PAD_PX: f32 = 16.0;
 /// Estimated width of one strong glyph in a TRADE button, in pixels: upper
 /// case and digits, wider than the average label glyph.
 const TRADE_GLYPH_PX: f32 = 8.0;
-/// The one size both entry buttons wear, in every position state, so a press
-/// lands where it landed flat; wide enough for the longest face.
-const TRADE_ENTRY_SIZE: egui::Vec2 = egui::vec2(128.0, 30.0);
-const _: () = assert!(
-    TRADE_ENTRY_SIZE.x >= TRADE_BUTTON_PAD_PX + ENTRY_FACE_MAX_CHARS as f32 * TRADE_GLYPH_PX
-);
+/// The one width both entry buttons wear, in every position state: room
+/// for the longest face the paper desk ever writes
+/// ([`ENTRY_FACE_MAX_CHARS`]), so a press lands where it landed flat.
+const TRADE_ENTRY_WIDTH_PX: f32 =
+    TRADE_BUTTON_PAD_PX + ENTRY_FACE_MAX_CHARS as f32 * TRADE_GLYPH_PX;
 /// Gap between History's main button and its caret, in pixels.
 const HISTORY_SPLIT_GAP_PX: f32 = 6.0;
 /// Gap between two TRADE buttons, in pixels.
-const TRADE_GAP_PX: f32 = 8.0;
+const TRADE_GAP_PX: f32 = 6.0;
 /// Characters the close button shows before it cuts with `…`: room for
 /// `× Close 999 SHORT`. The whole label is always in its hover.
 const TRADE_CLOSE_FACE_CHARS: usize = 17;
@@ -83,7 +82,7 @@ const TRADE_REVERSE_WIDTH_PX: f32 =
 /// never changes what folds, so nothing left of TRADE - and nothing in it -
 /// moves when a fill lands.
 const W_TRADE: f32 =
-    2.0 * TRADE_ENTRY_SIZE.x + TRADE_CLOSE_WIDTH_PX + TRADE_REVERSE_WIDTH_PX + 3.0 * TRADE_GAP_PX;
+    2.0 * TRADE_ENTRY_WIDTH_PX + TRADE_CLOSE_WIDTH_PX + TRADE_REVERSE_WIDTH_PX + 3.0 * TRADE_GAP_PX;
 
 /// The amber label that replaces SOURCE while a recording plays.
 pub struct ReplaySource {
@@ -593,7 +592,7 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
     let entry = |ui: &mut egui::Ui, label: &str, fill: egui::Color32, enabled: bool| {
         ui.add_enabled_ui(enabled, |ui| {
             ui.add_sized(
-                TRADE_ENTRY_SIZE,
+                egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0),
                 egui::Button::new(
                     egui::RichText::new(label)
                         .color(palette.chip_ink())
@@ -610,10 +609,10 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
     let enabled = paper.blocked.is_none();
     let locked = paper.blocked.as_deref().unwrap_or_default();
     // Right-aligned: the exits open left of the entries, which never move.
-    let flat = 2.0 * TRADE_ENTRY_SIZE.x + TRADE_GAP_PX;
+    let flat = 2.0 * TRADE_ENTRY_WIDTH_PX + TRADE_GAP_PX;
     let width = if paper.close.is_some() { W_TRADE } else { flat };
     let row = egui::Layout::left_to_right(egui::Align::Center);
-    ui.allocate_ui_with_layout(egui::vec2(width, TRADE_ENTRY_SIZE.y), row, |ui| {
+    ui.allocate_ui_with_layout(egui::vec2(width, 24.0), row, |ui| {
         ui.spacing_mut().item_spacing.x = TRADE_GAP_PX;
         // The exit controls, on the same surface as the entries: an open
         // position must never require a dock dive to leave or flip (audit
@@ -785,7 +784,7 @@ mod tests {
     }
 
     /// The 1100 px first-launch window, and 1280 px with REC, no longer hold
-    /// the full row since the trade buttons and the picker grew: PANELS and
+    /// the full row since the picker and the separators grew: PANELS and
     /// HISTORY fold into `⋯` together and TRADE stays inline.
     #[test]
     fn a_narrow_window_folds_panels_and_history_but_keeps_trade() {
@@ -835,6 +834,23 @@ mod tests {
             })
             .map(|rect| rect.left())
             .fold(f32::INFINITY, f32::min);
+        let market_right = shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Rect(rect)
+                    if rect.rect.left() > rules[0].right()
+                        && rect.rect.right() < rules[1].left() =>
+                {
+                    Some(rect.rect.right())
+                }
+                _ => None,
+            })
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(
+            rules[1].left() - market_right,
+            SEPARATOR_AIR_PX,
+            "air before the History rule"
+        );
         assert_eq!(
             history - rules[1].right(),
             SEPARATOR_AIR_PX,
@@ -874,7 +890,7 @@ mod tests {
             "picker, market, history, BUY, SELL, tray: {order:?}"
         );
         assert_eq!(sell.left() - buy.right(), TRADE_GAP_PX);
-        assert_eq!(buy.size(), TRADE_ENTRY_SIZE);
+        assert_eq!(buy.size(), egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0));
         assert!(order[5] > 1920.0 - 40.0, "the tray sits at the right edge");
     }
 
@@ -1274,8 +1290,8 @@ mod tests {
             ),
         ];
         let (flat, _) = paint_trade(&states[0]);
-        assert_eq!(flat.buy.width(), TRADE_ENTRY_SIZE.x);
-        assert_eq!(flat.sell.width(), TRADE_ENTRY_SIZE.x);
+        assert_eq!(flat.buy.width(), TRADE_ENTRY_WIDTH_PX);
+        assert_eq!(flat.sell.width(), TRADE_ENTRY_WIDTH_PX);
         assert_eq!((flat.close, flat.reverse), (None, None));
         let (long, _) = paint_trade(&states[1]);
         let close = long.close.expect("close painted");
