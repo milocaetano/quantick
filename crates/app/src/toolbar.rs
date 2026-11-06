@@ -43,8 +43,8 @@ use quantick_session::{HistoryPagingOff, fmt_history_span};
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 
 /// How far the tray's ink sits inside its hit target. The tray wears the
-/// dock strip's larger [`RAIL_ICON`] and inks 3/4 of its glyph.
-const DOCK_INSET_PX: f32 = (RAIL_ICON.hit - 0.75 * RAIL_ICON.glyph) / 2.0;
+/// dock strip's larger [`RAIL_ICON`], whose glyph inks 16 px (measured).
+const DOCK_INSET_PX: f32 = (RAIL_ICON.hit - 16.0) / 2.0;
 /// Gap between the market button and REC, in pixels.
 const MARKET_REC_GAP_PX: f32 = 10.0;
 /// The row's padding: 22 px to the miniature's frame, 12 px after the tray's glyph.

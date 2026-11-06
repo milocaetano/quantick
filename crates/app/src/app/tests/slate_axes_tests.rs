@@ -16,10 +16,7 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
         frame.time_strip.unwrap(),
     );
     let ui = crate::theme::axes(ctx);
-    let plot = area
-        .shrink(crate::plot_area::PLOT_PADDING_PX)
-        .with_max_x(gutter.left())
-        .with_max_y(strip.top());
+    let plot = area.with_max_x(gutter.left()).with_max_y(strip.top());
     assert!(
         has_fill(output, area, ui.canvas()),
         "the frame uses the shared Light canvas"

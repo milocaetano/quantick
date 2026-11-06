@@ -79,10 +79,7 @@ impl ChartPane {
         fill(area, background);
         if let (Some(gutter), Some(strip)) = (self.frame.price_gutter, self.frame.time_strip) {
             if light_flow {
-                let plot = area
-                    .shrink(crate::plot_area::PLOT_PADDING_PX)
-                    .with_max_x(gutter.left())
-                    .with_max_y(strip.top());
+                let plot = area.with_max_x(gutter.left()).with_max_y(strip.top());
                 fill(plot, start.canvas_background);
             }
             if self.orderflow.is_some() && layout.is_some() && !light_flow {
