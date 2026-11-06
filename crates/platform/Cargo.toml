@@ -10,9 +10,11 @@ publish.workspace = true
 # The root surface handle eframe offers `main`, read for its HWND alone.
 raw-window-handle = { workspace = true }
 tracing = { workspace = true }
-# The Win32 window, subclass and version calls; declarations only on other
-# targets, where every function here is a no-op or `None`. The three areas
-# beyond the workspace union are this crate's alone.
+
+[target.'cfg(windows)'.dependencies]
+# The Win32 window, subclass and version calls. Other targets link nothing:
+# every function here is a no-op or `None` there. The three areas beyond the
+# workspace union are this crate's alone.
 windows-sys = { workspace = true, features = [
     "Wdk_System_SystemServices",
     "Win32_System_SystemInformation",

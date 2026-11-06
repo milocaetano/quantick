@@ -59,6 +59,9 @@ quantick-orderflow = { path = "../orderflow" }
 # The paper account: orders, sizing, the journal and the report numbers. This
 # crate keeps the ticket that draws it and the host wiring around it.
 quantick-paper = { path = "../paper" }
+# The OS-window exception: the DPI adapter, the hidden-root paint pump and
+# the exposed-window lookup, behind safe calls; no-ops off Windows.
+quantick-platform = { path = "../platform" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 # The cockpit stores: every document the chart remembers between launches.
@@ -111,9 +114,6 @@ rodio = { workspace = true }
 # catalogue. `MessageBeep` is the sound Windows itself uses, and a platform
 # without one reports that instead of pretending (see `audio/platform.rs`).
 windows-sys = { workspace = true }
-# The OS-window exception: the DPI adapter, the hidden-root paint pump and
-# the exposed-window lookup, behind safe calls.
-quantick-platform = { path = "../platform" }
 
 [dev-dependencies]
 # The gate clock the worker tests park a real worker on, and the ledger
