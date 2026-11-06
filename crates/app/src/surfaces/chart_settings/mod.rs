@@ -107,8 +107,8 @@ impl ChartSettingsSurface {
         self.open
     }
 
-    /// Whether the window is on screen showing `tab` — what lights the
-    /// toolbar button that opens that tab.
+    /// Whether the window is on screen showing `tab`.
+    #[cfg(test)]
     pub fn is_open_on(&self, tab: ChartSettingsTab) -> bool {
         self.open && self.tab == tab
     }
@@ -135,15 +135,6 @@ impl ChartSettingsSurface {
         self.open = false;
         for tab in self.tabs() {
             tab.closed();
-        }
-    }
-
-    /// The toolbar's flip: close when already showing `tab`, else show it.
-    pub fn toggle(&mut self, tab: ChartSettingsTab, current: ChartStyle) {
-        if self.is_open_on(tab) {
-            self.close();
-        } else {
-            self.open(tab, current);
         }
     }
 

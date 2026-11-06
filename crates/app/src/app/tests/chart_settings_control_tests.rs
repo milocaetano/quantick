@@ -276,8 +276,8 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
             .chart_settings
             .is_open_on(ChartSettingsTab::Footprint)
     );
-    // The appearance button flips the same window to the Candles tab.
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::ToggleAppearance);
+    // Settings → Appearance… flips the same window to the Candles tab.
+    app.apply_menu_command(crate::app::menu_bar::MenuCommand::OpenAppearance);
     assert!(
         app.surfaces
             .chart_settings
