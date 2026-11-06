@@ -1754,9 +1754,9 @@ fn a_window_that_opens_on_the_split_focuses_the_flow_chart() {
         "a fresh window's controls speak for the chart quantick is built around"
     );
     assert_eq!(
-        app.status_model().spec_summary,
+        app.active_tab().focused_pane().state.spec().summary(),
         "tick(50)",
-        "and so does the status line"
+        "and so does the pane those controls drive"
     );
 }
 
@@ -2328,37 +2328,24 @@ fn the_keyboard_deletes_from_the_focused_pane() {
     );
 }
 
-/// The status bar's content section speaks for the focused pane (§11), so
+/// The status bar's price-scale hint speaks for the focused pane (§11), so
 /// it always describes the chart the user is working in.
 #[test]
 fn the_status_bar_follows_the_focused_pane() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
+    let time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+    assert!(time.price_view.set_manual_range(99.0, 103.0));
 
     let point = pane_point(&app, PaneSide::Flow);
-
     click_chart(&mut app, &ctx, point);
     let flow_status = app.status_model();
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
     let time_status = app.status_model();
 
-    assert_eq!(
-        flow_status.spec_summary,
-        app.active_tab().flow_pane.state.spec().summary()
-    );
-    assert_eq!(
-        time_status.spec_summary,
-        app.active_tab()
-            .pane(PaneSide::Time(0))
-            .state
-            .spec()
-            .summary()
-    );
-    assert_ne!(
-        flow_status.spec_summary, time_status.spec_summary,
-        "the two panes report different specs, so the bar has to change"
-    );
+    assert!(flow_status.price_auto, "the flow pane still auto-fits");
+    assert!(!time_status.price_auto, "the time pane was set by hand");
     // Provenance is the market's and never moves with focus.
     assert_eq!(flow_status.symbol, time_status.symbol);
     assert_eq!(flow_status.venue, time_status.venue);

@@ -129,6 +129,10 @@ impl BarBuilder for TimeBarBuilder {
             target: Decimal::from(length),
         })
     }
+
+    fn closes_at_ms(&self) -> Option<i64> {
+        self.current.as_ref().map(|_| self.bucket_end)
+    }
 }
 
 #[cfg(test)]
@@ -160,6 +164,23 @@ mod tests {
         assert!(b.push(&trade(1000, "100.0", Side::Buy)).is_none());
         assert!(b.push(&trade(1999, "101.0", Side::Buy)).is_none());
         assert_eq!(b.partial().unwrap().trade_count, 2);
+    }
+
+    #[test]
+    fn the_forming_bar_closes_at_its_own_bucket_end() {
+        let mut b = TimeBarBuilder::new(60_000);
+        assert_eq!(b.closes_at_ms(), None, "no forming bar, no close");
+        let _ = b.push(&trade(125_000, "100.0", Side::Buy));
+        assert_eq!(b.closes_at_ms(), Some(180_000));
+        let _ = b.push(&trade(179_999, "100.0", Side::Buy));
+        assert_eq!(b.closes_at_ms(), Some(180_000), "same bucket, same close");
+        let _ = b.push(&trade(300_000, "100.0", Side::Buy));
+        assert_eq!(
+            b.closes_at_ms(),
+            Some(360_000),
+            "a skipped bucket never counts"
+        );
+        assert_eq!(b.running_imbalance(), None);
     }
 
     #[test]

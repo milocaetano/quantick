@@ -630,6 +630,7 @@ impl QuantickApp {
         // here rather than per pane, per entry, inside the canvas.
         let capabilities = self.active_tab().capabilities(&self.config);
         let side_inferred = self.active_tab().side_note(&self.config).is_some();
+        let bar_progress = self.layout_state().bar_progress_on(popup_tab);
         // Told before the canvas paints, not after: the object holding the
         // words the editor is showing must stand down on the *same* frame,
         // or the note flashes its placeholder under the field for one.
@@ -654,6 +655,7 @@ impl QuantickApp {
                     tz: self.runtime.tz,
                     capabilities,
                     side_inferred,
+                    bar_progress,
                     footprint: &mut self.runtime.footprint_config,
                     layers: &mut self.runtime.workspace.layers_mut().actions,
                     panel_folds,
@@ -666,8 +668,9 @@ impl QuantickApp {
                 // the canvas split. Draw the shared catalogue into every one
                 // now, while their exact same-frame rectangles are available.
                 self.layout_adapter().draw_layout_strips(ui);
-                // The grid and the indicator state belong to the window, not
-                // to the pane whose menu switched them.
+                // The grid, the indicator state and the price tag's progress
+                // belong to the window or the market, not to the pane whose
+                // menu switched them.
                 self.layer_wiring().apply_actions();
                 let tab = self.active_tab();
                 canvas::overlays(ui, area, tab, &self.config, stall, now_ms, &mut answers);

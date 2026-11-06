@@ -387,3 +387,92 @@ fn a_file_from_a_newer_format_is_refused_for_its_version() {
         Err(SettingsError::Malformed(_))
     ));
 }
+
+#[test]
+fn a_recording_is_its_own_market() {
+    assert_eq!(shown_market(("mt5", "WINZ26"), None), ("mt5", "WINZ26"));
+    assert_eq!(
+        shown_market(("mt5", "WINZ26"), Some("WINV26")),
+        (REPLAY_FEED_KEY, "WINV26")
+    );
+}
+
+#[test]
+fn bar_progress_on_the_price_tag_is_on_until_a_market_turns_it_off() {
+    let mut settings = MarketSettings::default();
+    let b3 = win("MetaTrader 5 — B3");
+    let other = win("Replay");
+    assert!(settings.bar_progress_on(&b3), "on by default");
+    assert!(settings.set_bar_progress(&b3, false), "a change");
+    assert!(
+        !settings.set_bar_progress(&b3, false),
+        "the same answer is no change"
+    );
+    assert!(!settings.bar_progress_on(&b3));
+    assert!(
+        settings.bar_progress_on(&other),
+        "one market's switch leaves another's"
+    );
+
+    let text = toml::to_string_pretty(&settings).unwrap();
+    let read: MarketSettings = toml::from_str(&text).unwrap();
+    assert!(
+        !read.bar_progress_on(&b3),
+        "the switch round-trips:\n{text}"
+    );
+    assert!(read.bar_progress_on(&other));
+
+    assert!(settings.set_bar_progress(&b3, true));
+    assert_eq!(
+        toml::to_string_pretty(&settings).unwrap(),
+        toml::to_string_pretty(&MarketSettings::default()).unwrap(),
+        "back on leaves nothing in the file"
+    );
+}
+
+/// A hand-edited file may list the switched-off markets out of order, or one
+/// twice: every listed market reads off, and switching one back on clears it.
+#[test]
+fn bar_progress_off_reads_any_order_and_duplicates() {
+    let text = r#"
+version = 1
+
+[[bar_progress_off]]
+venue = "mt5"
+asset = "WIN"
+
+[[bar_progress_off]]
+venue = "binance"
+asset = "BTCUSDT"
+
+[[bar_progress_off]]
+venue = "mt5"
+asset = "WIN"
+
+[[bar_progress_off]]
+venue = "hyperliquid"
+asset = "BTC"
+"#;
+    let mut settings: MarketSettings = toml::from_str(text).unwrap();
+    let key = |venue: &str, asset: &str| MarketKey {
+        venue: venue.to_owned(),
+        asset: asset.to_owned(),
+    };
+    for (venue, asset) in [
+        ("mt5", "WIN"),
+        ("binance", "BTCUSDT"),
+        ("hyperliquid", "BTC"),
+    ] {
+        assert!(
+            !settings.bar_progress_on(&key(venue, asset)),
+            "{venue} {asset}"
+        );
+    }
+    assert!(settings.bar_progress_on(&key("mt5", "WDO")));
+    assert!(settings.set_bar_progress(&key("mt5", "WIN"), true));
+    assert!(
+        settings.bar_progress_on(&key("mt5", "WIN")),
+        "the duplicate goes with it"
+    );
+    assert!(!settings.set_bar_progress(&key("binance", "BTCUSDT"), false));
+}

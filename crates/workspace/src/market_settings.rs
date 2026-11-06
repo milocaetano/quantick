@@ -13,6 +13,7 @@
 //! lose it.
 use crate::layout_document::{LayoutBook, LegacyDrawings, SavedDrawing, SavedOrigin};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// The market settings filename inside the cockpit home.
 pub const MARKET_SETTINGS_FILE: &str = "market-settings.toml";
@@ -26,6 +27,26 @@ const ROLE_CONTEXT_SLOT: &str = "context-slot:";
 
 /// The legacy pane address of the flow chart.
 const LEGACY_FLOW_PANE: usize = 0;
+
+/// The feed half of a market key while a tab plays a recording.
+///
+/// A recording is its own market: its prices are the recorded day's, not
+/// the live venue's, so a level drawn on it belongs to the recording's
+/// symbol under this name and never lands on the live chart of the same
+/// symbol, nor on another tab streaming it.
+pub const REPLAY_FEED_KEY: &str = "replay";
+
+/// The market a tab's panes show, as `(feed, symbol)`: the live feed's, or —
+/// while a recording plays — the recording's symbol under
+/// [`REPLAY_FEED_KEY`]. The feed thread's market does not move for a
+/// recording; the recording's symbol does.
+#[must_use]
+pub fn shown_market<'a>(
+    live: (&'a str, &'a str),
+    recording: Option<&'a str>,
+) -> (&'a str, &'a str) {
+    recording.map_or(live, |symbol| (REPLAY_FEED_KEY, symbol))
+}
 
 /// One market: a venue and the asset the config says a symbol belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -142,6 +163,11 @@ pub struct MarketSettings {
     version: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     drawings: Vec<DrawingSet>,
+    /// Markets whose last-price tag leaves out the forming bar's progress.
+    /// The default is on, so only a market switched off is written: a set, so
+    /// a hand-edited file out of order or with a market twice reads the same.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    bar_progress_off: BTreeSet<MarketKey>,
 }
 
 impl Default for MarketSettings {
@@ -149,11 +175,28 @@ impl Default for MarketSettings {
         Self {
             version: FORMAT_VERSION,
             drawings: Vec::new(),
+            bar_progress_off: BTreeSet::new(),
         }
     }
 }
 
 impl MarketSettings {
+    /// Whether `market`'s last-price tag carries the forming bar's progress.
+    #[must_use]
+    pub fn bar_progress_on(&self, market: &MarketKey) -> bool {
+        !self.bar_progress_off.contains(market)
+    }
+
+    /// Switch the progress line on `market`'s price tag; `true` when that
+    /// changed anything, so the caller knows whether to save.
+    pub fn set_bar_progress(&mut self, market: &MarketKey, on: bool) -> bool {
+        if on {
+            self.bar_progress_off.remove(market)
+        } else {
+            self.bar_progress_off.insert(market.clone())
+        }
+    }
+
     /// The drawings kept for `key`; none is an empty slice.
     #[must_use]
     pub fn drawings(&self, key: &DrawingKey) -> &[SavedDrawing] {

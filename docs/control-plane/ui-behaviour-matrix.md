@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 109 |
+| Reachable by capability | 110 |
 | Excluded: `authority` | 4 |
 | Excluded: `ui_only_by_decision` | 7 |
 | Excluded: `pending_capability` | 43 |
-| **Total** | **163** |
+| **Total** | **164** |
 
-96 of the 163 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 67 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+96 of the 164 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 68 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -82,6 +82,7 @@ The three exclusion classes are closed:
 | `chart.bars.set_spec` | Change what one bar is — kind and size | each pane header's bars control, typing a number over the chart | `layout.pane.set_bar_spec`, `layout.pane.set_interval` | — |
 | `chart.pan` | Drag the chart horizontally through history | horizontal primary drag on the canvas | — | `pending_capability` — `chart.window.read` reports the visible time window; no capability pans that window. Price framing has its own capability below. Tracked in issue 401 |
 | `chart.price_axis.set` | Set a pane's price range or resume automatic fitting | drag or wheel on the price axis; double-click it to reset | `chart.price_axis.set` | — |
+| `chart.price_tag.progress.set` | Show or hide the forming bar's progress on the last-price tag | the price axis menu's first row, per market | `chart.price_tag.progress.set` | — |
 | `chart.time_axis.reset` | Reset a time axis to where it opened, or the candles to a live overview | double-click the candles' time strip, or the tape's; double-click open canvas | `chart.time_axis.reset` | — |
 | `chart.tape.pan` | Drag the tape beside the candles through time and price | primary or middle drag over the native tape; double-click it to return to live | `chart.tape_view.set`, `chart.price_axis.set` | — |
 | `chart.tape.zoom` | Zoom the tape's time window in or out | wheel over the native tape; drag or wheel on its time strip; its window menu | `chart.tape_view.set` | — |
@@ -239,7 +240,7 @@ matrix fails the build.
 | `hotkey` | 25 |
 | `menu_entry` | 45 |
 | `scripted_menu` | 0 |
-| `authored` | 67 |
+| `authored` | 68 |
 
 ## Appendix: rows no registry stands behind
 
@@ -266,6 +267,7 @@ declares nothing here is a guard failure.
 | `chart.bars.set_spec` | the bar-kind and size controls are pane header widgets, not entries in an action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
 | `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |
+| `chart.price_tag.progress.set` | a checkbox in the price axis context menu, not an entry in an action enum |
 | `chart.time_axis.reset` | a time-strip double-click the canvas handles directly |
 | `chart.tape.pan` | a pointer drag over the tape the canvas handles directly; no registry names it |
 | `chart.tape.zoom` | a wheel over the tape and its time strip the canvas handles directly |

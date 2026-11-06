@@ -49,17 +49,10 @@ use super::TabSlot;
 use crate::workspace_store::{LayoutSave, LayoutStore};
 use quantick_stores::market_settings;
 
+mod bar_progress;
 mod indicators;
 pub(crate) use indicators::set_indicator_mouse_vertical_line;
 mod strip;
-
-/// The feed half of a drawing key while a tab plays a recording.
-///
-/// A recording is its own market: its prices are the recorded day's, not
-/// the live venue's, so a level drawn on it belongs to the recording's
-/// symbol under this name and never lands on the live chart of the same
-/// symbol, nor on another tab streaming it.
-const REPLAY_FEED_KEY: &str = "replay";
 
 /// Whether a pane can be swapped under the trader right now.
 ///
@@ -79,6 +72,7 @@ pub(crate) struct LayoutRead<'a> {
     pub(super) tabs: &'a crate::app::arrangement_host::ArrangementHost,
     pub(super) active: usize,
     pub(super) session: &'a quantick_workspace::session::LayoutSession,
+    pub(super) market: &'a quantick_workspace::market_settings_store::MarketSettingsStore,
 }
 impl<'a> LayoutRead<'a> {
     /// A drawing gesture in flight on a pane holding `from`'s or `to`'s marks.
@@ -695,16 +689,11 @@ impl LayoutAdapter<'_> {
     // Drawings
     // ------------------------------------------------------------------
 
-    /// The market a tab's panes are showing, as a drawing key names it.
-    ///
-    /// `tab.active` is the feed thread's market and does not move for a
-    /// recording; the recording's symbol does, under its own feed name.
+    /// The market a tab's panes are showing: see `market_settings::shown_market`.
     fn market_of(tab: &crate::tab::Tab) -> (&str, &str) {
-        if tab.replay.is_some() {
-            (REPLAY_FEED_KEY, tab.symbol.as_str())
-        } else {
-            (tab.active.0.as_str(), tab.active.1.as_str())
-        }
+        let recording = tab.replay.as_ref().map(|_| tab.symbol.as_str());
+        let live = (tab.active.0.as_str(), tab.active.1.as_str());
+        quantick_workspace::market_settings::shown_market(live, recording)
     }
 
     /// The market and role a pane's drawings belong to right now.

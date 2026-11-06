@@ -1,7 +1,7 @@
 //! Native siblings share an egui Context but must retain their own panel bounds.
 use super::*;
 
-fn model(replaying: bool) -> StatusModel {
+pub(super) fn model(replaying: bool) -> StatusModel {
     StatusModel {
         workspace: Some("Scalp".to_owned()),
         modified: true,
@@ -19,19 +19,12 @@ fn model(replaying: bool) -> StatusModel {
         feed_arrival_ms: None,
         tape_age_ms: None,
         feed_latency: None,
-        spec_summary: "tick(50)".to_owned(),
-        bar_progress: Some("37/50 ticks".to_owned()),
         deal_recording: None,
         deal_chip: None,
-        venue_bars: 0,
-        backfilled_bars: 240,
-        live_bars: 61,
         side_note: Some("side: inferred (tick rule)".to_owned()),
         side_detail: None,
         sim_pnl: None,
-        follows_live: true,
         price_auto: true,
-        live_trades: 12_345,
         fps: Some(60.0),
         frame_avg_ms: Some(16.7),
         frame_cpu_ms: Some(4.2),

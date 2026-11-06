@@ -39,6 +39,8 @@ pub enum MenuIntent {
         visible: bool,
     },
     SetPriceInverted(bool),
+    /// Switch the forming bar's progress on the market's last-price tag.
+    SetBarProgress(bool),
     SetIgnoreFlowOpening(bool),
     OpenFootprintSettings,
     SetLaneWindow(LaneWindow),

@@ -946,6 +946,7 @@ impl ChartPane {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
             PaneMenuIntent::SetPriceInverted(inverted) => self.price_view.set_inverted(inverted),
+            PaneMenuIntent::SetBarProgress(on) => chrome.layers.bar_progress = Some(on),
             PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_ignore_flow_opening(ignore);

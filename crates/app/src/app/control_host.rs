@@ -850,6 +850,7 @@ impl LayoutPort for QuantickApp {
             tabs: &self.runtime.tabs,
             active: self.runtime.tabs.active_index(),
             session,
+            market: self.runtime.workspace.layouts().market(),
         }
     }
 
