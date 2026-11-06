@@ -55,7 +55,7 @@ mod tests {
         );
         for token in Token::ALL {
             let expected = match token {
-                Token::Canvas | Token::CandlePreviewBackground => [67, 74, 82, 255],
+                Token::Canvas | Token::CandlePreviewBackground => [37, 47, 55, 255],
                 Token::DrawingDefault
                 | Token::DrawingBuy
                 | Token::DrawingSell
@@ -75,7 +75,7 @@ mod tests {
                 token.key()
             );
         }
-        assert_eq!(light.color(Token::Canvas).to_array(), [255, 255, 255, 255]);
+        assert_eq!(light.color(Token::Canvas).to_array(), [255, 252, 247, 255]);
         assert_eq!(light.bookmap().orderflow, dark.orderflow);
         assert_eq!(light.bookmap().footprint_heat, dark.footprint_heat);
         assert_eq!(light.bookmap().typography, light.typography);

@@ -662,13 +662,13 @@ fn preview_and_selection_keep_exact_dark_and_complete_light_values() {
 }
 
 #[test]
-fn light_uses_neutral_surfaces_green_bulls_and_black_bears_without_typography_changes() {
+fn light_uses_beige_whisper_surfaces_green_bulls_and_black_bears_without_typography_changes() {
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     let dark = ResolvedTheme::default();
     for (token, rgba) in [
-        (Token::Canvas, [255, 255, 255, 255]),
-        (Token::Chrome, [236, 236, 236, 255]),
-        (Token::Control, [222, 222, 222, 255]),
+        (Token::Canvas, [255, 252, 247, 255]),
+        (Token::Chrome, [236, 233, 228, 255]),
+        (Token::Control, [222, 219, 215, 255]),
         (Token::TextPrimary, [32, 32, 32, 255]),
         (Token::Buy, [76, 175, 80, 255]),
         (Token::Sell, [0, 0, 0, 255]),

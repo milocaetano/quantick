@@ -28,7 +28,7 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
         has_fill(output, plot, crate::theme::bookmap(ctx).canvas()),
         "only data plots use Slate"
     );
-    assert_eq!(ui.canvas(), egui::Color32::WHITE);
+    assert_eq!(ui.canvas(), egui::Color32::from_rgb(255, 252, 247));
     let strip_fill = output.shapes.iter().rev().find_map(|shape| {
         if let egui::Shape::Rect(rect) = &shape.shape
             && rect
@@ -348,7 +348,7 @@ fn empty_light_loading_words_have_a_compact_backing_above_slate() {
                     .iter()
                     .rposition(|clipped| {
                         matches!(&clipped.shape,
-                    egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(67, 74, 82)
+                    egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(37, 47, 55)
                         && rect.rect.intersects(empty))
                     })
                     .unwrap();
