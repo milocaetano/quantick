@@ -18,6 +18,10 @@ pub const MARK_PT: f32 = 28.0;
 pub const GLYPH_CENTRE: (f32, f32) = (129.5, 133.0);
 /// The glyph's right edge in viewBox units, the side that faces the wordmark.
 pub const GLYPH_RIGHT: f32 = 206.0;
+/// How far up and left the square sits from the Dark-anchored place: a test
+/// capture at 1.5 px/pt showed the Q 2 px right of and 2 px below c06, with the
+/// wordmark aligned.
+pub const W6_OFFSET_PT: f32 = 2.0 / 1.5;
 pub const VIEWBOX: f32 = 256.0;
 
 /// Samples per pixel along each axis, as the mock's 4x supersampling.
@@ -48,9 +52,9 @@ pub fn side_px(pixels_per_point: f32) -> u32 {
 
 /// Where the Light Q's square goes, in points: `[left, top, side]`. `frame`
 /// is the Dark Q's box (centre, width), whose frame scales the viewBox by 4/3
-/// about the glyph's centre. As W6 placed it, the square is centred on the
-/// box's height; across, the glyph keeps the Dark glyph's right edge, the side
-/// facing the wordmark. Both on the pixel grid.
+/// about the glyph's centre. The square is centred on the box's height, the
+/// glyph's right edge (the side facing the wordmark) on the Dark glyph's, and
+/// both then move [`W6_OFFSET_PT`] up and left, onto c06. On the pixel grid.
 #[must_use]
 pub fn light_q_box(centre: [f32; 2], frame_width: f32, pixels_per_point: f32) -> [f32; 3] {
     let ppp = pixels_per_point;
@@ -59,8 +63,8 @@ pub fn light_q_box(centre: [f32; 2], frame_width: f32, pixels_per_point: f32) ->
     let dark_unit = frame_width * 4.0 / 3.0 / VIEWBOX;
     let right = centre[0] + (GLYPH_RIGHT - GLYPH_CENTRE.0) * dark_unit;
     let on_grid = |v: f32| (v * ppp).round() / ppp;
-    let left = on_grid(right - GLYPH_RIGHT * unit);
-    [left, on_grid(centre[1] - side / 2.0), side]
+    let left = on_grid(right - GLYPH_RIGHT * unit - W6_OFFSET_PT);
+    [left, on_grid(centre[1] - side / 2.0 - W6_OFFSET_PT), side]
 }
 
 /// The Light Q as premultiplied sRGB RGBA bytes, `side` x `side` pixels,

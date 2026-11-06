@@ -77,8 +77,8 @@ fn the_raster_is_deterministic() {
     assert_eq!(light_q(42), light_q(42));
 }
 
-/// The square sits on the pixel grid, one texel per pixel, centred on the
-/// box's height as W6, its glyph's right edge within half a pixel of Dark's.
+/// The square sits on the pixel grid, one texel per pixel, W6's offset away
+/// from the box's height centre and from Dark's glyph right edge.
 #[test]
 fn the_box_keeps_the_dark_glyphs_right_edge_on_the_pixel_grid() {
     for ppp in [1.0, 1.25, 1.5, 1.75, 2.0] {
@@ -88,12 +88,12 @@ fn the_box_keeps_the_dark_glyphs_right_edge_on_the_pixel_grid() {
         }
         assert!((side * ppp - side_px(ppp) as f32).abs() < 1e-3);
         let dark_right = 30.0 + (GLYPH_RIGHT - GLYPH_CENTRE.0) * 22.0 * 4.0 / 3.0 / VIEWBOX;
-        let right = left + GLYPH_RIGHT * side / VIEWBOX;
+        let right = left + GLYPH_RIGHT * side / VIEWBOX + W6_OFFSET_PT;
         assert!(
             (right - dark_right).abs() <= 0.5 / ppp + 1e-4,
             "{right} vs {dark_right}"
         );
-        let middle = top + side / 2.0;
+        let middle = top + side / 2.0 + W6_OFFSET_PT;
         assert!(
             (middle - 17.0).abs() <= 0.5 / ppp + 1e-4,
             "{middle} at {ppp}"

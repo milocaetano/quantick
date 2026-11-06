@@ -1001,8 +1001,8 @@ fn light_strip(source: &str, ppp: f32) -> (egui::Rect, String, [usize; 2], f32) 
 }
 
 /// Light paints W6's Q: the whole viewBox in 28 pt, its glyph's right edge
-/// where Dark's sits plus the shift, about a pixel from the "u"; the wordmark
-/// keeps the place Dark gives it.
+/// where Dark's sits plus the shift, less W6's offset, as far from the "u" as
+/// in c06; the wordmark keeps the place Dark gives it.
 #[test]
 fn the_light_q_is_w6s_and_moved_toward_the_wordmark() {
     use crate::tabstrip::LIGHT_Q_SHIFT_PT;
@@ -1023,11 +1023,11 @@ fn the_light_q_is_w6s_and_moved_toward_the_wordmark() {
         dark.center().x + (mark::GLYPH_RIGHT - mark::GLYPH_CENTRE.0) * 22.0 * 4.0 / 3.0 / 256.0;
     let moved = glyph_right - dark_right;
     assert!(
-        (moved - LIGHT_Q_SHIFT_PT).abs() <= 0.5,
+        (moved - (LIGHT_Q_SHIFT_PT - mark::W6_OFFSET_PT)).abs() <= 0.5,
         "glyph moved {moved} pt"
     );
     let gap = light_uan - glyph_right;
-    assert!((0.0..=1.0).contains(&gap), "Q to the u galley: {gap} px");
+    assert!((1.0..=2.0).contains(&gap), "Q to the u galley: {gap} px");
 }
 
 /// At every scale the Light Q is rasterised for that scale and drawn one

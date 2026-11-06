@@ -131,7 +131,6 @@ impl RgbaExt for PremultipliedRgba {
     }
 }
 
-/// Compose a presentation opacity with configured alpha, in straight color space.
 /// Premultiply straight RGBA bytes in place, in sRGB, as browsers do.
 pub fn premultiply_in_srgb(rgba: &mut [u8]) {
     for texel in rgba.as_chunks_mut::<4>().0 {
@@ -140,6 +139,7 @@ pub fn premultiply_in_srgb(rgba: &mut [u8]) {
     }
 }
 
+/// Compose a presentation opacity with configured alpha, in straight color space.
 pub fn with_opacity(color: PremultipliedRgba, opacity: u8) -> PremultipliedRgba {
     let a = color.a();
     if a == 0 {
