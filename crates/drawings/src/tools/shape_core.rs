@@ -118,6 +118,7 @@ mod tests {
             ..DrawingStyle::default()
         };
         let ctxt = DrawContext {
+            appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
             payload: &payload,
             anchors: &[],
             scale: &scale,

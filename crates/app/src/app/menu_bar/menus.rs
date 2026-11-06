@@ -306,6 +306,10 @@ impl WindowMenu<'_> {
             response = response.on_disabled_hover_text(hover);
         }
         take_focus(state, level, &response);
+        if id == RowId::Settings {
+            // The scripted theme path presses this row on its way to the choice.
+            crate::theme::choice::record(&response, "Settings");
+        }
         if response.clicked() {
             self.push_row_commands(id, commands);
         }

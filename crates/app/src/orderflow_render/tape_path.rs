@@ -2,21 +2,18 @@
 //! held in the past carries.
 
 use crate::orderflow_render::constants::{
-    PAST_TAPE_LABEL_FONT_PX, PAST_TAPE_LABEL_INSET, PAST_TAPE_SHADE_ALPHA, PATH_RGBA,
-    PATH_WIDTH_PX, RETAINED_EDGE_LABEL_GAP_PX, RETAINED_EDGE_LABEL_TOP_PX,
+    PAST_TAPE_LABEL_FONT_PX, PAST_TAPE_LABEL_INSET, PATH_WIDTH_PX, RETAINED_EDGE_LABEL_GAP_PX,
+    RETAINED_EDGE_LABEL_TOP_PX,
 };
-use eframe::egui::{self, Align2, FontId};
+use eframe::egui::{self, Align2};
 use quantick_orderflow::projection::{PastTape, TapeHorizontalGeometry};
 use quantick_orderflow::tape_view::{PAST_TAPE_LABEL, RETAINED_EDGE_LABEL, retained_edge_fraction};
 
 /// Connect factual centres, including offscreen vertices, behind the discs.
 /// The painter clips each segment; culling vertices would invent a shortcut.
 pub(super) fn draw(painter: &egui::Painter, points: impl Iterator<Item = egui::Pos2>) {
-    let [r, g, b, a] = PATH_RGBA;
-    let stroke = egui::Stroke::new(
-        PATH_WIDTH_PX,
-        egui::Color32::from_rgba_unmultiplied(r, g, b, a),
-    );
+    let appearance = crate::theme::get(painter.ctx());
+    let stroke = egui::Stroke::new(PATH_WIDTH_PX, appearance.tape_path());
     let mut points: Vec<_> = points.collect();
     points.sort_by(|a, b| a.x.total_cmp(&b.x).then_with(|| a.y.total_cmp(&b.y)));
     let mut previous = None;
@@ -38,15 +35,10 @@ pub(crate) fn draw_past_tape_edge(
     let (Some(past), Some((edge, _))) = (past, context.tape_time) else {
         return;
     };
-    let (lane, font, [r, g, b, _]) = (
-        context.layout.lane_rect(),
-        FontId::proportional(PAST_TAPE_LABEL_FONT_PX),
-        PATH_RGBA,
-    );
-    let (clip, color) = (
-        painter.with_clip_rect(lane),
-        egui::Color32::from_rgb(r, g, b),
-    );
+    let appearance = crate::theme::get(painter.ctx());
+    let lane = context.layout.lane_rect();
+    let font = appearance.label_font(PAST_TAPE_LABEL_FONT_PX);
+    let (clip, color) = (painter.with_clip_rect(lane), appearance.tape_label());
     let top_left = lane.left_top() + PAST_TAPE_LABEL_INSET;
     clip.text(
         top_left,
@@ -62,11 +54,7 @@ pub(crate) fn draw_past_tape_edge(
     let geometry =
         TapeHorizontalGeometry::resolve(lane.width(), lane.height(), &context.style.bubbles);
     let x = lane.left() + geometry.x(fraction);
-    clip.rect_filled(
-        lane.with_max_x(x),
-        0.0,
-        egui::Color32::from_black_alpha(PAST_TAPE_SHADE_ALPHA),
-    );
+    clip.rect_filled(lane.with_max_x(x), 0.0, appearance.retained_tape_shade());
     clip.vline(x, lane.y_range(), egui::Stroke::new(1.0_f32, color));
     let at = egui::pos2(
         x - RETAINED_EDGE_LABEL_GAP_PX,

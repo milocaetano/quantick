@@ -6,6 +6,10 @@ use crate::{Drawing, DrawingStyle, NewDrawing, ToolCatalog};
 /// where presets live. Presets carry an opaque payload export; the host
 /// stores them per tool id, versioned, surviving restarts.
 pub trait PresetHost {
+    /// Current defaults for new objects; saved styles and payloads still win.
+    fn theme(&self) -> Option<&quantick_appearance::ResolvedTheme> {
+        None
+    }
     fn custom_preset_names(&self, tool_id: &str) -> Vec<String>;
     fn load_custom_preset(&self, tool_id: &str, name: &str) -> Option<toml::Value>;
     /// `false` means the name exists and `overwrite` was not set — the
@@ -56,8 +60,11 @@ pub trait PresetHost {
 pub fn new_drawing_from_defaults<T: ToolCatalog>(host: &dyn PresetHost, tool: T) -> NewDrawing {
     let style = host
         .default_style(tool.id())
-        .unwrap_or_else(|| tool.default_style());
+        .unwrap_or_else(|| tool.themed_style(host.theme()));
     let mut payload = tool.default_payload();
+    if let Some(theme) = host.theme() {
+        payload.apply_theme_defaults(theme);
+    }
     if let Some(value) = host.default_config(tool.id()) {
         payload.import_preset(&value);
     }

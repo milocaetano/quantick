@@ -223,3 +223,60 @@ fn a_failed_write_is_reported_before_saving_is_off() {
     assert!(store_part.contains("bubble-assets.toml"), "{why}");
     assert!(screen_part.contains("saving is off"), "{why}");
 }
+
+#[test]
+fn saved_asset_keeps_equal_default_explicit_color_and_unedited_inherited_fields() {
+    let dir = ScratchDir::new("asset-color-provenance");
+    let path = dir.join(ASSETS_FILE);
+    let store = AssetBubblesStore::load(path.clone()).shared();
+    let (mut binding, mut settings) = bind(&store, "WINV26");
+    assert_eq!(settings.look.bubbles.sell_color, None);
+    let inherited = settings.look.bubbles.clone();
+    settings.look.bubbles.max_radius = 31.0;
+    assert!(binding.file(settings.clone()));
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+    let reopened = AssetBubblesStore::load(path.clone()).shared();
+    let (mut binding, mut settings) = bind(&reopened, "WINV26");
+    assert_eq!(settings.look.bubbles.buy_color, inherited.buy_color);
+    assert_eq!(settings.look.bubbles.sell_color, inherited.sell_color);
+    assert_eq!(settings.look.bubbles.label_color, inherited.label_color);
+    // Choosing the exact historical default is still an explicit choice.
+    let default_buy = quantick_orderflow::config::theme::theme_bubble_rgb(
+        quantick_orderflow::HeatmapTheme::Bookmap,
+    )
+    .buy;
+    settings.look.bubbles.buy_color = Some(default_buy);
+    assert!(binding.file(settings));
+    assert_eq!(reopened.borrow_mut().flush(), Some(Ok(())));
+    let reloaded = AssetBubblesStore::load(path).shared();
+    let (_, actual) = bind(&reloaded, "WINV26");
+    assert_eq!(actual.look.bubbles.buy_color, Some(default_buy));
+    assert_eq!(actual.look.bubbles.sell_color, None);
+    assert_eq!(actual.look.bubbles.max_radius, 31.0);
+}
+
+#[test]
+fn named_bubble_preset_file_retains_explicit_equal_default_and_absent_overrides() {
+    let dir = ScratchDir::new("preset-color-provenance");
+    let path = dir.join("bubbles.toml");
+    let mut config = HeatmapConfig::default();
+    let rgb = config
+        .palette
+        .bubble_rgb(&quantick_appearance::ResolvedTheme::bundled_dark().orderflow);
+    config.bubbles.buy_color = Some(rgb.buy);
+    config.bubbles.label_color = Some(rgb.text);
+    config.bubbles.max_radius = 31.0;
+    let mut file = bubble_presets::BubblePresetFile::default();
+    file.upsert(BubblePreset::capture("authored", &config));
+    bubble_presets::save_to(path.clone(), &file).unwrap();
+    let (reloaded, source, error) = bubble_presets::load_from(Some(path));
+    assert!(matches!(source, bubble_presets::PresetSource::EnvPath(_)));
+    assert_eq!(error, None);
+    let mut actual = HeatmapConfig::default();
+    reloaded.get("authored").unwrap().apply_to(&mut actual);
+    assert_eq!(actual.bubbles.buy_color, Some(rgb.buy));
+    assert_eq!(actual.bubbles.label_color, Some(rgb.text));
+    assert_eq!(actual.bubbles.sell_color, None);
+    assert_eq!(actual.bubbles.front_color, None);
+    assert_eq!(actual.bubbles.max_radius, 31.0);
+}

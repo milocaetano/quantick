@@ -208,6 +208,7 @@ struct LevelList<'a> {
 
 impl LevelList<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
+        let palette = crate::theme::get(ui.ctx());
         let Self {
             payload,
             earlier_edit,
@@ -263,7 +264,7 @@ impl LevelList<'_> {
             None => data.remove::<&'static str>(error_id),
         });
         if let Some(message) = shown {
-            ui.colored_label(crate::theme::WARN, message);
+            ui.colored_label(palette.warn(), message);
         }
         ui.horizontal(|ui| {
             if ui.small_button("+ Add level").clicked() {

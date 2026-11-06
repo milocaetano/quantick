@@ -14,8 +14,8 @@ use super::{
     knockout_text_within, price_extent, range_edges, status_line,
 };
 use crate::chart::to_f64;
-use crate::palette as theme;
-use crate::palette::{CASING, CASING_EXTRA_PX};
+use quantick_appearance::{ResolvedTheme, Token};
+use crate::palette::CASING_EXTRA_PX;
 use crate::{DrawContext, DrawingStyle, drawing_stroke};
 
 /// Which side of the candles one pass of the profile paints on.
@@ -221,13 +221,13 @@ impl<'a> ProfileFrame<'a> {
                 self.painter.rect_filled(
                     PxRect::from_min_max(pos2(left, row_top), pos2(buy_tip, row_bottom)),
                     0.0,
-                    theme::BUY.gamma_multiply(alpha),
+                    self.ctxt.appearance.color(Token::Buy).gamma_multiply(alpha),
                 );
                 if fill_tip > buy_tip {
                     self.painter.rect_filled(
                         PxRect::from_min_max(pos2(buy_tip, row_top), pos2(fill_tip, row_bottom)),
                         0.0,
-                        theme::SELL.gamma_multiply(alpha),
+                        self.ctxt.appearance.color(Token::Sell).gamma_multiply(alpha),
                     );
                 }
             } else {
@@ -270,7 +270,7 @@ impl<'a> ProfileFrame<'a> {
         for segment in &segments {
             self.painter.line_segment(
                 [segment.from, segment.to],
-                Stroke::new(ink_width(segment.in_va) + CASING_EXTRA_PX, CASING),
+                Stroke::new(ink_width(segment.in_va) + CASING_EXTRA_PX, self.ctxt.appearance.color(Token::Casing)),
             );
         }
         for segment in &segments {
@@ -301,11 +301,11 @@ impl<'a> ProfileFrame<'a> {
             // canvas the casing is near-invisible, so it simply stays.
             self.painter.line_segment(
                 [pos2(left, y), pos2(right, y)],
-                Stroke::new(width + CASING_EXTRA_PX, CASING),
+                Stroke::new(width + CASING_EXTRA_PX, self.ctxt.appearance.color(Token::Casing)),
             );
             self.painter.line_segment(
                 [pos2(left, y), pos2(right, y)],
-                Stroke::new(width, theme::POC),
+                Stroke::new(width, self.ctxt.appearance.color(Token::Poc)),
             );
         }
         if self.payload.show_value_area {
@@ -319,7 +319,7 @@ impl<'a> ProfileFrame<'a> {
                 let ends = [pos2(left, y), pos2(right, y)];
                 self.painter.add(MarkShape::dashed_line(
                     &ends,
-                    Stroke::new(width + CASING_EXTRA_PX, CASING),
+                    Stroke::new(width + CASING_EXTRA_PX, self.ctxt.appearance.color(Token::Casing)),
                     VA_DASH_PX,
                     VA_GAP_PX,
                 ));
@@ -350,11 +350,11 @@ impl<'a> ProfileFrame<'a> {
                 if let Some(area) = value_area {
                     // POC/VAH/VAL price plates at the right edge of the range.
                     for (name, price, color) in
-                        level_plates(profile, *area, payload).into_iter().flatten()
+                        level_plates(profile, *area, payload, self.ctxt.appearance).into_iter().flatten()
                     {
                         knockout_text(
                             self.painter,
-                            self.ctxt.text,
+                            self.ctxt,
                             pos2(
                                 self.right + LABEL_OFFSET_PX,
                                 self.ctxt.scale.y(to_f64(price)),
@@ -387,10 +387,10 @@ impl<'a> ProfileFrame<'a> {
         if !status.is_empty() {
             knockout_text_within(
                 self.painter,
-                self.ctxt.text,
+                self.ctxt,
                 pos2(self.left, self.bottom + LABEL_OFFSET_PX),
                 &status,
-                theme::TEXT_MUTED,
+                self.ctxt.appearance.color(Token::TextMuted),
                 self.chart_rect,
                 (self.top, self.bottom),
             );
@@ -405,15 +405,16 @@ pub(super) fn level_plates(
     profile: &VolumeProfile,
     area: ValueArea,
     payload: &FrvpPayload,
+    appearance: &ResolvedTheme,
 ) -> [Option<(&'static str, Decimal, PremultipliedRgba)>; 3] {
     let levels = LevelPrices::of(profile, area);
     [
-        payload.show_poc.then_some(("POC", levels.poc, theme::POC)),
+        payload.show_poc.then_some(("POC", levels.poc, appearance.color(Token::Poc))),
         payload
             .show_value_area
-            .then_some(("VAH", levels.vah, theme::TEXT_MUTED)),
+            .then_some(("VAH", levels.vah, appearance.color(Token::TextMuted))),
         payload
             .show_value_area
-            .then_some(("VAL", levels.val, theme::TEXT_MUTED)),
+            .then_some(("VAL", levels.val, appearance.color(Token::TextMuted))),
     ]
 }

@@ -35,11 +35,9 @@
 //! without a window. Drawing demo requests now belong to the feature-gated
 //! drawing-chrome owner; the remaining legacy hook families stay here.
 //!
-//! The four enums that remain — [`ScriptedMenu`], [`ContextMenuPane`],
-//! [`VenueHistoryDemo`], [`StrategyDemoMode`] — are hook *values*, not
-//! response shapes: each names a set of mutually exclusive scenes, each is
-//! matched at exactly one site, and adding a scene to one of them is the arm
-//! that scene needs rather than a call site anybody else has to revisit.
+//! Scripted menu paths and the remaining context/history/demo scene enums are
+//! hook values. Menu paths name ordered targets; the UI supplies their real
+//! hit rectangles and the headless path advances only after a press is sent.
 //!
 //! # Why the registry is a typed struct, not a map of strings
 //!
@@ -225,37 +223,7 @@ impl VenueHistoryDemo {
     }
 }
 
-/// Which menu `QUANTICK_MENU` presses open.
-///
-/// A menu bar button is not something a scripted run can click, and every
-/// entry behind one is therefore invisible to a capture without a hook. The
-/// hook delivers a real click on the button's own published rectangle rather
-/// than reaching into egui's popup state, so what opens is exactly what a
-/// trader's click opens.
-///
-/// A token this build does not know opens nothing rather than the wrong menu:
-/// a capture of the wrong surface that passes is worse than one that fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScriptedMenu {
-    /// The `⋮` window menu: the door to save, export, open and locate.
-    Window,
-    /// The toolbar's history caret — the one-click targets and the candle
-    /// reach.
-    History,
-}
-
-impl ScriptedMenu {
-    /// Every menu this hook can open, by the token that names it.
-    pub(crate) const ALL: [(&'static str, Self); 2] =
-        [("window", Self::Window), ("history", Self::History)];
-
-    fn from_token(token: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(token))
-            .map(|(_, menu)| menu)
-    }
-}
+pub(crate) use quantick_chart_interaction::scripted_menu::ScriptedMenu;
 
 /// What one frame's tick of a budgeted hook came to.
 ///
@@ -652,14 +620,9 @@ impl Harness {
         self.context_menu_layers = layers;
     }
 
-    /// Which menu bar button still owes a scripted press.
-    pub(crate) fn menu(&self) -> Option<ScriptedMenu> {
-        self.menu
-    }
-
     /// Whether the button held still long enough to press: the `⋮` rides the right
     /// edge, and the window takes its scripted size a few frames in.
-    pub(crate) fn menu_button_settled(&mut self, position: egui::Pos2) -> bool {
+    fn menu_button_settled(&mut self, position: egui::Pos2) -> bool {
         const SETTLED_FRAMES: u32 = 10;
         let (held, frames) = self.menu_button_held;
         let frames = if held == position { frames + 1 } else { 0 };
@@ -667,15 +630,53 @@ impl Harness {
         frames >= SETTLED_FRAMES
     }
 
-    /// The press went out: disarm the button and hold its release.
-    pub(crate) fn menu_pressed(&mut self, position: egui::Pos2) {
-        self.menu = None;
-        self.menu_release = Some(position);
-    }
-
-    /// That release, once.
-    pub(crate) fn take_menu_release(&mut self) -> Option<egui::Pos2> {
-        self.menu_release.take()
+    /// Send each press and release through egui, waiting for the painted target.
+    ///
+    /// `window` is the `⋮` button, which must also hold still before it is
+    /// pressed; every later step of a path is a row its own draw published.
+    pub(crate) fn push_menu_input(
+        &mut self,
+        ctx: &egui::Context,
+        raw_input: &mut egui::RawInput,
+        window: Option<egui::Rect>,
+        history: Option<egui::Rect>,
+    ) -> bool {
+        let click = if let Some(position) = self.menu_release.take() {
+            Some((position, false))
+        } else if let Some(menu) = self.menu.as_mut().and_then(ScriptedMenu::ready) {
+            let rect = match menu.target() {
+                "Window" => window.filter(|rect| self.menu_button_settled(rect.center())),
+                "History" => history,
+                target => ctx.data_mut(|data| {
+                    data.remove_temp::<Option<egui::Rect>>(egui::Id::new(("scripted_menu", target)))
+                        .flatten()
+                }),
+            };
+            rect.map(|rect| {
+                let position = rect.center();
+                tracing::info!(
+                    event_code = "SCRIPTED_MENU_PRESS",
+                    target = menu.target(),
+                    ?position
+                );
+                self.menu = menu.next();
+                self.menu_release = Some(position);
+                (position, true)
+            })
+        } else {
+            None
+        };
+        if let Some((position, pressed)) = click {
+            raw_input.events.push(egui::Event::PointerMoved(position));
+            raw_input.events.push(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+            return true;
+        }
+        false
     }
 
     /// Which venue-history frame to stage, if one was asked for.
@@ -1044,19 +1045,6 @@ mod tests {
         assert_eq!(parse_settings_hook("0:colours"), None);
         assert_eq!(parse_settings_hook("first"), None);
         assert_eq!(parse_settings_hook(""), None);
-    }
-
-    #[test]
-    fn every_scripted_menu_is_reachable_by_its_token() {
-        assert_eq!(
-            ScriptedMenu::from_token("window"),
-            Some(ScriptedMenu::Window)
-        );
-        assert_eq!(
-            ScriptedMenu::from_token("HISTORY"),
-            Some(ScriptedMenu::History)
-        );
-        assert_eq!(ScriptedMenu::from_token("file"), None, "no such menu");
     }
 
     #[test]

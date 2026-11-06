@@ -22,15 +22,34 @@ pub struct StylePanelResponse {
 /// Draw every candle and canvas knob, and the live preview above them, into
 /// `ui` — the body of the chart settings window's Candles tab, which owns the
 /// window, its presets row and its Reset.
-pub fn draw_style_contents(ui: &mut egui::Ui, style: &mut ChartStyle) -> StylePanelResponse {
+pub fn draw_style_contents(
+    ui: &mut egui::Ui,
+    style: &mut ChartStyle,
+    bookmap: bool,
+) -> StylePanelResponse {
     let mut response = StylePanelResponse::default();
-    draw_preview(ui, style);
+    let palette = if bookmap {
+        crate::theme::bookmap(ui.ctx())
+    } else {
+        crate::theme::get(ui.ctx())
+    };
+    draw_preview(ui, style, &palette);
     ui.separator();
-    draw_body_settings(ui, &mut style.candles, &mut response.changed);
+    draw_body_settings(
+        ui,
+        &mut style.candles,
+        &mut style.ownership,
+        &mut response.changed,
+    );
     ui.separator();
     draw_outline_settings(ui, &mut style.candles, &mut response.changed);
     ui.separator();
-    draw_wick_settings(ui, &mut style.candles, &mut response.changed);
+    draw_wick_settings(
+        ui,
+        &mut style.candles,
+        &mut style.ownership,
+        &mut response.changed,
+    );
     ui.separator();
     draw_live_settings(ui, &mut style.candles, &mut response.changed);
     ui.separator();
@@ -43,6 +62,7 @@ pub fn draw_style_contents(ui: &mut egui::Ui, style: &mut ChartStyle) -> StylePa
         .clicked()
     {
         *style = ChartStyle::default();
+        style.apply_theme(&palette.resolved);
         response.changed = true;
         response.applied_preset = Some(CandlePreset::OrderFlow);
     }
@@ -55,14 +75,19 @@ pub fn draw_presets(ui: &mut egui::Ui, style: &mut ChartStyle, response: &mut St
     for preset in CandlePreset::ALL {
         let selected = CandlePreset::detect(&style.candles) == Some(preset);
         if ui.selectable_label(selected, preset.label()).clicked() {
-            style.candles = preset.style();
+            style.apply_preset(preset);
             response.changed = true;
             response.applied_preset = Some(preset);
         }
     }
 }
 
-pub fn draw_body_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &mut bool) {
+pub fn draw_body_settings(
+    ui: &mut egui::Ui,
+    style: &mut CandleStyle,
+    ownership: &mut quantick_chart::style::ChartColorOwnership,
+    changed: &mut bool,
+) {
     ui.heading("Body");
     let previous_mode = style.body_mode;
     egui::ComboBox::from_id_salt("candle_body_mode")
@@ -90,17 +115,17 @@ pub fn draw_body_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &
             ui.end_row();
 
             ui.label("Bull");
-            *changed |= ui.color_edit_button_srgb(&mut style.bull_fill).changed();
-            *changed |= ui.color_edit_button_srgb(&mut style.bull_outline).changed();
+            *changed |= edit_color(ui, &mut style.bull_fill, &mut ownership.bull_fill);
+            *changed |= edit_color(ui, &mut style.bull_outline, &mut ownership.bull_outline);
             ui.end_row();
 
             ui.label("Bear");
-            *changed |= ui.color_edit_button_srgb(&mut style.bear_fill).changed();
-            *changed |= ui.color_edit_button_srgb(&mut style.bear_outline).changed();
+            *changed |= edit_color(ui, &mut style.bear_fill, &mut ownership.bear_fill);
+            *changed |= edit_color(ui, &mut style.bear_outline, &mut ownership.bear_outline);
             ui.end_row();
         });
 
-    *changed |= ui
+    if ui
         .add_enabled(
             style.body_mode == CandleBodyMode::Filled,
             egui::Slider::new(&mut style.fill_opacity, 0.0..=1.0)
@@ -108,7 +133,11 @@ pub fn draw_body_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &
                 .step_by(0.01),
         )
         .on_hover_text("lower values reveal heatmap liquidity through the candle")
-        .changed();
+        .changed()
+    {
+        ownership.fill_opacity = quantick_appearance::Inheritance::Explicit;
+        *changed = true;
+    }
     *changed |= ui
         .add(
             egui::Slider::new(&mut style.body_width_frac, 0.1..=1.0)
@@ -162,7 +191,12 @@ pub fn draw_outline_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed
         .changed();
 }
 
-pub fn draw_wick_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &mut bool) {
+pub fn draw_wick_settings(
+    ui: &mut egui::Ui,
+    style: &mut CandleStyle,
+    ownership: &mut quantick_chart::style::ChartColorOwnership,
+    changed: &mut bool,
+) {
     ui.heading("Wicks");
     *changed |= ui
         .checkbox(&mut style.show_wicks, "show upper and lower wicks")
@@ -181,7 +215,7 @@ pub fn draw_wick_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &
         if style.wick_color_mode == WickColorMode::Custom {
             ui.horizontal(|ui| {
                 ui.label("wick colour");
-                *changed |= ui.color_edit_button_srgb(&mut style.wick).changed();
+                *changed |= edit_color(ui, &mut style.wick, &mut ownership.wick);
             });
         }
         *changed |= ui
@@ -225,9 +259,11 @@ pub fn draw_canvas_settings(ui: &mut egui::Ui, style: &mut ChartStyle, changed: 
     ui.add_enabled_ui(style.canvas.background_enabled, |ui| {
         ui.horizontal(|ui| {
             ui.label("background");
-            *changed |= ui
-                .color_edit_button_srgb(&mut style.canvas.background)
-                .changed();
+            *changed |= edit_color(
+                ui,
+                &mut style.canvas.background,
+                &mut style.ownership.background,
+            );
         });
     });
 
@@ -237,7 +273,7 @@ pub fn draw_canvas_settings(ui: &mut egui::Ui, style: &mut ChartStyle, changed: 
     ui.add_enabled_ui(style.canvas.grid_enabled, |ui| {
         ui.horizontal(|ui| {
             ui.label("grid colour");
-            *changed |= ui.color_edit_button_srgb(&mut style.canvas.grid).changed();
+            *changed |= edit_color(ui, &mut style.canvas.grid, &mut style.ownership.grid);
         });
         *changed |= ui
             .add(
@@ -249,7 +285,7 @@ pub fn draw_canvas_settings(ui: &mut egui::Ui, style: &mut ChartStyle, changed: 
     });
 }
 
-pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
+pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle, palette: &crate::theme::Palette) {
     ui.add_space(4.0);
     let width = ui.available_width().max(260.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 112.0), egui::Sense::hover());
@@ -257,7 +293,7 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
     let background = if style.canvas.background_enabled {
         color32(style.canvas.background_rgba())
     } else {
-        egui::Color32::from_rgb(12, 15, 22)
+        palette.candle_preview_background()
     };
     painter.rect_filled(rect, egui::Rounding::same(4.0), background);
 
@@ -274,8 +310,8 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
     // A few liquidity bands make transparency immediately visible in preview.
     for (index, alpha) in [36_u8, 54, 78, 48].into_iter().enumerate() {
         let y = rect.top() + 22.0 + index as f32 * 19.0;
-        let bid = egui::Color32::from_rgba_unmultiplied(20, 185, 230, alpha);
-        let ask = egui::Color32::from_rgba_unmultiplied(245, 70, 70, alpha);
+        let bid = crate::theme::with_opacity(palette.candle_preview_bid(), alpha);
+        let ask = crate::theme::with_opacity(palette.candle_preview_ask(), alpha);
         painter.line_segment(
             [
                 egui::pos2(rect.left() + 12.0, y),
@@ -315,12 +351,12 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle) {
     painter.circle_filled(
         egui::pos2(rect.left() + rect.width() * 0.43, rect.center().y),
         5.0,
-        egui::Color32::from_rgba_unmultiplied(55, 226, 176, 210),
+        palette.candle_preview_buy(),
     );
     painter.circle_filled(
         egui::pos2(rect.left() + rect.width() * 0.69, rect.center().y + 8.0),
         6.0,
-        egui::Color32::from_rgba_unmultiplied(255, 91, 105, 210),
+        palette.candle_preview_sell(),
     );
 }
 
@@ -360,4 +396,16 @@ pub fn draw_preview_candle(
             egui::Stroke::new(paint.outline_width, color32(paint.outline)),
         );
     }
+}
+
+fn edit_color(
+    ui: &mut egui::Ui,
+    rgb: &mut [u8; 3],
+    ownership: &mut quantick_appearance::Inheritance,
+) -> bool {
+    let changed = ui.color_edit_button_srgb(rgb).changed();
+    if changed {
+        *ownership = quantick_appearance::Inheritance::Explicit;
+    }
+    changed
 }

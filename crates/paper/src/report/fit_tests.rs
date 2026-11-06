@@ -156,3 +156,17 @@ fn an_empty_right_part_costs_no_gap() {
     let line = fit_line(66.0, 6.0, &["take profit"], &[""], mono);
     assert_eq!(line.left, "take profit");
 }
+
+#[test]
+fn enlarged_readouts_fit_even_when_the_result_alone_exceeds_the_row() {
+    for glyph in [6.0, 12.0, 18.0] {
+        for width in [0.0, 60.0, 140.0, 300.0] {
+            let measure = |text: &str| text.chars().count() as f32 * glyph;
+            let line = fit_line(width, 8.0, &["SHORT 400"], &["+123456.78 USD"], measure);
+            assert!(measure(&line.left) + measure(&line.right) <= width);
+            if !line.left.is_empty() && !line.right.is_empty() {
+                assert!(measure(&line.left) + measure(&line.right) + 8.0 <= width);
+            }
+        }
+    }
+}

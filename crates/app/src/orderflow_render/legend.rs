@@ -13,12 +13,12 @@ use crate::orderflow_render::constants::{
 };
 use eframe::egui;
 use quantick_chart::flow_execution::flow_chrome_layout;
-use quantick_orderflow::HeatmapTheme;
+
 use quantick_orderflow::config::legend::{LegendGlyph, legend_entries};
 
 use super::bubbles::BubbleColors;
 use super::layout::RenderContext;
-use super::{Palette, add_gradient_rect, draw_dashed_vertical, rgba, thermal_rgb};
+use super::{OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, rgba};
 
 /// Draw the canvas key. The tape alone wears none: its bubbles' colours are
 /// the only Buy/Sell key it needs.
@@ -27,6 +27,7 @@ pub(crate) fn draw_compact_legend_avoiding(
     context: &RenderContext<'_>,
     tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
 ) -> Option<egui::Rect> {
+    let appearance = crate::theme::get(painter.ctx());
     let style = context.style.sanitized();
     let tape_alone = style.live_lane.tape_only && style.live_lane.enabled;
     if tape_alone
@@ -44,7 +45,7 @@ pub(crate) fn draw_compact_legend_avoiding(
     }
     // The legend is a key for what is on screen, so the aggression swatches
     // follow the bubble panel's colour overrides.
-    let mut palette = super::palette_for_theme(style.theme);
+    let mut palette = style.colors(super::premultiplied);
     let colors = BubbleColors::resolve(&palette, &style.bubbles);
     palette.buy = colors.buy;
     palette.sell = colors.sell;
@@ -59,11 +60,16 @@ pub(crate) fn draw_compact_legend_avoiding(
     if entries.is_empty() {
         return None;
     }
-    let font = egui::FontId::proportional(LEGEND_FONT_PX);
+    let font = appearance.label_font(LEGEND_FONT_PX);
     let galleys: Vec<_> = entries
         .iter()
         .map(|(_, label)| clip.layout_no_wrap(label.clone(), font.clone(), palette.legend_text))
         .collect();
+    let entry_height = galleys
+        .iter()
+        .map(|galley| galley.size().y)
+        .fold(LEGEND_ENTRY_HEIGHT_PX, f32::max);
+    let row_height = LEGEND_ROW_HEIGHT_PX.max(entry_height);
     let widths: Vec<f32> = entries
         .iter()
         .zip(&galleys)
@@ -81,12 +87,7 @@ pub(crate) fn draw_compact_legend_avoiding(
     });
     let inner_margin = LEGEND_INNER_MARGIN_PX;
     let max_content_width = (max_panel_width - inner_margin * 2.0).max(LEGEND_MIN_CONTENT_WIDTH_PX);
-    let flow = flow_chrome_layout(
-        &widths,
-        max_content_width,
-        LEGEND_ROW_HEIGHT_PX,
-        LEGEND_ENTRY_GAP_PX,
-    );
+    let flow = flow_chrome_layout(&widths, max_content_width, row_height, LEGEND_ENTRY_GAP_PX);
     let panel_size = egui::vec2(
         (flow.size[0] + inner_margin * 2.0).min(max_panel_width),
         flow.size[1] + inner_margin * 2.0,
@@ -121,10 +122,10 @@ pub(crate) fn draw_compact_legend_avoiding(
     let origin = panel.left_top() + egui::vec2(inner_margin, inner_margin);
     for (((glyph, _), galley), offset) in entries.iter().zip(galleys).zip(flow.positions) {
         let item = origin + egui::Vec2::from(offset);
-        draw_legend_glyph(&clip, *glyph, item, &palette, style.theme);
+        draw_legend_glyph(&clip, *glyph, item, &palette, &style);
         let text_pos = egui::pos2(
             item.x + glyph_width(*glyph) + LEGEND_GLYPH_GAP_PX,
-            item.y + (LEGEND_ENTRY_HEIGHT_PX - galley.size().y) / 2.0,
+            item.y + (entry_height - galley.size().y) / 2.0,
         );
         footprint = footprint.union(egui::Rect::from_min_size(text_pos, galley.size()));
         clip.galley(text_pos, galley, palette.legend_text);
@@ -146,7 +147,7 @@ fn draw_legend_glyph(
     glyph: LegendGlyph,
     origin: egui::Pos2,
     palette: &Palette,
-    theme: HeatmapTheme,
+    style: &OrderflowRenderStyle,
 ) {
     let center = origin + egui::vec2(glyph_width(glyph), LEGEND_ENTRY_HEIGHT_PX) / 2.0;
     match glyph {
@@ -167,8 +168,8 @@ fn draw_legend_glyph(
                         egui::pos2(x0, rect.top()),
                         egui::pos2(x1, rect.bottom()),
                     ),
-                    rgba(thermal_rgb(theme, t0), 1.0),
-                    rgba(thermal_rgb(theme, t1), 1.0),
+                    rgba(style.thermal_rgb(t0), 1.0),
+                    rgba(style.thermal_rgb(t1), 1.0),
                 );
             }
             painter.add(egui::Shape::mesh(mesh));
@@ -188,8 +189,8 @@ fn draw_legend_glyph(
             add_gradient_rect(
                 &mut mesh,
                 egui::Rect::from_min_max(band.left_top(), egui::pos2(center.x, band.bottom())),
-                rgba(thermal_rgb(theme, 0.72), 0.92),
-                rgba(thermal_rgb(theme, 0.72), 0.92),
+                rgba(style.thermal_rgb(0.72), 0.92),
+                rgba(style.thermal_rgb(0.72), 0.92),
             );
             add_gradient_rect(
                 &mut mesh,

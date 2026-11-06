@@ -63,8 +63,20 @@ pub struct FlowPaneLayout {
 /// Carve a flow pane spanning these edges.
 #[must_use]
 pub fn flow_pane_layout(left: f32, top: f32, right: f32, bottom: f32) -> FlowPaneLayout {
-    let band_bottom = (top + BAND_HEIGHT_PX).min(bottom);
-    let row_bottom = (band_bottom + SIDE_HEADER_HEIGHT_PX).min(bottom);
+    flow_pane_layout_scaled(left, top, right, bottom, 1.0)
+}
+
+/// Text-dependent heights shared by painting and pointer admission.
+pub fn flow_pane_layout_scaled(
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+    scale: f32,
+) -> FlowPaneLayout {
+    let scale = scale.max(1.0);
+    let band_bottom = (top + BAND_HEIGHT_PX * scale).min(bottom);
+    let row_bottom = (band_bottom + SIDE_HEADER_HEIGHT_PX * scale).min(bottom);
     let inner_left = (left + FRAME_PX).min(right);
     let inner_right = (right - FRAME_PX).max(inner_left);
     FlowPaneLayout {
@@ -358,6 +370,29 @@ mod flow_band_tests {
 
     /// The band is the mock's 26 px, the side headers its 28, and the frame's 3 px
     /// closes the left, the right and the bottom around them.
+    #[test]
+    fn enlarged_text_grows_both_headers_without_growing_the_frame() {
+        let normal = flow_pane_layout(10.0, 20.0, 800.0, 600.0);
+        let enlarged = flow_pane_layout_scaled(10.0, 20.0, 800.0, 600.0, 2.0);
+        assert_eq!(
+            enlarged.band.bottom - enlarged.band.top,
+            BAND_HEIGHT_PX * 2.0
+        );
+        assert_eq!(
+            enlarged.side_row.bottom - enlarged.side_row.top,
+            SIDE_HEADER_HEIGHT_PX * 2.0
+        );
+        assert_eq!(enlarged.chart.left, normal.chart.left);
+        assert_eq!(enlarged.chart.right, normal.chart.right);
+        assert_eq!(enlarged.chart.top, enlarged.side_row.bottom);
+        assert!(
+            flow_pane_layout_scaled(0.0, 0.0, 4.0, 30.0, 2.0)
+                .chart
+                .bottom
+                >= 30.0
+        );
+    }
+
     #[test]
     fn the_pane_carves_band_row_and_chart_inside_the_frame() {
         let layout = flow_pane_layout(100.0, 50.0, 900.0, 650.0);

@@ -238,7 +238,7 @@ impl ChartLayer {
         label: "grid",
         hint: "price and time gridlines behind the candles",
         source: LayerSource::Grid,
-        scope: LayerScope::Window,
+        scope: LayerScope::Pane,
         persistence: Persistence::Layers,
         requirement: Requirement::None,
         on_tape: false,

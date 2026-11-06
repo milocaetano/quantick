@@ -10,6 +10,7 @@ pub mod input_probe;
 pub mod live_trade_plan;
 pub mod quick_range;
 pub mod scripted_hand;
+pub mod scripted_menu;
 
 #[cfg(test)]
 mod tests;

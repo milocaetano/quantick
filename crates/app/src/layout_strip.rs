@@ -82,11 +82,12 @@ pub fn draw(
     salt: u64,
     mut model: StripModel<'_>,
 ) -> Vec<StripAction> {
+    let palette = theme::get(ui.ctx());
     let mut actions = Vec::new();
-    ui.painter().rect_filled(rect, 0.0, theme::CHROME);
+    ui.painter().rect_filled(rect, 0.0, palette.chrome());
     ui.painter().line_segment(
         [rect.left_top(), rect.right_top()],
-        egui::Stroke::new(1.0_f32, theme::BORDER),
+        egui::Stroke::new(1.0_f32, palette.border()),
     );
     let mut content = ui.new_child(
         egui::UiBuilder::new()
@@ -136,7 +137,7 @@ pub fn draw(
                     egui::Button::new(
                         egui::RichText::new(icons::PLUS)
                             .size(ADD_ICON_SIZE_PX)
-                            .color(theme::TEXT_MUTED),
+                            .color(palette.text_muted()),
                     )
                     .frame(false),
                 );
@@ -159,12 +160,13 @@ fn draw_tab(
     can_delete: bool,
     actions: &mut Vec<StripAction>,
 ) {
+    let palette = theme::get(ui.ctx());
     let text = egui::RichText::new(&layout.name)
         .size(LABEL_SIZE_PX)
         .color(if active {
-            theme::TEXT_PRIMARY
+            palette.text_primary()
         } else {
-            theme::TEXT_MUTED
+            palette.text_muted()
         });
     let galley = egui::WidgetText::from(text).into_galley(
         ui,
@@ -185,9 +187,9 @@ fn draw_tab(
                 rect.shrink2(egui::vec2(0.0, TAB_INSET_Y_PX)),
                 TAB_RADIUS_PX,
                 if active {
-                    theme::CHROME.gamma_multiply(ACTIVE_TAB_BRIGHTNESS)
+                    palette.chrome().gamma_multiply(ACTIVE_TAB_BRIGHTNESS)
                 } else {
-                    theme::CHROME.gamma_multiply(HOVER_TAB_BRIGHTNESS)
+                    palette.chrome().gamma_multiply(HOVER_TAB_BRIGHTNESS)
                 },
             );
         }
@@ -195,7 +197,7 @@ fn draw_tab(
             rect.left() + TAB_PAD_X_PX,
             rect.center().y - galley.size().y / 2.0,
         );
-        painter.galley(text_pos, galley, theme::TEXT_PRIMARY);
+        painter.galley(text_pos, galley, palette.text_primary());
         if active {
             // A filled rule rather than a stroked segment: it is chrome, and
             // it must not read as a drawing to anything counting strokes.
@@ -208,7 +210,7 @@ fn draw_tab(
                     egui::pos2(rect.right() - RULE_INSET_X_PX, rect.bottom()),
                 ),
                 0.0,
-                theme::ACCENT,
+                palette.accent(),
             );
         }
     }

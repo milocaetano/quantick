@@ -85,6 +85,9 @@ const fn default_volume_dot_full_quantity() -> f64 {
 pub struct BubblePreset {
     /// Unique, human-chosen name shown in the picker.
     pub name: String,
+    /// Absent in historical files means the historical Bookmap palette.
+    #[serde(default = "quantick_orderflow::config::theme::PaletteChoice::legacy")]
+    pub palette: quantick_orderflow::config::theme::PaletteChoice,
     /// Temporal window used to cluster compatible prints, in milliseconds.
     #[serde(default = "default_cluster_ms")]
     pub cluster_ms: i64,
@@ -141,6 +144,7 @@ impl BubblePreset {
     pub fn capture(name: impl Into<String>, config: &HeatmapConfig) -> Self {
         Self {
             name: name.into(),
+            palette: config.palette,
             cluster_ms: config.bubble_cluster_ms,
             dust_merge_ms: config.bubble_dust_merge_ms,
             candle_summary: config.bubble_candle_summary,
@@ -175,9 +179,24 @@ impl BubblePreset {
         }
     }
 
+    /// Capture the visible palette as an authored whole look. Explicit RGB overrides stay explicit.
+    pub fn capture_look(
+        name: impl Into<String>,
+        config: &HeatmapConfig,
+        appearance: &quantick_appearance::orderflow::OrderflowAppearance,
+    ) -> Self {
+        let mut captured = Self::capture(name, config);
+        if captured.palette == quantick_orderflow::config::theme::PaletteChoice::Inherited {
+            captured.palette =
+                quantick_orderflow::config::theme::PaletteChoice::Snapshot(*appearance);
+        }
+        captured
+    }
+
     /// Apply this preset over `config`, touching nothing outside the panel —
     /// and never a layer's own switch, on either pane.
     pub fn apply_to(&self, config: &mut HeatmapConfig) {
+        config.palette = self.palette;
         config.bubble_cluster_ms = self.cluster_ms;
         config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubble_candle_summary = self.candle_summary;
@@ -1034,6 +1053,7 @@ name = "old"
         let mut file = BubblePresetFile::default();
         file.upsert(BubblePreset {
             name: "default".to_owned(),
+            palette: quantick_orderflow::config::theme::PaletteChoice::Inherited,
             tick_bubbles: None,
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,

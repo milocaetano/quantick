@@ -111,7 +111,10 @@ impl PaneHitTest<'_> {
             source,
             &self.frame.bands,
             (history_right, total),
-            &TextFonts(painter.ctx()),
+            (
+                &TextFonts(painter.ctx()),
+                &crate::theme::get(painter.ctx()).resolved,
+            ),
             &mut |rect, scene| paint_scene(&painter.with_clip_rect(egui_rect(rect)), scene),
         );
     }

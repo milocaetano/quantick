@@ -99,7 +99,7 @@ impl TabRecipeHost for BookTabs<'_> {
             .into_iter()
             .flat_map(|tab| tab.panes_mut())
         {
-            pane.footprint.config.pin_current_style(window);
+            pane.presentation.footprint.config.pin_current_style(window);
         }
     }
     fn apply_recipe_canvas(&mut self, id: u64, recipe: &WorkspaceRecipe) {
@@ -187,7 +187,7 @@ fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecip
     for (pane, side) in tab.panes_with_sides_mut() {
         pane.apply_layer_states(&layer_states(recipe.for_pane(side.index()).1));
         if let Some(style) = style {
-            pane.footprint.config.pin_style(style, window);
+            pane.presentation.footprint.config.pin_style(style, window);
         }
     }
 }

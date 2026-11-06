@@ -1,45 +1,39 @@
-//! The chrome's design tokens, named after `docs/ux/ui-design-model.md` §4.
-//!
-//! One module answers "which colour is this?" for every fixed surface — menu,
-//! toolbar, tool rail, dock, status bar — so a new control never invents its
-//! own grey. The chart canvas itself stays user-configurable through
-//! [`crate::style::CanvasStyle`]; only the chrome is pinned here.
-//!
-//! [`AMBER`] is reserved for provenance honesty — replay, the backfill
-//! divider, inferred data — and the Agent on pill, an exposure the trader must
-//! be able to see, and is never decoration. This is the UI
-//! expression of the project's data-honesty rule. [`PANE_MARK`] is its dimmed
-//! relative, a name rather than a warning.
-//!
-//! Reserved is not the same as compulsory. A provenance mark the trader reads
-//! *constantly* rather than acts on is better made quiet: see [`SEAM_LINE`],
-//! which marks the venue/prints boundary without amber's alarm.
-
-// The tokens in `palette`, the colours derived from them in `ink`, and the
-// one call that dresses egui in `chrome`. The leaves are private, so
-// `theme::TEXT_MUTED` stays the address of every token.
+//! Context-local appearance adapters. Retain a palette at each rendering boundary.
+pub(crate) mod choice;
 mod chrome;
 mod ink;
+#[cfg(test)]
 mod palette;
+mod resolved;
+pub mod store;
+
+pub use resolved::{Palette, axes, bookmap, bookmap_scope, get, install_fonts, sync};
 
 pub use chrome::apply;
-pub use ink::{active_tint, ink, ink_on, press_tint, side_color};
+pub use ink::{active_tint, press_tint, with_opacity};
+#[cfg(test)]
+pub use ink::{ink, side_color};
 // The contrast arithmetic is read back by the tests that pin every number a
 // layer draws against its background; production code asks `ink_on` instead.
 #[cfg(test)]
-pub use ink::{contrast_ratio, relative_luminance};
+pub use ink::relative_luminance;
 // The anchored VWAP's colour, painted by the headless tool; pinned to it here.
 #[cfg(test)]
-pub use palette::DRAW_CYAN;
 pub use palette::{
-    ACCENT, AMBER, BARE_HOVER, BORDER, BRAND, BUY, CANVAS, CASING, CASING_EXTRA_PX, CHIP_INK,
-    CHROME, CONTROL, DAY_RULE, DRAWING_SWATCHES, FLOAT_SHADOW, FLOW_BAND_RULE, FLOW_DIVIDER,
-    FLOW_INK, FLOW_KEY_DOWN, FLOW_KEY_DOWN_INK, FLOW_KEY_DOWN_RIM, FLOW_KEY_DOWN_SHADE,
-    FLOW_KEY_UP_BOTTOM, FLOW_KEY_UP_EDGE, FLOW_KEY_UP_INK, FLOW_KEY_UP_LIP, FLOW_KEY_UP_SHADOW,
-    FLOW_KEY_UP_TOP, FLOW_SURFACE, GAP_LABEL, GAP_LINE, HOME_INK, INSET, OFF, PANE_ACTION,
-    PANE_MARK, POC, REC, REPLAY, SEAM_LABEL, SEAM_LINE, SELL, TAG_BG, TEXT_FAINT, TEXT_MUTED,
-    TEXT_PRIMARY, TEXT_SUPPORT, WARN,
+    ACCENT, AMBER, BARE_HOVER, BORDER, BUY, CANVAS, CASING, CHIP_INK, CHROME, CONTROL, DRAW_CYAN,
+    FLOW_KEY_DOWN, FLOW_KEY_DOWN_RIM, FLOW_KEY_UP_BOTTOM, FLOW_KEY_UP_LIP, FLOW_KEY_UP_SHADOW,
+    FLOW_KEY_UP_TOP, FLOW_SURFACE, POC, SELL, TEXT_MUTED, TEXT_PRIMARY, WARN,
 };
+pub use quantick_appearance::palette::CASING_EXTRA_PX;
+
+// Layout-branch inks with no appearance token yet: fixed Dark values until the
+// colour pass gives them a `Token`. Named here so the pass finds every one.
+/// A market tab playing a recording: its label and status dot.
+pub const REPLAY: eframe::egui::Color32 = eframe::egui::Color32::from_rgb(0xC5, 0x8C, 0xFF);
+/// The logo's teal, sampled from `assets/icon.png`: the "tick" of the wordmark.
+pub const BRAND: eframe::egui::Color32 = eframe::egui::Color32::from_rgb(0x3A, 0xF0, 0xB2);
+/// The wordmark's "uan" at rest; white when the Home tab is lit or active.
+pub const HOME_INK: eframe::egui::Color32 = eframe::egui::Color32::from_rgb(0xDD, 0xE4, 0xEC);
 
 /// The toolbar's market button: bare at rest (border and fill on hover) when
 /// true, bordered like History when false. Kept for a side-by-side look.
@@ -48,50 +42,28 @@ pub const MARKET_BUTTON_QUIET: bool = false;
 #[cfg(test)]
 use eframe::egui::Color32;
 
+/// Single-line text with an explicit width budget; truncation remains visible.
+pub fn text_fitted(
+    painter: &eframe::egui::Painter,
+    at: eframe::egui::Pos2,
+    align: eframe::egui::Align2,
+    text: impl Into<String>,
+    font: eframe::egui::FontId,
+    color: eframe::egui::Color32,
+    width: f32,
+) {
+    let mut job = eframe::egui::text::LayoutJob::simple_singleline(text.into(), font, color);
+    job.wrap.max_width = width.max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = painter.layout_job(job);
+    let rect = align.anchor_size(at, galley.size());
+    painter.galley(rect.min, galley, color);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tokens_match_the_design_model() {
-        // The values documented in docs/ux/ui-design-model.md §4, verbatim.
-        assert_eq!(CANVAS, Color32::from_rgb(19, 23, 34));
-        assert_eq!(CHROME, Color32::from_rgb(23, 27, 38));
-        assert_eq!(INSET, Color32::from_rgb(16, 20, 29));
-        assert_eq!(CONTROL, Color32::from_rgb(35, 41, 54));
-        assert_eq!(BORDER, Color32::from_rgb(46, 54, 72));
-        assert_eq!(TEXT_PRIMARY, Color32::from_rgb(210, 218, 226));
-        assert_eq!(TEXT_MUTED, Color32::from_rgb(150, 160, 175));
-        assert_eq!(TEXT_FAINT, Color32::from_rgb(110, 120, 135));
-        assert_eq!(BUY, Color32::from_rgb(38, 166, 154));
-        assert_eq!(SELL, Color32::from_rgb(239, 83, 80));
-        assert_eq!(ACCENT, Color32::from_rgb(138, 180, 248));
-        assert_eq!(AMBER, Color32::from_rgb(240, 185, 11));
-        assert_eq!(WARN, Color32::from_rgb(255, 99, 71));
-        assert_eq!(TAG_BG, Color32::from_rgb(55, 63, 80));
-    }
-
-    #[test]
-    fn canvas_default_and_grid_agree_with_the_style_module() {
-        // The user-editable canvas defaults must start on the tokens, or the
-        // first paint would disagree with this palette.
-        let canvas = crate::style::CanvasStyle::default();
-        assert_eq!(
-            canvas.background_rgba(),
-            [CANVAS.r(), CANVAS.g(), CANVAS.b(), 255]
-        );
-        let grid = canvas.grid_rgba().expect("grid on by default");
-        assert_eq!(&grid[..3], &[CONTROL.r(), CONTROL.g(), CONTROL.b()]);
-    }
-
-    #[test]
-    fn default_candles_agree_with_the_buy_sell_tokens() {
-        // The Order-flow preset's fills are the token pair; a drifted preset
-        // would break the "one deliberate visual signature" rule quietly.
-        let candles = crate::style::CandlePreset::OrderFlow.style();
-        assert_eq!(candles.bull_fill, [BUY.r(), BUY.g(), BUY.b()]);
-        assert_eq!(candles.bear_fill, [SELL.r(), SELL.g(), SELL.b()]);
-    }
 
     #[test]
     fn active_tint_is_the_accent_at_22_percent() {
@@ -110,78 +82,5 @@ mod tests {
             tint.a() > active_tint(ACCENT).a(),
             "a press on an armed button must be distinguishable"
         );
-    }
-
-    #[test]
-    fn support_text_matches_the_redesign_spec() {
-        assert_eq!(TEXT_SUPPORT, Color32::from_rgb(0x86, 0x92, 0xA4));
-    }
-
-    /// The promise this rule makes, and the only one it can: whichever ink is
-    /// handed out is the better of the two on that fill.
-    ///
-    /// Not "always 4.5:1" — with `CHIP_INK` and `TEXT_PRIMARY` as the pair,
-    /// fills in a narrow mid band clear neither, and a test asserting the
-    /// stronger claim passes only for as long as nobody picks a colour inside
-    /// it. Widening the guarantee needs a third ink, not a moved threshold.
-    #[test]
-    fn the_ink_is_always_the_better_of_the_two() {
-        for fill in [
-            Color32::from_rgb(0x8A, 0xB4, 0xF8), // the stock drawing blue
-            Color32::from_rgb(0xFF, 0xE0, 0x66), // a pale yellow
-            Color32::from_rgb(0x0B, 0x1B, 0x3A), // dark navy, a legal pick
-            Color32::from_rgb(0x7F, 0x7F, 0x7F), // mid grey, inside the band
-            Color32::from_rgb(0x6B, 0x6B, 0x2E), // olive, likewise
-            Color32::WHITE,
-            Color32::BLACK,
-            WARN,
-            ACCENT,
-        ] {
-            let ink = ink_on(fill);
-            let other = if ink == CHIP_INK {
-                TEXT_PRIMARY
-            } else {
-                CHIP_INK
-            };
-            assert!(
-                contrast_ratio(fill, ink) >= contrast_ratio(fill, other),
-                "{fill:?} took {ink:?} at {:.2}:1 when the other gave {:.2}:1",
-                contrast_ratio(fill, ink),
-                contrast_ratio(fill, other)
-            );
-        }
-    }
-
-    /// A faded chip is graded as it will be *seen*, composited over the canvas
-    /// — not as its premultiplied channels read on black.
-    ///
-    /// The honesty fade is exactly where this matters: a pale line faded to
-    /// 45% is still a pale chip, and grading it on black flipped it to the
-    /// light ink at under 3:1 while the dark ink it rejected cleared 4.5:1.
-    #[test]
-    fn a_faded_fill_is_graded_as_it_will_be_seen() {
-        let faded = Color32::WHITE.gamma_multiply(0.45);
-        assert_eq!(
-            ink_on(faded),
-            CHIP_INK,
-            "a white line faded over a dark canvas is still a light chip"
-        );
-        assert_eq!(
-            ink_on(Color32::WHITE),
-            CHIP_INK,
-            "and fading it does not change which ink it wants"
-        );
-    }
-
-    /// Light colours take the dark ink and dark ones the light ink — stated
-    /// outright, so a rule broken by accident fails here rather than in a
-    /// screenshot nobody looks at twice.
-    #[test]
-    fn the_ink_follows_how_light_the_fill_looks_not_its_average() {
-        assert_eq!(ink_on(Color32::WHITE), CHIP_INK);
-        assert_eq!(ink_on(Color32::BLACK), TEXT_PRIMARY);
-        // Same channel average, opposite answers: green carries the weight.
-        assert_eq!(ink_on(Color32::from_rgb(0xC0, 0xC0, 0x00)), CHIP_INK);
-        assert_eq!(ink_on(Color32::from_rgb(0x00, 0x00, 0xC0)), TEXT_PRIMARY);
     }
 }

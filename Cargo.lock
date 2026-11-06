@@ -2916,6 +2916,7 @@ dependencies = [
  "getrandom 0.3.4",
  "png",
  "quantick-anchored-studies",
+ "quantick-appearance",
  "quantick-backpressure",
  "quantick-chart",
  "quantick-chart-interaction",
@@ -2963,6 +2964,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-appearance"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 0.8.20",
+]
+
+[[package]]
 name = "quantick-backpressure"
 version = "0.1.0"
 dependencies = [
@@ -2990,6 +2999,7 @@ dependencies = [
 name = "quantick-chart"
 version = "0.1.0"
 dependencies = [
+ "quantick-appearance",
  "quantick-chart-interaction",
  "quantick-civil",
  "quantick-engine",
@@ -3104,6 +3114,7 @@ name = "quantick-drawings"
 version = "0.1.0"
 dependencies = [
  "quantick-anchored-studies",
+ "quantick-appearance",
  "quantick-chart",
  "quantick-chart-interaction",
  "quantick-engine",
@@ -3248,6 +3259,7 @@ dependencies = [
 name = "quantick-orderflow"
 version = "0.1.0"
 dependencies = [
+ "quantick-appearance",
  "quantick-engine",
  "quantick-orderbook",
  "rust_decimal",
@@ -3331,6 +3343,7 @@ dependencies = [
 name = "quantick-stores"
 version = "0.1.0"
 dependencies = [
+ "quantick-appearance",
  "quantick-chart",
  "quantick-engine",
  "quantick-indicators",

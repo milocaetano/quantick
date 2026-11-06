@@ -20,10 +20,6 @@ const CHIP: egui::Vec2 = egui::Vec2::splat(20.0);
 const LIST_MAX_PX: f32 = 380.0;
 const SCRIM: Color32 = Color32::from_black_alpha(150);
 const RETURN: &str = egui_phosphor::regular::KEY_RETURN;
-const FOCUS_RING: egui::Stroke = egui::Stroke {
-    width: 1.0,
-    color: theme::ACCENT,
-};
 /// The palette answers Tab and the arrows; egui must not move focus on them.
 const LOCKED: egui::EventFilter = egui::EventFilter {
     tab: true,
@@ -67,17 +63,17 @@ fn either(flag: bool, yes: Color32, no: Color32) -> Color32 {
     if flag { yes } else { no }
 }
 
-fn faint(text: impl Into<String>) -> RichText {
-    RichText::new(text).small().color(theme::TEXT_FAINT)
+fn faint(colors: &theme::Palette, text: impl Into<String>) -> RichText {
+    RichText::new(text).small().color(colors.text_faint())
 }
 
-fn ink(tone: StatusTone) -> Color32 {
+fn ink(colors: &theme::Palette, tone: StatusTone) -> Color32 {
     match tone {
-        StatusTone::Muted => theme::TEXT_MUTED,
-        StatusTone::Open => theme::BUY,
-        StatusTone::Warn => theme::AMBER,
+        StatusTone::Muted => colors.text_muted(),
+        StatusTone::Open => colors.buy(),
+        StatusTone::Warn => colors.amber(),
         StatusTone::Replay => theme::REPLAY,
-        StatusTone::Add => theme::ACCENT,
+        StatusTone::Add => colors.accent(),
     }
 }
 
@@ -121,7 +117,8 @@ type Picked = egui::InnerResponse<Option<String>>;
 
 /// A footer dropdown, amber when the trader changed it: the pick, on its button.
 fn dropdown(ui: &mut Ui, id: &str, shown: (&str, bool), options: &[&str]) -> Picked {
-    let text = RichText::new(shown.0).color(either(shown.1, theme::AMBER, theme::TEXT_PRIMARY));
+    let colors = theme::get(ui.ctx());
+    let text = RichText::new(shown.0).color(either(shown.1, colors.amber(), colors.text_primary()));
     let mut picked = None;
     let combo = egui::ComboBox::from_id_salt(id).selected_text(text);
     let button = combo.show_ui(ui, |ui| {
@@ -135,16 +132,17 @@ fn dropdown(ui: &mut Ui, id: &str, shown: (&str, bool), options: &[&str]) -> Pic
 }
 
 fn paint_row(ui: &mut Ui, row: &MarketRow, selected: bool) -> egui::Response {
+    let colors = theme::get(ui.ctx());
     let size = egui::vec2(ui.available_width(), ROW_PX);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let painter = ui.painter_at(rect);
     let fade = if row.selectable() { 1.0 } else { 0.5 };
     if selected {
-        painter.rect_filled(rect, 6.0, theme::CONTROL);
+        painter.rect_filled(rect, 6.0, colors.control());
     }
-    let (y, stroke) = (rect.center().y, egui::Stroke::new(1.0_f32, theme::BORDER));
+    let (y, stroke) = (rect.center().y, egui::Stroke::new(1.0_f32, colors.border()));
     let chip = egui::Rect::from_center_size(egui::pos2(rect.left() + 20.0, y), CHIP);
-    painter.rect(chip, 5.0, theme::INSET, stroke);
+    painter.rect(chip, 5.0, colors.inset(), stroke);
     let put = |text: &str, (x, align): (f32, Align2), font: FontId, color: Color32| {
         painter.text(
             egui::pos2(x, y),
@@ -162,7 +160,7 @@ fn paint_row(ui: &mut Ui, row: &MarketRow, selected: bool) -> egui::Response {
     let chip_ink = either(
         row.kind == VenueKind::Replay,
         theme::REPLAY,
-        theme::TEXT_MUTED,
+        colors.text_muted(),
     );
     put(
         &row.chip.to_string(),
@@ -174,15 +172,23 @@ fn paint_row(ui: &mut Ui, row: &MarketRow, selected: bool) -> egui::Response {
         &row.symbol,
         (chip.right() + 10.0, left),
         font(13.0),
-        theme::TEXT_PRIMARY,
+        colors.text_primary(),
     );
     let venue = (chip.right() + 86.0).max(symbol.right() + 10.0);
-    put(&row.venue, (venue, left), font(12.5), theme::TEXT_MUTED);
-    let price_ink = either(row.price_dim, theme::TEXT_FAINT, theme::TEXT_PRIMARY);
+    put(&row.venue, (venue, left), font(12.5), colors.text_muted());
+    let price_ink = either(row.price_dim, colors.text_faint(), colors.text_primary());
     let cells = [
         (row.price.clone(), FontId::monospace(12.0), price_ink),
-        (row.rate_label(), FontId::monospace(11.5), theme::TEXT_FAINT),
-        (Some(row.status.label()), font(11.0), ink(row.status.tone())),
+        (
+            row.rate_label(),
+            FontId::monospace(11.5),
+            colors.text_faint(),
+        ),
+        (
+            Some(row.status.label()),
+            font(11.0),
+            ink(&colors, row.status.tone()),
+        ),
     ];
     let mut x = rect.right() - 10.0;
     for (text, font, color) in cells.into_iter().filter_map(|(t, f, c)| Some((t?, f, c))) {
@@ -195,12 +201,13 @@ fn paint_row(ui: &mut Ui, row: &MarketRow, selected: bool) -> egui::Response {
 }
 
 fn draw_list(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing) -> Option<Intent> {
+    let colors = theme::get(ui.ctx());
     let mut chosen = None;
     let moved = ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO);
     let scroll = egui::ScrollArea::vertical().max_height(LIST_MAX_PX);
     scroll.auto_shrink([false, true]).show(ui, |ui| {
         for group in &listing.groups {
-            ui.label(faint(group.heading.to_uppercase()));
+            ui.label(faint(&colors, group.heading.to_uppercase()));
             for row in &group.rows {
                 let response = paint_row(ui, row, palette.is_selected(listing, row));
                 if row.selectable() && ((response.hovered() && moved) || response.clicked()) {
@@ -217,16 +224,17 @@ fn draw_list(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing) 
 
 /// Bars (kind and size) and Workspace, then what Enter does.
 fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing, names: &[&str]) {
+    let colors = theme::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.set_height(30.0);
         if !palette.commands_mode() {
             let ((kind, size), changed) = (palette.bar_parts(listing), palette.bar_changed());
-            ui.label(faint("BARS"));
+            ui.label(faint(&colors, "BARS"));
             if let Some(kind) = dropdown(ui, "palette_bars", (&kind, changed), &BAR_KINDS).inner {
                 palette.set_bar_kind(&kind, &default_size(&kind));
             }
             let mut typed = size.clone();
-            let color = either(changed, theme::AMBER, theme::TEXT_PRIMARY);
+            let color = either(changed, colors.amber(), colors.text_primary());
             let field = egui::TextEdit::singleline(&mut typed).desired_width(56.0);
             let field = ui.add(field.text_color(color));
             focus_stop(palette, &field, PaletteFocus::Bars);
@@ -234,9 +242,10 @@ fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing
                 palette.set_bar_size(listing, &typed);
             }
             ui.add_space(14.0);
-            ui.label(faint("WORKSPACE"));
+            ui.label(faint(&colors, "WORKSPACE"));
             if palette.focus() == PaletteFocus::Workspace {
-                ui.visuals_mut().widgets.inactive.bg_stroke = FOCUS_RING;
+                ui.visuals_mut().widgets.inactive.bg_stroke =
+                    egui::Stroke::new(1.0_f32, colors.accent());
             }
             let shown = (palette.workspace().to_owned(), palette.workspace_changed());
             let picked = dropdown(ui, "palette_workspace", (&shown.0, shown.1), names);
@@ -245,7 +254,7 @@ fn draw_footer(ui: &mut Ui, palette: &mut MarketPalette, listing: &MarketListing
                 palette.set_workspace(&name);
             }
             if palette.switch_target().is_none() {
-                ui.label(faint(format!("Ctrl {RETURN} background")));
+                ui.label(faint(&colors, format!("Ctrl {RETURN} background")));
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -267,6 +276,7 @@ impl Surface for MarketPaletteSurface {
     }
 
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        let colors = theme::get(ctx);
         let id = egui::Id::new(self.id());
         let (Some(palette), Some(data)) = (self.open.as_mut(), env.markets) else {
             return SurfaceResponse::default();
@@ -292,7 +302,7 @@ impl Surface for MarketPaletteSurface {
         let area = egui::Area::new(id).order(egui::Order::Foreground);
         let at = egui::pos2(screen.center().x - width / 2.0, screen.top() + TOP_PX);
         let shown = area.fixed_pos(at).show(ctx, |ui| {
-            let frame = egui::Frame::popup(ui.style()).fill(theme::CHROME);
+            let frame = egui::Frame::popup(ui.style()).fill(colors.chrome());
             frame.rounding(10.0_f32).show(ui, |ui| {
                 ui.set_width(width);
                 let before = palette.query().to_owned();
@@ -306,10 +316,10 @@ impl Surface for MarketPaletteSurface {
                 focus_stop(palette, &field, PaletteFocus::Field);
                 palette.settle_query(&before);
                 if let Some(target) = palette.switch_target() {
-                    ui.label(RichText::new(target.caption()).color(theme::TEXT_FAINT));
+                    ui.label(RichText::new(target.caption()).color(colors.text_faint()));
                 }
                 if let Some(reason) = palette.refusal() {
-                    ui.label(RichText::new(reason).small().color(theme::SELL));
+                    ui.label(RichText::new(reason).small().color(colors.sell()));
                 }
                 ui.separator();
                 let listing = palette.listing(&data.world());

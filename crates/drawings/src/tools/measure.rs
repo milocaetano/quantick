@@ -70,6 +70,7 @@ impl MarkTool for Measure {
             style,
             points,
             Measured {
+                appearance: ctxt.appearance,
                 anchors: ctxt.anchors,
                 axes: BOTH_AXES,
                 unit: ctxt.unit,

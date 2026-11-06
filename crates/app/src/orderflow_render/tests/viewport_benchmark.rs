@@ -123,7 +123,10 @@ fn recorded_viewport_sphere_renderer_benchmark() {
                                 geometry,
                                 crate::theme::CANVAS,
                                 None,
-                                Some((style, quantick_orderflow::HeatmapTheme::default())),
+                                Some((
+                                    style,
+                                    quantick_orderflow::config::theme::PaletteChoice::default(),
+                                )),
                             );
                             drawing.paint(&painter, false);
                             drawing.paint(&painter, true);

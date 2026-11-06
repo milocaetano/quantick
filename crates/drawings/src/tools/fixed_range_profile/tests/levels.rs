@@ -84,6 +84,7 @@ fn payload(show_poc: bool, show_value_area: bool) -> FrvpPayload {
 
 fn context<'a>(payload: &'a FrvpPayload, scale: &'a PriceScale) -> DrawContext<'a> {
     DrawContext {
+        appearance: quantick_appearance::ResolvedTheme::bundled_dark(),
         payload,
         anchors: &[],
         scale,
@@ -118,7 +119,7 @@ fn plate(payload: &FrvpPayload, name: &str) -> Option<Decimal> {
     let output = cache.output();
     let (profile, area) = output.profile.expect("the fixture folded a profile");
     let area = area.expect("the fixture has a value area");
-    level_plates(profile, area, payload)
+    level_plates(profile, area, payload, quantick_appearance::ResolvedTheme::bundled_dark())
         .into_iter()
         .flatten()
         .find(|(plate, ..)| *plate == name)

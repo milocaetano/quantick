@@ -7,7 +7,7 @@
 //! labels), machinery on the right (fps and the timezone picker). What the
 //! forming bar has left lives on its own price tag, not here. A reading
 //! that breaches its threshold turns
-//! [`theme::WARN`]; narrow windows wrap cells without hiding their facts.
+//! the `warn` token; narrow windows wrap cells without hiding their facts.
 //!
 //! The bar has two controls, both with the same raised hover: the workspace
 //! cell at the left end, which opens the tab's workspace menu upward, and the
@@ -253,13 +253,14 @@ pub fn draw(
     tz: TzOffset,
     lead: &StatusLead<'_>,
 ) -> StatusResponse {
+    let palette = theme::get(ctx);
     let mut response = StatusResponse::default();
     // PanelState lives in the shared Context, not in its native viewport.
     egui::TopBottomPanel::bottom(egui::Id::new((ctx.viewport_id(), "status_bar")))
         .min_height(STATUS_BAR_HEIGHT)
         .frame(
             egui::Frame::none()
-                .fill(theme::CHROME)
+                .fill(palette.chrome())
                 .inner_margin(egui::Margin::symmetric(10.0, 4.0)),
         )
         .show(ctx, |ui| {
@@ -281,6 +282,7 @@ pub fn draw(
 /// `⊞ Scalp • ▴`: the tab's workspace, the amber mark while it holds edits and
 /// a caret pointing where the menu opens.
 fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusResponse) {
+    let palette = theme::get(ui.ctx());
     use quantick_control_schema::window_menu as text;
     let Some(workspace) = &model.workspace else {
         return;
@@ -289,12 +291,16 @@ fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusR
     let piece = |color| egui::TextFormat::simple(font.clone(), color);
     let mut job = egui::text::LayoutJob::default();
     // A Phosphor glyph: the Body face has no U+25A6, which drew as a box.
-    job.append(icons::SQUARES_FOUR, 0.0, piece(theme::TEXT_MUTED));
-    job.append(workspace, WORKSPACE_GAP_PX, piece(theme::TEXT_PRIMARY));
+    job.append(icons::SQUARES_FOUR, 0.0, piece(palette.text_muted()));
+    job.append(workspace, WORKSPACE_GAP_PX, piece(palette.text_primary()));
     if model.modified {
-        job.append(EDITED_MARK, WORKSPACE_GAP_PX, piece(theme::AMBER));
+        job.append(EDITED_MARK, WORKSPACE_GAP_PX, piece(palette.amber()));
     }
-    job.append(icons::CARET_UP, WORKSPACE_GAP_PX, piece(theme::TEXT_MUTED));
+    job.append(
+        icons::CARET_UP,
+        WORKSPACE_GAP_PX,
+        piece(palette.text_muted()),
+    );
     let cell = ui
         .add(egui::Button::new(job).frame(false))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -306,15 +312,16 @@ fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusR
 
 /// The word: a grey dot and what is true of the feed. Only an attempt pulses.
 fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResponse) {
+    let palette = theme::get(ui.ctx());
     let Some(word) = &lead.word else {
         return;
     };
     let colour = match word.word {
-        "offline" | "no data" | "quiet" => crate::loading::GREY_FAINT,
-        _ if word.pulses => {
-            crate::loading::GREY_MID.gamma_multiply(crate::loading::pulse(ui.ctx()))
-        }
-        _ => crate::loading::GREY_MID,
+        "offline" | "no data" | "quiet" => palette.loading_faint(),
+        _ if word.pulses => palette
+            .loading_meta()
+            .gamma_multiply(crate::loading::pulse(ui.ctx())),
+        _ => palette.loading_meta(),
     };
     let text = match &word.age {
         Some(age) => format!("{} · {age}", word.word),
@@ -329,7 +336,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
         fonts.layout_no_wrap(
             text,
             egui::TextStyle::Small.resolve(ui.style()),
-            crate::loading::GREY_MID,
+            palette.loading_meta(),
         )
     });
     let size = egui::vec2(
@@ -339,7 +346,11 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
     let (rect, cell) = ui.allocate_exact_size(size, sense);
     let painter = ui.painter();
     if lead.door && (lead.open || cell.hovered()) {
-        painter.rect_filled(rect.expand(2.0), egui::Rounding::same(3.0), theme::CONTROL);
+        painter.rect_filled(
+            rect.expand(2.0),
+            egui::Rounding::same(3.0),
+            palette.control(),
+        );
     }
     painter.circle_filled(
         egui::pos2(rect.left() + STATE_DOT_DIAMETER_PX / 2.0, rect.center().y),
@@ -352,7 +363,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
             rect.center().y - galley.size().y / 2.0,
         ),
         galley,
-        crate::loading::GREY_MID,
+        palette.loading_meta(),
     );
     if lead.door {
         response.word_rect = Some(rect);
@@ -362,7 +373,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
                 if let Some(report) = &lead.report {
                     ui.label(report.headline);
                     if let Some(step) = report.next_step {
-                        ui.label(egui::RichText::new(step).color(theme::TEXT_MUTED));
+                        ui.label(egui::RichText::new(step).color(palette.text_muted()));
                     }
                 }
             });
@@ -374,7 +385,7 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
                 egui::Label::new(
                     egui::RichText::new(crate::loading::RECONNECT_LABEL)
                         .small()
-                        .color(crate::loading::GREY_MID),
+                        .color(palette.loading_meta()),
                 )
                 .sense(egui::Sense::click()),
             )
@@ -386,11 +397,12 @@ fn draw_lead(ui: &mut egui::Ui, lead: &StatusLead<'_>, response: &mut StatusResp
 
 /// Venue, symbol, lag.
 fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
-    ui.label(egui::RichText::new(&model.venue).color(theme::TEXT_MUTED));
+    let palette = theme::get(ui.ctx());
+    ui.label(egui::RichText::new(&model.venue).color(palette.text_muted()));
     ui.label(
         egui::RichText::new(&model.symbol)
             .monospace()
-            .color(theme::TEXT_PRIMARY),
+            .color(palette.text_primary()),
     );
     // The two measurements this cell can show are easy to conflate, so the
     // cell explains itself (audit: every readout answers on hover).
@@ -402,7 +414,7 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
             model.feed_latency,
         ))
         .monospace()
-        .color(theme::TEXT_MUTED),
+        .color(palette.text_muted()),
     )
     // `on_hover_ui`, not `on_hover_text`: the split's sentences are built with
     // `format!`, and `on_hover_text` evaluates its argument on every frame
@@ -416,29 +428,30 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
 /// Middle section: honesty labels, the paper account and the axis hint.
 /// Returns whether the SIM cell was clicked.
 fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
+    let palette = theme::get(ui.ctx());
     let mut sim_clicked = false;
     if let Some(reason) = &model.saves_off {
         ui.label(
             egui::RichText::new(SAVES_OFF_LABEL)
                 .monospace()
-                .color(theme::AMBER),
+                .color(palette.amber()),
         )
         .on_hover_text(reason);
     }
     if let Some(cell) = &model.deal_recording {
         let color = match cell.tone {
-            RecState::Recording => theme::REC,
-            RecState::Stale => theme::AMBER,
-            RecState::Off | RecState::Recorded | RecState::Unsupported => theme::TEXT_MUTED,
+            RecState::Recording => palette.rec(),
+            RecState::Stale => palette.amber(),
+            RecState::Off | RecState::Recorded | RecState::Unsupported => palette.text_muted(),
         };
         ui.label(egui::RichText::new(&cell.text).monospace().color(color))
             .on_hover_text("the venue's deal counter: counted live and written to disk");
     }
     if let Some(chip) = &model.deal_chip {
         let color = match chip.tone {
-            RecState::Recording => theme::REC,
-            RecState::Stale => theme::AMBER,
-            RecState::Off | RecState::Recorded | RecState::Unsupported => theme::TEXT_MUTED,
+            RecState::Recording => palette.rec(),
+            RecState::Stale => palette.amber(),
+            RecState::Off | RecState::Recorded | RecState::Unsupported => palette.text_muted(),
         };
         ui.label(egui::RichText::new(&chip.text).small().color(color))
             .on_hover_text(&chip.hover);
@@ -447,14 +460,14 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
         // Inferred data wears the amber thread, like every not-quite-venue
         // truth on this chart. Kept short on purpose: this section shares its
         // row with the machinery readouts, and a long label overruns them.
-        ui.label(egui::RichText::new(note).small().color(theme::AMBER))
+        ui.label(egui::RichText::new(note).small().color(palette.amber()))
             .on_hover_text(model.side_detail.as_deref().unwrap_or(note.as_str()));
     }
     if let Some((text, sign)) = &model.sim_pnl {
         let color = match sign {
-            std::cmp::Ordering::Greater => theme::BUY,
-            std::cmp::Ordering::Less => theme::SELL,
-            std::cmp::Ordering::Equal => theme::TEXT_MUTED,
+            std::cmp::Ordering::Greater => palette.buy(),
+            std::cmp::Ordering::Less => palette.sell(),
+            std::cmp::Ordering::Equal => palette.text_muted(),
         };
         // A click-through, not just a readout: the cell summarizes a
         // position managed two levels away, so it carries the way there.
@@ -474,7 +487,7 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
         ui.label(
             egui::RichText::new("price: manual · double-click the axis to auto-fit")
                 .small()
-                .color(theme::TEXT_FAINT),
+                .color(palette.text_faint()),
         );
     }
     sim_clicked
@@ -482,8 +495,9 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
 
 /// Machinery cells share the same wrapping flow as the provenance and content.
 fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: TzOffset) -> bool {
+    let palette = theme::get(ui.ctx());
     let clock =
-        egui::RichText::new(format!("{} {}", tz.label(), icons::CLOCK)).color(theme::TEXT_MUTED);
+        egui::RichText::new(format!("{} {}", tz.label(), icons::CLOCK)).color(palette.text_muted());
     let clicked = ui
         .add(egui::Button::new(clock).frame(false))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -496,7 +510,11 @@ fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: TzOffset) -> bool 
     let slow = model
         .frame_avg_ms
         .is_some_and(|avg| avg > metrics::SLOW_FRAME_MS);
-    let fps_color = if slow { theme::WARN } else { theme::TEXT_MUTED };
+    let fps_color = if slow {
+        palette.warn()
+    } else {
+        palette.text_muted()
+    };
     // The cpu cost rides along because frame time alone hides behind vsync:
     // a real incident needed exactly this split to tell "we are slow" from
     // "we are waiting for the display".

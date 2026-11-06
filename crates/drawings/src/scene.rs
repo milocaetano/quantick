@@ -48,6 +48,21 @@ pub struct FontSpec {
 }
 
 impl FontSpec {
+    pub fn themed(
+        theme: &quantick_appearance::ResolvedTheme,
+        role: quantick_appearance::FontRole,
+        size: f32,
+    ) -> Self {
+        let font = theme.typography.at_size(role, size);
+        Self {
+            size_px: font.size,
+            family: match font.family {
+                quantick_appearance::FontFamily::Proportional => FontFamily::Proportional,
+                quantick_appearance::FontFamily::Monospace => FontFamily::Monospace,
+            },
+        }
+    }
+
     #[must_use]
     pub const fn proportional(size_px: f32) -> Self {
         Self {

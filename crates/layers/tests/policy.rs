@@ -19,7 +19,10 @@ fn opening_visibility_is_not_an_undoable_change_and_cannot_claim_shared_or_prese
         state.set(L::Drawings, false).unwrap().unwrap().write,
         VisibilityWrite::Change
     );
-    assert_eq!(state.initialize(L::Grid, false, facts), Ok(None));
+    let grid = state.initialize(L::Grid, false, facts).unwrap().unwrap();
+    assert_eq!(grid.source, LayerSource::Grid);
+    assert_eq!(grid.write, VisibilityWrite::Opening);
+    assert!(!grid.visible);
     assert_eq!(state.initialize(L::Heatmap, false, facts), Ok(None));
     assert_eq!(
         state.initialize(
@@ -129,7 +132,7 @@ fn switching_tabs_rebaselines_without_persisting_another_charts_opinion() {
 #[test]
 fn scope_and_persistence_filter_restores_without_overwriting_other_owners() {
     let facts = LayerFacts::default();
-    assert!(!LayerState::restorable(L::Grid, facts));
+    assert!(LayerState::restorable(L::Grid, facts));
     assert!(!LayerState::restorable(L::Heatmap, facts));
     assert!(LayerState::restorable(L::Footprint, facts));
     assert!(!L::LaneMarks.persisted());

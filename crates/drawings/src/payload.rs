@@ -10,6 +10,8 @@ use std::fmt;
 /// one tool lives in that tool's payload, never in the shared envelope, so
 /// the next tool cannot force the model or the central inspector open.
 pub trait DrawingPayload: fmt::Debug {
+    /// Called only for a fresh payload, before applying saved configuration.
+    fn apply_theme_defaults(&mut self, _theme: &quantick_appearance::ResolvedTheme) {}
     fn clone_box(&self) -> Box<dyn DrawingPayload>;
     fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool;
     fn as_any(&self) -> &dyn Any;

@@ -1,0 +1,50 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "choice": {
+      "description": "dark, light, or custom; exact bundled source identity, never RGB matching.",
+      "type": "string"
+    },
+    "durable": {
+      "description": "Last successful load/save. Files are not polled for external edits.",
+      "type": "boolean"
+    },
+    "load_failed": {
+      "description": "Startup fell back to Dark after an invalid/unreadable selected file.",
+      "type": "boolean"
+    },
+    "origin": {
+      "description": "bundled_dark, session, or selected_store; never a local path.",
+      "type": "string"
+    },
+    "revision": {
+      "$ref": "#/$defs/WireU64",
+      "description": "Paint revision: semantic equality does not invalidate rendering caches."
+    },
+    "source": {
+      "description": "The active candidate's original TOML, including omitted Dark fallbacks.",
+      "maxLength": 65536,
+      "type": "string"
+    },
+    "writes_enabled": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "choice",
+    "revision",
+    "origin",
+    "source",
+    "durable",
+    "writes_enabled",
+    "load_failed"
+  ],
+  "title": "AppearanceSnapshot",
+  "type": "object"
+}

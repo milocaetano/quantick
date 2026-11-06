@@ -103,6 +103,7 @@ pub(crate) fn draw(
     surface: &StripSurface,
     drawn: &mut StripDrawn,
 ) -> Option<TabAction> {
+    let palette = theme::get(ui.ctx());
     drawn.bounds = Some(ui.max_rect().intersect(ui.clip_rect()));
     drawn.drag_started = None;
     drawn.close.clear();
@@ -208,7 +209,7 @@ pub(crate) fn draw(
                 if slot == CloseSlot::Mark {
                     let center = close.rect.center();
                     ui.painter()
-                        .circle_filled(center, CHIP_DOT_RADIUS_PX, theme::AMBER);
+                        .circle_filled(center, CHIP_DOT_RADIUS_PX, palette.amber());
                 }
                 drawn.close.push(close.rect);
                 let chip_bounds = response.rect.union(close.rect).intersect(ui.clip_rect());
@@ -279,6 +280,7 @@ pub(crate) fn draw(
 /// `Scalp •` with the amber mark while edited. The name is paint, never a
 /// control: the status bar's cell switches the workspace.
 fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected: bool, lit: bool) {
+    let palette = theme::get(ui.ctx());
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let center_y = body.center().y;
     let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
@@ -286,8 +288,8 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
         egui::pos2(dot_x, center_y),
         CHIP_DOT_RADIUS_PX,
         match chip.dot {
-            TabFeedDot::Live => theme::BUY,
-            TabFeedDot::Stopped => theme::TEXT_MUTED,
+            TabFeedDot::Live => palette.buy(),
+            TabFeedDot::Stopped => palette.text_muted(),
             TabFeedDot::Replay => theme::REPLAY,
         },
     );
@@ -295,9 +297,9 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
     let ink = if chip.replaying {
         theme::REPLAY
     } else if lit {
-        theme::TEXT_PRIMARY
+        palette.text_primary()
     } else {
-        theme::TEXT_MUTED
+        palette.text_muted()
     };
     let text_x = dot_x + CHIP_DOT_RADIUS_PX + CHIP_DOT_GAP_PX;
     let laid = |text: String, px: f32, color: egui::Color32| {
@@ -311,13 +313,13 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
 
     let mark = chip
         .modified
-        .then(|| laid(EDITED_MARK.to_owned(), SUFFIX_TEXT_PX, theme::AMBER));
+        .then(|| laid(EDITED_MARK.to_owned(), SUFFIX_TEXT_PX, palette.amber()));
     let gapped = |galley: &Option<std::sync::Arc<egui::Galley>>| {
         galley
             .as_ref()
             .map_or(0.0, |galley| galley.size().x + NAME_MARK_GAP_PT)
     };
-    let name_ink = theme::TEXT_MUTED;
+    let name_ink = palette.text_muted();
     let name_width = |letters: usize| {
         let cut = shortened_name(&chip.workspace, letters);
         laid(cut, SUFFIX_TEXT_PX, name_ink).size().x
@@ -342,7 +344,7 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
     for galley in [name, mark.filter(|_| fit.mark)].into_iter().flatten() {
         let at = egui::pos2(x, center_y - galley.size().y / 2.0);
         x += galley.size().x + NAME_MARK_GAP_PT;
-        painter.galley(at, galley, theme::TEXT_MUTED);
+        painter.galley(at, galley, palette.text_muted());
     }
 }
 
@@ -410,13 +412,14 @@ fn paint_tab_surface(
     hovered: bool,
     focused: bool,
 ) {
+    let palette = theme::get(ui.ctx());
     let mut rect = bounds;
     rect.max.y = ui.max_rect().bottom();
     // The active tab wears the toolbar's fill, so the two read as one sheet.
     let fill = if selected {
-        theme::CHROME
+        palette.chrome()
     } else {
-        theme::BARE_HOVER
+        palette.bare_hover()
     };
     if selected || hovered || focused {
         ui.painter().set(
@@ -440,7 +443,7 @@ fn paint_tab_surface(
                     egui::pos2(rect.right(), rect.top() + 7.0),
                     egui::pos2(rect.right(), rect.bottom() - 7.0),
                 ],
-                egui::Stroke::new(1.0_f32, theme::BORDER),
+                egui::Stroke::new(1.0_f32, palette.border()),
             ),
         );
     }
@@ -448,7 +451,7 @@ fn paint_tab_surface(
         ui.painter().rect_stroke(
             rect.shrink(1.0),
             CHIP_ROUNDING_PX,
-            egui::Stroke::new(1.0_f32, theme::ACCENT),
+            egui::Stroke::new(1.0_f32, palette.accent()),
         );
     }
 }

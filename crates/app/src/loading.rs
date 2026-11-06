@@ -10,18 +10,8 @@ use quantick_chart::connection_state::{ATTEMPT_DOT_MS, Dot, DotLook, OverlayWord
 pub use quantick_chart::loading::{LoadingTask, LoadingTracker};
 use quantick_chart::logo_shatter::{LogoRun, symbol_seed};
 
-/// The system's greys, from the trader's mock: title, meta, faint, border.
-pub const GREY_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xd7, 0xdd, 0xe8);
-pub const GREY_MID: egui::Color32 = egui::Color32::from_rgb(0x7c, 0x87, 0x99);
-pub const GREY_FAINT: egui::Color32 = egui::Color32::from_rgb(0x4b, 0x55, 0x66);
-const GREY_BORDER: egui::Color32 = egui::Color32::from_rgb(0x1b, 0x23, 0x30);
-
-/// The stacking of the connection surfaces, named once: `menu > tooltip >
-/// loading-slot, overlay > chart`. Sharing a layer with the chart would leave
-/// their order to egui's hash map, so they stand one order above it, below
-/// windows and menus. The slot lives in the header strip and the overlay below
-/// it, so they never meet. egui ranks its tooltips above its popups, so a chip's
-/// tooltip stands down while a menu is open ([`dot_hover`]).
+/// `menu > tooltip > loading-slot, overlay > chart`; keep the chart below this
+/// layer, and suppress chip tooltips while a popup is open ([`dot_hover`]).
 const LOADING_ORDER: egui::Order = egui::Order::PanelResizeLine;
 
 /// The inline spinner's diameter, in pixels.
@@ -34,6 +24,7 @@ const TITLE_GAP_PX: f32 = 6.0;
 const META_PT: f32 = 11.0;
 const CONTROL_GAP_PX: f32 = 12.0;
 const CONTROL_PT: f32 = 12.0;
+const OVERLAY_PAD_PX: f32 = 8.0;
 /// The label a press on the overlay answers to: same word as the popup's.
 pub const RECONNECT_LABEL: &str = "Reconnect";
 
@@ -57,17 +48,18 @@ const PULSE_REPAINT: std::time::Duration = std::time::Duration::from_millis(50);
 const LOGO_REPAINT: std::time::Duration = std::time::Duration::from_millis(16);
 const DOT_REPAINT: std::time::Duration = std::time::Duration::from_millis(ATTEMPT_DOT_MS as u64);
 
-/// A spinner + `label…` pair added to the current layout, for embedding in
-/// windows and toolbars. Adds two widgets rather than opening its own row, so
-/// the caller's layout (including right-to-left rows) keeps deciding where
-/// they land.
+/// A spinner + `label…` pair of widgets in the caller's layout.
 pub fn inline(ui: &mut egui::Ui, label: &str) {
-    ui.add(egui::Spinner::new().size(SPINNER_SIZE).color(GREY_MID));
-    ui.label(egui::RichText::new(format!("{label}…")).color(GREY_LIGHT));
+    let palette = crate::theme::get(ui.ctx());
+    ui.add(
+        egui::Spinner::new()
+            .size(SPINNER_SIZE)
+            .color(palette.loading_meta()),
+    );
+    ui.label(egui::RichText::new(format!("{label}…")).color(palette.loading_title()));
 }
 
-/// Whether the machine asked for no decorative motion: the Windows client-area
-/// animation setting, or the harness hook. Read once.
+/// Windows client-area animation preference or the harness hook, read once.
 #[must_use]
 pub fn reduced_motion() -> bool {
     static READ: OnceLock<bool> = OnceLock::new();
@@ -153,6 +145,7 @@ fn decode_alpha(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
 
 /// The tab's logo run as one mesh, asking for a frame only when it next changes.
 fn logo_mesh(ui: &egui::Ui, rect: egui::Rect, symbol: &str, now: i64, tab: u64) -> egui::Mesh {
+    let palette = crate::theme::get(ui.ctx());
     let ((alpha, side), ctx, still) = (logo_alpha(), ui.ctx(), reduced_motion());
     let (pass, size) = (ctx.cumulative_pass_nr(), rect.size().into());
     let (mesh, next) = ctx.data_mut(|data| {
@@ -160,7 +153,7 @@ fn logo_mesh(ui: &egui::Ui, rect: egui::Rect, symbol: &str, now: i64, tab: u64) 
         let (poses, next) = run.frame(size, symbol_seed(symbol), (alpha, *side), now, pass, still);
         let mut mesh = egui::Mesh::default();
         for pose in poses {
-            let colour = egui::Color32::from_gray(pose.grey).gamma_multiply(pose.alpha);
+            let colour = palette.loading_logo[usize::from(pose.grey)].gamma_multiply(pose.alpha);
             let base = mesh.vertices.len() as u32;
             for [x, y] in pose.corners() {
                 mesh.colored_vertex(rect.min + egui::vec2(x, y), colour);
@@ -176,11 +169,17 @@ fn logo_mesh(ui: &egui::Ui, rect: egui::Rect, symbol: &str, now: i64, tab: u64) 
     mesh
 }
 
-/// `text` as wide as its walking dots at their widest, `...`, the missing dots in
-/// clear ink: placed by that width, a walk never moves the words it follows.
-fn steady(fonts: &Fonts, text: &str, font: egui::FontId, wrap: f32) -> Arc<egui::Galley> {
+/// Reserve the walking dots' full width with clear ink so words never shift.
+fn steady(
+    palette: &crate::theme::Palette,
+    fonts: &Fonts,
+    text: &str,
+    font: egui::FontId,
+    wrap: f32,
+) -> Arc<egui::Galley> {
     let dots = text.len() - text.trim_end_matches('.').len();
-    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font.clone(), GREY_MID, wrap);
+    let mut job =
+        egui::text::LayoutJob::simple(text.to_owned(), font.clone(), palette.loading_meta(), wrap);
     let clear = egui::TextFormat::simple(font, egui::Color32::TRANSPARENT);
     let pad = ".".repeat((3 - dots.min(3)) * usize::from(dots > 0));
     job.append(&pad, 0.0, clear);
@@ -203,25 +202,30 @@ fn lay_out_overlay(
     words: &OverlayWords,
     with_control: bool,
 ) -> OverlayGroup {
+    let palette = crate::theme::get(ctx);
     let mut title = egui::text::LayoutJob::default();
-    let font = egui::FontId::proportional(TITLE_PT);
+    let font = palette.body_font(TITLE_PT);
     title.append(
         words.verb,
         0.0,
-        egui::TextFormat::simple(font.clone(), GREY_LIGHT),
+        egui::TextFormat::simple(font.clone(), palette.loading_title()),
     );
-    title.append(symbol, 4.0, egui::TextFormat::simple(font, GREY_MID));
+    title.append(
+        symbol,
+        4.0,
+        egui::TextFormat::simple(font, palette.loading_meta()),
+    );
     title.wrap.max_width = rect.width();
-    let mono = egui::FontId::monospace(META_PT);
+    let mono = palette.mono_font(META_PT);
     let (title, meta, control) = ctx.fonts(|fonts| {
         (
             fonts.layout_job(title),
-            steady(fonts, &words.meta, mono, rect.width()),
+            steady(&palette, fonts, &words.meta, mono, rect.width()),
             with_control.then(|| {
                 fonts.layout_no_wrap(
                     RECONNECT_LABEL.to_owned(),
-                    egui::FontId::proportional(CONTROL_PT),
-                    GREY_MID,
+                    palette.body_font(CONTROL_PT),
+                    palette.loading_meta(),
                 )
             }),
         )
@@ -250,8 +254,7 @@ fn lay_out_overlay(
     }
 }
 
-/// Whether the overlay's control stands wholly inside `rect`. When it does not,
-/// the overlay draws none and the status bar offers Reconnect instead.
+/// A clipped control is omitted; the status bar then offers Reconnect instead.
 pub fn reconnect_fits(
     ctx: &egui::Context,
     rect: egui::Rect,
@@ -263,9 +266,7 @@ pub fn reconnect_fits(
         .is_some_and(|(_, hit)| rect.contains_rect(hit))
 }
 
-/// The shattering logo across `rect` with the words under it, painted without
-/// an input region but for the one control. Answers the control's rect and
-/// whether it was pressed.
+/// Paint the logo and words; only the returned reconnect rect takes input.
 pub fn draw_overlay(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -273,6 +274,7 @@ pub fn draw_overlay(
     words: &OverlayWords,
     (now_ms, tab): (i64, u64),
 ) -> (Option<egui::Rect>, bool) {
+    let palette = crate::theme::get(ui.ctx());
     let layer = egui::LayerId::new(LOADING_ORDER, egui::Id::new("connection_overlay"));
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(rect);
     let fits = words.reconnect && reconnect_fits(ui.ctx(), rect, symbol, words);
@@ -281,17 +283,45 @@ pub fn draw_overlay(
     let mut y = group.top;
     let centred = |width: f32| rect.center().x - width / 2.0;
     let size = group.title.size();
-    painter.galley(egui::pos2(centred(size.x), y), group.title, GREY_LIGHT);
+    if !palette.resolved.dark {
+        let meta = group.meta.size();
+        let width = size.x.max(meta.x);
+        let mut plate = egui::Rect::from_min_size(
+            egui::pos2(centred(width), y),
+            egui::vec2(width, size.y + TITLE_GAP_PX + meta.y),
+        );
+        if let Some((_, hit)) = &group.control {
+            plate = plate.union(*hit);
+        }
+        painter.rect_filled(plate.expand(OVERLAY_PAD_PX), 4.0, palette.canvas());
+    }
+    painter.galley(
+        egui::pos2(centred(size.x), y),
+        group.title,
+        palette.loading_title(),
+    );
     y += size.y + TITLE_GAP_PX;
     let meta_size = group.meta.size();
-    painter.galley(egui::pos2(centred(meta_size.x), y), group.meta, GREY_MID);
+    painter.galley(
+        egui::pos2(centred(meta_size.x), y),
+        group.meta,
+        palette.loading_meta(),
+    );
     let Some((control, hit)) = group.control else {
         return (None, false);
     };
     let at = hit.shrink2(egui::vec2(6.0, 3.0)).min;
     let response = ui.interact(hit, ui.id().with("overlay_reconnect"), egui::Sense::click());
     let lit = response.hovered();
-    painter.galley(at, control, if lit { GREY_LIGHT } else { GREY_MID });
+    painter.galley(
+        at,
+        control,
+        if lit {
+            palette.loading_title()
+        } else {
+            palette.loading_meta()
+        },
+    );
     if lit {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -312,24 +342,35 @@ pub fn chip_widths(ui: &egui::Ui, dots: &[Dot; 3]) -> (f32, f32) {
 }
 
 fn word_galley(ui: &egui::Ui, word: &str) -> std::sync::Arc<egui::Galley> {
+    let palette = crate::theme::get(ui.ctx());
     ui.fonts(|fonts| {
-        fonts.layout_no_wrap(word.to_owned(), egui::FontId::monospace(CHIP_PT), GREY_MID)
+        fonts.layout_no_wrap(
+            word.to_owned(),
+            palette.mono_font(CHIP_PT),
+            palette.loading_meta(),
+        )
     })
 }
 
 /// The chip, with its right edge at `right`. Each dot answers its own hover.
 pub fn draw_chip(ui: &egui::Ui, right: f32, strip: egui::Rect, dots: &[Dot; 3], words: bool) {
+    let palette = crate::theme::get(ui.ctx());
     let (with_words, alone) = chip_widths(ui, dots);
     let width = if words { with_words } else { alone };
+    let height = CHIP_HEIGHT_PX.max(if words {
+        word_galley(ui, dots[0].name).size().y + 4.0
+    } else {
+        0.0
+    });
     let rect = egui::Rect::from_min_size(
-        egui::pos2(right - width, strip.center().y - CHIP_HEIGHT_PX / 2.0),
-        egui::vec2(width, CHIP_HEIGHT_PX),
+        egui::pos2(right - width, strip.center().y - height / 2.0),
+        egui::vec2(width, height),
     );
     let painter = ui.painter();
     painter.rect_stroke(
         rect,
-        egui::Rounding::same(CHIP_HEIGHT_PX / 2.0),
-        egui::Stroke::new(1.0_f32, GREY_BORDER),
+        egui::Rounding::same(height / 2.0),
+        egui::Stroke::new(1.0_f32, palette.loading_border()),
     );
     let mut x = rect.left() + CHIP_PAD_PX;
     for (index, dot) in dots.iter().enumerate() {
@@ -341,7 +382,7 @@ pub fn draw_chip(ui: &egui::Ui, right: f32, strip: egui::Rect, dots: &[Dot; 3], 
             let galley = word_galley(ui, dot.name);
             let size = galley.size();
             let at = egui::pos2(x + DOT_WORD_GAP_PX, rect.center().y - size.y / 2.0);
-            painter.galley(at, galley, GREY_MID);
+            painter.galley(at, galley, palette.loading_meta());
             x += DOT_WORD_GAP_PX + size.x;
         }
         let area =
@@ -368,10 +409,11 @@ fn dot_hover(ui: &egui::Ui, area: egui::Rect, index: usize, dot: &Dot) {
 
 /// The dot's ink. Waiting is faint, ok is solid, and only an attempt moves.
 fn dot_colour(ui: &egui::Ui, look: DotLook) -> egui::Color32 {
+    let palette = crate::theme::get(ui.ctx());
     match look {
-        DotLook::Faint => GREY_FAINT,
-        DotLook::Solid => GREY_LIGHT,
-        DotLook::Pulsing => GREY_MID.gamma_multiply(pulse(ui.ctx())),
+        DotLook::Faint => palette.loading_faint(),
+        DotLook::Solid => palette.loading_title(),
+        DotLook::Pulsing => palette.loading_meta().gamma_multiply(pulse(ui.ctx())),
     }
 }
 
@@ -405,17 +447,26 @@ type SlotGalleys = (
 );
 
 fn slot_galleys(ui: &egui::Ui, slot: &Slot<'_>) -> SlotGalleys {
+    let palette = crate::theme::get(ui.ctx());
     ui.fonts(|fonts| {
-        let font = egui::FontId::proportional(SLOT_PT);
+        let font = palette.body_font(SLOT_PT);
         let glyph = slot.job.then(|| {
-            fonts.layout_no_wrap(icons::ARROW_CLOCKWISE.to_owned(), font.clone(), GREY_MID)
+            fonts.layout_no_wrap(
+                icons::ARROW_CLOCKWISE.to_owned(),
+                font.clone(),
+                palette.loading_meta(),
+            )
         });
-        (glyph, steady(fonts, slot.text, font, f32::INFINITY))
+        (
+            glyph,
+            steady(&palette, fonts, slot.text, font, f32::INFINITY),
+        )
     })
 }
 
 /// The slot, with its right edge at `right`, on its own layer so a menu wins.
 pub fn draw_slot(ui: &egui::Ui, right: f32, strip: egui::Rect, slot: &Slot<'_>) {
+    let palette = crate::theme::get(ui.ctx());
     let layer = egui::LayerId::new(LOADING_ORDER, ui.id().with("loading_slot"));
     let painter = ui.ctx().layer_painter(layer).with_clip_rect(strip);
     if slot.job && !reduced_motion() {
@@ -427,11 +478,19 @@ pub fn draw_slot(ui: &egui::Ui, right: f32, strip: egui::Rect, slot: &Slot<'_>) 
     let y = strip.center().y;
     if let Some(glyph) = glyph {
         let size = glyph.size();
-        painter.galley(egui::pos2(x, y - size.y / 2.0), glyph, GREY_MID);
+        painter.galley(
+            egui::pos2(x, y - size.y / 2.0),
+            glyph,
+            palette.loading_meta(),
+        );
         x += size.x + SLOT_ICON_GAP_PX;
     }
     let size = words.size();
-    painter.galley(egui::pos2(x, y - size.y / 2.0), words, GREY_MID);
+    painter.galley(
+        egui::pos2(x, y - size.y / 2.0),
+        words,
+        palette.loading_meta(),
+    );
 }
 
 #[cfg(test)]
@@ -542,8 +601,11 @@ mod tests {
     #[test]
     fn the_overlay_control_answers_a_real_press() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
-        let press_at = |at: Option<egui::Pos2>| {
+        let press_at = |source: &str, at: Option<egui::Pos2>| {
             let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            crate::theme::sync(&ctx, &appearance);
             let frame = |events: Vec<egui::Event>| {
                 let mut answer = (None, false);
                 let _ = ctx.run(
@@ -570,10 +632,24 @@ mod tests {
             };
             let _ = frame(vec![egui::Event::PointerMoved(at)]);
             let _ = frame(vec![button(true)]);
-            frame(vec![button(false)]).1
+            let result = frame(vec![button(false)]);
+            assert_eq!(
+                result.0,
+                Some(control),
+                "painting never moves the hit region"
+            );
+            (control, result.1)
         };
-        assert!(press_at(None));
-        assert!(!press_at(Some(egui::pos2(20.0, 20.0))));
+        let dark = press_at(quantick_appearance::DARK, None);
+        let light = press_at(quantick_appearance::LIGHT, None);
+        assert!(dark.1 && light.1);
+        assert_eq!(
+            dark.0, light.0,
+            "Light backing preserves the reconnect target"
+        );
+        for source in [quantick_appearance::DARK, quantick_appearance::LIGHT] {
+            assert!(!press_at(source, Some(egui::pos2(20.0, 20.0))).1);
+        }
     }
 
     /// The overlay paints a drag through: only its one control takes a press,
@@ -621,18 +697,24 @@ mod tests {
     fn walking_dots_keep_the_words_still() {
         let ctx = egui::Context::default();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            for font in [
-                egui::FontId::monospace(META_PT),
-                egui::FontId::proportional(SLOT_PT),
-            ] {
+            let palette = crate::theme::get(ctx);
+            for font in [palette.mono_font(META_PT), palette.body_font(SLOT_PT)] {
                 let width = |text: &str| {
-                    ctx.fonts(|fonts| steady(fonts, text, font.clone(), f32::INFINITY).size().x)
+                    ctx.fonts(|fonts| {
+                        steady(&palette, fonts, text, font.clone(), f32::INFINITY)
+                            .size()
+                            .x
+                    })
                 };
                 let widest = width("Replay · attempting...");
                 assert_eq!(width("Replay · attempting."), widest);
                 assert_eq!(width("Replay · attempting.."), widest);
                 let bare = ctx.fonts(|fonts| {
-                    fonts.layout_no_wrap("loading history".to_owned(), font.clone(), GREY_MID)
+                    fonts.layout_no_wrap(
+                        "loading history".to_owned(),
+                        font.clone(),
+                        palette.loading_meta(),
+                    )
                 });
                 assert_eq!(width("loading history"), bare.size().x);
             }

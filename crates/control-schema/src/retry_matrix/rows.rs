@@ -11,6 +11,7 @@ use crate::{analysis, attention, feed, indicator_guide, layers, layout, notify, 
 /// document is rendered in the registry's order.
 pub const FAMILIES: &[&[Readback]] = &[
     analysis::READBACKS,
+    crate::appearance::READBACKS,
     attention::READBACKS,
     crate::bubble_save::READBACKS,
     crate::bubble_scale::READBACKS,

@@ -1,6 +1,6 @@
 //! Compact history execution groups on the FLOW candle coordinate system.
 use super::bubbles::{BubbleColors, SPHERE_LIGHT_OFFSET, SphereShading, add_sector};
-use super::{bubbles, constants, palette_for_theme, premultiplied};
+use super::{bubbles, constants, premultiplied};
 use crate::orderflow_render::constants::{
     FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX,
     LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, PIE_START_ANGLE,
@@ -82,10 +82,12 @@ pub(crate) struct FlowDrawing {
     /// Exact presentation frame when the current camera resizes tick spheres.
     pub viewport_frame: Option<Arc<FlowTapeFrame>>,
     labels: Vec<flow_labels::PlacedLabel>,
+    appearance: Arc<crate::theme::Palette>,
 }
 impl FlowDrawing {
     /// `painter` lends tessellation and fonts; `history` is the area painted in. Runs
     /// whose keys held since `previous`, this look's drawing before, are kept from it.
+    #[cfg(test)]
     pub fn styled(
         (frame, plan): (&FlowTapeFrame, FlowPresentation),
         look: (egui::Color32, Option<egui::Color32>),
@@ -93,13 +95,35 @@ impl FlowDrawing {
         (painter, history): (&egui::Painter, egui::Rect),
         previous: Option<&Self>,
     ) -> Self {
+        let appearance = crate::theme::get(painter.ctx());
+        Self::with_appearance(
+            (frame, plan),
+            look,
+            tick_look,
+            (painter, history),
+            previous,
+            appearance,
+        )
+    }
+
+    pub(super) fn with_appearance(
+        (frame, plan): (&FlowTapeFrame, FlowPresentation),
+        look: (egui::Color32, Option<egui::Color32>),
+        tick_look: Option<quantick_orderflow::TickLook>,
+        (painter, history): (&egui::Painter, egui::Rect),
+        previous: Option<&Self>,
+        appearance: Arc<crate::theme::Palette>,
+    ) -> Self {
+        let previous = previous.filter(|held| Arc::ptr_eq(&held.appearance, &appearance));
         let (made, held) = ((frame, &plan), previous.map(|previous| &previous.runs));
-        let runs = flow_runs::flow_runs(made, look, tick_look, (painter, history), held);
+        let runs =
+            flow_runs::flow_runs(made, look, tick_look, (painter, history), held, &appearance);
         Self {
             runs,
-            labels: flow_labels::placed_labels(made, tick_look, (painter, history)),
+            labels: flow_labels::placed_labels(made, tick_look, (painter, history), &appearance),
             history,
             viewport_frame: None,
+            appearance,
             plan,
         }
     }
@@ -176,15 +200,16 @@ pub(crate) fn flow_caption(
     frame: Option<&FlowTapeFrame>,
     progress: FlowProgress,
 ) -> Option<egui::Rect> {
+    let palette = crate::theme::get(painter.ctx());
     let notes = quantick_orderflow::projection::flow_tape::notes_caption(frame, progress)?;
     let at = egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top);
     let wrap = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
-    let font = egui::FontId::proportional(FLOW_CAPTION_FONT_PX);
-    let galley = painter.layout(notes, font, crate::theme::TEXT_MUTED, wrap);
+    let font = palette.label_font(FLOW_CAPTION_FONT_PX);
+    let galley = painter.layout(notes, font, palette.text_muted(), wrap);
     let rect = egui::Rect::from_min_size(at, galley.size());
     painter
         .with_clip_rect(history)
-        .galley(at, galley, crate::theme::TEXT_MUTED);
+        .galley(at, galley, palette.text_muted());
     Some(rect)
 }
 

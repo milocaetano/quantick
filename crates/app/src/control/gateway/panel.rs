@@ -174,7 +174,7 @@ impl ControlAccess {
         ));
 
         if let Some(error) = &self.initialization_error {
-            ui.colored_label(eframe::egui::Color32::LIGHT_RED, error);
+            ui.colored_label(crate::theme::get(ui.ctx()).error_text(), error);
         }
         if let Some(notice) = &self.notice {
             ui.label(notice);

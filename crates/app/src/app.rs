@@ -20,11 +20,12 @@ use crate::canvas_layout::PaneIdAllocator;
 
 mod arrangement_adapter;
 mod workspace_runtime;
-use quantick_workspace::lifetime::{WorkspaceId, WorkspaceLifetime};
+use quantick_workspace::lifetime::WorkspaceId;
 const WORKSPACE_ID: WorkspaceId = WorkspaceId(0);
 pub(crate) mod arrangement_host;
 use arrangement_host::ArrangementHost;
 mod chart_layers_wiring;
+mod chart_settings_wiring;
 mod chrome;
 pub(crate) mod control_host;
 #[cfg(test)]
@@ -76,28 +77,25 @@ use menu_bar::{
     PAPER_SELL_SHORTCUT,
 };
 
-use crate::chart_layers;
 use crate::config::AppConfig;
 use crate::dock::Dock;
 #[cfg(test)]
 use crate::drawings;
 use crate::feed_notice;
 #[cfg(any(feature = "scenario-harness", test))]
-use crate::harness::{Harness, ScriptedMenu};
-use crate::indicators::preset_file;
+use crate::harness::Harness;
 use crate::replay_view::ReplayView;
 #[cfg(test)]
 use crate::state::BarSpec;
-use crate::style::ChartStyle;
 use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::Tab;
+#[cfg(test)]
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 use crate::ui_state;
 use crate::window_scale;
-use crate::workspace_store::{StorePaths, WorkspaceStore};
 use quantick_feed::FeedHandle;
-use quantick_feed::history_reach;
+
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_orderflow::LaneWindow;
 use quantick_stores::bubble_asset_store::open_asset_bubbles;
@@ -129,8 +127,6 @@ use crate::statusbar;
 use crate::tab::CanvasLayout;
 #[cfg(test)]
 use crate::tabstrip::TabAction;
-#[cfg(test)]
-use crate::theme;
 #[cfg(test)]
 use crate::toolbar::ToolbarAction;
 #[cfg(test)]
@@ -528,48 +524,9 @@ impl QuantickApp {
                 ));
         }
         crate::paper_state::restore_money(tab.paper.account_mut(), &paper_state);
-        // Resolved once: under test the settings path is a fresh scratch
-        // file per call, and the load must read the same file the saves
-        // will write.
-        let symbols_path = symbols_file::default_path();
-        let footprint_settings_path = crate::footprint_config::settings_path();
-        let indicator_presets_path = preset_file::default_path();
-        let added_symbols = symbols_file::load(&symbols_path);
-        let mut runtime = workspace_runtime::WorkspaceRuntime {
-            lifetime: WorkspaceLifetime::new(WORKSPACE_ID),
-            tabs: ArrangementHost::new(
-                WORKSPACE_ID,
-                quantick_workspace::arrangement::TabId(FIRST_TAB_ID),
-                tab,
-            ),
-            indicators: indicator_manager::IndicatorState::new(
-                WORKSPACE_ID,
-                FIRST_TAB_ID,
-                &indicator_presets_path,
-            ),
-            footprint_config: crate::footprint_config::load(&footprint_settings_path),
-            style: ChartStyle::default(),
-            style_revision: 0,
-            history: tabs::HistorySettings {
-                progressive_history: true,
-                history_reach: history_reach::HistoryReach::default(),
-                history_reach_span_minutes: reach_span_minutes,
-                venue_lead_in: false,
-            },
-            tz: TzOffset::default(),
-            workspace: WorkspaceStore::new(
-                StorePaths {
-                    symbols: symbols_path,
-                    chart_layers: chart_layers::default_path(),
-                    footprint_settings: footprint_settings_path,
-                    indicator_presets: indicator_presets_path,
-                    ui_state: ui_state::default_path(),
-                    bubble_assets: crate::bubble_presets::assets_path(),
-                },
-                layout_wiring::open_layout_store(&config),
-                trades_dir,
-            ),
-        };
+        let mut runtime =
+            workspace_runtime::WorkspaceRuntime::new(tab, trades_dir, reach_span_minutes, &config);
+        let added_symbols = symbols_file::load(runtime.workspace.symbols_path());
         let presentation = workspace_runtime::WindowPresentation::new(&mut runtime);
         let mut app = Self {
             runtime,
@@ -717,7 +674,7 @@ impl eframe::App for QuantickApp {
     /// the first. So the hook supplies the click itself, on the pane it names,
     /// and every line after that is the code a trader's own click runs.
     #[cfg(any(feature = "scenario-harness", test))]
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         let chart_layers = self.active_tab().flow_pane.chart_layers_menu_center();
         if self
             .chrome
@@ -731,34 +688,7 @@ impl eframe::App for QuantickApp {
         // it; the hook supplies the press, and every line after it is what a
         // trader's click runs. The rect is published by the draw, so the
         // first frame has none — wait for it rather than guess.
-        if let Some(position) = self.chrome.harness.take_menu_release() {
-            raw_input.events.push(egui::Event::PointerButton {
-                pos: position,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::default(),
-            });
-            return;
-        }
-        if let Some(menu) = self.chrome.harness.menu()
-            && let Some(position) = match menu {
-                ScriptedMenu::Window => self
-                    .chrome
-                    .title_bar
-                    .control_rect(quantick_control_schema::window_menu::KEBAB_CONTROL),
-                ScriptedMenu::History => self.chrome.history_menu_rect,
-            }
-            .map(|rect| rect.center())
-            && self.chrome.harness.menu_button_settled(position)
-        {
-            self.chrome.harness.menu_pressed(position);
-            raw_input.events.push(egui::Event::PointerMoved(position));
-            raw_input.events.push(egui::Event::PointerButton {
-                pos: position,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: egui::Modifiers::default(),
-            });
+        if title_bar::push_scripted_menu(self, ctx, raw_input) {
             return;
         }
         // The parked pointer, re-delivered — before the menu branch and not
@@ -768,8 +698,8 @@ impl eframe::App for QuantickApp {
         // down with it: the capture showed no compass, no crosshair and no
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
-        let flow = &self.runtime.tabs[self.runtime.tabs.active_index()].flow_pane;
-        self.chrome.harness.push_scripted_input(flow, raw_input);
+        let harness = &mut self.chrome.harness;
+        harness.push_scripted_input(&mut self.runtime.tabs, raw_input);
         let Some(pane) = self.chrome.harness.context_menu() else {
             return;
         };

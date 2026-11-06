@@ -18,8 +18,6 @@ use eframe::egui;
 
 use crate::timezone::TzOffset;
 
-/// Height of the bottom time-axis strip, in pixels (§5 zone 6).
-const TIME_STRIP: f32 = 24.0;
 /// Space outside the plot, including the compact tape-only header.
 pub(crate) const PLOT_PADDING_PX: f32 = 16.0;
 
@@ -34,19 +32,29 @@ pub(crate) const PLOT_PADDING_PX: f32 = 16.0;
 /// caller — a chart rect that two call sites disagree about is two price
 /// scales for the same pixels. Sizing rather than a count, because how tall a
 /// pane is and whether it has room to be drawn at all is the same decision.
+#[cfg(test)]
 pub fn plot_split(
     area: egui::Rect,
     live_strip_width: f32,
     pane_sizing: &[crate::indicators::PaneSizing],
 ) -> PlotAreas {
+    plot_split_with_metrics(area, live_strip_width, pane_sizing, Default::default())
+}
+
+pub fn plot_split_with_metrics(
+    area: egui::Rect,
+    live_strip_width: f32,
+    pane_sizing: &[crate::indicators::PaneSizing],
+    metrics: quantick_appearance::AxisMetrics,
+) -> PlotAreas {
     let plot = area.shrink(PLOT_PADDING_PX);
     let strip_width = live_strip_width.max(0.0);
-    // The price-axis gutter (§5 zone 9).
-    let gutter_x = (plot.right() - crate::chart::PRICE_GUTTER_PX).max(plot.left() + 20.0);
+    let gutter_x = (plot.right() - metrics.gutter).max(plot.left() + 20.0);
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
-    let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
+    let split_y = (plot.bottom() - metrics.strip).max(plot.top() + 20.0);
     let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
-    let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_sizing);
+    let (chart, indicator_panes) =
+        crate::indicators::split_panes_with_header(body, pane_sizing, metrics.indicator_header);
     // The gutter is banded exactly like the body it labels: the candles' price
     // scale owns the height of the candles and not a pixel more, so a drag
     // over a pane's numbers can only ever move that pane.

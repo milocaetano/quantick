@@ -26,8 +26,9 @@ const SMALL_PRINT_FONT_PX: f32 = 10.0;
 
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
+    let appearance = crate::theme::get(painter.ctx());
     let style = context.style.sanitized();
-    let palette = super::palette_for_theme(style.theme);
+    let palette = style.colors(super::premultiplied);
     let previews = quantick_orderflow::projection::forward_book_preview(
         &style.live_lane,
         context.current_book_live,
@@ -107,7 +108,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             egui::pos2(left, context.layout.chart_rect.top()) + DEPTH_CAPTION_OFFSET,
             egui::Align2::LEFT_TOP,
             caption,
-            egui::FontId::proportional(SMALL_PRINT_FONT_PX),
+            appearance.label_font(SMALL_PRINT_FONT_PX),
             palette.muted_text,
         );
     }
@@ -156,7 +157,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             && (marks.fill || rect.right() - at.x <= GAP_HOVER_PX)
         {
             let label = quantick_orderflow::projection::gap_label(&gap.reason);
-            let font = egui::FontId::proportional(SMALL_PRINT_FONT_PX);
+            let font = appearance.label_font(SMALL_PRINT_FONT_PX);
             let anchor = at - egui::vec2(GAP_HOVER_PX, GAP_HOVER_PX);
             let align = egui::Align2::RIGHT_BOTTOM;
             draw_text_with_shadow(&clip, anchor, align, label, font, palette.muted_text);
@@ -186,7 +187,7 @@ pub(crate) fn draw_live_lane_marks(painter: &egui::Painter, context: &RenderCont
     if context.layout.lane_left_x().is_none() {
         return;
     }
-    let palette = super::palette_for_theme(style.theme);
+    let palette = style.colors(super::premultiplied);
     let clip = painter.with_clip_rect(rect);
     let x = context.layout.x(now_x);
     if x.is_finite() && rect.x_range().contains(x) {
@@ -209,6 +210,7 @@ pub(crate) fn draw_lane_boundary(
     lane_width: f32,
     style: &super::OrderflowRenderStyle,
 ) {
+    let palette = crate::theme::get(painter.ctx());
     if !style.live_lane.show_marks {
         return;
     }
@@ -216,7 +218,7 @@ pub(crate) fn draw_lane_boundary(
         painter.with_clip_rect(rect).vline(
             x,
             rect.y_range(),
-            egui::Stroke::new(LANE_DIVIDER_WIDTH_PX, crate::theme::BORDER),
+            egui::Stroke::new(LANE_DIVIDER_WIDTH_PX, palette.border()),
         );
     }
 }
@@ -281,7 +283,7 @@ struct EventPass<'c, 'a> {
 impl<'c, 'a> EventPass<'c, 'a> {
     fn new(context: &'c RenderContext<'a>) -> Self {
         let style = context.style.sanitized();
-        let palette = super::palette_for_theme(style.theme);
+        let palette = style.colors(super::premultiplied);
         Self {
             context,
             style,
@@ -563,7 +565,7 @@ fn draw_text_with_shadow(
         align,
         text,
         font.clone(),
-        egui::Color32::from_black_alpha(190),
+        crate::theme::get(painter.ctx()).quantity_shadow(),
     );
     painter.text(anchor, align, text, font, color);
 }

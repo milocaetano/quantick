@@ -2448,10 +2448,10 @@ fn the_flow_pane_wears_its_band_frame_and_side_headers() {
         flow.frame.capsules, [None; 2],
         "nothing floats on the chart"
     );
-    let carved = crate::pane::split_flow_pane(egui::Rect::from_min_max(
-        egui::pos2(100.0, 50.0),
-        egui::pos2(900.0, 650.0),
-    ));
+    let carved = crate::pane::split_flow_pane(
+        egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(900.0, 650.0)),
+        1.0,
+    );
     assert_eq!(carved.chart.left(), 100.0 + FRAME_PX);
     assert_eq!(carved.chart.right(), 900.0 - FRAME_PX);
     assert_eq!(carved.chart.bottom(), 650.0 - FRAME_PX);

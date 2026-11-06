@@ -33,6 +33,23 @@ impl TitleBarState {
     }
 }
 
+/// `QUANTICK_MENU`'s press: the `⋮` button and the history caret are the two
+/// rects the strip publishes; every later step is a row its own draw records.
+#[cfg(any(feature = "scenario-harness", test))]
+pub(super) fn push_scripted_menu(
+    app: &mut super::QuantickApp,
+    ctx: &egui::Context,
+    raw_input: &mut egui::RawInput,
+) -> bool {
+    let chrome = &mut app.chrome;
+    let kebab = quantick_control_schema::window_menu::KEBAB_CONTROL;
+    let window = chrome.title_bar.control_rect(kebab);
+    let history = chrome.history_menu_rect;
+    chrome
+        .harness
+        .push_menu_input(ctx, raw_input, window, history)
+}
+
 fn send_state(ctx: &egui::Context, state: WindowState) {
     match state {
         WindowState::Normal => {
@@ -99,6 +116,7 @@ pub(crate) fn draw(
     workspaces: &quantick_stores::workspaces::WorkspaceBookStore,
     title: &mut TitleBarState,
 ) -> Option<crate::tabstrip::TabAction> {
+    let palette = theme::get(ctx);
     resize::draw(ctx);
     let active = tabs.presented_index();
     title.strip.allow_close_last = tabs.plan_close(tabs.active_index()).is_ok();
@@ -117,7 +135,7 @@ pub(crate) fn draw(
         .exact_height(HEIGHT)
         .frame(
             egui::Frame::none()
-                .fill(theme::INSET)
+                .fill(palette.inset())
                 .inner_margin(egui::Margin {
                     left: crate::tabstrip::STRIP_EDGE_PX,
                     right: 0.0,
@@ -231,6 +249,7 @@ pub(crate) fn draw(
 
 /// The `⋮` button. Returns whether it was pressed.
 fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
+    let palette = theme::get(ui.ctx());
     let glyph = egui::RichText::new(super::menu_bar::KEBAB_GLYPH).size(KEBAB_GLYPH_PX);
     let surface = ui.painter().add(egui::Shape::Noop);
     let button = ui
@@ -245,7 +264,7 @@ fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
         });
     title.kebab_pressed = title.menu_open || button.is_pointer_button_down_on();
     if title.kebab_pressed {
-        let fill = egui::Shape::rect_filled(button.rect, 0.0, theme::CONTROL);
+        let fill = egui::Shape::rect_filled(button.rect, 0.0, palette.control());
         ui.painter().set(surface, fill);
     }
     let bounds = button.rect.intersect(ui.clip_rect());
@@ -257,9 +276,10 @@ fn kebab(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
 
 /// The pill naming local agent access, shown only while it is on.
 fn agent_pill(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
+    let palette = theme::get(ui.ctx());
     let face = egui::RichText::new(AGENT_PILL_LABEL)
         .size(AGENT_TEXT_PX)
-        .color(theme::AMBER);
+        .color(palette.amber());
     let pill = ui
         .add_sized(
             [AGENT_PILL_WIDTH, crate::tabstrip::CHIP_HEIGHT],
@@ -269,7 +289,7 @@ fn agent_pill(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
     ui.painter().rect_stroke(
         pill.rect.shrink2(AGENT_OUTLINE_INSET),
         pill.rect.height(),
-        egui::Stroke::new(AGENT_OUTLINE_PX, theme::AMBER),
+        egui::Stroke::new(AGENT_OUTLINE_PX, palette.amber()),
     );
     let bounds = pill.rect.intersect(ui.clip_rect());
     if bounds.is_positive() {
@@ -280,6 +300,7 @@ fn agent_pill(ui: &mut egui::Ui, title: &mut TitleBarState) -> bool {
 
 /// Vector strokes keep native controls crisp and equally legible at every DPI.
 fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> egui::Response {
+    let palette = theme::get(ui.ctx());
     let response = ui.add_sized(
         [WINDOW_BUTTON_WIDTH, HEIGHT],
         egui::Button::new("").frame(false),
@@ -291,18 +312,18 @@ fn window_button(ui: &mut egui::Ui, id: &str, hint: &str, maximized: bool) -> eg
             response.rect,
             0.0,
             if id == "close" {
-                theme::WARN
+                palette.warn()
             } else {
-                theme::BARE_HOVER
+                palette.bare_hover()
             },
         );
     }
     let ink = if id == "close" && (response.hovered() || response.has_focus()) {
-        theme::ink_on(theme::WARN)
+        palette.ink_on(palette.warn())
     } else if response.hovered() || response.has_focus() {
-        theme::TEXT_PRIMARY
+        palette.text_primary()
     } else {
-        theme::TEXT_MUTED
+        palette.text_muted()
     };
     let stroke = egui::Stroke::new(1.0_f32, ink);
     let icon =

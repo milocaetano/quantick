@@ -81,8 +81,8 @@ pub(crate) trait SettingsTab {
 /// The window, its tabs and the appearance log's debounce.
 #[derive(Default)]
 pub(crate) struct ChartSettingsSurface {
-    open: bool,
-    tab: ChartSettingsTab,
+    pub session: quantick_control_handlers::chart_settings::ChartSettingsSession,
+    pub target_label: String,
     /// The candle appearance and its presets.
     pub candles: CandlesTab,
     /// The focused chart's footprint knobs and their presets.
@@ -93,6 +93,18 @@ pub(crate) struct ChartSettingsSurface {
     last_change: Option<Instant>,
     /// The named preset that change came from, if a click named one.
     pending_preset: Option<CandlePreset>,
+}
+
+impl std::ops::Deref for ChartSettingsSurface {
+    type Target = quantick_control_handlers::chart_settings::ChartSettingsSession;
+    fn deref(&self) -> &Self::Target {
+        &self.session
+    }
+}
+impl std::ops::DerefMut for ChartSettingsSurface {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.session
+    }
 }
 
 impl ChartSettingsSurface {
@@ -114,6 +126,7 @@ impl ChartSettingsSurface {
     }
 
     /// The tab shown, or shown next time the window opens.
+    #[cfg(test)]
     pub fn tab(&self) -> ChartSettingsTab {
         self.tab
     }
@@ -123,16 +136,26 @@ impl ChartSettingsSurface {
     /// cannot disagree about the window. The Candles sitting starts now, not
     /// at the next draw, so Reset has the look the window opened on whichever
     /// door opened it.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn open(&mut self, tab: ChartSettingsTab, current: ChartStyle) {
-        self.open = true;
-        self.tab = tab;
-        self.candles.begin(current);
+        self.session
+            .open(tab, None, current, &mut self.candles.state);
+    }
+
+    pub fn open_target(
+        &mut self,
+        tab: ChartSettingsTab,
+        target: quantick_chart::pane_style::StyleTarget,
+        current: ChartStyle,
+    ) {
+        self.session
+            .open(tab, Some(target), current, &mut self.candles.state);
     }
 
     /// Close the window, ending the sitting. A pending log line is flushed
     /// by the next draw.
     pub fn close(&mut self) {
-        self.open = false;
+        self.session.close(&mut self.candles.state);
         for tab in self.tabs() {
             tab.closed();
         }
@@ -208,6 +231,8 @@ impl Surface for ChartSettingsSurface {
         for tab in tabs {
             tab.opened(env);
         }
+        let target_label = self.target_label.clone();
+        let available = !self.editor.stale;
         let mut tabs = self.tabs();
         egui::Window::new("chart settings")
             .id(id)
@@ -216,6 +241,16 @@ impl Surface for ChartSettingsSurface {
             .min_width(WINDOW_WIDTH - 40.0)
             .resizable(true)
             .show(ctx, |ui| {
+                if selected == ChartSettingsTab::Candles {
+                    ui.label(&target_label);
+                    ui.strong("Only this chart");
+                }
+                if !available {
+                    ui.label("This chart is no longer available. Open settings on another chart.");
+                }
+                if !available {
+                    ui.disable();
+                }
                 ui.horizontal(|ui| {
                     for tab in tabs.iter() {
                         let which = tab.tab();

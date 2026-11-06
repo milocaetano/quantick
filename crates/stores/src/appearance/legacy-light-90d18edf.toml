@@ -1,0 +1,245 @@
+version = 1
+name = "Light"
+dark = false
+candle_fill_opacity = 1.0
+
+[colors]
+drawing_default = "#D89A32"
+drawing_buy = "#D89A32"
+drawing_sell = "#D89A32"
+drawing_vwap = "#D89A32"
+# The reference histogram fill (#B1BCD9) includes its existing 0.55 row opacity.
+drawing_profile = "#7A8EC2"
+flow_surface = "#eeeeee"
+flow_divider = "#bdbdbd"
+flow_ink = "#242424"
+flow_key_down = "#dedede"
+flow_key_down_shade = { premultiplied = [0, 0, 0, 25] }
+flow_key_down_rim = { premultiplied = [30, 30, 30, 90] }
+flow_key_down_ink = "#4a4a4a"
+flow_key_up_top = "#fafafa"
+flow_key_up_bottom = "#e3e3e3"
+flow_key_up_lip = { premultiplied = [200, 200, 200, 200] }
+flow_key_up_edge = { premultiplied = [35, 35, 35, 100] }
+flow_key_up_shadow = { premultiplied = [0, 0, 0, 35] }
+flow_key_up_ink = "#242424"
+flow_band_rule = "#c8c8c8"
+trade_selection_halo = "#24588740"
+candle_preview_background = "#F5F5F5"
+candle_preview_bid = "#157EAE"
+candle_preview_ask = "#BD394C"
+candle_preview_buy = "#4CAF50D2"
+candle_preview_sell = "#000000D2"
+retained_tape_shade = "#77777738"
+text_shadow = "#FFFFFF"
+replay_error = "#FFE6E1"
+replay_inset = "#EEEEEE"
+replay_well = { premultiplied = [245, 245, 245, 255] }
+error_text = "#B3261E"
+action_ink = "#202020"
+modal_scrim = { premultiplied = [0, 0, 0, 60] }
+widget_open_border = "#A0A0A0"
+widget_active_border = "#000000"
+widget_noninteractive = "#F7F7F7"
+widget_shadow = { premultiplied = [0, 0, 0, 25] }
+widget_cursor = "#00537D"
+widget_error = "#C62828"
+widget_warn = "#B84600"
+widget_code = "#E6E6E6"
+drawing_readout_plate = "#FFFFFFE6"
+drawing_selection_halo = { premultiplied = [0, 0, 0, 28] }
+flow_buy = "#1769A5"
+flow_sell = "#9B5B12"
+tape_path = "#55555580"
+tape_label = "#555555"
+quantity_shadow = "#FFFFFFBE"
+crosshair_ink = "#202020"
+footprint_total_ink = "#202020"
+loading_logo_low = "#707070"
+loading_logo_high = "#303030"
+loading_title = "#303030"
+loading_meta = "#606060"
+loading_faint = "#858585"
+loading_border = "#C8C8C8"
+footprint_profile = "#404040"
+footprint_bevel_highlight = { premultiplied = [0, 0, 0, 30] }
+footprint_bevel_shadow = { premultiplied = [0, 0, 0, 100] }
+canvas = "#F5F5F5"
+chrome = "#ECECEC"
+inset = "#E6E6E6"
+control = "#DEDEDE"
+border = "#B8B8B8"
+text_primary = "#202020"
+text_muted = "#505050"
+text_faint = "#707070"
+text_support = "#555555"
+buy = "#4CAF50"
+sell = "#000000"
+poc = "#9A6500"
+accent = "#245DB1"
+amber = "#906900"
+pane_mark = "#795B1A"
+pane_action = "#555555"
+off = "#98540B"
+capsule_fill = "#F7F7F7DB"
+capsule_border = "#20202024"
+capsule_shadow = "#00000038"
+bare_hover = "#20202012"
+seam_line = "#2020203C"
+day_rule = "#2020201E"
+seam_label = "#20202080"
+warn = "#B23824"
+rec = "#BA2636"
+gap_line = "#80600096"
+gap_label = "#765B0E"
+tag_bg = "#E2E2E2"
+chip_ink = "#FFFFFF"
+casing = "#F5F5F5EB"
+draw_violet = "#7F36B3"
+draw_cyan = "#007D91"
+float_shadow = "#00000038"
+candle_bull_outline = "#3D8540"
+candle_bear_outline = "#000000"
+candle_wick = "#5C5C5C"
+buy_ink = "#286B2B"
+sell_ink = "#202020"
+
+[footprint_heat]
+buy = ["#E8F5F2", "#D0EBE5", "#AFE0D5", "#75C8B5", "#227C6B", "#116454"]
+sell = ["#FCEEEA", "#F9DCD3", "#F3BDB0", "#EB9783", "#B74730", "#8B2F20"]
+ink = ["#374151", "#374151", "#273142", "#202A38", "#FFFFFF", "#FFFFFF"]
+
+[orderflow]
+ramp = ["#000000", "#040a28", "#0a2e78", "#0078c4", "#00c2c4", "#3cd078", "#d0dc3c", "#fa9e2c", "#fffae8"]
+
+[orderflow.colors]
+crown_backing = "#0000006E"
+separator = "#000000AA"
+buy = { premultiplied = [46, 224, 150, 255] }
+sell = { premultiplied = [255, 82, 96, 255] }
+consumption = { premultiplied = [255, 246, 205, 255] }
+depth_only = { premultiplied = [184, 130, 240, 255] }
+bubble_text = { premultiplied = [255, 255, 255, 255] }
+gap_fill = { premultiplied = [21, 24, 32, 20] }
+gap_boundary = { premultiplied = [157, 167, 188, 115] }
+lane_now = { premultiplied = [226, 234, 250, 150] }
+muted_text = { premultiplied = [186, 194, 209, 255] }
+legend_text = { premultiplied = [225, 230, 239, 255] }
+legend_background = { premultiplied = [8, 12, 23, 225] }
+legend_border = { premultiplied = [130, 145, 170, 90] }
+bid_tint = { premultiplied = [0, 174, 231, 255] }
+ask_tint = { premultiplied = [255, 90, 108, 255] }
+preview_grid = { premultiplied = [16, 16, 16, 16] }
+preview_path = { premultiplied = [145, 145, 145, 145] }
+
+# Bookmap uses the approved warm-gray surface independently of the Light Time canvas.
+[bookmap]
+candle_fill_opacity = 0.20
+
+[bookmap.colors]
+drawing_default = "#D89A32"
+drawing_buy = "#D89A32"
+drawing_sell = "#D89A32"
+drawing_vwap = "#D89A32"
+drawing_profile = "#7A8EC2"
+flow_surface = "#1e2433"
+flow_divider = "#3a4357"
+flow_ink = "#e8ecf2"
+flow_key_down = "#141924"
+flow_key_down_shade = { premultiplied = [0, 0, 0, 179] }
+flow_key_down_rim = { premultiplied = [0, 0, 0, 102] }
+flow_key_down_ink = "#7e8799"
+flow_key_up_top = "#3d485e"
+flow_key_up_bottom = "#2e3749"
+flow_key_up_lip = { premultiplied = [56, 56, 56, 56] }
+flow_key_up_edge = { premultiplied = [0, 0, 0, 153] }
+flow_key_up_shadow = { premultiplied = [0, 0, 0, 128] }
+flow_key_up_ink = "#ffffff"
+flow_band_rule = "#2e3648"
+trade_selection_halo = { premultiplied = [40, 40, 40, 40] }
+candle_preview_background = "#625E59"
+candle_preview_bid = "#14B9E6"
+candle_preview_ask = "#F54646"
+candle_preview_buy = "#37E2B0D2"
+candle_preview_sell = "#FF5B69D2"
+retained_tape_shade = "#0000005A"
+text_shadow = "#000000"
+replay_error = "#5A1E1978"
+replay_inset = { premultiplied = [0, 0, 0, 90] }
+replay_well = { premultiplied = [0, 0, 0, 60] }
+error_text = "#FF8080"
+action_ink = "#000000"
+modal_scrim = { premultiplied = [0, 0, 0, 90] }
+widget_open_border = "#3C3C3C"
+widget_active_border = "#FFFFFF"
+widget_noninteractive = "#1B1B1B"
+widget_shadow = { premultiplied = [0, 0, 0, 96] }
+widget_cursor = "#C0DEFF"
+widget_error = "#FF0000"
+widget_warn = "#FF8F00"
+widget_code = "#404040"
+drawing_readout_plate = { premultiplied = [14, 18, 26, 216] }
+drawing_selection_halo = { premultiplied = [28, 28, 28, 28] }
+flow_buy = "#70B9F4"
+flow_sell = "#E8AF63"
+tape_path = "#8EA6B15F"
+tape_label = "#8EA6B1"
+quantity_shadow = { premultiplied = [0, 0, 0, 190] }
+crosshair_ink = "#FFFFFF"
+footprint_total_ink = "#FFFFFF"
+loading_logo_low = "#969696"
+loading_logo_high = "#D2D2D2"
+loading_title = "#D7DDE8"
+loading_meta = "#7C8799"
+loading_faint = "#4B5566"
+loading_border = "#1B2330"
+footprint_profile = "#D8D8D8"
+footprint_bevel_highlight = { premultiplied = [56, 56, 56, 56] }
+footprint_bevel_shadow = { premultiplied = [0, 0, 0, 120] }
+canvas = "#625E59"
+chrome = "#171B26"
+inset = "#10141D"
+control = "#232936"
+border = "#2E3648"
+text_primary = "#D2DAE2"
+text_muted = "#96A0AF"
+text_faint = "#6E7887"
+buy = "#26A69A"
+sell = "#EF5350"
+poc = "#FFD54F"
+accent = "#8AB4F8"
+amber = "#F0B90B"
+pane_mark = { premultiplied = [190, 156, 63, 217] }
+pane_action = "#AAB0BF"
+off = "#F29A4B"
+capsule_fill = { premultiplied = [8, 10, 15, 189] }
+capsule_border = { premultiplied = [23, 23, 23, 23] }
+capsule_shadow = { premultiplied = [0, 0, 0, 115] }
+bare_hover = { premultiplied = [15, 15, 15, 15] }
+seam_line = { premultiplied = [60, 60, 60, 60] }
+day_rule = { premultiplied = [30, 30, 30, 30] }
+seam_label = { premultiplied = [80, 80, 80, 80] }
+warn = "#FF6347"
+rec = "#FF4D4D"
+gap_line = { premultiplied = [120, 92, 10, 150] }
+gap_label = "#9A823A"
+tag_bg = "#373F50"
+text_support = "#8692A4"
+chip_ink = "#0E121A"
+casing = { premultiplied = [5, 7, 12, 235] }
+draw_violet = "#C58AF9"
+draw_cyan = "#4DD0E1"
+float_shadow = { premultiplied = [0, 0, 0, 96] }
+candle_bull_outline = "#68E0C9"
+candle_bear_outline = "#FF898B"
+candle_wick = "#A0A9B8"
+
+buy_ink = "#88CEC7"
+sell_ink = "#F6A09F"
+
+# Logical pixels. Both families retain the bundled glyph fallback chain.
+
+[bookmap.footprint_heat]
+buy = ["#0A2D2B", "#0D3B38", "#11554E", "#0D6A5F", "#009880", "#29D9AE"]
+sell = ["#510E16", "#6A111A", "#951520", "#BD1217", "#FE3800", "#FDAF89"]
+ink = ["#96A0AF", "#96A0AF", "#D2DAE2", "#D2DAE2", "#0E121A", "#0E121A"]

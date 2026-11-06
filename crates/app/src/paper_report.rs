@@ -37,14 +37,14 @@
 //! where a trader's own results are computed, and a rounding that shifts
 //! during a refactor is the code lying to them about their trading.
 
-use std::path::{Path, PathBuf};
-
-use quantick_sim::{ClosedTrade, PerformanceReport};
-use rust_decimal::Decimal;
+#[cfg(test)]
+use quantick_sim::ClosedTrade;
+#[cfg(test)]
+use quantick_sim::PerformanceReport;
 
 // One date law for every trade surface - see `paper_calendar`.
 use crate::paper_calendar::{CalendarState, DayIndex};
-use crate::paper_chrome::PositionSummary;
+
 use crate::timezone::TzOffset;
 
 mod curve;
@@ -72,58 +72,13 @@ pub(crate) fn report_from_history(history: &LoadedHistory) -> PerformanceReport 
     let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
     PerformanceReport::from_trades(&trades)
 }
-use window::{ReportPeriod, ReportWindow};
+#[cfg(test)]
+use quantick_paper::report::snapshot::ReportWindow;
+use window::ReportPeriod;
 
-/// What the report and the ledger read about the trading session they
-/// belong to, borrowed for one call.
-///
-/// Every field here is something the host already knows and this module
-/// has no way to learn: it holds no venue, opens no folder of its own and
-/// reads no clock. Borrowed rather than copied, for `SurfaceEnv`'s reason
-/// — a reader that kept its own copy of the symbol would answer for the
-/// market the chart used to be on.
-pub(crate) struct ReportEnv<'a> {
-    /// The chart's instrument. Empty before a market is chosen, which is
-    /// why every read of it tests for that rather than assuming a name.
-    pub symbol: &'a str,
-    /// The journal folder every surface here reads from.
-    pub dir: &'a Path,
-    /// Journal files this session is still writing. Excluded from the
-    /// ledger's history load: those trades are already in the simulator,
-    /// and reading them back would list every one of them twice.
-    pub session_journal_paths: &'a [PathBuf],
-    /// This session's closed round trips, oldest first — the ledger's live
-    /// rows, and the only trades whose fills the tape on screen can prove.
-    pub session_trades: &'a [ClosedTrade],
-    /// Where each of those trades was journaled, index-aligned with them.
-    pub session_trade_at: &'a [Option<quantick_paper::report::sessions::JournaledTrade>],
-    /// The source each of those trades closed under, index-aligned.
-    pub session_trade_sources: &'a [quantick_sim::history::SessionSource],
-    /// The position still open, if there is one. Gathered by the host
-    /// because it takes three reads of a venue this module cannot see.
-    pub open: Option<OpenRow>,
-    /// How every P&L figure here is worded: the ticket's own reader.
-    pub pnl: quantick_paper::pnl::PnlReader<'a>,
-}
+pub(crate) use quantick_paper::report::snapshot::ReportEnv;
 
-/// The open position as the ledger's top row needs it: the summary, the
-/// mark it is valued against, and how long it has been held.
-///
-/// One value rather than three reads. The ledger asks "is there a position
-/// and what does its row say"; splitting that into a summary, a mark price
-/// and a timestamp invites a caller to supply two of the three.
-pub(crate) struct OpenRow {
-    pub summary: PositionSummary,
-    /// The price the open points are marked against; `None` before the
-    /// first print.
-    pub mark_price: Option<Decimal>,
-    /// Mark time less open time; `None` when either is unknown. Not read
-    /// from a clock — the tape says how long, so a replay's ages are the
-    /// recording's, not this afternoon's.
-    pub held_ms: Option<i64>,
-    /// The open profit as the ticket words it; `None` before a print.
-    pub pnl: Option<String>,
-}
+pub(crate) use quantick_paper::report::snapshot::OpenRow;
 
 /// What the report asked its host to do.
 ///
@@ -142,126 +97,20 @@ pub(crate) struct ReportResponse {
     pub toast: Option<String>,
 }
 
-/// Fixed ledger row height — two lines plus their padding, held constant so
-/// the trade list can virtualise through `ScrollArea::show_rows`.
-const LEDGER_ROW_HEIGHT_PX: f32 = 34.0;
-/// The side rail on ledger rows — the position HUD card's rail width.
-const SIDE_RAIL_WIDTH_PX: f32 = 3.0;
-/// Height reserved under the ledger for the pinned totals strip.
-const TOTALS_STRIP_PX: f32 = 26.0;
-
-/// Saved trades one ledger page reveals. A folder holding a year of
-/// sessions must not paint a year of rows to show today's; the "show
-/// older" control adds another page and says how many are left.
-const LEDGER_PAGE_TRADES: usize = 50;
-
-/// The ledger's instrument picker. Wide enough for "This chart · BTCUSDT"
-/// without pushing the refresh and fold controls off the row.
-const LEDGER_SCOPE_COMBO_PX: f32 = 150.0;
-
-/// Gap between a detail line and the date stamp anchored opposite it.
-const DETAIL_GAP_PX: f32 = 8.0;
-
-/// Right margin the detail line and its stamp both respect.
-const DETAIL_RIGHT_PAD_PX: f32 = 6.0;
-
-/// How far a day header's tinted band sits below the row's top edge — the
-/// gap is what separates one day's block from the previous day's last row.
-const DAY_HEADER_INSET_PX: f32 = 6.0;
-
-/// Where a day header's date starts, clear of its fold caret.
-const DAY_HEADER_TEXT_X_PX: f32 = 20.0;
-/// The report's floor while the month grid is expanded: the grid's own
-/// six rows plus a weekday rule, on top of what the collapsed report had
-/// to fit. Kept under the app's own 560 px minimum height so the report
-/// can never be taller than the window it lives in.
-const REPORT_MIN_HEIGHT_CALENDAR_PX: f32 = 540.0;
-
-/// The size the report opens at. The trade list is eleven columns wide and
-/// the curve wants room above it; opening cramped and making the trader
-/// drag the corner every session is not a default.
-const REPORT_DEFAULT_W_PX: f32 = 900.0;
-/// See [`REPORT_DEFAULT_W_PX`].
-const REPORT_DEFAULT_H_PX: f32 = 720.0;
-
-/// The floor the equity curve shrinks to while the month grid is open. The
-/// curve is a shape to glance at; the list under it is the answer to
-/// "which trades", so when the two compete for a short window the curve is
-/// what gives way.
-const CURVE_MIN_H_CALENDAR_PX: f32 = 104.0;
-
-/// One calendar day cell. Seven of them plus the report's own margins fit
-/// inside `REPORT_MIN_WIDTH_PX`, so the grid never forces the window wider
-/// than the trader sized it.
-const CALENDAR_CELL_W_PX: f32 = 34.0;
-
-/// See [`CALENDAR_CELL_W_PX`]. Tall enough for the day number and the
-/// trade count under it.
-const CALENDAR_CELL_H_PX: f32 = 28.0;
-
-/// The tallest the report's trade list grows before it scrolls inside
-/// itself. Bounded so a thousand-trade window still leaves the metric
-/// grids under it reachable by scrolling the page rather than the list.
-const REPORT_LIST_MAX_H_PX: f32 = 220.0;
-/// Headline tile geometry: a caption, a 22 px value, a sub-line.
-const TILE_HEIGHT_PX: f32 = 62.0;
-/// Gap between headline tiles.
-const TILE_GUTTER_PX: f32 = 8.0;
-/// The report's hero numbers — the one type size above 16 in the app.
-const HEADLINE_FONT_PX: f32 = 22.0;
-/// The equity curve's readable floor.
-const CURVE_MIN_H_PX: f32 = 160.0;
-/// Stops the curve from eating a resized window.
-const CURVE_MAX_H_PX: f32 = 240.0;
-/// Alpha of the equity area fill — ground under the line, not a mark.
-const CURVE_FILL_ALPHA: u8 = 31;
-/// Alpha of the equity curve's gridlines — the chart's own grid token at
-/// half strength, recessive under one quiet line.
-const CURVE_GRID_LINE_ALPHA: u8 = 128;
-/// At most this many curve points are drawn; the *drawing* downsamples
-/// past it (and says so), the metrics always use every trade.
-const CURVE_MAX_POINTS: usize = 1000;
-/// Space kept under the curve for the metric grids before the curve
-/// height clamps.
-const CURVE_GRID_RESERVE_PX: f32 = 230.0;
-/// The report window's smallest usable size — everything scrolls or
-/// clamps below its defaults, so the window resizes freely down to this.
-const REPORT_MIN_WIDTH_PX: f32 = 440.0;
-/// See [`REPORT_MIN_WIDTH_PX`].
-const REPORT_MIN_HEIGHT_PX: f32 = 360.0;
-/// Height the report keeps for its honesty footer under the grids.
-const REPORT_FOOTER_RESERVE_PX: f32 = 64.0;
-/// Width of the typed-period field beside the pills — room for "999h".
-const CUSTOM_PERIOD_FIELD_PX: f32 = 44.0;
-/// The grids' readable floor inside a squeezed window.
-const REPORT_GRID_MIN_H_PX: f32 = 80.0;
-/// Width of the equity curve's y-tick gutter.
-const CURVE_GUTTER_PX: f32 = 52.0;
-/// The report as data: what is being asked, and what came back. Handed
-/// out by [`ReportState::snapshot`] so an operator that cannot see the
-/// window can still say which trades produced which numbers.
-pub(crate) struct ReportSnapshot<'a> {
-    /// `None` — every symbol folder in scope.
-    pub(crate) symbol: Option<&'a str>,
-    pub(crate) source: SourceFilter,
-    /// What cut this report. One value, not a pair of options: the two
-    /// filters are exclusive, and a pair could spell "both" or "neither" —
-    /// states the report has no meaning for.
-    pub(crate) window: ReportWindow,
-    /// Saved trades the window keeps out, and those the Source filter does.
-    pub(crate) hidden_outside: usize,
-    pub(crate) hidden_by_source: usize,
-    pub(crate) rows: &'a [HistoryRow],
-    pub(crate) report: &'a PerformanceReport,
-}
-
+use quantick_paper::report::layout::*;
+pub(crate) use quantick_paper::report::snapshot::ReportSnapshot;
 /// The report window's and the trades ledger's whole state.
 ///
 /// Twenty-one fields that used to sit on the trading host, where they made
 /// up better than a quarter of it. They are here because they answer one
 /// question together — "what did the saved journal produce, cut this way?"
 /// — and because none of them is read by an order, a bracket or a fill.
+#[cfg(any(feature = "scenario-harness", test))]
+mod scroll_probe;
+
 pub(crate) struct ReportState {
+    #[cfg(any(feature = "scenario-harness", test))]
+    scroll_probe: scroll_probe::Probe,
     /// An acknowledgement waiting to leave through [`ReportResponse`].
     toast: Option<String>,
     report_open: bool,
@@ -335,6 +184,8 @@ impl Default for ReportState {
     /// ledger starts one page in, and its scope follows the chart.
     fn default() -> Self {
         Self {
+            #[cfg(any(feature = "scenario-harness", test))]
+            scroll_probe: scroll_probe::Probe::default(),
             toast: None,
             report_open: false,
             report_symbol: None,

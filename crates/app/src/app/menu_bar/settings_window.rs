@@ -97,6 +97,7 @@ fn draw_row(
     row: SettingRow,
     commands: &mut Vec<MenuCommand>,
 ) {
+    let palette = theme::get(ui.ctx());
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(ROW_TEXT_WIDTH_PX);
@@ -104,7 +105,7 @@ fn draw_row(
             ui.label(
                 egui::RichText::new(row.description())
                     .size(ROW_HINT_PX)
-                    .color(theme::TEXT_MUTED),
+                    .color(palette.text_muted()),
             );
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -115,9 +116,9 @@ fn draw_row(
         && let Some(access) = app.control.control_access.as_ref()
     {
         if let Some(error) = access.start_error() {
-            ui.colored_label(theme::WARN, error);
+            ui.colored_label(palette.warn(), error);
         } else if let Some(note) = access.status_note() {
-            ui.colored_label(theme::TEXT_MUTED, note);
+            ui.colored_label(palette.text_muted(), note);
         }
     }
 }
@@ -133,6 +134,7 @@ fn row_control(
             if ui.button(row.label()).clicked() {
                 commands.push(MenuCommand::OpenAppearance);
             }
+            crate::theme::choice::show(ui, app);
         }
         SettingRow::Timezone => {
             let mut tz = app.runtime.tz;
@@ -193,6 +195,7 @@ fn row_control(
 
 /// The prototype's switch, painted because egui has none.
 fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool, row: SettingRow) -> egui::Response {
+    let palette = theme::get(ui.ctx());
     let sense = if enabled {
         egui::Sense::click()
     } else {
@@ -207,11 +210,15 @@ fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool, row: SettingRow) -> e
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, value, row.label())
     });
-    let track = if value { theme::ACCENT } else { theme::BORDER };
-    let knob = if value {
-        theme::INSET
+    let track = if value {
+        palette.accent()
     } else {
-        theme::TEXT_FAINT
+        palette.border()
+    };
+    let knob = if value {
+        palette.inset()
+    } else {
+        palette.text_faint()
     };
     let (track, knob) = if enabled {
         (track, knob)

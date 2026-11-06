@@ -1,7 +1,7 @@
 //! Axis contributions share the claims and geometry resolved for the current frame.
 use super::super::{
-    LAST_PRICE_CHIP_TEXT, LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA,
-    PointerCompass, PriceAxisClaims, grid_color,
+    LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, PointerCompass, PriceAxisClaims,
+    grid_color,
 };
 use super::{Contribution, Package};
 use crate::{
@@ -37,6 +37,7 @@ pub(in crate::pane) struct GridPass<'a, 'b> {
     pub scale: &'a PriceScale,
     pub claims: &'a PriceAxisClaims<'b>,
     pub style: &'a ChartStyle,
+    pub snap_horizontal: bool,
 }
 pub(in crate::pane) struct LastPricePass<'a> {
     pub painter: &'a egui::Painter,
@@ -65,6 +66,7 @@ pub(in crate::pane) struct PointerPass<'a> {
     pub tz: TzOffset,
 }
 fn grid(p: &mut GridPass<'_, '_>) {
+    let palette = theme::axes(p.painter.ctx());
     let GridPass {
         painter,
         chart_rect,
@@ -72,16 +74,17 @@ fn grid(p: &mut GridPass<'_, '_>) {
         scale,
         claims,
         style,
+        snap_horizontal,
     } = *p;
 
-    let grid = grid_color(style);
+    let grid = egui::Stroke::new(1.0_f32, grid_color(style));
     let (lo, hi) = scale.range();
-    let font = egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX);
+    let font = palette.axis_font(chart::AXIS_LABEL_FONT_PX);
     // Measured once per frame, the way the time strip measures its own:
     // every label on this axis is one line of the same font, so one
     // layout answers for all of them.
     let label_height = painter
-        .layout_no_wrap("0".to_owned(), font.clone(), theme::TEXT_MUTED)
+        .layout_no_wrap("0".to_owned(), font.clone(), palette.text_muted())
         .size()
         .y;
     for tick in crate::chart::nice_ticks(lo, hi, 8) {
@@ -92,13 +95,12 @@ fn grid(p: &mut GridPass<'_, '_>) {
         // The *line* is drawn either way: a gridline under a chip is
         // still the grid, and hiding it would put a gap in the chart
         // wherever the pointer went.
-        painter.line_segment(
-            [
-                egui::pos2(chart_rect.left(), y),
-                egui::pos2(chart_rect.right(), y),
-            ],
-            egui::Stroke::new(1.0_f32, grid),
-        );
+        let line_y = if snap_horizontal {
+            painter.round_to_pixel_center(y)
+        } else {
+            y
+        };
+        painter.hline(chart_rect.x_range(), line_y, grid);
         // The chips on this axis are the same font and padding as the
         // labels, so one extent answers for both — unlike the time strip,
         // where they differ.
@@ -110,17 +112,11 @@ fn grid(p: &mut GridPass<'_, '_>) {
             egui::Align2::LEFT_CENTER,
             pointer_compass::price_text(tick),
             font.clone(),
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
     // The axis dividing line.
-    painter.line_segment(
-        [
-            egui::pos2(axis_x, chart_rect.top()),
-            egui::pos2(axis_x, chart_rect.bottom()),
-        ],
-        egui::Stroke::new(1.0_f32, grid),
-    );
+    painter.vline(axis_x, chart_rect.y_range(), grid);
 }
 fn last_price(p: &mut LastPricePass<'_>) {
     let LastPricePass {
@@ -173,10 +169,11 @@ fn last_price(p: &mut LastPricePass<'_>) {
         pointer_compass::price_text(price),
         progress.map(|reading| reading.tag_text()),
         color,
-        LAST_PRICE_CHIP_TEXT,
+        theme::get(painter.ctx()).chip_ink(),
     );
 }
 fn crosshair(p: &mut CrosshairPass<'_>) {
+    let palette = theme::get(p.painter.ctx());
     let CrosshairPass {
         painter,
         chart_rect,
@@ -195,7 +192,7 @@ fn crosshair(p: &mut CrosshairPass<'_>) {
     if !chart_rect.contains(pos) {
         return;
     }
-    let stroke = egui::Stroke::new(1.0_f32, theme::TEXT_FAINT);
+    let stroke = egui::Stroke::new(1.0_f32, palette.text_faint());
     painter.line_segment(
         [
             egui::pos2(pos.x, chart_rect.top()),
@@ -213,6 +210,7 @@ fn crosshair(p: &mut CrosshairPass<'_>) {
         stroke,
     );
 
+    let axis_palette = theme::axes(painter.ctx());
     // Price tag on the axis at the cursor height, through the axis's one
     // tag owner — the compass and the last-price chip write theirs the
     // same way, so the marks that share this gutter cannot drift apart.
@@ -222,8 +220,8 @@ fn crosshair(p: &mut CrosshairPass<'_>) {
         pos.y,
         pointer_compass::price_text(scale.price_at(pos.y)),
         None,
-        theme::TAG_BG,
-        egui::Color32::WHITE,
+        axis_palette.tag_bg(),
+        axis_palette.crosshair_ink(),
     );
 }
 fn pointer(p: &mut PointerPass<'_>) {
@@ -265,6 +263,7 @@ pub(in crate::pane) struct TimeStripPass<'a> {
 }
 impl TimeStripPass<'_> {
     pub fn paint(&self) {
+        let palette = theme::axes(self.painter.ctx());
         let Self {
             painter,
             strip,
@@ -281,7 +280,7 @@ impl TimeStripPass<'_> {
             ],
             egui::Stroke::new(1.0_f32, grid_color(self.style)),
         );
-        let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
+        let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
         let y = strip.center().y;
         let visible = end.saturating_sub(start);
         if visible == 0 {
@@ -295,7 +294,11 @@ impl TimeStripPass<'_> {
         // that a narrower strip could not honour.
         let width_of = |format: crate::chart::TimeLabelFormat| {
             painter
-                .layout_no_wrap(format.sample().to_owned(), font.clone(), theme::TEXT_MUTED)
+                .layout_no_wrap(
+                    format.sample().to_owned(),
+                    font.clone(),
+                    palette.text_muted(),
+                )
                 .size()
                 .x
         };
@@ -307,7 +310,7 @@ impl TimeStripPass<'_> {
             || width_of(format),
             |sample| {
                 painter
-                    .layout_no_wrap(sample.to_owned(), font.clone(), theme::TEXT_MUTED)
+                    .layout_no_wrap(sample.to_owned(), font.clone(), palette.text_muted())
                     .size()
                     .x
             },
@@ -354,7 +357,7 @@ impl TimeStripPass<'_> {
                         egui::Align2::CENTER_CENTER,
                         text,
                         font.clone(),
-                        theme::TEXT_MUTED,
+                        palette.text_muted(),
                     );
                 }
             }
@@ -378,6 +381,7 @@ pub(in crate::pane) struct LaneTimeAxisPass<'a> {
 }
 impl LaneTimeAxisPass<'_> {
     pub fn paint(&self) {
+        let palette = theme::axes(self.painter.ctx());
         let Self {
             painter,
             lane_strip,
@@ -394,7 +398,7 @@ impl LaneTimeAxisPass<'_> {
         // candles' own time labels. The tape's axis may run out of room; it
         // may not spill into the pane beside it.
         let painter = &painter.with_clip_rect(strip);
-        let font = egui::FontId::monospace(super::super::LANE_AXIS_FONT_PX);
+        let font = palette.axis_font(super::super::LANE_AXIS_FONT_PX);
         // The warning is its own text, pinned to the right end of the strip,
         // and the window keeps the centre it has always had. One label growing
         // a suffix would re-centre itself every time a quiet stretch started
@@ -402,7 +406,7 @@ impl LaneTimeAxisPass<'_> {
         // right end is also where it belongs: directly under the edge the
         // missing marks should have reached.
         let warning = quantick_orderflow::lane_lag_label(window_ms, tape_age)
-            .map(|lag| painter.layout_no_wrap(lag, font.clone(), theme::WARN));
+            .map(|lag| painter.layout_no_wrap(lag, font.clone(), palette.warn()));
         // Room the warning denies the window label. Doubled, because the window
         // keeps the strip's own centre: a centred label grows by half its
         // width towards each end, so it reaches the warning after only half
@@ -416,7 +420,7 @@ impl LaneTimeAxisPass<'_> {
             2.0 * (galley.size().x + 2.0 * super::super::LANE_AXIS_GAP_PX)
         });
         let window_label = format!("tape · {}", quantick_orderflow::format_window_ms(window_ms));
-        let window_galley = painter.layout_no_wrap(window_label, font, theme::TEXT_MUTED);
+        let window_galley = painter.layout_no_wrap(window_label, font, palette.text_muted());
         // A strip too narrow keeps the urgent label and drops this one. The
         // window is a setting the trader chose and can read from the tape's
         // own menu; how old the newest mark is exists nowhere else.
@@ -429,7 +433,7 @@ impl LaneTimeAxisPass<'_> {
             let rect =
                 egui::Align2::CENTER_CENTER.align_size_within_rect(window_galley.size(), strip);
             labelled.push(rect);
-            painter.galley(rect.min, window_galley, theme::TEXT_MUTED);
+            painter.galley(rect.min, window_galley, palette.text_muted());
         }
         if let Some((end_ms, tz, geometry)) = clock {
             if let Some(galley) = warning.as_ref() {
@@ -467,7 +471,7 @@ impl LaneTimeAxisPass<'_> {
                     )
                     .min,
                 galley,
-                theme::WARN,
+                palette.warn(),
             );
         }
     }
@@ -502,6 +506,7 @@ impl AxisMarksPass<'_> {
         }
     }
     fn draw_drawing_axis_tags(&self) {
+        let palette = crate::theme::get(self.painter.ctx());
         let Self {
             painter,
             chart_rect,
@@ -526,7 +531,7 @@ impl AxisMarksPass<'_> {
                 pointer_compass::price_text(level.price),
                 None,
                 level.color,
-                theme::ink_on(level.color),
+                palette.ink_on(level.color),
             );
         }
     }
@@ -544,10 +549,15 @@ fn paint_tape_clock(
     labelled: &[egui::Rect],
     geometry: quantick_orderflow::projection::TapeHorizontalGeometry,
 ) {
+    let palette = theme::axes(painter.ctx());
     let format = crate::chart::TimeLabelFormat::Full;
-    let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
+    let font = palette.axis_font(crate::chart::TIME_LABEL_FONT_PX);
     let label_width = painter
-        .layout_no_wrap(format.sample().to_owned(), font.clone(), theme::TEXT_MUTED)
+        .layout_no_wrap(
+            format.sample().to_owned(),
+            font.clone(),
+            palette.text_muted(),
+        )
         .size()
         .x;
     let slot = label_width + 2.0 * super::super::LANE_AXIS_GAP_PX;
@@ -580,7 +590,7 @@ fn paint_tape_clock(
             egui::Align2::CENTER_CENTER,
             ticks.label_at(instant),
             font.clone(),
-            theme::TEXT_MUTED,
+            palette.text_muted(),
         );
     }
 }

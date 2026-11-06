@@ -1,8 +1,8 @@
 # AGENTS.md — quantick for AI agents
 
-The crate map. [CLAUDE.md](CLAUDE.md) owns the rules, [CONTRIBUTING.md](CONTRIBUTING.md) the verification loop,
-[docs/agentic-development.md](docs/agentic-development.md) their reasons,
-[docs/README.md](docs/README.md) the docs index.
+[CLAUDE.md](CLAUDE.md): rules; [CONTRIBUTING.md](CONTRIBUTING.md): checks;
+[docs/agentic-development.md](docs/agentic-development.md): rationale;
+[docs/README.md](docs/README.md): index.
 
 **Driving the running app?** Build `quantick-mcp`, run `quantick-mcp setup
 --client claude` (or `codex`), enable **Tools → Local agent access**, and call
@@ -13,9 +13,8 @@ The crate map. [CLAUDE.md](CLAUDE.md) owns the rules, [CONTRIBUTING.md](CONTRIBU
 
 ## The map
 
-A Cargo workspace under `crates/`. *Depends on* is one-way
-(`crates/guards/src/graph.rs`). `app`, `backtest`, `mcp` and `guards` are
-leaves; `guards` has no edges either way.
+Cargo workspace: `crates/`. One-way edges: `crates/guards/src/graph.rs`.
+`app`, `backtest`, `mcp` and `guards` are leaves; `guards` has no edges.
 
 | Crate | Depends on | What it owns |
 | --- | --- | --- |
@@ -25,8 +24,9 @@ leaves; `guards` has no edges either way.
 | `guards` | — | Size, context, cycle and UI-free ratchets; English and encoding scans. |
 | `control-handlers` | control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores | Headless-port handlers. |
 | `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
-| `stores` | chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
-| `chart` | chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model. |
+| `stores` | appearance, chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
+| `appearance` | — | Versioned colors and typography. |
+| `chart` | appearance, chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model. |
 | `indicator-session` | pine, indicators, engine | Source binding, batches, deltas. |
 | `anchored-studies` | indicators, engine | Resumable profile and anchored-average state; the caller schedules and paints. |
 | `pine` | indicators | "Quantick Pine", a Pine v5 subset; zero external dependencies. |
@@ -41,7 +41,7 @@ leaves; `guards` has no edges either way.
 | `feed` | feed-*, sources, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port, its adapters, session export. Owns runtimes, threads, clock. |
 | `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook, sources | Produce trades. |
 | `sources` | engine | Feed config vocabulary and the history reach, below `feed`. |
-| `orderflow` | engine, orderbook | Liquidity history, grouping, timeline, settled/live heatmap projections. Told the time. |
+| `orderflow` | appearance, engine, orderbook | Liquidity history, grouping, timeline and heatmaps. Told the time. |
 | `engine` | — | Trades in, bars out. Deterministic, no clock. |
 | `orderbook` | — | L2 book core: validated snapshots, absolute level updates, update-id continuity. |
 | `control` | — | Control-plane contracts and the published `fake` host/client ports. |

@@ -5,8 +5,9 @@
 
 use eframe::egui;
 use quantick_orderbook::BookLevel;
+use quantick_orderflow::config::theme::PaletteChoice;
 use quantick_orderflow::engine::BookPublished;
-use quantick_orderflow::{DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode};
+use quantick_orderflow::{DisplayGrouping, HeatmapConfig, IntensityMode};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -22,15 +23,11 @@ impl LiquidityRangesSection<'_> {
             ui.strong("liquidity ranges");
             ui.add_space(8.0);
             egui::ComboBox::from_id_salt("heatmap_theme")
-                .selected_text(theme_label(config.theme))
+                .selected_text(config.palette.label())
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut config.theme, HeatmapTheme::Bookmap, "Bookmap");
-                    ui.selectable_value(
-                        &mut config.theme,
-                        HeatmapTheme::HighContrast,
-                        "High contrast",
-                    );
-                    ui.selectable_value(&mut config.theme, HeatmapTheme::ColorBlind, "Color blind");
+                    for choice in PaletteChoice::SELECTABLE {
+                        ui.selectable_value(&mut config.palette, choice, choice.label());
+                    }
                 });
         });
 
@@ -293,14 +290,6 @@ impl BookHealthSection<'_> {
             "effective range {} · {}× base",
             health.effective_grouping, health.effective_grouping_multiple
         ));
-    }
-}
-
-fn theme_label(theme: HeatmapTheme) -> &'static str {
-    match theme {
-        HeatmapTheme::Bookmap => "Bookmap",
-        HeatmapTheme::HighContrast => "High contrast",
-        HeatmapTheme::ColorBlind => "Color blind",
     }
 }
 

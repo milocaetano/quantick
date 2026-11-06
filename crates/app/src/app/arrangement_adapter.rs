@@ -239,7 +239,11 @@ impl ArrangementAdapter<'_> {
         #[cfg(any(feature = "scenario-harness", test))]
         {
             if self.harness.footprint() {
-                self.active_tab_mut().flow_pane.footprint.visible = true;
+                self.active_tab_mut()
+                    .flow_pane
+                    .presentation
+                    .footprint
+                    .visible = true;
             }
             if let Some(px) = self.harness.candle_width() {
                 self.active_tab_mut()
@@ -435,6 +439,7 @@ impl ArrangementRead<'_> {
 /// One tab as the desk records it, apart from the workspace book's two fields.
 pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
     ui_state::SavedTab {
+        candle_styles: tab.candle_styles(),
         feed: tab.feed_id.clone(),
         symbol: tab.symbol.clone(),
         layout: tab.layout.into(),

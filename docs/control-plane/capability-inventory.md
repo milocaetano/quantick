@@ -38,6 +38,7 @@ capability that cannot change application state.
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.trend_line.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `appearance.apply` | 1 | `appearance` | no | `cockpit`, `cockpit.layout` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
 | `catalog.remove` | 1 | `catalog` | no | `cockpit`, `cockpit.desk` |
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
@@ -144,4 +145,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-119 capabilities registered.
+120 capabilities registered.

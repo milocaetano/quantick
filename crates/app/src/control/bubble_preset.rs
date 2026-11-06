@@ -6,11 +6,12 @@ use quantick_control_handlers::bubble_preset::{BubblePresetPort, PresetApplied};
 use quantick_control_schema::bubble_preset::{ApplyInput, ListInput, ListResult};
 impl BubblePresetPort for dyn ControlPort {
     fn apply_bubble_preset(&mut self, input: &ApplyInput, spheres: bool) -> PresetApplied {
+        let appearance = self.appearance().orderflow;
         let owner = pane(self, input.tab_id, input.pane_id)?
             .orderflow
             .as_mut()
             .ok_or_else(|| invalid("The pane has no order-flow view"))?;
-        let applied = owner.apply_named_preset(&input.preset, spheres);
+        let applied = owner.apply_named_preset_with(&input.preset, spheres, &appearance);
         let changed = applied.map_err(invalid)?;
         Ok(quantick_control_schema::bubble_preset::applied(
             input,

@@ -313,10 +313,10 @@ impl OrderflowPane for OrderflowPaneRead<'_> {
         self.pane.id
     }
     fn footprint_visible(&self) -> bool {
-        self.pane.footprint.visible
+        self.pane.presentation.footprint.visible
     }
     fn footprint_overridden(&self) -> bool {
-        self.pane.footprint.config.is_own()
+        self.pane.presentation.footprint.config.is_own()
     }
     fn footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
         self.pane.footprint_config(self.window)

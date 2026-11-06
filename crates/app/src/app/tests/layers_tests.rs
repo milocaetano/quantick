@@ -1,6 +1,30 @@
 use super::*;
 use crate::drawings::StyleColor32;
 
+#[test]
+fn stale_grid_menu_target_does_not_redirect_to_the_focused_chart() {
+    let (mut app, _events, _commands, _book) = test_app();
+    let before = app.runtime.style_revision;
+    let actions = &mut app.runtime.workspace.layers_mut().actions;
+    actions.grid = Some(false);
+    actions.grid_pane = Some(u64::MAX);
+    app.layer_wiring().apply_actions();
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .layer_switched_on(ChartLayer::Grid, &app.runtime.style)
+    );
+    assert_eq!(app.runtime.style_revision, before);
+    app.runtime.workspace.layers_mut().actions.grid = Some(false);
+    app.layer_wiring().apply_actions();
+    assert!(
+        !app.active_tab()
+            .flow_pane
+            .layer_switched_on(ChartLayer::Grid, &app.runtime.style)
+    );
+    assert!(app.runtime.style_revision > before);
+}
+
 /// Restoring saved layers writes the tape's switch alone: the saved share and the
 /// market's hold stay, and an old file's closed tape, waiting for this very restore,
 /// survives it.
@@ -196,7 +220,7 @@ fn layer_visibility_survives_a_restart() {
     for (layer, expected) in [
         (ChartLayer::Crosshair, false),
         (ChartLayer::PaperTrading, false),
-        (ChartLayer::Grid, false),
+        (ChartLayer::Grid, true),
         (ChartLayer::Heatmap, true),
         (ChartLayer::Bubbles, true),
         (ChartLayer::LastPrice, true),
@@ -282,7 +306,11 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
     let (mut app, _commands) = app_with_history(120);
     // The state a shipped default leaves behind: the ladder on, before the
     // second pane exists at all.
-    app.active_tab_mut().flow_pane.footprint.visible = true;
+    app.active_tab_mut()
+        .flow_pane
+        .presentation
+        .footprint
+        .visible = true;
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     // One frame builds the time pane; that is the frame under test.
     run_frame(&mut app, &ctx);
@@ -291,7 +319,7 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
         .time_pane()
         .expect("the split is what this proof is about");
     assert!(
-        time.footprint.visible,
+        time.presentation.footprint.visible,
         "the time pane opened without the ladder the flow pane beside it is drawing"
     );
 }

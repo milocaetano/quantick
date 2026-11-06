@@ -82,7 +82,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         snapshot,
     )?;
     registry.register_scope(SnapshotScopeId::new(SCOPE_ID).expect("static scope ID"), module, 1,
-        "Layer visibility", "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid is window-wide.",
+        "Layer visibility", "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid belongs to each pane.",
         &["observe", "observe.workspace", "observe.market"], project)
 }
 
