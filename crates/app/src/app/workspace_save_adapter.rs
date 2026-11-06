@@ -154,8 +154,10 @@ impl WorkspaceSaveAdapter<'_> {
         saved
     }
     /// Write the desk's `auto_save` alone; `true` once it reached the disk.
-    pub(super) fn write_auto_save(&mut self, on: bool) -> bool {
-        self.edit_workspace_file("UI_STATE_AUTOSAVE_WRITTEN", DocumentEdit::AutoSave(on))
+    pub(super) fn write_auto_save(&mut self, on: bool) -> Result<(), String> {
+        (self.edit_workspace_file("UI_STATE_AUTOSAVE_WRITTEN", DocumentEdit::AutoSave(on)))
+            .then_some(())
+            .ok_or_else(|| "the desk file was not written".to_owned())
     }
     /// Write the file's standing choices, `save_on_exit` among them, leaving the
     /// saved arrangement exactly as it was.

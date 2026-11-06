@@ -6,10 +6,9 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "What a revert did.",
+  "description": "What the removed revert would have answered; it now always refuses.",
   "properties": {
     "changed": {
-      "description": "`false` when the tab held no edits.",
       "type": "boolean"
     },
     "tab_id": {

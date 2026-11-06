@@ -128,6 +128,16 @@ impl WorkspaceBookStore {
         &mut self.book
     }
 
+    /// Whether layout edits are written through as they are made.
+    #[must_use]
+    pub fn autosave(&self) -> bool {
+        self.book.autosave()
+    }
+    /// Turn autosave on or off, as the desk file says.
+    pub fn set_autosave(&mut self, on: bool) {
+        self.book.set_autosave(on);
+    }
+
     /// What the snapshot and the chip read for a tab: a tab the book has not met
     /// is on `Default`, clean, as a new tab is.
     #[must_use]

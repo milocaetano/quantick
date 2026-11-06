@@ -176,11 +176,8 @@ fn apply_recipe_canvas(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe)
     let Some(tab) = app.runtime.tabs.by_id_mut(id) else {
         return;
     };
-    // The timeframe is the market's: each pane keeps its own interval.
-    let bars: Vec<String> = (tab.panes())
-        .filter(|(_, side)| *side != PaneSide::Flow)
-        .map(|(pane, _)| pane.state.spec().to_config_string())
-        .collect();
+    // The timeframe stays the tab's: each pane keeps its own interval.
+    let bars = super::arrangement_adapter::saved_tab_of(tab).context_bars;
     let intervals = super::saved_context_intervals(&bars, None);
     let legends = LegendFold {
         flow: tab.flow_pane.legend_collapsed,

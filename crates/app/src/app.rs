@@ -51,6 +51,7 @@ mod layout_wiring;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod home_wiring;
 mod menu_bar;
+pub(crate) use menu_bar::SAVE_TO_WORKSPACE_SHORTCUT;
 pub(crate) mod native_windows;
 pub(crate) mod paper_wiring;
 mod replay_and_history;

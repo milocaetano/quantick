@@ -18940,6 +18940,126 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Closes one tab. With autosave on its edits were written already and it closes at once. With autosave off and edits held, a call without save refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and closes nothing; save true writes the edits first, save false drops them. The window's last tab refuses with workspace.last_tab.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "tab.close",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Close a market tab.",
+        "properties": {
+          "save": {
+            "description": "What to do with held edits: `true` saves them to the workspace first,\n`false` drops them. Left out on a tab holding edits, nothing closes.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab. Left out, the one on screen."
+          }
+        },
+        "title": "TabCloseInput",
+        "type": "object"
+      },
+      "module": "tab",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceSaveResult": {
+            "description": "What a save did.",
+            "properties": {
+              "changed": {
+                "description": "`false` for a repeat, which writes nothing.",
+                "type": "boolean"
+              },
+              "tabs_changed": {
+                "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "type": "array"
+              },
+              "workspace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "workspace",
+              "changed",
+              "tabs_changed"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The tab that closed, and the save made first when asked.",
+        "properties": {
+          "saved": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkspaceSaveResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "title": "TabCloseResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A closed tab is gone, so a repeat names an unknown tab and is refused with workspace.unknown_tab; nothing else closes.",
+      "title": "Close a market tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Puts the tab on a configured feed and symbol, as the toolbar's market button and the Open a market palette's switch mode do. It is feed.source.set under the tab's market names: the same checks, the same switch and the same `feed.source.changed` journal row naming the caller. The tab keeps its workspace and pane layout; each market keeps its own drawings, so switching back shows the first market's again. Refuses while replay owns the tab and for a pair feed.status.sources does not list. Repeating the market the tab shows is a no-op. Requires cockpit.recover like feed.source.set.",
       "destructive": false,
       "dry_run_supported": false,
@@ -20401,6 +20521,111 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; no tab reads as modified. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once and answers each save. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 4096
+      },
+      "id": "workspace.autosave.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Turn \"auto save layout changes\" on or off.",
+        "properties": {
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "title": "WorkspaceAutosaveInput",
+        "type": "object"
+      },
+      "module": "workspace",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "WorkspaceSaveResult": {
+            "description": "What a save did.",
+            "properties": {
+              "changed": {
+                "description": "`false` for a repeat, which writes nothing.",
+                "type": "boolean"
+              },
+              "tabs_changed": {
+                "description": "The other tabs whose charts followed the new recipe. A tab with edits\nof its own keeps them and is not listed.",
+                "items": {
+                  "$ref": "#/$defs/WireU64"
+                },
+                "type": "array"
+              },
+              "workspace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "workspace",
+              "changed",
+              "tabs_changed"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The setting as it now stands, and the saves turning it on made at once.",
+        "properties": {
+          "auto_save": {
+            "type": "boolean"
+          },
+          "changed": {
+            "description": "`false` for a repeat, which writes nothing.",
+            "type": "boolean"
+          },
+          "saved": {
+            "description": "One per tab that held edits when autosave turned on.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceSaveResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "auto_save",
+          "changed",
+          "saved"
+        ],
+        "title": "WorkspaceAutosaveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.desk"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the state it wants, so a repeat writes nothing and answers changed false.",
+      "title": "Turn auto save layout changes on or off",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Deletes a workspace and moves the tabs on it to Default. A tab with unsaved edits keeps them, marked Default •. Default cannot be deleted.",
       "destructive": false,
       "dry_run_supported": false,
@@ -20732,7 +20957,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Puts the tab back on its workspace's saved recipe. The edits do not come back.",
+      "description": "Revert is gone. Every call refuses with workspace.revert_removed, naming workspace.save_to to keep edits and workspace.autosave.set to write them as they are made. A switch with tab.workspace.set drops held edits.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -20778,10 +21003,9 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "What a revert did.",
+        "description": "What the removed revert would have answered; it now always refuses.",
         "properties": {
           "changed": {
-            "description": "`false` when the tab held no edits.",
             "type": "boolean"
           },
           "tab_id": {
@@ -20810,8 +21034,8 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "A repeat finds no edits and answers changed false.",
-      "title": "Drop a tab's unsaved edits",
+      "stale_input_safety": "Always refuses; nothing changes.",
+      "title": "Removed: always refuses",
       "version": 1
     },
     {
@@ -27505,6 +27729,11 @@
           },
           "active_tab_index": {
             "$ref": "#/$defs/WireU64"
+          },
+          "auto_save": {
+            "default": true,
+            "description": "Whether layout edits are written into the tab's workspace as they are\nmade (`workspace.autosave.set`). Absent from an older answer: on.",
+            "type": "boolean"
           },
           "focused_window_id": {
             "anyOf": [

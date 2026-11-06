@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 63 |
+| deduplicated per connection | 65 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **96** |
+| **Total** | **98** |
 
 ## Capabilities
 
@@ -203,6 +203,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `session.journal.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.journal.changed` | `payload.journal_session` | an event after the pre-call cursor names the session and the name or tags, or the ledger view, the call asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `session.pnl_display.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.pnl_display.changed` | `payload.pnl_display.primary` | an event after the pre-call cursor carries the requested mode as `primary` | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `settings.open` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `scene.controls` | `controls[].selected` | the asked section's settings.section control is listed and selected | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `tab.close` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.tab_closed` | `payload.tab_id` | an event after the pre-call cursor names the closed tab | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `tab.market.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].active_symbol` | the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the market changed and not otherwise | `a_market_switch_moves_the_button_chip_and_status_cell_together`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `tab.workspace.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.tab_set` | `payload.workspace` | an event after the pre-call cursor names the requested workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `trade.instrument.set_money` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `events.read` `trade.ticket.changed` | `payload.asked` | an event after the pre-call cursor carries the caller's input as `asked` | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
@@ -212,11 +213,12 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.risk.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].risk_state` | the ticket's risk state follows the basis asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
+| `workspace.autosave.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.autosave_set` | `payload.auto_save` | an event after the pre-call cursor carries the requested state | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.delete` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.deleted` | `payload.workspace` | an event after the pre-call cursor names the deleted workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.new` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.created` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.rename` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.renamed` | `payload.workspace` | an event after the pre-call cursor carries the new name | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
-| `workspace.revert` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.reverted` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `workspace.revert` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.reverted` | `payload.workspace` | no event: every call refuses with workspace.revert_removed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-96 mutable capabilities registered, 96 with a readback.
+98 mutable capabilities registered, 98 with a readback.

@@ -408,6 +408,14 @@ pub const READBACKS: &[Readback] = &[
         &[EVERY_OPTIONAL_TEST],
     ),
     journal(
+        WORKSPACE_REVERT_CAPABILITY_ID,
+        IdempotencyPolicy::Optional,
+        WORKSPACE_REVERTED_EVENT_KIND,
+        "payload.workspace",
+        "no event: every call refuses with workspace.revert_removed",
+        &[EVERY_OPTIONAL_TEST],
+    ),
+    journal(
         WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
         IdempotencyPolicy::Optional,
         WORKSPACE_AUTOSAVE_SET_EVENT_KIND,

@@ -1,7 +1,7 @@
 //! The market settings document at its resolved path, under the commit policy.
 use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
-    market_settings::{MARKET_SETTINGS_FILE, MarketSettings},
+    market_settings::{DrawingKey, MARKET_SETTINGS_FILE, MarketSettings},
 };
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -11,8 +11,14 @@ use std::time::Instant;
 pub type AssetResolver = Rc<dyn Fn(&str, &str) -> String>;
 
 /// The per-market document, and the one rule that decides when it reaches disk.
+///
+/// With autosave off the store is *held*: drawings and anchored studies change
+/// in memory and wait for Save ([`Self::take_commit`]); `saved` is what the
+/// file holds, so a held change can be counted and dropped.
 pub struct MarketSettingsStore {
     settings: MarketSettings,
+    saved: MarketSettings,
+    held: bool,
     path: PathBuf,
     policy: LayoutCommitPolicy,
     asset: AssetResolver,
@@ -24,7 +30,9 @@ impl MarketSettingsStore {
     #[must_use]
     pub fn new(settings: MarketSettings, path: PathBuf, blocked: bool) -> Self {
         Self {
+            saved: settings.clone(),
             settings,
+            held: false,
             path,
             policy: LayoutCommitPolicy::new(blocked),
             asset: Rc::new(|_, symbol| symbol.to_owned()),
@@ -70,6 +78,7 @@ impl MarketSettingsStore {
 
     /// Replace the document wholesale — an imported bundle landing.
     pub fn set_settings(&mut self, settings: MarketSettings) {
+        self.saved = settings.clone();
         self.settings = settings;
     }
 
@@ -97,14 +106,73 @@ impl MarketSettingsStore {
     pub fn mark_changed(&mut self, now: Instant) {
         self.policy.mark_changed(now);
     }
+    /// The debounced write; nothing while held.
     pub fn take_save(&mut self, now: Instant) -> LayoutSave {
-        self.policy.take_save(now)
+        if self.held {
+            return LayoutSave::Wait;
+        }
+        let save = self.policy.take_save(now);
+        self.note_written(save)
     }
+    /// The write on exit or before an export; nothing while held.
     pub fn take_flush(&mut self) -> LayoutSave {
-        self.policy.take_flush()
+        if self.held {
+            return LayoutSave::Wait;
+        }
+        self.take_commit()
+    }
+    /// Save: the write now, held or not.
+    pub fn take_commit(&mut self) -> LayoutSave {
+        let save = self.policy.take_flush();
+        self.note_written(save)
+    }
+    fn note_written(&mut self, save: LayoutSave) -> LayoutSave {
+        if save == LayoutSave::Write {
+            self.saved = self.settings.clone();
+        }
+        save
+    }
+
+    /// Hold writes until Save (autosave off), or let them through.
+    pub fn set_held(&mut self, held: bool) {
+        self.held = held;
+    }
+    #[must_use]
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+
+    /// How many drawings on `keys` wait for Save; none unless held.
+    #[must_use]
+    pub fn held_changes<'a>(&self, keys: impl IntoIterator<Item = &'a DrawingKey>) -> usize {
+        if !self.held {
+            return 0;
+        }
+        keys.into_iter()
+            .map(|key| self.settings.drawing_changes(&self.saved, key))
+            .sum()
+    }
+
+    /// Close without saving: put every key in `closed` that no pane in `open`
+    /// still shows back to the file's version. Once nothing differs, nothing is
+    /// owed. Answers whether anything was dropped.
+    pub fn discard(&mut self, closed: &[DrawingKey], open: &[DrawingKey], now: Instant) -> bool {
+        let mut dropped = false;
+        for key in closed.iter().filter(|key| !open.contains(key)) {
+            dropped |= self.settings.drawing_changes(&self.saved, key) > 0;
+            self.settings.restore(&self.saved, key);
+        }
+        if self.settings == self.saved {
+            self.policy.settle(false, now);
+        }
+        dropped
     }
     #[must_use]
     pub fn is_dirty(&self) -> bool {
         self.policy.is_dirty()
     }
 }
+
+#[cfg(test)]
+#[path = "market_settings_store_tests.rs"]
+mod tests;

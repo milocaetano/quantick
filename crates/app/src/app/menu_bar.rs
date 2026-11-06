@@ -94,7 +94,7 @@ const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::
     egui::Key::S,
 );
 /// Saves the active tab's edits to its workspace; with none it does nothing.
-pub(super) const SAVE_TO_WORKSPACE_SHORTCUT: egui::KeyboardShortcut =
+pub(crate) const SAVE_TO_WORKSPACE_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
 /// Opens the status bar cell's workspace menu. Not Alt: Alt is the sell
 /// modifier.

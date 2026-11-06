@@ -201,6 +201,25 @@ impl MarketSettings {
         self.drawings.iter().map(|set| set.items.len()).sum()
     }
 
+    /// How many of `key`'s drawings differ from `saved`'s: added, removed or
+    /// changed, whichever side counts more.
+    #[must_use]
+    pub fn drawing_changes(&self, saved: &Self, key: &DrawingKey) -> usize {
+        let (now, then) = (self.drawings(key), saved.drawings(key));
+        let gone = then.iter().filter(|entry| !now.contains(entry)).count();
+        let new = now.iter().filter(|entry| !then.contains(entry)).count();
+        gone.max(new)
+    }
+
+    /// Put `key`'s drawings back to what `saved` holds.
+    pub fn restore(&mut self, saved: &Self, key: &DrawingKey) {
+        self.drawings.retain(|set| !set.is(key));
+        let items = saved.drawings(key).to_vec();
+        if !items.is_empty() {
+            self.insert(key, items);
+        }
+    }
+
     /// Every key the store holds drawings for, in key order.
     pub fn keys(&self) -> impl Iterator<Item = DrawingKey> + '_ {
         self.drawings.iter().map(DrawingSet::key)

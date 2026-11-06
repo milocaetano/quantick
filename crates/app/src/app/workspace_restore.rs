@@ -138,10 +138,7 @@ impl ArrangementAdapter<'_> {
             .prune_private(named, std::time::Instant::now());
     }
     fn adopt_workspace_settings(&mut self, workspace: &ui_state::Workspace) {
-        self.workspace
-            .book
-            .book_mut()
-            .set_autosave(workspace.auto_save);
+        self.workspace.book.set_autosave(workspace.auto_save);
         self.workspace.session_mut().adopt(
             workspace.save_on_exit,
             workspace.saved.clone(),

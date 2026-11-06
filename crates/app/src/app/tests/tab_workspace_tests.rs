@@ -18,6 +18,9 @@ fn two_tabs(layouts: &crate::scratch::ScratchFile) -> (QuantickApp, u64, u64) {
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
     let (first, second) = (app.runtime.tabs.id_at(0), app.runtime.tabs.id_at(1));
     run_frame(&mut app, &egui::Context::default());
+    // Held edits are what these tests read: autosave off, as the trader who
+    // unticks it. `autosave_on_never_marks_an_edit` covers the default.
+    app.runtime.workspace.book.book_mut().set_autosave(false);
     (app, first, second)
 }
 
@@ -217,7 +220,7 @@ fn a_first_run_leaves_tabs_unmodified_with_the_recipe_equal_to_what_they_show() 
         let store = &app.runtime.workspace.book;
         let state = store.book().tab_state(tab).expect("seeded");
         assert!(!state.modified, "a seeded tab reads as clean");
-        assert!(state.workspace.starts_with("from "));
+        assert!(!state.workspace.starts_with("from "), "no seed prefix");
         assert_eq!(
             store.book().recipe(state.workspace),
             live_recipe(&app, tab).as_ref(),
@@ -249,6 +252,20 @@ fn chip_and_snapshot_read_one_state() {
         assert_eq!(status.modified, app.tab_workspace_row(tab).1);
     }
     assert!(app.tab_workspace_row(first).1 && !app.tab_workspace_row(second).1);
+}
+
+/// Autosave on, the default: an edit is written through, never held, so
+/// neither the book nor the status cell ever marks it.
+#[test]
+fn autosave_on_never_marks_an_edit() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-autosave-on", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.workspace.book.book_mut().set_autosave(true);
+    app.runtime.tabs.select(0);
+    edit_split(&mut app, first, 0.31);
+    frames(&mut app, 2);
+    assert!(!app.runtime.workspace.book.tab_row(first).1);
+    assert!(!app.status_model().modified);
 }
 
 #[test]
@@ -627,6 +644,7 @@ fn a_menu_switch_and_delete_journal_what_the_control_calls_do() {
 fn chip_and_status_cell_read_one_state() {
     let layouts = crate::scratch::ScratchFile::new("workspace-cell-state", "layouts.toml");
     let (mut app, first, second) = two_tabs(&layouts);
+    app.runtime.workspace.book.set_autosave(true);
     edit_split(&mut app, first, 0.31);
     assert!(
         !app.runtime.workspace.book.tab_row(first).1,

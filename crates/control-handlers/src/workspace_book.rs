@@ -58,13 +58,24 @@ pub trait WorkspaceBookHost {
     }
     /// Put a recipe on a tab's charts.
     fn show_tab_recipe(&mut self, _tab: u64, _recipe: &WorkspaceRecipe) {}
+    /// The book, for reading.
+    fn workspace_book_ref(&self) -> Option<&WorkspaceBook> {
+        None
+    }
     /// The tab's workspace and whether it holds edits, as the snapshot reads it.
-    fn tab_workspace_row(&self, _tab: u64) -> (String, bool) {
-        (DEFAULT_WORKSPACE.to_owned(), false)
+    fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
+        let state = self
+            .workspace_book_ref()
+            .and_then(|book| book.tab_state(tab));
+        state.map_or_else(
+            || (DEFAULT_WORKSPACE.to_owned(), false),
+            |state| (state.workspace.to_owned(), state.modified),
+        )
     }
     /// Whether layout edits are written through, as the snapshot reads it.
     fn workspace_autosave(&self) -> bool {
-        true
+        self.workspace_book_ref()
+            .is_none_or(WorkspaceBook::autosave)
     }
     /// The symbols of these tabs, in the order asked.
     fn tab_symbols(&self, _tabs: &[u64]) -> Vec<String> {

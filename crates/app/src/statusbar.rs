@@ -8,9 +8,12 @@
 //! timezone picker). A reading that breaches its threshold turns
 //! [`theme::WARN`]; narrow windows wrap cells without hiding their facts.
 //!
-//! The bar has two controls, both with the same raised hover: the workspace
-//! cell at the left end, which opens the tab's workspace menu upward, and the
-//! timezone picker at the right. A `Reconnect`/`Reload` pair once stood in the
+//! The bar's controls share one raised hover. At the left end the workspace
+//! cell opens the tab's workspace menu upward; while autosave is off and the
+//! tab holds edits it carries the amber mark and a `Save` pill (Ctrl+S). Right
+//! after it, a muted "auto save" check turns autosave on or off
+//! (`workspace.autosave.set`). The timezone picker sits at the right end. A
+//! `Reconnect`/`Reload` pair once stood in the
 //! provenance section, because the notice card refused to cover a working
 //! chart, and a terminal that froze mid-session left the trader nothing to
 //! press anywhere in the window. The offline chip in the chart's bottom-right
@@ -76,8 +79,6 @@ pub struct StatusModel {
     pub modified: bool,
     /// "auto save layout changes", the checkbox after the cell.
     pub autosave: bool,
-    /// The keys the Save pill's hover names.
-    pub save_shortcut: egui::KeyboardShortcut,
     /// Display name of the venue (or the session, while replaying).
     pub venue: String,
     /// The streamed symbol.
@@ -356,7 +357,9 @@ fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusR
     response.workspace_cell = Some(cell.rect);
     response.workspace_clicked = cell.clicked();
     if model.modified {
-        let keys = ui.ctx().format_shortcut(&model.save_shortcut);
+        let keys = ui
+            .ctx()
+            .format_shortcut(&crate::app::SAVE_TO_WORKSPACE_SHORTCUT);
         let pill = egui::Button::new(egui::RichText::new(text::SAVE_PILL).color(theme::AMBER))
             .rounding(SAVE_PILL_ROUNDING_PX);
         let hover = text::save_pill_hover(workspace, &keys);
@@ -817,7 +820,6 @@ mod tests {
                 workspace: None,
                 modified: false,
                 autosave: true,
-                save_shortcut: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S),
                 venue: "Binance".to_owned(),
                 symbol: "BTCUSDT".to_owned(),
                 replay: replaying.then_some(ReplayFigures {
@@ -923,7 +925,6 @@ mod tests {
             workspace: None,
             modified: false,
             autosave: true,
-            save_shortcut: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S),
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,

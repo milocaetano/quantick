@@ -458,7 +458,11 @@ fn every_journal_row_reads_a_field_the_event_carries() {
     delete(&mut host, &mut access, &actor, &json!({ "name": "Open" })).unwrap();
     edit(&mut host, 1);
     new(&mut host, &mut access, &actor, &json!({ "name": "Blank" })).unwrap();
-    for row in READBACKS {
+    // Revert only refuses now: its row names an event nothing journals.
+    for row in READBACKS
+        .iter()
+        .filter(|row| row.capability != "workspace.revert")
+    {
         let kind = row.event.unwrap();
         let field = row.field.strip_prefix("payload.").unwrap();
         assert!(
