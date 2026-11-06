@@ -137,7 +137,7 @@ impl ThemeDocument {
                 {
                     colors[Token::Inset as usize]
                 }
-                None if matches!(token, Token::TabStrip | Token::Brand | Token::ReplayInk)
+                None if MODE_TOKENS.contains(&token)
                     && fallback.is_some_and(|theme| theme.dark != self.dark) =>
                 {
                     ResolvedTheme::bundled(self.dark).color(token)
@@ -209,6 +209,11 @@ impl ThemeDocument {
         Ok(resolved)
     }
 }
+
+/// The tokens an older document takes from its own mode's bundled theme.
+/// Both bundled themes write every one, so resolving Light for
+/// [`ResolvedTheme::bundled`] never asks its own lock again.
+pub(crate) const MODE_TOKENS: [Token; 3] = [Token::TabStrip, Token::Brand, Token::ReplayInk];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedTheme {

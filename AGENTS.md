@@ -25,7 +25,7 @@ Cargo workspace: `crates/`. One-way edges: `crates/guards/src/graph.rs`.
 | `control-handlers` | control*, chart*, civil, drawings, engine, orderflow, paper, replay, session, sim, sources, stores | Headless-port handlers. |
 | `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
 | `stores` | appearance, chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
-| `appearance` | workspace | Versioned colors and typography. |
+| `appearance` | — | Versioned colors and typography. |
 | `chart` | appearance, chart-interaction, civil, orderflow, indicator-session, indicators, engine, workspace | Chart model. |
 | `indicator-session` | pine, indicators, engine | Source binding, batches, deltas. |
 | `anchored-studies` | indicators, engine | Resumable profile and anchored-average state; the caller schedules and paints. |

@@ -39,6 +39,9 @@ pub fn home_label_fits(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabFeed {
     Live,
+    /// Connected, but the venue reports a failure behind the open socket, such
+    /// as a terminal closed: the canvas shows the notice, so the tab is not live.
+    Attention,
     /// Playing a recording; the tab also says so in words.
     Replay,
     /// A live session was lost and has not come back.
@@ -48,14 +51,15 @@ pub enum TabFeed {
 }
 
 impl TabFeed {
-    /// A recording wins. A connected feed stays live even while a venue notice
-    /// asks for attention: only a feed that is not connected and needs
-    /// attention reads as lost, so a live feed is never labelled as gone.
+    /// A recording wins. A connected feed that needs attention is neither live
+    /// nor lost: its socket is open while its venue reports a failure. Only a
+    /// feed that is not connected and needs attention reads as lost.
     #[must_use]
     pub const fn of(replaying: bool, connected: bool, attention: bool) -> Self {
         match (replaying, connected, attention) {
             (true, _, _) => Self::Replay,
-            (false, true, _) => Self::Live,
+            (false, true, false) => Self::Live,
+            (false, true, true) => Self::Attention,
             (false, false, true) => Self::Disconnected,
             (false, false, false) => Self::Stopped,
         }
@@ -354,12 +358,12 @@ mod tests {
     }
 
     #[test]
-    fn a_recording_wins_and_only_a_lost_feed_reads_as_disconnected() {
+    fn a_recording_wins_and_a_venue_notice_is_neither_live_nor_lost() {
         assert_eq!(TabFeed::of(true, false, true), TabFeed::Replay);
         assert_eq!(TabFeed::of(true, true, false), TabFeed::Replay);
         assert_eq!(TabFeed::of(false, true, false), TabFeed::Live);
-        // A venue notice on a connected feed: still live, never "lost".
-        assert_eq!(TabFeed::of(false, true, true), TabFeed::Live);
+        // A venue notice on a connected feed: neither live nor "lost".
+        assert_eq!(TabFeed::of(false, true, true), TabFeed::Attention);
         assert_eq!(TabFeed::of(false, false, true), TabFeed::Disconnected);
         assert_eq!(TabFeed::of(false, false, false), TabFeed::Stopped);
     }
@@ -368,6 +372,7 @@ mod tests {
     fn only_a_recording_is_named_in_words() {
         let all = [
             TabFeed::Live,
+            TabFeed::Attention,
             TabFeed::Replay,
             TabFeed::Disconnected,
             TabFeed::Stopped,

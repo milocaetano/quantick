@@ -314,7 +314,7 @@ fn the_strip_and_its_tabs_paint_each_themes_tokens() {
         let tab = app.active_tab();
         let connected = tab.feed_connection == quantick_feed::FeedConnectionState::Connected;
         let feed = TabFeed::of(tab.replay.is_some(), connected, tab.needs_attention());
-        let ink = palette.color(feed_token(feed));
+        let ink = palette.color(feed_token(crate::tabstrip::feed_mark(feed)));
         let marked = output.shapes.iter().any(|clipped| match &clipped.shape {
             egui::Shape::Circle(circle) => {
                 chip.contains(circle.center) && (circle.fill == ink || circle.stroke.color == ink)

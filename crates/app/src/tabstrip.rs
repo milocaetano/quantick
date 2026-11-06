@@ -5,7 +5,7 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
-use quantick_appearance::tab_strip::{MarkShape, feed_shape, feed_token, tab_fill, tab_ink};
+use quantick_appearance::tab_strip::{FeedMark, MarkShape, feed_shape, feed_token, tab_ink};
 use quantick_session::tab_chip::{ChipMeasure, CloseSlot, close_slot, fit_chip, shortened_name};
 use quantick_workspace::arrangement::strip::{
     StripSurface, TabFeed, chip_parts, home_label_fits, market_slots, visible_tabs,
@@ -114,11 +114,7 @@ pub(crate) fn draw(
     ui.spacing_mut().item_spacing.x = if compact { 2.0 } else { 4.0 };
     ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 4.0);
     ui.spacing_mut().interact_size.y = CHIP_HEIGHT;
-    let controls_width = if compact {
-        56.0
-    } else {
-        STRIP_CONTROLS_WIDTH_PX
-    };
+    let controls_width = [STRIP_CONTROLS_WIDTH_PX, 56.0][usize::from(compact)];
     let close_reserve = CLOSE_HIT_WIDTH_PX + CHIP_RIGHT_PADDING_PX;
     let label = home_label(ui);
     let after_q = label.iter().map(|galley| galley.size().x).sum::<f32>() + HOME_LOGO_GAP_PX;
@@ -136,19 +132,11 @@ pub(crate) fn draw(
     // The separator after the last unlit tab, dropped if the next one lights.
     let mut separator = None;
     let active_chip = surface.active_chip(active);
-    let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32).clamp(
-        if compact {
-            CHIP_COMPACT_MIN_WIDTH_PX
-        } else {
-            CHIP_MIN_WIDTH_PX
-        },
-        CHIP_MAX_WIDTH_PX,
-    );
-    for (index, chip) in chips
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| visible.contains(index))
-    {
+    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
+    let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
+        .clamp(floor, CHIP_MAX_WIDTH_PX);
+    for index in visible.clone() {
+        let chip = &chips[index];
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = active_chip == Some(index);
             let surface = ui.painter().add(egui::Shape::Noop);
@@ -295,13 +283,9 @@ fn paint_chip_face(
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let center_y = body.center().y;
     let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
-    let feed_ink = *palette.get(feed_token(chip.feed));
-    paint_feed_mark(
-        &painter,
-        egui::pos2(dot_x, center_y),
-        feed_shape(chip.feed),
-        feed_ink,
-    );
+    let mark = feed_mark(chip.feed);
+    let feed_ink = *palette.get(feed_token(mark));
+    paint_feed_mark(&painter, egui::pos2(dot_x, center_y), mark, feed_ink);
     let (symbol, _venue_on_hover) = chip_parts(chip.label);
     let ink = *palette.get(tab_ink(lit));
     let text_x = dot_x + CHIP_DOT_RADIUS_PX + CHIP_DOT_GAP_PX;
@@ -355,14 +339,30 @@ fn paint_chip_face(
     }
 }
 
-/// A dot, a play triangle or a hollow ring: the state survives without colour.
-fn paint_feed_mark(painter: &egui::Painter, at: egui::Pos2, shape: MarkShape, ink: egui::Color32) {
+/// The workspace's feed state as the theme's mark.
+pub(crate) const fn feed_mark(feed: TabFeed) -> FeedMark {
+    match feed {
+        TabFeed::Live => FeedMark::Live,
+        TabFeed::Attention => FeedMark::Attention,
+        TabFeed::Replay => FeedMark::Replay,
+        TabFeed::Disconnected => FeedMark::Lost,
+        TabFeed::Stopped => FeedMark::Stopped,
+    }
+}
+
+/// A dot, a diamond, a play triangle or a hollow ring: the state survives without colour.
+fn paint_feed_mark(painter: &egui::Painter, at: egui::Pos2, mark: FeedMark, ink: egui::Color32) {
     let r = CHIP_DOT_RADIUS_PX;
-    let tip = [(-r, -r), (r, 0.0), (-r, r)].map(|(x, y)| at + egui::vec2(x, y));
-    painter.add(match shape {
+    // Corners in radii; the diamond's 1.25 gives it about the dot's area.
+    let fill = |unit: &[(f32, f32)]| {
+        let points = unit.iter().map(|&(x, y)| at + r * egui::vec2(x, y));
+        egui::Shape::convex_polygon(points.collect(), ink, egui::Stroke::NONE)
+    };
+    painter.add(match feed_shape(mark) {
         MarkShape::Dot => egui::Shape::circle_filled(at, r, ink),
+        MarkShape::Diamond => fill(&[(0.0, -1.25), (1.25, 0.0), (0.0, 1.25), (-1.25, 0.0)]),
         MarkShape::Ring => egui::Shape::circle_stroke(at, r - 0.5, (1.0, ink)),
-        MarkShape::Triangle => egui::Shape::convex_polygon(tip.into(), ink, egui::Stroke::NONE),
+        MarkShape::Triangle => fill(&[(-1.0, -1.0), (1.0, 0.0), (-1.0, 1.0)]),
     });
 }
 
@@ -436,7 +436,7 @@ fn paint_tab_surface(
     let painter = ui.painter();
     let mut rect = bounds;
     rect.max.y = ui.max_rect().bottom();
-    let fill = tab_fill(selected, hovered || focused);
+    let fill = quantick_appearance::tab_strip::tab_fill(selected, hovered || focused);
     if let Some(fill) = fill {
         // Only the active tab is outlined, and its outline runs past the
         // strip's floor, where the clip drops the bottom edge: the tab and the

@@ -56,8 +56,7 @@ use crate::Finding;
 /// same shape in prose and in a diagram, for a reader; this is the copy a
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
-    // `workspace` for the tab feed state the strip's marks are painted for.
-    ("appearance", &["workspace"]),
+    ("appearance", &[]),
     ("anchored-studies", &["engine", "indicators"]),
     // Queue discipline and progress counts between an owner and a worker;
     // told the time, and whether the worker unwound.

@@ -692,3 +692,16 @@ fn chip_ink_reads_on_amber_in_both_themes() {
         assert!(ratio >= 4.5, "{}: {ratio}", theme.name);
     }
 }
+
+/// `ResolvedTheme::bundled(false)` resolves Light inside its own lock: a mode
+/// token a bundled theme left out would re-enter that lock at runtime.
+#[test]
+fn bundled_themes_write_every_mode_token() {
+    for source in [DARK, LIGHT] {
+        let theme = ThemeDocument::parse(source).unwrap();
+        for token in document::MODE_TOKENS {
+            let key = token.key();
+            assert!(theme.colors.contains_key(key), "{}: {key}", theme.name);
+        }
+    }
+}

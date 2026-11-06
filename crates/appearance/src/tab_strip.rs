@@ -1,35 +1,49 @@
 //! The market tab strip's colour decisions, so every painter of a tab reads
 //! the same answer (`docs/ux/layout-appearance-2026-11-06`).
 use crate::Token;
-use quantick_workspace::arrangement::strip::TabFeed;
+
+/// The mark beside a tab's symbol. Which one a tab wears is the caller's
+/// rule (`quantick_workspace`'s tab feed state); this is only how it looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedMark {
+    Live,
+    /// Connected while the venue reports a failure.
+    Attention,
+    Replay,
+    /// A live session was lost.
+    Lost,
+    Stopped,
+}
 
 /// The mark's shape: the state survives without its colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkShape {
     Dot,
+    Diamond,
     Triangle,
     Ring,
 }
 
-/// The mark a feed state wears: its shape and its ink. Which state a tab is
-/// in is `quantick_workspace`'s rule; this is only how it looks.
+/// The mark's shape: attention's filled diamond is neither live's dot nor
+/// lost's hollow ring, though it shares the ring's ink.
 #[must_use]
-pub const fn feed_shape(feed: TabFeed) -> MarkShape {
-    match feed {
-        TabFeed::Live => MarkShape::Dot,
-        TabFeed::Replay => MarkShape::Triangle,
-        TabFeed::Disconnected | TabFeed::Stopped => MarkShape::Ring,
+pub const fn feed_shape(mark: FeedMark) -> MarkShape {
+    match mark {
+        FeedMark::Live => MarkShape::Dot,
+        FeedMark::Attention => MarkShape::Diamond,
+        FeedMark::Replay => MarkShape::Triangle,
+        FeedMark::Lost | FeedMark::Stopped => MarkShape::Ring,
     }
 }
 
 /// Amber is not here: on a tab it means unsaved edits.
 #[must_use]
-pub const fn feed_token(feed: TabFeed) -> Token {
-    match feed {
-        TabFeed::Live => Token::BuyInk,
-        TabFeed::Replay => Token::ReplayInk,
-        TabFeed::Disconnected => Token::Warn,
-        TabFeed::Stopped => Token::TextFaint,
+pub const fn feed_token(mark: FeedMark) -> Token {
+    match mark {
+        FeedMark::Live => Token::BuyInk,
+        FeedMark::Replay => Token::ReplayInk,
+        FeedMark::Attention | FeedMark::Lost => Token::Warn,
+        FeedMark::Stopped => Token::TextFaint,
     }
 }
 
@@ -62,11 +76,16 @@ mod tests {
     #[test]
     fn each_feed_state_has_its_own_shape_or_colour() {
         let all = [
-            TabFeed::Live,
-            TabFeed::Replay,
-            TabFeed::Disconnected,
-            TabFeed::Stopped,
+            FeedMark::Live,
+            FeedMark::Attention,
+            FeedMark::Replay,
+            FeedMark::Lost,
+            FeedMark::Stopped,
         ];
+        // Attention is told from live and from lost by shape alone.
+        for other in [FeedMark::Live, FeedMark::Lost] {
+            assert_ne!(feed_shape(FeedMark::Attention), feed_shape(other));
+        }
         for (index, a) in all.iter().enumerate() {
             for b in &all[index + 1..] {
                 assert!(
@@ -108,8 +127,13 @@ mod tests {
             assert_ne!(strip, theme.color(Token::Chrome), "the strip reads apart");
             // Text at 4.5:1; the wordmark and the feed marks are graphics, 3:1.
             let text = [(Token::TextMuted, 4.5), (Token::ReplayInk, 4.5)];
-            let marks = [TabFeed::Live, TabFeed::Disconnected, TabFeed::Stopped];
-            let graphics = marks.map(|feed| (feed_token(feed), 3.0));
+            let marks = [
+                FeedMark::Live,
+                FeedMark::Attention,
+                FeedMark::Lost,
+                FeedMark::Stopped,
+            ];
+            let graphics = marks.map(|mark| (feed_token(mark), 3.0));
             for (ink, floor) in text
                 .into_iter()
                 .chain([(Token::Brand, 3.0)])
