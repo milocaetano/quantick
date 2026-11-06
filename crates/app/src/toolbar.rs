@@ -30,7 +30,7 @@ use quantick_chart::toolbar_collapse::{
 use quantick_engine::bar_selection::BarInputAvailability;
 pub(crate) mod bar_parameters;
 use crate::theme;
-use crate::widgets::{IconButton, TOOLBAR_ICON};
+use crate::widgets::{IconButton, RAIL_ICON};
 use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::RunStatus;
 use quantick_paper::desk::{
@@ -42,8 +42,9 @@ use quantick_session::{HistoryPagingOff, fmt_history_span};
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 
-/// How far the tray's ink sits inside its 28 px hit target (12 px measured).
-const DOCK_INSET_PX: f32 = (TOOLBAR_ICON.hit - 12.0) / 2.0;
+/// How far the tray's ink sits inside its hit target. The tray wears the
+/// dock strip's larger [`RAIL_ICON`] and inks 3/4 of its glyph.
+const DOCK_INSET_PX: f32 = (RAIL_ICON.hit - 0.75 * RAIL_ICON.glyph) / 2.0;
 /// Gap between the market button and REC, in pixels.
 const MARKET_REC_GAP_PX: f32 = 10.0;
 /// The row's padding: 22 px to the miniature's frame, 12 px after the tray's glyph.
@@ -232,7 +233,7 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                         draw_overflow(ui, model, plan, &mut actions);
                     }
                     if plan.panels_inline {
-                        let panels = IconButton::new(icons::TRAY, TOOLBAR_ICON)
+                        let panels = IconButton::new(icons::TRAY, RAIL_ICON)
                             .active(model.dock_visible)
                             .hover_text("show or hide the panels dock (Ctrl+Shift+B)")
                             .show(ui);
@@ -408,12 +409,6 @@ pub struct HistoryButton {
     pub tz: crate::timezone::TzOffset,
 }
 
-impl HistoryButton {
-    fn running(&self) -> bool {
-        !matches!(self.status, RunStatus::Idle)
-    }
-}
-
 /// The button's words: the target it loads, or the run it is making.
 fn history_button_label(button: &HistoryButton) -> String {
     let at = |ms| quantick_civil::fmt_weekday_minute(ms, button.tz);
@@ -435,7 +430,7 @@ fn history_button_label(button: &HistoryButton) -> String {
 
 /// The main click repeats the target; while running it cancels.
 fn history_button_action(button: &HistoryButton) -> ToolbarAction {
-    if button.running() {
+    if button.status.running() {
         ToolbarAction::CancelHistory
     } else {
         ToolbarAction::LoadHistory(button.main)
@@ -466,7 +461,7 @@ fn draw_history_menu(
     // without paging its tape offers no target it could not serve.
     if model.capabilities.history_paging {
         ui.label("Load back");
-        let running = model.history.running();
+        let running = model.history.status.running();
         for reach in HistoryReach::PRESETS {
             let entry = ui
                 .add_enabled(!running, egui::Button::new(reach.label()))

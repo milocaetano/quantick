@@ -129,6 +129,7 @@ pub fn draw(dock: &mut Dock, ctx: &egui::Context, env: &mut DockEnv) -> DockResp
                     _ => None,
                 };
                 let button = IconButton::new(tab_icon(tab), RAIL_ICON)
+                    .strong()
                     .active(dock.tab() == Some(tab))
                     .hover_text(
                         position_hover

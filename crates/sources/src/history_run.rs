@@ -73,6 +73,12 @@ pub enum RunStatus {
 }
 
 impl RunStatus {
+    /// Whether a run is queued or paging, so a press cancels it.
+    #[must_use]
+    pub const fn running(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+
     /// The stable word the control plane reports.
     #[must_use]
     pub const fn token(&self) -> &'static str {

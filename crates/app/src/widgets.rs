@@ -149,6 +149,7 @@ pub struct IconButton<'a> {
     letter: Option<crate::drawings::IconLetter>,
     size: IconSize,
     hit: egui::Vec2,
+    strong: bool,
     active: bool,
     enabled: bool,
     accent: Option<egui::Color32>,
@@ -168,6 +169,7 @@ impl<'a> IconButton<'a> {
             letter: None,
             size,
             hit: egui::Vec2::splat(size.hit),
+            strong: false,
             active: false,
             enabled: true,
             accent: None,
@@ -211,6 +213,13 @@ impl<'a> IconButton<'a> {
     #[must_use]
     pub fn hit_size(mut self, hit: egui::Vec2) -> Self {
         self.hit = hit;
+        self
+    }
+
+    /// Paint the idle glyph in primary ink, for a strip read at a glance.
+    #[must_use]
+    pub fn strong(mut self) -> Self {
+        self.strong = true;
         self
     }
 
@@ -271,6 +280,12 @@ impl<'a> IconButton<'a> {
                 accent,
             );
             let painter = ui.painter();
+            let idle = self.strong && self.enabled && paint.fill.is_none();
+            let ink = if idle {
+                palette.text_primary()
+            } else {
+                paint.glyph
+            };
             if let Some(fill) = paint.fill {
                 painter.rect_filled(rect, egui::Rounding::same(CORNER_RADIUS), fill);
             }
@@ -280,19 +295,12 @@ impl<'a> IconButton<'a> {
                     egui::Align2::CENTER_CENTER,
                     self.glyph,
                     egui::FontId::proportional(self.size.glyph),
-                    paint.glyph,
+                    ink,
                 );
             } else {
                 let box_rect =
                     egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(self.size.glyph));
-                paint_vector_icon(
-                    painter,
-                    box_rect,
-                    self.strokes,
-                    self.dots,
-                    self.letter,
-                    paint.glyph,
-                );
+                paint_vector_icon(painter, box_rect, self.strokes, self.dots, self.letter, ink);
             }
             if self.active
                 && let Some(edge) = self.marker_edge
