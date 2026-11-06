@@ -98,8 +98,8 @@ mod tests {
         style.canvas.grid_opacity = 0.37;
         style.canvas.grid_enabled = false;
         for (surface, grid, background) in [
-            (&light, [186, 187, 187], [255, 255, 255]),
-            (light.bookmap(), [35, 41, 54], [67, 74, 82]),
+            (&light, [186, 187, 187], [255, 252, 247]),
+            (light.bookmap(), [35, 41, 54], [37, 47, 55]),
             (&dark, [35, 41, 54], [19, 23, 34]),
         ] {
             style.apply_theme(surface);
@@ -223,7 +223,7 @@ mod bookmap_tests {
         let mut flow = shared;
         flow.apply_theme(light.bookmap());
         let mut expected_flow = ChartStyle::default();
-        expected_flow.canvas.background = [0x43, 0x4A, 0x52];
+        expected_flow.canvas.background = [0x25, 0x2F, 0x37];
         expected_flow.candles.wick = [0xB6, 0xC9, 0xD2];
         assert_eq!(flow, expected_flow);
         for bullish in [false, true] {
