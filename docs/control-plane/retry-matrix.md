@@ -112,11 +112,11 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 67 |
+| deduplicated per connection | 68 |
 | key refused; not retryable, read back | 17 |
 | key required; deduplicated per connection | 9 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **100** |
+| **Total** | **101** |
 
 ## Capabilities
 
@@ -191,6 +191,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `notify.sound` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.toast` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `orderflow.bubbles.preset.apply` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.preset` | the addressed pane reports the selected whole look and effective tape policy after application | `whole_presets_reapply_drift_and_are_authorized_retry_safe`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `orderflow.bubbles.reset` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.preset` | the addressed pane reports the factory look it wears after the reset, or an empty preset on the code defaults | `bubble_reset_wears_the_factory_look_and_is_authorized_retry_safe`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.bubbles.save_changes.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.asset.save_changes` | the addressed pane's asset reports the requested switch | `save_changes_is_the_assets_permission_checked_retry_safe_and_read_back`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.bubbles.size.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.display_scale` | the addressed pane reports independent tape and candle bubble radius multipliers | `bubble_size_is_named_permission_checked_retry_safe_and_read_back`, `bubble_size_refuses_invalid_values_stale_targets_and_inactive_context`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.bubbles.tick.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.tick_bubbles` | the addressed pane reports the selected tick sphere calibration independently of the tape | `tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -223,4 +224,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `workspace.save_as` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the new workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `workspace.save_to` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `workspace.saved` | `payload.workspace` | an event after the pre-call cursor names the tab's workspace | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 
-100 mutable capabilities registered, 100 with a readback.
+101 mutable capabilities registered, 101 with a readback.

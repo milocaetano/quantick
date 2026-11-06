@@ -1,7 +1,9 @@
 //! Named whole looks over the pane owner's narrow port.
 use crate::dock::ActionDock;
 use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
-use quantick_control_schema::bubble_preset::{ApplyInput, ApplyResult, ListInput, ListResult};
+use quantick_control_schema::bubble_preset::{
+    ApplyInput, ApplyResult, ListInput, ListResult, ResetInput,
+};
 use serde_json::Value;
 
 /// What wearing a whole preset answers.
@@ -12,6 +14,9 @@ pub trait BubblePresetPort {
     /// `spheres`, the pane's [`TickSpherePane::may_choose`].
     fn apply_bubble_preset(&mut self, input: &ApplyInput, spheres: bool) -> PresetApplied;
     fn list_bubble_presets(&mut self, input: &ListInput) -> Result<ListResult, ControlError>;
+    /// Restore the pane's factory look, as the panel's reset button does;
+    /// its tick spheres only when `spheres`, as for a whole preset.
+    fn reset_bubbles(&mut self, input: &ResetInput, spheres: bool) -> PresetApplied;
 }
 
 pub fn register<D: ActionDock<H, A>, H: BubblePresetPort + TickBubblePort + ?Sized, A>(
@@ -24,6 +29,10 @@ pub fn register<D: ActionDock<H, A>, H: BubblePresetPort + TickBubblePort + ?Siz
     registry.register(
         quantick_control_schema::bubble_preset::list_descriptor(),
         list,
+    )?;
+    registry.register(
+        quantick_control_schema::bubble_preset::reset_descriptor(),
+        reset,
     )
 }
 
@@ -39,6 +48,20 @@ fn apply<H: BubblePresetPort + TickBubblePort + ?Sized, A>(
         .tick_sphere_pane(input.tab_id.get(), input.pane_id.get())?
         .may_choose();
     serde_json::to_value(host.apply_bubble_preset(&input, spheres)?).map_err(invalid)
+}
+
+fn reset<H: BubblePresetPort + TickBubblePort + ?Sized, A>(
+    host: &mut H,
+    _access: &mut A,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: ResetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
+    // The factory look brings its spheres by the rule a whole look asks.
+    let spheres = host
+        .tick_sphere_pane(input.tab_id.get(), input.pane_id.get())?
+        .may_choose();
+    serde_json::to_value(host.reset_bubbles(&input, spheres)?).map_err(invalid)
 }
 
 fn list<H: BubblePresetPort + ?Sized, A>(

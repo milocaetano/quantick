@@ -112,6 +112,7 @@ capability that cannot change application state.
 | `notify.toast` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `orderflow.bubbles.preset.apply` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.presets.list` | 1 | `orderflow` | yes | `observe`, `observe.orderflow` |
+| `orderflow.bubbles.reset` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.save_changes.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.size.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.bubbles.tick.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
@@ -147,4 +148,4 @@ capability that cannot change application state.
 | `workspace.save_as` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 | `workspace.save_to` | 1 | `workspace` | no | `cockpit`, `cockpit.desk` |
 
-122 capabilities registered.
+123 capabilities registered.

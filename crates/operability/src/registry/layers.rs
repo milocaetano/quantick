@@ -227,4 +227,14 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         )],
         mapping: capability!("orderflow.bubbles.preset.apply"),
     },
+    UiBehaviour {
+        id: "orderflow.bubbles.reset",
+        title: "Reset the bubble look to the asset's factory preset",
+        reach: "Bubbles settings, reset bubble visuals",
+        keys: &[(
+            Source::Authored,
+            "the reset button at the foot of the Bubbles settings",
+        )],
+        mapping: capability!("orderflow.bubbles.reset"),
+    },
 ];

@@ -3,7 +3,7 @@ use super::price_axis::{invalid, pane};
 use crate::app::control_host::ControlPort;
 use quantick_control::error::ControlError;
 use quantick_control_handlers::bubble_preset::{BubblePresetPort, PresetApplied};
-use quantick_control_schema::bubble_preset::{ApplyInput, ListInput, ListResult};
+use quantick_control_schema::bubble_preset::{ApplyInput, ListInput, ListResult, ResetInput};
 impl BubblePresetPort for dyn ControlPort {
     fn apply_bubble_preset(&mut self, input: &ApplyInput, spheres: bool) -> PresetApplied {
         let appearance = self.appearance().orderflow;
@@ -14,7 +14,21 @@ impl BubblePresetPort for dyn ControlPort {
         let applied = owner.apply_named_preset_with(&input.preset, spheres, &appearance);
         let changed = applied.map_err(invalid)?;
         Ok(quantick_control_schema::bubble_preset::applied(
-            input,
+            (input.tab_id, input.pane_id),
+            changed,
+            owner.bubbles_snapshot(),
+            owner.cached_config(),
+        ))
+    }
+    fn reset_bubbles(&mut self, input: &ResetInput, spheres: bool) -> PresetApplied {
+        let appearance = self.appearance().orderflow;
+        let owner = pane(self, input.tab_id, input.pane_id)?
+            .orderflow
+            .as_mut()
+            .ok_or_else(|| invalid("The pane has no order-flow view"))?;
+        let changed = owner.reset_bubble_look(spheres, &appearance);
+        Ok(quantick_control_schema::bubble_preset::applied(
+            (input.tab_id, input.pane_id),
             changed,
             owner.bubbles_snapshot(),
             owner.cached_config(),

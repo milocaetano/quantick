@@ -554,6 +554,17 @@ impl AssetBinding {
         &self.asset.key
     }
 
+    /// The asset's factory look, which the panel's reset restores: the
+    /// preset the feed config declares for it, as the shipped presets hold
+    /// it ([`crate::bubble_presets::embedded`]) — never the operator's
+    /// presets file, where that name may have been saved over. `None` when
+    /// the config declares no preset for the asset, or names one not shipped.
+    #[must_use]
+    pub fn factory_preset(&self) -> Option<BubblePreset> {
+        let name = self.asset.preset.as_deref()?;
+        crate::bubble_presets::embedded().get(name).cloned()
+    }
+
     /// The mode the config switches on for the asset, if any.
     #[must_use]
     pub fn mode(&self) -> Option<&crate::config::AssetMode> {
