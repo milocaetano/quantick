@@ -3,6 +3,7 @@
 use super::*;
 use crate::bubble_asset_store::bubble_asset_store_tests::{bind, shipped_config};
 use crate::bubble_asset_store::{AssetBubblesStore, SharedAssetBubbles};
+use crate::bubble_assets::AssetSource;
 use crate::bubble_presets::{embedded, parse};
 
 /// One view's screen: the look and the config it dresses.
@@ -369,14 +370,19 @@ fn the_reset_wears_the_assets_shipped_factory_look_and_files_it() {
         let spheres = screen.look.asset_mode().is_some();
         let mut expected = screen.config.clone();
         super::dress(&shipped, &mut expected, spheres, &appearance);
+        // As a fresh open wears it: the palette is not the theme's snapshot.
+        expected.palette = shipped.palette;
 
-        let worn = screen
-            .look
-            .restore_factory(&mut screen.config, spheres, &appearance);
+        let worn = screen.look.restore_factory(&mut screen.config, spheres);
 
         assert_eq!(worn.as_deref(), Some(name));
         assert_eq!(screen.config, expected, "{name}: the shipped look");
         assert_eq!(screen.config.bubbles, shipped.bubbles, "{name}");
+        assert_eq!(
+            screen.config.palette,
+            quantick_orderflow::config::theme::PaletteChoice::Inherited,
+            "{name}: the palette still follows the theme"
+        );
         assert_eq!(screen.look.look_name(), name, "the picker names it");
         assert_eq!(screen.look.name_draft(), name);
         let key = screen.look.asset().expect("bound").key().to_owned();
@@ -395,11 +401,42 @@ fn the_reset_wears_the_assets_shipped_factory_look_and_files_it() {
     }
 }
 
+/// Over an unedited presets file, a reset after a trader's edit returns the
+/// asset to exactly what a fresh open wears: nothing of its own is stored.
+#[test]
+fn a_reset_over_the_shipped_presets_leaves_no_stored_entry() {
+    for market in [
+        ("binance-futures", "BTCUSDT.p"),
+        ("metatrader-tickmill", "XAUUSD"),
+        ("metatrader-b3", "WINZ26"),
+    ] {
+        let store = AssetBubblesStore::default().shared();
+        let mut screen = bound(&store, market, &embedded());
+        tune(&mut screen);
+        screen.look.sync(&screen.config, false, false);
+        let key = screen.look.asset().expect("bound").key().to_owned();
+        assert!(
+            store.borrow().get(&key).is_some(),
+            "{key}: the edit is filed"
+        );
+        let spheres = screen.look.asset_mode().is_some();
+        assert!(
+            screen
+                .look
+                .restore_factory(&mut screen.config, spheres)
+                .is_some()
+        );
+        screen.look.sync(&screen.config, false, false);
+        assert_eq!(store.borrow().get(&key), None, "{key}: nothing stored");
+        let binding = screen.look.asset().expect("bound");
+        assert_eq!(binding.source(), AssetSource::Declared, "{key}");
+    }
+}
+
 /// No declared look, or no asset at all: the reset restores the code
 /// defaults, as it always did.
 #[test]
 fn without_a_declared_look_the_reset_restores_the_code_defaults() {
-    let appearance = quantick_appearance::ResolvedTheme::bundled_dark().orderflow;
     let store = AssetBubblesStore::default().shared();
     let mut eth = bound(&store, ("binance", "ETHUSDT"), &embedded());
     assert_eq!(eth.look.asset().expect("bound").factory_preset(), None);
@@ -408,9 +445,7 @@ fn without_a_declared_look_the_reset_restores_the_code_defaults() {
         tune(screen);
         let mut expected = screen.config.clone();
         expected.reset_bubble_visuals();
-        let worn = screen
-            .look
-            .restore_factory(&mut screen.config, false, &appearance);
+        let worn = screen.look.restore_factory(&mut screen.config, false);
         assert_eq!(worn, None);
         assert_eq!(screen.config, expected);
         assert_eq!(screen.look.look_name(), "");

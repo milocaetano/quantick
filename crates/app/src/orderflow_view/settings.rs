@@ -255,11 +255,8 @@ impl OrderflowView {
             )
             .clicked()
         {
-            self.look.restore_factory(
-                &mut self.config,
-                rule.may_choose(),
-                &crate::theme::get(ui.ctx()).resolved.orderflow,
-            );
+            self.look
+                .restore_factory(&mut self.config, rule.may_choose());
         }
         self.commit_config_changes(before)
     }
@@ -316,14 +313,9 @@ impl OrderflowView {
     /// The panel's reset as one call
     /// ([`quantick_stores::bubble_look::BubbleLook::restore_factory`]):
     /// whether the look on screen moved.
-    pub(crate) fn reset_bubble_look(
-        &mut self,
-        spheres: bool,
-        appearance: &quantick_appearance::orderflow::OrderflowAppearance,
-    ) -> bool {
+    pub(crate) fn reset_bubble_look(&mut self, spheres: bool) -> bool {
         let (before, name) = (self.config.clone(), self.look.look_name().to_owned());
-        self.look
-            .restore_factory(&mut self.config, spheres, appearance);
+        self.look.restore_factory(&mut self.config, spheres);
         let renamed = self.look.look_name() != name;
         // Compared once committed, which sanitizes what the reset dressed.
         self.commit_config_changes(before.clone());
@@ -373,7 +365,6 @@ impl OrderflowView {
 
     /// "reset bubble visuals", on a pane where spheres may not be chosen.
     pub(crate) fn press_reset_bubble_visuals_for_test(&mut self) {
-        let appearance = quantick_appearance::ResolvedTheme::bundled_dark().orderflow;
-        self.reset_bubble_look(false, &appearance);
+        self.reset_bubble_look(false);
     }
 }

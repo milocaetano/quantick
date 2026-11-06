@@ -63,21 +63,19 @@ impl BubbleLook {
         Ok(true)
     }
 
-    /// The panel's reset: dress `config` in the bound asset's factory look
-    /// ([`AssetBinding::factory_preset`]) as a whole-preset pick dresses it,
-    /// `spheres` being the same tick sphere verdict, and name it. With no
+    /// The panel's reset: put the bound asset's factory look
+    /// ([`AssetBinding::factory_preset`]) on `config` as a fresh open wears
+    /// it — an inherited palette stays inherited and follows the theme, so
+    /// an asset back on its unedited declared look keeps no stored entry —
+    /// with its tick spheres only where `spheres`, the verdict a whole-preset
+    /// pick gets; where not, the spheres worn stay. Then name it. With no
     /// asset bound, or none the shipped presets declare a look for, the
     /// code defaults are restored instead ([`BubbleLook::defaults_restored`]).
     /// Either way the asset on screen files what it shows at the next sync.
     /// Returns the factory preset's name, `None` for the code defaults.
     ///
     /// [`AssetBinding::factory_preset`]: crate::bubble_asset_store::AssetBinding::factory_preset
-    pub fn restore_factory(
-        &mut self,
-        config: &mut HeatmapConfig,
-        spheres: bool,
-        appearance: &quantick_appearance::orderflow::OrderflowAppearance,
-    ) -> Option<String> {
+    pub fn restore_factory(&mut self, config: &mut HeatmapConfig, spheres: bool) -> Option<String> {
         let factory = self.asset.as_ref().and_then(|binding| {
             let preset = binding.factory_preset()?;
             Some((preset, binding.key().to_owned()))
@@ -87,7 +85,11 @@ impl BubbleLook {
             self.defaults_restored(config);
             return None;
         };
-        super::dress(&preset, config, spheres, appearance);
+        let worn = config.volume_dots.tick_bubbles;
+        preset.apply_to(config);
+        if !spheres {
+            config.volume_dots.tick_bubbles = worn;
+        }
         self.look_name.clone_from(&preset.name);
         self.name_draft.clone_from(&preset.name);
         self.status = Some(format!("factory look '{}' restored for {key}", preset.name));
