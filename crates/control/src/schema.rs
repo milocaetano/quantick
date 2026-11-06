@@ -1,6 +1,10 @@
 //! JSON Schema validation, generation, and conservative compatibility checks.
 
-use std::{collections::BTreeSet, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    sync::{Arc, Mutex, OnceLock, PoisonError},
+};
 
 use schemars::JsonSchema;
 use serde_json::Value;
@@ -16,11 +20,40 @@ pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
 }
 
 pub struct CompiledSchema {
-    validator: jsonschema::Validator,
+    validator: Arc<jsonschema::Validator>,
 }
 
+/// Distinct schemas one process keeps compiled. The built-in registries hold
+/// a few hundred; the cap only stops a caller minting schemas from growing it.
+const SHARED_SCHEMA_CAPACITY: usize = 4_096;
+
 impl CompiledSchema {
+    /// Admission is a pure function of the schema, so a schema that passed
+    /// once shares its validator: every registry a process builds (each test
+    /// app re-registers the built-in capabilities) compiles each schema once.
+    /// A refused schema is never kept, and is checked afresh every time.
     pub fn new(schema: &Value) -> Result<Self, SchemaError> {
+        type Shared = Mutex<BTreeMap<String, Arc<jsonschema::Validator>>>;
+        static SHARED: OnceLock<Shared> = OnceLock::new();
+        let shared = SHARED.get_or_init(Shared::default);
+        let key = schema.to_string();
+        let held = shared
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+            .cloned();
+        if let Some(validator) = held {
+            return Ok(Self { validator });
+        }
+        let validator = Arc::new(Self::admit(schema)?);
+        let mut shared = shared.lock().unwrap_or_else(PoisonError::into_inner);
+        if shared.len() < SHARED_SCHEMA_CAPACITY {
+            shared.insert(key, Arc::clone(&validator));
+        }
+        Ok(Self { validator })
+    }
+
+    fn admit(schema: &Value) -> Result<jsonschema::Validator, SchemaError> {
         if let Some(dialect) = schema
             .as_object()
             .and_then(|object| object.get("$schema"))
@@ -32,9 +65,7 @@ impl CompiledSchema {
         reject_external_references(schema)?;
         jsonschema::draft202012::meta::validate(schema)
             .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-        Ok(Self {
-            validator: compile(schema)?,
-        })
+        compile(schema)
     }
 
     pub fn validate(&self, instance: &Value) -> Result<(), SchemaError> {
@@ -602,5 +633,27 @@ mod tests {
             Err(SchemaError::UnsupportedDialect(_))
         ));
         assert!(validate_schema(&json!({"type": "object"})).is_ok());
+    }
+
+    #[test]
+    fn an_admitted_schema_shares_its_validator_and_a_refused_one_stays_refused() {
+        let schema = json!({"type": "object", "required": ["shared_validator_probe"]});
+        let first = CompiledSchema::new(&schema).unwrap();
+        let second = CompiledSchema::new(&schema).unwrap();
+        assert!(Arc::ptr_eq(&first.validator, &second.validator));
+        assert!(second.validate(&json!({})).is_err());
+        assert!(
+            second
+                .validate(&json!({"shared_validator_probe": 1}))
+                .is_ok()
+        );
+
+        let refused = json!({"type": "string", "pattern": "^(?=a)shared"});
+        for _ in 0..2 {
+            assert!(matches!(
+                CompiledSchema::new(&refused),
+                Err(SchemaError::InvalidSchema(_))
+            ));
+        }
     }
 }
