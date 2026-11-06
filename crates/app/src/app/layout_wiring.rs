@@ -222,7 +222,7 @@ impl LayoutAdapter<'_> {
     /// and the moment before a bundle export reads it.
     pub(super) fn flush_layouts(&mut self) {
         self.persist_changed_drawings();
-        market_settings::flush(self.store);
+        market_settings::flush(self.store, Instant::now());
     }
 
     // ------------------------------------------------------------------

@@ -20,6 +20,10 @@ struct FakeHost {
     market: Option<MarketSettingsStore>,
     /// What the fake's market commit wrote: the file it stands in for.
     market_written: Option<MarketSettings>,
+    /// The market file cannot be written.
+    market_fails: bool,
+    /// The workspaces file takes this many more writes, then refuses.
+    book_writes_left: Option<usize>,
 }
 
 impl TabDirectory for FakeHost {
@@ -39,8 +43,11 @@ impl WorkspaceBookHost for FakeHost {
         Some(&mut self.book)
     }
     fn persist_workspace_book(&mut self) -> Result<(), String> {
-        if self.write_fails {
+        if self.write_fails || self.book_writes_left == Some(0) {
             return Err("saving is off".to_owned());
+        }
+        if let Some(left) = self.book_writes_left.as_mut() {
+            *left -= 1;
         }
         self.writes += 1;
         Ok(())
@@ -58,9 +65,9 @@ impl WorkspaceBookHost for FakeHost {
         self.desk_writes.push(on);
         Ok(())
     }
-    fn close_market_tab(&mut self, tab: u64) -> bool {
-        if self.tabs.len() < 2 {
-            return false;
+    fn close_market_tab(&mut self, tab: u64, close: bool) -> bool {
+        if self.tabs.len() < 2 || !close {
+            return self.tabs.len() >= 2;
         }
         self.tabs.retain(|open| *open != tab);
         self.closed.push(tab);
@@ -69,16 +76,24 @@ impl WorkspaceBookHost for FakeHost {
     fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
         self.market.as_mut()
     }
-    fn commit_workspace_market(&mut self) -> bool {
+    /// The real commit's decisions, with the file in memory.
+    fn commit_workspace_market(&mut self, keys: Option<&[DrawingKey]>) -> Result<bool, String> {
         let Some(market) = self.market.as_mut() else {
-            return false;
+            return Ok(false);
         };
-        let owed = market.is_dirty();
-        let _ = market.take_commit();
-        if owed {
-            self.market_written = Some(market.settings().clone());
+        let document = match keys {
+            Some(keys) => market.commit_document(keys),
+            None => market.owes_write().then(|| market.settings().clone()),
+        };
+        let Some(document) = document else {
+            return Ok(false);
+        };
+        if self.market_fails {
+            return Err("the disk is full".to_owned());
         }
-        owed
+        self.market_written = Some(document.clone());
+        market.note_saved(document);
+        Ok(true)
     }
 }
 
@@ -104,13 +119,19 @@ fn autosaving() -> (FakeHost, FakeAccess, ActorContext) {
         closed: Vec::new(),
         market: None,
         market_written: None,
+        market_fails: false,
+        book_writes_left: None,
     };
     (host, FakeAccess::with_budget(0), FakeWindow::assistant())
 }
 
 fn edit(host: &mut FakeHost, tab: u64) {
+    edit_to(host, tab, "heatmap");
+}
+
+fn edit_to(host: &mut FakeHost, tab: u64, style: &str) {
     let edited = WorkspaceRecipe {
-        footprint_style: Some("heatmap".to_owned()),
+        footprint_style: Some(style.to_owned()),
         ..WorkspaceRecipe::default()
     };
     host.book.observe(tab, &edited).unwrap();
@@ -905,5 +926,296 @@ fn closing_the_last_tab_from_the_strip_is_quiet() {
     assert!(
         menu.close.request(CloseScope::Tabs, [1]),
         "nothing is left in flight"
+    );
+}
+
+fn wdo_key() -> DrawingKey {
+    DrawingKey::of_pane("mt5", "WDOZ26".to_owned(), None)
+}
+
+/// A market file holding a level on each tab's flow chart, both erased in
+/// memory and held: one drawing waits for Save on each tab.
+fn with_a_held_drawing_on_each_tab(host: &mut FakeHost) {
+    let mut saved = market_settings::parse_settings(DRAWN).unwrap();
+    let wdo = market_settings::parse_settings(&DRAWN.replace("WINZ26", "WDOZ26")).unwrap();
+    saved.restore(&wdo, &wdo_key());
+    let path = std::path::PathBuf::from("market-settings.toml");
+    let mut market = MarketSettingsStore::new(saved, path, false);
+    market.set_held(true);
+    for key in [flow_key(), wdo_key()] {
+        market
+            .settings_mut()
+            .restore(&MarketSettings::default(), &key);
+    }
+    market.mark_changed(std::time::Instant::now());
+    host.book.note_drawings(1, vec![flow_key()], 1);
+    host.book.note_drawings(2, vec![wdo_key()], 1);
+    host.market = Some(market);
+}
+
+/// Saving tab 1 writes tab 1's sets only: tab 2's erased level is not
+/// committed, tab 2 stays marked, and its Close without saving brings the
+/// level back.
+#[test]
+fn a_save_commits_only_its_own_tab_s_drawings() {
+    let (mut host, mut access, actor) = parts();
+    with_a_held_drawing_on_each_tab(&mut host);
+    save_to(&mut host, &mut access, &actor, &json!({ "tab_id": "1" })).unwrap();
+    let written = host.market_written.clone().unwrap();
+    assert!(
+        written.drawings(&flow_key()).is_empty(),
+        "tab 1's erase landed"
+    );
+    assert_eq!(written.drawings(&wdo_key()).len(), 1, "tab 2's did not");
+    assert!(!host.book.tab_state(1).unwrap().modified);
+    assert!(
+        host.book.tab_state(2).unwrap().modified,
+        "tab 2 still holds it"
+    );
+    let value = json!({ "tab_id": "2", "save": false });
+    close(&mut host, &mut access, &actor, &value).unwrap();
+    let market = host.market.as_ref().unwrap();
+    assert_eq!(
+        market.settings().drawings(&wdo_key()).len(),
+        1,
+        "it came back"
+    );
+    assert!(!market.owes_write(), "memory is the file again");
+}
+
+/// A Save whose market write fails says so with `workspace.write_failed`,
+/// writes no recipe either, and the mark stays.
+#[test]
+fn a_save_whose_market_write_fails_reports_it_and_stays_marked() {
+    let (mut host, mut access, actor) = parts();
+    with_held_drawing(&mut host);
+    edit(&mut host, 1);
+    host.market_fails = true;
+    let value = json!({ "tab_id": "1" });
+    let error = save_to(&mut host, &mut access, &actor, &value).unwrap_err();
+    assert_eq!(detail(&error), WRITE_FAILED_CODE);
+    assert!(
+        error.message.contains("the disk is full"),
+        "{}",
+        error.message
+    );
+    assert_eq!((host.writes, access.events.len()), (0, 0));
+    assert!(
+        host.book.tab_state(1).unwrap().modified,
+        "nothing reads saved"
+    );
+    assert_eq!(host.book.held_drawings(1), 1);
+    host.market_fails = false;
+    save_to(&mut host, &mut access, &actor, &value).unwrap();
+    assert!(!host.book.tab_state(1).unwrap().modified);
+}
+
+fn answer(
+    host: &mut FakeHost,
+    access: &mut FakeAccess,
+    actor: &ActorContext,
+    menu: &mut WorkspaceMenuState,
+    answer: CloseAnswer,
+) {
+    row(
+        host,
+        access,
+        actor,
+        menu,
+        WorkspaceCommand::AnswerClose(answer),
+    );
+}
+
+/// An exit answers tab 1 Close without saving, then tab 2 Cancel: the app
+/// stays open with tab 1 exactly as it was, on screen and in the stores.
+#[test]
+fn an_exit_cancelled_on_a_later_tab_lets_nothing_go() {
+    let (mut host, mut access, actor) = parts();
+    with_held_drawing(&mut host);
+    edit(&mut host, 1);
+    edit(&mut host, 2);
+    let before = host.book.clone();
+    let mut menu = WorkspaceMenuState::default();
+    let exit = WorkspaceCommand::Close(CloseScope::App, vec![1, 2]);
+    row(&mut host, &mut access, &actor, &mut menu, exit);
+    answer(
+        &mut host,
+        &mut access,
+        &actor,
+        &mut menu,
+        CloseAnswer::CloseWithoutSaving,
+    );
+    assert_eq!(close_prompt(&menu.close).unwrap().title, "Close SYM2");
+    answer(
+        &mut host,
+        &mut access,
+        &actor,
+        &mut menu,
+        CloseAnswer::Cancel,
+    );
+    assert!(!menu.close.take_exit());
+    assert_eq!(host.book, before, "tab 1 keeps its edits and its count");
+    assert!(
+        host.market.as_ref().unwrap().owes_write(),
+        "its drawing still held"
+    );
+    assert!(host.shown.is_empty(), "nothing was redrawn");
+    assert_eq!((host.writes, access.events.len()), (0, 0));
+}
+
+/// An exit's Close without saving lets the recipe copy go too: the desk keeps
+/// no edits for that tab, so the next launch opens it on its workspace.
+#[test]
+fn an_exit_without_saving_leaves_the_desk_no_edits_to_restore() {
+    let (mut host, mut access, actor) = parts();
+    edit(&mut host, 1);
+    edit_to(&mut host, 2, "volume");
+    let mut menu = WorkspaceMenuState::default();
+    let exit = WorkspaceCommand::Close(CloseScope::App, vec![1, 2]);
+    row(&mut host, &mut access, &actor, &mut menu, exit);
+    answer(
+        &mut host,
+        &mut access,
+        &actor,
+        &mut menu,
+        CloseAnswer::CloseWithoutSaving,
+    );
+    answer(&mut host, &mut access, &actor, &mut menu, CloseAnswer::Save);
+    assert!(menu.close.take_exit());
+    let (workspace, copy) = host.book.saved_fields(1);
+    assert_eq!(
+        (workspace.as_deref(), copy),
+        (Some(DEFAULT_WORKSPACE), None)
+    );
+    let mut next = host.book.clone();
+    next.close_tab(1);
+    next.restore_tab(1, DEFAULT_WORKSPACE, None);
+    assert_eq!(next.tab_copy(1), host.book.recipe(DEFAULT_WORKSPACE));
+    assert_eq!(host.book.tab_copy(1), host.book.recipe(DEFAULT_WORKSPACE));
+    assert_eq!(host.shown, [1], "the screen shows what is kept");
+    assert_eq!(host.writes, 1, "tab 2's save");
+}
+
+/// The window's last tab refuses before anything is written: no flush, no
+/// save, whatever the flag says.
+#[test]
+fn closing_the_last_tab_refuses_before_it_writes() {
+    for save in [None, Some(true)] {
+        let (mut host, mut access, actor) = autosaving();
+        host.tabs = vec![1];
+        edit(&mut host, 1);
+        let value = json!({ "tab_id": "1", "save": save });
+        let error = close(&mut host, &mut access, &actor, &value).unwrap_err();
+        assert_eq!(detail(&error), LAST_TAB_CODE);
+        assert_eq!((host.writes, access.events.len()), (0, 0), "{save:?}");
+        assert!(host.book.differs(1));
+    }
+}
+
+/// Autosave on, a write-through that fails: the tab reads modified, the
+/// failure toasts once however often the frame retries, and a retry that
+/// lands clears the mark.
+#[test]
+fn a_failed_write_through_marks_the_tab_and_toasts_once() {
+    let (mut host, mut access, actor) = autosaving();
+    edit(&mut host, 1);
+    host.write_fails = true;
+    let notes = write_through(&mut host, Some((&mut access, &actor)), &[1]);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        host.book.tab_state(1).unwrap().modified,
+        "not saved, so marked"
+    );
+    assert_eq!(host.book.failed_writes(), [1], "the frame retries it");
+    let again = write_through(&mut host, Some((&mut access, &actor)), &[1]);
+    assert!(again.is_empty(), "no second toast: {again:?}");
+    host.write_fails = false;
+    write_through(&mut host, Some((&mut access, &actor)), &[1]);
+    assert!(!host.book.tab_state(1).unwrap().modified);
+    assert!(host.book.failed_writes().is_empty());
+}
+
+/// Turning autosave on where one save fails: the setting stays on, the save
+/// that landed and the setting are journaled, and the answer is the failure
+/// naming both, with the failed tab marked and owed a retry.
+#[test]
+fn autosave_on_with_a_save_failing_journals_what_landed() {
+    let (mut host, mut access, actor) = parts();
+    save_as(
+        &mut host,
+        &mut access,
+        &actor,
+        &json!({ "tab_id": "2", "name": "Solo" }),
+    )
+    .unwrap();
+    access.events.clear();
+    edit(&mut host, 1);
+    edit(&mut host, 2);
+    host.book_writes_left = Some(1);
+    let on = json!({ "on": true });
+    let error = autosave_set(&mut host, &mut access, &actor, &on).unwrap_err();
+    let details = error.context.details.clone().unwrap();
+    assert_eq!(details["code"], WRITE_FAILED_CODE);
+    assert_eq!(details["auto_save"], true);
+    assert_eq!(details["saved"], json!([DEFAULT_WORKSPACE]));
+    let kinds: Vec<_> = rows(&access).into_iter().map(|row| row.1).collect();
+    assert_eq!(
+        kinds,
+        [
+            WORKSPACE_AUTOSAVE_SET_EVENT_KIND,
+            WORKSPACE_SAVED_EVENT_KIND
+        ]
+    );
+    assert!(host.book.autosave(), "the state the journal names");
+    assert!(!host.book.tab_state(1).unwrap().modified);
+    assert!(
+        host.book.tab_state(2).unwrap().modified,
+        "Solo did not land"
+    );
+    assert_eq!(host.book.failed_writes(), [2]);
+    host.book_writes_left = None;
+    let retried = autosave_set(&mut host, &mut access, &actor, &on).unwrap();
+    assert_eq!(
+        (
+            retried["changed"].clone(),
+            retried["saved"][0]["workspace"].clone()
+        ),
+        (json!(false), json!("Solo"))
+    );
+    assert!(!host.book.tab_state(2).unwrap().modified);
+}
+
+/// Turning autosave on with two tabs on one workspace both edited: the
+/// active tab's copy is written, and the other keeps its edits, marked.
+#[test]
+fn autosave_on_writes_one_tab_per_workspace_and_marks_the_other() {
+    let (mut host, mut access, actor) = parts();
+    save_as(&mut host, &mut access, &actor, &json!({ "name": "Scalp" })).unwrap();
+    set(
+        &mut host,
+        &mut access,
+        &actor,
+        &json!({ "tab_id": "2", "name": "Scalp" }),
+    )
+    .unwrap();
+    edit_to(&mut host, 1, "heatmap");
+    edit_to(&mut host, 2, "volume");
+    let on = autosave_set(&mut host, &mut access, &actor, &json!({ "on": true })).unwrap();
+    assert_eq!(
+        on["saved"].as_array().unwrap().len(),
+        1,
+        "one write per workspace"
+    );
+    let style = |book: &WorkspaceBook| book.recipe("Scalp").unwrap().footprint_style.clone();
+    assert_eq!(
+        style(&host.book).as_deref(),
+        Some("heatmap"),
+        "the active tab won"
+    );
+    assert!(host.book.differs(2));
+    assert_eq!(host.book.unsynced(2), Some(Unsynced::Outvoted));
+    assert!(
+        host.book.tab_state(2).unwrap().modified,
+        "never differing unmarked"
     );
 }

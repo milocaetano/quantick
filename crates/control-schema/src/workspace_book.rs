@@ -321,8 +321,8 @@ pub fn workspace_autosave_set_descriptor() -> CapabilityDescriptor {
         WORKSPACE_AUTOSAVE_SET_CAPABILITY_ID,
         MODULE_ID,
         "Turn auto save layout changes on or off",
-        "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; no tab reads as modified. Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once and answers each save. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
-        "The call names the state it wants, so a repeat writes nothing and answers changed false.",
+        "On, every layout edit on a tab is written into its workspace a second after it stops, and the clean tabs on that workspace follow; a tab reads as modified only while its copy is not in its workspace: a write that failed (retried each quiet second) or a second tab on that workspace holding edits (one copy is written: the active tab's, else the lowest id's). Off, a tab holds its edits, marked, until workspace.save_to, and closing it asks. Turning it on saves every tab holding edits at once, one per workspace, and answers each save; when one fails the setting stays on, the setting and the saves that landed are journaled, and the call refuses with workspace.write_failed whose details name auto_save and the workspaces saved. The desk keeps the choice; the workspace snapshot reads it as auto_save.",
+        "The call names the state it wants, so a repeat answers changed false and writes only a save still owed, as after a failure.",
     ))
 }
 
@@ -331,7 +331,7 @@ pub fn tab_close_descriptor() -> CapabilityDescriptor {
         TAB_CLOSE_CAPABILITY_ID,
         quantick_control_host::authority::TAB_MODULE_ID,
         "Close a market tab",
-        "Closes one tab. With autosave on its edits were written already and it closes at once. With autosave off and edits held, a call without save refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and closes nothing; save true writes the edits first, save false drops them. The window's last tab refuses with workspace.last_tab.",
+        "Closes one tab. With autosave on its edits were written already and it closes at once. With autosave off and edits held, a call without save refuses with workspace.unsaved_edits, naming the workspace, the tabs a save also changes and what changed, and closes nothing; save true writes the edits first, save false drops them. The window's last tab refuses with workspace.last_tab before anything is saved or written.",
         "A closed tab is gone, so a repeat names an unknown tab and is refused with workspace.unknown_tab; nothing else closes.",
     ))
 }

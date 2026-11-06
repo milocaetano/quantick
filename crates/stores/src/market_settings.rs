@@ -11,6 +11,7 @@ pub use quantick_workspace::market_settings_store::MarketSettingsStore;
 use quantick_workspace::write_refusal::guard_write;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Beside `layouts.toml`: the file as it was before its drawings moved out, so
 /// an older build or a change of mind still has them. Written once, never over.
@@ -188,53 +189,95 @@ pub fn reload(
 
 /// The frame's write: the layouts file and the market file, each once its own
 /// debounce has settled. A held market store waits for Save.
-pub fn save_settled(store: &mut LayoutStore, now: std::time::Instant) {
+pub fn save_settled(store: &mut LayoutStore, now: Instant) {
     let layouts = store.take_save(now);
+    layouts::act_on(store.path(), store.book(), layouts);
     let market = store.market_mut().take_save(now);
-    act_on_both(store, layouts, market);
+    act_on(store.market_mut(), market, now);
 }
 
 /// Both files now, whatever the debounce says: the way out on exit and the
-/// moment before an export reads them. A held market store still waits.
-pub fn flush(store: &mut LayoutStore) {
+/// moment before an export reads them. A held market store still waits; a
+/// market write that fails is owed again from `now`.
+pub fn flush(store: &mut LayoutStore, now: Instant) {
     let layouts = store.take_flush();
-    let market = store.market_mut().take_flush();
-    act_on_both(store, layouts, market);
-}
-
-fn act_on_both(store: &LayoutStore, layouts: LayoutSave, market: LayoutSave) {
     layouts::act_on(store.path(), store.book(), layouts);
-    act_on(store.market(), market);
+    let market = store.market_mut().take_flush();
+    act_on(store.market_mut(), market, now);
 }
 
-/// Save's other half: what the store holds back reaches its file now, held or
-/// not. Answers whether it was written.
-pub fn commit(market: &mut MarketSettingsStore) -> bool {
-    match market.take_commit() {
-        LayoutSave::Write => save(market.path(), market.settings()),
-        decision => {
-            act_on(market, decision);
-            false
-        }
+/// Save's other half for one tab: the sets in `keys` reach the file now, held
+/// or not, and every other set stays as the file has it, so a set another tab
+/// holds back is still that tab's to save or drop. `Ok(true)` when the file
+/// was written, `Ok(false)` when it already held them.
+///
+/// # Errors
+/// Why the file was not written: the store is blocked, or the write failed.
+/// Nothing reads as saved then: the held sets stay counted.
+pub fn commit(market: &mut MarketSettingsStore, keys: &[DrawingKey]) -> Result<bool, String> {
+    let Some(document) = market.commit_document(keys) else {
+        return Ok(false);
+    };
+    write_committed(market, document)
+}
+
+/// [`commit`] for every set the store holds: turning autosave on.
+///
+/// # Errors
+/// As [`commit`].
+pub fn commit_all(market: &mut MarketSettingsStore) -> Result<bool, String> {
+    if !market.owes_write() {
+        return Ok(false);
     }
+    let document = market.settings().clone();
+    write_committed(market, document)
+}
+
+fn write_committed(
+    market: &mut MarketSettingsStore,
+    document: MarketSettings,
+) -> Result<bool, String> {
+    if market.is_blocked() {
+        blocked(market);
+        return Err(format!(
+            "{} could not be read at launch and is left untouched",
+            market.path().display()
+        ));
+    }
+    if !save(market.path(), &document) {
+        return Err(format!("{} could not be written", market.path().display()));
+    }
+    market.note_saved(document);
+    Ok(true)
 }
 
 /// Carry out what the commit policy decided; see [`crate::layouts::act_on`].
-pub fn act_on(market: &MarketSettingsStore, decision: LayoutSave) {
+/// The baseline moves only once the file holds the document; a failed write
+/// is owed again a quiet second after `now`.
+pub fn act_on(market: &mut MarketSettingsStore, decision: LayoutSave, now: Instant) {
     match decision {
         LayoutSave::Wait => {}
         LayoutSave::Write => {
-            save(market.path(), market.settings());
+            let document = market.settings().clone();
+            if save(market.path(), &document) {
+                market.note_saved(document);
+            } else {
+                market.note_write_failed(now);
+            }
         }
-        LayoutSave::Blocked => tracing::warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "MARKET_SETTINGS_SAVE_BLOCKED",
-            path = %market.path().display(),
-            action = "file_left_untouched",
-            "the market settings file could not be read at launch and was not set aside; this session's are not written over it"
-        ),
+        LayoutSave::Blocked => blocked(market),
     }
+}
+
+fn blocked(market: &MarketSettingsStore) {
+    tracing::warn!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "MARKET_SETTINGS_SAVE_BLOCKED",
+        path = %market.path().display(),
+        action = "file_left_untouched",
+        "the market settings file could not be read at launch and was not set aside; this session's are not written over it"
+    );
 }
 
 /// Move `book`'s drawings into `settings` and persist the move in the only safe
@@ -501,6 +544,91 @@ mod tests {
                 .with_extension(LAYOUTS_BACKUP_TEMP_EXTENSION)
                 .exists()
         );
+    }
+
+    /// Two held sets, the flow chart's and a context chart's, each with one level.
+    const TWO_SETS: &str = "version = 1\n\n[[drawings]]\nvenue = \"mt5\"\nasset = \"WIN*\"\nrole = \"flow\"\n\n[[drawings.items]]\ntool = \"horizontal-line\"\nband = { axis = \"price\" }\ncolor = [255, 200, 0, 255]\nwidth_px = 1.5\nfill_alpha = 0\npoints = [{ time_ms = 1000, price = 1.5, bar = 3.0 }]\n\n[[drawings]]\nvenue = \"mt5\"\nasset = \"WIN*\"\nrole = \"context:time:5m\"\n\n[[drawings.items]]\ntool = \"horizontal-line\"\nband = { axis = \"price\" }\ncolor = [255, 200, 0, 255]\nwidth_px = 1.5\nfill_alpha = 0\npoints = [{ time_ms = 1000, price = 2.5, bar = 3.0 }]\n";
+
+    fn win(role: PaneRole) -> DrawingKey {
+        DrawingKey {
+            market: MarketKey {
+                venue: "mt5".to_owned(),
+                asset: "WIN*".to_owned(),
+            },
+            role,
+        }
+    }
+
+    /// A held store over an empty file whose memory holds both sets.
+    fn held_with_two_sets(path: PathBuf) -> (MarketSettingsStore, DrawingKey, DrawingKey) {
+        let mut market = MarketSettingsStore::new(MarketSettings::default(), path, false);
+        market.set_held(true);
+        let drawn = parse_settings(TWO_SETS).unwrap();
+        let (flow, time) = (
+            win(PaneRole::Flow),
+            win(PaneRole::Context {
+                bars: "time:5m".to_owned(),
+            }),
+        );
+        for key in [&flow, &time] {
+            market.settings_mut().restore(&drawn, key);
+        }
+        market.mark_changed(std::time::Instant::now());
+        (market, flow, time)
+    }
+
+    /// Saving tab A writes A's sets only: tab B's held set is not on disk and
+    /// stays held, so B's Close without saving can still drop it.
+    #[test]
+    fn a_tab_s_save_writes_only_its_own_sets() {
+        let home = home("market-commit-keys");
+        let (mut market, flow, time) = held_with_two_sets(home.market.clone());
+        assert_eq!(commit(&mut market, std::slice::from_ref(&flow)), Ok(true));
+        let on_disk = parse_settings(&std::fs::read_to_string(&home.market).unwrap()).unwrap();
+        assert_eq!(on_disk.drawings(&flow).len(), 1);
+        assert!(
+            on_disk.drawings(&time).is_empty(),
+            "B's set is not committed"
+        );
+        assert_eq!(market.held_changes([&time]), 1, "and still held");
+        assert!(market.discard(std::slice::from_ref(&time), &[]));
+        assert!(market.settings().drawings(&time).is_empty(), "dropped");
+        assert_eq!(commit(&mut market, std::slice::from_ref(&flow)), Ok(false));
+    }
+
+    /// A Save whose write fails says so and moves no baseline: the held set
+    /// stays counted, so the mark stays lit.
+    #[test]
+    fn a_save_that_cannot_write_fails_and_keeps_the_mark() {
+        let home = home("market-commit-fails");
+        let nowhere = home
+            .market
+            .with_file_name("no-such-folder")
+            .join(MARKET_SETTINGS_FILE);
+        let (mut market, flow, _) = held_with_two_sets(nowhere);
+        let failed = commit(&mut market, std::slice::from_ref(&flow));
+        assert!(failed.is_err(), "{failed:?}");
+        assert_eq!(market.held_changes([&flow]), 1, "nothing reads as saved");
+        market.set_blocked(true);
+        assert!(commit(&mut market, std::slice::from_ref(&flow)).is_err());
+    }
+
+    /// The debounced write that fails is owed again instead of reading saved.
+    #[test]
+    fn a_debounced_write_that_fails_is_owed_again() {
+        let home = home("market-act-on-fails");
+        let nowhere = home
+            .market
+            .with_file_name("no-such-folder")
+            .join(MARKET_SETTINGS_FILE);
+        let (mut market, flow, _) = held_with_two_sets(nowhere);
+        market.set_held(false);
+        let now = std::time::Instant::now();
+        act_on(&mut market, LayoutSave::Write, now);
+        assert!(market.is_dirty());
+        assert!(market.owes_write());
+        market.set_held(true);
+        assert_eq!(market.held_changes([&flow]), 1);
     }
 
     #[test]

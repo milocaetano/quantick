@@ -3,6 +3,7 @@ use crate::{
     layout_commit::{LayoutCommitPolicy, LayoutSave},
     market_settings::{DrawingKey, MARKET_SETTINGS_FILE, MarketKey, MarketSettings},
 };
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
@@ -13,12 +14,20 @@ pub type AssetResolver = Rc<dyn Fn(&str, &str) -> String>;
 /// The per-market document, and the one rule that decides when it reaches disk.
 ///
 /// With autosave off the store is *held*: drawings and anchored studies change
-/// in memory and wait for Save ([`Self::take_commit`]); `saved` is what the
-/// file holds, so a held change can be counted and dropped.
+/// in memory and wait for Save ([`Self::commit_document`]); `saved` is what the
+/// file holds, so a held change can be counted and dropped. `saved` moves only
+/// once a write has reached the disk ([`Self::note_saved`]): a failed write
+/// leaves every change counted and owed.
 pub struct MarketSettingsStore {
     settings: MarketSettings,
     saved: MarketSettings,
     held: bool,
+    /// Moves whenever `settings`, `saved` or the hold may have: a reader that
+    /// counts held changes recounts only when it moved.
+    revision: u64,
+    /// How many times [`Self::held_changes`] compared drawings, for a test
+    /// that proves an idle frame compares none.
+    counted: Cell<u64>,
     path: PathBuf,
     policy: LayoutCommitPolicy,
     asset: AssetResolver,
@@ -33,6 +42,8 @@ impl MarketSettingsStore {
             saved: settings.clone(),
             settings,
             held: false,
+            revision: 0,
+            counted: Cell::new(0),
             path,
             policy: LayoutCommitPolicy::new(blocked),
             asset: Rc::new(|_, symbol| symbol.to_owned()),
@@ -86,13 +97,28 @@ impl MarketSettingsStore {
         &self.settings
     }
     pub fn settings_mut(&mut self) -> &mut MarketSettings {
+        self.revision += 1;
         &mut self.settings
     }
 
     /// Replace the document wholesale — an imported bundle landing.
     pub fn set_settings(&mut self, settings: MarketSettings) {
+        self.revision += 1;
         self.saved = settings.clone();
         self.settings = settings;
+    }
+
+    /// Moves whenever what [`Self::held_changes`] answers may have.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// How many sets [`Self::held_changes`] has compared so far.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn held_counts(&self) -> u64 {
+        self.counted.get()
     }
 
     #[must_use]
@@ -119,35 +145,63 @@ impl MarketSettingsStore {
     pub fn mark_changed(&mut self, now: Instant) {
         self.policy.mark_changed(now);
     }
-    /// The debounced write; nothing while held.
+    /// The debounced write of the whole document; nothing while held. On
+    /// `Write` the caller writes [`Self::settings`] and reports the outcome
+    /// with [`Self::note_saved`] or [`Self::note_write_failed`].
     pub fn take_save(&mut self, now: Instant) -> LayoutSave {
         if self.held {
             return LayoutSave::Wait;
         }
-        let save = self.policy.take_save(now);
-        self.note_written(save)
+        self.policy.take_save(now)
     }
     /// The write on exit or before an export; nothing while held.
     pub fn take_flush(&mut self) -> LayoutSave {
         if self.held {
             return LayoutSave::Wait;
         }
-        self.take_commit()
+        self.policy.take_flush()
     }
-    /// Save: the write now, held or not.
-    pub fn take_commit(&mut self) -> LayoutSave {
-        let save = self.policy.take_flush();
-        self.note_written(save)
-    }
-    fn note_written(&mut self, save: LayoutSave) -> LayoutSave {
-        if save == LayoutSave::Write {
-            self.saved = self.settings.clone();
+
+    /// Save for one tab: the file as it stands, with only `keys` taken from
+    /// memory, so a set another tab holds back stays held. `None` when those
+    /// keys hold nothing the file lacks.
+    #[must_use]
+    pub fn commit_document(&self, keys: &[DrawingKey]) -> Option<MarketSettings> {
+        let mut document = self.saved.clone();
+        for key in keys {
+            document.restore(&self.settings, key);
         }
-        save
+        (document != self.saved).then_some(document)
+    }
+
+    /// Whether memory holds anything the file lacks.
+    #[must_use]
+    pub fn owes_write(&self) -> bool {
+        self.settings != self.saved
+    }
+
+    /// `written` reached the disk: it is what the file holds now. Once memory
+    /// holds nothing more, nothing is owed.
+    pub fn note_saved(&mut self, written: MarketSettings) {
+        self.revision += 1;
+        self.saved = written;
+        if self.settings == self.saved {
+            // The pending change is consumed: the file holds it.
+            let _ = self.policy.take_flush();
+        }
+    }
+
+    /// A write did not reach the disk: the change is owed again, and the
+    /// debounce retries it a quiet second after `now`.
+    pub fn note_write_failed(&mut self, now: Instant) {
+        self.policy.mark_changed(now);
     }
 
     /// Hold writes until Save (autosave off), or let them through.
     pub fn set_held(&mut self, held: bool) {
+        if self.held != held {
+            self.revision += 1;
+        }
         self.held = held;
     }
     #[must_use]
@@ -162,6 +216,7 @@ impl MarketSettingsStore {
             return 0;
         }
         keys.into_iter()
+            .inspect(|_| self.counted.set(self.counted.get() + 1))
             .map(|key| self.settings.drawing_changes(&self.saved, key))
             .sum()
     }
@@ -170,6 +225,7 @@ impl MarketSettingsStore {
     /// still shows back to the file's version. Once nothing differs, nothing is
     /// owed. Answers whether anything was dropped.
     pub fn discard(&mut self, closed: &[DrawingKey], open: &[DrawingKey]) -> bool {
+        self.revision += 1;
         let mut dropped = false;
         for key in closed.iter().filter(|key| !open.contains(key)) {
             dropped |= self.settings.drawing_changes(&self.saved, key) > 0;

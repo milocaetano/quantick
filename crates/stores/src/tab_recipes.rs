@@ -53,7 +53,11 @@ pub trait TabRecipeHost {
 
 /// What the frame owes the book, once its panes are built and seeded. Answers
 /// the tabs autosave writes through now: edits quiet for a second, never while
-/// it is off.
+/// it is off, one tab per workspace ([`WorkspaceBook::autosave_winners`]). A
+/// write-through that failed is armed again, so it is retried a quiet second
+/// later, never per frame.
+///
+/// [`WorkspaceBook::autosave_winners`]: crate::workspaces::WorkspaceBook::autosave_winners
 pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H, now: Instant) -> Vec<u64> {
     adopt_tabs(host);
     note_drawings(host);
@@ -62,26 +66,36 @@ pub fn maintain<H: TabRecipeHost + ?Sized>(host: &mut H, now: Instant) -> Vec<u6
     let tabs = host.recipe_tabs();
     let other = host.recipe_store_mut().sync_mut().next_watch(&tabs, active);
     for id in std::iter::once(active).chain(other) {
-        if observe_tab(host, id) {
-            host.recipe_store_mut().sync_mut().note_edit(id, now);
-        }
+        watch_tab(host, id, now);
     }
-    let store = host.recipe_store_mut();
-    let due = store.sync_mut().take_due(now);
-    if store.book().autosave() {
-        due.into_iter()
-            .filter(|tab| store.book().differs(*tab))
-            .collect()
-    } else {
-        Vec::new()
+    let (book, sync) = host.recipe_store_mut().parts_mut();
+    if !book.autosave() {
+        return Vec::new();
     }
+    for tab in book.failed_writes() {
+        sync.arm(tab, now);
+    }
+    let due = sync.take_due(now);
+    book.autosave_winners(&due, active)
+}
+
+/// Read one tab as [`observe_tab`] does and, when its copy changed, start
+/// the quiet second autosave waits: the one path every reading takes, the
+/// frame's and a command's, so no edit it picks up is left unwritten.
+pub fn watch_tab<H: TabRecipeHost + ?Sized>(host: &mut H, id: u64, now: Instant) -> bool {
+    let changed = observe_tab(host, id);
+    if changed {
+        host.recipe_store_mut().sync_mut().note_edit(id, now);
+    }
+    changed
 }
 
 /// The market store waits for Save while autosave is off, and the book learns
 /// what each tab's drawings hold back, so its mark and close prompt count them.
 ///
 /// Per frame, so autosave on reads no pane (nothing is held, nothing marks)
-/// and a store owing no write compares no drawing.
+/// and a tab whose sets and store revision stand as they were last counted
+/// compares no drawing.
 pub fn note_drawings<H: TabRecipeHost + ?Sized>(host: &mut H) {
     let held = !host.recipe_store().book().autosave();
     let Some(market) = host.recipe_market() else {
@@ -91,22 +105,25 @@ pub fn note_drawings<H: TabRecipeHost + ?Sized>(host: &mut H) {
     if !held {
         return;
     }
-    let tabs = host.recipe_tabs().into_iter();
-    let keys: Vec<(u64, Vec<DrawingKey>)> =
-        tabs.map(|tab| (tab, host.tab_drawing_keys(tab))).collect();
-    let Some(market) = host.recipe_market().filter(|market| market.is_dirty()) else {
-        let book = host.recipe_store_mut().book_mut();
-        keys.into_iter()
-            .for_each(|(tab, keys)| book.note_drawings(tab, keys, 0));
+    let revision = market.revision();
+    let book = host.recipe_store().book();
+    let stale: Vec<(u64, Vec<DrawingKey>)> = (host.recipe_tabs().into_iter())
+        .map(|tab| (tab, host.tab_drawing_keys(tab)))
+        .filter(|(tab, keys)| !book.drawings_current(*tab, keys, revision))
+        .collect();
+    if stale.is_empty() {
+        return;
+    }
+    let Some(market) = host.recipe_market() else {
         return;
     };
-    let counts: Vec<usize> = keys
+    let counts: Vec<usize> = stale
         .iter()
         .map(|(_, keys)| market.held_changes(keys))
         .collect();
     let book = host.recipe_store_mut().book_mut();
-    for ((tab, keys), held) in keys.into_iter().zip(counts) {
-        book.note_drawings(tab, keys, held);
+    for ((tab, keys), held) in stale.into_iter().zip(counts) {
+        book.note_drawings_at(tab, keys, held, revision);
     }
 }
 
@@ -494,5 +511,70 @@ mod tests {
         maintain(&mut host, Instant::now());
         assert!(!host.market.as_ref().unwrap().is_held());
         assert_eq!(host.store.book().held_drawings(7), 0);
+    }
+
+    /// Autosave off with a drawing held: an idle frame compares no drawing;
+    /// a change to the store is counted on the next frame.
+    #[test]
+    fn an_idle_frame_counts_no_held_drawing() {
+        let mut host = one_tab("tab_recipes_count_cache");
+        let saved = quantick_workspace::market_settings::parse_settings(DRAWN).unwrap();
+        let path = std::path::PathBuf::from("market-settings.toml");
+        let mut market = MarketSettingsStore::new(saved.clone(), path, false);
+        let cleared = quantick_workspace::market_settings::MarketSettings::default();
+        market.settings_mut().restore(&cleared, &flow_key());
+        market.mark_changed(Instant::now());
+        host.market = Some(market);
+        host.store.book_mut().set_autosave(false);
+        maintain(&mut host, Instant::now());
+        let counted = host.market.as_ref().unwrap().held_counts();
+        for _ in 0..5 {
+            maintain(&mut host, Instant::now());
+        }
+        assert_eq!(
+            host.market.as_ref().unwrap().held_counts(),
+            counted,
+            "five idle frames"
+        );
+        assert_eq!(host.store.book().held_drawings(7), 1);
+        let market = host.market.as_mut().unwrap();
+        market.settings_mut().restore(&saved, &flow_key());
+        maintain(&mut host, Instant::now());
+        assert_eq!(host.store.book().held_drawings(7), 0, "the level is back");
+    }
+
+    /// A command reads the tab before it acts; an edit it picks up there
+    /// starts the quiet second like the frame's reading, so it is written.
+    #[test]
+    fn an_edit_a_command_reads_is_written_through() {
+        let mut host = one_tab("tab-recipes-command-read");
+        let start = Instant::now();
+        maintain(&mut host, start);
+        maintain(&mut host, start);
+        host.shows.split_fraction = Some(0.3);
+        assert!(watch_tab(&mut host, 7, start), "the command saw the edit");
+        assert!(
+            maintain(&mut host, start).is_empty(),
+            "not inside the second"
+        );
+        assert_eq!(maintain(&mut host, start + AUTOSAVE_QUIET), vec![7]);
+    }
+
+    /// A write-through that failed is retried a quiet second later, and the
+    /// tab reads modified meanwhile, autosave on or not.
+    #[test]
+    fn a_failed_write_through_is_retried_after_the_quiet_second() {
+        let mut host = one_tab("tab-recipes-retry");
+        let start = Instant::now();
+        maintain(&mut host, start);
+        maintain(&mut host, start);
+        host.shows.split_fraction = Some(0.3);
+        maintain(&mut host, start);
+        assert_eq!(maintain(&mut host, start + AUTOSAVE_QUIET), vec![7]);
+        host.store.book_mut().note_write_failed(7);
+        assert!(host.store.tab_row(7).1, "a failed write reads modified");
+        let failed_at = start + AUTOSAVE_QUIET;
+        assert!(maintain(&mut host, failed_at).is_empty(), "not per frame");
+        assert_eq!(maintain(&mut host, failed_at + AUTOSAVE_QUIET), vec![7]);
     }
 }

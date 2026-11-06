@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 pub use quantick_workspace::workspace_book::{
     BookParseError, CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, MAX_WORKSPACE_NAME,
-    RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UnsavedEdits,
+    RenameOutcome, SaveOutcome, SeedTab, SetOutcome, TabWorkspaceState, UnsavedEdits, Unsynced,
     WORKSPACES_FILE, WorkspaceBook, WorkspaceListing, WorkspaceRefusal, capture_recipe, parse_book,
 };
 pub use quantick_workspace::workspace_recipe::{ContextPaneRecipe, WorkspaceRecipe};

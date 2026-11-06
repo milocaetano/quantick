@@ -37,7 +37,7 @@ use quantick_session::workspace_menu::{NameDialogMode, WorkspaceCommand, Workspa
 use quantick_stores::market_settings::{self, DrawingKey, MarketSettingsStore};
 use quantick_stores::workspaces::{
     CreateOutcome, DEFAULT_WORKSPACE, DeleteOutcome, RenameOutcome, SaveOutcome, SetOutcome,
-    UnsavedEdits, WorkspaceBook, WorkspaceBookStore, WorkspaceRecipe, WorkspaceRefusal,
+    UnsavedEdits, Unsynced, WorkspaceBook, WorkspaceBookStore, WorkspaceRecipe, WorkspaceRefusal,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -81,10 +81,20 @@ pub trait WorkspaceBookHost {
     fn workspace_market(&mut self) -> Option<&mut MarketSettingsStore> {
         None
     }
-    /// Write what [`Self::workspace_market`] holds back now; answers whether
-    /// it reached the disk.
-    fn commit_workspace_market(&mut self) -> bool {
-        self.workspace_market().is_some_and(market_settings::commit)
+    /// Write what [`Self::workspace_market`] holds back for `keys` now, every
+    /// other set left as the file has it; `None` writes every set. `Ok(true)`
+    /// when the file was written, `Ok(false)` when it already held them.
+    ///
+    /// # Errors
+    /// Why nothing reached the disk; the held sets stay counted.
+    fn commit_workspace_market(&mut self, keys: Option<&[DrawingKey]>) -> Result<bool, String> {
+        let Some(market) = self.workspace_market() else {
+            return Ok(false);
+        };
+        match keys {
+            Some(keys) => market_settings::commit(market, keys),
+            None => market_settings::commit_all(market),
+        }
     }
     /// The tab's workspace and whether it holds edits, as the snapshot reads it.
     fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
@@ -109,8 +119,10 @@ pub trait WorkspaceBookHost {
     fn persist_workspace_autosave(&mut self, _on: bool) -> Result<(), String> {
         Err("the desk is unavailable".to_owned())
     }
-    /// Close a market tab; `false` when it is its window's last.
-    fn close_market_tab(&mut self, _tab: u64) -> bool {
+    /// Close a market tab; `false` when it is its window's last. With `close`
+    /// false nothing closes and the answer says whether it would: asked
+    /// before anything is saved or flushed, so the refusal writes nothing.
+    fn close_market_tab(&mut self, _tab: u64, _close: bool) -> bool {
         false
     }
 }
@@ -165,7 +177,7 @@ pub fn apply_row_command<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
             })
         }),
         WorkspaceCommand::SetAutosave(on) => {
-            autosave_journaled(host, &mut to, on).map(|(_, saved)| saved_notes(host, &saved))
+            autosave_journaled(host, &mut to, on, tab).map(|(_, saved)| saved_notes(host, &saved))
         }
         WorkspaceCommand::Delete(name) => delete_journaled(host, &mut to, &name).map(|gone| {
             gone.changed.then(|| {
@@ -253,6 +265,16 @@ fn refused(refusal: &WorkspaceRefusal) -> ControlError {
     let mut error = ControlError::invalid_request(refusal.to_string());
     error.context.details = Some(json!({ "code": refusal.code() }));
     error
+}
+
+fn last_tab() -> ControlError {
+    let mut error = ControlError::invalid_request("the window's last tab stays open");
+    error.context.details = Some(json!({ "code": LAST_TAB_CODE }));
+    error
+}
+
+fn code_of(error: &ControlError) -> Option<&Value> {
+    error.context.details.as_ref()?.get("code")
 }
 
 fn write_failed(reason: String) -> ControlError {
@@ -358,29 +380,77 @@ pub fn set_tab_workspace<H: WorkspaceBookHost + ?Sized>(
 }
 
 /// Write a tab's edits into its workspace and redraw the tabs that follow.
+/// The tab's held drawings reach their file first: a market write that fails
+/// leaves the recipe unwritten too, so a Save lands whole or not at all. A
+/// recipe write that fails with autosave on marks the tab, which the frame
+/// retries.
 ///
 /// # Errors
-/// No such tab, no book, or the write failed and the book was restored.
+/// No such tab, no book, or a write failed and the book was restored.
 pub fn save_tab_to<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     tab: u64,
 ) -> Result<SaveOutcome, ControlError> {
-    let mut outcome = written(app, |book| book.save_to(tab), |saved| saved.changed)?;
+    let wrote = commit_market(app, tab)?;
+    let saved = written(app, |book| book.save_to(tab), |saved| saved.changed);
+    if saved.as_ref().is_err_and(failed_write) {
+        note_failed(app, tab);
+    }
+    let mut outcome = saved?;
     if outcome.changed {
         show(app, &outcome.tabs_changed)?;
     }
-    outcome.changed |= commit_market(app);
+    outcome.changed |= wrote;
     Ok(outcome)
 }
 
-/// Save's other half: the drawings and anchored studies autosave off held back
-/// reach their file right after the recipe. Answers whether they were written.
-fn commit_market<H: WorkspaceBookHost + ?Sized>(app: &mut H) -> bool {
-    let wrote = app.commit_workspace_market();
-    if wrote && let Some(book) = app.workspace_book() {
-        book.clear_held_drawings();
+/// A save of `tab` did not reach the disk: with autosave on it reads modified
+/// until one does.
+fn note_failed<H: WorkspaceBookHost + ?Sized>(app: &mut H, tab: u64) {
+    if let Some(book) = app.workspace_book().filter(|book| book.autosave()) {
+        book.note_write_failed(tab);
     }
-    wrote
+}
+
+/// Save's other half: the drawings and anchored studies autosave off held
+/// back on `tab`'s panes reach their file, and only those: another tab's held
+/// set stays its own to save or drop. With autosave on nothing is held, and
+/// the market's own debounce writes. Answers whether the file was written.
+///
+/// # Errors
+/// The market file was not written; every held set stays counted.
+fn commit_market<H: WorkspaceBookHost + ?Sized>(
+    app: &mut H,
+    tab: u64,
+) -> Result<bool, ControlError> {
+    if !app
+        .workspace_market()
+        .is_some_and(|market| market.is_held())
+    {
+        return Ok(false);
+    }
+    let keys = book(app)?.drawing_keys(tab).to_vec();
+    let wrote = app
+        .commit_workspace_market(Some(&keys))
+        .map_err(write_failed)?;
+    recount_held(app);
+    Ok(wrote)
+}
+
+/// The book counts again what each tab's sets hold back, as the store reads.
+fn recount_held<H: WorkspaceBookHost + ?Sized>(app: &mut H) {
+    let sets = app.workspace_book().map(|book| book.drawing_sets());
+    let (Some(sets), Some(market)) = (sets, app.workspace_market()) else {
+        return;
+    };
+    let counted: Vec<_> = (sets.into_iter())
+        .map(|(tab, keys)| (tab, market.held_changes(&keys), keys))
+        .collect();
+    if let Some(book) = app.workspace_book() {
+        for (tab, held, keys) in counted {
+            book.note_drawings(tab, keys, held);
+        }
+    }
 }
 
 /// Close without saving: the closed tab's held drawings go back to the file's
@@ -394,17 +464,21 @@ fn discard_market<H: WorkspaceBookHost + ?Sized>(app: &mut H, closed: &[DrawingK
     }
 }
 
-/// Make a new workspace of a tab's copy.
+/// Make a new workspace of a tab's copy, its held drawings written first.
 ///
 /// # Errors
-/// The name is refused, no such tab, no book, or the write failed.
+/// The name is refused, no such tab, no book, or a write failed.
 pub fn save_tab_as<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     tab: u64,
     name: &str,
 ) -> Result<SaveOutcome, ControlError> {
+    // Asked of a copy first: a refused name writes no drawing either.
+    let trial = book(app)?.clone().save_as(tab, name);
+    trial.map_err(|refusal| refused(&refusal))?;
+    let wrote = commit_market(app, tab)?;
     let mut outcome = written(app, |book| book.save_as(tab, name), |saved| saved.changed)?;
-    outcome.changed |= commit_market(app);
+    outcome.changed |= wrote;
     Ok(outcome)
 }
 
@@ -436,9 +510,11 @@ fn flush<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(())
 }
 
-/// Autosave's write-through for the tabs the frame found quiet, journaled as
-/// the hand that edited. Answers the toasts: one only where other tabs follow,
-/// or why a write failed.
+/// Autosave's write-through for the tabs the frame found quiet (one per
+/// workspace, as `quantick_stores::tab_recipes::maintain` chose them),
+/// journaled as the hand that edited. Answers the toasts: one only where
+/// other tabs follow, or why a write failed, once: a failed tab reads
+/// modified and the frame retries it each quiet second.
 pub fn write_through<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     mut to: Journal<'_, A>,
@@ -446,12 +522,18 @@ pub fn write_through<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
 ) -> Vec<String> {
     let mut notes = Vec::new();
     for tab in tabs {
+        let known = app.workspace_book().and_then(|book| book.unsynced(*tab));
         match save_to_journaled(app, &mut to, *tab) {
             Ok(saved) => notes.extend(saved_notes(app, &[saved])),
+            Err(error) if known == Some(Unsynced::Failed) && failed_write(&error) => {}
             Err(error) => notes.push(error.message),
         }
     }
     notes
+}
+
+fn failed_write(error: &ControlError) -> bool {
+    code_of(error) == Some(&json!(WRITE_FAILED_CODE))
 }
 
 fn saved_notes<H: WorkspaceBookHost + ?Sized>(app: &H, saved: &[SaveOutcome]) -> Option<String> {
@@ -464,33 +546,63 @@ fn saved_notes<H: WorkspaceBookHost + ?Sized>(app: &H, saved: &[SaveOutcome]) ->
     (!notes.is_empty()).then(|| notes.join("; "))
 }
 
-/// Turn autosave on or off and write the desk; turning it on saves every tab
-/// holding edits at once. A desk write that fails takes the choice back.
+/// What turning autosave on or off did, the saves included, even when one
+/// failed: the journal and the answer name what landed.
+#[derive(Debug)]
+pub struct AutosaveOutcome {
+    /// Whether the setting moved.
+    pub changed: bool,
+    /// The saves that reached the disk.
+    pub saved: Vec<SaveOutcome>,
+    /// The first save that did not; its tab reads modified and is retried.
+    pub failed: Option<ControlError>,
+}
+
+/// Turn autosave on or off and write the desk. A desk write that fails takes
+/// the choice back and changes nothing. Turning it on (or asking for on
+/// again) saves every tab holding edits at once, one per workspace
+/// ([`WorkspaceBook::autosave_winners`], `active` first): a tab outvoted
+/// stays marked, and a save that fails marks its tab, which the frame
+/// retries; the setting stays on and the saves that landed stand.
 ///
 /// # Errors
-/// No book, the desk write failed, or a save failed.
+/// No book, or the desk write failed: then nothing changed.
 pub fn set_autosave<H: WorkspaceBookHost + ?Sized>(
     app: &mut H,
     on: bool,
-) -> Result<(bool, Vec<SaveOutcome>), ControlError> {
-    if !book(app)?.set_autosave(on) {
-        return Ok((false, Vec::new()));
-    }
-    if let Err(reason) = app.persist_workspace_autosave(on) {
+    active: u64,
+) -> Result<AutosaveOutcome, ControlError> {
+    let changed = book(app)?.set_autosave(on);
+    if changed && let Err(reason) = app.persist_workspace_autosave(on) {
         book(app)?.set_autosave(!on);
         return Err(write_failed(reason));
     }
     if let Some(market) = app.workspace_market() {
         market.set_held(!on);
     }
-    let mut saved = Vec::new();
-    if on {
-        for tab in book(app)?.differing_tabs() {
-            saved.push(save_tab_to(app, tab)?);
-        }
-        commit_market(app);
+    let mut outcome = AutosaveOutcome {
+        changed,
+        saved: Vec::new(),
+        failed: None,
+    };
+    if !on {
+        return Ok(outcome);
     }
-    Ok((true, saved))
+    let held = book(app)?;
+    for tab in held.autosave_winners(&held.differing_tabs(), active) {
+        match save_tab_to(app, tab) {
+            Ok(saved) => outcome.saved.push(saved),
+            Err(error) => {
+                outcome.failed.get_or_insert(error);
+            }
+        }
+    }
+    let market = app.commit_workspace_market(None).map(drop);
+    if let Err(reason) = market {
+        outcome.failed.get_or_insert(write_failed(reason));
+    }
+    recount_held(app);
+    Ok(outcome)
 }
 
 /// What closing a tab does with its held edits: `None` asks, and refuses with
@@ -504,6 +616,10 @@ pub fn close_tab<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     tab: u64,
     save: Option<bool>,
 ) -> Result<Option<SaveOutcome>, ControlError> {
+    // First: the tab that stays open writes and asks nothing.
+    if !app.close_market_tab(tab, false) {
+        return Err(last_tab());
+    }
     flush(app, to, tab)?;
     let saved = match (close_question(app, tab), save) {
         (Some(asked), None) => return Err(unsaved(&asked)),
@@ -514,10 +630,8 @@ pub fn close_tab<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         !book(app)?.autosave() && saved.is_none(),
         book(app)?.drawing_keys(tab).to_vec(),
     );
-    if !app.close_market_tab(tab) {
-        let mut error = ControlError::invalid_request("the window's last tab stays open");
-        error.context.details = Some(json!({ "code": LAST_TAB_CODE }));
-        return Err(error);
+    if !app.close_market_tab(tab, true) {
+        return Err(last_tab());
     }
     if drop_held {
         discard_market(app, &keys, tab);
@@ -604,19 +718,17 @@ fn run_close<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
         };
         if let Err(error) = settled {
             queue.abort();
-            let code = error
-                .context
-                .details
-                .as_ref()
-                .and_then(|details| details.get("code"));
-            return (code != Some(&json!(LAST_TAB_CODE))).then_some(error.message);
+            return (code_of(&error) != Some(&json!(LAST_TAB_CODE))).then_some(error.message);
         }
     }
     None
 }
 
-/// Exit's settle: the tab stays in the desk for the next launch, its edits
-/// written into its workspace or let go, and a pending autosave written.
+/// Exit's settle, once every tab is answered (the queue defers them, so a
+/// Cancel applies nothing): the tab stays in the desk for the next launch,
+/// its edits written into its workspace or let go, and a pending autosave
+/// written. Let go means the recipe copy too, so the desk keeps no edits
+/// the trader dropped and the next launch opens the tab on its workspace.
 fn settle_in_place<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
@@ -626,8 +738,12 @@ fn settle_in_place<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     match save {
         Some(true) => save_to_journaled(app, to, tab).map(drop),
         Some(false) => {
+            if book(app)?.discard_edits(tab) {
+                show(app, &[tab])?;
+            }
             let keys = book(app)?.drawing_keys(tab).to_vec();
             discard_market(app, &keys, tab);
+            recount_held(app);
             Ok(())
         }
         None => flush(app, to, tab),
@@ -728,12 +844,20 @@ fn new_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     Ok(outcome)
 }
 
+/// The setting and every save that landed are journaled, a failed save
+/// included: the answer is then that save's error, its details naming the
+/// setting as it now stands and the workspaces saved, as the journal does.
 fn autosave_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
     app: &mut H,
     to: &mut Journal<'_, A>,
     on: bool,
+    active: u64,
 ) -> Result<(bool, Vec<SaveOutcome>), ControlError> {
-    let (changed, saved) = set_autosave(app, on)?;
+    let AutosaveOutcome {
+        changed,
+        saved,
+        failed,
+    } = set_autosave(app, on, active)?;
     if changed {
         journal(
             to,
@@ -746,7 +870,16 @@ fn autosave_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
             json!({ "workspace": one.workspace, "tabs_changed": wires(&one.tabs_changed) });
         journal(to, WORKSPACE_SAVED_EVENT_KIND, payload);
     }
-    Ok((changed, saved))
+    match failed {
+        None => Ok((changed, saved)),
+        Some(mut error) => {
+            let landed: Vec<&str> = saved.iter().map(|one| one.workspace.as_str()).collect();
+            let code = code_of(&error).cloned().unwrap_or(json!(WRITE_FAILED_CODE));
+            error.context.details = Some(json!({ "code": code, "auto_save": on,
+                "changed": changed, "saved": landed }));
+            Err(error)
+        }
+    }
 }
 
 fn rename_journaled<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
@@ -861,14 +994,15 @@ fn save_result(saved: SaveOutcome) -> WorkspaceSaveResult {
     }
 }
 
-fn autosave_set<H: WorkspaceBookHost + ?Sized, A: NotifyAccess>(
+fn autosave_set<H: WorkspaceBookHost + TabDirectory + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
     let WorkspaceAutosaveInput { on } = input(value)?;
-    let (changed, saved) = autosave_journaled(app, &mut Some((access, actor)), on)?;
+    let active = app.tab_id_at(app.active_tab_index());
+    let (changed, saved) = autosave_journaled(app, &mut Some((access, actor)), on, active)?;
     answer(&WorkspaceAutosaveResult {
         auto_save: on,
         changed,

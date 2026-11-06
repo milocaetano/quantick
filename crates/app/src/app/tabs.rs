@@ -88,11 +88,13 @@ impl QuantickApp {
     }
 }
 
-/// Close the tab at `index` without asking; answers whether it went.
-pub(super) fn close_now(app: &mut QuantickApp, index: usize) -> bool {
-    let asked = app
-        .arrangement_adapter()
-        .apply_tab_action(TabAction::Close(index));
+/// Close the tab at `index` without asking; answers whether it went. With
+/// `close` false it only answers whether it would.
+pub(super) fn close_now(app: &mut QuantickApp, index: usize, close: bool) -> bool {
+    if !close {
+        return app.runtime.tabs.plan_close(index).is_ok();
+    }
+    let asked = (app.arrangement_adapter()).apply_tab_action(TabAction::Close(index));
     let closed = asked.1.is_some();
     settle_strip(app, asked);
     closed

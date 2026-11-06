@@ -156,15 +156,27 @@ snapshot reads it as `auto_save`.
 - **On:** a layout change is written into the tab's workspace after the 1 s
   quiet the layouts file already waits; tabs on the same workspace follow. The
   toast "Scalp saved · WDOZ26 follows" appears only when another tab followed.
-  Nothing is ever pending, so nothing is marked and closing never asks.
+  Nothing is pending, so nothing is marked and closing never asks, with two
+  honest exceptions: a write that did not reach the disk marks the tab, toasts
+  once and is retried each quiet second until it lands; and when two tabs on
+  one workspace both hold edits, one copy is written (the active tab's, else
+  the lowest tab id's) and the other tab keeps its edits, marked, until it is
+  saved, edited again or switched. A tab whose copy is not in its workspace
+  never reads saved.
 - **Off:** the change is held on the tab. The cell wears the amber mark and a
   "Save" pill (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
   Scalp" row (its hover names the tabs that follow) write it. Drawings and
-  anchored studies are held too, and Save writes the workspace and the market
-  settings together (the whole market file, so a set no open tab shows is
-  written too); the mark lights for either. Close without saving puts a held
-  set back to the file's version unless another open tab shows it. Turning
-  auto save on with edits held saves them at once.
+  anchored studies are held too, and Save writes the tab's own drawing sets
+  (the ones its panes show; every other set stays as the file has it, still
+  held for its own tab) and then the workspace; the mark lights for either. A
+  Save whose write fails answers `workspace.write_failed` and the mark stays:
+  nothing reads as saved before it is on disk. Close without saving puts a
+  held set back to the file's version unless another open tab shows it.
+  Turning auto save on with edits held saves them at once, one tab per
+  workspace as above, then every held drawing; a save that fails there leaves
+  auto save on, journals the setting and each save that landed, and answers
+  `workspace.write_failed` naming them (`auto_save`, `saved`), the failed tab
+  marked and retried.
 - There is no Revert: `workspace.revert` answers `workspace.revert_removed`,
   naming `workspace.save_to` and `workspace.autosave.set`. A workspace switch
   with edits held keeps today's "changes dropped" toast.
@@ -175,11 +187,18 @@ snapshot reads it as `auto_save`.
   close (a tab already answered stays closed, nothing after it closes).
   `tab.close {tab_id, save}` is the named form and asks the same question:
   without `save` it answers `workspace.unsaved_edits` (with the workspace,
-  followers and changes) and does not close. Closing a torn-off window while
-  another window stays asks nothing, because its tabs move into that window;
-  closing the last window is the exit, which asks for every tab in strip
-  order and keeps them all in the desk for the next launch (Save writes the
-  workspace and market file, Close without saving leaves both as saved).
+  followers and changes) and does not close; the window's last tab answers
+  `workspace.last_tab` before anything is saved or written. Closing a
+  torn-off window while another window stays asks nothing, because its tabs
+  move into that window; closing the last window is the exit, which asks for
+  every tab in strip order and keeps them all in the desk for the next
+  launch. The exit applies no answer until the last one is in: Cancel on any
+  tab leaves every tab, on screen and in the stores, as it stood. Once all
+  are answered the saves (and pending write-throughs) land first, in strip
+  order, then the discards, so a save that fails ends the exit before
+  anything is let go. Save writes the tab's workspace and drawing sets; Close
+  without saving leaves both as saved and lets the tab's held recipe go too,
+  so the next launch opens it on its workspace, not on the dropped edits.
   With autosave on, or nothing held, no close asks: a pending write-through
   is written first, on exit too.
 - What counts as a change: indicators (add, remove, settings, style), panes

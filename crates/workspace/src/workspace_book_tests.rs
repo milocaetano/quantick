@@ -218,7 +218,9 @@ fn held_drawings_mark_the_tab_and_the_prompt_counts_them() {
     let changes = book.unsaved_edits(1).unwrap().changes;
     assert_eq!(changes, ["EMA", "panes", "1 drawing"]);
     assert_eq!(book.drawing_keys_except(1), vec![flow_key()]);
-    book.clear_held_drawings();
+    for (tab, keys) in book.drawing_sets() {
+        book.note_drawings(tab, keys, 0);
+    }
     assert_eq!(
         state(&book, 2),
         ("Scalp".to_owned(), false),
@@ -642,4 +644,88 @@ fn create_refuses_a_taken_or_empty_name_and_changes_nothing() {
     assert!(book.create(1, "  ").is_err());
     assert!(book.create(9, "Fresh").is_err(), "no such tab");
     assert_eq!(book, before);
+}
+
+/// Autosave on, two tabs on one workspace both edited: writing one leaves the
+/// other differing, and it reads modified, never silently unsaved.
+#[test]
+fn an_outvoted_tab_reads_modified_with_autosave_on() {
+    let mut book = two_tabs_on_scalp();
+    book.set_autosave(true);
+    let mut one = recipe(DeclaredLayout::Time);
+    one.flow_indicators = vec![ema()];
+    book.observe(1, &one).unwrap();
+    book.observe(2, &recipe(DeclaredLayout::Flow)).unwrap();
+    assert_eq!(
+        book.autosave_winners(&[1, 2], 2),
+        [2],
+        "the active tab wins"
+    );
+    assert_eq!(book.autosave_winners(&[2, 1], 9), [1], "else the lowest id");
+    book.save_to(2).unwrap();
+    assert!(book.differs(1));
+    assert_eq!(book.unsynced(1), Some(Unsynced::Outvoted));
+    assert_eq!(state(&book, 1), ("Scalp".to_owned(), true));
+    assert_eq!(state(&book, 2), ("Scalp".to_owned(), false));
+    book.save_to(1).unwrap();
+    assert_eq!(
+        state(&book, 1),
+        ("Scalp".to_owned(), false),
+        "saved at last"
+    );
+    assert!(!book.differs(2), "the clean tab followed");
+}
+
+/// Autosave on: a write-through that failed marks the tab and is news once.
+#[test]
+fn a_failed_write_through_marks_the_tab_until_a_save_lands() {
+    let mut book = two_tabs_on_scalp();
+    book.set_autosave(true);
+    book.observe(1, &recipe(DeclaredLayout::Flow)).unwrap();
+    assert!(!state(&book, 1).1);
+    assert!(book.note_write_failed(1));
+    assert!(
+        !book.note_write_failed(1),
+        "a retry that fails again is no news"
+    );
+    assert_eq!(state(&book, 1), ("Scalp".to_owned(), true));
+    assert_eq!(book.failed_writes(), [1]);
+    book.save_to(1).unwrap();
+    assert!(!state(&book, 1).1);
+    assert!(book.failed_writes().is_empty());
+}
+
+/// An exit's Close without saving puts the copy back, so the desk keeps no
+/// edits and the next launch opens the tab on its workspace's recipe.
+#[test]
+fn discarded_edits_are_not_what_the_next_launch_restores() {
+    let mut book = two_tabs_on_scalp();
+    book.observe(1, &recipe(DeclaredLayout::Flow)).unwrap();
+    assert!(
+        book.saved_fields(1).1.is_some(),
+        "the desk would keep the edit"
+    );
+    assert!(book.discard_edits(1));
+    let (workspace, copy) = book.saved_fields(1);
+    assert_eq!((workspace.as_deref(), copy.as_ref()), (Some("Scalp"), None));
+    let mut next = book.clone();
+    next.close_tab(1);
+    next.restore_tab(1, "Scalp", copy);
+    assert_eq!(next.tab_copy(1), next.recipe("Scalp"));
+    assert!(!book.discard_edits(1), "a repeat changes nothing");
+}
+
+/// A count stands while the store and the tab's sets stay as they were.
+#[test]
+fn a_drawing_count_is_current_only_at_its_revision_and_sets() {
+    let mut book = two_tabs_on_scalp();
+    book.note_drawings_at(1, vec![flow_key()], 2, 7);
+    assert!(book.drawings_current(1, &[flow_key()], 7));
+    assert!(!book.drawings_current(1, &[flow_key()], 8));
+    assert!(!book.drawings_current(1, &[], 7));
+    book.note_drawings(1, vec![flow_key()], 2);
+    assert!(
+        !book.drawings_current(1, &[flow_key()], 7),
+        "told without one"
+    );
 }

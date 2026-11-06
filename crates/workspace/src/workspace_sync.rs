@@ -252,6 +252,13 @@ impl TabRecipeSync {
         self.edited.insert(tab, now);
     }
 
+    /// A write to retry: due a quiet second after `now`, unless an edit already
+    /// waits, whose own clock stands. A retry that fails again is armed anew,
+    /// so a failing disk is tried once a second, never per frame.
+    pub fn arm(&mut self, tab: u64, now: Instant) {
+        self.edited.entry(tab).or_insert(now);
+    }
+
     /// The tabs whose last edit has stood [`AUTOSAVE_QUIET`] by `now`, in id
     /// order, taken: each is written through once.
     pub fn take_due(&mut self, now: Instant) -> Vec<u64> {

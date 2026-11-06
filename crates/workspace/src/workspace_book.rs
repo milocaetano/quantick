@@ -6,9 +6,10 @@
 //! to the recipe, never stored, so a flag and the truth cannot disagree.
 //!
 //! With [`WorkspaceBook::autosave`] on (the default) the window writes every
-//! edit through after a quiet second, so no tab reads as holding edits; with it
-//! off a tab holds them, marked, until Save to. There is no revert: a workspace
-//! switch drops held edits, and closing the tab asks first.
+//! edit through after a quiet second, so no tab reads as holding edits unless
+//! autosave could not write it ([`Unsynced`]); with it off a tab holds them,
+//! marked, until Save to. There is no revert: a workspace switch drops held
+//! edits, and closing the tab asks first.
 //!
 //! The recipes persist in their own file; the per-tab state persists on
 //! [`SavedTab`] in the desk, so an edited tab survives a restart still marked.
@@ -242,6 +243,22 @@ pub struct WorkspaceBook {
     /// it: the window's, never this file's.
     #[serde(skip)]
     drawings: BTreeMap<u64, TabDrawings>,
+    /// Tabs whose differing copy autosave did not write: marked even with
+    /// autosave on, so a copy that is not in its workspace never reads saved.
+    #[serde(skip)]
+    unsynced: BTreeMap<u64, Unsynced>,
+}
+
+/// Why a tab's copy differs from its workspace with autosave on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unsynced {
+    /// The write-through did not reach the disk: the window retries it after
+    /// the quiet second.
+    Failed,
+    /// Another tab on the same workspace was written instead (the active tab,
+    /// else the lowest id): this one keeps its edits, marked, until it saves,
+    /// edits again or switches.
+    Outvoted,
 }
 
 /// The drawing sets (anchored studies among them) a tab's panes hold, and how
@@ -250,6 +267,9 @@ pub struct WorkspaceBook {
 struct TabDrawings {
     keys: Vec<DrawingKey>,
     held: usize,
+    /// The market store's revision `held` was counted at; `None` for a count
+    /// told without one, which is never current.
+    revision: Option<u64>,
 }
 
 /// How a close prompt names held drawings: `1 drawing`, `3 drawings`.
@@ -275,6 +295,7 @@ impl Default for WorkspaceBook {
             tabs: BTreeMap::new(),
             autosave: autosave_default(),
             drawings: BTreeMap::new(),
+            unsynced: BTreeMap::new(),
         }
     }
 }
@@ -393,16 +414,51 @@ impl WorkspaceBook {
     #[must_use]
     pub fn tab_state(&self, tab: u64) -> Option<TabWorkspaceState<'_>> {
         let state = self.tabs.get(&tab)?;
+        let modified = if self.autosave {
+            self.unsynced.contains_key(&tab) && self.is_modified(state)
+        } else {
+            self.is_modified(state) || self.held_drawings(tab) > 0
+        };
         Some(TabWorkspaceState {
             workspace: &state.workspace,
-            modified: !self.autosave && (self.is_modified(state) || self.held_drawings(tab) > 0),
+            modified,
         })
     }
 
     /// The frame's reading of a tab: the drawing sets its panes hold, and how
     /// many of their drawings wait for Save.
     pub fn note_drawings(&mut self, tab: u64, keys: Vec<DrawingKey>, held: usize) {
-        self.drawings.insert(tab, TabDrawings { keys, held });
+        let revision = None;
+        self.drawings.insert(
+            tab,
+            TabDrawings {
+                keys,
+                held,
+                revision,
+            },
+        );
+    }
+
+    /// [`Self::note_drawings`], counted at the market store's `revision`.
+    pub fn note_drawings_at(&mut self, tab: u64, keys: Vec<DrawingKey>, held: usize, at: u64) {
+        let revision = Some(at);
+        self.drawings.insert(
+            tab,
+            TabDrawings {
+                keys,
+                held,
+                revision,
+            },
+        );
+    }
+
+    /// Whether the tab's count still stands: the same sets, counted at this
+    /// very revision of the market store. A frame recounts nothing else.
+    #[must_use]
+    pub fn drawings_current(&self, tab: u64, keys: &[DrawingKey], revision: u64) -> bool {
+        self.drawings
+            .get(&tab)
+            .is_some_and(|noted| noted.revision == Some(revision) && noted.keys == keys)
     }
 
     /// How many of the tab's drawings and anchored studies wait for Save:
@@ -431,11 +487,83 @@ impl WorkspaceBook {
             .collect()
     }
 
-    /// Save wrote the market file: nothing is held back any more.
-    pub fn clear_held_drawings(&mut self) {
-        for drawings in self.drawings.values_mut() {
-            drawings.held = 0;
+    /// Every tab's drawing sets as the frame last noted them, in id order:
+    /// what a Save counts again once it wrote some of the market file.
+    #[must_use]
+    pub fn drawing_sets(&self) -> Vec<(u64, Vec<DrawingKey>)> {
+        let sets = self.drawings.iter();
+        sets.map(|(tab, drawings)| (*tab, drawings.keys.clone()))
+            .collect()
+    }
+
+    /// A write-through of the tab did not reach the disk: it reads modified
+    /// until a save lands. Answers whether it is news (the toast says it once).
+    pub fn note_write_failed(&mut self, tab: u64) -> bool {
+        self.unsynced.insert(tab, Unsynced::Failed) != Some(Unsynced::Failed)
+    }
+
+    /// Why the tab's copy is not in its workspace with autosave on, if it is not.
+    #[must_use]
+    pub fn unsynced(&self, tab: u64) -> Option<Unsynced> {
+        let state = self.tabs.get(&tab)?;
+        let why = self.unsynced.get(&tab).copied()?;
+        self.is_modified(state).then_some(why)
+    }
+
+    /// The tabs whose write-through failed and still differ: what the window
+    /// retries once the quiet second has passed.
+    #[must_use]
+    pub fn failed_writes(&self) -> Vec<u64> {
+        let failed = self
+            .unsynced
+            .iter()
+            .filter(|(_, why)| **why == Unsynced::Failed);
+        failed
+            .map(|(tab, _)| *tab)
+            .filter(|tab| self.differs(*tab))
+            .collect()
+    }
+
+    /// Of `tabs`, the ones autosave writes: the differing ones, one per
+    /// workspace, `active` where it is among them, else the lowest id. In id
+    /// order. Writing two copies into one workspace would leave the first
+    /// differing and unmarked, so the others are marked [`Unsynced::Outvoted`]
+    /// here, before any write: they read modified even if the winner's write
+    /// then fails.
+    pub fn autosave_winners(&mut self, tabs: &[u64], active: u64) -> Vec<u64> {
+        let mut ordered: Vec<u64> = tabs.to_vec();
+        ordered.sort_unstable();
+        ordered.dedup();
+        ordered.retain(|tab| self.differs(*tab));
+        let mut winners: BTreeMap<String, u64> = BTreeMap::new();
+        for tab in &ordered {
+            let workspace = self.tabs[tab].workspace.clone();
+            let held = winners.entry(workspace).or_insert(*tab);
+            if *tab == active {
+                *held = *tab;
+            }
         }
+        let mut chosen: Vec<u64> = winners.into_values().collect();
+        chosen.sort_unstable();
+        for tab in ordered.into_iter().filter(|tab| !chosen.contains(tab)) {
+            self.unsynced.entry(tab).or_insert(Unsynced::Outvoted);
+        }
+        chosen
+    }
+
+    /// Close without saving where the tab stays (an exit): its copy goes back
+    /// to its workspace, so the desk keeps no edits for the next launch.
+    /// Answers whether the copy changed.
+    pub fn discard_edits(&mut self, tab: u64) -> bool {
+        self.unsynced.remove(&tab);
+        let Some(base) = self.tabs.get(&tab).and_then(|state| self.baseline(state)) else {
+            return false;
+        };
+        let base = base.clone();
+        let state = self.tabs.get_mut(&tab).expect("found above");
+        let changed = state.copy != base;
+        state.copy = base;
+        changed
     }
 
     /// Whether edits are written through as they are made.
@@ -560,6 +688,7 @@ impl WorkspaceBook {
     pub fn close_tab(&mut self, tab: u64) {
         self.tabs.remove(&tab);
         self.drawings.remove(&tab);
+        self.unsynced.remove(&tab);
     }
 
     /// A tab the desk brought back, following a rename since. A workspace the
@@ -648,6 +777,7 @@ impl WorkspaceBook {
         }
         let dropped_edits = self.is_modified(state);
         self.tabs.insert(tab, TabWorkspace::on(name, recipe));
+        self.unsynced.remove(&tab);
         Ok(SetOutcome {
             changed: true,
             dropped_edits,
@@ -699,8 +829,17 @@ impl WorkspaceBook {
             if let Some(state) = self.tabs.get_mut(other) {
                 state.copy = recipe.clone();
             }
+            self.unsynced.remove(other);
         }
         self.recipes.insert(workspace.clone(), recipe);
+        self.unsynced.remove(&tab);
+        // A tab on this workspace with edits of its own keeps them, now told
+        // against this recipe: marked with autosave on too, never silent.
+        for other in self.tabs_on(&workspace) {
+            if other != tab && self.differs(other) {
+                self.unsynced.entry(other).or_insert(Unsynced::Outvoted);
+            }
+        }
         Ok(SaveOutcome {
             workspace,
             changed: true,
@@ -729,6 +868,7 @@ impl WorkspaceBook {
         if let Some(state) = self.tabs.get_mut(&tab) {
             state.workspace.clone_from(&cleaned);
         }
+        self.unsynced.remove(&tab);
         Ok(SaveOutcome {
             workspace: cleaned,
             changed: true,
@@ -752,6 +892,7 @@ impl WorkspaceBook {
         let recipe = state.copy.emptied();
         self.recipes.insert(cleaned.clone(), recipe.clone());
         self.tabs.insert(tab, TabWorkspace::on(&cleaned, recipe));
+        self.unsynced.remove(&tab);
         Ok(CreateOutcome {
             workspace: cleaned,
             dropped_edits,

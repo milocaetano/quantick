@@ -13,6 +13,7 @@
 //! lose it.
 use crate::layout_document::{LayoutBook, LegacyDrawings, SavedDrawing, SavedOrigin};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The market settings filename inside the cockpit home.
 pub const MARKET_SETTINGS_FILE: &str = "market-settings.toml";
@@ -202,13 +203,34 @@ impl MarketSettings {
     }
 
     /// How many of `key`'s drawings differ from `saved`'s: added, removed or
-    /// changed, whichever side counts more.
+    /// changed, whichever side counts more. The sets are compared as
+    /// multisets, so a duplicated mark counts as one added.
+    ///
+    /// Linear in the common case: the equal ends (a mark added, moved or
+    /// erased leaves the rest in place) are walked once, and only the middle
+    /// is balanced, keyed by each entry's `Debug` text, which tells apart every
+    /// entry `==` does but `-0.0` from `0.0`.
     #[must_use]
     pub fn drawing_changes(&self, saved: &Self, key: &DrawingKey) -> usize {
         let (now, then) = (self.drawings(key), saved.drawings(key));
-        let gone = then.iter().filter(|entry| !now.contains(entry)).count();
-        let new = now.iter().filter(|entry| !then.contains(entry)).count();
-        gone.max(new)
+        let head = now.iter().zip(then).take_while(|(a, b)| a == b).count();
+        let (now, then) = (&now[head..], &then[head..]);
+        let ends = now.iter().rev().zip(then.iter().rev());
+        let tail = ends.take_while(|(a, b)| a == b).count();
+        let (now, then) = (&now[..now.len() - tail], &then[..then.len() - tail]);
+        let mut balance: BTreeMap<String, isize> = BTreeMap::new();
+        for (entries, sign) in [(now, 1), (then, -1)] {
+            for entry in entries {
+                *balance.entry(format!("{entry:?}")).or_default() += sign;
+            }
+        }
+        let side = |positive: bool| -> usize {
+            let counts = balance
+                .values()
+                .filter(|n| (**n > 0) == positive && **n != 0);
+            counts.map(|n| n.unsigned_abs()).sum()
+        };
+        side(false).max(side(true))
     }
 
     /// Put `key`'s drawings back to what `saved` holds.

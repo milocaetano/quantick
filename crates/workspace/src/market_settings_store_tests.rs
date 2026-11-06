@@ -83,8 +83,105 @@ fn a_held_store_writes_only_on_save() {
     assert_eq!(store.take_flush(), LayoutSave::Wait);
     assert_eq!(store.held_changes([&flow]), 2);
     assert_eq!(store.held_changes([&key("mt5", context("1m"))]), 0);
-    assert_eq!(store.take_commit(), LayoutSave::Write);
+    let written = store.commit_document(std::slice::from_ref(&flow)).unwrap();
+    assert_eq!(
+        store.held_changes([&flow]),
+        2,
+        "nothing moves before the disk"
+    );
+    store.note_saved(written);
     assert_eq!(store.held_changes([&flow]), 0, "saved is the new baseline");
+    assert!(!store.is_dirty());
+}
+
+/// One tab's Save writes its own sets only: another tab's held set stays
+/// held, counted and owed, so its Close without saving can still drop it.
+#[test]
+fn a_save_commits_only_the_keys_it_names() {
+    let (flow, time) = (key("mt5", PaneRole::Flow), key("mt5", context("5m")));
+    let mut store = store();
+    store.set_held(true);
+    draw(&mut store, &flow);
+    draw(&mut store, &time);
+    let written = store.commit_document(std::slice::from_ref(&flow)).unwrap();
+    assert_eq!(written.drawings(&flow).len(), 2);
+    assert!(
+        written.drawings(&time).is_empty(),
+        "the other set as the file has it"
+    );
+    store.note_saved(written);
+    assert_eq!(store.held_changes([&flow]), 0);
+    assert_eq!(store.held_changes([&time]), 2, "still held");
+    assert!(store.is_dirty(), "still owed");
+    assert!(store.discard(std::slice::from_ref(&time), &[]));
+    assert!(store.settings().drawings(&time).is_empty());
+    assert!(store.commit_document(std::slice::from_ref(&flow)).is_none());
+}
+
+/// A write that did not reach the disk moves no baseline: the change stays
+/// counted and owed, and the debounce asks for it again.
+#[test]
+fn a_failed_write_keeps_the_change_counted_and_owed() {
+    let flow = key("mt5", PaneRole::Flow);
+    let mut store = store();
+    draw(&mut store, &flow);
+    let later = Instant::now() + Duration::from_secs(5);
+    assert_eq!(store.take_save(later), LayoutSave::Write);
+    store.note_write_failed(later);
+    store.set_held(true);
+    assert_eq!(store.held_changes([&flow]), 2, "the file never got it");
+    store.set_held(false);
+    assert!(store.is_dirty());
+    assert_eq!(
+        store.take_save(later),
+        LayoutSave::Wait,
+        "a quiet second first"
+    );
+    assert_eq!(
+        store.take_save(later + Duration::from_secs(1)),
+        LayoutSave::Write
+    );
+}
+
+/// A duplicated mark is one added drawing, and a long equal set compares
+/// only what changed.
+#[test]
+fn drawing_changes_count_a_duplicate_and_ignore_equal_ends() {
+    let flow = key("mt5", PaneRole::Flow);
+    let mut saved = MarketSettings::default();
+    let many: Vec<SavedDrawing> = (0..2_000_u32)
+        .map(|n| level(Some(u64::from(n)), f64::from(n)))
+        .collect();
+    saved.replace(&flow, many.clone(), known);
+    let mut now = saved.clone();
+    let mut doubled = many.clone();
+    doubled.insert(1_000, level(Some(1_000), 1_000.0));
+    now.replace(&flow, doubled, known);
+    assert_eq!(
+        now.drawing_changes(&saved, &flow),
+        1,
+        "the duplicate counts"
+    );
+    let mut moved = many;
+    moved[5].points[0].price = -1.0;
+    now.replace(&flow, moved, known);
+    assert_eq!(now.drawing_changes(&saved, &flow), 1);
+    assert_eq!(saved.drawing_changes(&saved, &flow), 0);
+}
+
+/// The revision moves with every change a held count reads, and only then.
+#[test]
+fn the_revision_moves_with_what_a_held_count_reads() {
+    let flow = key("mt5", PaneRole::Flow);
+    let mut store = store();
+    let start = store.revision();
+    store.set_held(false);
+    assert_eq!(store.revision(), start, "no hold change");
+    store.set_held(true);
+    let held = store.revision();
+    assert_ne!(held, start);
+    draw(&mut store, &flow);
+    assert_ne!(store.revision(), held);
 }
 
 /// Autosave on: nothing is held, the debounce writes as it always did.

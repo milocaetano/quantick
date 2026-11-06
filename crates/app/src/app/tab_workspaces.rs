@@ -169,7 +169,8 @@ pub(super) fn live_recipe(app: &QuantickApp, id: u64) -> Option<WorkspaceRecipe>
     ))
 }
 
-/// Read one tab; a change the book has not seen becomes its copy, and only its.
+/// Read one tab, as the frame does, without starting autosave's second.
+#[cfg(test)]
 pub(super) fn observe_tab(app: &mut QuantickApp, id: u64) {
     tab_recipes::observe_tab(&mut BookTabs(app), id);
 }
@@ -246,7 +247,7 @@ fn apply_recipe_indicators(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRec
 /// tab shows now, journaled as the trader's hand.
 pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: WorkspaceCommand) {
     let tab = app.runtime.tabs.active_id();
-    observe_tab(app, tab);
+    tab_recipes::watch_tab(&mut BookTabs(app), tab, Instant::now());
     let symbol = app.active_tab().symbol.clone();
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
     as_hand(app, |app, to| {

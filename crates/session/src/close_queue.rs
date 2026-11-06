@@ -6,6 +6,13 @@
 //! in `quantick_control_handlers::workspace_book`), and so is carrying out
 //! each settled tab. Autosave on, or no tab holding edits, asks nothing: every
 //! tab settles at once and the close goes ahead.
+//!
+//! A tab close settles each tab as it is answered: it leaves the strip, so
+//! nothing it let go stays on screen. An exit closes no tab, so its answers
+//! wait until the last one is in: a Cancel then leaves every tab, on screen
+//! and in the stores, as it stood. The answered exit settles the saves (and
+//! the pending autosave writes) first and the discards last, so a save that
+//! fails ends the exit before anything is let go.
 
 use std::collections::VecDeque;
 
@@ -71,6 +78,10 @@ struct Request {
     tabs: VecDeque<u64>,
     asking: Option<CloseQuestion>,
     answered: Option<(u64, bool)>,
+    /// An exit's settled tabs, held until every tab is answered.
+    decided: Vec<(u64, Option<bool>)>,
+    /// The exit's answers, carried out in order once the last is in.
+    settling: Option<VecDeque<(u64, Option<bool>)>>,
 }
 
 /// The close in flight, across frames.
@@ -92,6 +103,8 @@ impl CloseQueue {
             tabs: tabs.into_iter().collect(),
             asking: None,
             answered: None,
+            decided: Vec::new(),
+            settling: None,
         });
         true
     }
@@ -119,8 +132,9 @@ impl CloseQueue {
     }
 
     /// The next step: the answered tab first, then each tab in order, asking
-    /// `pending` whether it holds edits when its turn comes.
-    pub fn next(&mut self, pending: impl FnOnce(u64) -> Option<CloseQuestion>) -> CloseStep {
+    /// `pending` whether it holds edits when its turn comes. An exit asks
+    /// every tab before it settles any (the module says why).
+    pub fn next(&mut self, mut pending: impl FnMut(u64) -> Option<CloseQuestion>) -> CloseStep {
         let Some(request) = self.request.as_mut() else {
             return CloseStep::Idle;
         };
@@ -128,26 +142,47 @@ impl CloseQueue {
         if request.asking.is_some() {
             return CloseStep::Ask;
         }
-        if let Some((tab, save)) = request.answered.take() {
-            let save = Some(save);
-            return CloseStep::Settle { tab, save, scope };
+        if let Some(settling) = request.settling.as_mut() {
+            return match settling.pop_front() {
+                Some((tab, save)) => CloseStep::Settle { tab, save, scope },
+                None => self.finish(scope),
+            };
         }
-        let Some(tab) = request.tabs.pop_front() else {
-            self.request = None;
-            self.exit |= scope == CloseScope::App;
-            return CloseStep::Done(scope);
-        };
-        match pending(tab) {
-            Some(question) => {
-                request.asking = Some(question);
-                CloseStep::Ask
+        let answered = request.answered.take().map(|(tab, save)| (tab, Some(save)));
+        if let Some((tab, save)) = answered {
+            if scope == CloseScope::Tabs {
+                return CloseStep::Settle { tab, save, scope };
             }
-            None => CloseStep::Settle {
-                tab,
-                save: None,
-                scope,
-            },
+            request.decided.push((tab, save));
         }
+        while let Some(tab) = request.tabs.pop_front() {
+            if let Some(question) = pending(tab) {
+                request.asking = Some(question);
+                return CloseStep::Ask;
+            }
+            if scope == CloseScope::Tabs {
+                return CloseStep::Settle {
+                    tab,
+                    save: None,
+                    scope,
+                };
+            }
+            request.decided.push((tab, None));
+        }
+        if scope == CloseScope::Tabs {
+            return self.finish(scope);
+        }
+        // Saves and pending writes first, discards last: stable within each.
+        let mut decided = std::mem::take(&mut request.decided);
+        decided.sort_by_key(|(_, save)| *save == Some(false));
+        request.settling = Some(decided.into());
+        self.next(pending)
+    }
+
+    fn finish(&mut self, scope: CloseScope) -> CloseStep {
+        self.request = None;
+        self.exit |= scope == CloseScope::App;
+        CloseStep::Done(scope)
     }
 
     /// End the request where it stands: a step failed.
@@ -222,18 +257,50 @@ mod tests {
     #[test]
     fn cancel_aborts_the_rest_of_the_request() {
         let mut queue = CloseQueue::default();
-        queue.request(CloseScope::App, [1, 2, 3]);
+        queue.request(CloseScope::Tabs, [1, 2, 3]);
         assert_eq!(drive(&mut queue, &[1, 2]).1, CloseStep::Ask);
         queue.answer(CloseAnswer::Save);
         assert_eq!(drive(&mut queue, &[1, 2]).0, vec![(1, Some(true))]);
         queue.answer(CloseAnswer::Cancel);
         assert_eq!(drive(&mut queue, &[1, 2]), (vec![], CloseStep::Idle));
         assert!(queue.question().is_none());
-        assert!(!queue.take_exit(), "a cancelled exit keeps the app open");
         assert!(
             queue.request(CloseScope::Tabs, [3]),
             "the next close starts"
         );
+    }
+
+    /// An exit settles nothing until every tab is answered: a Cancel on the
+    /// second leaves the first's Close without saving unapplied.
+    #[test]
+    fn an_exit_cancelled_late_settles_nothing() {
+        let mut queue = CloseQueue::default();
+        queue.request(CloseScope::App, [1, 2, 3]);
+        assert_eq!(drive(&mut queue, &[1, 2]), (vec![], CloseStep::Ask));
+        queue.answer(CloseAnswer::CloseWithoutSaving);
+        assert_eq!(drive(&mut queue, &[1, 2]), (vec![], CloseStep::Ask));
+        queue.answer(CloseAnswer::Cancel);
+        assert_eq!(drive(&mut queue, &[1, 2]), (vec![], CloseStep::Idle));
+        assert!(!queue.take_exit(), "a cancelled exit keeps the app open");
+    }
+
+    /// An answered exit settles the saves and the quiet tabs first, in strip
+    /// order, and the discards last.
+    #[test]
+    fn an_answered_exit_settles_saves_before_discards() {
+        let mut queue = CloseQueue::default();
+        queue.request(CloseScope::App, [1, 2, 3]);
+        drive(&mut queue, &[1, 2]);
+        queue.answer(CloseAnswer::CloseWithoutSaving);
+        drive(&mut queue, &[1, 2]);
+        queue.answer(CloseAnswer::Save);
+        let settled = drive(&mut queue, &[1, 2]);
+        assert_eq!(
+            settled.0,
+            vec![(2, Some(true)), (3, None), (1, Some(false))]
+        );
+        assert_eq!(settled.1, CloseStep::Done(CloseScope::App));
+        assert!(queue.take_exit());
     }
 
     #[test]

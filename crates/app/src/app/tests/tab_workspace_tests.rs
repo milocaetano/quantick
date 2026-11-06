@@ -268,6 +268,32 @@ fn autosave_on_never_marks_an_edit() {
     assert!(!app.status_model().modified);
 }
 
+/// A command reads the active tab before it acts. An edit first seen there
+/// starts autosave's quiet second, as one the frame sees does, or it would
+/// never be written through.
+#[test]
+fn an_edit_a_command_reads_first_is_due_for_write_through() {
+    let layouts = crate::scratch::ScratchFile::new("workspace-command-read", "layouts.toml");
+    let (mut app, first, _) = two_tabs(&layouts);
+    app.runtime.workspace.book.book_mut().set_autosave(true);
+    app.runtime.tabs.select(0);
+    frames(&mut app, 2);
+    app.runtime
+        .tabs
+        .by_id_mut(first)
+        .expect("an open tab")
+        .split_fraction = 0.27;
+    let read_first = quantick_session::workspace_menu::WorkspaceCommand::BeginSaveAs;
+    crate::app::tab_workspaces::apply_workspace_command(&mut app, read_first);
+    let later = std::time::Instant::now() + quantick_workspace::workspace_sync::AUTOSAVE_QUIET;
+    let due = app.runtime.workspace.book.sync_mut().take_due(later);
+    assert_eq!(
+        due,
+        [first],
+        "the command's reading armed the write-through"
+    );
+}
+
 #[test]
 fn an_edit_on_one_tab_leaves_another_on_the_same_workspace_alone_until_save_to() {
     let layouts = crate::scratch::ScratchFile::new("workspace-no-leak", "layouts.toml");
