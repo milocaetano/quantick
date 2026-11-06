@@ -152,9 +152,9 @@ macro_rules! frame_stages {
                 HomeToolbar after [MenuBar],
                 /// The toolbar, under the menu bar.
                 Toolbar after [MenuBar, HomeToolbar],
-                /// The indicator dialogs, after the requests that open them, so
-                /// a double click on a pane or a curve opens the dialog on the
-                /// same frame the gesture happened.
+                /// The indicator dialogs, after the requests that open or
+                /// replace them. A pane's double click is read by the canvas, so
+                /// its request is serviced on the next tick.
                 IndicatorDialogs after [IndicatorSurfaces],
                 /// The registered surfaces and what they asked for. After the
                 /// toolbar that toggles them, after the indicator dialog that sets
@@ -312,7 +312,40 @@ macro_rules! frame_stages {
                     | Self::Canvas
                     | Self::DrawingChrome => Market,
                     Self::HomeToolbar | Self::HomeCanvas => Home,
-                    _ => Always,
+                    Self::RecordFrameTime
+                    | Self::DrainSources
+                    | Self::ExpireHistoryNotes
+                    | Self::ReplayTrace
+                    | Self::GatewayService
+                    | Self::WindowHousekeeping
+                    | Self::IndicatorSurfaces
+                    | Self::StrategyPopupRequests
+                    | Self::IndicatorMaintenance
+                    | Self::LayoutSwitches
+                    | Self::MirrorLoadingWaits
+                    | Self::RequestRepaint
+                    | Self::TabKeys
+                    | Self::MenuBar
+                    | Self::IndicatorDialogs
+                    | Self::Surfaces
+                    | Self::StatusLine
+                    | Self::LayoutDialogs
+                    | Self::ReplayBrowser
+                    | Self::FeedSwitch
+                    | Self::StrategyCleanup
+                    | Self::Tail
+                    | Self::BackgroundStrategyCleanup
+                    | Self::PlayAlerts
+                    | Self::BackgroundPaperPanels => Always,
+                    #[cfg($scenario)]
+                    Self::HistoryNoteHook | Self::WindowStartupHook => Always,
+                    #[cfg($control)]
+                    Self::EnableControlAccess
+                    | Self::TakeMark
+                    | Self::AnnotateHooks
+                    | Self::EvidenceHook => Always,
+                    #[cfg($scripted)]
+                    Self::ScenarioHooks => Always,
                 }
             }
 
