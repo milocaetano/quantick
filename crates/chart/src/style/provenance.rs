@@ -82,7 +82,7 @@ impl ChartStyle {
         self.canvas.grid = self
             .ownership
             .grid
-            .resolve(self.canvas.grid, || rgb(Token::Control));
+            .resolve(self.canvas.grid, || rgb(Token::ChartGrid));
         *self != before
     }
 }
@@ -90,6 +90,31 @@ impl ChartStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inherited_grid_tracks_surfaces_and_preserves_authored_settings() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let dark = ResolvedTheme::default();
+        let mut style = ChartStyle::default();
+        style.canvas.grid_opacity = 0.37;
+        style.canvas.grid_enabled = false;
+        for (surface, grid, background) in [
+            (&light, [186, 187, 187], [255, 255, 255]),
+            (light.bookmap(), [35, 41, 54], [67, 74, 82]),
+            (&dark, [35, 41, 54], [19, 23, 34]),
+        ] {
+            style.apply_theme(surface);
+            assert_eq!(style.canvas.grid, grid);
+            assert_eq!(style.canvas.background, background);
+            assert_eq!(style.canvas.grid_opacity, 0.37);
+            assert!(!style.canvas.grid_enabled);
+        }
+        style.canvas.grid = [222, 222, 222];
+        style.ownership.grid = Inheritance::Explicit;
+        for surface in [&light, light.bookmap(), &dark] {
+            style.apply_theme(surface);
+            assert_eq!(style.canvas.grid, [222, 222, 222]);
+        }
+    }
     #[test]
     fn theme_opacity_changes_fresh_fills_but_preserves_authored_modes_and_presets() {
         let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();

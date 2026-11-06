@@ -1,11 +1,14 @@
-use super::{DARK_SOURCE, LIGHT_SOURCES};
+use super::{DARK_SOURCES, LIGHT_SOURCES};
 use crate::appearance::{AppearanceStore, Builtin, load};
 use crate::scratch::ScratchDir;
 use quantick_appearance::{LIGHT, ResolvedTheme, Token};
 
 #[test]
 fn historical_dark_choice_retains_builtin_identity_and_rendered_values() {
-    for source in [DARK_SOURCE.to_owned(), DARK_SOURCE.replace('\n', "\r\n")] {
+    for source in DARK_SOURCES
+        .into_iter()
+        .flat_map(|known| [known.to_owned(), known.replace('\n', "\r\n")])
+    {
         let scratch = ScratchDir::new("legacy-dark-choice");
         let path = scratch.join("appearance.toml");
         let choice_path = scratch.join("appearance.toml.choice.toml");
@@ -43,6 +46,10 @@ fn historical_builtin_choices_load_current_light_without_rewriting_files() {
                 let store = AppearanceStore::open(path.clone());
                 assert_eq!(store.builtin(), Some(Builtin::Light));
                 assert_eq!(store.source(), Some(LIGHT));
+                assert_eq!(
+                    store.resolved().color(Token::ChartGrid).to_array(),
+                    [186, 187, 187, 255]
+                );
                 assert!(store.durable());
                 assert!(!store.load_failed());
                 assert_eq!(
@@ -81,6 +88,10 @@ fn authored_historical_sources_and_modified_choices_remain_exact() {
         let store = AppearanceStore::open(path.clone());
         assert_eq!(store.source(), Some(known));
         assert_eq!(store.builtin(), None);
+        assert_eq!(
+            store.resolved().color(Token::ChartGrid),
+            store.resolved().color(Token::Control)
+        );
         assert_eq!(load(&path).unwrap().source(), Some(known));
         let choice_path = scratch.join("appearance.toml.choice.toml");
         for custom in [

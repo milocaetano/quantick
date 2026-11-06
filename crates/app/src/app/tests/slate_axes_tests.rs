@@ -28,7 +28,7 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
         has_fill(output, plot, crate::theme::bookmap(ctx).canvas()),
         "only data plots use Slate"
     );
-    assert_eq!(ui.canvas(), egui::Color32::from_rgb(245, 245, 245));
+    assert_eq!(ui.canvas(), egui::Color32::WHITE);
     let strip_fill = output.shapes.iter().rev().find_map(|shape| {
         if let egui::Shape::Rect(rect) = &shape.shape
             && rect

@@ -75,7 +75,7 @@ mod tests {
                 token.key()
             );
         }
-        assert_eq!(light.color(Token::Canvas).to_array(), [245, 245, 245, 255]);
+        assert_eq!(light.color(Token::Canvas).to_array(), [255, 255, 255, 255]);
         assert_eq!(light.bookmap().orderflow, dark.orderflow);
         assert_eq!(light.bookmap().footprint_heat, dark.footprint_heat);
         assert_eq!(light.bookmap().typography, light.typography);

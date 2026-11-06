@@ -57,6 +57,9 @@ mod tests {
         authored.candles.bull_fill = [1, 2, 3];
         authored.ownership.bull_fill = quantick_appearance::Inheritance::Explicit;
         authored.candles.gap_px = 4.5;
+        authored.canvas.grid = [222, 222, 222];
+        authored.ownership.grid = quantick_appearance::Inheritance::Explicit;
+        authored.canvas.grid_opacity = 0.37;
         let record = capture(2, PaneStyle::new(Some(authored))).unwrap();
         let text = toml::to_string(&record).unwrap();
         let loaded: SavedPaneStyle = toml::from_str(&text).unwrap();
@@ -68,6 +71,8 @@ mod tests {
             let effective = pane.resolve(&legacy, theme);
             assert_eq!(effective.candles.bull_fill, [1, 2, 3]);
             assert_eq!(effective.candles.gap_px, 4.5);
+            assert_eq!(effective.canvas.grid, [222, 222, 222]);
+            assert_eq!(effective.canvas.grid_opacity, 0.37);
             let mut expected = legacy;
             expected.apply_theme(theme);
             assert_eq!(effective.candles.bear_fill, expected.candles.bear_fill);

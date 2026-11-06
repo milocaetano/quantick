@@ -121,6 +121,13 @@ impl ThemeDocument {
                 {
                     colors[Token::DrawingDefault as usize]
                 }
+                // Older themes used control for both widgets and chart grids.
+                None if token == Token::ChartGrid
+                    && fallback.is_some()
+                    && self.colors.contains_key(Token::Control.key()) =>
+                {
+                    colors[Token::Control as usize]
+                }
                 None => fallback
                     .map(|theme| theme.color(token))
                     .ok_or_else(|| ThemeError::new(field, "required in a complete theme"))?,
@@ -137,6 +144,7 @@ impl ThemeDocument {
         for token in [
             Token::Canvas,
             Token::Control,
+            Token::ChartGrid,
             Token::Buy,
             Token::Sell,
             Token::CandleBullOutline,

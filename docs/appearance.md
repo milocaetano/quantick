@@ -62,7 +62,7 @@ to preserve historical translucent colors exactly; it must not be used for
 ordinary straight-alpha values. Its channels are bytes, not floating-point
 fractions, and gamma-aware RGB channels can exceed the alpha byte.
 
-`canvas`, `control`, `buy`, `sell`, `candle_bull_outline`, `candle_bear_outline`
+`canvas`, `control`, `chart_grid`, `buy`, `sell`, `candle_bull_outline`, `candle_bear_outline`
 and `candle_wick` must be opaque. These roles feed legacy RGB chart style and
 preset fields. A nonopaque value is rejected with the semantic field name before
 publication; alpha is never silently discarded.
@@ -73,6 +73,7 @@ groups are:
 | Keys | Meaning |
 | --- | --- |
 | `canvas`, `chrome`, `inset`, `control`, `border` | Chart background, fixed surfaces, wells, widgets and borders |
+| `chart_grid` | Inherited chart-grid color, independent of widget surfaces; pane opacity still applies |
 | `text_primary`, `text_muted`, `text_faint`, `text_support` | Labels, secondary text, hints and explanatory text |
 | `buy`, `sell`, `poc` | Trade direction and point of control |
 | `buy_ink`, `sell_ink` | Readable direction-colored text over the configured underlay |
@@ -92,6 +93,13 @@ groups are:
 | `loading_logo_low`, `loading_logo_high` | Cached endpoints for the decorative loading logo |
 | `footprint_profile`, `footprint_total_ink`, `footprint_bevel_highlight`, `footprint_bevel_shadow` | Footprint silhouettes, totals and raised cell edges |
 | `crosshair_ink` | Crosshair price tag text |
+
+Light's `chart_grid` renders the reference `#F2F3F3` at the default grid opacity
+over its white `#FFFFFF` canvas. Candle previews and shared axes use the same white.
+Dark and Slate retain their existing grid.
+Omitting `chart_grid` preserves an explicitly supplied `control` as the grid
+default in either root or Bookmap colors; otherwise it inherits the fallback grid.
+Explicit pane colors and opacity retain their existing ownership.
 
 Typography tables use `family = "proportional"` or `"monospace"` and `size` in
 logical pixels, from 6 through 72 inclusive. Each property can be omitted.
@@ -295,7 +303,7 @@ New drawings use semantic `drawing_default`, buy/sell marks use
 `drawing_buy`/`drawing_sell`, anchored VWAP uses `drawing_vwap`, and fixed-range
 profiles use `drawing_profile`. Light supplies amber strokes and text, translucent
 fills derived from those strokes, and a white `drawing_readout_plate`. Its profile
-source is `#7A8EC2`, matching the approved reference's muted blue-gray histogram:
+source remains `#7A8EC2`, calibrated to the earlier muted blue-gray histogram:
 the reference's approximately `#B1BCD9` fill already includes the existing 0.55
 value-area row opacity over `#F5F5F5`. The profile stays in the chart and retains
 its row geometry, value-area weights, POC and double-cased outline over heatmaps.

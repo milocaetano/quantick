@@ -11,8 +11,8 @@ fn light_profile_source_reproduces_reference_fill_without_reapplying_its_alpha()
         ResolvedTheme::default().color(Token::DrawingProfile),
         ResolvedTheme::default().color(Token::DrawingDefault)
     );
-    // The reference's histogram is translucent over #F5F5F5; sampled pixels
-    // are not its source color. Keep the existing in-value-area row opacity.
+    // This earlier reference used #F5F5F5; retain its authored source color
+    // and in-value-area row opacity when the canvas changes.
     let [r, g, b, a] = source.gamma_multiply(0.55).to_array();
     let background = 245.0 * (1.0 - f32::from(a) / 255.0);
     let composite = [r, g, b].map(|channel| (f32::from(channel) + background).round() as u8);
@@ -567,6 +567,7 @@ fn rgb_style_fields_reject_alpha_before_publication() {
     for token in [
         Token::Canvas,
         Token::Control,
+        Token::ChartGrid,
         Token::Buy,
         Token::Sell,
         Token::CandleBullOutline,
@@ -665,7 +666,7 @@ fn light_uses_neutral_surfaces_green_bulls_and_black_bears_without_typography_ch
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     let dark = ResolvedTheme::default();
     for (token, rgba) in [
-        (Token::Canvas, [245, 245, 245, 255]),
+        (Token::Canvas, [255, 255, 255, 255]),
         (Token::Chrome, [236, 236, 236, 255]),
         (Token::Control, [222, 222, 222, 255]),
         (Token::TextPrimary, [32, 32, 32, 255]),
