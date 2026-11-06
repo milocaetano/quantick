@@ -735,16 +735,48 @@ fn a_press_on_a_capsule_never_reaches_the_chart() {
 }
 
 /// A narrow tape's header also spans the price axis, so its capsule stays;
-/// `flow_band`'s tests walk the fit's order down to nothing.
+/// `flow_band`'s tests walk the fit's order down to nothing. Narrow is
+/// measured rather than assumed: the tape's own lane is thinner than the
+/// capsule's slots, so only the axis beside it can carry them.
 #[test]
 fn a_narrow_tape_keeps_its_capsule() {
+    use quantick_chart::flow_band::{SECOND_SIDE_PAD_LEFT_PX, SIDE_PAD_RIGHT_PX};
+    use quantick_chart::pane_header::SLOT_GAP_PX;
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
+    // The tape's capsule at the default share, where all of it fits.
+    let frame = &app.active_tab().flow_pane.frame;
+    let divider = frame.lane_divider_x.expect("a tape beside the candles");
+    let slots = frame
+        .header_controls
+        .iter()
+        .filter(|(painted, rect)| {
+            matches!(painted, HeaderControl::Layer(_) | HeaderControl::Sample(_))
+                && rect.left() > divider
+        })
+        .fold(egui::Rect::NOTHING, |all, (_, rect)| all.union(*rect))
+        .width();
+    let room = SECOND_SIDE_PAD_LEFT_PX + 2.0 * SLOT_GAP_PX + slots + SIDE_PAD_RIGHT_PX;
+    let gutter = frame.price_gutter.expect("a price axis").width();
+    let chart = frame.chart_rect.expect("the pane drew").width();
+    assert!(
+        room - gutter < slots,
+        "the axis must be wide enough to carry what the lane alone cannot"
+    );
+    // Thinner than the slots, and with the axis beside it past the room.
+    let lane = (room - gutter + slots) / 2.0;
     app.active_tab_mut()
         .tape_mut()
-        .edit_config(|config| config.live_lane.width_share = 0.05);
+        .edit_config(|config| config.live_lane.width_share = lane / chart);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
+    let frame = &app.active_tab().flow_pane.frame;
+    let divider = frame.lane_divider_x.expect("still beside");
+    let axis = frame.price_gutter.expect("a price axis").left();
+    assert!(
+        axis - divider < slots,
+        "the tape alone cannot hold its capsule"
+    );
     flow_control(&app, HeaderControl::Layer(LayerToggle::TapeBubbles));
     flow_control(&app, HeaderControl::Layer(LayerToggle::Bubbles));
 }

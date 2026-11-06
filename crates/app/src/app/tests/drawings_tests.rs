@@ -3210,6 +3210,11 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
     }
     let bar = app.drawings.chrome.context_bar_rect().expect("still up");
     let grip = egui::pos2(bar.left() + 8.0, bar.center().y);
+    // The hand reaches the grip before it clicks. The drag above left the
+    // pointer where it ended, and egui hit-tests a press against the last
+    // frame's layers: a tooltip raised there (the status bar's rises over a
+    // bar parked low) would take a press that teleports in.
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(grip)]);
     run_frame_with_events(
         &mut app,
         &ctx,

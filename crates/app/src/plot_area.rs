@@ -18,8 +18,8 @@ use eframe::egui;
 
 use crate::timezone::TzOffset;
 
-/// Space outside the plot, including the compact tape-only header.
-pub(crate) const PLOT_PADDING_PX: f32 = 16.0;
+/// Space outside the plot: none, a border there only eats chart room.
+pub(crate) const PLOT_PADDING_PX: f32 = 0.0;
 
 /// Split the padded plot area into the candle chart, the indicator panes, the
 /// optional live strip, the right price gutter and the bottom time strip, so
