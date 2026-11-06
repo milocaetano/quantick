@@ -341,10 +341,15 @@ fn a_named_style_change_leaves_the_appearance_log_line() {
     use super::control_launch_baselines::RecordedEvents;
     use quantick_control_schema::chart_settings::ChartSettingsInput;
     use tracing_subscriber::prelude::*;
+    // Keep the general callsite-interest path while subscriber-less test threads
+    // register this same log site. This dispatcher is never installed.
+    // https://github.com/tokio-rs/tracing/issues/3611 (tracing-core 0.1.36).
+    let _parallel_dispatch = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
     let recorded = RecordedEvents::default();
     let subscriber = tracing_subscriber::registry().with(recorded.clone());
     tracing::subscriber::with_default(subscriber, || {
         let (mut app, _commands) = app_with_history(20);
+        let original = addressed_style(&mut app);
         let call = |app: &mut QuantickApp, input| {
             app.layer_wiring()
                 .chart_settings(input)
@@ -358,18 +363,33 @@ fn a_named_style_change_leaves_the_appearance_log_line() {
             },
         );
         assert!(recorded.named("CANDLE_STYLE_CHANGED").is_empty());
-        call(
+        let changed = call(
             &mut app,
             ChartSettingsInput::ApplyCandlePreset {
                 target: None,
                 name: "glass".to_owned(),
             },
         );
+        assert!(changed.changed);
+        assert_eq!(
+            addressed_style(&mut app).candles,
+            CandlePreset::Glass.style()
+        );
         let lines = recorded.named("CANDLE_STYLE_CHANGED");
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert_eq!(lines[0]["preset"], CandlePreset::Glass.log_value());
         assert_eq!(lines[0]["revision"], app.runtime.style_revision.to_string());
-        call(&mut app, ChartSettingsInput::ResetCandles { target: None });
+        let unchanged = call(
+            &mut app,
+            ChartSettingsInput::ApplyCandlePreset {
+                target: None,
+                name: "glass".to_owned(),
+            },
+        );
+        assert!(!unchanged.changed);
+        assert_eq!(recorded.named("CANDLE_STYLE_CHANGED").len(), 1);
+        assert!(call(&mut app, ChartSettingsInput::ResetCandles { target: None }).changed);
+        assert_eq!(addressed_style(&mut app), original);
         assert_eq!(
             recorded.named("CANDLE_STYLE_CHANGED").len(),
             2,

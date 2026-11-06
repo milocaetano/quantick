@@ -225,6 +225,93 @@ fn local_candles_stale_editor_never_redirects_after_a_frame_and_shared_actions_r
 }
 
 #[test]
+fn local_candles_closed_startup_never_pins_a_ghost_editor_across_replay_and_tab_changes() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    assert!(app.surfaces.hooks_pending());
+    assert!(!app.surfaces.chart_settings.is_open());
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.surfaces.chart_settings.editor.target, None);
+    let flow = target(&app, 0, PaneSide::Flow);
+    let time = target(&app, 0, PaneSide::Time(0));
+    let session = quantick_replay::Session::from_text(
+        std::path::Path::new("ETHUSDT_2026-03-16.csv"),
+        "# quantick,csv,1\n# symbol=ETHUSDT\n# timezone=UTC\nDate,Time,Price,Volume,Side\n2026-03-16,10:01:08.000,2000,12,B\n",
+        quantick_replay::ParseOptions::default(),
+    ).unwrap();
+    with_config(&mut app, |tab, config| {
+        tab.open_replay(
+            config,
+            quantick_feed::ReplayRequest {
+                session: std::sync::Arc::new(session),
+                options: quantick_feed::ReplayOptions {
+                    autoplay: false,
+                    ..Default::default()
+                },
+            },
+        )
+    });
+    run_frame(&mut app, &ctx);
+    for selected in [&flow, &time] {
+        assert_eq!(
+            call(&mut app, json!({"action":"inspect", "target":selected}))["target"],
+            *selected
+        );
+    }
+    let _other = open_second_tab(&mut app, &ctx, "TESTUSDT");
+    let focused = target(&app, 1, app.active_tab().focused_side());
+    assert_eq!(
+        call(&mut app, json!({"action":"inspect"}))["target"],
+        focused
+    );
+    assert_eq!(
+        call(&mut app, json!({"action":"inspect", "target":flow}))["target"],
+        flow
+    );
+    assert!(!app.surfaces.chart_settings.is_open());
+    assert_eq!(app.surfaces.chart_settings.editor.target, None);
+    assert!(!app.surfaces.chart_settings.editor.stale);
+}
+
+#[test]
+fn local_candles_first_frame_hook_pins_only_the_opened_chart_and_captures_its_style() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    let flow = target(&app, 0, PaneSide::Flow);
+    let mut expected = inspect(&mut app, &flow);
+    expected["candles"]["wick_width"] = json!("3");
+    expected["canvas"]["background"] = json!([11, 22, 33]);
+    expected["ownership"]["background"] = json!("explicit");
+    call(
+        &mut app,
+        json!({"action":"update_candles", "target":flow, "style":expected}),
+    );
+    crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_STYLE_PANEL", "1")]));
+    run_frame(&mut app, &ctx);
+    crate::hooks::captured::set_on_this_thread(None);
+    assert!(app.surfaces.chart_settings.is_open());
+    assert_eq!(
+        serde_json::to_value(app.surfaces.chart_settings.editor.target.map(|target| {
+            quantick_control_schema::chart_settings::ChartSettingsTarget {
+                tab_id: quantick_control::wire::WireU64(target.tab_id),
+                pane_id: quantick_control::wire::WireU64(target.pane_id),
+            }
+        }))
+        .unwrap(),
+        flow
+    );
+    let _other = open_second_tab(&mut app, &ctx, "ETHUSDT");
+    let changed = call(
+        &mut app,
+        json!({"action":"apply_candle_preset", "name":"glass"}),
+    );
+    assert_eq!(changed["target"], flow);
+    let reset = call(&mut app, json!({"action":"reset_candles"}));
+    assert_eq!(reset["effective_style"], expected);
+}
+
+#[test]
 fn local_candles_source_retarget_invalidates_the_sitting_until_explicit_reopen() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(20);

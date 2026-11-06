@@ -150,19 +150,6 @@ pub(super) fn draw_surfaces(
         .presentation
         .candles
         .resolve(style, &palette.resolved);
-    if (staging || registry.chart_settings.is_open())
-        && registry.chart_settings.editor.target.is_none()
-    {
-        let target = quantick_chart::pane_style::StyleTarget {
-            tab_id: tabs.active_id(),
-            pane_id: editor_pane.id,
-        };
-        registry.chart_settings.editor.pin(target);
-        registry
-            .chart_settings
-            .editor
-            .observe(target, Some(editor_pane.presentation.candles.context()));
-    }
     registry.chart_settings.target_label =
         if let Some(target) = pinned.filter(|_| registry.chart_settings.editor.stale) {
             format!(
@@ -210,6 +197,18 @@ pub(super) fn draw_surfaces(
             alert_failure,
         },
     );
+    // A surface hook may have opened the editor inside draw_all.
+    if registry.chart_settings.is_open() && registry.chart_settings.editor.target.is_none() {
+        let target = quantick_chart::pane_style::StyleTarget {
+            tab_id: tabs.active_id(),
+            pane_id: editor_pane.id,
+        };
+        registry.chart_settings.editor.pin(target);
+        registry
+            .chart_settings
+            .editor
+            .observe(target, Some(editor_pane.presentation.candles.context()));
+    }
     if let Some(request) = asks.bar_switch.take() {
         apply_bar_switch(tabs, &mut registry.toast, request);
     }
