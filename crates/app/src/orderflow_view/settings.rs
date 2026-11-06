@@ -251,12 +251,12 @@ impl OrderflowView {
         if ui
             .button("reset bubble visuals")
             .on_hover_text(
-                "the asset's factory look; only this tab; L2 and history settings stay as they are",
+                "restores this asset's factory look, kept for the asset like any change here \
+                 (other tabs on the asset follow); L2 and history settings stay as they are",
             )
             .clicked()
         {
-            self.look
-                .restore_factory(&mut self.config, rule.may_choose());
+            self.reset_bubble_look();
         }
         self.commit_config_changes(before)
     }
@@ -313,13 +313,13 @@ impl OrderflowView {
     /// The panel's reset as one call
     /// ([`quantick_stores::bubble_look::BubbleLook::restore_factory`]):
     /// whether the look on screen moved.
-    pub(crate) fn reset_bubble_look(&mut self, spheres: bool) -> bool {
-        let (before, name) = (self.config.clone(), self.look.look_name().to_owned());
-        self.look.restore_factory(&mut self.config, spheres);
-        let renamed = self.look.look_name() != name;
-        // Compared once committed, which sanitizes what the reset dressed.
-        self.commit_config_changes(before.clone());
-        renamed || self.config != before
+    pub(crate) fn reset_bubble_look(&mut self) -> bool {
+        let before = self.config.clone();
+        let changed = self.look.restore_factory(&mut self.config);
+        if changed {
+            self.commit_config_changes(before);
+        }
+        changed
     }
 }
 
@@ -365,6 +365,6 @@ impl OrderflowView {
 
     /// "reset bubble visuals", on a pane where spheres may not be chosen.
     pub(crate) fn press_reset_bubble_visuals_for_test(&mut self) {
-        self.reset_bubble_look(false);
+        self.reset_bubble_look();
     }
 }

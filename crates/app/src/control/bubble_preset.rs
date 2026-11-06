@@ -20,12 +20,12 @@ impl BubblePresetPort for dyn ControlPort {
             owner.cached_config(),
         ))
     }
-    fn reset_bubbles(&mut self, input: &ResetInput, spheres: bool) -> PresetApplied {
+    fn reset_bubbles(&mut self, input: &ResetInput) -> PresetApplied {
         let owner = pane(self, input.tab_id, input.pane_id)?
             .orderflow
             .as_mut()
             .ok_or_else(|| invalid("The pane has no order-flow view"))?;
-        let changed = owner.reset_bubble_look(spheres);
+        let changed = owner.reset_bubble_look();
         Ok(quantick_control_schema::bubble_preset::applied(
             (input.tab_id, input.pane_id),
             changed,

@@ -219,5 +219,20 @@ fn bubble_reset_wears_the_factory_look_and_is_authorized_retry_safe() {
         .find(|p| p["pane_id"] == payload["pane_id"])
         .unwrap();
     assert_eq!(pane["bubbles"]["preset"], FACTORY);
+    // A candle pane resets to the factory spheres too: they are the look's.
+    let spheres = shipped.get(FACTORY).unwrap().tick_bubbles;
+    assert!(spheres.is_some(), "the factory look wears spheres");
+    let volume = crate::state::BarSpec::Volume(rust_decimal::Decimal::from(5));
+    app.active_tab_mut().flow_pane.spec.set(volume);
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    assert!(app.active_tab().flow_pane.state.tick_membership().is_none());
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.volume_dots.tick_bubbles = None);
+    let (candles, _) = unkeyed_call(&mut app, &mut cockpit, RESET, payload.clone());
+    assert_eq!(success_result(&candles)["changed"], true);
+    let tape = app.active_tab().tape().cached_config();
+    assert_eq!(tape.volume_dots.tick_bubbles, spheres);
     disable_test_gateway(&mut app, &ctx);
 }

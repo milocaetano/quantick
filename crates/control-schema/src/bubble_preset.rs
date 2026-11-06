@@ -165,8 +165,8 @@ pub fn reset_descriptor() -> CapabilityDescriptor {
         BUBBLE_RESET_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
         "Reset bubble look to the asset's factory preset",
-        "Does what the Bubbles settings button reset bubble visuals does: wears the whole preset the feed config declares for the pane's asset, as the shipped presets hold it (never the operator's edited copy of that name), with tick spheres by the rule orderflow.bubbles.tick.set asks; preset names it. An asset with no declared shipped preset, or a pane with no asset, gets the code defaults and an empty preset. Changes follow the asset save switch. Read selection and effective policies in orderflow.bubbles.",
-        "Stable tab/pane IDs are checked before mutation. A pane already on its factory look is a no-op. Keyed retries replay the first answer.",
+        "Does what the Bubbles settings button reset bubble visuals does: puts back the look a fresh open of the pane's asset shows, tick spheres included. That is the preset the feed config declares for the asset as the shipped presets hold it (never the operator's edited copy of that name); without a shipped declared preset, the look the operator's presets open the asset on. Only the look: the pane's native tape and tape-only mode stay. A pane with no asset gets the code defaults and an empty preset; otherwise preset names the look worn. Changes follow the asset save switch. Read selection and effective policies in orderflow.bubbles.",
+        "Stable tab/pane IDs are checked before mutation. A pane already on its factory look is a no-op answering changed false. Keyed retries replay the first answer.",
     );
     descriptor.persistence = EffectPersistence::Durable;
     descriptor

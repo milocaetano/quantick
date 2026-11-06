@@ -319,7 +319,7 @@ fn deliberate_same_name_btc_preset_selection_replaces_old_saved_lane_flags() {
 }
 
 /// The operator's presets file with every preset saved over: what a reset
-/// must not wear.
+/// must not wear where a shipped preset is declared.
 fn saved_over() -> BubblePresetFile {
     let mut file = embedded();
     for preset in &mut file.presets {
@@ -328,31 +328,60 @@ fn saved_over() -> BubblePresetFile {
     file
 }
 
-/// A view on `market`, bound to `store` over `presets` and wearing what the
-/// binding opened with.
-fn bound(store: &SharedAssetBubbles, market: (&str, &str), presets: &BubblePresetFile) -> Screen {
+/// A view on `market` under `config`, bound to `store` over `presets` and
+/// wearing what the binding opened with.
+fn bound_in(
+    store: &SharedAssetBubbles,
+    config: &crate::config::AppConfig,
+    market: (&str, &str),
+    presets: &BubblePresetFile,
+) -> Screen {
     let mut screen = Screen::open(presets.clone());
-    let (binding, settings) =
-        AssetBinding::bind(store.clone(), &shipped_config(), market, presets, false);
+    let (binding, settings) = AssetBinding::bind(store.clone(), config, market, presets, false);
     screen.look.bind(binding);
     screen.look.wear(&settings, false, &mut screen.config);
     screen
 }
 
+fn bound(store: &SharedAssetBubbles, market: (&str, &str), presets: &BubblePresetFile) -> Screen {
+    bound_in(store, &shipped_config(), market, presets)
+}
+
+/// The look a fresh open of `market` shows over `presets`.
+fn fresh_look(market: (&str, &str), presets: &BubblePresetFile) -> BubblePreset {
+    let store = AssetBubblesStore::default().shared();
+    let (_, settings) = AssetBinding::bind(store, &shipped_config(), market, presets, false);
+    settings.look
+}
+
+/// `config` in `look` as the reset wears it: the look only, the pane's mode
+/// kept.
+fn reset_to(config: &HeatmapConfig, look: &BubblePreset) -> HeatmapConfig {
+    let mut expected = config.clone();
+    look.apply_to(&mut expected);
+    expected.live_lane.native_tape = config.live_lane.native_tape;
+    expected.live_lane.tape_only = config.live_lane.tape_only;
+    expected.sanitize();
+    expected
+}
+
 /// A panel value the trader moved, as the view commits one.
 fn tune(screen: &mut Screen) {
+    edit(screen, |config| config.bubbles.max_radius += 3.0);
+}
+
+fn edit(screen: &mut Screen, change: impl FnOnce(&mut HeatmapConfig)) {
     let before = screen.config.clone();
-    screen.config.bubbles.max_radius += 3.0;
+    change(&mut screen.config);
     screen.look.note_config_change(&before, &screen.config);
 }
 
 /// The trader's request: "reset bubble visuals" returns an asset to the look
 /// it ships with — the preset the feed config declares for it, as shipped,
 /// even after the operator's presets file saved over that name — and files
-/// it, so the asset opens on it again.
+/// it, so the asset opens on it again. A second reset changes nothing.
 #[test]
 fn the_reset_wears_the_assets_shipped_factory_look_and_files_it() {
-    let appearance = quantick_appearance::ResolvedTheme::bundled_dark().orderflow;
     let operator = saved_over();
     for (market, name) in [
         (
@@ -364,20 +393,17 @@ fn the_reset_wears_the_assets_shipped_factory_look_and_files_it() {
     ] {
         let store = AssetBubblesStore::default().shared();
         let mut screen = bound(&store, market, &operator);
-        let shipped = embedded().get(name).cloned().expect("a shipped preset");
-        assert_ne!(operator.get(name), Some(&shipped), "{name}: saved over");
+        let factory = fresh_look(market, &embedded());
+        assert_eq!(factory.name, name);
+        let copy = operator.get(name).expect("the operator's copy");
+        assert_ne!(copy.bubbles, factory.bubbles, "{name}: saved over");
         tune(&mut screen);
-        let spheres = screen.look.asset_mode().is_some();
-        let mut expected = screen.config.clone();
-        super::dress(&shipped, &mut expected, spheres, &appearance);
-        // As a fresh open wears it: the palette is not the theme's snapshot.
-        expected.palette = shipped.palette;
+        let expected = reset_to(&screen.config, &factory);
 
-        let worn = screen.look.restore_factory(&mut screen.config, spheres);
+        assert!(screen.look.restore_factory(&mut screen.config));
 
-        assert_eq!(worn.as_deref(), Some(name));
         assert_eq!(screen.config, expected, "{name}: the shipped look");
-        assert_eq!(screen.config.bubbles, shipped.bubbles, "{name}");
+        assert_eq!(screen.config.bubbles.max_radius, factory.bubbles.max_radius);
         assert_eq!(
             screen.config.palette,
             quantick_orderflow::config::theme::PaletteChoice::Inherited,
@@ -398,7 +424,53 @@ fn the_reset_wears_the_assets_shipped_factory_look_and_files_it() {
             BubblePreset::capture(name, &screen.config),
             "{name}: a fresh bind opens on the factory look"
         );
+
+        let shown = screen.config.clone();
+        assert!(!screen.look.restore_factory(&mut screen.config), "{name}");
+        assert_eq!(screen.config, shown);
+        assert!(!screen.look.asset().expect("bound").edited(), "{name}");
+        let status = screen.look.status().expect("a status");
+        assert!(status.contains("already"), "{status}");
     }
+}
+
+/// The reset puts back the look, not the pane's mode: a tape-only pane stays
+/// tape only, and the native tape stays as the trader switched it.
+#[test]
+fn the_reset_keeps_the_panes_mode() {
+    let market = ("binance-futures", "BTCUSDT.p");
+    let store = AssetBubblesStore::default().shared();
+    let mut screen = bound(&store, market, &embedded());
+    let native_tape = !screen.config.live_lane.native_tape;
+    edit(&mut screen, |config| {
+        config.live_lane.tape_only = true;
+        config.live_lane.native_tape = native_tape;
+    });
+    tune(&mut screen);
+    assert!(screen.look.restore_factory(&mut screen.config));
+    assert!(screen.config.live_lane.tape_only, "still tape only");
+    assert_eq!(screen.config.live_lane.native_tape, native_tape);
+}
+
+/// The factory look's spheres come with it whatever pane resets: the mini
+/// index gets its spheres back, and an asset without the mode gets none.
+#[test]
+fn the_reset_wears_the_factory_spheres_the_asset_opens_with() {
+    let win = ("metatrader-b3", "WINZ26");
+    let factory = fresh_look(win, &embedded());
+    assert!(factory.tick_bubbles.is_some(), "the mini index has spheres");
+    let mut screen = bound(&AssetBubblesStore::default().shared(), win, &embedded());
+    edit(&mut screen, |config| config.volume_dots.tick_bubbles = None);
+    assert!(screen.look.restore_factory(&mut screen.config));
+    assert_eq!(screen.config.volume_dots.tick_bubbles, factory.tick_bubbles);
+
+    let gold = ("metatrader-tickmill", "XAUUSD");
+    let mut screen = bound(&AssetBubblesStore::default().shared(), gold, &embedded());
+    edit(&mut screen, |config| {
+        config.volume_dots.tick_bubbles = factory.tick_bubbles;
+    });
+    assert!(screen.look.restore_factory(&mut screen.config));
+    assert_eq!(screen.config.volume_dots.tick_bubbles, None, "no mode");
 }
 
 /// Over an unedited presets file, a reset after a trader's edit returns the
@@ -419,13 +491,7 @@ fn a_reset_over_the_shipped_presets_leaves_no_stored_entry() {
             store.borrow().get(&key).is_some(),
             "{key}: the edit is filed"
         );
-        let spheres = screen.look.asset_mode().is_some();
-        assert!(
-            screen
-                .look
-                .restore_factory(&mut screen.config, spheres)
-                .is_some()
-        );
+        assert!(screen.look.restore_factory(&mut screen.config));
         screen.look.sync(&screen.config, false, false);
         assert_eq!(store.borrow().get(&key), None, "{key}: nothing stored");
         let binding = screen.look.asset().expect("bound");
@@ -433,25 +499,51 @@ fn a_reset_over_the_shipped_presets_leaves_no_stored_entry() {
     }
 }
 
-/// No declared look, or no asset at all: the reset restores the code
-/// defaults, as it always did.
+/// A declared name the shipped presets lack opens on the operator's preset
+/// of that name, so that is the asset's factory look; an asset nothing is
+/// declared for opens on the operator file's active look.
 #[test]
-fn without_a_declared_look_the_reset_restores_the_code_defaults() {
+fn without_a_shipped_declared_preset_the_reset_wears_what_the_operator_file_opens() {
+    let mut operator = saved_over();
+    let mut own = operator.get("dense tape").cloned().expect("a preset");
+    own.name = "my look".to_owned();
+    own.bubbles.max_radius = 19.0;
+    operator.presets.push(own.clone());
+    let mut config = shipped_config();
+    let hyperliquid = config
+        .feeds
+        .iter_mut()
+        .find(|feed| feed.id == "hyperliquid");
+    hyperliquid.expect("a shipped feed").bubble_preset = Some("my look".to_owned());
     let store = AssetBubblesStore::default().shared();
-    let mut eth = bound(&store, ("binance", "ETHUSDT"), &embedded());
-    assert_eq!(eth.look.asset().expect("bound").factory_preset(), None);
-    let mut unbound = Screen::open(embedded());
-    for screen in [&mut eth, &mut unbound] {
-        tune(screen);
-        let mut expected = screen.config.clone();
-        expected.reset_bubble_visuals();
-        let worn = screen.look.restore_factory(&mut screen.config, false);
-        assert_eq!(worn, None);
-        assert_eq!(screen.config, expected);
-        assert_eq!(screen.look.look_name(), "");
-        assert_eq!(
-            screen.look.status(),
-            Some("bubble defaults restored for the asset on screen")
-        );
-    }
+    let mut screen = bound_in(&store, &config, ("hyperliquid", "ETH"), &operator);
+    tune(&mut screen);
+    assert!(screen.look.restore_factory(&mut screen.config));
+    assert_eq!(screen.look.look_name(), "my look");
+    assert_eq!(screen.config.bubbles.max_radius, own.bubbles.max_radius);
+
+    let mut eth = bound(&store, ("binance", "ETHUSDT"), &operator);
+    let active = operator.get(&operator.active).expect("the active look");
+    tune(&mut eth);
+    assert!(eth.look.restore_factory(&mut eth.config));
+    assert_eq!(eth.look.look_name(), active.name);
+    assert_eq!(eth.config.bubbles.max_radius, active.bubbles.max_radius);
+}
+
+/// No asset bound: the reset restores the code defaults, as it always did.
+#[test]
+fn an_unbound_view_resets_to_the_code_defaults() {
+    let mut screen = Screen::open(embedded());
+    tune(&mut screen);
+    let mut expected = screen.config.clone();
+    expected.reset_bubble_visuals();
+    expected.sanitize();
+    assert!(screen.look.restore_factory(&mut screen.config));
+    assert_eq!(screen.config, expected);
+    assert_eq!(screen.look.look_name(), "");
+    assert_eq!(
+        screen.look.status(),
+        Some("bubble defaults restored for the asset on screen")
+    );
+    assert!(!screen.look.restore_factory(&mut screen.config));
 }

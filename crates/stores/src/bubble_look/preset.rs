@@ -64,36 +64,50 @@ impl BubbleLook {
     }
 
     /// The panel's reset: put the bound asset's factory look
-    /// ([`AssetBinding::factory_preset`]) on `config` as a fresh open wears
-    /// it — an inherited palette stays inherited and follows the theme, so
-    /// an asset back on its unedited declared look keeps no stored entry —
-    /// with its tick spheres only where `spheres`, the verdict a whole-preset
-    /// pick gets; where not, the spheres worn stay. Then name it. With no
-    /// asset bound, or none the shipped presets declare a look for, the
-    /// code defaults are restored instead ([`BubbleLook::defaults_restored`]).
-    /// Either way the asset on screen files what it shows at the next sync.
-    /// Returns the factory preset's name, `None` for the code defaults.
+    /// ([`AssetBinding::factory_look`]) on `config`, the look a fresh open
+    /// shows — its tick spheres and an inherited palette, which follows the
+    /// theme, included — and name it. Only the look: the pane's native tape
+    /// and tape only are its mode and stay. With no asset bound the code
+    /// defaults are restored ([`BubbleLook::defaults_restored`]). The asset
+    /// on screen files the change at the next sync. Returns whether
+    /// anything changed: a screen already on that look is left alone, and
+    /// nothing is noted for the asset.
     ///
-    /// [`AssetBinding::factory_preset`]: crate::bubble_asset_store::AssetBinding::factory_preset
-    pub fn restore_factory(&mut self, config: &mut HeatmapConfig, spheres: bool) -> Option<String> {
-        let factory = self.asset.as_ref().and_then(|binding| {
-            let preset = binding.factory_preset()?;
-            Some((preset, binding.key().to_owned()))
-        });
-        let Some((preset, key)) = factory else {
-            config.reset_bubble_visuals();
+    /// [`AssetBinding::factory_look`]: crate::bubble_asset_store::AssetBinding::factory_look
+    pub fn restore_factory(&mut self, config: &mut HeatmapConfig) -> bool {
+        let Some(binding) = self.asset.as_ref() else {
+            let mut desired = config.clone();
+            desired.reset_bubble_visuals();
+            desired.sanitize();
+            if desired == *config && self.look_name.is_empty() {
+                self.status = Some("the bubble defaults are on screen already".to_owned());
+                return false;
+            }
+            *config = desired;
             self.defaults_restored(config);
-            return None;
+            return true;
         };
-        let worn = config.volume_dots.tick_bubbles;
-        preset.apply_to(config);
-        if !spheres {
-            config.volume_dots.tick_bubbles = worn;
+        let look = binding.factory_look(&self.presets);
+        let key = binding.key().to_owned();
+        let mut desired = config.clone();
+        look.apply_to(&mut desired);
+        desired.live_lane.native_tape = config.live_lane.native_tape;
+        desired.live_lane.tape_only = config.live_lane.tape_only;
+        desired.sanitize();
+        let named = if look.name.is_empty() {
+            "the default look".to_owned()
+        } else {
+            format!("'{}'", look.name)
+        };
+        if desired == *config && self.look_name == look.name {
+            self.status = Some(format!("{key} is on its factory look {named} already"));
+            return false;
         }
-        self.look_name.clone_from(&preset.name);
-        self.name_draft.clone_from(&preset.name);
-        self.status = Some(format!("factory look '{}' restored for {key}", preset.name));
+        *config = desired;
+        self.look_name.clone_from(&look.name);
+        self.name_draft.clone_from(&look.name);
+        self.status = Some(format!("factory look {named} restored for {key}"));
         self.note_lane_set(config);
-        Some(preset.name)
+        true
     }
 }
