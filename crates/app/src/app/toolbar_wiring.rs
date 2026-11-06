@@ -12,11 +12,10 @@ use quantick_session::workspace_menu::WorkspaceCommand;
 
 use super::tab_workspaces::apply_workspace_command as workspace_command;
 use crate::indicator_worker::SlotId;
-use crate::surfaces::ChartSettingsTab::Candles;
 use crate::tab::CanvasLayout;
 use crate::toolbar::{self, ToolbarAction};
 
-use super::{LayersPort, QuantickApp, TabsMutPort};
+use super::{QuantickApp, TabsMutPort};
 
 // A failed recut still owns older prints after venue paging is exhausted.
 // The history button retries those retained pages through its ordinary action.
@@ -55,7 +54,6 @@ impl QuantickApp {
         let candles_held = self.active_tab().session.venue_candles_held();
         let older_candles = self.active_tab().older_candles(capabilities);
         let dock_visible = self.dock.visible();
-        let show_style = self.surfaces.chart_settings.is_open_on(Candles);
         // The History button names this tab's target and run.
         let history = toolbar::HistoryButton {
             main: self.active_tab().session.main_history_reach(),
@@ -102,7 +100,6 @@ impl QuantickApp {
             older_candles,
             capabilities,
             dock_visible,
-            appearance_open: show_style,
             // The lock reaches the toolbar too: `blocked` carries it, so a
             // fast click here cannot only toast while the ticket refuses.
             paper: tab
@@ -164,7 +161,6 @@ impl QuantickApp {
             ToolbarAction::LoadOlderCandles => self.tabs_mut().load_older_candles(),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
-            ToolbarAction::ToggleAppearance => self.layer_wiring().toggle_settings(Candles),
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.
             // Adding an indicator by hand is the plainest possible request to

@@ -188,17 +188,23 @@ Left, *what am I looking at*:
 - **SOURCE** — feed combo, symbol combo (from config, as today). During
   replay the group is replaced by the amber session label; you cannot pick a
   venue without closing the recording first (existing behaviour, kept).
+- **LAYOUT** — the layout picker, beside SOURCE. Its face is a miniature of
+  the layout on screen.
 - **HISTORY** — one `+ older ▾` split button; the page size moves into its
   menu. Gated by the `history_paging` capability.
 
-Right, *how it looks*. What is drawn on each chart moved to that chart's own
-header line (§11):
+Right, alone at the edge. What is drawn on each chart moved to that chart's
+own header line (§11):
 
-- **LOOK** — opens the appearance dialog (candles, canvas, grid).
-- **PANELS** — shows/hides the dock.
+- **PANELS** — shows/hides the dock; a tray, so it never reads as a second
+  layout button.
 - **⋯ overflow** — collapse target; the toolbar never wraps. Collapse order:
-  LOOK → PANELS → HISTORY → TRADE → feed name shrinks to its initial. Never
-  folded: the symbol.
+  PANELS → HISTORY → TRADE → feed name shrinks to its initial. PANELS never
+  folds alone, since trading its icon for `⋯` saves no width. Never folded:
+  the symbol and LAYOUT.
+
+The appearance dialog (candles, canvas, grid) has no toolbar button: the chart
+itself and Settings → Appearance… open it.
 
 Leaving the toolbar: the perf checkbox (a *reading*, moves to the status
 bar §8) and both panel-opening buttons (the dock's tab strip replaces them).

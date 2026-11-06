@@ -16,6 +16,13 @@ use crate::canvas_layout::{LAYOUT_PRESETS, LayoutPreset, PaneKind};
 use crate::theme;
 use crate::widgets::{CORNER_RADIUS, IconButton, TOOLBAR_ICON};
 
+/// The button's own miniature of the layout on screen, in pixels: the
+/// popover's thumbnail at toolbar scale, inside the 28 px hit target.
+const FACE_THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(20.0, 14.0);
+const _: () = assert!(
+    FACE_THUMBNAIL_SIZE.x < TOOLBAR_ICON.hit && FACE_THUMBNAIL_SIZE.y < TOOLBAR_ICON.hit,
+    "the miniature must sit inside the button's hit target"
+);
 /// Width of the popover, in pixels.
 const POPOVER_WIDTH_PX: f32 = 268.0;
 /// One preset cell: the thumbnail plus its label.
@@ -77,10 +84,23 @@ pub struct PickerModel<'a> {
 ///
 /// Returns the preset the trader picked this frame, if any.
 pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static LayoutPreset> {
-    let button = IconButton::new(icons::LAYOUT, TOOLBAR_ICON)
+    // The face is the layout on screen. A hand-arranged row matches no
+    // preset, so no miniature describes it and the generic icon stands in.
+    let glyph = if model.current.is_some() {
+        ""
+    } else {
+        icons::LAYOUT
+    };
+    let button = IconButton::new(glyph, TOOLBAR_ICON)
         .active(*model.open)
         .hover_text("chart layout (Ctrl+Shift+1…)")
         .show(ui);
+    if let Some(preset) = model.current
+        && ui.is_rect_visible(button.rect)
+    {
+        let face = egui::Rect::from_center_size(button.rect.center(), FACE_THUMBNAIL_SIZE);
+        draw_panes(ui.painter(), face, preset);
+    }
 
     let popup_id = ui.make_persistent_id("layout_picker_popup");
     if model.request_open {
@@ -224,7 +244,12 @@ fn draw_cell(
 /// before the trader commits to the layout.
 fn draw_thumbnail(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
     painter.rect_filled(rect, THUMBNAIL_RADIUS_PX, theme::INSET);
+    draw_panes(painter, rect, preset);
+}
 
+/// The miniature's panes and frame without its backdrop, so the toolbar
+/// button's own hover and active tint stay visible behind its face.
+fn draw_panes(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
     let count = preset.kinds.len().max(1);
     // The flow pane is drawn wider than the context panes for the same reason
     // it is wider on the canvas. An even miniature would promise a layout the
