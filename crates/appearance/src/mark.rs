@@ -14,8 +14,7 @@ const SVG: &str = include_str!("../../../logo/icon.svg");
 /// The square the viewBox fills, in points: W6 drew it 42 px wide at the
 /// trader's 1.5 px/pt.
 pub const MARK_PT: f32 = 28.0;
-/// The Q glyph's centre in viewBox units, the point that sits where the Dark
-/// Q's glyph centre does.
+/// The Q glyph's centre in viewBox units, where the Dark frame centres it.
 pub const GLYPH_CENTRE: (f32, f32) = (129.5, 133.0);
 /// The glyph's right edge in viewBox units, the side that faces the wordmark.
 pub const GLYPH_RIGHT: f32 = 206.0;
@@ -49,8 +48,9 @@ pub fn side_px(pixels_per_point: f32) -> u32 {
 
 /// Where the Light Q's square goes, in points: `[left, top, side]`. `frame`
 /// is the Dark Q's box (centre, width), whose frame scales the viewBox by 4/3
-/// about the glyph's centre; the Light glyph keeps that box's vertical centre
-/// and its glyph's right edge, the side facing the wordmark, on the pixel grid.
+/// about the glyph's centre. As W6 placed it, the square is centred on the
+/// box's height; across, the glyph keeps the Dark glyph's right edge, the side
+/// facing the wordmark. Both on the pixel grid.
 #[must_use]
 pub fn light_q_box(centre: [f32; 2], frame_width: f32, pixels_per_point: f32) -> [f32; 3] {
     let ppp = pixels_per_point;
@@ -60,13 +60,13 @@ pub fn light_q_box(centre: [f32; 2], frame_width: f32, pixels_per_point: f32) ->
     let right = centre[0] + (GLYPH_RIGHT - GLYPH_CENTRE.0) * dark_unit;
     let on_grid = |v: f32| (v * ppp).round() / ppp;
     let left = on_grid(right - GLYPH_RIGHT * unit);
-    [left, on_grid(centre[1] - GLYPH_CENTRE.1 * unit), side]
+    [left, on_grid(centre[1] - side / 2.0), side]
 }
 
-/// The Light Q as premultiplied sRGB RGBA, `side` x `side` pixels, row-major,
-/// the viewBox spanning the square.
+/// The Light Q as premultiplied sRGB RGBA bytes, `side` x `side` pixels,
+/// row-major, the viewBox spanning the square.
 #[must_use]
-pub fn light_q(side: u32) -> Vec<[u8; 4]> {
+pub fn light_q(side: u32) -> Vec<u8> {
     let side = side.max(1) as usize;
     let fine = supersampled(side);
     let weights = lanczos_weights(side);
@@ -81,7 +81,7 @@ pub fn light_q(side: u32) -> Vec<[u8; 4]> {
             });
         }
     }
-    let mut out = Vec::with_capacity(side * side);
+    let mut out = Vec::with_capacity(side * side * 4);
     for taps in &weights {
         for x in 0..side {
             let sum = taps.iter().fold([0f32; 4], |acc, &(i, w)| {
@@ -89,7 +89,7 @@ pub fn light_q(side: u32) -> Vec<[u8; 4]> {
                 std::array::from_fn(|c| acc[c] + texel[c] * w)
             });
             let alpha = sum[3].round().clamp(0.0, 255.0);
-            out.push(std::array::from_fn(|c| {
+            out.extend((0..4).map(|c| {
                 let limit = if c == 3 { 255.0 } else { alpha };
                 sum[c].round().clamp(0.0, limit) as u8
             }));

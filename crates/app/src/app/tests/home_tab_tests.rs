@@ -356,7 +356,7 @@ fn surface_fill(output: &egui::FullOutput, rect: egui::Rect) -> Option<egui::Col
 /// not in egui's linear light, which paints its 0.647 alpha near 0.84.
 #[test]
 fn the_q_texture_is_premultiplied_in_srgb() {
-    let image = crate::surfaces::home::logo_image(crate::surfaces::home::Logo::Q);
+    let image = crate::surfaces::home::logo_image(crate::surfaces::home::Logo::Q, 0);
     let png = include_bytes!("../../../assets/logo-q.png");
     let source = eframe::icon_data::from_png_bytes(png).unwrap();
     let light = source.rgba.as_chunks::<4>().0.iter().position(|texel| {

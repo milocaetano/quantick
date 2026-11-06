@@ -27,11 +27,18 @@ impl Logo {
         if dark { Self::Q } else { Self::QLight }
     }
 
-    fn source(self) -> (&'static str, &'static [u8]) {
+    /// The texture's name and the bundled raster; the Light Q has none.
+    fn source(self) -> (&'static str, Option<&'static [u8]>) {
         match self {
-            Self::Plated => ("Quantick logo", include_bytes!("../../assets/icon.png")),
-            Self::Q => ("Quantick Q", include_bytes!("../../assets/logo-q.png")),
-            Self::QLight => unreachable!("the Light Q is rasterised per scale"),
+            Self::Plated => (
+                "Quantick logo",
+                Some(include_bytes!("../../assets/icon.png")),
+            ),
+            Self::Q => (
+                "Quantick Q",
+                Some(include_bytes!("../../assets/logo-q.png")),
+            ),
+            Self::QLight => ("Quantick Q light", None),
         }
     }
 }
@@ -42,23 +49,21 @@ pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, logo: Logo) {
     use quantick_appearance::mark;
     let (ctx, ppp) = (ui.ctx(), ui.ctx().pixels_per_point());
     let light = logo == Logo::QLight;
-    let side = mark::side_px(ppp);
-    let id = egui::Id::new(("logo", logo, light.then_some(side)));
-    let cached = ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id));
-    let texture = cached.unwrap_or_else(|| {
-        let (name, image, options) = if light {
-            let texels: Vec<u8> = mark::light_q(side).into_iter().flatten().collect();
-            let image = egui::ColorImage::from_rgba_premultiplied([side as usize; 2], &texels);
-            ("Quantick Q light", image, egui::TextureOptions::NEAREST)
-        } else {
-            let mipmaps = Some(egui::TextureFilter::Linear);
-            let options = egui::TextureOptions::LINEAR.with_mipmap_mode(mipmaps);
-            (logo.source().0, logo_image(logo), options)
-        };
-        let texture = ctx.load_texture(name, image, options);
-        ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
-        texture
-    });
+    // One texture per logo: a new scale's Light Q replaces the last one.
+    let side = if light { mark::side_px(ppp) } else { 0 };
+    let id = egui::Id::new(("logo", logo));
+    let cached = ctx.data_mut(|data| data.get_temp::<(u32, egui::TextureHandle)>(id));
+    let texture = match cached {
+        Some((at, texture)) if at == side => texture,
+        _ => {
+            let base = [egui::TextureOptions::LINEAR, egui::TextureOptions::NEAREST];
+            let mipmaps = (!light).then_some(egui::TextureFilter::Linear);
+            let options = base[usize::from(light)].with_mipmap_mode(mipmaps);
+            let texture = ctx.load_texture(logo.source().0, logo_image(logo, side), options);
+            ctx.data_mut(|data| data.insert_temp(id, (side, texture.clone())));
+            texture
+        }
+    };
     let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
     let painter = ui.painter();
     let rect = if light {
@@ -70,18 +75,19 @@ pub(crate) fn paint_logo(ui: &egui::Ui, rect: egui::Rect, logo: Logo) {
     painter.image(texture.id(), rect, uv, egui::Color32::WHITE);
 }
 
-/// The plated logo as egui reads it; a Q premultiplied in sRGB, as browsers do.
-pub(crate) fn logo_image(logo: Logo) -> egui::ColorImage {
-    let png = eframe::icon_data::from_png_bytes(logo.source().1);
-    let mut icon = png.expect("bundled logo is a valid PNG");
+/// A logo as egui reads it: the plated one straight, a Q premultiplied in
+/// sRGB, as browsers do; the Light Q rasterised `side` pixels square.
+pub(crate) fn logo_image(logo: Logo, side: u32) -> egui::ColorImage {
+    let Some(png) = logo.source().1 else {
+        let texels = quantick_appearance::mark::light_q(side);
+        return egui::ColorImage::from_rgba_premultiplied([side as usize; 2], &texels);
+    };
+    let mut icon = eframe::icon_data::from_png_bytes(png).expect("bundled logo is a valid PNG");
     let size = [icon.width as usize, icon.height as usize];
     if logo == Logo::Plated {
         return egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
     }
-    for texel in icon.rgba.as_chunks_mut::<4>().0 {
-        let [r, g, b, a] = texel.map(u16::from);
-        *texel = [r * a, g * a, b * a, a * 255].map(|c| ((c + 127) / 255) as u8);
-    }
+    quantick_appearance::color::premultiply_in_srgb(&mut icon.rgba);
     egui::ColorImage::from_rgba_premultiplied(size, &icon.rgba)
 }
 

@@ -24,18 +24,19 @@ fn the_square_is_w6s_42_px_at_the_traders_scale() {
 #[test]
 fn at_w6s_size_each_bar_has_a_black_edge_and_a_lit_core() {
     let side = 42;
-    let image = light_q(side);
+    let image: Vec<[u8; 4]> = light_q(side).as_chunks::<4>().0.to_vec();
     let unit = side as f32 / VIEWBOX;
-    let column = |x: f32, rows: &[(f32, f32)]| -> Vec<(u8, u8)> {
+    // Per bar: the darkest pixel's brightest channel, and the lightest pixel.
+    let column = |x: f32, rows: &[(f32, f32)]| -> Vec<(u8, [u8; 4])> {
         let px = (x * unit) as usize;
         rows.iter()
             .map(|&(y, h)| {
                 let (y0, y1) = ((y * unit) as usize, ((y + h) * unit).ceil() as usize);
                 let span: Vec<[u8; 4]> =
                     (y0..y1).map(|py| image[py * side as usize + px]).collect();
-                let lightest = span.iter().map(|p| p[1]).max().unwrap();
-                let darkest = span.iter().map(|p| p[1]).min().unwrap();
-                (darkest, lightest)
+                let darkest = span.iter().map(|p| p[..3].iter().copied().max().unwrap());
+                let lightest = span.iter().max_by_key(|p| p[1]).unwrap();
+                (darkest.min().unwrap(), *lightest)
             })
             .collect()
     };
@@ -47,13 +48,16 @@ fn at_w6s_size_each_bar_has_a_black_edge_and_a_lit_core() {
         (116.0, 14.0),
         (135.0, 14.0),
     ];
-    for (darkest, lightest) in column(78.0, &faded) {
-        assert!(lightest > 140, "a white core: {lightest}");
+    for (darkest, [r, g, b, _]) in column(78.0, &faded) {
+        assert!(
+            r.min(g).min(b) > 140 && r == g && g == b,
+            "a white core: {r} {g} {b}"
+        );
         assert!(darkest < 90, "a black edge: {darkest}");
     }
     let teal = [(79.0, 14.0), (98.0, 14.0), (117.0, 13.0), (136.0, 13.0)];
-    for (darkest, lightest) in column(181.0, &teal) {
-        assert!(lightest > 120, "a teal core: {lightest}");
+    for (darkest, [r, g, b, _]) in column(181.0, &teal) {
+        assert!(g > 120 && g > r + 60 && g > b, "a teal core: {r} {g} {b}");
         assert!(darkest < 90, "a black edge: {darkest}");
     }
 }
@@ -61,7 +65,7 @@ fn at_w6s_size_each_bar_has_a_black_edge_and_a_lit_core() {
 #[test]
 fn pixels_are_premultiplied_and_the_corners_clear() {
     for side in [28, 35, 42, 56] {
-        let image = light_q(side);
+        let image: Vec<[u8; 4]> = light_q(side).as_chunks::<4>().0.to_vec();
         assert_eq!(image.len(), (side * side) as usize);
         assert!(image.iter().all(|[r, g, b, a]| r <= a && g <= a && b <= a));
         assert_eq!(image[0], [0; 4], "no plate at {side}");
@@ -73,8 +77,8 @@ fn the_raster_is_deterministic() {
     assert_eq!(light_q(42), light_q(42));
 }
 
-/// The square sits on the pixel grid, one texel per pixel, and its glyph's
-/// right edge stays within half a pixel of the Dark frame's.
+/// The square sits on the pixel grid, one texel per pixel, centred on the
+/// box's height as W6, its glyph's right edge within half a pixel of Dark's.
 #[test]
 fn the_box_keeps_the_dark_glyphs_right_edge_on_the_pixel_grid() {
     for ppp in [1.0, 1.25, 1.5, 1.75, 2.0] {
@@ -88,6 +92,11 @@ fn the_box_keeps_the_dark_glyphs_right_edge_on_the_pixel_grid() {
         assert!(
             (right - dark_right).abs() <= 0.5 / ppp + 1e-4,
             "{right} vs {dark_right}"
+        );
+        let middle = top + side / 2.0;
+        assert!(
+            (middle - 17.0).abs() <= 0.5 / ppp + 1e-4,
+            "{middle} at {ppp}"
         );
     }
 }
