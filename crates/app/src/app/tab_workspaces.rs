@@ -1,5 +1,5 @@
 //! The window's side of the workspace book: reading a tab into a recipe and
-//! putting a recipe on a tab. The upkeep is `quantick_stores::tab_recipes`'s; what
+//! putting a recipe on a tab. The upkeep is `quantick_workspace::book_upkeep`'s; what
 //! a row does is `quantick_control_handlers::workspace_book`'s.
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -7,11 +7,12 @@ use std::time::Instant;
 use quantick_control_handlers::workspace_book as ops;
 use quantick_layers::{ChartLayer, recipe_layers};
 use quantick_session::workspace_menu::WorkspaceCommand;
-use quantick_stores::tab_recipes::{self, TabRecipeHost};
-use quantick_stores::workspaces::{WorkspaceBookStore, WorkspaceRecipe, capture_recipe};
+use quantick_stores::workspaces::{TabRecipeSync, WorkspaceBook, WorkspaceRecipe, capture_recipe};
+use quantick_workspace::book_upkeep::{self, TabRecipeHost};
 
-use super::QuantickApp;
 use super::control_host::LayoutPort as _;
+use super::workspace_runtime::WorkspaceRuntime as Runtime;
+use super::{ArrangementHost, QuantickApp, layout_wiring::LayoutAdapter};
 use crate::pane::{ChartPane, PaneSide};
 use crate::tab::{CanvasCollapseRestore, CanvasLayout, LegendFold};
 
@@ -22,23 +23,19 @@ fn layer_states(layers: &BTreeMap<String, bool>) -> BTreeMap<ChartLayer, bool> {
 /// What the frame owes the book, once its panes are built and seeded.
 pub(super) fn maintain(app: &mut QuantickApp) {
     app.layout_adapter().own_indicator_copies();
-    tab_recipes::maintain(&mut BookTabs(app));
-}
-
-/// Put `recipe` on a tab.
-pub(super) fn show_recipe(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe) {
-    tab_recipes::show_recipe(&mut BookTabs(app), id, recipe);
+    let save = book_upkeep::maintain(&mut BookTabs(app));
+    app.runtime.workspace.book.save_upkeep(save);
 }
 
 /// The window as [`TabRecipeHost`]: the protected root gains no impl.
-struct BookTabs<'a>(&'a mut QuantickApp);
+pub(super) struct BookTabs<'a>(pub(super) &'a mut QuantickApp);
 
 impl TabRecipeHost for BookTabs<'_> {
-    fn recipe_store(&self) -> &WorkspaceBookStore {
-        &self.0.runtime.workspace.book
+    fn recipe_book(&self) -> (&WorkspaceBook, &TabRecipeSync) {
+        self.0.runtime.workspace.book.parts()
     }
-    fn recipe_store_mut(&mut self) -> &mut WorkspaceBookStore {
-        &mut self.0.runtime.workspace.book
+    fn recipe_book_mut(&mut self) -> (&mut WorkspaceBook, &mut TabRecipeSync) {
+        self.0.runtime.workspace.book.parts_mut()
     }
     fn recipe_tabs(&self) -> Vec<u64> {
         self.0
@@ -59,7 +56,7 @@ impl TabRecipeHost for BookTabs<'_> {
         })
     }
     fn live_recipe(&self, id: u64) -> Option<WorkspaceRecipe> {
-        live_recipe(self.0, id)
+        live_recipe(&self.0.runtime, id)
     }
     fn recipe_tab_symbol(&self, id: u64) -> Option<String> {
         self.0.runtime.tabs.by_id(id).map(|tab| tab.symbol.clone())
@@ -106,49 +103,40 @@ impl TabRecipeHost for BookTabs<'_> {
         }
     }
     fn apply_recipe_canvas(&mut self, id: u64, recipe: &WorkspaceRecipe) {
-        apply_recipe_canvas(self.0, id, recipe);
+        apply_recipe_canvas(&mut self.0.runtime, id, recipe);
     }
     fn apply_recipe_switches(&mut self, id: u64, recipe: &WorkspaceRecipe) {
-        apply_recipe_switches(self.0, id, recipe);
+        apply_recipe_switches(&mut self.0.runtime, id, recipe);
     }
     fn apply_recipe_indicators(&mut self, id: u64, recipe: &WorkspaceRecipe) {
-        apply_recipe_indicators(self.0, id, recipe);
+        apply_recipe_indicators(self.0.layout_adapter(), id, recipe);
     }
 }
 
 /// What the tab shows now, as a recipe.
-pub(super) fn live_recipe(app: &QuantickApp, id: u64) -> Option<WorkspaceRecipe> {
-    let tab = app.runtime.tabs.by_id(id)?;
+pub(super) fn live_recipe(runtime: &Runtime, id: u64) -> Option<WorkspaceRecipe> {
+    let tab = runtime.tabs.by_id(id)?;
     let saved = super::arrangement_adapter::saved_tab_of(tab);
-    let pane_layers = |pane: &ChartPane| recipe_layers(pane.layer_states(&app.runtime.style));
+    let pane_layers = |pane: &ChartPane| recipe_layers(pane.layer_states(&runtime.style));
     let context = tab.panes().filter(|(_, side)| *side != PaneSide::Flow);
     let context_layers = context.map(|(pane, _)| pane_layers(pane)).collect();
     let layers = (pane_layers(&tab.flow_pane), context_layers);
-    let window = &app.runtime.footprint_config;
+    let window = &runtime.footprint_config;
     let style = Some(tab.flow_pane.footprint_config(window).style.id().to_owned());
-    Some(capture_recipe(
-        &saved,
-        app.layout_state().layouts(),
-        layers,
-        style,
-    ))
+    let layouts = runtime.workspace.layouts().book();
+    Some(capture_recipe(&saved, layouts, layers, style))
 }
 
-/// Read one tab; a change the book has not seen becomes its copy, and only its.
-pub(super) fn observe_tab(app: &mut QuantickApp, id: u64) {
-    tab_recipes::observe_tab(&mut BookTabs(app), id);
-}
-
-pub(super) fn symbols_of(app: &QuantickApp, tabs: &[u64]) -> Vec<String> {
+pub(super) fn symbols_of(open: &ArrangementHost, tabs: &[u64]) -> Vec<String> {
     tabs.iter()
-        .filter_map(|id| app.runtime.tabs.by_id(*id))
+        .filter_map(|id| open.by_id(*id))
         .map(|tab| tab.symbol.clone())
         .collect()
 }
 
-fn apply_recipe_canvas(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe) {
+fn apply_recipe_canvas(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe) {
     let intervals = super::saved_context_intervals(&recipe.context_bars, None);
-    let Some(tab) = app.runtime.tabs.by_id_mut(id) else {
+    let Some(tab) = runtime.tabs.by_id_mut(id) else {
         return;
     };
     let legends = LegendFold {
@@ -184,33 +172,30 @@ fn apply_recipe_canvas(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe)
             );
         }
     }
-    apply_recipe_switches(app, id, recipe);
+    apply_recipe_switches(runtime, id, recipe);
 }
 
-fn apply_recipe_switches(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe) {
-    let window = app.runtime.footprint_config.clone();
+fn apply_recipe_switches(runtime: &mut Runtime, id: u64, recipe: &WorkspaceRecipe) {
+    let window = &runtime.footprint_config;
     let style = recipe
         .footprint_style
         .as_deref()
         .and_then(crate::footprint_config::FootprintStyle::from_id);
-    let Some(tab) = app.runtime.tabs.by_id_mut(id) else {
+    let Some(tab) = runtime.tabs.by_id_mut(id) else {
         return;
     };
     for (pane, side) in tab.panes_with_sides_mut() {
         pane.apply_layer_states(&layer_states(recipe.for_pane(side.index()).1));
         if let Some(style) = style {
-            pane.footprint.config.pin_style(style, &window);
+            pane.footprint.config.pin_style(style, window);
         }
     }
 }
 
-fn apply_recipe_indicators(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRecipe) {
-    let tab = app.runtime.tabs.by_id(id);
-    let sides: Vec<_> = tab
-        .into_iter()
+fn apply_recipe_indicators(mut layouts: LayoutAdapter<'_>, id: u64, recipe: &WorkspaceRecipe) {
+    let sides: Vec<_> = (layouts.tabs.by_id(id).into_iter())
         .flat_map(|tab| tab.panes().map(|(pane, side)| (pane.id, side)))
         .collect();
-    let mut layouts = app.layout_adapter();
     layouts.own_indicator_copies();
     let sets = sides
         .iter()
@@ -222,9 +207,8 @@ fn apply_recipe_indicators(app: &mut QuantickApp, id: u64, recipe: &WorkspaceRec
 }
 
 /// The workspace the active tab holds edits against, while it holds any.
-pub(super) fn edits_of_active(app: &QuantickApp) -> Option<String> {
-    let tab = app.runtime.tabs.active_id();
-    let (workspace, modified) = app.runtime.workspace.book.tab_row(tab);
+pub(super) fn edits_of_active(runtime: &Runtime) -> Option<String> {
+    let (workspace, modified) = runtime.workspace.book.tab_row(runtime.tabs.active_id());
     modified.then_some(workspace)
 }
 
@@ -232,7 +216,7 @@ pub(super) fn edits_of_active(app: &QuantickApp) -> Option<String> {
 /// tab shows now, journaled as the trader's hand.
 pub(super) fn apply_workspace_command(app: &mut QuantickApp, command: WorkspaceCommand) {
     let tab = app.runtime.tabs.active_id();
-    observe_tab(app, tab);
+    book_upkeep::observe_tab(&mut BookTabs(app), tab);
     let symbol = app.active_tab().symbol.clone();
     let mut menu = std::mem::take(&mut app.chrome.window_menu.tab_workspace);
     let mut access = app.control.control_access.take();

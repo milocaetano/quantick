@@ -6,16 +6,15 @@ use quantick_control_schema::settings_sections::{SettingRow, SettingsSection};
 use quantick_control_schema::window_menu::{ABOUT_WORKSPACES, HelpPage};
 
 use crate::control::ControlAccess;
-use crate::surfaces::ChartSettingsTab::Candles;
 use crate::theme;
 use crate::timezone::TzOffset;
 
-use super::super::{LayersPort, QuantickApp, deal_recording_wiring};
+use super::super::{QuantickApp, deal_recording_wiring as deals};
 use super::commands::MenuCommand;
 use super::{
     CLOSE_TAB_SHORTCUT, DOCK_SHORTCUT, HOME_SHORTCUT, LEGEND_SHORTCUT, NEW_TAB_SHORTCUT,
     NEXT_TAB_SHORTCUT, PREVIOUS_TAB_SHORTCUT, REPLAY_SHORTCUT, SAVE_WORKSPACE_SHORTCUT,
-    SETTINGS_SHORTCUT, WINDOW_MENU_SHORTCUT,
+    SETTINGS_SHORTCUT, WINDOW_MENU_SHORTCUT, WindowMenuState,
 };
 
 const WINDOW_WIDTH_PX: f32 = 420.0;
@@ -42,7 +41,7 @@ pub(super) fn show(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Ve
         return;
     }
     show_settings(app, ctx, commands);
-    show_help(app, ctx);
+    show_help(&mut app.chrome.window_menu, ctx);
 }
 
 fn show_settings(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<MenuCommand>) {
@@ -58,7 +57,7 @@ fn show_settings(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<
         .fixed_size(SETTINGS_SIZE_PX)
         .show(ctx, |ui| {
             ui.horizontal_top(|ui| {
-                section_list(app, ui);
+                section_list(&mut app.chrome.window_menu, ui);
                 ui.separator();
                 ui.vertical(|ui| section_body(app, ui, commands));
             });
@@ -67,13 +66,13 @@ fn show_settings(app: &mut QuantickApp, ctx: &egui::Context, commands: &mut Vec<
 }
 
 /// The list on the left: the one on screen is filled, as in the prototype.
-fn section_list(app: &mut QuantickApp, ui: &mut egui::Ui) {
+fn section_list(menu: &mut WindowMenuState, ui: &mut egui::Ui) {
     ui.vertical(|ui| {
         ui.set_width(SECTION_LIST_WIDTH_PX);
         for section in SettingsSection::ALL {
-            let shown = app.chrome.window_menu.settings_section == section;
+            let shown = menu.settings_section == section;
             if ui.selectable_label(shown, section.title()).clicked() {
-                app.chrome.window_menu.settings_section = section;
+                menu.settings_section = section;
             }
         }
     });
@@ -167,9 +166,9 @@ fn row_control(
             }
         }
         SettingRow::RecordDeals => {
-            let mut on = deal_recording_wiring::default_for(app);
+            let mut on = deals::default_for(app);
             if switch(ui, &mut on, true, row).changed() {
-                deal_recording_wiring::set_default(app, on);
+                deals::set_default(&mut app.chrome.record_deals, &mut app.runtime.tabs, on);
             }
         }
         SettingRow::AgentSwitch => {
@@ -234,8 +233,8 @@ fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool, row: SettingRow) -> e
     response
 }
 
-fn show_help(app: &mut QuantickApp, ctx: &egui::Context) {
-    let Some(page) = app.chrome.window_menu.help else {
+fn show_help(menu: &mut WindowMenuState, ctx: &egui::Context) {
+    let Some(page) = menu.help else {
         return;
     };
     let mut open = true;
@@ -257,7 +256,7 @@ fn show_help(app: &mut QuantickApp, ctx: &egui::Context) {
             }
         });
     if !open {
-        app.chrome.window_menu.help = None;
+        menu.help = None;
     }
 }
 
@@ -284,9 +283,4 @@ fn shortcuts_body(ui: &mut egui::Ui) {
             ui.end_row();
         }
     });
-}
-
-/// Carry out the appearance row, which belongs to the layer wiring.
-pub(super) fn open_appearance(app: &mut QuantickApp) {
-    app.layer_wiring().open_settings(Candles);
 }

@@ -536,7 +536,7 @@ impl QuantickApp {
         scratch.status = statusbar::draw(ctx, &self.status_model(), self.runtime.tz, &lead);
         super::menu_bar::workspace_cell(self, ctx, &scratch.status);
         if scratch.status.open_display_settings {
-            super::desk_wiring::open_settings_on(self, ctx);
+            super::desk_wiring::open_settings_on(&mut self.chrome.window_menu, ctx);
         }
         if scratch.status.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
