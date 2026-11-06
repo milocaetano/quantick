@@ -81,7 +81,7 @@ impl QuantickApp {
             let popup = crate::pane_header::menu_id(self.focused_pane().id);
             ctx.memory_mut(|memory| memory.open_popup(popup));
         }
-        let workspace_edits = super::tab_workspaces::edits_of_active(self);
+        let workspace_edits = super::tab_workspaces::edits_of_active(&self.runtime);
         let tab = self.active_tab_mut();
         let focused_bars = tab.focused_pane().spec.spec().definition();
         let mut model = toolbar::ToolbarModel {

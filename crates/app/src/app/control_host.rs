@@ -29,6 +29,7 @@ use quantick_control_handlers::market_palette::TabOpening;
 use quantick_engine::bar_registry::BarConfiguration as Bars;
 use quantick_workspace::market_list::OpenChoice;
 
+use super::tab_workspaces::BookTabs;
 use crate::config::AppConfig;
 use crate::dock::Dock;
 use crate::drawings;
@@ -759,13 +760,13 @@ impl quantick_control_handlers::market_palette::MarketPaletteHost for QuantickAp
         super::tabs::market_snapshot(self)
     }
     fn focus_tab(&mut self, index: usize) {
-        super::tabs::focus_tab(self, index);
+        super::tabs::focus_tab(&mut self.runtime.tabs, &mut self.chrome.title_bar, index);
     }
     fn open_tab(&mut self, choice: &OpenChoice, bar: Option<Bars>) -> TabOpening {
         Ok(super::tabs::open(self, choice, bar))
     }
     fn edit_catalog(&mut self, feed: &str, symbol: &str, add: bool) -> Result<(), String> {
-        super::tabs::edit_catalog(self, (feed, symbol), add)
+        super::tabs::edit_catalog(self.symbol_catalog(), (feed, symbol), add)
     }
     fn open_market_palette(&mut self, query: &str, switch: bool) -> Result<(), ControlError> {
         super::tabs::open_palette(self, query, switch).map_err(ControlError::invalid_request)
@@ -790,13 +791,13 @@ impl quantick_control_handlers::workspace_book::WorkspaceBookHost for QuantickAp
         self.runtime.workspace.book.persist()
     }
     fn show_tab_recipe(&mut self, tab: u64, recipe: &quantick_stores::workspaces::WorkspaceRecipe) {
-        super::tab_workspaces::show_recipe(self, tab, recipe);
+        quantick_workspace::book_upkeep::show_recipe(&mut BookTabs(self), tab, recipe);
     }
     fn tab_workspace_row(&self, tab: u64) -> (String, bool) {
         self.runtime.workspace.book.tab_row(tab)
     }
     fn tab_symbols(&self, tabs: &[u64]) -> Vec<String> {
-        super::tab_workspaces::symbols_of(self, tabs)
+        super::tab_workspaces::symbols_of(&self.runtime.tabs, tabs)
     }
 }
 
