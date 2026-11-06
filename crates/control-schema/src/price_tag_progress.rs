@@ -79,3 +79,19 @@ pub const READBACKS: &[Readback] = &[snapshot(
         "the_price_tag_progress_call_switches_the_market_and_reads_it_back",
     ],
 )];
+
+/// The documents this module publishes, as `(file name, schema)`.
+#[must_use]
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "chart-price-tag-progress-input-v1.schema.json",
+            schema::<PriceTagProgressInput>(),
+        ),
+        (
+            "chart-price-tag-progress-result-v1.schema.json",
+            schema::<PriceTagProgressResult>(),
+        ),
+    ]
+}

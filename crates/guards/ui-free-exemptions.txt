@@ -24,6 +24,5 @@ crates/app/src/orderflow_render/tape_rebuild.rs the pane's tape rebuild thread; 
 crates/app/src/orderflow_view/flow_execution/runner.rs the pane's bounded FLOW worker thread; headless crates may not spawn one, and source admission, retention, request comparison and result adoption live in `quantick_orderflow::projection::flow_tape::FlowSession`.
 
 crates/app/src/pane/history_worker.rs the pane history recut thread; headless chart owns admission, cancellation, catch-up and publication and cannot spawn the app runtime.
-crates/app/src/app/native_windows/exposed.rs native OS z-order hit tests and same-process HWND/title resolution cannot live below app, where native APIs are forbidden; the resulting eligible strip alone enters workspace policy.
 crates/app/src/app/workspace_bundle_adapter.rs the desk file effects run over app-only ports (arrangement, chart settings, toast); the window menu now paints their rows, and the headless bundle transaction already owns the policy
 crates/app/src/workspace_picker.rs the native file chooser's dialog thread and receiver; headless crates may not spawn one, and the window menu now paints its rows

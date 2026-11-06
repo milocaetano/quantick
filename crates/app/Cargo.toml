@@ -59,6 +59,9 @@ quantick-orderflow = { path = "../orderflow" }
 # The paper account: orders, sizing, the journal and the report numbers. This
 # crate keeps the ticket that draws it and the host wiring around it.
 quantick-paper = { path = "../paper" }
+# The OS-window exception: the DPI adapter, the hidden-root paint pump and
+# the exposed-window lookup, behind safe calls; no-ops off Windows.
+quantick-platform = { path = "../platform" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 # The cockpit stores: every document the chart remembers between launches.

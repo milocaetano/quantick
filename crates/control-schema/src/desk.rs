@@ -221,6 +221,38 @@ pub const READBACKS: &[Readback] = &[
     ),
 ];
 
+/// Published schemas of the desk and the settings opener.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "settings-open-input-v1.schema.json",
+            schema::<SettingsOpenInput>(),
+        ),
+        (
+            "settings-open-result-v1.schema.json",
+            schema::<SettingsOpenResult>(),
+        ),
+        ("desk-input-v1.schema.json", schema::<DeskInput>()),
+        (
+            "desk-write-result-v1.schema.json",
+            schema::<DeskWriteResult>(),
+        ),
+        (
+            "desk-pick-result-v1.schema.json",
+            schema::<DeskPickResult>(),
+        ),
+        (
+            "desk-reopen-input-v1.schema.json",
+            schema::<DeskReopenInput>(),
+        ),
+        (
+            "desk-reopen-result-v1.schema.json",
+            schema::<DeskReopenResult>(),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
