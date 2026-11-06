@@ -3,9 +3,10 @@
 //!
 //! Three sections replace the perf overlay, the floating timezone pill and
 //! the mode text that used to be painted over candles: provenance on the
-//! left (state dot, venue, symbol, lag), content in the middle (bar spec,
-//! counts, honesty labels), machinery on the right (trades, fps, and the
-//! timezone picker). A reading that breaches its threshold turns
+//! left (state dot, venue, symbol, lag), content in the middle (honesty
+//! labels), machinery on the right (fps and the timezone picker). What the
+//! forming bar has left lives on its own price tag, not here. A reading
+//! that breaches its threshold turns
 //! [`theme::WARN`]; narrow windows wrap cells without hiding their facts.
 //!
 //! The bar has two controls, both with the same raised hover: the workspace
@@ -93,28 +94,11 @@ pub struct StatusModel {
     /// the hover: a trader mid-session needs one word to know whether to look
     /// at their terminal or at this chart, and the breakdown only when they ask.
     pub feed_latency: Option<FeedLatency>,
-    /// The bar spec, e.g. `tick(50)`.
-    pub spec_summary: String,
-    /// How far the forming bar is from closing, e.g. `37/50 ticks`, when its
-    /// rule counts toward a fixed threshold.
-    ///
-    /// Alternative bars close on activity, not on a clock, so without this the
-    /// chart never says whether the next print completes the bar or the
-    /// fiftieth does.
-    pub bar_progress: Option<String>,
     /// The deal recorder's cell — `REC 2 301 455 · 09:00:00 · file`, `REC
     /// off`, `RECORDED · day` — or none where the feed has no counter.
     pub deal_recording: Option<DealCell>,
     /// What the recorder has to say about the flow pane, beside that cell.
     pub deal_chip: Option<crate::deal_recording_ui::DealChip>,
-    /// Bars that came from the venue's own candle history, in front of
-    /// everything this app built from prints. Zero on any pane without a
-    /// venue prefix, which is every flow pane.
-    pub venue_bars: usize,
-    /// Closed bars built from backfilled history.
-    pub backfilled_bars: usize,
-    /// Closed bars built live.
-    pub live_bars: usize,
     /// Data-honesty label such as `side: inferred (tick rule)`, when the
     /// aggressor side is not venue truth.
     ///
@@ -128,12 +112,8 @@ pub struct StatusModel {
     /// while the simulator has never been touched (an idle chart owes no
     /// account line).
     pub sim_pnl: Option<(String, std::cmp::Ordering)>,
-    /// Whether the viewport follows the live edge.
-    pub follows_live: bool,
     /// Whether the price axis is auto-fitting.
     pub price_auto: bool,
-    /// Live trades ingested since the feed started.
-    pub live_trades: u64,
     /// Rolling frames per second.
     pub fps: Option<f32>,
     /// Rolling mean frame time, in milliseconds.
@@ -141,7 +121,7 @@ pub struct StatusModel {
     /// Rolling mean CPU cost per frame (update + tessellation + paint, no
     /// vsync wait), in milliseconds.
     pub frame_cpu_ms: Option<f32>,
-    /// Whether the perf readings (fps, frame time, trades) are shown
+    /// Whether the perf readings (fps, frame time, cpu) are shown
     /// (View → perf readings).
     pub show_perf: bool,
     /// Why nothing is saved this session, when nothing is (decision DS7): a
@@ -212,19 +192,6 @@ use quantick_feed::timing::{TAPE_TOOLTIP_BASE, tape_arrival_ms};
 
 pub fn tape_tooltip(arrival_ms: Option<i64>, latency: Option<FeedLatency>) -> String {
     quantick_feed::timing::tape_tooltip(arrival_ms, latency, orderflow::format_window_ms)
-}
-
-/// The bar-count cell, keeping the backfilled+live split: `240+61 bars`.
-#[must_use]
-pub fn bars_text(venue: usize, backfilled: usize, live: usize) -> String {
-    // Three sources, three counts, in the order they sit on the chart. The
-    // venue term is dropped rather than shown as zero: a chart with no venue
-    // prefix has nothing to disclose about one, and "0+" would read as a
-    // failed fetch.
-    if venue == 0 {
-        return format!("{backfilled}+{live} bars");
-    }
-    format!("{venue}v+{backfilled}+{live} bars")
 }
 
 /// What a click on the bar asked of the app this frame.
@@ -446,7 +413,7 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
     });
 }
 
-/// Middle section: bar spec, counts, honesty labels and navigation hints.
+/// Middle section: honesty labels, the paper account and the axis hint.
 /// Returns whether the SIM cell was clicked.
 fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
     let mut sim_clicked = false;
@@ -457,19 +424,6 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
                 .color(theme::AMBER),
         )
         .on_hover_text(reason);
-    }
-    ui.label(
-        egui::RichText::new(&model.spec_summary)
-            .monospace()
-            .color(theme::TEXT_PRIMARY),
-    );
-    if let Some(progress) = &model.bar_progress {
-        ui.label(
-            egui::RichText::new(progress)
-                .monospace()
-                .color(theme::AMBER),
-        )
-        .on_hover_text("how far the forming bar is from closing");
     }
     if let Some(cell) = &model.deal_recording {
         let color = match cell.tone {
@@ -489,19 +443,6 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
         ui.label(egui::RichText::new(&chip.text).small().color(color))
             .on_hover_text(&chip.hover);
     }
-    ui.label(
-        egui::RichText::new(bars_text(
-            model.venue_bars,
-            model.backfilled_bars,
-            model.live_bars,
-        ))
-        .monospace()
-        .color(theme::TEXT_MUTED),
-    )
-    .on_hover_text(
-        "closed bars by source, oldest first: venue candles (v), bars built \
-         from backfilled prints, bars built live",
-    );
     if let Some(note) = &model.side_note {
         // Inferred data wears the amber thread, like every not-quite-venue
         // truth on this chart. Kept short on purpose: this section shares its
@@ -528,13 +469,6 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
                  account; click to open the Trading tab",
             );
         sim_clicked = cell.clicked();
-    }
-    if !model.follows_live {
-        ui.label(
-            egui::RichText::new("history · double-click for live")
-                .small()
-                .color(theme::TEXT_FAINT),
-        );
     }
     if !model.price_auto {
         ui.label(
@@ -575,12 +509,6 @@ fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: TzOffset) -> bool 
         ))
         .monospace()
         .color(fps_color),
-    );
-    ui.separator();
-    ui.label(
-        egui::RichText::new(format!("{} trades", model.live_trades))
-            .monospace()
-            .color(theme::TEXT_MUTED),
     );
     clicked
 }
@@ -754,24 +682,6 @@ mod tests {
         assert_eq!(tape_text(over, None, None, None), "1× 100%");
     }
 
-    #[test]
-    fn bar_counts_keep_the_backfilled_live_split() {
-        assert_eq!(bars_text(0, 240, 61), "240+61 bars");
-        assert_eq!(bars_text(0, 0, 0), "0+0 bars");
-    }
-
-    /// A time pane standing on venue history says so, in the same cell and the
-    /// same order the chart puts the three sources in.
-    #[test]
-    fn a_venue_prefix_becomes_a_third_term() {
-        assert_eq!(bars_text(26_000, 240, 61), "26000v+240+61 bars");
-        assert_eq!(
-            bars_text(0, 240, 61),
-            "240+61 bars",
-            "a chart with no prefix discloses nothing about one; `0v+` would read as a fetch that failed"
-        );
-    }
-
     /// Lay the bar out for real, off-screen, in its live and replay shapes —
     /// every section drawn, no duplicated widget id, no panicking widget.
     #[test]
@@ -791,19 +701,12 @@ mod tests {
                 feed_arrival_ms: (!replaying).then_some(120),
                 feed_latency: None,
                 tape_age_ms: (!replaying).then_some(200),
-                spec_summary: "tick(50)".to_owned(),
-                bar_progress: Some("37/50 ticks".to_owned()),
                 deal_recording: None,
                 deal_chip: None,
-                venue_bars: 0,
-                backfilled_bars: 240,
-                live_bars: 61,
                 side_note: replaying.then(|| "side: inferred (tick rule)".to_owned()),
                 side_detail: None,
                 sim_pnl: Some(("SIM +12.5 pts".to_owned(), std::cmp::Ordering::Greater)),
-                follows_live: false,
                 price_auto: false,
-                live_trades: 12_345,
                 fps: Some(60.0),
                 frame_avg_ms: Some(16.7),
                 frame_cpu_ms: Some(4.2),
@@ -882,7 +785,6 @@ mod tests {
     #[test]
     fn the_quote_driven_disclosure_is_really_painted() {
         let ctx = egui::Context::default();
-        let tz = TzOffset::default();
         let model = StatusModel {
             workspace: None,
             modified: false,
@@ -892,33 +794,36 @@ mod tests {
             feed_arrival_ms: Some(106),
             feed_latency: None,
             tape_age_ms: Some(150),
-            spec_summary: "tick(50)".to_owned(),
-            bar_progress: Some("37/50 ticks".to_owned()),
             deal_recording: None,
             deal_chip: None,
-            venue_bars: 0,
-            backfilled_bars: 3_999,
-            live_bars: 17,
             side_note: Some("prints: quote-derived".to_owned()),
             side_detail: Some(
                 "this venue quotes prices but prints no trades: every candle is built \n                 from one synthetic print per tick"
                     .to_owned(),
             ),
             sim_pnl: None,
-            follows_live: true,
             price_auto: true,
-            live_trades: 846,
             fps: Some(60.0),
             frame_avg_ms: Some(16.7),
             frame_cpu_ms: Some(4.2),
             show_perf: false,
             saves_off: None,
         };
-        // Two passes: egui settles its layout on the second.
+        let painted = painted_text(&ctx, &model);
+        assert!(
+            painted.contains("prints: quote-derived"),
+            "the honesty label never reached the screen; painted: {painted}"
+        );
+        assert!(painted.contains("US500"), "painted: {painted}");
+    }
+
+    /// Every text the bar paints, after egui settles its layout on the
+    /// second pass.
+    fn painted_text(ctx: &egui::Context, model: &StatusModel) -> String {
         let mut painted = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let _ = draw(ctx, &model, tz, &StatusLead::default());
+                let _ = draw(ctx, model, TzOffset::default(), &StatusLead::default());
             });
             painted.clear();
             for shape in output.shapes {
@@ -928,10 +833,36 @@ mod tests {
                 }
             }
         }
-        assert!(
-            painted.contains("prints: quote-derived"),
-            "the honesty label never reached the screen; painted: {painted}"
-        );
-        assert!(painted.contains("US500"), "painted: {painted}");
+        painted
+    }
+
+    /// The bar spec, the forming bar, the bar counts, the history hint and the
+    /// trade count left the line: the price tag carries the forming bar now.
+    /// What stays — workspace, feed, clock, perf, the manual-price hint — still
+    /// paints.
+    #[test]
+    fn the_trimmed_segments_are_gone_and_the_rest_stays() {
+        let ctx = egui::Context::default();
+        let model = super::native_layout_tests::model(false);
+        let model = StatusModel {
+            price_auto: false,
+            ..model
+        };
+        let painted = painted_text(&ctx, &model);
+        for gone in [
+            "tick(50)",
+            "37/50",
+            " bars",
+            "trades",
+            "double-click for live",
+        ] {
+            assert!(
+                !painted.contains(gone),
+                "{gone:?} is still painted: {painted}"
+            );
+        }
+        for kept in ["Scalp", "fps", "cpu", "price: manual", "WDOU26"] {
+            assert!(painted.contains(kept), "{kept:?} is missing: {painted}");
+        }
     }
 }

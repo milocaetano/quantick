@@ -149,18 +149,6 @@ const FIRST_TAB_ID: u64 = 0;
 #[cfg(any(feature = "scenario-harness", test))]
 const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
 
-/// Format the forming bar's countdown, e.g. `37/50 ticks`.
-///
-/// Trailing zeros are trimmed on both figures: a volume bar's accumulator
-/// carries the feed's own scale, and `1.20000000/5 vol` reads as noise.
-fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
-    format!(
-        "{}/{} {unit}",
-        quantick_engine::display::display_decimal(progress.done),
-        quantick_engine::display::display_decimal(progress.target)
-    )
-}
-
 /// Read a tape window off `QUANTICK_TAPE_WINDOW`.
 ///
 /// `auto` follows the bars; a duration pins it, in the units a human would

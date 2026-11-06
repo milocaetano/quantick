@@ -693,15 +693,6 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
         PaneSide::Time(1),
         "clicking the bottom context chart focuses it"
     );
-    assert_eq!(
-        app.status_model().spec_summary,
-        app.active_tab()
-            .pane(PaneSide::Time(1))
-            .state
-            .spec()
-            .summary(),
-        "the status bar speaks for it"
-    );
 
     // The focused pane's selector fields, as its bars menu edits them.
     let top_spec = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
