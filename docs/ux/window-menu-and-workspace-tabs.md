@@ -167,7 +167,7 @@ snapshot reads it as `auto_save`.
   close, a switch or the exit), closing it or exiting asks, a switch drops it
   with the "changes dropped" toast, and its Save is the trader's choice.
 - **Off:** the change is held on the tab. The cell wears the amber mark and a
-  "Save" pill (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
+  blue "Save" chip (hover "Save to Scalp · Ctrl+S"); Ctrl+S and the menu's "Save to
   Scalp" row (its hover names the tabs that follow) write it. Drawings and
   anchored studies are held too, and Save writes the tab's own drawing sets
   (the ones its panes show; every other set stays as the file has it, still
@@ -176,7 +176,10 @@ snapshot reads it as `auto_save`.
   and a failed drawing write puts the workspace back; it answers
   `workspace.write_failed` and the mark stays: nothing reads as saved before
   it is on disk. Close without saving puts a held set back to the file's
-  version unless another open tab shows it.
+  version unless another open tab shows it. A drawing counts as held when
+  the trader changed it; a dated anchor's bar offset is re-derived from its
+  market time on a flow bar-size or timeframe change and on a relaunch, and
+  an id is the pane's, so neither marks.
   Turning auto save on with edits held saves them at once, one tab per
   workspace as above, then every held drawing; a save that fails there leaves
   auto save on, journals the setting and each save that landed, and answers
@@ -188,7 +191,9 @@ snapshot reads it as `auto_save`.
 - Closing a tab, a torn-off window or the app with edits held asks, one tab at
   a time: "Close WINZ26" — "This tab changed its layout since Scalp was last
   saved (RSI, CVD, 3 drawings). Saving also changes WDOZ26." — Cancel /
-  Close without saving / Save to Scalp; Enter saves, Esc cancels the whole
+  Close without saving / Save to Scalp, right-aligned, Save in the accent;
+  the question stands over every chart overlay and nothing under it takes a
+  click while it is up. Enter saves, Esc cancels the whole
   close (a tab already answered stays closed, nothing after it closes).
   `tab.close {tab_id, save}` is the named form and asks the same question:
   without `save` it answers `workspace.unsaved_edits` (with the workspace,

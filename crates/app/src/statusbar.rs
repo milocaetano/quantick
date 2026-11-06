@@ -54,8 +54,6 @@ const DOT_WORD_GAP_PX: f32 = 4.0;
 const WORKSPACE_GAP_PX: f32 = 4.0;
 /// The mark of a tab holding unsaved workspace edits.
 const EDITED_MARK: &str = "\u{2022}";
-/// The Save pill's corner radius: a pill, not a square button.
-const SAVE_PILL_ROUNDING_PX: f32 = 8.0;
 
 /// Replay figures for the provenance section, read from the transport link.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -359,10 +357,9 @@ fn draw_workspace(ui: &mut egui::Ui, model: &StatusModel, response: &mut StatusR
     if model.modified {
         let shortcut = &crate::app::SAVE_TO_WORKSPACE_SHORTCUT;
         let keys = ui.ctx().format_shortcut(shortcut);
-        let pill = egui::Button::new(egui::RichText::new(text::SAVE_PILL).color(theme::AMBER))
-            .rounding(SAVE_PILL_ROUNDING_PX);
+        let pill = ui.add(crate::widgets::accent_button(text::SAVE_PILL));
         let hover = text::save_pill_hover(workspace, &keys);
-        response.save_clicked = ui.add(pill).on_hover_text(hover).clicked();
+        response.save_clicked = pill.on_hover_text(hover).clicked();
     }
     let mut on = model.autosave;
     let label = egui::RichText::new(text::AUTOSAVE_LABEL).color(theme::TEXT_MUTED);
