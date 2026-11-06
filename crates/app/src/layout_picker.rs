@@ -84,7 +84,14 @@ pub struct PickerModel<'a> {
 ///
 /// Returns the preset the trader picked this frame, if any.
 pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static LayoutPreset> {
-    let button = IconButton::new(face_glyph(model.current), TOOLBAR_ICON)
+    // The face is the layout on screen. A hand-arranged row matches no
+    // preset, so no miniature describes it and the generic icon stands in.
+    let glyph = if model.current.is_some() {
+        ""
+    } else {
+        icons::LAYOUT
+    };
+    let button = IconButton::new(glyph, TOOLBAR_ICON)
         .active(*model.open)
         .hover_text("chart layout (Ctrl+Shift+1…)")
         .show(ui);
@@ -92,7 +99,7 @@ pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static Layout
         && ui.is_rect_visible(button.rect)
     {
         let face = egui::Rect::from_center_size(button.rect.center(), FACE_THUMBNAIL_SIZE);
-        draw_thumbnail(ui.painter(), face, preset);
+        draw_panes(ui.painter(), face, preset);
     }
 
     let popup_id = ui.make_persistent_id("layout_picker_popup");
@@ -126,13 +133,6 @@ pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static Layout
         *model.open = false;
     }
     picked
-}
-
-/// The glyph the button wears: none while a preset is on screen, whose
-/// miniature is painted instead, and the generic layout icon for a row the
-/// trader rearranged by hand, which no miniature describes.
-fn face_glyph(current: Option<&'static LayoutPreset>) -> &'static str {
-    if current.is_some() { "" } else { icons::LAYOUT }
 }
 
 /// The grid of preset cells, wrapped to the popover's width.
@@ -244,7 +244,12 @@ fn draw_cell(
 /// before the trader commits to the layout.
 fn draw_thumbnail(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
     painter.rect_filled(rect, THUMBNAIL_RADIUS_PX, theme::INSET);
+    draw_panes(painter, rect, preset);
+}
 
+/// The miniature's panes and frame without its backdrop, so the toolbar
+/// button's own hover and active tint stay visible behind its face.
+fn draw_panes(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
     let count = preset.kinds.len().max(1);
     // The flow pane is drawn wider than the context panes for the same reason
     // it is wider on the canvas. An even miniature would promise a layout the
@@ -340,22 +345,6 @@ mod tests {
             "{} presets need {rows} rows and {height}px of popover; either the              grid wraps wider or the registry has outgrown a popover",
             LAYOUT_PRESETS.len()
         );
-    }
-
-    /// The button shows the layout on screen, so it never says the same thing
-    /// for two arrangements; a custom row, which matches no preset, falls back
-    /// to the generic icon rather than a miniature of something it is not.
-    #[test]
-    fn the_button_face_is_the_current_preset_or_the_generic_icon() {
-        for preset in LAYOUT_PRESETS {
-            assert_eq!(
-                face_glyph(Some(preset)),
-                "",
-                "{} paints its miniature",
-                preset.id
-            );
-        }
-        assert_eq!(face_glyph(None), icons::LAYOUT);
     }
 
     /// A cell is a click target before it is a picture, so it has to clear the

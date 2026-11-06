@@ -17,6 +17,8 @@ const W_SOURCE_SHRUNK: f32 = 240.0;
 /// The `History: <target> ▾` split button.
 const W_HISTORY: f32 = 150.0;
 /// One 28 px icon button (the layout picker, PANELS, or the overflow `⋯`).
+/// The separator in front of the picker is one of the separators
+/// [`W_SLACK`] already holds.
 const W_ICON: f32 = 28.0;
 /// Which groups stay inline at the current width. Everything folded is
 /// reachable through the `⋯` overflow menu instead — never hidden.
