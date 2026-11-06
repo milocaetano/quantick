@@ -26,15 +26,6 @@ pub use palette::{
 };
 pub use quantick_appearance::palette::CASING_EXTRA_PX;
 
-// Layout-branch inks with no appearance token yet: fixed Dark values until the
-// colour pass gives them a `Token`. Named here so the pass finds every one.
-/// A market tab playing a recording: its label and status dot.
-pub const REPLAY: eframe::egui::Color32 = eframe::egui::Color32::from_rgb(0xC5, 0x8C, 0xFF);
-/// The logo's teal, sampled from `assets/icon.png`: the "tick" of the wordmark.
-pub const BRAND: eframe::egui::Color32 = eframe::egui::Color32::from_rgb(0x3A, 0xF0, 0xB2);
-/// The wordmark's "uan" at rest; white when the Home tab is lit or active.
-pub const HOME_INK: eframe::egui::Color32 = eframe::egui::Color32::from_rgb(0xDD, 0xE4, 0xEC);
-
 /// The toolbar's market button: bare at rest (border and fill on hover) when
 /// true, bordered like History when false. Kept for a side-by-side look.
 pub const MARKET_BUTTON_QUIET: bool = false;

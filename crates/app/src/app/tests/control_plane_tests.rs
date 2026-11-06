@@ -2107,9 +2107,10 @@ fn observer_per_scope_capture_cost() {
 /// Heap work one coherent capture of every scope may do on the loaded
 /// fixture. Readings: 1285 allocations, 67368 bytes on Windows, 67358 on Linux;
 /// 1287 allocations, 80979 bytes on Windows once the layout's scopes and
-/// `appearance.state` were merged together.
+/// `appearance.state` were merged together; 81179 with the tab strip's three
+/// tokens. The byte ceiling sits about 1% above that reading.
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 93000;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 82000;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {

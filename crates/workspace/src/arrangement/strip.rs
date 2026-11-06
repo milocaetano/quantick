@@ -35,24 +35,6 @@ pub fn home_label_fits(
     markets <= slots && (markets != 1 || lone_fits)
 }
 
-/// What a market tab's dot says: the feed's state, never the selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TabFeedDot {
-    Live,
-    Stopped,
-    Replay,
-}
-
-/// The dot of a tab playing a recording, or else of its feed.
-#[must_use]
-pub const fn tab_feed_dot(replaying: bool, live: bool) -> TabFeedDot {
-    match (replaying, live) {
-        (true, _) => TabFeedDot::Replay,
-        (false, true) => TabFeedDot::Live,
-        (false, false) => TabFeedDot::Stopped,
-    }
-}
-
 /// A chip label's market and its muted suffix: `SYMBOL · venue`.
 #[must_use]
 pub fn chip_parts(label: &str) -> (&str, &str) {
@@ -333,14 +315,6 @@ mod tests {
             split((84.451_7, 7, 591.161_87)),
             "the case still splits the two rules"
         );
-    }
-
-    #[test]
-    fn a_tab_dot_says_the_feed_and_replay_wins() {
-        assert_eq!(tab_feed_dot(false, true), TabFeedDot::Live);
-        assert_eq!(tab_feed_dot(false, false), TabFeedDot::Stopped);
-        assert_eq!(tab_feed_dot(true, true), TabFeedDot::Replay);
-        assert_eq!(tab_feed_dot(true, false), TabFeedDot::Replay);
     }
 
     #[test]

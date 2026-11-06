@@ -72,7 +72,7 @@ fn ink(colors: &theme::Palette, tone: StatusTone) -> Color32 {
         StatusTone::Muted => colors.text_muted(),
         StatusTone::Open => colors.buy(),
         StatusTone::Warn => colors.amber(),
-        StatusTone::Replay => theme::REPLAY,
+        StatusTone::Replay => colors.replay_ink(),
         StatusTone::Add => colors.accent(),
     }
 }
@@ -159,7 +159,7 @@ fn paint_row(ui: &mut Ui, row: &MarketRow, selected: bool) -> egui::Response {
     );
     let chip_ink = either(
         row.kind == VenueKind::Replay,
-        theme::REPLAY,
+        colors.replay_ink(),
         colors.text_muted(),
     );
     put(

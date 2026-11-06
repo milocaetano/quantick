@@ -210,16 +210,13 @@ fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool, row: SettingRow) -> e
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, value, row.label())
     });
+    // An off track in `border` is 1.5:1 on Light, under 3:1 for a control.
     let track = if value {
         palette.accent()
     } else {
-        palette.border()
-    };
-    let knob = if value {
-        palette.inset()
-    } else {
         palette.text_faint()
     };
+    let knob = palette.inset();
     let (track, knob) = if enabled {
         (track, knob)
     } else {

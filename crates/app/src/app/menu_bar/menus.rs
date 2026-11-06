@@ -588,6 +588,9 @@ pub(super) fn flat_rows(ui: &mut egui::Ui) {
     ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
     ui.visuals_mut().widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
     ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
+    let fill = crate::theme::get(ui.ctx()).bare_hover();
+    let hover = &mut ui.visuals_mut().widgets.hovered;
+    (hover.weak_bg_fill, hover.bg_stroke) = (fill, egui::Stroke::NONE);
 }
 
 fn take_focus(state: &mut WindowMenuState, level: usize, response: &egui::Response) {

@@ -5,12 +5,13 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
+use quantick_appearance::tab_strip::{MarkShape, TabFeed, tab_fill, tab_ink};
 use quantick_session::tab_chip::{ChipMeasure, CloseSlot, close_slot, fit_chip, shortened_name};
 use quantick_workspace::arrangement::strip::{
-    StripSurface, TabFeedDot, chip_parts, home_label_fits, market_slots, visible_tabs,
+    StripSurface, chip_parts, home_label_fits, market_slots, visible_tabs,
 };
 
-use crate::theme::{self, HOME_INK};
+use crate::theme;
 
 const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
 const CHIP_PREFERRED_WIDTH_PX: f32 = 180.0;
@@ -56,10 +57,8 @@ pub struct TabChip<'a> {
     pub id: u64,
     /// `SYMBOL · venue`, composed by the tab when its market last changed.
     pub label: &'a str,
-    /// Whether this tab is playing a recording rather than streaming.
-    pub replaying: bool,
-    /// The dot's state. Amber stays reserved for an edited tab.
-    pub dot: TabFeedDot,
+    /// The feed's mark. Amber stays reserved for an edited tab.
+    pub feed: TabFeed,
     /// The workspace the tab uses.
     pub workspace: String,
     /// Whether the tab holds edits it has not saved to that workspace.
@@ -134,6 +133,8 @@ pub(crate) fn draw(
     let mut action =
         draw_home_tab(ui, surface.is_home(), shown, bare, drawn).then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
+    // The separator after the last unlit tab, dropped if the next one lights.
+    let mut separator = None;
     let active_chip = surface.active_chip(active);
     let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32).clamp(
         if compact {
@@ -164,7 +165,7 @@ pub(crate) fn draw(
                     chip.label,
                 )
             });
-            let response = response.on_hover_text(if chip.replaying {
+            let response = response.on_hover_text(if chip.feed == TabFeed::Replay {
                 format!("{} (replay)", chip.label)
             } else {
                 chip.label.to_owned()
@@ -187,13 +188,20 @@ pub(crate) fn draw(
                     ui.next_widget_position(),
                     egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
                 );
-                let hovered = response.hovered() || ui.rect_contains_pointer(close_target);
-                let slot = close_slot(selected, hovered, chip.modified);
+                let close_hot = ui.rect_contains_pointer(close_target);
+                let slot = close_slot(selected, response.hovered() || close_hot, chip.modified);
+                let hot = close_hot && closable && slot == CloseSlot::Close;
+                if hot {
+                    let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);
+                    ui.painter()
+                        .circle_filled(center, radius, palette.bare_hover());
+                }
+                let glyph = egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX);
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
                             slot == CloseSlot::Close,
-                            egui::Button::new(egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX))
+                            egui::Button::new(glyph.color(*palette.get(tab_ink(hot))))
                                 .frame(false)
                                 .min_size(egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT)),
                         )
@@ -216,14 +224,19 @@ pub(crate) fn draw(
                 if chip_bounds.is_positive() {
                     drawn.tab_ids.push((chip.id, chip_bounds));
                 }
-                paint_tab_surface(
+                let lit = paint_tab_surface(
                     ui,
                     surface,
                     response.rect.union(close.rect),
                     selected,
                     response.hovered() || close.hovered(),
                     response.has_focus() || close.has_focus(),
+                    true,
                 );
+                if lit && let Some(before) = separator.take() {
+                    ui.painter().set(before, egui::Shape::Noop);
+                }
+                separator = (!lit).then_some(surface);
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
@@ -239,8 +252,8 @@ pub(crate) fn draw(
                     .show(ui, |ui| {
                         for (index, chip) in chips.iter().enumerate() {
                             let mut text = egui::RichText::new(chip.label);
-                            if chip.replaying {
-                                text = text.color(theme::REPLAY);
+                            if chip.feed == TabFeed::Replay {
+                                text = text.color(palette.replay_ink());
                             }
                             if ui
                                 .push_id(chip.id, |ui| {
@@ -276,37 +289,29 @@ pub(crate) fn draw(
     action
 }
 
-/// The dot, the symbol in its heavier strike and the workspace in muted ink,
-/// `Scalp •` with the amber mark while edited. The name is paint, never a
-/// control: the status bar's cell switches the workspace.
+/// The feed's mark, the symbol in its heavier strike, "Replay" on a recording
+/// and the workspace in muted ink, `Scalp •` with the amber mark while edited.
+/// The name is paint, never a control: the status bar's cell switches it.
 fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected: bool, lit: bool) {
     let palette = theme::get(ui.ctx());
     let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let center_y = body.center().y;
     let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
-    painter.circle_filled(
+    let feed_ink = *palette.get(chip.feed.token());
+    paint_feed_mark(
+        &painter,
         egui::pos2(dot_x, center_y),
-        CHIP_DOT_RADIUS_PX,
-        match chip.dot {
-            TabFeedDot::Live => palette.buy(),
-            TabFeedDot::Stopped => palette.text_muted(),
-            TabFeedDot::Replay => theme::REPLAY,
-        },
+        chip.feed.shape(),
+        feed_ink,
     );
     let (symbol, _venue_on_hover) = chip_parts(chip.label);
-    let ink = if chip.replaying {
-        theme::REPLAY
-    } else if lit {
-        palette.text_primary()
-    } else {
-        palette.text_muted()
-    };
+    let ink = *palette.get(tab_ink(lit));
     let text_x = dot_x + CHIP_DOT_RADIUS_PX + CHIP_DOT_GAP_PX;
     let laid = |text: String, px: f32, color: egui::Color32| {
         ui.fonts(|fonts| fonts.layout_no_wrap(text, egui::FontId::proportional(px), color))
     };
     let galley = laid(symbol.to_owned(), SYMBOL_TEXT_PX, ink);
-    let symbol_width = galley.size().x;
+    let glyphs = galley.size().x;
     let at = egui::pos2(text_x, center_y - galley.size().y / 2.0);
     painter.galley(at, galley.clone(), ink);
     painter.galley(at + egui::vec2(SEMIBOLD_STRIKE_PX, 0.0), galley, ink);
@@ -319,6 +324,9 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
             .as_ref()
             .map_or(0.0, |galley| galley.size().x + NAME_MARK_GAP_PT)
     };
+    // The word stays with the symbol, so the name gives way before it does.
+    let word = (chip.feed.word()).map(|word| laid(word.to_owned(), SUFFIX_TEXT_PX, feed_ink));
+    let symbol_width = glyphs + gapped(&word);
     let name_ink = palette.text_muted();
     let name_width = |letters: usize| {
         let cut = shortened_name(&chip.workspace, letters);
@@ -333,7 +341,7 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
         name_letters: chip.workspace.chars().count(),
         name_width: &name_width,
     });
-    let mut x = text_x + symbol_width + CHIP_DOT_GAP_PX;
+    let mut x = text_x + glyphs + CHIP_DOT_GAP_PX;
     let name = (fit.name_letters > 0).then(|| {
         laid(
             shortened_name(&chip.workspace, fit.name_letters),
@@ -341,11 +349,23 @@ fn paint_chip_face(ui: &egui::Ui, chip: &TabChip<'_>, body: egui::Rect, selected
             name_ink,
         )
     });
-    for galley in [name, mark.filter(|_| fit.mark)].into_iter().flatten() {
+    let trail = [word, name, mark.filter(|_| fit.mark)];
+    for galley in trail.into_iter().flatten() {
         let at = egui::pos2(x, center_y - galley.size().y / 2.0);
         x += galley.size().x + NAME_MARK_GAP_PT;
         painter.galley(at, galley, palette.text_muted());
     }
+}
+
+/// A dot, a play triangle or a hollow ring: the state survives without colour.
+fn paint_feed_mark(painter: &egui::Painter, at: egui::Pos2, shape: MarkShape, ink: egui::Color32) {
+    let r = CHIP_DOT_RADIUS_PX;
+    let tip = [(-r, -r), (r, 0.0), (-r, r)].map(|(x, y)| at + egui::vec2(x, y));
+    painter.add(match shape {
+        MarkShape::Dot => egui::Shape::circle_filled(at, r, ink),
+        MarkShape::Ring => egui::Shape::circle_stroke(at, r - 0.5, (1.0, ink)),
+        MarkShape::Triangle => egui::Shape::convex_polygon(tip.into(), ink, egui::Stroke::NONE),
+    });
 }
 
 type HomeLabel = [std::sync::Arc<egui::Galley>; 2];
@@ -380,7 +400,7 @@ fn draw_home_tab(
     let bounds = rect.intersect(ui.clip_rect());
     drawn.home = bounds.is_positive().then_some(bounds);
     let (hovered, focused) = (response.hovered(), response.has_focus());
-    paint_tab_surface(ui, surface, rect, active, hovered, focused);
+    paint_tab_surface(ui, surface, rect, active, hovered, focused, false);
     let q_x = match label {
         Some(_) => rect.left() + HOME_PADDING_LEFT_PX + HOME_Q.x / 2.0,
         None => rect.center().x,
@@ -391,8 +411,8 @@ fn draw_home_tab(
     if let Some(([uan, tick], _)) = label {
         let mut x = q.right() + HOME_LOGO_GAP_PX;
         let lit = active || hovered || focused;
-        let ink = if lit { egui::Color32::WHITE } else { HOME_INK };
-        for (galley, color) in [(uan, ink), (tick, theme::BRAND)] {
+        let palette = theme::get(ui.ctx());
+        for (galley, color) in [(uan, *palette.get(tab_ink(lit))), (tick, palette.brand())] {
             // CSS centres the 15 px line box: the font's unrounded metrics.
             let glyph = galley.rows[0].glyphs[0];
             let y = q.center().y + glyph.font_ascent - glyph.font_height / 2.0 - glyph.pos.y;
@@ -404,6 +424,8 @@ fn draw_home_tab(
     response.clicked()
 }
 
+/// A lit tab's sheet, or the separator an unlit one ends with when
+/// `separated`. Returns whether the tab is lit.
 fn paint_tab_surface(
     ui: &egui::Ui,
     slot: egui::layers::ShapeIdx,
@@ -411,47 +433,34 @@ fn paint_tab_surface(
     selected: bool,
     hovered: bool,
     focused: bool,
-) {
-    let palette = theme::get(ui.ctx());
+    separated: bool,
+) -> bool {
+    let (palette, painter) = (theme::get(ui.ctx()), ui.painter());
     let mut rect = bounds;
     rect.max.y = ui.max_rect().bottom();
-    // The active tab wears the toolbar's fill, so the two read as one sheet.
-    let fill = if selected {
-        palette.chrome()
-    } else {
-        palette.bare_hover()
-    };
-    if selected || hovered || focused {
-        ui.painter().set(
-            slot,
-            egui::Shape::rect_filled(
-                rect,
-                egui::Rounding {
-                    nw: CHIP_ROUNDING_PX,
-                    ne: CHIP_ROUNDING_PX,
-                    sw: 0.0,
-                    se: 0.0,
-                },
-                fill,
-            ),
-        );
-    } else {
-        ui.painter().set(
-            slot,
-            egui::Shape::line_segment(
-                [
-                    egui::pos2(rect.right(), rect.top() + 7.0),
-                    egui::pos2(rect.right(), rect.bottom() - 7.0),
-                ],
-                egui::Stroke::new(1.0_f32, palette.border()),
-            ),
-        );
+    let fill = tab_fill(selected, hovered || focused);
+    if let Some(fill) = fill {
+        // Only the active tab is outlined, and its outline runs past the
+        // strip's floor, where the clip drops the bottom edge: the tab and the
+        // toolbar read as one sheet.
+        let outline = egui::Stroke::new(f32::from(u8::from(selected)), palette.border());
+        let rounding = egui::Rounding {
+            nw: CHIP_ROUNDING_PX,
+            ne: CHIP_ROUNDING_PX,
+            ..Default::default()
+        };
+        let sheet = rect.with_max_y(rect.bottom() + 2.0);
+        let shape = egui::epaint::RectShape::new(sheet, rounding, *palette.get(fill), outline);
+        painter.set(slot, shape);
+    } else if separated {
+        let top = egui::pos2(rect.right(), rect.top() + 7.0);
+        let stroke = egui::Stroke::new(1.0_f32, palette.seam_line());
+        let line = [top, egui::pos2(rect.right(), rect.bottom() - 7.0)];
+        painter.set(slot, egui::Shape::line_segment(line, stroke));
     }
     if focused {
-        ui.painter().rect_stroke(
-            rect.shrink(1.0),
-            CHIP_ROUNDING_PX,
-            egui::Stroke::new(1.0_f32, palette.accent()),
-        );
+        let ring = egui::Stroke::new(2.0_f32, palette.accent());
+        painter.rect_stroke(rect.shrink(1.0), CHIP_ROUNDING_PX, ring);
     }
+    fill.is_some()
 }

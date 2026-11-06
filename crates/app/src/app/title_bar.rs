@@ -97,11 +97,10 @@ pub(super) fn chips_of<'a>(
             crate::tabstrip::TabChip {
                 id,
                 label: tab.chip_label(),
-                replaying: tab.replay.is_some(),
-                dot: quantick_workspace::arrangement::strip::tab_feed_dot(
+                feed: quantick_appearance::tab_strip::TabFeed::of(
                     tab.replay.is_some(),
-                    tab.feed_connection == quantick_feed::FeedConnectionState::Connected
-                        && !tab.needs_attention(),
+                    tab.feed_connection == quantick_feed::FeedConnectionState::Connected,
+                    tab.needs_attention(),
                 ),
                 workspace,
                 modified,
@@ -135,7 +134,7 @@ pub(crate) fn draw(
         .exact_height(HEIGHT)
         .frame(
             egui::Frame::none()
-                .fill(palette.inset())
+                .fill(palette.tab_strip())
                 .inner_margin(egui::Margin {
                     left: crate::tabstrip::STRIP_EDGE_PX,
                     right: 0.0,

@@ -15,6 +15,7 @@ pub mod heat;
 pub mod orderflow;
 pub mod palette;
 mod state;
+pub mod tab_strip;
 mod typography;
 
 pub use color::PremultipliedRgba;

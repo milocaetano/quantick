@@ -7,18 +7,21 @@
 //! 90d18edf: the warm-gray Bookmap and amber drawing defaults.
 //! Dark's fixture is also the unmodified 66aa9abc source, before drawing_profile.
 //! 7ec67e50: exact Light/Dark sources before the independent chart grid color.
+//! d4a42dc1: exact Light/Dark sources before the tab strip, brand and replay tokens.
 
-const LIGHT_SOURCES: [&str; 6] = [
+const LIGHT_SOURCES: [&str; 7] = [
     include_str!("legacy-light-e4a9249b.toml"),
     include_str!("legacy-light-e24a42a3.toml"),
     include_str!("legacy-light-8bb894e1.toml"),
     include_str!("legacy-light-66aa9abc.toml"),
     include_str!("legacy-light-90d18edf.toml"),
     include_str!("legacy-light-7ec67e50.toml"),
+    include_str!("legacy-light-d4a42dc1.toml"),
 ];
-const DARK_SOURCES: [&str; 2] = [
+const DARK_SOURCES: [&str; 3] = [
     include_str!("legacy-dark-66aa9abc.toml"),
     include_str!("legacy-dark-7ec67e50.toml"),
+    include_str!("legacy-dark-d4a42dc1.toml"),
 ];
 
 /// Only generated choice siblings call this; authored base documents stay exact.

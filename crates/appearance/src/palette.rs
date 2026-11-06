@@ -166,9 +166,12 @@ pub enum Token {
     DrawingVwap,
     DrawingProfile,
     ChartGrid,
+    TabStrip,
+    Brand,
+    ReplayInk,
 }
 impl Token {
-    pub const ALL: [Self; 99] = [
+    pub const ALL: [Self; 102] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -268,6 +271,9 @@ impl Token {
         Self::DrawingVwap,
         Self::DrawingProfile,
         Self::ChartGrid,
+        Self::TabStrip,
+        Self::Brand,
+        Self::ReplayInk,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -277,6 +283,9 @@ impl Token {
             Self::DrawingVwap => "drawing_vwap",
             Self::DrawingProfile => "drawing_profile",
             Self::ChartGrid => "chart_grid",
+            Self::TabStrip => "tab_strip",
+            Self::Brand => "brand",
+            Self::ReplayInk => "replay_ink",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

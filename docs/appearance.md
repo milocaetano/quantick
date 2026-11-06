@@ -73,6 +73,7 @@ groups are:
 | Keys | Meaning |
 | --- | --- |
 | `canvas`, `chrome`, `inset`, `control`, `border` | Chart background, fixed surfaces, wells, widgets and borders |
+| `tab_strip`, `brand`, `replay_ink` | Market tab strip and window title area, the Home wordmark's "tick", and a replaying tab's mark and word ([decision](ux/layout-appearance-2026-11-06/README.md)) |
 | `chart_grid` | Inherited chart-grid color, independent of widget surfaces; pane opacity still applies |
 | `text_primary`, `text_muted`, `text_faint`, `text_support` | Labels, secondary text, hints and explanatory text |
 | `buy`, `sell`, `poc` | Trade direction and point of control |
