@@ -603,7 +603,10 @@ and the persisted grant; `campaign/*` keeps the mission reviews. A plain
 `/implement` PR into a `feat/*` or `feature/*` branch records
 `<branch> origin/<target> none none` in `mission-base`: the review and its key
 measure against that target, `gh pr create` must name `--base <target>`, and the
-merge stays the user's.
+merge stays the user's unless the user lists that exact target, one branch per
+line, in the common git dir's `agent-merge-grant`. A listed target lets the
+agent run `gh pr merge` once every PR check passes or is skipped; `main` is
+never grantable.
 
 ## Tests
 

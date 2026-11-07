@@ -1016,6 +1016,12 @@ run "an implement branch goes ready on code-review alone" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 7")" silent
 run "an implement branch still leaves the merge to main to the user" \
     pr-gate "$(json_bash "$root/wt" "gh pr merge 7 --squash")" deny "reserved exclusively for the user"
+# The merge grant names non-main targets only; a `main` line in it buys nothing.
+merge_grant="$(git -C "$root/wt" rev-parse --path-format=absolute --git-common-dir)/agent-merge-grant"
+printf 'main\n' > "$merge_grant"
+run "a merge grant cannot name main" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 7 --squash")" deny "reserved exclusively for the user"
+rm -f "$merge_grant"
 set_marker code-review-ok "stale"
 run "a code-review of another change does not count" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "code-review-ok"
@@ -1632,6 +1638,39 @@ printf 'fail\n' > "$root/completion/checks"
 run_completion "a consolidated campaign PR still needs green exact-head CI" \
     ship fail 'not green'
 printf 'pass\n' > "$root/completion/checks"
+
+# --- pr-gate: the implement merge grant -------------------------------------
+#
+# A plain /implement child of feature/demo may merge itself only when the
+# trader listed that target in the grant file, and only on green PR checks.
+git -C "$root/mainco" worktree add -q -b feat/granted "$root/granted" origin/feature/demo >/dev/null 2>&1
+echo granted > "$root/granted/src/granted.txt"
+kind_commit "$root/granted" 'granted implement change'
+printf 'feat/granted origin/feature/demo none none\n' \
+    > "$(git -C "$root/granted" rev-parse --absolute-git-dir)/mission-base"
+set_tier "$root/granted" implement
+set_marker_in "$(git -C "$root/granted" rev-parse --absolute-git-dir)" code-review-ok \
+    "$(sh "$root/hooks/campaign_context.sh" key "$root/granted")"
+merge_grant="$(git -C "$root/granted" rev-parse --path-format=absolute --git-common-dir)/agent-merge-grant"
+grant_path=$PATH
+PATH="$root/bin:$PATH"
+export QUANTICK_COMPLETION_FIXTURE="$root/completion"
+run "an ungranted feature target leaves the merge to the user" \
+    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --squash")" deny "reserved exclusively for the user"
+printf 'feature/other\nfeature/demo\n' > "$merge_grant"
+printf 'pass\nskipping\n' > "$root/completion/checks"
+run "a granted feature target merges on passing checks" \
+    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --squash")" silent
+printf 'pass\nfail\n' > "$root/completion/checks"
+run "a granted merge still waits for every check" \
+    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --squash")" deny "waits for every PR check"
+printf 'feature/demo-old\n' > "$merge_grant"
+printf 'pass\n' > "$root/completion/checks"
+run "a grant names its target exactly" \
+    pr-gate "$(json_bash "$root/granted" "gh pr merge 42 --squash")" deny "reserved exclusively for the user"
+rm -f "$merge_grant"
+unset QUANTICK_COMPLETION_FIXTURE
+PATH=$grant_path
 
 completion_wt=
 : > "$root/completion/pr-body"
