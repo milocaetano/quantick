@@ -15,8 +15,8 @@ use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_binance::{
-    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M,
-    ONE_MINUTE_MS, agg_trade_url, backfill_before_with_boundary, backfill_with_boundary,
+    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, agg_trade_url,
+    backfill_before_with_boundary, backfill_with_boundary,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
     },
@@ -326,7 +326,11 @@ impl BinanceLoop {
                     return ControlFlow::Break(()); // UI gone
                 }
             }
-            CommandPlan::RefuseOhlcv { span_ms, before_ms } => {
+            CommandPlan::RefuseOhlcv {
+                interval_ms,
+                span_ms,
+                before_ms,
+            } => {
                 // One fetch at a time: the venue's rate budget is shared, and
                 // the in-flight one already answers.
                 warn!(
@@ -346,7 +350,7 @@ impl BinanceLoop {
                 // `load_older` never returns silence either. `Refused` rather
                 // than a short answer: nothing was fetched because nobody
                 // looked, which is not a statement about the venue's record.
-                let refused = (ONE_MINUTE_MS, Vec::new(), crate::OhlcvSlice::Refused);
+                let refused = (interval_ms, Vec::new(), crate::OhlcvSlice::Refused);
                 send_or_break(&self.ohlcv_tx, refused).await?; // UI gone
             }
             CommandPlan::StartOhlcv {
@@ -566,12 +570,26 @@ fn spawn_ohlcv(
     before_ms: Option<i64>,
     reply: mpsc::Sender<OhlcvReply>,
 ) -> JoinHandle<()> {
-    // Binance serves both bases natively: `1d` klines open at 00:00 UTC, the
-    // engine's own day.
-    let (kline_interval, interval_ms) = if interval_ms == crate::OHLCV_DAILY_INTERVAL_MS {
-        (KLINE_INTERVAL_1D, quantick_engine::time_bucket::DAY_MS)
-    } else {
-        (KLINE_INTERVAL_1M, ONE_MINUTE_MS)
+    // Every interval asked for is served by its own kline name: `1d` opens at
+    // 00:00 UTC, the engine's own day, `1w` on Monday and `1M` on the 1st, as
+    // the engine's buckets do.
+    let Some(kline_interval) = quantick_feed_binance::kline_interval_for(interval_ms) else {
+        // Answered, never silent: the caller's spinner keys on the closing
+        // reply. Empty and short — the venue was not asked, so nothing is
+        // claimed about its record.
+        return tokio::spawn(async move {
+            warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "BINANCE_OHLCV_UNSUPPORTED_INTERVAL",
+                symbol,
+                interval_ms,
+                action = "answer_empty",
+                "the venue serves no candles at this interval"
+            );
+            let unsupported = crate::OhlcvSlice::Last { complete: false };
+            let _ = reply.send((interval_ms, Vec::new(), unsupported)).await;
+        });
     };
     tokio::spawn(async move {
         // The right-hand edge of everything this request covers: the live edge
@@ -602,7 +620,8 @@ fn spawn_ohlcv(
                 &symbol,
                 kline_interval,
                 interval_ms,
-                window.from_ms,
+                // A page of months or weeks reaches past 1970; no venue opens there.
+                window.from_ms.max(0),
                 window.to_ms,
             )
             .await;

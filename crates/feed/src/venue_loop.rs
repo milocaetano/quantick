@@ -51,7 +51,10 @@ pub(crate) enum CommandPlan {
     },
     /// Answer a candle request with `Refused`: one fetch at a time, and the
     /// one in flight already answers.
+    /// Tagged with the interval asked for, so the reply finds the series
+    /// that is waiting on it.
     RefuseOhlcv {
+        interval_ms: i64,
         span_ms: i64,
         before_ms: Option<i64>,
     },
@@ -84,7 +87,11 @@ pub(crate) fn plan_command(cmd: Option<FeedCommand>, book: Slot, ohlcv: Slot) ->
             slice_ms,
             before_ms,
         }) => match ohlcv {
-            Slot::Busy => CommandPlan::RefuseOhlcv { span_ms, before_ms },
+            Slot::Busy => CommandPlan::RefuseOhlcv {
+                interval_ms,
+                span_ms,
+                before_ms,
+            },
             Slot::Free => CommandPlan::StartOhlcv {
                 interval_ms,
                 span_ms,
@@ -185,6 +192,7 @@ mod venue_loop_tests {
         assert_eq!(
             plan_command(Some(fetch(None)), Slot::Free, Slot::Busy),
             CommandPlan::RefuseOhlcv {
+                interval_ms: crate::OHLCV_DAILY_INTERVAL_MS,
                 span_ms: 60_000,
                 before_ms: None,
             }

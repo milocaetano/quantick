@@ -41,6 +41,37 @@ pub const KLINE_INTERVAL_1D: &str = "1d";
 /// Milliseconds in the [`KLINE_INTERVAL_1M`] bucket.
 pub const ONE_MINUTE_MS: i64 = 60_000;
 
+/// Every kline interval Binance serves, by its length; a calendar month by
+/// the engine's nominal month, which Binance opens on the 1st at 00:00 UTC
+/// as the engine does. A week opens on Monday on both sides.
+const KLINE_INTERVALS: [(i64, &str); 15] = [
+    (ONE_MINUTE_MS, "1m"),
+    (3 * ONE_MINUTE_MS, "3m"),
+    (5 * ONE_MINUTE_MS, "5m"),
+    (15 * ONE_MINUTE_MS, "15m"),
+    (30 * ONE_MINUTE_MS, "30m"),
+    (60 * ONE_MINUTE_MS, "1h"),
+    (2 * 60 * ONE_MINUTE_MS, "2h"),
+    (4 * 60 * ONE_MINUTE_MS, "4h"),
+    (6 * 60 * ONE_MINUTE_MS, "6h"),
+    (8 * 60 * ONE_MINUTE_MS, "8h"),
+    (12 * 60 * ONE_MINUTE_MS, "12h"),
+    (quantick_engine::time_bucket::DAY_MS, "1d"),
+    (3 * quantick_engine::time_bucket::DAY_MS, "3d"),
+    (quantick_engine::time_bucket::WEEK_MS, "1w"),
+    (quantick_engine::time_bucket::CALENDAR_MONTH_MS, "1M"),
+];
+
+/// The kline interval serving candles `interval_ms` long, or `None` for a
+/// length Binance does not serve.
+#[must_use]
+pub fn kline_interval_for(interval_ms: i64) -> Option<&'static str> {
+    KLINE_INTERVALS
+        .iter()
+        .find(|(length, _)| *length == interval_ms)
+        .map(|(_, name)| *name)
+}
+
 /// Pause between pages.
 ///
 /// Not a rate limit so much as a manner. A week of one-minute candles is
@@ -518,6 +549,29 @@ async fn fetch_page_with_retries<S: KlineSource>(
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn every_interval_binance_serves_maps_to_its_kline_name() {
+        let minute = ONE_MINUTE_MS;
+        let hour = 60 * minute;
+        let day = quantick_engine::time_bucket::DAY_MS;
+        assert_eq!(kline_interval_for(minute), Some("1m"));
+        assert_eq!(kline_interval_for(15 * minute), Some("15m"));
+        assert_eq!(kline_interval_for(6 * hour), Some("6h"));
+        assert_eq!(kline_interval_for(day), Some("1d"));
+        assert_eq!(kline_interval_for(3 * day), Some("3d"));
+        assert_eq!(
+            kline_interval_for(quantick_engine::time_bucket::WEEK_MS),
+            Some("1w")
+        );
+        assert_eq!(
+            kline_interval_for(quantick_engine::time_bucket::CALENDAR_MONTH_MS),
+            Some("1M")
+        );
+        assert_eq!(KLINE_INTERVALS.len(), 15);
+        assert_eq!(kline_interval_for(10 * minute), None);
+        assert_eq!(kline_interval_for(90_000), None);
+    }
 
     /// One verbatim row from Binance's `klines` documentation, retyped for a
     /// one-minute BTCUSDT bucket. The mixed types are the point: two integers,
