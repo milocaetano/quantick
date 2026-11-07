@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 use quantick_civil::TzOffset;
 use quantick_engine::{Bar, Trade};
 use quantick_sources::candle_base::CandleAsk;
+pub use quantick_sources::candle_series::{SeriesState, SeriesStatus};
 pub use quantick_sources::candles::OlderCandles;
 use quantick_sources::config::FeedCapabilities;
 use quantick_sources::history_reach::{HistoryReach, MAX_CAMPAIGN_SPAN_MS, ReachOutcome};
@@ -806,6 +807,14 @@ impl TabSession {
         self.venue.older_candles(capabilities, panes)
     }
 
+    /// The venue candles a pane cut at `interval_ms` (`None`: by trades)
+    /// reads, and where asking for more stands; `None` when it reads none.
+    #[must_use]
+    pub fn candle_status(&self, interval_ms: Option<i64>) -> Option<SeriesStatus> {
+        let _ = interval_ms;
+        todo!("candle status")
+    }
+
     /// Whether the next candle request asks for slices.
     #[must_use]
     pub const fn progressive_history(&self) -> bool {
@@ -838,5 +847,7 @@ impl TabSession {
     }
 }
 
+#[cfg(test)]
+mod native_tests;
 #[cfg(test)]
 mod session_tests;
