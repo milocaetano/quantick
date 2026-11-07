@@ -1674,6 +1674,7 @@ mod tests {
                 native_tape: false,
                 depth_time_averaging: false,
                 forward_book_preview: false,
+                bbo_lines: true,
                 stable_size: false,
                 tape_only: false,
                 fold_market_closed: true,

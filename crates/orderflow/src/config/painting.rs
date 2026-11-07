@@ -75,6 +75,10 @@ pub const PREVIEW_SUMMARY_BUY_SHARE: f32 = 0.62;
 pub const PATH_WIDTH_PX: f32 = 0.8;
 pub const PATH_RGBA: [u8; 4] = [142, 166, 177, 95];
 
+/// The tape's best bid and best ask lines stand out over the book: bold,
+/// in the side's own colour ([`crate::projection::BboPath`]).
+pub const BBO_LINE_WIDTH_PX: f32 = 2.0;
+
 /// FLOW caption text size, in points.
 pub const FLOW_CAPTION_FONT_PX: f32 = 10.0;
 /// FLOW caption distance from the history pane's left edge, in pixels.

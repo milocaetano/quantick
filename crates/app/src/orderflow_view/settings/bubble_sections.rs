@@ -208,6 +208,8 @@ impl LiveLaneSection<'_> {
         {
             lane.set_tape_only(tape_only);
         }
+        ui.checkbox(&mut lane.bbo_lines, "Best bid/ask lines")
+            .on_hover_text(ChartLayer::TapeBboLines.hint());
         let native_tape = lane.native() && volume_dots;
         let mut lane_set = false;
         egui::CollapsingHeader::new("live lane")

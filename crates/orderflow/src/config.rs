@@ -2,7 +2,9 @@
 
 use rust_decimal::Decimal;
 
+mod bubble_colors;
 mod bubble_display_scale;
+pub use bubble_colors::BubbleColors;
 mod bubbles;
 pub use bubble_display_scale::{
     BubbleDisplayScale, BubbleScaleTarget, DEFAULT_BUBBLE_DISPLAY_SCALE, MAX_BUBBLE_DISPLAY_SCALE,
@@ -894,6 +896,7 @@ mod tests {
                 native_tape: false,
                 depth_time_averaging: false,
                 forward_book_preview: false,
+                bbo_lines: true,
                 stable_size: false,
                 tape_only: false,
                 fold_market_closed: true,

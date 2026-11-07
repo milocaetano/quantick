@@ -12,6 +12,7 @@ use quantick_orderbook::BookSide;
 #[cfg(test)]
 use quantick_orderflow::HeatmapTheme;
 
+mod bbo_lines;
 mod bubbles;
 mod constants;
 mod flow_cache;
@@ -29,6 +30,7 @@ mod preview;
 mod tape_path;
 mod tape_rebuild;
 
+pub(crate) use bbo_lines::draw_bbo_lines;
 pub(crate) use bubbles::draw_aggression_bubbles;
 pub(crate) use bubbles::{SphereShading, add_shaded_sector};
 pub(crate) use constants::PIE_START_ANGLE;

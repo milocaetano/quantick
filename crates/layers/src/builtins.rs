@@ -233,6 +233,25 @@ impl ChartLayer {
         default_on: false,
         projection_demand: false,
     });
+    pub const TapeBboLines: Self = Self(&LayerDescriptor {
+        id: "tape_bbo_lines",
+        label: "best bid/ask lines",
+        hint: "the best ask (sell colour) and the best bid (buy colour) as bold stepped lines \
+               over the tape's book, from the recorded top of the book. A gap or an empty side \
+               breaks the line rather than bridging it, and the book carried past its last \
+               confirmation is drawn dimmed. Saved with the asset's bubble settings while its \
+               save switch is on, not with the other layers",
+        source: LayerSource::Orderflow(OrderflowSwitch::BboLines),
+        scope: LayerScope::FlowPane,
+        persistence: Persistence::OrderflowPreset,
+        requirement: Requirement::Book,
+        on_tape: true,
+        needs_tape: true,
+        needs_depth: false,
+        capture_gates_visibility: true,
+        default_on: true,
+        projection_demand: false,
+    });
     pub const Grid: Self = Self(&LayerDescriptor {
         id: "grid",
         label: "grid",
@@ -408,7 +427,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 25] = [
+pub const ALL: [ChartLayer; 26] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -422,6 +441,7 @@ pub const ALL: [ChartLayer; 25] = [
     ChartLayer::BubbleOverlapMerge,
     ChartLayer::TapeOnly,
     ChartLayer::NativeTape,
+    ChartLayer::TapeBboLines,
     ChartLayer::Grid,
     ChartLayer::LastPrice,
     ChartLayer::BackfillDivider,

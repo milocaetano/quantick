@@ -3,8 +3,9 @@
 
 use super::*;
 use crate::history::bbo_fixture;
+use crate::projection::{HeatmapProjection, project};
 use crate::timeline::BarTimeline;
-use crate::{LiveEdge, LiquidityHistory};
+use crate::{LiquidityHistory, LiveEdge};
 use rust_decimal::Decimal;
 
 fn line(side: RestingSide, carried: bool, points: &[(i64, i64)]) -> BboLine {
@@ -170,4 +171,15 @@ fn the_lines_are_purely_additive_to_the_frame() {
         off,
         "cells, marks, gaps and every count are untouched by the switch"
     );
+}
+
+#[test]
+fn a_carried_line_is_as_faint_as_a_carried_band() {
+    let path = |carried| BboPath {
+        side: RestingSide::Ask,
+        carried,
+        points: Vec::new(),
+    };
+    assert_eq!(path(false).alpha(), 1.0);
+    assert_eq!(path(true).alpha(), CARRIED_BOOK_ALPHA);
 }

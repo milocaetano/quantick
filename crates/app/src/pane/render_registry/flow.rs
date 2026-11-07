@@ -16,6 +16,7 @@ pub(super) const PACKAGE: Package = Package {
         quantick_layers::ChartLayer::BubbleOverlapMerge,
         quantick_layers::ChartLayer::TapeOnly,
         quantick_layers::ChartLayer::NativeTape,
+        quantick_layers::ChartLayer::TapeBboLines,
     ],
     contributions: &[
         Contribution::Heatmap(background),

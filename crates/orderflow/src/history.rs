@@ -10,8 +10,12 @@ use rust_decimal::Decimal;
 use super::config::{BubbleSizeReference, HeatmapConfig};
 use super::scale::{SessionScale, SummaryScale};
 
+mod bbo;
 mod openings;
 mod tape_range;
+#[cfg(test)]
+pub(crate) use bbo::tests::fixture as bbo_fixture;
+pub use bbo::{BboStep, BboTrail};
 pub use openings::{RecordedOpeningAnchors, RecordedOpenings};
 
 /// Resting side represented by a liquidity run.
@@ -291,6 +295,8 @@ pub struct LiquidityHistory {
     gaps: VecDeque<CoverageGap>,
     pending_gap: Option<usize>,
     counters: HistoryCounters,
+    /// The book's best bid and ask over time ([`BboTrail`]).
+    bbo: BboTrail,
 }
 
 impl LiquidityHistory {
@@ -318,6 +324,7 @@ impl LiquidityHistory {
             gaps: VecDeque::new(),
             pending_gap: None,
             counters: HistoryCounters::default(),
+            bbo: BboTrail::default(),
         }
     }
 
@@ -521,6 +528,12 @@ impl LiquidityHistory {
             + self.summary_scale.approximate_bytes()
     }
 
+    /// The book's best bid and ask over time, one step per change.
+    #[must_use]
+    pub fn bbo(&self) -> &BboTrail {
+        &self.bbo
+    }
+
     /// Finalized runs followed by active runs (`end_ms == None`).
     pub fn runs(&self) -> impl Iterator<Item = &LiquidityRun> {
         self.archived.iter().chain(self.active.values())
@@ -701,6 +714,7 @@ impl LiquidityHistory {
             end_ms: None,
         });
         self.start_from_current_book(timestamp_ms, generation);
+        self.bbo.observe(timestamp_ms, Some(generation), &self.book);
         self.counters.snapshots += 1;
         self.prune(timestamp_ms);
         Ok(())
@@ -740,6 +754,7 @@ impl LiquidityHistory {
             } => self.counters.deltas_applied += 1,
             ApplyOutcome::Applied { .. } => {
                 self.reconcile_current_book(timestamp_ms, generation);
+                self.bbo.observe(timestamp_ms, Some(generation), &self.book);
                 self.counters.deltas_applied += 1;
             }
         }
@@ -863,6 +878,7 @@ impl LiquidityHistory {
         }
         self.archived.clear();
         self.active.clear();
+        self.bbo.clear();
         self.coverage.clear();
         self.gaps.clear();
         self.pending_gap = None;
@@ -893,6 +909,7 @@ impl LiquidityHistory {
         }
         let from_generation = self.generation.take();
         self.book = OrderBook::new();
+        self.bbo.observe(timestamp_ms, None, &self.book);
         self.latest_book_ms = Some(timestamp_ms);
         self.first_stream_ms.get_or_insert(timestamp_ms);
         self.gaps.push_back(CoverageGap {
@@ -1029,6 +1046,7 @@ impl LiquidityHistory {
         for run in self.active.values_mut() {
             run.start_ms = run.start_ms.max(cutoff);
         }
+        self.bbo.truncate_before(cutoff);
 
         while self
             .aggressions

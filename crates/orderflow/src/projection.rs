@@ -13,6 +13,7 @@ pub use super::interaction::LiquidityEvidence;
 use super::interaction::{LiquidityEvent, correlate_liquidity, liquidity_events};
 use super::timeline::BarTimeline;
 
+mod bbo_lines;
 mod candle_dots;
 mod constants;
 mod depth_display;
@@ -42,6 +43,7 @@ mod tape_reuse;
 mod tape_seal;
 mod tiers;
 
+pub use bbo_lines::{BboLine, BboPath, bbo_lines, project_bbo_paths};
 pub use candle_dots::{
     CandleDot, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
     CandleFootprintSource, CandleGroupMemory, project_candle_dots,
@@ -584,6 +586,7 @@ pub fn project_live_folded(
         settled.liquidity_reference,
         fold,
     );
+    let bbo_lines = project_bbo_paths(history, timeline, prices);
     // No boundary means no bar is represented at all, so there is no live half
     // to draw — and no reason to walk the retained tape looking for one.
     //
@@ -596,6 +599,7 @@ pub fn project_live_folded(
             cells,
             dropped_cells,
             current_book,
+            bbo_lines,
             ..LiveMarks::default()
         };
     };
@@ -744,6 +748,7 @@ pub fn project_live_folded(
         cells,
         dropped_cells,
         current_book,
+        bbo_lines,
     }
 }
 
