@@ -1,8 +1,8 @@
 ﻿# Light theme: menu and settings audit
 
-**Status: illustrated audit and navigation reconciliation delivered; PR delivery checks pending.** This is an illustrated recommendations report, not a UI implementation or a claim of exhaustive coverage.
+**Status: illustrated recommendations and semantic menu/settings inventory delivered.** This is a visual audit, not a UI implementation or an execution certification. The coverage companion distinguishes inspected configuration forms from unexecuted operational states.
 
-The reviewed runtime baseline is `ee7ea6b54ffc035daf46ac6e02055090c69b5729` on `milocaetano/quantick:feat/quantick-new-layout`. Captures use isolated stores and the bundled Light appearance. Light deliberately combines warm off-white interface surfaces with a dark Bookmap plot. The user's existing instance and saved workspace are preserved.
+The original runtime baseline is `ee7ea6b54ffc035daf46ac6e02055090c69b5729` on `milocaetano/quantick:feat/quantick-new-layout`. The resumed audit also inspects feature tip `f32407a05c10e6a8d41a38ecfbf9a999cb530359`, whose title strip, Home, tabs and toolbar appearance changed upstream. Original images retain their original baseline identity; current-tip observations are identified separately below. Captures use isolated stores and the bundled Light appearance. Light deliberately combines warm off-white interface surfaces with a dark Bookmap plot. The user's existing instances and saved workspace are preserved.
 
 Two independent AI design reviewers and two independent AI UX reviewers assessed the evidence. These are expert-role AI evaluations, not human interviews or usability tests. Their shared direction is to strengthen specific active text, enlarge consequential explanations, and fix confirmed overlaps while preserving disabled-state hierarchy.
 
@@ -185,6 +185,39 @@ The reviewers also agreed that primary Settings labels, switches and the inspect
 
 ## Capture methodology
 
+### Current feature-tip follow-up
+
+After the audit resumed, the documentation branch was rebased onto feature tip `f32407a05c10e6a8d41a38ecfbf9a999cb530359`. A fresh harness build completed successfully from the rebased worktree. This upstream change redesigned the title strip, Home, tabs and toolbar backing; it also removed the inherited app-size guard failure. No runtime fix was authored by this audit.
+
+The follow-up inspected the distinct configuration forms missing from the original 32 broad route groups: all seven drawing-owned inspector tabs (including the previously inspected Text tab), stroke/fill and three-anchor/locked coordinates, floating inspector scrolling, context colour/width/text-size popovers, native CVD, every shipped script's actual Inputs/Style surface, Arm strategy and conditional alarms, the full grouped sound list, quick-range ready/future controls, commands mode, chart Objects and clear confirmations, drawing preset save/overwrite states, a layout deletion question, Bubbles colour picker, populated recent exports and successful import feedback. See the [finite form inventory and state exclusions](coverage.md#resumed-semantic-form-inventory).
+
+The independent follow-up designer and UX reviewer both found the long Copilot and Exhaustion reversal forms complete and aligned at 1280 logical pixels. ZigZag, Range box and Force bar expose object-only input forms with no Style tab; repeated `:style` launch requests are **N/A**, not additional visited dialogs. The reviewers support the existing F01, F04 and F06 recommendations without adding a new alignment defect. In particular, the drawing preset name fields and locked-coordinate explanations repeat the existing affordance and typography problems; ordinary script input labels remain readable.
+
+| Existing finding | Current-tip disposition |
+| --- | --- |
+| F01 BUY contrast | Still visible on the changed white toolbar backing; foreground and green fill tokens are unchanged |
+| F02/F07 shortcuts and carets | Still visible in the actual current window menu; the slate title strip does not make its Light popup dark |
+| F04 consequential microcopy | Confirmed also in the shared drawing-lock and coordinate-unlock explanations; no blanket criticism of script input labels |
+| F06 editable preset names | Confirmed also in VWAP, profile and Fibonacci forms; typing enables Save, and a saved duplicate opens an explicit Overwrite? Yes/No row |
+| F08 market footer | Stable text collision reproduced on current tip |
+| F09 manager overlap | Reproduced with the populated manager and its delete-all question; Keep cancelled it, preserving all 22 demo objects |
+| F11 top toolbar | Black band reproduced on current tip at 1280 logical width |
+| F03/F05/F10 and original F04/F06 examples | Original-baseline evidence retained; their owning paths and relevant tokens are unchanged upstream. This is evidence reuse, not a claim that every old image was recaptured |
+
+No original finding is claimed fixed by the title-strip update. These five full-window PNGs are **1920x1170 physical pixels at 1.5 pixels per logical point**, representing a 1280x780 logical window. Original image coordinates above still refer to the original images.
+
+![Current feature tip: Light window menu retains faint active shortcuts and carets](images/current-window-menu.png)
+
+![Current feature tip: market-search footer collision remains](images/current-market-footer.png)
+
+![Current feature tip: weak BUY foreground and Top-toolbar black band remain](images/current-top-toolbar.png)
+
+The [locked-coordinate capture](images/current-locked-coordinates.png) shows the additional F04 example, and the [profile preset capture](images/current-profile-presets.png) shows the additional F06 example. Follow-up scratch captures 194-236, including named script families under 202, remain outside Git. They use isolated stores. The gallery and strategy forms are staged harness fixtures; the replay is explicitly synthetic. The paper-demo capture showed an open simulated position, while its early performance window remained empty: neither is described as a populated closed-trade report.
+
+One export dialog displayed a scratch filename set through accessibility but saved its original OS suggestion instead. Creation time and the unique audit preset proved ownership of that newly created file. After inspecting the populated recent-files menu and importing the same four audit settings groups, the file was moved to scratch evidence; no preexisting user file was replaced or moved. Native file-dialog behaviour is not presented as a Quantick Light finding.
+
+### Original baseline
+
 The audit build used the exact source baseline `ee7ea6b54ffc035daf46ac6e02055090c69b5729`. From the isolated audit worktree, the executed PowerShell build command was:
 
 ```powershell
@@ -203,21 +236,21 @@ The requested logical window sizes were 1440×900, 1280×780 and 1000×740. The 
 - Disabled Delete layout, empty-replay actions and locked permission editing are not active-control contrast failures. The reason for unavailability can still deserve clearer wording.
 - A low-position candle colour picker reached the screen edge in capture 28. Reviewers differed on whether staged window position was enough to establish the cause. Keep this as a placement follow-up, not a settled default-placement defect.
 - Dark Bookmap is intentional. Empty Session/Trades/Report states identify their emptiness and next action; blank space is not missing data.
-- The flat ticket and empty ledger/report do not validate populated P&L, orders or performance charts. Still images do not prove keyboard behavior, persistence, latency, accessibility conformance or click routing.
-- Screenshots are unedited full-size JPEGs. The original 05/08 files had `.png` names but JPEG contents; the copies use the correct `.jpg` extension. Approximate coordinates and source-token contrast are distinguished from compressed pixels. Blue pointer halos are capture interaction indicators, not proposed UI changes.
+- The original flat ticket and empty ledger/report do not validate populated P&L, orders or performance charts. The follow-up adds an open simulated position, not a populated closed-trade report. Still images do not prove keyboard behavior, persistence, latency, accessibility conformance or click routing.
+- Original screenshots are unedited full-size JPEGs; current-tip attachments are full-size PNGs. The original 05/08 files had `.png` names but JPEG contents; the copies use the correct `.jpg` extension. Approximate coordinates and source-token contrast are distinguished from compressed pixels. Blue pointer halos are capture interaction indicators, not proposed UI changes.
 - A MetaTrader-label encoding artifact in the isolated market configuration is excluded pending reproduction with an unmodified UTF-8 configuration.
 
 ## Coverage and delivery reconciliation
 
-The [final 32-route navigation matrix](coverage.md) records every route's observed states and explicit limits. All 32 groups have an observed menu/configuration surface; this does **not** mean every state passed, every numeric value was tried, or every workflow was executed. Synthetic replay, cancelled native file dialogs and empty/disabled states are distinguished from financial or persistence verification.
+The [original 32-route ledger and resumed semantic form inventory](coverage.md) record observed menus, configuration forms and explicit state limits. The broad route count alone did not establish all-options coverage; the resumed inventory closes the distinct drawing, indicator and contextual forms it omitted. This does **not** mean every state passed, every numeric value was tried, or every workflow was executed. Synthetic fixtures, cancelled confirmations and empty/disabled states remain distinct from financial or persistence verification.
 
 | Requirement | Delivery evidence | Status |
 | --- | --- | --- |
 | R1 Requested branch and Light | Baseline identity above and Light screenshots | Delivered audit evidence |
-| R2 Navigate menus/settings | Final 32-route matrix, narrow Settings, conditional Bubbles, indicator categories and replay transport | Delivered with explicit state limits |
+| R2 Navigate menus/settings | Original route ledger plus finite semantic form inventory, expanded/scrolled content and current-tip follow-up | Delivered visual options inventory; operational state limits remain explicit |
 | R3 Prints for defects | Illustrated findings with screenshots and regions | Delivered; final link/artifact checks in R6 |
 | R4 Two design and two UX opinions | Independent AI roles and agreement matrix | Delivered |
 | R5 Illustrated document under docs | This report, semantic image files and coverage companion | Delivered |
-| R6 Pull request | Documentation-only scope against feat/quantick-new-layout | Pending PR creation, required reviews and final-head checks |
+| R6 Pull request | [PR #784](https://github.com/milocaetano/quantick/pull/784), documentation-only scope against feat/quantick-new-layout | Opened; current-head review and delivery receipts are retained on the PR |
 
 No runtime source changes are included. Proposed fixes require their own implementation and before/after validation.

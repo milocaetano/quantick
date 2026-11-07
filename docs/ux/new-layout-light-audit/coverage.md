@@ -1,8 +1,12 @@
 ﻿# Navigation coverage and delivery limits
 
-Independent UX1 visual review of the Light audit. This is a navigation and exposed-settings audit, not an execution certification. Every one of the 32 route groups below has an observed surface. **Visited does not mean passed.** Partial identifies a named child menu or dialog still absent from the reviewed evidence; alternate numeric values, live-broker conditions and every on/off combination are documented limits, not extra routes.
+This is a navigation and exposed-settings audit, not an execution certification. The original UX1 ledger below groups routes broadly; those 32 groups alone did not establish coverage of every distinct configuration form. The resumed semantic inventory later in this document records the additional forms actually inspected on current feature tip. **Visited does not mean passed.** Alternate numeric values, live-broker conditions and every on/off combination are state limits, not additional configuration forms.
 
 Evidence IDs refer to local scratch captures in `C:/src/quantick-audit-evidence`; they are intentionally plain references, not broken repository image links. The main report contains the curated image attachments. Dark interruption captures15–19 are excluded. Latest independent review includes relevant narrow captures139–163, Regional FLOW170–178 and closing navigation captures179–191. Filenames alone were not accepted as proof:132 is Save-as,134 is New workspace,136 is chart only,137 is native Export, and89 does not contain a time-axis menu.
+
+## Original baseline route ledger
+
+These rows retain the original `ee7ea6b` observations and limits. A resumed observation below supersedes an earlier unobserved limit only for the precise form/state it names.
 
 | ID | Route | Coverage | Observed evidence and limits |
 | --- | --- | --- | --- |
@@ -54,3 +58,41 @@ Replay playback used a clearly named synthetic fixture. Replay selection, loadin
 Settings fit at the inspected 1000-pixel width. Repeated no-match market-footer overlap and Top-toolbar black gutter remain findings, not passes. Top gutter is visible154/157, absent in Bottom155/Hidden156/Left163. Drawing-manager toolbar collision112–114 and low-emphasis annotation text108/110 remain separately documented findings.
 
 This reviewer changed documentation/evidence records only. No source or runtime implementation was edited. The audit does not claim fixes, pixel-perfect compliance, complete keyboard behavior, accessibility certification, or every persistence path.
+
+## Resumed semantic form inventory
+
+Runtime: feature tip `f32407a05c10e6a8d41a38ecfbf9a999cb530359`, rebuilt from the rebased audit worktree. These are distinct visible configuration shapes, not a count of every value or on/off permutation. Evidence is in `C:/src/quantick-audit-evidence`; curated current-tip images are linked from the main report. Follow-up images are full 1920x1170 physical captures of a 1280x780 logical window at scale 1.5. The original files remain identified as the original baseline.
+
+| ID | Additional semantic surface | Actual observation and evidence | Disposition |
+| --- | --- | --- | --- |
+| S01 | VWAP inspector | Source and three conditional sigma pairs, preset row, expanded seven-source menu. 194-vwap-extra; 195-vwap-source | Visited; unchecked multipliers are intentionally unavailable |
+| S02 | Profile inspector | Value area, histogram width, POC/value-area/split/labels/extend/outline/approximation options, preset row. 200-fixed-range-profile-extra | Visited; empty editable preset name extends F06 |
+| S03 | Channel and Rectangle inspectors | Middle line and two extension switches; Rectangle Region two extension switches. 196-channel-extra; 200-rectangle-extra | Visited; other tools without an Extra tab are not fictitious missing dialogs |
+| S04 | Fibonacci retracement and extension | Both tool-specific preset families and full default level rows; retracement Extended rows, label/position/extend dropdowns and per-level colour picker. 200-fib-retracement-extra; 200-fib-extension-extra; 211-215 | Visited; shared Levels editor exercised beyond its closed default controls |
+| S05 | Shared drawing Style and Coordinates | Stroke width/fill opacity, three anchors, locked explanation; docked and floating inspector, scrolled to bottom controls. 197-channel-style; 198-channel-coordinates; 199-channel-locked; 221-222 | Visited; consequential fine print extends F04; disabled coordinates are intentional |
+| S06 | Context-bar popovers | Four stroke-width previews, colour swatches/custom colour, four text-size previews. 223-context-width; 224-context-colors; 225-context-text-sizes | Visited; no new alignment finding |
+| S07 | Drawing custom preset states | Editable field focused/typed, saved preset listed, enabled Apply/Delete/Set as default, duplicate Overwrite? Yes/No and No cancellation. 216-219 and isolated preset file | Visited; no overwrite or preset deletion executed |
+| S08 | Native CVD settings | Inputs explicitly says no settings; Style has enabled plot, colour and width. 201-cvd-inputs/style | Visited; complements the original native EMA coverage |
+| S09 | Shipped EMA/CVD/Delta histogram/cumulative VWAP scripts | Each actual named Inputs and Style dialog inspected. EMA length/source; others explicitly no declared inputs; one/two plot rows as applicable. 202-ema; 202-cvd; 202-delta_histogram; 202-vwap_cumulative, each inputs/style | Visited; default numeric values are not execution validation |
+| S10 | Shipped ZigZag/Range box/Force bar scripts | Actual object-only input forms: one input each for ZigZag/Range box and all 15 Force bar controls. 202-zigzag; 202-range_box; 202-force_bar | Visited; these have no Style tab. A :style hook request repeats Inputs, so Style is N/A rather than another visited dialog |
+| S11 | Shipped Copilot/Exhaustion reversal scripts | All 19 grouped Copilot inputs and 18 Exhaustion reversal inputs through their last sections and Apply/Close; six/two Style plot rows. 202-copilot; 202-exhaustion_reversal, inputs/style | Visited; long labels fit and columns align at inspected size |
+| S12 | Arm strategy and conditional alarms | Default form, side/quantity/force/projection/re-arm controls, alarm when/share/repeat/cooldown/stop-after/alarm-only, sound list through lower standard and nature groups. 203-strategy-popup/alarm/alarm-sounds; 236-alarm-sounds-bottom | Visited; no Arm, Test sound or financial action invoked |
+| S13 | Quick range and Commands mode | Ready and future quick-range toolbars with conversion actions/disabled state; actual leading-> commands palette. 204-quick-range-ready/future; 205-commands | Visited; conversion execution and arbitrary command outcomes not claimed |
+| S14 | Objects submenu and clear questions | Populated 22-object submenu top and bottom; reopening higher exposes final Trend line row. Manager delete-all question and chart Clear objects question; Keep cancelled both. 220; 226-228 | Visited; no deletion. Lower edge placement is recorded with recovery, not an inaccessible-command claim |
+| S15 | Layout deletion question | Separate Audit disposable layout created by registered hook; count/consequence text, Delete and Cancel visible. 234-layout-delete-confirm | Visited; no Delete action submitted; owned fixture then closed |
+| S16 | Bubbles independent colour popup | Expanded colours and buy RGB picker, including component row, colour plane and hue strip. 229-bubbles-color-picker | Visited; other swatches use the same picker shape; no assertion that every hue was tried |
+| S17 | Desk recent/export/import | Native Export surface, successful new audit export, populated Open recent submenu and successful restore feedback for four audit settings groups. 231-233; audit-resume-export.qws.toml | Visited; file ownership verified and audit-created export relocated to scratch. Original cancelled dialogs remain historical observations |
+| S18 | Changed title/Home/tab/menu/toolbar | Current active market and replay tabs, Home and idle market tab, window menu, no-match footer, Top toolbar. 206-208; 230-current-home-idle-tab; 235-replay-current-tab | Visited; F01/F02/F07/F08/F11 remain. Slate title strip and dark Bookmap are intentional |
+| S19 | Paper fixture follow-up | Open SIM position and populated open ledger row in 209; 210 performance filter still had no saved closed trades | Open-position visual state visited; populated closed-trade report is NOT claimed |
+
+Two independent follow-up AI roles inspected the actual drawing and shipped-script images. Both support the F01/F04/F06 extensions and reject a new general alignment defect. Copilot, Exhaustion reversal and the docked Profile/Fibonacci controls are useful readable counterexamples. A closed dropdown was not counted as its expanded list; the explicitly expanded lists are named above.
+
+### Scope boundary and remaining operational states
+
+The original broad menu routes plus S01-S18 cover the inventoried distinct visual menu/configuration forms, including conditional sections and exposed scroll content. This is the semantic all-options inventory used for the visual audit. It does not certify all state combinations or all actions behind those controls. The original row limits are retained so a reader can distinguish a visible option from a proven outcome.
+
+Still unexecuted are final destructive operations (workspace/layout/object/preset deletion and startup reset), every duplicate/error variant of each preset store, the two-step named-workspace Delete armed label, arbitrary import failures/long filenames, every indicator colour/width/value combination, theme persistence, keyboard/focus/hover permutations, DPI variants, and populated closed-trade performance. Delete-enabled rows and the separate count-bearing layout/object questions were visually inspected; submitting their final actions is not necessary to inspect a menu/configuration form.
+
+Connected-client/revoked/authentication/service-error states and real broker/download/execution conditions require external actors or conditions absent from the isolated audit. They remain untested. No permission grant, credential change, broker order or real financial action was performed. The native colour pickers and Windows file dialogs are distinguished from Quantick-owned layout findings.
+
+During resumed inspection an unrelated Quantick window briefly covered the audit. Native inputs stopped; they resumed only after an idle reading exceeded 177 seconds and the exact owned audit window was selected again. Target-only captures preserved evidence, and unrelated app windows and stores were not edited. All owned audit processes were closed after the final captures.
