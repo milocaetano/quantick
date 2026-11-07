@@ -559,7 +559,8 @@ impl Tab {
     fn attach_with(&mut self, handle: FeedHandle, keep_timeline: bool) {
         // The old market's candles, and how far back it reached, describe the
         // old market; anything in flight belongs to the channel about to be
-        // dropped, and the run to the old session's tape.
+        // dropped, and the run to the old session's tape. New capabilities first.
+        self.feed_capabilities = handle.capabilities;
         self.run_session(None, quantick_session::Act::Attach { keep_timeline });
         if !keep_timeline {
             // A seam and a resume floor both belong to the timeline being
@@ -582,7 +583,6 @@ impl Tab {
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.notices = handle.notices;
-        self.feed_capabilities = handle.capabilities;
         self.feed_latency = handle.latency;
         self.notice = FeedNotice::Clear;
         self.feed_attached_ms = metrics::wall_clock_ms();

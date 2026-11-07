@@ -1584,6 +1584,10 @@ fn switching_the_feed_drops_the_prefix_and_clears_the_wait() {
             .is_active(LoadingTask::VenueHistory),
         "and nothing waits on a reply that went with the old channel"
     );
+    // Read before any frame: the new feed's series per interval answers.
+    let six_hours = 6 * 3_600_000;
+    let status = app.active_tab().session.candle_status(Some(six_hours));
+    assert_eq!(status.map(|s| s.interval_ms), Some(2 * 3_600_000));
     run_frame(&mut app, &ctx);
 }
 

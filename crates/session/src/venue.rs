@@ -714,6 +714,7 @@ impl VenueCandles {
             self.base = None;
             self.reaching_back = None;
             self.older_exhausted = false;
+            self.last_reply_short = false;
             self.interval.drop_parked();
             self.capable = false;
             step.clear_prefixes();
