@@ -12,11 +12,12 @@
 use std::collections::BTreeMap;
 
 use quantick_engine::Bar;
+use quantick_engine::time_bucket::DAY_MS;
 use quantick_sources::candle_base::CandleAsk;
 use quantick_sources::candle_series::seam::{SeamMinutes, reads_seam_minutes, seam_stretch};
 use quantick_sources::candle_series::{CandleSeries, SeriesStatus, native_series_for};
 use quantick_sources::candles::{
-    OlderCandles, fold, starts_inside_bucket, trim_borrowed_to_seam, trim_to_seam,
+    OlderCandles, fold, stamp_on_buckets, starts_inside_bucket, trim_borrowed_to_seam, trim_to_seam,
 };
 use quantick_sources::config::FeedCapabilities;
 use quantick_sources::ohlcv::{OHLCV_BASE_INTERVAL_MS, OhlcvSlice};
@@ -57,6 +58,7 @@ impl NativeCandles {
     ///
     /// Rate: **per-frame**; a walk over the panes and a map lookup each.
     pub(crate) fn poll(&mut self, step: &mut Step<'_>, tab_id: u64, lead_in: bool) {
+        self.series.values_mut().for_each(CandleSeries::tick);
         if self.pending() || !step.tab.capabilities.ohlcv_history {
             return;
         }
@@ -82,10 +84,10 @@ impl NativeCandles {
                 ))
             })
         };
-        let opening = wanted().find(|(key, _)| {
+        let opening = wanted().find(|&(key, _)| {
             self.series
-                .get(key)
-                .is_none_or(|series| !series.is_answered() && !series.is_pending())
+                .get(&key)
+                .is_none_or(|series| !series.is_answered() && series.next_ask(key, None).is_some())
         });
         if let Some((key, _)) = opening {
             return Some((CandleSeries::opening_ask(key), CandlePurpose::Opening));
@@ -201,9 +203,9 @@ impl NativeCandles {
             return;
         };
         // Candles at another interval than asked would be drawn at the wrong
-        // width: the request is answered, with nothing.
-        let bars = if interval_ms == key || bars.is_empty() {
-            bars
+        // width: the request is answered with nothing, and cut short.
+        let (bars, slice) = if interval_ms == key || bars.is_empty() {
+            (bars, slice)
         } else {
             tracing::warn!(
                 target: "quantick::app",
@@ -216,7 +218,10 @@ impl NativeCandles {
                 action = "refuse_candles",
                 "candles arrived at an interval the series was not asked for"
             );
-            Vec::new()
+            let short = slice
+                .is_last()
+                .then_some(OhlcvSlice::Last { complete: false });
+            (Vec::new(), short.unwrap_or(slice))
         };
         let received = bars.len();
         let series = self.series.entry(key).or_default();
@@ -327,12 +332,19 @@ impl NativeCandles {
         };
         // A pane cut by trades takes the minutes unfolded, cut at its seam.
         let interval_ms = pane.interval_ms.unwrap_or(key);
-        if key == interval_ms {
-            trim_borrowed_to_seam(series.bars(), pane.first_bar, pane.partial, interval_ms)
-        } else {
-            let folded = fold(series.bars(), key, interval_ms);
-            trim_to_seam(folded, pane.first_bar, pane.partial, interval_ms)
+        if key == interval_ms && key < DAY_MS {
+            return trim_borrowed_to_seam(series.bars(), pane.first_bar, pane.partial, interval_ms);
         }
+        let folded = if key == interval_ms {
+            // Days and longer are stamped on the engine's buckets, as a fold
+            // from days stamps them: a month candle names no length.
+            let mut bars = series.bars().to_vec();
+            stamp_on_buckets(&mut bars, interval_ms);
+            bars
+        } else {
+            fold(series.bars(), key, interval_ms)
+        };
+        trim_to_seam(folded, pane.first_bar, pane.partial, interval_ms)
     }
 
     /// A pane was built: it reads a series already held, or asks.
@@ -385,10 +397,12 @@ impl NativeCandles {
             OlderCandles::NoChartCutByTime
         } else if self.pending() {
             OlderCandles::Fetching
+        } else if series.is_some_and(CandleSeries::is_exhausted) {
+            // Before the oldest candle: a series answered empty has none,
+            // and the status calls it exhausted too.
+            OlderCandles::RecordStartsHere
         } else if series.and_then(CandleSeries::oldest_ms).is_none() {
             OlderCandles::NotArrivedYet
-        } else if series.is_some_and(CandleSeries::is_exhausted) {
-            OlderCandles::RecordStartsHere
         } else {
             OlderCandles::Available
         }
@@ -410,7 +424,7 @@ impl NativeCandles {
             .find_map(|pane| series_key(pane.interval_ms, lead_in))
             .and_then(|key| {
                 let series = self.series.get(&key)?;
-                Some((series.next_ask(key, Some(0))?, series.oldest_ms()?))
+                Some((series.older_ask(key)?, series.oldest_ms()?))
             });
         let (OlderCandles::Available, Some((ask, oldest_ms))) = (reason, older) else {
             return Err(Refusal::OlderCandles(reason));

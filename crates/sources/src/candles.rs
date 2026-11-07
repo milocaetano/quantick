@@ -138,12 +138,24 @@ pub fn fold(base: &[Bar], base_interval_ms: i64, interval_ms: i64) -> Vec<Bar> {
         }
     }
     if base_interval_ms >= DAY_MS {
-        for folded in &mut out {
-            folded.open_time = law.start(folded.open_time);
-            folded.close_time = law.end(folded.open_time) - 1;
-        }
+        stamp_on_buckets(&mut out, interval_ms);
     }
     out
+}
+
+/// Stamp each bar on the `interval_ms` bucket it is placed in: opening at
+/// its start and closing on its last millisecond. A bar folded from daily
+/// candles takes it, and so does a venue's own week or month read unfolded —
+/// a month candle stamped with a nominal month's length would close a
+/// February in March.
+pub fn stamp_on_buckets(bars: &mut [Bar], interval_ms: i64) {
+    let Some(law) = TimeBucketLaw::of(interval_ms) else {
+        return;
+    };
+    for bar in bars {
+        bar.open_time = law.start(placement_ms(bar));
+        bar.close_time = law.end(bar.open_time) - 1;
+    }
 }
 
 /// Whether the oldest of `base` candles opens after the `interval_ms` bucket

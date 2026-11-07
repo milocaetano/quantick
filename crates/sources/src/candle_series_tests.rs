@@ -199,8 +199,85 @@ fn the_status_names_the_interval_the_count_and_the_oldest_candle() {
             interval_ms: QUARTER,
             candles_held: CANDLE_PAGE_BARS,
             oldest_open_ms: Some(END - CANDLE_PAGE_BARS as i64 * QUARTER),
+            last_reply_short: false,
         }
     );
+}
+
+const SHORT: OhlcvSlice = OhlcvSlice::Last { complete: false };
+
+fn tick(series: &mut CandleSeries, polls: u32) {
+    (0..polls).for_each(|_| series.tick());
+}
+
+#[test]
+fn an_answer_cut_short_is_not_the_record_start_and_is_asked_again_after_a_backoff() {
+    let mut series = opened(END);
+    let oldest = series.oldest_ms().expect("held");
+    let ask = series.next_ask(QUARTER, Some(0)).expect("ask");
+    series.sent(ask);
+    let settled = series.take_reply(Vec::new(), SHORT).expect("closed");
+    assert!(
+        !settled.exhausted,
+        "a failed fetch says nothing of the record"
+    );
+    assert!(!series.is_exhausted());
+    let status = series.status(QUARTER);
+    assert_eq!(status.state, SeriesState::Idle);
+    assert!(status.last_reply_short, "said, not hidden");
+    assert_eq!(series.next_ask(QUARTER, Some(0)), None, "backing off");
+    tick(&mut series, SHORT_REPLY_RETRY_POLLS);
+    assert_eq!(series.next_ask(QUARTER, Some(0)), Some(ask), "asked again");
+
+    // A second short answer waits twice as long.
+    series.sent(ask);
+    series.take_reply(Vec::new(), SHORT);
+    tick(&mut series, SHORT_REPLY_RETRY_POLLS);
+    assert_eq!(series.next_ask(QUARTER, Some(0)), None);
+    tick(&mut series, SHORT_REPLY_RETRY_POLLS);
+    assert_eq!(series.next_ask(QUARTER, Some(0)), Some(ask));
+
+    // A complete page clears the flag.
+    series.sent(ask);
+    series.take_reply(page(oldest, CANDLE_PAGE_BARS, QUARTER), LAST);
+    assert!(!series.status(QUARTER).last_reply_short);
+}
+
+#[test]
+fn the_backoff_stops_growing() {
+    let mut series = opened(END);
+    let ask = series.next_ask(QUARTER, Some(0)).expect("ask");
+    for _ in 0..20 {
+        series.sent(ask);
+        series.take_reply(Vec::new(), SHORT);
+        tick(&mut series, SHORT_REPLY_RETRY_MAX_POLLS);
+        assert_eq!(series.next_ask(QUARTER, Some(0)), Some(ask));
+    }
+}
+
+#[test]
+fn an_opening_cut_short_and_empty_asks_the_opening_again() {
+    let mut series = CandleSeries::default();
+    series.sent(CandleSeries::opening_ask(QUARTER));
+    series.take_reply(Vec::new(), SHORT);
+    assert!(!series.is_answered(), "nothing arrived");
+    assert!(!series.is_exhausted());
+    assert_eq!(series.next_ask(QUARTER, None), None, "backing off");
+    tick(&mut series, SHORT_REPLY_RETRY_POLLS);
+    assert_eq!(
+        series.next_ask(QUARTER, None),
+        Some(CandleSeries::opening_ask(QUARTER))
+    );
+}
+
+#[test]
+fn a_press_asks_the_older_page_through_the_backoff() {
+    let mut series = opened(END);
+    let ask = series.next_ask(QUARTER, Some(0)).expect("ask");
+    series.sent(ask);
+    series.take_reply(Vec::new(), SHORT);
+    assert_eq!(series.next_ask(QUARTER, Some(0)), None);
+    assert_eq!(series.older_ask(QUARTER), Some(ask));
 }
 
 #[test]

@@ -28,6 +28,15 @@ pub const CANDLE_PAGE_BARS: usize = 1_000;
 /// edge, near enough that a chart opened and left alone never asks.
 pub const REACH_BACK_MARGIN_BARS: usize = 200;
 
+/// How many polls a series waits before asking again after an answer the
+/// venue cut short; each further short answer doubles it, up to
+/// [`SHORT_REPLY_RETRY_MAX_POLLS`]. Counted in polls, not time: the session
+/// reads no clock.
+pub const SHORT_REPLY_RETRY_POLLS: u32 = 120;
+
+/// The longest wait between asks after answers cut short.
+pub const SHORT_REPLY_RETRY_MAX_POLLS: u32 = SHORT_REPLY_RETRY_POLLS << 4;
+
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
 
@@ -100,6 +109,9 @@ pub struct SeriesStatus {
     pub candles_held: usize,
     /// When its oldest candle opened.
     pub oldest_open_ms: Option<i64>,
+    /// Whether the last answer was cut short (a failed or throttled fetch):
+    /// what is held is real, more is asked for after a backoff.
+    pub last_reply_short: bool,
 }
 
 /// What a closing reply did to a series.
@@ -122,6 +134,9 @@ pub struct CandleSeries {
     exhausted: bool,
     /// The request out, one at a time.
     pending: Option<CandleAsk>,
+    /// Answers cut short in a row, and the polls left before asking again.
+    short_replies: u32,
+    retry_in: u32,
 }
 
 impl CandleSeries {
@@ -139,16 +154,28 @@ impl CandleSeries {
     /// The next request this series wants, if any: the opening one until a
     /// reply lands, then the page behind the oldest candle while the pane's
     /// first visible slot is within [`REACH_BACK_MARGIN_BARS`] of it. Never a
-    /// second one while one is out, and never past the record's start.
+    /// second one while one is out, never past the record's start, and none
+    /// while backing off from an answer cut short.
     #[must_use]
     pub fn next_ask(&self, interval_ms: i64, first_visible: Option<usize>) -> Option<CandleAsk> {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.retry_in > 0 {
             return None;
         }
         if !self.answered {
             return Some(Self::opening_ask(interval_ms));
         }
-        if self.exhausted || first_visible.is_none_or(|slot| slot >= REACH_BACK_MARGIN_BARS) {
+        if first_visible.is_none_or(|slot| slot >= REACH_BACK_MARGIN_BARS) {
+            return None;
+        }
+        self.older_ask(interval_ms)
+    }
+
+    /// The page behind the oldest candle, backoff or not: what a press of
+    /// *load older* asks for. None while one is out or past the record's
+    /// start.
+    #[must_use]
+    pub fn older_ask(&self, interval_ms: i64) -> Option<CandleAsk> {
+        if self.pending.is_some() || self.exhausted {
             return None;
         }
         // One millisecond before the oldest candle: windows closed at both
@@ -158,6 +185,11 @@ impl CandleSeries {
             before_ms: Some(oldest.saturating_sub(1)),
             ..Self::opening_ask(interval_ms)
         })
+    }
+
+    /// One poll went by: a backoff counts down.
+    pub fn tick(&mut self) {
+        self.retry_in = self.retry_in.saturating_sub(1);
     }
 
     /// The request went out.
@@ -186,11 +218,21 @@ impl CandleSeries {
         };
         let ask = self.pending.take();
         let held_oldest = self.oldest_ms();
+        // Only a complete answer says where the record starts; one the venue
+        // cut short (a failed, throttled or mismatched fetch) is retried.
         let exhausted =
-            ask.is_none_or(|ask| reaches_record_start(&ask, held_oldest, &bars, complete));
+            complete && ask.is_none_or(|ask| reaches_record_start(&ask, held_oldest, &bars));
         let added = self.merge(bars);
-        self.answered = true;
+        self.answered |= complete || !self.bars.is_empty();
         self.exhausted = exhausted;
+        if complete {
+            self.short_replies = 0;
+            self.retry_in = 0;
+        } else {
+            let doublings = self.short_replies.min(4);
+            self.short_replies = self.short_replies.saturating_add(1);
+            self.retry_in = SHORT_REPLY_RETRY_POLLS << doublings;
+        }
         Some(Settled { added, exhausted })
     }
 
@@ -249,6 +291,7 @@ impl CandleSeries {
             interval_ms,
             candles_held: self.bars.len(),
             oldest_open_ms: self.oldest_ms(),
+            last_reply_short: self.short_replies > 0,
         }
     }
 }
@@ -258,26 +301,20 @@ fn page_span(interval_ms: i64) -> i64 {
     interval_ms.saturating_mul(CANDLE_PAGE_BARS as i64)
 }
 
-/// Whether a closing reply to `ask` shows the venue's record starting at its
-/// oldest candle: it brought nothing, nothing older than `held_oldest`, or —
-/// complete and short of a page — a first candle a whole bucket inside the
-/// window asked for. A short page whose oldest candle sits at the window's
-/// start only has holes in it (a venue's maintenance, a bucket nobody traded)
-/// and says nothing about where the record begins; neither does an answer
-/// the venue cut short.
-fn reaches_record_start(
-    ask: &CandleAsk,
-    held_oldest: Option<i64>,
-    bars: &[Bar],
-    complete: bool,
-) -> bool {
+/// Whether a complete closing reply to `ask` shows the venue's record
+/// starting at its oldest candle: it brought nothing, nothing older than
+/// `held_oldest`, or — short of a page — a first candle a whole bucket inside
+/// the window asked for. A short page whose oldest candle sits at the
+/// window's start only has holes in it (a venue's maintenance, a bucket
+/// nobody traded) and says nothing about where the record begins.
+fn reaches_record_start(ask: &CandleAsk, held_oldest: Option<i64>, bars: &[Bar]) -> bool {
     let (Some(oldest), Some(newest)) = (bars.first(), bars.last()) else {
         return true;
     };
     if held_oldest.is_some_and(|held| oldest.open_time >= held) {
         return true;
     }
-    if !complete || bars.len() >= CANDLE_PAGE_BARS {
+    if bars.len() >= CANDLE_PAGE_BARS {
         return false;
     }
     let end = ask.before_ms.map_or_else(

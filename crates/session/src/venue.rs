@@ -71,6 +71,8 @@ pub(crate) struct VenueCandles {
     /// know is to have asked; cleared by a change of market and by the
     /// opening request of a new one, never by time passing.
     pub(crate) older_exhausted: bool,
+    /// Whether the last closing reply was cut short.
+    last_reply_short: bool,
     /// What `ohlcv_history` said last poll, so the rising edge can be seen.
     ///
     /// MetaTrader narrows its capabilities when the bridge says hello, which
@@ -101,6 +103,7 @@ impl Default for VenueCandles {
             stale: false,
             reaching_back: None,
             older_exhausted: false,
+            last_reply_short: false,
             capable: false,
             progressive: true,
             lead_in: false,
@@ -431,6 +434,7 @@ impl VenueCandles {
             return;
         }
         let complete = matches!(slice, OhlcvSlice::Last { complete } if complete);
+        self.last_reply_short = !complete;
         if !complete {
             // Known-short, not merely short: a venue that stopped answering
             // partway, or a block clipped to a cap. An instrument younger than
@@ -598,6 +602,7 @@ impl VenueCandles {
             interval_ms: self.interval.held_ms(),
             candles_held: self.candles_held(),
             oldest_open_ms: self.oldest(),
+            last_reply_short: self.last_reply_short,
         })
     }
 

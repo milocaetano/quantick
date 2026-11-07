@@ -20088,6 +20088,11 @@
                 "type": "integer",
                 "x-unit": "milliseconds"
               },
+              "last_reply_short": {
+                "default": false,
+                "description": "Whether the last answer was cut short (a failed or throttled fetch):\nthe candles held are real, and more are asked for after a backoff.",
+                "type": "boolean"
+              },
               "oldest_open_time_unix_ms": {
                 "format": "int64",
                 "type": [

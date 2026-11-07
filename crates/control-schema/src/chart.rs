@@ -141,6 +141,10 @@ pub struct VenueCandleStatus {
     pub candles_held: WireU64,
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
     pub oldest_open_time_unix_ms: Option<i64>,
+    /// Whether the last answer was cut short (a failed or throttled fetch):
+    /// the candles held are real, and more are asked for after a backoff.
+    #[serde(default)]
+    pub last_reply_short: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

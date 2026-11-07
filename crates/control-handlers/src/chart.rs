@@ -209,6 +209,7 @@ fn coverage(pane: &dyn ChartPaneSource) -> ChartCoverage {
             interval_ms: status.interval_ms,
             candles_held: wire_usize(status.candles_held),
             oldest_open_time_unix_ms: status.oldest_open_ms,
+            last_reply_short: status.last_reply_short,
         }),
     }
 }

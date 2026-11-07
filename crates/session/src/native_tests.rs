@@ -3,7 +3,9 @@
 
 use super::*;
 use quantick_engine::time_bucket::DAY_MS;
-use quantick_sources::candle_series::{CANDLE_PAGE_BARS, CandleSeries, REACH_BACK_MARGIN_BARS};
+use quantick_sources::candle_series::{
+    CANDLE_PAGE_BARS, CandleSeries, REACH_BACK_MARGIN_BARS, SHORT_REPLY_RETRY_POLLS,
+};
 use quantick_sources::history_reach::{Outage, ReachBounds};
 use rust_decimal::Decimal;
 
@@ -76,10 +78,8 @@ impl Shell {
         }
     }
 
-    fn dispatch(&mut self, session: &mut TabSession, act: Act<'_>) {
-        let now = Instant::now();
-        let panes: Vec<PaneView<'_>> = self
-            .panes
+    fn views(&self) -> Vec<PaneView<'static>> {
+        self.panes
             .iter()
             .map(|pane| PaneView {
                 interval_ms: pane.interval_ms,
@@ -90,7 +90,17 @@ impl Shell {
                 rebuild_failed: false,
                 first_visible_slot: pane.first_visible_slot,
             })
-            .collect();
+            .collect()
+    }
+
+    /// What *load older* would say about the panes.
+    fn older(&self, session: &TabSession) -> OlderCandles {
+        session.older_candles(self.capabilities, &self.views())
+    }
+
+    fn dispatch(&mut self, session: &mut TabSession, act: Act<'_>) {
+        let now = Instant::now();
+        let panes = self.views();
         let view = TabView {
             symbol: "BTCUSDT",
             capabilities: self.capabilities,
@@ -138,15 +148,25 @@ impl Shell {
         let Some(FeedRequest::Candles { ask, .. }) = self.sent.last().copied() else {
             panic!("no candle request to answer");
         };
-        self.dispatch(
-            session,
-            Act::CandleReply {
-                tab_id: TAB,
-                interval_ms: ask.interval_ms,
-                bars,
-                slice: OhlcvSlice::Last { complete: true },
-            },
-        );
+        let slice = OhlcvSlice::Last { complete: true };
+        self.answer(session, ask.interval_ms, bars, slice);
+    }
+
+    /// Answer whatever is out with `bars` at `interval_ms`, closed by `slice`.
+    fn answer(
+        &mut self,
+        session: &mut TabSession,
+        interval_ms: i64,
+        bars: Vec<Bar>,
+        slice: OhlcvSlice,
+    ) {
+        let act = Act::CandleReply {
+            tab_id: TAB,
+            interval_ms,
+            bars,
+            slice,
+        };
+        self.dispatch(session, act);
     }
 
     fn set_interval(&mut self, session: &mut TabSession, pane: usize, interval_ms: i64) {
@@ -196,6 +216,7 @@ fn a_15m_pane_opens_with_one_request_at_its_own_interval() {
             interval_ms: QUARTER,
             candles_held: CANDLE_PAGE_BARS,
             oldest_open_ms: Some(EDGE - CANDLE_PAGE_BARS as i64 * QUARTER),
+            last_reply_short: false,
         })
     );
 }
@@ -299,6 +320,11 @@ fn an_empty_answer_at_an_interval_is_not_asked_again() {
             .map(|status| status.state),
         Some(SeriesState::Exhausted)
     );
+    assert_eq!(
+        shell.older(&session),
+        OlderCandles::RecordStartsHere,
+        "the button and the status agree"
+    );
 }
 
 #[test]
@@ -366,4 +392,63 @@ fn the_seam_bar_reads_the_minutes_before_the_first_trade() {
     assert_eq!(lead.as_ref().map(|bar| bar.trade_count), Some(7));
     shell.poll(&mut session);
     assert_eq!(shell.asks().len(), 2, "asked once");
+}
+
+#[test]
+fn an_answer_cut_short_is_asked_again_after_a_backoff_and_never_called_exhausted() {
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[Some(QUARTER)]);
+    shell.poll(&mut session);
+    let short = OhlcvSlice::Last { complete: false };
+    shell.answer(&mut session, QUARTER, Vec::new(), short);
+    let status = session.candle_status(Some(QUARTER)).expect("a status");
+    assert_eq!(status.state, SeriesState::Idle);
+    assert!(status.last_reply_short);
+    shell.poll(&mut session);
+    assert_eq!(shell.asks().len(), 1, "backing off");
+    for _ in 0..SHORT_REPLY_RETRY_POLLS {
+        shell.poll(&mut session);
+    }
+    assert_eq!(shell.asks().len(), 2, "asked again");
+    assert_eq!(shell.asks()[1].0, CandleSeries::opening_ask(QUARTER));
+}
+
+#[test]
+fn candles_at_another_interval_than_asked_are_a_short_answer() {
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[Some(QUARTER)]);
+    shell.poll(&mut session);
+    shell.reply(&mut session, page(EDGE, CANDLE_PAGE_BARS, QUARTER));
+    shell.panes[0].first_visible_slot = Some(0);
+    shell.poll(&mut session);
+    assert_eq!(shell.asks().len(), 2);
+    let complete = OhlcvSlice::Last { complete: true };
+    shell.answer(&mut session, DAY_MS, page(EDGE, 10, DAY_MS), complete);
+    let status = session.candle_status(Some(QUARTER)).expect("a status");
+    assert_eq!(status.state, SeriesState::Idle, "not the record's start");
+    assert!(status.last_reply_short);
+    assert_eq!(status.candles_held, CANDLE_PAGE_BARS);
+}
+
+#[test]
+fn a_monthly_pane_closes_each_month_on_its_last_millisecond() {
+    use quantick_engine::time_bucket::CALENDAR_MONTH_MS;
+    // 2025-01-01, 2025-02-01 and 2025-03-01, 00:00 UTC.
+    const JANUARY: i64 = 1_735_689_600_000;
+    const FEBRUARY: i64 = 1_738_368_000_000;
+    const MARCH: i64 = 1_740_787_200_000;
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[Some(CALENDAR_MONTH_MS)]);
+    shell.poll(&mut session);
+    // As a venue's month arrives: stamped with the nominal month's length.
+    let months = vec![
+        candle(JANUARY, CALENDAR_MONTH_MS),
+        candle(FEBRUARY, CALENDAR_MONTH_MS),
+    ];
+    shell.reply(&mut session, months);
+    let stamps: Vec<(i64, i64)> = shell.prefixes[0]
+        .iter()
+        .map(|bar| (bar.open_time, bar.close_time))
+        .collect();
+    assert_eq!(stamps, [(JANUARY, FEBRUARY - 1), (FEBRUARY, MARCH - 1)]);
 }
