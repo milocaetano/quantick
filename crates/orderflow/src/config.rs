@@ -2,7 +2,9 @@
 
 use rust_decimal::Decimal;
 
+mod bubble_colors;
 mod bubble_display_scale;
+pub use bubble_colors::BubbleColors;
 mod bubbles;
 pub use bubble_display_scale::{
     BubbleDisplayScale, BubbleScaleTarget, DEFAULT_BUBBLE_DISPLAY_SCALE, MAX_BUBBLE_DISPLAY_SCALE,
@@ -678,12 +680,15 @@ impl HeatmapConfig {
     /// A surface that is not a layer of its own can ask too
     /// ([`projection_demand`](Self::projection_demand)): the live strip draws
     /// the same clusters the bubbles do, and it stays alive when they are
-    /// hidden.
+    /// hidden. The tape's best bid/ask lines
+    /// ([`LiveLaneStyle::bbo_lines`]) are a layer of their own: on a tape
+    /// with neither its book nor its bubbles they still draw.
     #[must_use]
     pub fn any_layer_enabled(&self) -> bool {
         self.depth_visible_anywhere()
             || self.aggressions_visible_anywhere()
             || self.projection_demand
+            || (self.lane_enabled() && self.live_lane.bbo_lines)
     }
 
     /// Whether displayed-liquidity reductions need to be computed at all.
@@ -894,6 +899,7 @@ mod tests {
                 native_tape: false,
                 depth_time_averaging: false,
                 forward_book_preview: false,
+                bbo_lines: true,
                 stable_size: false,
                 tape_only: false,
                 fold_market_closed: true,
@@ -974,8 +980,11 @@ mod tests {
         assert!(config.any_layer_enabled());
 
         // Only with every pane's every layer off does the pipeline stand down
-        // — and a surface that is not a layer can still hold it open.
+        // — and a surface that is not a layer can still hold it open. The
+        // tape's best bid/ask lines are a layer too: on, they keep it up.
         config.show_depth = false;
+        assert!(config.any_layer_enabled(), "the tape's lines still draw");
+        config.live_lane.bbo_lines = false;
         assert!(!config.any_layer_enabled());
         config.projection_demand = true;
         assert!(config.any_layer_enabled());

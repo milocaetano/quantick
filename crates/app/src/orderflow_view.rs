@@ -1463,10 +1463,16 @@ mod tests {
             "the tape is still reading, so the live edge may not be gated shut              (that the edge itself comes from prints is proven in `history` and              `orderflow_engine`)"
         );
 
-        // Only when nothing at all is on does the lane stand down.
+        // Only when nothing at all is on does the lane stand down. The best
+        // bid/ask lines are a tape layer too: on, they keep it reading.
         view.config.live_lane.show_aggressions = false;
         view.config.show_aggressions = false;
         view.config.projection_demand = false;
+        assert!(
+            view.config.any_layer_enabled(),
+            "the tape's lines still draw"
+        );
+        view.config.live_lane.bbo_lines = false;
         assert!(!view.config.any_layer_enabled());
         assert_eq!(view.live_end_ms(), None);
     }
@@ -1674,6 +1680,7 @@ mod tests {
                 native_tape: false,
                 depth_time_averaging: false,
                 forward_book_preview: false,
+                bbo_lines: true,
                 stable_size: false,
                 tape_only: false,
                 fold_market_closed: true,
@@ -2474,9 +2481,11 @@ mod tests {
             "a tape nobody switched off may not lose the frame that feeds it"
         );
 
-        // Switching the tape's own copy off too leaves nobody reading, and the
+        // Switching the tape's own copy off too, and the tape's best bid/ask
+        // lines (a layer of their own), leaves nobody reading, and the
         // pipeline closes exactly as it always did.
         view.set_lane_bubbles_enabled(false);
+        view.edit_config(|config| config.live_lane.bbo_lines = false);
         view.flush_for_test();
         assert!(
             view.project_visible(

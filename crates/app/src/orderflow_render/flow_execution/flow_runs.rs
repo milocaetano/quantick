@@ -18,7 +18,10 @@ pub(super) fn flow_runs(
     let tick_colors = tick_look.map(|(tick, theme)| {
         let mut style = quantick_orderflow::config::theme::OrderflowRenderStyle::default();
         style.resolve_palette(theme, &appearance.resolved.orderflow);
-        BubbleColors::resolve(&style.colors(super::super::premultiplied), &tick.bubbles())
+        super::super::bubbles::bubble_colors(
+            &style.colors(super::super::premultiplied),
+            &tick.bubbles(),
+        )
     });
     let canvas = background.to_array();
     let underlay = backing.as_ref().map(egui::Color32::to_array);
