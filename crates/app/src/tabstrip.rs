@@ -7,7 +7,7 @@
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_appearance::tab_strip::{
-    FeedMark, MarkShape, TAB_CORNER_PT, feed_shape, feed_token, glow_mesh, tab_ink, tab_layers,
+    FeedMark, MarkShape, feed_shape, feed_token, glow_mesh, home_glow_strength, tab_ink, tab_layers,
 };
 use quantick_session::tab_chip::{
     ChipMeasure, CloseSlot, broker_name, close_slot, fit_chip, shortened_name,
@@ -26,7 +26,7 @@ const CHIP_MIN_WIDTH_PX: f32 = 44.0;
 const CHIP_COMPACT_MIN_WIDTH_PX: f32 = 38.0;
 pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
 pub(crate) const CHIP_HEIGHT: f32 = 30.0;
-const CHIP_ROUNDING_PX: f32 = TAB_CORNER_PT;
+const CHIP_ROUNDING_PX: f32 = quantick_appearance::tab_strip::TAB_CORNER_PT;
 
 const SYMBOL_TEXT_PX: f32 = 13.0;
 const SUFFIX_TEXT_PX: f32 = 12.0;
@@ -359,8 +359,8 @@ fn home_label(ui: &egui::Ui) -> HomeLabel {
 }
 
 /// The first tab: the Q and "uantick" centred on one line, or the Q alone and
-/// centred in `bare` points when `label` is `None`. No tab shape: while Home is
-/// shown a soft glow sits behind the Q. Returns whether it was pressed.
+/// centred in `bare` points when `label` is `None`. No tab shape: a soft glow
+/// sits behind the Q ([`home_glow_strength`]). Returns whether it was pressed.
 fn draw_home_tab(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -389,12 +389,12 @@ fn draw_home_tab(
     };
     let q = egui::Rect::from_center_size(egui::pos2(q_x, rect.center().y), HOME_Q);
     let q = ui.painter().round_rect_to_pixels(q); // One grid for the Q and its text.
-    if active {
+    if let Some(strength) = home_glow_strength(active, response.hovered()) {
         let (color, glow) = (*palette.get(Token::HomeGlow), glow_mesh());
         let vertex = |&([x, y], shade): &([f32; 2], f32)| egui::epaint::Vertex {
             pos: q.center() + egui::vec2(x, y),
             uv: egui::epaint::WHITE_UV,
-            color: color.gamma_multiply(shade),
+            color: color.gamma_multiply(shade * strength),
         };
         let vertices = glow.vertices.iter().map(vertex).collect();
         let (indices, mesh) = (glow.indices.clone(), egui::Mesh::default());

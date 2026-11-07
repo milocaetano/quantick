@@ -73,12 +73,27 @@ pub fn glow_falloff(distance: f32) -> f32 {
     (gaussian(distance) - rim) / (1.0 - rim)
 }
 
-/// The Home glow's diameter in points: a ~28 pt light, blurred, as the
-/// approved mock draws it (about 55 pt of visible halo).
-pub const HOME_GLOW_DIAMETER_PT: f32 = 72.0;
+/// The Home glow as the approved mock draws it: its diameter in points (a
+/// ~28 pt light, blurred), its centre's offset from the Q's centre (behind
+/// the Q's tail and the "u"), and its strength while the pointer is over Home.
+pub const HOME_GLOW_DIAMETER_PT: f32 = 60.0;
+pub const HOME_GLOW_OFFSET_PT: [f32; 2] = [11.0, 1.0];
+pub const HOME_GLOW_HOVER: f32 = 0.5;
 
-/// The Home glow as triangles around its centre: each vertex's offset in
-/// points and its strength (0 to 1), and the triangles' vertex indices.
+/// How strong the Home glow is: full while Home is shown, half while the
+/// pointer is over it, none otherwise.
+#[must_use]
+pub fn home_glow_strength(shown: bool, hovered: bool) -> Option<f32> {
+    if shown {
+        Some(1.0)
+    } else {
+        hovered.then_some(HOME_GLOW_HOVER)
+    }
+}
+
+/// The Home glow as triangles: each vertex's offset from the Q's centre in
+/// points (the glow's own centre is [`HOME_GLOW_OFFSET_PT`] away) and its
+/// strength (0 to 1), and the triangles' vertex indices.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlowMesh {
     pub vertices: Vec<([f32; 2], f32)>,
@@ -97,12 +112,13 @@ fn build_glow_mesh() -> GlowMesh {
     const RINGS: u32 = 14;
     const SEGMENTS: u32 = 48;
     let radius = HOME_GLOW_DIAMETER_PT / 2.0;
-    let mut vertices = vec![([0.0, 0.0], glow_falloff(0.0))];
+    let mut vertices = vec![(HOME_GLOW_OFFSET_PT, glow_falloff(0.0))];
     for ring in 1..=RINGS {
         let distance = ring as f32 / RINGS as f32;
         for segment in 0..SEGMENTS {
             let angle = std::f32::consts::TAU * segment as f32 / SEGMENTS as f32;
-            let at = [angle.cos(), angle.sin()].map(|unit| unit * radius * distance);
+            let [x, y] = [angle.cos(), angle.sin()].map(|unit| unit * radius * distance);
+            let at = [HOME_GLOW_OFFSET_PT[0] + x, HOME_GLOW_OFFSET_PT[1] + y];
             vertices.push((at, glow_falloff(distance)));
         }
     }
@@ -278,12 +294,21 @@ mod tests {
     }
 
     #[test]
+    fn home_glows_in_full_when_shown_and_by_half_when_hovered() {
+        assert_eq!(home_glow_strength(true, false), Some(1.0));
+        assert_eq!(home_glow_strength(true, true), Some(1.0));
+        assert_eq!(home_glow_strength(false, true), Some(HOME_GLOW_HOVER));
+        assert_eq!(home_glow_strength(false, false), None);
+    }
+
+    #[test]
     fn the_glow_mesh_is_a_closed_disc_brightest_at_its_centre() {
         let mesh = glow_mesh();
-        assert_eq!(mesh.vertices[0], ([0.0, 0.0], 1.0));
+        assert_eq!(mesh.vertices[0], (HOME_GLOW_OFFSET_PT, 1.0));
         let radius = HOME_GLOW_DIAMETER_PT / 2.0;
+        let [cx, cy] = HOME_GLOW_OFFSET_PT;
         for &([x, y], strength) in &mesh.vertices {
-            assert!(x.hypot(y) <= radius + 1e-3);
+            assert!((x - cx).hypot(y - cy) <= radius + 1e-3);
             assert!((0.0..=1.0).contains(&strength));
         }
         assert_eq!(mesh.indices.len() % 3, 0);

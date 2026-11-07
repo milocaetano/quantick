@@ -433,7 +433,7 @@ fn the_q_texture_is_premultiplied_in_srgb() {
 }
 
 #[test]
-fn the_home_tab_has_no_shape_and_glows_only_while_shown() {
+fn the_home_tab_has_no_shape_and_glows_while_shown_and_half_on_hover() {
     use quantick_appearance::Token;
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
@@ -455,7 +455,12 @@ fn the_home_tab_has_no_shape_and_glows_only_while_shown() {
     assert_eq!(glow_peak(&idle, home), None, "idle: no glow");
     let hovered = moved(&mut app, home.center());
     assert_eq!(surface_fill(&hovered, home), None, "hovered: no shape");
-    assert_eq!(glow_peak(&hovered, home), None, "hovered: no glow");
+    let half = glow.gamma_multiply(quantick_appearance::tab_strip::HOME_GLOW_HOVER);
+    assert_eq!(
+        glow_peak(&hovered, home),
+        Some(half),
+        "hovered: half the glow"
+    );
     click_sized(&mut app, &ctx, WINDOW, home.center());
     let active = moved(&mut app, far);
     assert!(on_home(&app));
@@ -468,7 +473,9 @@ fn the_home_tab_has_no_shape_and_glows_only_while_shown() {
     // The glow sits under the Q, its peak at the Q's centre.
     let q = logo_mesh(&active).calc_bounds();
     let centre = glow_mesh(&active, home).expect("glow").vertices[0].pos;
-    assert!((centre - q.center()).length() < 1e-3, "{centre:?} vs {q:?}");
+    let offset = egui::Vec2::from(quantick_appearance::tab_strip::HOME_GLOW_OFFSET_PT);
+    let want = q.center() + offset;
+    assert!((centre - want).length() < 1e-3, "{centre:?} vs {want:?}");
     let order = |want: &dyn Fn(&egui::Mesh) -> bool| {
         flat_shapes(&active)
             .iter()
