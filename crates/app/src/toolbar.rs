@@ -195,8 +195,9 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
     egui::TopBottomPanel::top(egui::Id::new((ctx.viewport_id(), "toolbar")))
         .exact_height(TOOLBAR_HEIGHT)
         .frame(
+            // One sheet with the active market tab above it.
             egui::Frame::none()
-                .fill(palette.chrome())
+                .fill(*palette.get(quantick_appearance::Token::ToolbarSheet))
                 .inner_margin(ROW_MARGIN),
         )
         .show(ctx, |ui| {

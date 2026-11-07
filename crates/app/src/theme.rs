@@ -7,7 +7,9 @@ mod palette;
 mod resolved;
 pub mod store;
 
-pub use resolved::{Palette, axes, bookmap, bookmap_scope, get, install_fonts, sync};
+pub use resolved::{
+    Palette, axes, bookmap, bookmap_scope, get, install_fonts, sync, title_strip_scope,
+};
 
 pub use chrome::apply;
 pub use ink::{active_tint, press_tint, with_opacity};
@@ -20,7 +22,7 @@ pub use ink::relative_luminance;
 // The anchored VWAP's colour, painted by the headless tool; pinned to it here.
 #[cfg(test)]
 pub use palette::{
-    ACCENT, AMBER, BARE_HOVER, BORDER, BUY, CANVAS, CASING, CHIP_INK, CHROME, CONTROL, DRAW_CYAN,
+    ACCENT, AMBER, BORDER, BUY, CANVAS, CASING, CHIP_INK, CHROME, CONTROL, DRAW_CYAN,
     FLOW_KEY_DOWN, FLOW_KEY_DOWN_RIM, FLOW_KEY_UP_BOTTOM, FLOW_KEY_UP_LIP, FLOW_KEY_UP_SHADOW,
     FLOW_KEY_UP_TOP, FLOW_SURFACE, POC, SELL, TEXT_MUTED, TEXT_PRIMARY, WARN,
 };

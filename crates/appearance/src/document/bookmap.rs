@@ -27,6 +27,7 @@ impl BookmapOverride {
             footprint_heat: self.footprint_heat.clone(),
             orderflow: Default::default(),
             bookmap: None,
+            title_strip: None,
         }
         .resolve_with(Some(parent))
         .map_err(|error| ThemeError::new(format!("bookmap.{}", error.field), error.message))
@@ -66,6 +67,12 @@ mod tests {
                 Token::TextFaint => [187, 198, 208, 255],
                 Token::CandleWick => [182, 201, 210, 255],
                 Token::FootprintProfile => [197, 204, 214, 255],
+                // The tab tokens belong to the title strip, never to a chart.
+                Token::ToolbarSheet
+                | Token::TabIdleFill
+                | Token::TabIdleOutline
+                | Token::TabBand
+                | Token::HomeGlow => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(

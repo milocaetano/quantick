@@ -73,6 +73,7 @@ groups are:
 | Keys | Meaning |
 | --- | --- |
 | `canvas`, `chrome`, `inset`, `control`, `border` | Chart background, fixed surfaces, wells, widgets and borders |
+| `toolbar_sheet`, `tab_idle_fill`, `tab_idle_outline`, `tab_band`, `home_glow` | The active market tab and toolbar row as one sheet; an idle tab's block and its 1 pt edge; the active tab's top band; the glow behind the Home Q, its alpha the peak |
 | `tab_strip`, `brand`, `replay_ink` | Market tab strip and window title area, the Home wordmark's "tick", and a replaying tab's mark and word ([decision](ux/layout-appearance-2026-11-06/README.md)) |
 | `chart_grid` | Inherited chart-grid color, independent of widget surfaces; pane opacity still applies |
 | `text_primary`, `text_muted`, `text_faint`, `text_support` | Labels, secondary text, hints and explanatory text |
@@ -101,9 +102,18 @@ Dark and Slate retain their existing grid.
 Omitting `chart_grid` preserves an explicitly supplied `control` as the grid
 default in either root or Bookmap colors; otherwise it inherits the fallback grid.
 Explicit pane colors and opacity retain their existing ownership.
-Omitting `tab_strip` takes the document's own `inset`; omitting `brand` or
-`replay_ink` takes the bundled theme of the document's `dark` mode, so an
-authored Light file written before these tokens stays Light.
+Omitting `tab_strip` takes the document's own `inset`; omitting `brand`,
+`replay_ink` or a tab token takes the bundled theme of the document's `dark`
+mode, so an authored Light file written before these tokens stays Light.
+
+## Title strip
+
+The optional `[title_strip.colors]` table paints the window's title strip (logo,
+`+`, menu and window buttons) in colours other than the root's; missing fields
+inherit the resolved root. Bundled Light uses it for the order-flow slate with
+Dark's inks, so its logo renders exactly as Dark's. Market tabs keep the root's
+colours and inks. A document without the table paints its strip in its own
+root colours.
 
 Typography tables use `family = "proportional"` or `"monospace"` and `size` in
 logical pixels, from 6 through 72 inclusive. Each property can be omitted.

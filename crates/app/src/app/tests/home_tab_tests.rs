@@ -273,33 +273,43 @@ fn the_strip_and_its_tabs_paint_each_themes_tokens() {
                 theme.color(token).to_array()
             );
         }
-        let rects: Vec<_> = (output.shapes.iter())
-            .filter_map(|clipped| match &clipped.shape {
+        let shapes = flat_shapes(&output);
+        let rects: Vec<_> = (shapes.iter())
+            .filter_map(|shape| match shape {
                 egui::Shape::Rect(shape) => Some(shape),
                 _ => None,
             })
             .collect();
+        let inks = theme.title_strip();
+        let ink = |token: Token| {
+            let [r, g, b, a] = inks.color(token).to_array();
+            egui::Color32::from_rgba_premultiplied(r, g, b, a)
+        };
         let strip = rects
             .iter()
             .find(|shape| shape.rect.min == egui::Pos2::ZERO);
         assert_eq!(
             strip.map(|shape| shape.fill),
-            Some(palette.tab_strip()),
+            Some(ink(Token::TabStrip)),
             "{}",
             theme.name
         );
-        strips.push(palette.tab_strip());
+        strips.push(ink(Token::TabStrip));
         assert_eq!(
             wordmark_colors(&output),
-            (palette.text_primary(), palette.brand()),
+            (ink(Token::TextPrimary), ink(Token::Brand)),
             "{}",
             theme.name
         );
         let chip = chip_rect(&app, 0);
-        let sheet = rects.iter().find(|shape| shape.rect.min == chip.min);
-        let sheet = sheet.expect("the active tab wears a sheet");
-        assert_eq!(sheet.fill, palette.chrome(), "{}", theme.name);
-        assert_eq!(sheet.stroke.color, palette.border(), "{}", theme.name);
+        let band = rects.iter().find(|shape| shape.rect.min == chip.min);
+        let band = band.expect("the active tab wears its band");
+        assert_eq!(band.fill, ink(Token::TabBand), "{}", theme.name);
+        let below = chip.min + egui::vec2(0.0, 2.0);
+        let sheet = rects.iter().find(|shape| shape.rect.min == below);
+        let sheet = sheet.expect("the active tab wears the toolbar sheet");
+        let face = *palette.get(Token::ToolbarSheet);
+        assert_eq!(sheet.fill, face, "{}", theme.name);
         // No rule along the strip's floor: the active tab joins the toolbar.
         let floor = output.shapes.iter().any(|clipped| match &clipped.shape {
             egui::Shape::LineSegment { points, stroke } => {
@@ -325,6 +335,53 @@ fn the_strip_and_its_tabs_paint_each_themes_tokens() {
         assert!(marked, "{}: the {feed:?} mark in its token", theme.name);
     }
     assert_ne!(strips[0], strips[1], "Light has its own strip");
+}
+
+/// An idle market tab is a block in the theme's own colours, edged (Light: a
+/// transparent edge);
+/// no separator line is drawn between tabs.
+#[test]
+fn an_idle_market_tab_is_an_edged_block_with_no_separator() {
+    use quantick_appearance::{ResolvedTheme, Token};
+    for source in [quantick_appearance::DARK, quantick_appearance::LIGHT] {
+        let (mut app, _, _, _) = test_app();
+        let ctx = egui::Context::default();
+        app.runtime
+            .appearance
+            .apply_candidate(source, false)
+            .unwrap();
+        let _second = two_tabs(&mut app, &ctx);
+        let event = egui::Event::PointerMoved(egui::pos2(1000.0, 400.0));
+        let output = run_frame_sized(&mut app, &ctx, WINDOW, vec![event], egui::Modifiers::NONE);
+        let theme = ResolvedTheme::parse(source).unwrap();
+        let ink = |token: Token| {
+            let [r, g, b, a] = theme.color(token).to_array();
+            egui::Color32::from_rgba_premultiplied(r, g, b, a)
+        };
+        assert_ne!(app.runtime.tabs.active_index(), 0, "chip 0 is idle");
+        let chip = chip_rect(&app, 0);
+        let shapes = flat_shapes(&output);
+        let block = shapes.iter().find_map(|shape| match shape {
+            egui::Shape::Rect(rect) if rect.rect.min == chip.min => Some(rect),
+            _ => None,
+        });
+        let block = block.expect("the idle tab is a block");
+        assert_eq!(block.fill, ink(Token::TabIdleFill), "{}", theme.name);
+        assert_eq!(
+            block.stroke.color,
+            ink(Token::TabIdleOutline),
+            "{}",
+            theme.name
+        );
+        assert_eq!(block.stroke.width, 1.0, "{}", theme.name);
+        let separator = shapes.iter().any(|shape| match shape {
+            egui::Shape::LineSegment { points, .. } => {
+                points[0].x == points[1].x && (points[0].x - chip.right()).abs() <= 1.0
+            }
+            _ => false,
+        });
+        assert!(!separator, "{}: a separator after the idle tab", theme.name);
+    }
 }
 
 /// The Home tab's own widget, to focus it directly rather than by Tab order.
@@ -356,7 +413,7 @@ fn surface_fill(output: &egui::FullOutput, rect: egui::Rect) -> Option<egui::Col
 /// not in egui's linear light, which paints its 0.647 alpha near 0.84.
 #[test]
 fn the_q_texture_is_premultiplied_in_srgb() {
-    let image = crate::surfaces::home::logo_image(crate::surfaces::home::Logo::Q, 0);
+    let image = crate::surfaces::home::logo_image(crate::surfaces::home::Logo::Q);
     let png = include_bytes!("../../../assets/logo-q.png");
     let source = eframe::icon_data::from_png_bytes(png).unwrap();
     let light = source.rgba.as_chunks::<4>().0.iter().position(|texel| {
@@ -376,7 +433,8 @@ fn the_q_texture_is_premultiplied_in_srgb() {
 }
 
 #[test]
-fn the_home_surface_is_bare_at_rest_a_market_tabs_fill_on_hover_and_chrome_when_active() {
+fn the_home_tab_has_no_shape_and_glows_while_shown_and_half_on_hover() {
+    use quantick_appearance::Token;
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     let _second = two_tabs(&mut app, &ctx);
@@ -385,31 +443,82 @@ fn the_home_surface_is_bare_at_rest_a_market_tabs_fill_on_hover_and_chrome_when_
         let event = egui::Event::PointerMoved(to);
         run_frame_sized(app, &ctx, WINDOW, vec![event], egui::Modifiers::NONE)
     };
-    let (home, chip) = (home_rect(&app), chip_rect(&app, 0));
+    let home = home_rect(&app);
     assert_ne!(
         app.runtime.tabs.active_index(),
         0,
         "the first chip is inactive"
     );
+    let glow = *crate::theme::get(&ctx).get(Token::HomeGlow);
     let idle = moved(&mut app, far);
-    assert_eq!(
-        surface_fill(&idle, home),
-        None,
-        "idle: no fill, only the divider"
-    );
+    assert_eq!(surface_fill(&idle, home), None, "idle: no shape");
+    assert_eq!(glow_peak(&idle, home), None, "idle: no glow");
     let hovered = moved(&mut app, home.center());
-    let chip_hovered = moved(&mut app, chip.center());
-    let market_hover = surface_fill(&chip_hovered, chip).expect("a hovered market tab is lit");
-    assert_eq!(market_hover, crate::theme::BARE_HOVER);
-    assert_eq!(surface_fill(&hovered, home), Some(market_hover), "hovered");
+    assert_eq!(surface_fill(&hovered, home), None, "hovered: no shape");
+    let half = glow.gamma_multiply(quantick_appearance::tab_strip::HOME_GLOW_HOVER);
+    assert_eq!(
+        glow_peak(&hovered, home),
+        Some(half),
+        "hovered: half the glow"
+    );
     click_sized(&mut app, &ctx, WINDOW, home.center());
     let active = moved(&mut app, far);
     assert!(on_home(&app));
+    assert_eq!(surface_fill(&active, home), None, "active: no shape");
     assert_eq!(
-        surface_fill(&active, home),
-        Some(crate::theme::CHROME),
-        "active"
+        glow_peak(&active, home),
+        Some(glow),
+        "active: the full glow"
     );
+    // The glow sits under the Q, its peak at the Q's centre.
+    let q = logo_mesh(&active).calc_bounds();
+    let centre = glow_mesh(&active, home).expect("glow").vertices[0].pos;
+    let offset = egui::Vec2::from(quantick_appearance::tab_strip::HOME_GLOW_OFFSET_PT);
+    let want = q.center() + offset;
+    assert!((centre - want).length() < 1e-3, "{centre:?} vs {want:?}");
+    let order = |want: &dyn Fn(&egui::Mesh) -> bool| {
+        flat_shapes(&active)
+            .iter()
+            .position(|shape| matches!(shape, egui::Shape::Mesh(mesh) if want(mesh)))
+    };
+    let glow_at = order(&|mesh| mesh.texture_id == egui::TextureId::default());
+    let logo_at = order(&|mesh| mesh.texture_id != egui::TextureId::default());
+    assert!(glow_at < logo_at, "the glow is drawn first");
+}
+
+/// The untextured mesh centred inside `home`: the glow behind the Q.
+fn glow_mesh(output: &egui::FullOutput, home: egui::Rect) -> Option<egui::Mesh> {
+    flat_shapes(output)
+        .into_iter()
+        .find_map(|shape| match shape {
+            egui::Shape::Mesh(mesh)
+                if mesh.texture_id == egui::TextureId::default()
+                    && mesh.vertices.first().is_some_and(|v| home.contains(v.pos)) =>
+            {
+                Some(mesh)
+            }
+            _ => None,
+        })
+}
+
+/// The glow's colour at its centre, if one is painted.
+fn glow_peak(output: &egui::FullOutput, home: egui::Rect) -> Option<egui::Color32> {
+    glow_mesh(output, home).map(|mesh| mesh.vertices[0].color)
+}
+
+/// Every painted shape, nested groups opened.
+fn flat_shapes(output: &egui::FullOutput) -> Vec<egui::Shape> {
+    fn open(shape: &egui::Shape, into: &mut Vec<egui::Shape>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| open(shape, into)),
+            shape => into.push(shape.clone()),
+        }
+    }
+    let mut shapes = Vec::new();
+    for clipped in &output.shapes {
+        open(&clipped.shape, &mut shapes);
+    }
+    shapes
 }
 
 #[test]
@@ -978,7 +1087,7 @@ fn the_logo_is_its_own_q_only_scaled_or_plate_dropped_on_whole_pixels_at_every_z
 
 /// The Home strip under `source` at `ppp`: the logo mesh's bounds, the
 /// texture's name and size, and where the "uan" galley starts.
-fn light_strip(source: &str, ppp: f32) -> (egui::Rect, String, [usize; 2], f32) {
+fn home_strip(source: &str, ppp: f32) -> (egui::Rect, String, [usize; 2], f32) {
     let (mut app, _, _, _) = test_app();
     let ctx = egui::Context::default();
     ctx.set_pixels_per_point(ppp);
@@ -1000,73 +1109,14 @@ fn light_strip(source: &str, ppp: f32) -> (egui::Rect, String, [usize; 2], f32) 
     (mesh.calc_bounds(), meta.name, meta.size, uan)
 }
 
-/// Light paints W6's Q: the whole viewBox in 28 pt, its glyph's right edge
-/// where Dark's sits plus the shift, less W6's offset, as far from the "u" as
-/// in c06; the wordmark keeps the place Dark gives it.
+/// Light paints Dark's own Q, from the same raster, in the same box, beside
+/// a wordmark in the same place, at every scale.
 #[test]
-fn the_light_q_is_w6s_and_moved_toward_the_wordmark() {
-    use crate::tabstrip::LIGHT_Q_SHIFT_PT;
-    use quantick_appearance::mark;
-    let (dark, dark_name, _, dark_uan) = light_strip(quantick_appearance::DARK, 1.0);
-    let (light, light_name, size, light_uan) = light_strip(quantick_appearance::LIGHT, 1.0);
-    assert_eq!(
-        (dark_name.as_str(), light_name.as_str()),
-        ("Quantick Q", "Quantick Q light")
-    );
-    assert_eq!(light_uan, dark_uan, "the wordmark stays put");
-    assert_eq!(dark.size(), egui::vec2(22.0, 22.0), "Dark is unchanged");
-    assert_eq!(light.size(), egui::Vec2::splat(mark::MARK_PT));
-    assert_eq!(size, [28, 28], "one texel per pixel");
-    let unit = light.width() / mark::VIEWBOX;
-    let glyph_right = light.left() + mark::GLYPH_RIGHT * unit;
-    let dark_right =
-        dark.center().x + (mark::GLYPH_RIGHT - mark::GLYPH_CENTRE.0) * 22.0 * 4.0 / 3.0 / 256.0;
-    let moved = glyph_right - dark_right;
-    assert!(
-        (moved - (LIGHT_Q_SHIFT_PT - mark::W6_OFFSET_PT)).abs() <= 0.5,
-        "glyph moved {moved} pt"
-    );
-    let gap = light_uan - glyph_right;
-    assert!((1.0..=2.0).contains(&gap), "Q to the u galley: {gap} px");
-}
-
-/// At every scale the Light Q is rasterised for that scale and drawn one
-/// texel per physical pixel, on the pixel grid.
-#[test]
-fn the_light_q_is_drawn_one_to_one_on_the_pixel_grid() {
-    use quantick_appearance::mark;
-    for ppp in [1.0, 1.25, 1.5, 1.75, 2.0] {
-        let (light, _, size, _) = light_strip(quantick_appearance::LIGHT, ppp);
-        let side = mark::side_px(ppp) as usize;
-        assert_eq!(size, [side, side], "texture at {ppp}");
-        let px = light.size() * ppp;
-        assert!(
-            (px.x - side as f32).abs() < 1e-3 && (px.y - side as f32).abs() < 1e-3,
-            "{px:?} at {ppp}"
-        );
-        for v in [light.left(), light.top()] {
-            let at = v * ppp;
-            assert!((at - at.round()).abs() < 1e-3, "{at} px off grid at {ppp}");
-        }
-    }
-}
-
-/// Dark and a lone Light Q keep their box; beside the wordmark the Light Q
-/// moves toward it by whole physical pixels, so it stays on the grid.
-#[test]
-fn the_light_mark_moves_by_whole_physical_pixels() {
-    use crate::tabstrip::{LIGHT_Q_SHIFT_PT, mark_box};
-    for ppp in [1.0, 1.25, 1.5, 1.68, 2.0, 2.5] {
-        let on_grid = |v: f32| (v * ppp).round() / ppp;
-        let min = egui::pos2(on_grid(19.0), on_grid(4.0));
-        let q = egui::Rect::from_min_size(min, egui::Vec2::splat(on_grid(22.0)));
-        assert_eq!(mark_box(q, true, true, ppp), q, "Dark at {ppp}");
-        assert_eq!(mark_box(q, false, false, ppp), q, "lone Light Q at {ppp}");
-        let mark = mark_box(q, false, true, ppp);
-        assert_eq!(mark.size(), q.size(), "same size at {ppp}");
-        let shift = (mark.left() - q.left()) * ppp;
-        assert!((shift - shift.round()).abs() < 1e-3, "{shift} px at {ppp}");
-        let off = (mark.left() - q.left() - LIGHT_Q_SHIFT_PT).abs();
-        assert!(off <= 0.5 / ppp, "{off} pt off at {ppp}");
+fn light_paints_darks_exact_q() {
+    for ppp in [1.0, 1.25, 1.5, 2.0] {
+        let dark = home_strip(quantick_appearance::DARK, ppp);
+        let light = home_strip(quantick_appearance::LIGHT, ppp);
+        assert_eq!(dark.1, "Quantick Q", "at {ppp}");
+        assert_eq!(light, dark, "at {ppp}");
     }
 }

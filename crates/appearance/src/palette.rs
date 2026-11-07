@@ -169,9 +169,14 @@ pub enum Token {
     TabStrip,
     Brand,
     ReplayInk,
+    ToolbarSheet,
+    TabIdleFill,
+    TabIdleOutline,
+    TabBand,
+    HomeGlow,
 }
 impl Token {
-    pub const ALL: [Self; 102] = [
+    pub const ALL: [Self; 107] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -274,6 +279,11 @@ impl Token {
         Self::TabStrip,
         Self::Brand,
         Self::ReplayInk,
+        Self::ToolbarSheet,
+        Self::TabIdleFill,
+        Self::TabIdleOutline,
+        Self::TabBand,
+        Self::HomeGlow,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -286,6 +296,11 @@ impl Token {
             Self::TabStrip => "tab_strip",
             Self::Brand => "brand",
             Self::ReplayInk => "replay_ink",
+            Self::ToolbarSheet => "toolbar_sheet",
+            Self::TabIdleFill => "tab_idle_fill",
+            Self::TabIdleOutline => "tab_idle_outline",
+            Self::TabBand => "tab_band",
+            Self::HomeGlow => "home_glow",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

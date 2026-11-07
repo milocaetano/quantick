@@ -47,15 +47,137 @@ pub const fn feed_token(mark: FeedMark) -> Token {
     }
 }
 
-/// The fill behind a tab: the active one is the toolbar's own sheet, a
-/// hovered or focused one lifts, the rest stay bare on the strip.
+/// The fill behind a tab: the active one is the toolbar's own sheet, every
+/// other one a block lifted off the strip. A hovered or focused idle tab adds
+/// the hover wash over its block ([`Token::BareHover`]).
 #[must_use]
-pub const fn tab_fill(selected: bool, lit: bool) -> Option<Token> {
-    match (selected, lit) {
-        (true, _) => Some(Token::Chrome),
-        (false, true) => Some(Token::BareHover),
-        (false, false) => None,
+pub const fn tab_fill(selected: bool) -> Token {
+    if selected {
+        Token::ToolbarSheet
+    } else {
+        Token::TabIdleFill
     }
+}
+
+/// The glow behind the Home Q, by distance from its centre as a fraction of
+/// its radius: a Gaussian that is 1 at the centre and reaches 0 at the rim, so
+/// the edge never shows. Outside the radius it is 0.
+#[must_use]
+pub fn glow_falloff(distance: f32) -> f32 {
+    if !(0.0..1.0).contains(&distance) {
+        return 0.0;
+    }
+    // A sigma of a third of the radius, renormalised so the rim is exactly 0.
+    let gaussian = |d: f32| (-4.5 * d * d).exp();
+    let rim = gaussian(1.0);
+    (gaussian(distance) - rim) / (1.0 - rim)
+}
+
+/// The Home glow as the approved mock draws it: its diameter in points (a
+/// ~28 pt light, blurred), its centre's offset from the Q's centre (behind
+/// the Q's tail and the "u"), and its strength while the pointer is over Home.
+pub const HOME_GLOW_DIAMETER_PT: f32 = 60.0;
+pub const HOME_GLOW_OFFSET_PT: [f32; 2] = [11.0, 1.0];
+pub const HOME_GLOW_HOVER: f32 = 0.5;
+
+/// How strong the Home glow is: full while Home is shown, half while the
+/// pointer is over it, none otherwise.
+#[must_use]
+pub fn home_glow_strength(shown: bool, hovered: bool) -> Option<f32> {
+    if shown {
+        Some(1.0)
+    } else {
+        hovered.then_some(HOME_GLOW_HOVER)
+    }
+}
+
+/// The Home glow as triangles: each vertex's offset from the Q's centre in
+/// points (the glow's own centre is [`HOME_GLOW_OFFSET_PT`] away) and its
+/// strength (0 to 1), and the triangles' vertex indices.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlowMesh {
+    pub vertices: Vec<([f32; 2], f32)>,
+    pub indices: Vec<u32>,
+}
+
+/// A disc [`HOME_GLOW_DIAMETER_PT`] across in rings, shaded by [`glow_falloff`],
+/// built once.
+#[must_use]
+pub fn glow_mesh() -> &'static GlowMesh {
+    static MESH: std::sync::OnceLock<GlowMesh> = std::sync::OnceLock::new();
+    MESH.get_or_init(build_glow_mesh)
+}
+
+fn build_glow_mesh() -> GlowMesh {
+    const RINGS: u32 = 14;
+    const SEGMENTS: u32 = 48;
+    let radius = HOME_GLOW_DIAMETER_PT / 2.0;
+    let mut vertices = vec![(HOME_GLOW_OFFSET_PT, glow_falloff(0.0))];
+    for ring in 1..=RINGS {
+        let distance = ring as f32 / RINGS as f32;
+        for segment in 0..SEGMENTS {
+            let angle = std::f32::consts::TAU * segment as f32 / SEGMENTS as f32;
+            let [x, y] = [angle.cos(), angle.sin()].map(|unit| unit * radius * distance);
+            let at = [HOME_GLOW_OFFSET_PT[0] + x, HOME_GLOW_OFFSET_PT[1] + y];
+            vertices.push((at, glow_falloff(distance)));
+        }
+    }
+    let vertex = |ring: u32, segment: u32| 1 + (ring - 1) * SEGMENTS + segment % SEGMENTS;
+    let mut indices = Vec::new();
+    for segment in 0..SEGMENTS {
+        indices.extend([0, vertex(1, segment), vertex(1, segment + 1)]);
+        for ring in 1..RINGS {
+            let (a, b) = (vertex(ring, segment), vertex(ring, segment + 1));
+            let (c, d) = (vertex(ring + 1, segment), vertex(ring + 1, segment + 1));
+            indices.extend([a, c, b, b, c, d]);
+        }
+    }
+    GlowMesh { vertices, indices }
+}
+
+/// The active tab's accent band along its top edge, and a tab's top corner
+/// radius, in points.
+pub const TAB_BAND_PT: f32 = 2.0;
+pub const TAB_CORNER_PT: f32 = 6.0;
+
+/// One rounded-top layer of a market tab's shape, bottom to top.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TabLayer {
+    /// How far below the tab's top edge the layer starts.
+    pub inset: f32,
+    /// Its top corners' radius, less the inset so nested corners follow.
+    pub corner_inset: f32,
+    pub fill: Token,
+    /// A 1 pt edge.
+    pub outline: Option<Token>,
+    /// How tall the layer is, or to the tab's floor when `None`.
+    pub height: Option<f32>,
+}
+
+/// A market tab's layers, in the theme's own palette: the active one an accent
+/// band under the toolbar sheet, inset by [`TAB_BAND_PT`] so the band shows
+/// along its top; an idle one an edged block. Light's idle edge is
+/// transparent: its warm grey block needs none. A hovered or focused tab lifts
+/// its ink, not its block, so its text keeps the block's contrast.
+#[must_use]
+pub fn tab_layers(selected: bool) -> Vec<TabLayer> {
+    let layer = |inset, fill, outline| TabLayer {
+        inset,
+        corner_inset: inset,
+        fill,
+        outline,
+        height: None,
+    };
+    if selected {
+        // The band ends where the sheet's corners do: the sheet's
+        // anti-aliased straight sides never sit over it.
+        let band = TabLayer {
+            height: Some(TAB_CORNER_PT),
+            ..layer(0.0, Token::TabBand, None)
+        };
+        return vec![band, layer(TAB_BAND_PT, tab_fill(true), None)];
+    }
+    vec![layer(0.0, tab_fill(false), Some(Token::TabIdleOutline))]
 }
 
 /// A market tab's text and glyphs: its symbol and the ×.
@@ -98,49 +220,114 @@ mod tests {
     }
 
     #[test]
-    fn the_active_tab_wears_chrome_and_a_lit_one_the_hover() {
-        assert_eq!(tab_fill(true, false), Some(Token::Chrome));
-        assert_eq!(tab_fill(false, true), Some(Token::BareHover));
-        assert_eq!(tab_fill(false, false), None);
+    fn the_active_tab_wears_the_toolbar_sheet_and_the_rest_a_block() {
+        assert_eq!(tab_fill(true), Token::ToolbarSheet);
+        assert_eq!(tab_fill(false), Token::TabIdleFill);
         assert_eq!(tab_ink(true), Token::TextPrimary);
         assert_eq!(tab_ink(false), Token::TextMuted);
     }
 
-    /// The three layout tokens differ between the themes and stay readable
-    /// on the strip and on the active tab in both.
+    /// The three layout tokens differ between the themes. An idle tab's inks
+    /// (the strip's palette) stay readable on the strip and on its block, the
+    /// active tab's (the theme's own) on the toolbar sheet, in both themes.
     #[test]
     fn dark_and_light_resolve_distinct_readable_strip_tokens() {
         let dark = ResolvedTheme::default();
         let light = ResolvedTheme::parse(LIGHT).unwrap();
         for (token, want) in [
-            (Token::TabStrip, [[0x10, 0x14, 0x1D], [0xD9, 0xD6, 0xD2]]),
-            (Token::Brand, [[0x3A, 0xF0, 0xB2], [0x12, 0xC6, 0x8C]]),
-            (Token::ReplayInk, [[0xC5, 0x8C, 0xFF], [0x7F, 0x36, 0xB3]]),
+            (Token::TabStrip, [[0x10, 0x14, 0x1D], [0x25, 0x2F, 0x37]]),
+            (Token::TabBand, [[0x3A, 0xF0, 0xB2], [0x12, 0xC6, 0x8C]]),
+            (Token::TabIdleFill, [[0x1B, 0x20, 0x2D], [0xCF, 0xCC, 0xC7]]),
+            (
+                Token::ToolbarSheet,
+                [[0x17, 0x1B, 0x26], [0xFF, 0xFC, 0xF7]],
+            ),
         ] {
             for (theme, rgb) in [(&dark, want[0]), (&light, want[1])] {
-                assert_eq!(theme.color(token).to_array()[..3], rgb, "{}", token.key());
+                let palette = [theme, theme.title_strip()][usize::from(token == Token::TabStrip)];
+                assert_eq!(palette.color(token).to_array()[..3], rgb, "{}", token.key());
             }
-            assert_ne!(dark.color(token), light.color(token), "{}", token.key());
         }
+        let outline = |theme: &ResolvedTheme| theme.color(Token::TabIdleOutline).to_array();
+        assert_eq!(outline(&dark), [0x42, 0x4B, 0x60, 255]);
+        assert_eq!(outline(&light)[3], 0, "Light's idle tab has no edge");
+        // Text at 4.5:1; the feed marks are graphics, 3:1. The wordmark is a
+        // logotype, which has no contrast floor (WCAG 1.4.3, 1.4.11).
+        let text = [(Token::TextMuted, 4.5), (Token::ReplayInk, 4.5)];
+        let marks = [
+            FeedMark::Live,
+            FeedMark::Attention,
+            FeedMark::Lost,
+            FeedMark::Stopped,
+        ];
+        let graphics = marks.map(|mark| (feed_token(mark), 3.0));
         for theme in [&dark, &light] {
-            let strip = theme.color(Token::TabStrip);
-            assert_ne!(strip, theme.color(Token::Chrome), "the strip reads apart");
-            // Text at 4.5:1; the feed marks are graphics, 3:1. The wordmark is a
-            // logotype, which has no contrast floor (WCAG 1.4.3, 1.4.11).
-            let text = [(Token::TextMuted, 4.5), (Token::ReplayInk, 4.5)];
-            let marks = [
-                FeedMark::Live,
-                FeedMark::Attention,
-                FeedMark::Lost,
-                FeedMark::Stopped,
-            ];
-            let graphics = marks.map(|mark| (feed_token(mark), 3.0));
-            for (ink, floor) in text.into_iter().chain(graphics) {
-                for under in [strip, theme.color(Token::Chrome)] {
+            // Market tabs wear the theme's inks on both their faces.
+            for under in [tab_fill(false), tab_fill(true)].map(|fill| theme.color(fill)) {
+                for (ink, floor) in text.into_iter().chain(graphics) {
                     let ratio = contrast_ratio(theme.color(ink), under);
                     assert!(ratio >= floor, "{} {}: {ratio}", theme.name, ink.key());
                 }
             }
+            // The strip's own inks (window buttons, menu) on the strip.
+            let strip = theme.title_strip();
+            let ratio = contrast_ratio(strip.color(Token::TextMuted), strip.color(Token::TabStrip));
+            assert!(ratio >= 4.5, "{} strip: {ratio}", theme.name);
         }
+    }
+
+    #[test]
+    fn the_active_tab_is_a_band_under_the_sheet_and_an_idle_one_an_edged_block() {
+        let active = tab_layers(true);
+        assert_eq!(
+            active.iter().map(|l| l.fill).collect::<Vec<_>>(),
+            [Token::TabBand, Token::ToolbarSheet]
+        );
+        assert_eq!(active[1].inset, TAB_BAND_PT);
+        assert!(active.iter().all(|layer| layer.outline.is_none()));
+        assert_eq!(active[0].height, Some(TAB_CORNER_PT));
+        assert_eq!(active[1].height, None);
+        let idle = tab_layers(false);
+        assert_eq!(idle.len(), 1);
+        assert_eq!(idle[0].outline, Some(Token::TabIdleOutline));
+        assert_eq!(idle[0].fill, Token::TabIdleFill);
+    }
+
+    #[test]
+    fn home_glows_in_full_when_shown_and_by_half_when_hovered() {
+        assert_eq!(home_glow_strength(true, false), Some(1.0));
+        assert_eq!(home_glow_strength(true, true), Some(1.0));
+        assert_eq!(home_glow_strength(false, true), Some(HOME_GLOW_HOVER));
+        assert_eq!(home_glow_strength(false, false), None);
+    }
+
+    #[test]
+    fn the_glow_mesh_is_a_closed_disc_brightest_at_its_centre() {
+        let mesh = glow_mesh();
+        assert_eq!(mesh.vertices[0], (HOME_GLOW_OFFSET_PT, 1.0));
+        let radius = HOME_GLOW_DIAMETER_PT / 2.0;
+        let [cx, cy] = HOME_GLOW_OFFSET_PT;
+        for &([x, y], strength) in &mesh.vertices {
+            assert!((x - cx).hypot(y - cy) <= radius + 1e-3);
+            assert!((0.0..=1.0).contains(&strength));
+        }
+        assert_eq!(mesh.indices.len() % 3, 0);
+        let count = mesh.vertices.len() as u32;
+        assert!(mesh.indices.iter().all(|&index| index < count));
+    }
+
+    #[test]
+    fn the_home_glow_peaks_at_its_centre_and_fades_out_at_its_rim() {
+        assert_eq!(glow_falloff(0.0), 1.0);
+        assert!(glow_falloff(1.0).abs() < f32::EPSILON);
+        assert_eq!(glow_falloff(1.5), 0.0);
+        assert_eq!(glow_falloff(-0.1), 0.0);
+        let samples: Vec<f32> = (0..10)
+            .map(|step| glow_falloff(step as f32 / 10.0))
+            .collect();
+        assert!(
+            samples.windows(2).all(|pair| pair[0] > pair[1]),
+            "{samples:?}"
+        );
     }
 }

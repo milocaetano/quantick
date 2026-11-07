@@ -5,7 +5,10 @@
 //! toolbar's configured source catalog.
 
 use eframe::egui;
-use quantick_appearance::tab_strip::{FeedMark, MarkShape, feed_shape, feed_token, tab_ink};
+use quantick_appearance::Token;
+use quantick_appearance::tab_strip::{
+    FeedMark, MarkShape, feed_shape, feed_token, glow_mesh, home_glow_strength, tab_ink, tab_layers,
+};
 use quantick_session::tab_chip::{
     ChipMeasure, CloseSlot, broker_name, close_slot, fit_chip, shortened_name,
 };
@@ -22,10 +25,8 @@ const CHIP_MIN_WIDTH_PX: f32 = 44.0;
 /// A window so narrow the strip is in its compact form: the × and a sliver.
 const CHIP_COMPACT_MIN_WIDTH_PX: f32 = 38.0;
 pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
-/// What is kept right of the close target, so it never touches the next tab.
-const CHIP_RIGHT_PADDING_PX: f32 = 2.0;
 pub(crate) const CHIP_HEIGHT: f32 = 30.0;
-const CHIP_ROUNDING_PX: f32 = 6.0;
+const CHIP_ROUNDING_PX: f32 = quantick_appearance::tab_strip::TAB_CORNER_PT;
 
 const SYMBOL_TEXT_PX: f32 = 13.0;
 const SUFFIX_TEXT_PX: f32 = 12.0;
@@ -43,11 +44,6 @@ const SEMIBOLD_STRIKE_PX: f32 = 0.35;
 
 /// The plate-less Q, the wordmark's first letter: its 22 px box, the glyph inside.
 const HOME_Q: egui::Vec2 = egui::Vec2::splat(22.0);
-/// How far the Light theme's edged Q moves toward the wordmark (trader-approved
-/// option W6, 2026-11-06), leaving its glyph about 1 px from the "u". Its size
-/// and raster are `quantick_appearance::mark`'s: W6's 28 pt square, whose
-/// glyph is about 0.95 of the Dark Q's.
-pub(crate) const LIGHT_Q_SHIFT_PT: f32 = 4.0;
 const HOME_TEXT_PX: f32 = 15.0;
 // Window edge to the Home tab, tab edge to the Q, Q to text, text to edge.
 pub(crate) const STRIP_EDGE_PX: f32 = 10.0;
@@ -101,7 +97,7 @@ pub(crate) fn draw(
     chips: &[TabChip<'_>],
     active: usize,
     surface: &StripSurface,
-    drawn: &mut StripDrawn,
+    (drawn, root): (&mut StripDrawn, &Palette),
 ) -> Option<TabAction> {
     let palette = theme::get(ui.ctx());
     drawn.bounds = Some(ui.max_rect().intersect(ui.clip_rect()));
@@ -116,7 +112,7 @@ pub(crate) fn draw(
     ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 4.0);
     ui.spacing_mut().interact_size.y = CHIP_HEIGHT;
     let controls_width = [STRIP_CONTROLS_WIDTH_PX, 56.0][usize::from(compact)];
-    let close_reserve = CLOSE_HIT_WIDTH_PX + CHIP_RIGHT_PADDING_PX;
+    let close_reserve = CLOSE_HIT_WIDTH_PX;
     let label = home_label(ui);
     let after_q = label.iter().map(|galley| galley.size().x).sum::<f32>() + HOME_LOGO_GAP_PX;
     let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
@@ -130,8 +126,6 @@ pub(crate) fn draw(
     let mut action = draw_home_tab(ui, &palette, surface.is_home(), shown, bare, drawn)
         .then_some(TabAction::Home);
     let closable = chips.len() > 1 || drawn.allow_close_last;
-    // The separator after the last unlit tab, dropped if the next one lights.
-    let mut separator = None;
     let active_chip = surface.active_chip(active);
     let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
     let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
@@ -178,14 +172,14 @@ pub(crate) fn draw(
                 if hot {
                     let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);
                     ui.painter()
-                        .circle_filled(center, radius, palette.bare_hover());
+                        .circle_filled(center, radius, root.bare_hover());
                 }
                 let glyph = egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX);
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
                             slot == CloseSlot::Close,
-                            egui::Button::new(glyph.color(*palette.get(tab_ink(hot))))
+                            egui::Button::new(glyph.color(*root.get(tab_ink(hot))))
                                 .frame(false)
                                 .min_size(egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT)),
                         )
@@ -206,30 +200,26 @@ pub(crate) fn draw(
                 }
                 let hovered = response.hovered() || close.hovered();
                 let pointer = (hovered, response.has_focus() || close.has_focus());
-                let lit = paint_tab_surface(ui, &palette, surface, sheet, selected, pointer, true);
+                let lit = paint_tab_surface(ui, root, surface, sheet, selected, pointer);
                 // The face reads lit whenever its sheet is: body, × or focus.
-                paint_chip_face(ui, &palette, chip, body, lit);
-                if lit && let Some(before) = separator.take() {
-                    ui.painter().set(before, egui::Shape::Noop);
-                }
-                separator = (!lit).then_some(surface);
+                paint_chip_face(ui, root, chip, body, lit);
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
-                ui.add_space(CHIP_RIGHT_PADDING_PX);
             }
         });
     }
     if visible.len() < chips.len() {
         let overflow = ui.push_id("market_overflow", |ui| {
-            ui.menu_button(egui::RichText::new("...").size(17.0), |ui| {
+            let dots = egui::Button::new(egui::RichText::new("...").size(17.0)).frame(false);
+            egui::menu::menu_custom_button(ui, dots, |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
                     .show(ui, |ui| {
                         for (index, chip) in chips.iter().enumerate() {
                             let mut text = egui::RichText::new(chip.label);
                             if chip.feed == TabFeed::Replay {
-                                text = text.color(palette.replay_ink());
+                                text = text.color(root.replay_ink());
                             }
                             if ui
                                 .push_id(chip.id, |ui| {
@@ -369,8 +359,8 @@ fn home_label(ui: &egui::Ui) -> HomeLabel {
 }
 
 /// The first tab: the Q and "uantick" centred on one line, or the Q alone and
-/// centred in `bare` points when `label` is `None`. Shaped and lit like a
-/// market tab, with no close target. Returns whether it was pressed.
+/// centred in `bare` points when `label` is `None`. No tab shape: a soft glow
+/// sits behind the Q ([`home_glow_strength`]). Returns whether it was pressed.
 fn draw_home_tab(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -380,7 +370,6 @@ fn draw_home_tab(
     drawn: &mut StripDrawn,
 ) -> bool {
     let width = label.as_ref().map_or(bare, |(_, width)| *width);
-    let surface = ui.painter().add(egui::Shape::Noop);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());
     response.widget_info(|| {
@@ -389,17 +378,36 @@ fn draw_home_tab(
     let response = response.on_hover_text("Home · Ctrl+1");
     let bounds = rect.intersect(ui.clip_rect());
     drawn.home = bounds.is_positive().then_some(bounds);
-    let lit = (response.hovered(), response.has_focus());
-    paint_tab_surface(ui, palette, surface, rect, active, lit, false);
+    if response.has_focus() {
+        let ring = (2.0_f32, palette.accent());
+        ui.painter()
+            .rect_stroke(rect.shrink(1.0), CHIP_ROUNDING_PX, ring);
+    }
     let q_x = match label {
         Some(_) => rect.left() + HOME_PADDING_LEFT_PX + HOME_Q.x / 2.0,
         None => rect.center().x,
     };
     let q = egui::Rect::from_center_size(egui::pos2(q_x, rect.center().y), HOME_Q);
     let q = ui.painter().round_rect_to_pixels(q); // One grid for the Q and its text.
-    let dark = palette.resolved.dark;
-    let mark = mark_box(q, dark, label.is_some(), ui.ctx().pixels_per_point());
-    crate::surfaces::home::paint_logo(ui, mark, crate::surfaces::home::Logo::mark(dark));
+    if let Some(strength) = home_glow_strength(active, response.hovered()) {
+        let (color, glow) = (*palette.get(Token::HomeGlow), glow_mesh());
+        let vertex = |&([x, y], shade): &([f32; 2], f32)| egui::epaint::Vertex {
+            pos: q.center() + egui::vec2(x, y),
+            uv: egui::epaint::WHITE_UV,
+            color: color.gamma_multiply(shade * strength),
+        };
+        let vertices = glow.vertices.iter().map(vertex).collect();
+        let (indices, mesh) = (glow.indices.clone(), egui::Mesh::default());
+        // Under the Q, clipped from the window's corner: `with_clip_rect` only narrows.
+        let mut painter = ui.painter().clone();
+        painter.set_clip_rect(ui.clip_rect().with_min_x(0.0).with_min_y(0.0));
+        painter.add(egui::Mesh {
+            indices,
+            vertices,
+            ..mesh
+        });
+    }
+    crate::surfaces::home::paint_logo(ui, q, crate::surfaces::home::Logo::Q);
     if let Some(([uan, tick], _)) = label {
         let mut x = q.right() + HOME_LOGO_GAP_PX;
         // The wordmark never dims: lit or not, "uan" stays in primary ink.
@@ -415,18 +423,8 @@ fn draw_home_tab(
     response.clicked()
 }
 
-/// Where the Q is drawn inside its layout box `q`: beside the wordmark, the
-/// Light theme's edged Q moves [`LIGHT_Q_SHIFT_PT`] toward it, by whole
-/// physical pixels; the text keeps its place. Otherwise `q` itself.
-pub(crate) fn mark_box(q: egui::Rect, dark: bool, labelled: bool, ppp: f32) -> egui::Rect {
-    if dark || !labelled {
-        return q;
-    }
-    q.translate(egui::vec2((LIGHT_Q_SHIFT_PT * ppp).round() / ppp, 0.0))
-}
-
-/// A lit tab's sheet, or the separator an unlit one ends with when
-/// `separated`. Returns whether the tab is lit.
+/// A market tab's [`tab_layers`], its base past the strip's floor, where the
+/// clip opens it onto the toolbar. Returns whether the tab is lit.
 fn paint_tab_surface(
     ui: &egui::Ui,
     palette: &Palette,
@@ -434,34 +432,32 @@ fn paint_tab_surface(
     bounds: egui::Rect,
     selected: bool,
     (hovered, focused): (bool, bool),
-    separated: bool,
 ) -> bool {
-    let painter = ui.painter();
-    let mut rect = bounds;
-    rect.max.y = ui.max_rect().bottom();
-    let fill = quantick_appearance::tab_strip::tab_fill(selected, hovered || focused);
-    if let Some(fill) = fill {
-        // Only the active tab is outlined, and its outline runs past the
-        // strip's floor, where the clip drops the bottom edge: the tab and the
-        // toolbar read as one sheet.
-        let outline = egui::Stroke::new(f32::from(u8::from(selected)), palette.border());
+    let rect = bounds.with_max_y(ui.max_rect().bottom());
+    let sheet = rect.with_max_y(rect.bottom() + 2.0);
+    let layer = |layer: quantick_appearance::tab_strip::TabLayer| {
+        let radius = CHIP_ROUNDING_PX - layer.corner_inset;
         let rounding = egui::Rounding {
-            nw: CHIP_ROUNDING_PX,
-            ne: CHIP_ROUNDING_PX,
+            nw: radius,
+            ne: radius,
             ..Default::default()
         };
-        let sheet = rect.with_max_y(rect.bottom() + 2.0);
-        let shape = egui::epaint::RectShape::new(sheet, rounding, *palette.get(fill), outline);
-        painter.set(slot, shape);
-    } else if separated {
-        let top = egui::pos2(rect.right(), rect.top() + 7.0);
-        let stroke = egui::Stroke::new(1.0_f32, palette.seam_line());
-        let line = [top, egui::pos2(rect.right(), rect.bottom() - 7.0)];
-        painter.set(slot, egui::Shape::line_segment(line, stroke));
-    }
+        let fill = *palette.get(layer.fill);
+        let edge = layer
+            .outline
+            .map(|token| egui::Stroke::new(1.0_f32, *palette.get(token)));
+        let at = sheet.with_min_y(sheet.top() + layer.inset);
+        let at = layer
+            .height
+            .map_or(at, |height| at.with_max_y(at.top() + height));
+        egui::epaint::RectShape::new(at, rounding, fill, edge.unwrap_or_default()).into()
+    };
+    let shapes = tab_layers(selected).into_iter().map(layer);
+    ui.painter().set(slot, egui::Shape::Vec(shapes.collect()));
     if focused {
-        let ring = egui::Stroke::new(2.0_f32, palette.accent());
-        painter.rect_stroke(rect.shrink(1.0), CHIP_ROUNDING_PX, ring);
+        let ring = (2.0_f32, palette.accent());
+        ui.painter()
+            .rect_stroke(rect.shrink(1.0), CHIP_ROUNDING_PX, ring);
     }
-    fill.is_some()
+    selected || hovered || focused
 }
