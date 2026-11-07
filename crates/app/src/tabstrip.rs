@@ -399,7 +399,9 @@ fn draw_home_tab(
         };
         let vertices = glow.vertices.iter().map(vertex).collect();
         let (indices, mesh) = (glow.indices.clone(), egui::Mesh::default());
-        ui.painter().add(egui::Mesh {
+        // The halo spans the strip's full height, as the window's top edge does.
+        let clip = ui.clip_rect().with_min_y(ui.ctx().screen_rect().top());
+        ui.painter().with_clip_rect(clip).add(egui::Mesh {
             indices,
             vertices,
             ..mesh

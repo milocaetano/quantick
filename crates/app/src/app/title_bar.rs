@@ -170,7 +170,9 @@ pub(crate) fn draw(
                     egui::vec2(tab_width, crate::tabstrip::CHIP_HEIGHT),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
+                        // One point above the tabs, so an idle tab's top edge shows.
+                        let clip = ui.max_rect().with_min_y(ui.max_rect().top() - 1.0);
+                        ui.set_clip_rect(ui.clip_rect().intersect(clip));
                         let surface = &title.surface;
                         let strip = (&mut title.strip, &*root);
                         action = crate::tabstrip::draw(ui, &chips, active, surface, strip);

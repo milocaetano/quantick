@@ -80,8 +80,9 @@ toolbar_sheet = "#171B26"
 tab_idle_fill = "#1B202D"
 tab_idle_outline = "#424B60"
 tab_band = "#3AF0B2"
-# The glow behind the Q while Home is shown: the band's green at 35% at its peak.
-home_glow = "#3AF0B259"
+# The glow behind the Q while Home is shown, in the band's green. egui blends
+# in linear light, so this alpha reads as the mock's ~25% rise at the peak.
+home_glow = "#3AF0B213"
 border = "#2E3648"
 text_primary = "#D2DAE2"
 text_muted = "#96A0AF"

@@ -73,8 +73,9 @@ pub fn glow_falloff(distance: f32) -> f32 {
     (gaussian(distance) - rim) / (1.0 - rim)
 }
 
-/// The Home glow's diameter in points.
-pub const HOME_GLOW_DIAMETER_PT: f32 = 28.0;
+/// The Home glow's diameter in points: a ~28 pt light, blurred, as the
+/// approved mock draws it (about 55 pt of visible halo).
+pub const HOME_GLOW_DIAMETER_PT: f32 = 72.0;
 
 /// The Home glow as triangles around its centre: each vertex's offset in
 /// points and its strength (0 to 1), and the triangles' vertex indices.
