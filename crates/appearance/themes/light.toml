@@ -70,8 +70,8 @@ inset = "#E6E3DF"
 control = "#DEDBD7"
 # Existing opacity renders the reference #F2F3F3 over the white canvas.
 chart_grid = "#BABBBB"
-# The title strip and its wordmark paint [title_strip]'s values; these two
-# are Light's own, for surfaces outside the strip.
+# Overridden by [title_strip] for the bundled strip and wordmark; kept so a
+# Light theme without that table, or one derived from this file, has its own.
 tab_strip = "#D9D6D2"
 brand = "#12C68C"
 # Darker than draw_violet so a replaying idle tab keeps 4.5:1 on its warm grey.
@@ -270,7 +270,6 @@ ink = ["#96A0AF", "#96A0AF", "#D2DAE2", "#D2DAE2", "#0E121A", "#0E121A"]
 tab_strip = "#252F37"
 text_primary = "#D2DAE2"
 text_muted = "#96A0AF"
-text_faint = "#6E7887"
 brand = "#3AF0B2"
 warn = "#FF6347"
 amber = "#F0B90B"

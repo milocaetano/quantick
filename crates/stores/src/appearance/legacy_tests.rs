@@ -212,4 +212,18 @@ fn light_choice_before_the_title_strip_migrates_to_current_light() {
     assert_eq!(store.builtin(), Some(Builtin::Light));
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     assert_eq!(store.resolved().title_strip(), light.title_strip());
+    for token in [Token::TabIdleFill, Token::ToolbarSheet, Token::TabBand] {
+        assert_eq!(
+            store.resolved().color(token),
+            light.color(token),
+            "{}",
+            token.key()
+        );
+    }
+    let stale = ResolvedTheme::parse(old).unwrap();
+    assert_ne!(
+        stale.title_strip(),
+        light.title_strip(),
+        "the old file has no table"
+    );
 }

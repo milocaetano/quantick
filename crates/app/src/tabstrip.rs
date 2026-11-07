@@ -134,7 +134,6 @@ pub(crate) fn draw(
         let chip = &chips[index];
         ui.push_id(("market_tab", chip.id), |ui| {
             let selected = active_chip == Some(index);
-            let face = root; // Market tabs wear the theme's own inks.
             let surface = ui.painter().add(egui::Shape::Noop);
             ui.spacing_mut().item_spacing.x = 0.0;
             let (body, response) = ui.allocate_exact_size(
@@ -173,14 +172,14 @@ pub(crate) fn draw(
                 if hot {
                     let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);
                     ui.painter()
-                        .circle_filled(center, radius, face.bare_hover());
+                        .circle_filled(center, radius, root.bare_hover());
                 }
                 let glyph = egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX);
                 let close = ui
                     .add_enabled_ui(closable, |ui| {
                         ui.add_visible(
                             slot == CloseSlot::Close,
-                            egui::Button::new(glyph.color(*face.get(tab_ink(hot))))
+                            egui::Button::new(glyph.color(*root.get(tab_ink(hot))))
                                 .frame(false)
                                 .min_size(egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT)),
                         )
@@ -203,7 +202,7 @@ pub(crate) fn draw(
                 let pointer = (hovered, response.has_focus() || close.has_focus());
                 let lit = paint_tab_surface(ui, root, surface, sheet, selected, pointer);
                 // The face reads lit whenever its sheet is: body, × or focus.
-                paint_chip_face(ui, face, chip, body, lit);
+                paint_chip_face(ui, root, chip, body, lit);
                 if close.clicked() {
                     action = Some(TabAction::Close(index));
                 }
@@ -451,9 +450,7 @@ fn paint_tab_surface(
             .map_or(at, |height| at.with_max_y(at.top() + height));
         egui::epaint::RectShape::new(at, rounding, fill, edge.unwrap_or_default()).into()
     };
-    let shapes = tab_layers(selected, hovered || focused)
-        .into_iter()
-        .map(layer);
+    let shapes = tab_layers(selected).into_iter().map(layer);
     ui.painter().set(slot, egui::Shape::Vec(shapes.collect()));
     if focused {
         let ring = (2.0_f32, palette.accent());

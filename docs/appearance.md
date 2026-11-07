@@ -112,8 +112,8 @@ The optional `[title_strip.colors]` table paints the window's title strip (logo,
 `+`, menu and window buttons) in colours other than the root's; missing fields
 inherit the resolved root. Bundled Light uses it for the order-flow slate with
 Dark's inks, so its logo renders exactly as Dark's. Market tabs keep the root's
-colours and inks. A Light document without the table paints its strip as
-bundled Light does; a Dark document paints its own.
+colours and inks. A document without the table paints its strip in its own
+root colours.
 
 Typography tables use `family = "proportional"` or `"monospace"` and `size` in
 logical pixels, from 6 through 72 inclusive. Each property can be omitted.

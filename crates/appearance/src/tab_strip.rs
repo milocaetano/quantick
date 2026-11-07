@@ -139,10 +139,11 @@ pub struct TabLayer {
 
 /// A market tab's layers, in the theme's own palette: the active one an accent
 /// band under the toolbar sheet, inset by [`TAB_BAND_PT`] so the band shows
-/// along its top; an idle one an edged block, washed while hovered or focused.
-/// Light's idle edge is transparent: its warm grey block needs none.
+/// along its top; an idle one an edged block. Light's idle edge is
+/// transparent: its warm grey block needs none. A hovered or focused tab lifts
+/// its ink, not its block, so its text keeps the block's contrast.
 #[must_use]
-pub fn tab_layers(selected: bool, lit: bool) -> Vec<TabLayer> {
+pub fn tab_layers(selected: bool) -> Vec<TabLayer> {
     let layer = |inset, fill, outline| TabLayer {
         inset,
         corner_inset: inset,
@@ -151,17 +152,15 @@ pub fn tab_layers(selected: bool, lit: bool) -> Vec<TabLayer> {
         height: None,
     };
     if selected {
-        // The band only reaches below the corners: the sheet's anti-aliased
-        // sides never sit over it.
+        // The band ends where the sheet's corners do: the sheet's
+        // anti-aliased straight sides never sit over it.
         let band = TabLayer {
-            height: Some(TAB_BAND_PT + TAB_CORNER_PT),
+            height: Some(TAB_CORNER_PT),
             ..layer(0.0, Token::TabBand, None)
         };
         return vec![band, layer(TAB_BAND_PT, tab_fill(true), None)];
     }
-    let block = layer(0.0, tab_fill(false), Some(Token::TabIdleOutline));
-    let wash = layer(0.0, Token::BareHover, None);
-    if lit { vec![block, wash] } else { vec![block] }
+    vec![layer(0.0, tab_fill(false), Some(Token::TabIdleOutline))]
 }
 
 /// A market tab's text and glyphs: its symbol and the ×.
@@ -262,21 +261,19 @@ mod tests {
 
     #[test]
     fn the_active_tab_is_a_band_under_the_sheet_and_an_idle_one_an_edged_block() {
-        let active = tab_layers(true, false);
+        let active = tab_layers(true);
         assert_eq!(
             active.iter().map(|l| l.fill).collect::<Vec<_>>(),
             [Token::TabBand, Token::ToolbarSheet]
         );
         assert_eq!(active[1].inset, TAB_BAND_PT);
         assert!(active.iter().all(|layer| layer.outline.is_none()));
-        assert_eq!(active[0].height, Some(TAB_BAND_PT + TAB_CORNER_PT));
+        assert_eq!(active[0].height, Some(TAB_CORNER_PT));
         assert_eq!(active[1].height, None);
-        assert_eq!(tab_layers(true, true), active, "hover does not change it");
-        let idle = tab_layers(false, false);
+        let idle = tab_layers(false);
         assert_eq!(idle.len(), 1);
         assert_eq!(idle[0].outline, Some(Token::TabIdleOutline));
         assert_eq!(idle[0].fill, Token::TabIdleFill);
-        assert_eq!(tab_layers(false, true)[1].fill, Token::BareHover);
     }
 
     #[test]
