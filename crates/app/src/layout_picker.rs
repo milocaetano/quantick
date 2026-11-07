@@ -16,13 +16,19 @@ use crate::canvas_layout::{LAYOUT_PRESETS, LayoutPreset, PaneKind};
 use crate::theme;
 use crate::widgets::{CORNER_RADIUS, IconButton, TOOLBAR_ICON};
 
-/// The button's own miniature of the layout on screen, in pixels: the
-/// popover's thumbnail at toolbar scale, inside the 28 px hit target.
-const FACE_THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(20.0, 14.0);
+/// The button's own miniature of the layout on screen, in pixels.
+const FACE_THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(38.0, 26.0);
+/// The button's hit target: the miniature in a ring of the hover fill.
+pub(crate) const FACE_HIT_SIZE: egui::Vec2 =
+    egui::vec2(quantick_chart::toolbar_collapse::W_PICKER, 32.0);
 const _: () = assert!(
-    FACE_THUMBNAIL_SIZE.x < TOOLBAR_ICON.hit && FACE_THUMBNAIL_SIZE.y < TOOLBAR_ICON.hit,
+    FACE_THUMBNAIL_SIZE.x < FACE_HIT_SIZE.x
+        && FACE_THUMBNAIL_SIZE.y < FACE_HIT_SIZE.y
+        && TOOLBAR_ICON.hit <= FACE_HIT_SIZE.y,
     "the miniature must sit inside the button's hit target"
 );
+/// How far the miniature's frame sits inside the hit target's left edge.
+pub(crate) const FACE_INSET_PX: f32 = (FACE_HIT_SIZE.x - FACE_THUMBNAIL_SIZE.x) / 2.0;
 /// Width of the popover, in pixels.
 const POPOVER_WIDTH_PX: f32 = 268.0;
 /// One preset cell: the thumbnail plus its label.
@@ -92,6 +98,7 @@ pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static Layout
         icons::LAYOUT
     };
     let button = IconButton::new(glyph, TOOLBAR_ICON)
+        .hit_size(FACE_HIT_SIZE)
         .active(*model.open)
         .hover_text("chart layout (Ctrl+Shift+1…)")
         .show(ui);
