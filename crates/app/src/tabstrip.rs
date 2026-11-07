@@ -390,7 +390,6 @@ fn draw_home_tab(
     let q = egui::Rect::from_center_size(egui::pos2(q_x, rect.center().y), HOME_Q);
     let q = ui.painter().round_rect_to_pixels(q); // One grid for the Q and its text.
     if active {
-        // Under the Q: `home_glow` (premultiplied, its alpha the peak).
         let (color, glow) = (*palette.get(Token::HomeGlow), glow_mesh());
         let vertex = |&([x, y], shade): &([f32; 2], f32)| egui::epaint::Vertex {
             pos: q.center() + egui::vec2(x, y),
@@ -399,9 +398,10 @@ fn draw_home_tab(
         };
         let vertices = glow.vertices.iter().map(vertex).collect();
         let (indices, mesh) = (glow.indices.clone(), egui::Mesh::default());
-        // The halo spans the strip's full height, as the window's top edge does.
-        let clip = ui.clip_rect().with_min_y(ui.ctx().screen_rect().top());
-        ui.painter().with_clip_rect(clip).add(egui::Mesh {
+        // Under the Q, clipped from the window's corner: `with_clip_rect` only narrows.
+        let mut painter = ui.painter().clone();
+        painter.set_clip_rect(ui.clip_rect().with_min_x(0.0).with_min_y(0.0));
+        painter.add(egui::Mesh {
             indices,
             vertices,
             ..mesh
