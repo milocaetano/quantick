@@ -465,3 +465,69 @@ fn a_page_boundary_inside_a_folded_bucket_leaves_that_bucket_out() {
     assert_eq!(shell.prefixes[0].len(), 333, "the partial bucket waits");
     assert_eq!(shell.prefixes[0][0].open_time % (3 * two_hours), 0);
 }
+
+#[test]
+fn a_1m_pane_and_a_pane_reading_no_candles_ask_no_seam_minutes() {
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[Some(MINUTE), Some(90_000)]);
+    // Inside the 1m pane's own minute; 80 s into the 90 s bucket.
+    let first_trade = EDGE + 7 * MINUTE + 20_000;
+    for pane in &mut shell.panes {
+        pane.first_print_open_ms = Some(first_trade);
+    }
+    shell.poll(&mut session);
+    shell.reply(
+        &mut session,
+        page(EDGE + 7 * MINUTE, CANDLE_PAGE_BARS, MINUTE),
+    );
+    shell.poll(&mut session);
+    shell.poll(&mut session);
+    assert_eq!(
+        shell.asks().len(),
+        1,
+        "the minutes held already lead the seam"
+    );
+    // The 90 s seam bar reads the 1m series held; the 20 s of the trade's
+    // own minute before it no candle speaks for.
+    let (lead, covers_seam) = &shell.leads[1];
+    assert_eq!(lead.as_ref().map(|bar| bar.trade_count), Some(1));
+    assert!(!covers_seam);
+}
+
+#[test]
+fn a_weekly_seam_bar_reads_the_held_days_and_the_seam_day_minutes() {
+    use quantick_engine::time_bucket::WEEK_MS;
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[Some(DAY_MS)]);
+    // EDGE is a Friday: its week opened four days before.
+    let first_trade = EDGE + 7 * MINUTE;
+    shell.panes[0].first_print_open_ms = Some(first_trade);
+    shell.poll(&mut session);
+    shell.reply(&mut session, page(EDGE, 900, DAY_MS));
+    shell.poll(&mut session);
+    assert_eq!(shell.asks()[1].1, CandlePurpose::SeamMinutes);
+    shell.reply(&mut session, page(first_trade, 7, MINUTE));
+    shell.set_interval(&mut session, 0, WEEK_MS);
+    shell.poll(&mut session);
+    assert_eq!(shell.asks()[2].0, CandleSeries::opening_ask(WEEK_MS));
+    shell.reply(&mut session, page(EDGE - 4 * DAY_MS, 100, WEEK_MS));
+    shell.poll(&mut session);
+    assert_eq!(shell.asks().len(), 3, "the seam day's minutes are held");
+    let (lead, covers_seam) = &shell.leads[0];
+    assert!(covers_seam, "four whole days and seven minutes");
+    assert_eq!(lead.as_ref().map(|bar| bar.trade_count), Some(4 + 7));
+}
+
+#[test]
+fn a_weekly_seam_bar_without_days_asks_no_minutes_and_stays_partial() {
+    use quantick_engine::time_bucket::WEEK_MS;
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[Some(WEEK_MS)]);
+    shell.panes[0].first_print_open_ms = Some(EDGE + 7 * MINUTE);
+    shell.poll(&mut session);
+    shell.reply(&mut session, page(EDGE - 4 * DAY_MS, 100, WEEK_MS));
+    shell.poll(&mut session);
+    shell.poll(&mut session);
+    assert_eq!(shell.asks().len(), 1, "a week of minutes is not asked for");
+    assert_eq!(shell.leads[0], (None, false), "labelled partial");
+}

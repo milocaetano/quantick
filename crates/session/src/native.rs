@@ -14,10 +14,11 @@ use std::collections::BTreeMap;
 use quantick_engine::Bar;
 use quantick_engine::time_bucket::DAY_MS;
 use quantick_sources::candle_base::CandleAsk;
-use quantick_sources::candle_series::seam::{SeamMinutes, reads_seam_minutes, seam_stretch};
+use quantick_sources::candle_series::seam::{SeamMinutes, seam_stretch};
 use quantick_sources::candle_series::{CandleSeries, SeriesStatus, native_series_for};
 use quantick_sources::candles::{
-    OlderCandles, fold, stamp_on_buckets, starts_inside_bucket, trim_borrowed_to_seam, trim_to_seam,
+    Minutes, OlderCandles, fold, seam_lead, seam_minutes_wanted, stamp_on_buckets,
+    starts_inside_bucket, trim_borrowed_to_seam, trim_to_seam,
 };
 use quantick_sources::config::FeedCapabilities;
 use quantick_sources::ohlcv::{OHLCV_BASE_INTERVAL_MS, OhlcvSlice};
@@ -92,10 +93,15 @@ impl NativeCandles {
         if let Some((key, _)) = opening {
             return Some((CandleSeries::opening_ask(key), CandlePurpose::Opening));
         }
-        let seams = panes
-            .iter()
-            .filter_map(|pane| Some((pane.first_print_open_ms?, pane.interval_ms?)));
-        if let Some(ask) = self.seam.ask(seam_stretch(seams)) {
+        // Where each pane reading candles lacks minutes for its seam lead.
+        let lacks = panes.iter().filter_map(|pane| {
+            let (interval_ms, first_ms) = pane.interval_ms.zip(pane.first_print_open_ms)?;
+            native_series_for(interval_ms)?;
+            let (days, minutes) = self.seam_inputs(interval_ms)?;
+            let from_ms = seam_minutes_wanted(days, minutes, first_ms, interval_ms)?;
+            Some((from_ms, first_ms))
+        });
+        if let Some(ask) = self.seam.ask(seam_stretch(lacks)) {
             return Some((ask, CandlePurpose::SeamMinutes));
         }
         wanted().find_map(|(key, first_visible)| {
@@ -289,14 +295,14 @@ impl NativeCandles {
     pub(crate) fn install(&self, step: &mut Step<'_>, lead_in: bool) {
         for (index, pane) in step.tab.panes.iter().enumerate() {
             let bars = self.prefix_for(pane, lead_in);
-            // The bucket of the first trade, before it: the seam's minutes.
-            let seam = pane
-                .interval_ms
-                .zip(pane.first_print_open_ms)
-                .filter(|&(interval_ms, _)| reads_seam_minutes(interval_ms));
-            let effect = match seam {
-                Some((interval_ms, first_print_ms)) => {
-                    let outcome = self.seam.lead(first_print_ms, interval_ms);
+            // The bucket of the first trade, before it: the seam's minutes,
+            // and the days before the seam day on a pane longer than a day.
+            // Without days held that pane gets no lead: labelled partial.
+            let seam = pane.interval_ms.zip(pane.first_print_open_ms);
+            let inputs = seam.and_then(|(interval_ms, _)| self.seam_inputs(interval_ms));
+            let effect = match seam.zip(inputs) {
+                Some(((interval_ms, first_print_ms), (days, minutes))) => {
+                    let outcome = seam_lead(days, minutes, first_print_ms, interval_ms);
                     let covers_seam = outcome.covers_seam();
                     let token = outcome.token();
                     Effect::InstallPrefix {
@@ -321,6 +327,24 @@ impl NativeCandles {
             };
             step.effects.push(effect);
         }
+    }
+
+    /// The days and minutes the seam lead of a pane cut at `interval_ms`
+    /// reads: minutes alone up to a day — the seam's own, else the 1m series
+    /// held — and longer, the daily series before the seam day as well.
+    /// `None` longer than a day with no days held: weeks of minutes are not
+    /// asked for.
+    fn seam_inputs(&self, interval_ms: i64) -> Option<(Option<&[Bar]>, Option<Minutes<'_>>)> {
+        let held = |key| {
+            let bars = self.series.get(&key).map(CandleSeries::bars)?;
+            (!bars.is_empty()).then_some(bars)
+        };
+        let minutes =
+            (self.seam.minutes()).or_else(|| held(OHLCV_BASE_INTERVAL_MS).map(Minutes::candles));
+        if interval_ms <= DAY_MS {
+            return Some((None, minutes));
+        }
+        Some((Some(held(DAY_MS)?), minutes))
     }
 
     fn prefix_for(&self, pane: &PaneView<'_>, lead_in: bool) -> Vec<Bar> {
