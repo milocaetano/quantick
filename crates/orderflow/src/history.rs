@@ -526,6 +526,7 @@ impl LiquidityHistory {
             + self.aggressions.len() * size_of::<Aggression>()
             + self.scale.approximate_bytes()
             + self.summary_scale.approximate_bytes()
+            + self.bbo.approximate_bytes()
     }
 
     /// The book's best bid and ask over time, one step per change.

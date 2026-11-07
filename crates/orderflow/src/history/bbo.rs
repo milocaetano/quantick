@@ -46,6 +46,19 @@ impl BboTrail {
             .take_while(move |step| step.start_ms < until_ms)
     }
 
+    /// The step in force at `at_ms`: the last one starting at or before it.
+    #[must_use]
+    pub fn step_at(&self, at_ms: i64) -> Option<&BboStep> {
+        let after = self.steps.partition_point(|step| step.start_ms <= at_ms);
+        after.checked_sub(1).and_then(|index| self.steps.get(index))
+    }
+
+    /// Bytes the retained steps hold, for the history's byte budget.
+    #[must_use]
+    pub fn approximate_bytes(&self) -> usize {
+        self.steps.len() * std::mem::size_of::<BboStep>()
+    }
+
     /// Record `book`'s top at `timestamp_ms` under `generation`, when it
     /// differs from the last step. A change at the last step's own instant
     /// replaces it, and one that restores the step before it removes it.

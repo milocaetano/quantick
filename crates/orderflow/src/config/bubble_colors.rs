@@ -4,6 +4,7 @@
 //! is headless, the colour type is the painter's.
 
 use quantick_engine::Side;
+use quantick_orderbook::BookSide;
 
 use super::BubbleStyle;
 use super::crown::CROWN_WHITE_MIX;
@@ -64,6 +65,15 @@ impl<C: Copy> BubbleColors<C> {
         match side {
             Side::Buy => self.buy,
             Side::Sell => self.sell,
+        }
+    }
+
+    /// The colour of the resting `side`: a bid in the buy colour, an ask in
+    /// the sell colour, as the prints that would hit them.
+    pub fn for_resting(self, side: BookSide) -> C {
+        match side {
+            BookSide::Bid => self.buy,
+            BookSide::Ask => self.sell,
         }
     }
 

@@ -65,3 +65,12 @@ pub(crate) fn layer_facts(config: &HeatmapConfig) -> LayerFacts {
 pub(crate) fn native_tape_block(config: &HeatmapConfig) -> Option<LayerBlock> {
     LayerState::blocked(ChartLayer::NativeTape, layer_facts(config))
 }
+/// Why the best bid/ask lines switch cannot move for `config`.
+pub(crate) fn bbo_lines_block(config: &HeatmapConfig) -> Option<LayerBlock> {
+    LayerState::blocked(ChartLayer::TapeBboLines, layer_facts(config))
+}
+/// Whether the best bid/ask lines draw for `config`, as the layer call reads back.
+pub(crate) fn bbo_lines_drawn(config: &HeatmapConfig) -> bool {
+    let layer = ChartLayer::TapeBboLines;
+    LayerState::effective(layer, config.live_lane.bbo_lines, layer_facts(config))
+}

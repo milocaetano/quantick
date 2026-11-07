@@ -176,6 +176,8 @@ pub(super) struct LiveLaneSection<'a> {
     pub(super) volume_dots: bool,
     /// Why the native tape layer cannot move, which locks its box too.
     pub(super) native_block: Option<quantick_layers::LayerBlock>,
+    /// Why the best bid/ask lines cannot move, which locks their box.
+    pub(super) bbo_block: Option<quantick_layers::LayerBlock>,
 }
 
 impl LiveLaneSection<'_> {
@@ -188,6 +190,7 @@ impl LiveLaneSection<'_> {
             inherited_cluster_ms: inherited,
             volume_dots,
             native_block,
+            bbo_block,
         } = self;
         // The layer's second door: shut, with its reason, where the call refuses.
         let mut native = lane.native();
@@ -208,8 +211,10 @@ impl LiveLaneSection<'_> {
         {
             lane.set_tape_only(tape_only);
         }
-        ui.checkbox(&mut lane.bbo_lines, "Best bid/ask lines")
-            .on_hover_text(ChartLayer::TapeBboLines.hint());
+        let bbo_box = egui::Checkbox::new(&mut lane.bbo_lines, "Best bid/ask lines");
+        ui.add_enabled(bbo_block.is_none(), bbo_box)
+            .on_hover_text(ChartLayer::TapeBboLines.hint())
+            .on_disabled_hover_text(bbo_block.map_or("", |block| block.explanation));
         let native_tape = lane.native() && volume_dots;
         let mut lane_set = false;
         egui::CollapsingHeader::new("live lane")

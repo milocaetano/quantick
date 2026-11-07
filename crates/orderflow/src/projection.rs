@@ -43,7 +43,9 @@ mod tape_reuse;
 mod tape_seal;
 mod tiers;
 
-pub use bbo_lines::{BboLine, BboPath, bbo_lines, project_bbo_paths};
+pub use bbo_lines::{
+    BboLine, BboPath, StepPoint, bbo_lines, decimate_columns, past_bbo_lines, project_bbo_paths,
+};
 pub use candle_dots::{
     CandleDot, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
     CandleFootprintSource, CandleGroupMemory, project_candle_dots,
@@ -146,7 +148,9 @@ pub fn project_with_dots(
 ) -> HeatmapProjection {
     let settled = project_settled(history, timeline, prices, dots);
     let live = project_live(history, timeline, prices, &settled, dots);
-    settled.with_live(live, history.config())
+    let mut frame = settled.with_live(live, history.config());
+    frame.bbo_lines = Arc::new(project_bbo_paths(history, timeline, prices));
+    frame
 }
 
 /// Build the half of the frame that is finished.
@@ -586,7 +590,6 @@ pub fn project_live_folded(
         settled.liquidity_reference,
         fold,
     );
-    let bbo_lines = project_bbo_paths(history, timeline, prices);
     // No boundary means no bar is represented at all, so there is no live half
     // to draw — and no reason to walk the retained tape looking for one.
     //
@@ -599,7 +602,6 @@ pub fn project_live_folded(
             cells,
             dropped_cells,
             current_book,
-            bbo_lines,
             ..LiveMarks::default()
         };
     };
@@ -748,7 +750,6 @@ pub fn project_live_folded(
         cells,
         dropped_cells,
         current_book,
-        bbo_lines,
     }
 }
 

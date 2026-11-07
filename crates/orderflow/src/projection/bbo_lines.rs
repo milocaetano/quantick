@@ -4,9 +4,9 @@
 //! A line holds its price until the top moves, then steps straight up or
 //! down to the new one. It breaks wherever there is no top to draw: a gap, a
 //! new generation, an empty side. The stretch the live book is carried past
-//! its last confirmation ([`BookCarry`]) is its own line, flagged
-//! [`carried`](BboPath::carried) so the painter dims it as it dims the
-//! carried bands.
+//! its last confirmation ([`BookCarry`](super::BookCarry)) is its own line,
+//! flagged [`carried`](BboLine::carried) so the painter dims it as it dims
+//! the carried bands.
 
 use rust_decimal::Decimal;
 
@@ -15,35 +15,27 @@ use super::model::PriceWindow;
 use crate::history::{BboStep, BboTrail, LiquidityHistory, RestingSide};
 use crate::timeline::BarTimeline;
 
-/// A step vertex: `(time_ms, price)`.
-type StepPoint = (i64, Decimal);
+/// A step vertex in market terms: `(time_ms, price)`.
+pub type StepPoint = (i64, Decimal);
 
-/// One unbroken stretch of one side's best price, in market time.
+/// One unbroken stretch of one side's best price, its vertices `P`: a
+/// horizontal then a vertical leg per change of the price.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BboLine {
+pub struct BboLine<P> {
     /// Bid for the best bid, ask for the best ask.
     pub side: RestingSide,
     /// Past the last confirmation, carried to the live edge.
     pub carried: bool,
-    /// Step vertices: `(time_ms, price)`, a horizontal then a vertical leg
-    /// per change of the price.
-    pub points: Vec<(i64, Decimal)>,
+    /// The vertices, oldest first.
+    pub points: Vec<P>,
 }
 
 /// A [`BboLine`] placed on the lane: normalized `[x, y]` vertices, `y`
 /// outside `[0, 1]` where the price is off the window (the painter clips).
-#[derive(Debug, Clone, PartialEq)]
-pub struct BboPath {
-    /// Bid for the best bid, ask for the best ask.
-    pub side: RestingSide,
-    /// Past the last confirmation, carried to the live edge.
-    pub carried: bool,
-    /// Normalized `[x, y]` vertices.
-    pub points: Vec<[f64; 2]>,
-}
+pub type BboPath = BboLine<[f64; 2]>;
 
-impl BboPath {
-    /// The share of its side's colour the path is drawn at: a carried line
+impl<P> BboLine<P> {
+    /// The share of its side's colour the line is drawn at: a carried line
     /// as faint as a carried band ([`CARRIED_BOOK_ALPHA`]).
     #[must_use]
     pub fn alpha(&self) -> f32 {
@@ -53,24 +45,67 @@ impl BboPath {
             1.0
         }
     }
+
+    /// The same line on other vertices; `None` when one does not map.
+    pub fn map<Q>(&self, point: impl FnMut(&P) -> Option<Q>) -> Option<BboLine<Q>> {
+        Some(BboLine {
+            side: self.side,
+            carried: self.carried,
+            points: self.points.iter().map(point).collect::<Option<_>>()?,
+        })
+    }
+}
+
+impl BboLine<StepPoint> {
+    /// The line cut to `[from_ms, until_ms]`: a horizontal leg crossing an
+    /// edge ends on it; `None` when nothing of it is left to draw.
+    #[must_use]
+    pub fn clipped(&self, from_ms: i64, until_ms: i64) -> Option<Self> {
+        let mut points: Vec<StepPoint> = Vec::new();
+        for leg in self.points.windows(2) {
+            let ((t0, p0), (t1, p1)) = (leg[0], leg[1]);
+            if t1 < from_ms || t0 > until_ms {
+                continue;
+            }
+            for point in [(t0.max(from_ms), p0), (t1.min(until_ms), p1)] {
+                if points.last() != Some(&point) {
+                    points.push(point);
+                }
+            }
+        }
+        spans_time(&points).then_some(Self {
+            side: self.side,
+            carried: self.carried,
+            points,
+        })
+    }
+}
+
+/// Whether step vertices cover any time at all.
+fn spans_time(points: &[StepPoint]) -> bool {
+    matches!((points.first(), points.last()), (Some(first), Some(last)) if first.0 < last.0)
 }
 
 /// The stepped best-bid and best-ask lines over `[from_ms, observed_until_ms)`,
-/// then, when `carried_until_ms` is past it, the top held at
-/// `observed_until_ms` carried out to there. Bid lines first, then ask, each
-/// in time order with its carried line last.
+/// then, when `carried_until_ms` is past it, the top in force at
+/// `observed_until_ms` — a step starting exactly there included — carried
+/// out to there. Bid lines first, then ask, each in time order with its
+/// carried line last.
 #[must_use]
 pub fn bbo_lines(
     trail: &BboTrail,
     from_ms: i64,
     observed_until_ms: i64,
     carried_until_ms: Option<i64>,
-) -> Vec<BboLine> {
+) -> Vec<BboLine<StepPoint>> {
     let mut lines = Vec::new();
-    if observed_until_ms <= from_ms {
+    if observed_until_ms < from_ms {
         return lines;
     }
     let steps: Vec<&BboStep> = trail.steps_between(from_ms, observed_until_ms).collect();
+    let held = trail
+        .step_at(observed_until_ms)
+        .filter(|step| step.generation.is_some());
     for side in [RestingSide::Bid, RestingSide::Ask] {
         let price = |step: &BboStep| match side {
             RestingSide::Bid => step.bid,
@@ -106,11 +141,7 @@ pub fn bbo_lines(
             carried: false,
             points,
         }));
-        let held = steps
-            .last()
-            .filter(|step| step.generation.is_some())
-            .and_then(|step| price(step));
-        if let (Some(until_ms), Some(value)) = (carried_until_ms, held)
+        if let (Some(until_ms), Some(value)) = (carried_until_ms, held.and_then(price))
             && until_ms > observed_until_ms
         {
             lines.push(BboLine {
@@ -120,13 +151,13 @@ pub fn bbo_lines(
             });
         }
     }
-    lines.retain(|line| line.points.len() >= 2);
+    lines.retain(|line| spans_time(&line.points));
     lines
 }
 
-/// The lines of the tape on `timeline`, placed in `prices`: observed up to
-/// the book's last confirmation, carried from there to the lane's live edge
-/// while the book is current. Empty while
+/// The lines of the live tape on `timeline`, placed in `prices`: observed up
+/// to the book's last confirmation, carried from there to the lane's live
+/// edge while the book is current. Empty while
 /// [`LiveLaneStyle::bbo_lines`](crate::config::LiveLaneStyle::bbo_lines) is
 /// off, or with no lane.
 #[must_use]
@@ -159,20 +190,68 @@ pub fn project_bbo_paths(
         observed_until_ms,
         carry.map(|carry| carry.until_ms),
     )
-    .into_iter()
+    .iter()
     .filter_map(|line| {
-        let points = line
-            .points
-            .iter()
-            .map(|&(time_ms, price)| Some([x(time_ms)?, prices.y_unclamped(price)?]))
-            .collect::<Option<Vec<_>>>()?;
-        Some(BboPath {
-            side: line.side,
-            carried: line.carried,
-            points,
-        })
+        line.map(|&(time_ms, price)| Some([x(time_ms)?, prices.y_unclamped(price)?]))
     })
     .collect()
+}
+
+/// The lines over `[from_ms, until_ms)` a held tape draws: observed only,
+/// since a past book is never carried. Empty while the switch is off.
+#[must_use]
+pub fn past_bbo_lines(
+    history: &LiquidityHistory,
+    from_ms: i64,
+    until_ms: i64,
+) -> Vec<BboLine<StepPoint>> {
+    let latest_ms = history.latest_book_ms().unwrap_or(until_ms);
+    if !history.config().live_lane.bbo_lines {
+        return Vec::new();
+    }
+    let start_ms = history
+        .retention_start_ms()
+        .map_or(from_ms, |retained| retained.max(from_ms));
+    bbo_lines(history.bbo(), start_ms, until_ms.min(latest_ms), None)
+}
+
+/// `points` — screen `[x, y]`, `x` non-decreasing — cut to what one pixel
+/// column can show: a column holding more than four vertices keeps its
+/// first, its lowest and highest `y` (in the order they came) and its last,
+/// so the step shape survives and the vertex count is bounded by the width.
+#[must_use]
+pub fn decimate_columns(points: impl IntoIterator<Item = [f32; 2]>) -> Vec<[f32; 2]> {
+    let mut kept = Vec::new();
+    let mut column: Vec<[f32; 2]> = Vec::new();
+    for point in points {
+        if column
+            .first()
+            .is_some_and(|first| first[0].floor() != point[0].floor())
+        {
+            keep_column(&mut column, &mut kept);
+        }
+        column.push(point);
+    }
+    keep_column(&mut column, &mut kept);
+    kept.dedup();
+    kept
+}
+
+/// Move one pixel column's vertices into `kept`, at most four of them.
+fn keep_column(column: &mut Vec<[f32; 2]>, kept: &mut Vec<[f32; 2]>) {
+    if column.len() <= 4 {
+        kept.append(column);
+        return;
+    }
+    let by_y = |a: &(usize, &[f32; 2]), b: &(usize, &[f32; 2])| a.1[1].total_cmp(&b.1[1]);
+    let low = column.iter().enumerate().min_by(by_y).map(|(at, _)| at);
+    let high = column.iter().enumerate().max_by(by_y).map(|(at, _)| at);
+    let mut keep = vec![0, column.len() - 1];
+    keep.extend(low.into_iter().chain(high));
+    keep.sort_unstable();
+    keep.dedup();
+    kept.extend(keep.into_iter().map(|at| column[at]));
+    column.clear();
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use crate::timeline::BarTimeline;
 use crate::{LiquidityHistory, LiveEdge};
 use rust_decimal::Decimal;
 
-fn line(side: RestingSide, carried: bool, points: &[(i64, i64)]) -> BboLine {
+fn line(side: RestingSide, carried: bool, points: &[(i64, i64)]) -> BboLine<StepPoint> {
     BboLine {
         side,
         carried,
@@ -182,4 +182,163 @@ fn a_carried_line_is_as_faint_as_a_carried_band() {
     };
     assert_eq!(path(false).alpha(), 1.0);
     assert_eq!(path(true).alpha(), CARRIED_BOOK_ALPHA);
+}
+
+fn level(price: i64) -> quantick_orderbook::BookLevel {
+    quantick_orderbook::BookLevel::new(price.into(), Decimal::ONE).unwrap()
+}
+
+fn snapshot(id: u64, bid: i64, ask: i64) -> quantick_orderbook::BookSnapshot {
+    quantick_orderbook::BookSnapshot::new(
+        id,
+        vec![level(bid)],
+        vec![level(ask), level(ask + 10)],
+        quantick_orderbook::BookCoverage::Full,
+    )
+}
+
+/// Bid 950 / ask 960 from 1,000; the book's last event, at 1,700, pulls
+/// the ask to 970.
+fn ends_on_a_move() -> LiquidityHistory {
+    let mut history = LiquidityHistory::new(crate::HeatmapConfig {
+        enabled: true,
+        price_grouping: Decimal::ONE,
+        ..crate::HeatmapConfig::default()
+    });
+    history
+        .install_snapshot(1_000, 1, snapshot(10, 950, 960))
+        .unwrap();
+    let pull = quantick_orderbook::BookLevel::new(960.into(), Decimal::ZERO).unwrap();
+    history
+        .apply_delta(
+            1_700,
+            &quantick_orderbook::BookDelta::new(11, 11, vec![], vec![pull]),
+        )
+        .unwrap();
+    history
+}
+
+#[test]
+fn a_top_moved_by_the_last_event_is_the_top_carried() {
+    let history = ends_on_a_move();
+    assert_eq!(
+        bbo_lines(history.bbo(), 1_000, 1_700, Some(1_800)),
+        vec![
+            line(RestingSide::Bid, false, &[(1_000, 950), (1_700, 950)]),
+            line(RestingSide::Bid, true, &[(1_700, 950), (1_800, 950)]),
+            line(RestingSide::Ask, false, &[(1_000, 960), (1_700, 960)]),
+            line(RestingSide::Ask, true, &[(1_700, 970), (1_800, 970)]),
+        ],
+        "the ask pulled at the last confirmation is carried at 970, not 960"
+    );
+    let carried_ask = project_bbo_paths(&history, &timeline(1_800), prices())
+        .into_iter()
+        .find(|path| path.carried && path.side == RestingSide::Ask)
+        .expect("the carried ask");
+    let y = prices().y_unclamped(970.into()).unwrap();
+    assert!(carried_ask.points.iter().all(|point| point[1] == y));
+}
+
+#[test]
+fn a_resync_snapshot_as_the_last_event_is_carried_at_once() {
+    let mut history = ends_on_a_move();
+    history.mark_gap(1_750, "transport_closed").unwrap();
+    history
+        .install_snapshot(1_760, 2, snapshot(20, 940, 945))
+        .unwrap();
+    let lines = bbo_lines(history.bbo(), 1_000, 1_760, Some(1_800));
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.carried)
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            line(RestingSide::Bid, true, &[(1_760, 940), (1_800, 940)]),
+            line(RestingSide::Ask, true, &[(1_760, 945), (1_800, 945)]),
+        ],
+        "no delta needed after the snapshot"
+    );
+    assert!(
+        lines
+            .iter()
+            .filter(|line| !line.carried)
+            .all(|line| line.points.last().unwrap().0 <= 1_750),
+        "nothing observed is drawn across the gap"
+    );
+}
+
+#[test]
+fn a_clipped_line_ends_its_crossing_legs_on_the_window() {
+    let step = line(
+        RestingSide::Bid,
+        false,
+        &[(1_000, 950), (1_300, 950), (1_300, 955), (1_400, 955)],
+    );
+    assert_eq!(
+        step.clipped(1_100, 1_350),
+        Some(line(
+            RestingSide::Bid,
+            false,
+            &[(1_100, 950), (1_300, 950), (1_300, 955), (1_350, 955)]
+        ))
+    );
+    assert_eq!(step.clipped(1_500, 1_600), None);
+    assert_eq!(
+        step.clipped(1_400, 1_600),
+        None,
+        "a single instant draws nothing"
+    );
+}
+
+#[test]
+fn a_crowded_pixel_column_keeps_its_ends_and_extremes() {
+    let mut points = vec![[9.5, 50.0]];
+    for index in 0..1_000 {
+        let y = 40.0 + (index % 7) as f32;
+        points.push([10.0 + index as f32 / 2_000.0, y]);
+    }
+    points.push([10.9, 44.0]);
+    points.push([11.2, 44.0]);
+    let kept = decimate_columns(points);
+    let ys: Vec<f32> = kept.iter().map(|point| point[1]).collect();
+    assert_eq!(ys, vec![50.0, 40.0, 46.0, 44.0, 44.0], "{kept:?}");
+    assert_eq!(
+        kept[1],
+        [10.0, 40.0],
+        "the column's first vertex is its lowest"
+    );
+    assert!(
+        kept.windows(2).all(|pair| pair[0][0] <= pair[1][0]),
+        "order kept"
+    );
+    let sparse = vec![[1.0, 1.0], [2.0, 1.0], [2.0, 3.0], [3.0, 3.0]];
+    assert_eq!(
+        decimate_columns(sparse.clone()),
+        sparse,
+        "a sparse line is untouched"
+    );
+}
+
+#[test]
+fn a_held_tape_places_its_own_lines_on_its_clock() {
+    let history = bbo_fixture();
+    let grouping =
+        crate::EffectiveGrouping::resolve(crate::DisplayGrouping::Native, Decimal::ONE, 50.into());
+    let heat = super::super::project_past_heat(&history, 1_000, 1_700, prices(), grouping);
+    assert_eq!(heat.bbo_lines.len(), 4, "two sides, broken at the gap");
+    let placed = heat.placed(1_350, 300, 2);
+    assert_eq!(
+        placed.bbo_lines.len(),
+        2,
+        "the gap and later are off the window"
+    );
+    for path in placed.bbo_lines.iter() {
+        assert!(!path.carried);
+        assert!(
+            path.points
+                .iter()
+                .all(|point| (0.5..=1.0).contains(&point[0]))
+        );
+    }
 }

@@ -239,12 +239,13 @@ impl ChartLayer {
         hint: "the best ask (sell colour) and the best bid (buy colour) as bold stepped lines \
                over the tape's book, from the recorded top of the book. A gap or an empty side \
                breaks the line rather than bridging it, and the book carried past its last \
-               confirmation is drawn dimmed. Saved with the asset's bubble settings while its \
-               save switch is on, not with the other layers",
+               confirmation is drawn dimmed; with no book recorded there is nothing to draw. \
+               Saved with the asset's bubble settings while its save switch is on, not with the \
+               other layers",
         source: LayerSource::Orderflow(OrderflowSwitch::BboLines),
         scope: LayerScope::FlowPane,
         persistence: Persistence::OrderflowPreset,
-        requirement: Requirement::Book,
+        requirement: Requirement::None,
         on_tape: true,
         needs_tape: true,
         needs_depth: false,
