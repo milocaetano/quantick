@@ -159,12 +159,12 @@ impl ChartPane {
         view
     }
 
-    /// The `[start, end)` slots the last frame showed; `None` before it laid
-    /// the pane out.
+    /// The `[start, end)` slots the last frame showed; `None` before it laid the pane out.
     pub(crate) fn visible_slots(&self) -> Option<(usize, usize)> {
         let chart = self.frame.chart_area?;
         let width = self.frame.candles_right.unwrap_or_else(|| chart.right()) - chart.left();
-        Some(self.shown_viewport().visible_range(width.max(0.0), self.slots()))
+        let view = self.shown_viewport();
+        Some(view.visible_range(width.max(0.0), self.slots()))
     }
 
     /// The jump-to-live chip this pane offers on `strip`. On a tape-only pane
