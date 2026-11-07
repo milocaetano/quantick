@@ -27,9 +27,11 @@ use quantick_control_host::{
 use quantick_control_schema::chart::{
     BarProvenanceContext, BarSnapshot, BarStateDto, ChartCoverage, ChartPaneSnapshot,
     ChartSnapshot, ChartWindowPage, ChartWindowQuery, ChartWindowSelection, MODULE_ID,
-    OMITTED_WINDOW_MODULE_IDS, SCHEMA_VERSION, SCOPE_ID, ViewportSnapshot,
+    OMITTED_WINDOW_MODULE_IDS, SCHEMA_VERSION, SCOPE_ID, VenueCandleState, VenueCandleStatus,
+    ViewportSnapshot,
 };
 use quantick_engine::Bar;
+use quantick_sources::candle_series::{SeriesState, SeriesStatus};
 
 use crate::dock::ProjectionDock;
 
@@ -63,6 +65,11 @@ pub trait ChartPaneSource {
     fn venue_record_starts_inside(&self, interval_ms: i64) -> bool;
     /// The pane's market-data provenance, in the feed scope's vocabulary.
     fn provenance(&self) -> BarProvenanceContext;
+    /// The venue candles the pane's prefix is built from; `None` for a pane
+    /// that reads none.
+    fn venue_candles(&self) -> Option<SeriesStatus> {
+        None
+    }
 }
 
 /// One pane with where it sits: its tab, its side and its market.
@@ -193,6 +200,17 @@ fn coverage(pane: &dyn ChartPaneSource) -> ChartCoverage {
         newest_close_time_unix_ms: newest,
         older_history_paging_supported: pane.history_paging(),
         venue_prefix_present: !pane.venue_prefix().is_empty(),
+        venue_candles: pane.venue_candles().map(|status| VenueCandleStatus {
+            state: match status.state {
+                SeriesState::Idle => VenueCandleState::Idle,
+                SeriesState::Loading => VenueCandleState::Loading,
+                SeriesState::Exhausted => VenueCandleState::Exhausted,
+            },
+            interval_ms: status.interval_ms,
+            candles_held: wire_usize(status.candles_held),
+            oldest_open_time_unix_ms: status.oldest_open_ms,
+            last_reply_short: status.last_reply_short,
+        }),
     }
 }
 

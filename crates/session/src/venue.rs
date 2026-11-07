@@ -10,6 +10,7 @@
 
 use quantick_engine::Bar;
 use quantick_sources::candle_base::{CandleAsk, CandleBaseInterval, SeamMinutesTaken};
+use quantick_sources::candle_series::{SeriesState, SeriesStatus};
 use quantick_sources::candles::{
     OlderCandles, fold, is_foldable, merge_older_candles, starts_inside_bucket,
     trim_borrowed_to_seam, trim_to_seam,
@@ -70,6 +71,8 @@ pub(crate) struct VenueCandles {
     /// know is to have asked; cleared by a change of market and by the
     /// opening request of a new one, never by time passing.
     pub(crate) older_exhausted: bool,
+    /// Whether the last closing reply was cut short.
+    last_reply_short: bool,
     /// What `ohlcv_history` said last poll, so the rising edge can be seen.
     ///
     /// MetaTrader narrows its capabilities when the bridge says hello, which
@@ -100,6 +103,7 @@ impl Default for VenueCandles {
             stale: false,
             reaching_back: None,
             older_exhausted: false,
+            last_reply_short: false,
             capable: false,
             progressive: true,
             lead_in: false,
@@ -430,6 +434,7 @@ impl VenueCandles {
             return;
         }
         let complete = matches!(slice, OhlcvSlice::Last { complete } if complete);
+        self.last_reply_short = !complete;
         if !complete {
             // Known-short, not merely short: a venue that stopped answering
             // partway, or a block clipped to a cap. An instrument younger than
@@ -579,6 +584,28 @@ impl VenueCandles {
         self.take_reply(step, tab_id, interval_ms, bars, slice);
     }
 
+    /// The base a pane cut at `interval_ms` folds from, and where asking for
+    /// more stands; `None` for a pane that reads no candles.
+    pub(crate) fn status(&self, interval_ms: Option<i64>) -> Option<SeriesStatus> {
+        let wants = match interval_ms {
+            Some(interval_ms) => is_foldable(OHLCV_BASE_INTERVAL_MS, interval_ms),
+            None => self.lead_in,
+        };
+        wants.then(|| SeriesStatus {
+            state: if self.pending {
+                SeriesState::Loading
+            } else if self.older_exhausted {
+                SeriesState::Exhausted
+            } else {
+                SeriesState::Idle
+            },
+            interval_ms: self.interval.held_ms(),
+            candles_held: self.candles_held(),
+            oldest_open_ms: self.oldest(),
+            last_reply_short: self.last_reply_short,
+        })
+    }
+
     pub(crate) fn candles_held(&self) -> usize {
         self.base.as_ref().map_or(0, Vec::len)
     }
@@ -687,6 +714,7 @@ impl VenueCandles {
             self.base = None;
             self.reaching_back = None;
             self.older_exhausted = false;
+            self.last_reply_short = false;
             self.interval.drop_parked();
             self.capable = false;
             step.clear_prefixes();

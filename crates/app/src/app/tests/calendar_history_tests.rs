@@ -86,6 +86,7 @@ fn push_feed_app_restoring(
         ohlcv_generation: 1,
         ohlcv_daily_generation: 1,
         ohlcv_aggressor_split: true,
+        native_candle_intervals: false,
     });
     let mut app = QuantickApp::new(
         test_config(),

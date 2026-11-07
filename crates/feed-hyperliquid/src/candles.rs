@@ -40,6 +40,35 @@ pub const CANDLE_INTERVAL_1D: &str = "1d";
 /// Milliseconds in the [`CANDLE_INTERVAL_1M`] bucket.
 pub const ONE_MINUTE_MS: i64 = 60_000;
 
+/// Every `candleSnapshot` interval Hyperliquid serves, by its length. No
+/// `6h`: a chart cut there folds `2h`.
+const CANDLE_INTERVALS: [(i64, &str); 14] = [
+    (ONE_MINUTE_MS, "1m"),
+    (3 * ONE_MINUTE_MS, "3m"),
+    (5 * ONE_MINUTE_MS, "5m"),
+    (15 * ONE_MINUTE_MS, "15m"),
+    (30 * ONE_MINUTE_MS, "30m"),
+    (60 * ONE_MINUTE_MS, "1h"),
+    (2 * 60 * ONE_MINUTE_MS, "2h"),
+    (4 * 60 * ONE_MINUTE_MS, "4h"),
+    (8 * 60 * ONE_MINUTE_MS, "8h"),
+    (12 * 60 * ONE_MINUTE_MS, "12h"),
+    (quantick_engine::time_bucket::DAY_MS, "1d"),
+    (3 * quantick_engine::time_bucket::DAY_MS, "3d"),
+    (quantick_engine::time_bucket::WEEK_MS, "1w"),
+    (quantick_engine::time_bucket::CALENDAR_MONTH_MS, "1M"),
+];
+
+/// The `candleSnapshot` interval serving candles `interval_ms` long, or
+/// `None` for a length Hyperliquid does not serve.
+#[must_use]
+pub fn candle_interval_for(interval_ms: i64) -> Option<&'static str> {
+    CANDLE_INTERVALS
+        .iter()
+        .find(|(length, _)| *length == interval_ms)
+        .map(|(_, name)| *name)
+}
+
 /// Candles requested per page.
 ///
 /// Hyperliquid caps a `candleSnapshot` at 5 000 rows and answers a wider window
@@ -457,6 +486,28 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_interval_hyperliquid_serves_maps_to_its_snapshot_name() {
+        let minute = ONE_MINUTE_MS;
+        let hour = 60 * minute;
+        let day = quantick_engine::time_bucket::DAY_MS;
+        assert_eq!(candle_interval_for(minute), Some("1m"));
+        assert_eq!(candle_interval_for(15 * minute), Some("15m"));
+        assert_eq!(candle_interval_for(8 * hour), Some("8h"));
+        assert_eq!(candle_interval_for(day), Some("1d"));
+        assert_eq!(
+            candle_interval_for(quantick_engine::time_bucket::WEEK_MS),
+            Some("1w")
+        );
+        assert_eq!(
+            candle_interval_for(quantick_engine::time_bucket::CALENDAR_MONTH_MS),
+            Some("1M")
+        );
+        assert_eq!(CANDLE_INTERVALS.len(), 14);
+        assert_eq!(candle_interval_for(6 * hour), None, "not served");
+        assert_eq!(candle_interval_for(90_000), None);
+    }
 
     /// A verbatim `candleSnapshot` reply shape, with one BTC one-minute candle.
     const REPLY: &str = r#"{"channel":"post","data":{"id":1,"response":{"type":"info","payload":{

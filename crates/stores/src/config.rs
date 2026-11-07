@@ -1337,6 +1337,7 @@ mod tests {
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
                 ohlcv_aggressor_split: false,
+                native_candle_intervals: true,
             }
         );
         assert_eq!(config.side_note("hyperliquid"), None);

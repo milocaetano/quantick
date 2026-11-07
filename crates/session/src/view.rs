@@ -21,6 +21,9 @@ pub struct PaneView<'a> {
     pub rebuild_pending: bool,
     /// Whether that rebuild failed and waits for a retry.
     pub rebuild_failed: bool,
+    /// The oldest slot the last frame showed, prefix included; `None` before
+    /// the pane was laid out. Scrolling it near zero asks for older candles.
+    pub first_visible_slot: Option<usize>,
 }
 
 /// The tab, as one dispatch sees it.
