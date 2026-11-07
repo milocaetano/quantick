@@ -174,6 +174,30 @@ impl ChartPane {
         }
     }
 
+    /// Where the vertical grid stands this frame: at the time labels' places.
+    /// Empty while the time grid is off, so a Dark chart measures nothing.
+    pub(super) fn time_grid_xs(&self, frame: &DrawFrame<'_>, chrome: &PaneChrome<'_>) -> Vec<f32> {
+        if chrome.style.canvas.time_grid_rgba().is_none() {
+            return Vec::new();
+        }
+        crate::pane::render_registry::TimeStripPass {
+            reserved: &[],
+            named: &[],
+            painter: frame.painter,
+            strip: frame.areas.time_strip,
+            start: frame.start,
+            end: frame.end,
+            total: frame.total,
+            chip: None,
+            style: chrome.style,
+            tz: chrome.tz,
+            candles_right: self.frame.candles_right,
+            viewport: &frame.view,
+            series: self.series_read(),
+        }
+        .grid_xs()
+    }
+
     /// The axis marks and the candles' own dividers: the trader's levels and
     /// the last price on the gutter, the venue seam, the backfill boundary,
     /// the feed gaps, and the time strip.

@@ -2,6 +2,8 @@ version = 1
 name = "Dark"
 dark = true
 candle_fill_opacity = 0.20
+candle_outline_width = 1.25
+chart_time_grid = false
 
 [colors]
 drawing_default = "#8AB4F8"
@@ -83,6 +85,13 @@ tab_band = "#3AF0B2"
 # The glow behind the Q while Home is shown, in the band's green. egui blends
 # in linear light, so this opacity reads as the mock's ~25% rise at the peak.
 home_glow = "#3AF0B210"
+# Dark writes its axes in text_muted and rules them in the chart grid's own
+# colour, so the rules follow the grid switch: these three are read by light
+# themes only, and record what Dark's axes look like by default.
+axis_ink = "#96A0AF"
+chart_canvas = "#131722"
+price_axis_rule = "#232936A6"
+time_axis_rule = "#232936A6"
 border = "#2E3648"
 text_primary = "#D2DAE2"
 text_muted = "#96A0AF"

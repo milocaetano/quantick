@@ -28,7 +28,7 @@ fn additive_layer_traverses_discovery_admission_and_common_operation() {
     );
     let initial = snapshot(&mut app, &mut observer);
     let layers = initial["panes"][0]["layers"].as_array().unwrap();
-    assert_eq!(layers.len(), 26);
+    assert_eq!(layers.len(), 27);
     assert!(layers.iter().any(|layer| layer["id"] == "test_probe"
         && layer["requested"] == false
         && layer["effective"] == false));
@@ -285,5 +285,63 @@ fn tape_only_is_switched_by_the_layer_call_and_read_back() {
             .clone();
         assert_eq!(pane["bubbles"]["tape_only"], on, "{pane}");
     }
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// The two grids are two named switches on the same control door, each read
+/// back as its own layer, and the time grid becomes the trader's once set.
+#[test]
+fn price_and_time_grids_switch_apart_through_the_layer_door() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("grid-axes");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let requested = |snapshot: &Value, id: &str| {
+        snapshot["panes"][0]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == id)
+            .map(|layer| (layer["requested"].clone(), layer["persistence"].clone()))
+            .unwrap()
+    };
+    let initial = snapshot(&mut app, &mut observer);
+    assert_eq!(
+        requested(&initial, "grid"),
+        (json!(true), json!("workspace"))
+    );
+    assert_eq!(
+        requested(&initial, "time_grid"),
+        (json!(false), json!("workspace"))
+    );
+    for (id, visible) in [("time_grid", true), ("grid", false)] {
+        let payload = layer_input(&app, id, visible);
+        let (response, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+        assert_eq!(success_result(&response)["layer"]["requested"], visible);
+        run_frame(&mut app, &ctx);
+    }
+    let pane = &app.active_tab().flow_pane;
+    assert!(pane.layer_switched_on(ChartLayer::TimeGrid, &app.runtime.style));
+    assert!(!pane.layer_switched_on(ChartLayer::Grid, &app.runtime.style));
+    let authored = pane.presentation.candles.authored().unwrap();
+    assert_eq!(
+        authored.ownership.time_grid,
+        quantick_appearance::Inheritance::Explicit,
+        "a switched time grid no longer follows the theme"
+    );
+    let after = snapshot(&mut app, &mut observer);
+    assert_eq!(requested(&after, "grid").0, json!(false));
+    assert_eq!(requested(&after, "time_grid").0, json!(true));
+    // A retry of the same switch is a no-op that reads back the same answer.
+    let payload = layer_input(&app, "time_grid", true);
+    let (again, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+    assert_eq!(success_result(&again)["layer"]["requested"], true);
     disable_test_gateway(&mut app, &ctx);
 }

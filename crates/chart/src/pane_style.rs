@@ -1,6 +1,6 @@
 //! Per-pane appearance and stable editor addressing, independent of focus.
 use crate::style::ChartStyle;
-use quantick_appearance::ResolvedTheme;
+use quantick_appearance::{Inheritance, ResolvedTheme};
 
 /// Runtime identity, never a mutable pane position or the active tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +77,24 @@ impl PaneStyle {
     pub fn set_grid(&mut self, legacy: &ChartStyle, visible: bool) {
         let mut style = self.authored.unwrap_or(*legacy);
         style.canvas.grid_enabled = visible;
+        self.set(style);
+    }
+    /// The vertical grid this pane shows. `resolved` is a style already
+    /// resolved against the theme; a pane whose time grid still follows the
+    /// theme answers from it rather than from its own stored copy.
+    pub fn time_grid(&self, resolved: &ChartStyle) -> bool {
+        match self.authored {
+            Some(style) if style.ownership.time_grid == Inheritance::Explicit => {
+                style.canvas.time_grid_enabled
+            }
+            _ => resolved.canvas.time_grid_enabled,
+        }
+    }
+    /// Switch the vertical grid; from then on it is the trader's, not the theme's.
+    pub fn set_time_grid(&mut self, legacy: &ChartStyle, visible: bool) {
+        let mut style = self.authored.unwrap_or(*legacy);
+        style.canvas.time_grid_enabled = visible;
+        style.ownership.time_grid = Inheritance::Explicit;
         self.set(style);
     }
     pub fn set(&mut self, style: ChartStyle) {

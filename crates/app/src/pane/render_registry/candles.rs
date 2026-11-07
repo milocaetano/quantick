@@ -26,6 +26,8 @@ pub(in crate::pane) struct CandlePass<'a, 'b> {
     pub candle_lane: f32,
     pub content_half: f32,
     pub style: &'a CandleStyle,
+    /// Bodies and wicks on pixel centres (the light time chart).
+    pub crisp: bool,
 }
 impl CandlePass<'_, '_> {
     fn slot(&self, index: usize) -> BarSlot {
@@ -37,11 +39,13 @@ impl CandlePass<'_, '_> {
             BarSlot {
                 xc: xc - self.content_half + sliver + 1.0,
                 half_width: sliver,
+                crisp: false,
             }
         } else {
             BarSlot {
                 xc,
                 half_width: self.half,
+                crisp: self.crisp,
             }
         }
     }

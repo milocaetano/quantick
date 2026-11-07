@@ -53,7 +53,9 @@ fn drawing_env<'a>(
         let header = crate::indicator_render::pane_header_rect(
             band,
             false,
-            quantick_appearance::AxisMetrics::new(&crate::theme::get(ctx).resolved.typography)
+            crate::theme::get(ctx)
+                .resolved
+                .axis_metrics()
                 .indicator_header,
         );
         Some(egui::Rect::from_min_max(

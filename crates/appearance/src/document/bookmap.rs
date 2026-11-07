@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct BookmapOverride {
     pub candle_fill_opacity: Option<f32>,
+    pub candle_outline_width: Option<f32>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     #[serde(default)]
@@ -22,6 +23,9 @@ impl BookmapOverride {
             name: parent.name.clone(),
             dark: parent.dark,
             candle_fill_opacity: self.candle_fill_opacity,
+            candle_outline_width: self.candle_outline_width,
+            chart_time_grid: None,
+            chart_axes: None,
             colors: self.colors.clone(),
             typography: BTreeMap::new(),
             footprint_heat: self.footprint_heat.clone(),
@@ -56,7 +60,10 @@ mod tests {
         );
         for token in Token::ALL {
             let expected = match token {
-                Token::Canvas | Token::CandlePreviewBackground => [37, 47, 55, 255],
+                // An override's own canvas is its chart canvas too.
+                Token::Canvas | Token::ChartCanvas | Token::CandlePreviewBackground => {
+                    [37, 47, 55, 255]
+                }
                 Token::DrawingDefault
                 | Token::DrawingBuy
                 | Token::DrawingSell
@@ -72,7 +79,11 @@ mod tests {
                 | Token::TabIdleFill
                 | Token::TabIdleOutline
                 | Token::TabBand
-                | Token::HomeGlow => light.color(token).to_array(),
+                | Token::HomeGlow
+                // Light's axes read the root palette, never the slate plot's.
+                | Token::AxisInk
+                | Token::PriceAxisRule
+                | Token::TimeAxisRule => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(
@@ -83,6 +94,7 @@ mod tests {
             );
         }
         assert_eq!(light.color(Token::Canvas).to_array(), [255, 252, 247, 255]);
+        assert_eq!(light.color(Token::ChartCanvas).to_array(), [255; 4]);
         assert_eq!(light.bookmap().orderflow, dark.orderflow);
         assert_eq!(light.bookmap().footprint_heat, dark.footprint_heat);
         assert_eq!(light.bookmap().typography, light.typography);

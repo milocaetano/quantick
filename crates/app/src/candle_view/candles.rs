@@ -31,6 +31,9 @@ pub struct BarSlot {
     pub xc: f32,
     /// Half the body width.
     pub half_width: f32,
+    /// Whether the body and wick are drawn on pixel centres (the light time
+    /// chart's TradingView look) rather than where the geometry falls.
+    pub crisp: bool,
 }
 
 /// Draw one candle from pure geometry and a resolved paint description.
@@ -42,6 +45,10 @@ pub struct BarSlot {
 /// `bar_paint` is the colour an indicator asked this bar to wear (Pine's
 /// `barcolor`); `None` — the ordinary case — draws the trader's own direction
 /// colours.
+///
+/// A [`BarSlot::crisp`] slot puts the body's edges and the wick on pixel
+/// centres, so a one-pixel contour and wick land on one pixel column each
+/// instead of being smeared grey across two.
 pub fn draw_candle(
     painter: &egui::Painter,
     slot: BarSlot,
@@ -51,15 +58,32 @@ pub fn draw_candle(
     style: &CandleStyle,
     bar_paint: Option<Rgba8>,
 ) {
+    let crisp = slot.crisp;
+    let slot = if crisp {
+        BarSlot {
+            xc: painter.round_to_pixel_center(slot.xc),
+            half_width: slot.half_width.round().max(1.0),
+            crisp,
+        }
+    } else {
+        slot
+    };
     let paint = style.resolved_painted(
         is_bullish(bar),
         forming,
         bar_paint.map(|c| [c.r, c.g, c.b, c.a]),
     );
     let geometry = candle_geometry(scale, bar, slot.xc, slot.half_width, paint.min_body_height);
+    let edge = |at: f32| {
+        if crisp {
+            painter.round_to_pixel_center(at)
+        } else {
+            at
+        }
+    };
     let body = egui::Rect::from_min_max(
-        egui::pos2(geometry.body.left, geometry.body.top),
-        egui::pos2(geometry.body.right, geometry.body.bottom),
+        egui::pos2(geometry.body.left, edge(geometry.body.top)),
+        egui::pos2(geometry.body.right, edge(geometry.body.bottom)),
     );
 
     if let Some(wick) = paint.wick {

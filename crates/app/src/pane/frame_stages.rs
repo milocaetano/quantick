@@ -452,6 +452,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             candle_lane: self.dress.candle_lane,
             content_half: self.dress.content_half,
             style: self.dress.style(base),
+            crisp: false,
         }
     }
 

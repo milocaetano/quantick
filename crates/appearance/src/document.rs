@@ -1,8 +1,10 @@
 //! The versioned authoring contract and all-or-nothing resolution.
 
 mod bookmap;
+mod chart;
 mod title_strip;
 pub use bookmap::BookmapOverride;
+pub use chart::{AXIS_RESERVATION_RANGE, CANDLE_OUTLINE_WIDTH_RANGE, ChartAxes};
 pub use title_strip::TitleStripOverride;
 
 use std::{collections::BTreeMap, sync::OnceLock};
@@ -61,6 +63,14 @@ pub struct ThemeDocument {
     pub dark: bool,
     #[serde(default)]
     pub candle_fill_opacity: Option<f32>,
+    /// Candle contour width a fresh chart takes, in logical pixels.
+    #[serde(default)]
+    pub candle_outline_width: Option<f32>,
+    /// Whether a fresh chart draws vertical gridlines at its time labels.
+    #[serde(default)]
+    pub chart_time_grid: Option<bool>,
+    #[serde(default)]
+    pub chart_axes: Option<ChartAxes>,
     #[serde(default)]
     pub colors: BTreeMap<String, ColorValue>,
     #[serde(default)]
@@ -125,6 +135,13 @@ impl ThemeDocument {
                 {
                     colors[Token::DrawingDefault as usize]
                 }
+                // Older themes paint the chart on their own canvas.
+                None if token == Token::ChartCanvas
+                    && fallback.is_some()
+                    && self.colors.contains_key(Token::Canvas.key()) =>
+                {
+                    colors[Token::Canvas as usize]
+                }
                 // Older themes used control for both widgets and chart grids.
                 None if token == Token::ChartGrid
                     && fallback.is_some()
@@ -161,6 +178,7 @@ impl ThemeDocument {
         // Reject unsupported alpha before publishing any part of the theme.
         for token in [
             Token::Canvas,
+            Token::ChartCanvas,
             Token::Control,
             Token::ChartGrid,
             Token::Buy,
@@ -192,6 +210,9 @@ impl ThemeDocument {
             name: self.name.clone(),
             dark: self.dark,
             candle_fill_opacity,
+            candle_outline_width: chart::outline_width(self.candle_outline_width, fallback)?,
+            chart_time_grid: chart::time_grid(self.chart_time_grid, fallback)?,
+            chart_axes: ChartAxes::resolve(self.chart_axes, fallback)?,
             colors,
             typography: Typography::resolve(
                 &self.typography,
@@ -223,7 +244,7 @@ impl ThemeDocument {
 /// The tokens an older document takes from its own mode's bundled theme.
 /// Both bundled themes write every one, so resolving Light for
 /// [`ResolvedTheme::bundled`] never asks its own lock again.
-pub(crate) const MODE_TOKENS: [Token; 8] = [
+pub(crate) const MODE_TOKENS: [Token; 11] = [
     Token::TabStrip,
     Token::Brand,
     Token::ReplayInk,
@@ -232,6 +253,9 @@ pub(crate) const MODE_TOKENS: [Token; 8] = [
     Token::TabIdleOutline,
     Token::TabBand,
     Token::HomeGlow,
+    Token::AxisInk,
+    Token::PriceAxisRule,
+    Token::TimeAxisRule,
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -239,6 +263,9 @@ pub struct ResolvedTheme {
     pub name: String,
     pub dark: bool,
     pub candle_fill_opacity: f32,
+    pub candle_outline_width: f32,
+    pub chart_time_grid: bool,
+    pub chart_axes: ChartAxes,
     colors: [PremultipliedRgba; Token::ALL.len()],
     pub typography: Typography,
     pub footprint_heat: crate::heat::HeatRamp,

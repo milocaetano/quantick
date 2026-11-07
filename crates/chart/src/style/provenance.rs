@@ -13,6 +13,10 @@ pub struct ChartColorOwnership {
     pub wick: Inheritance,
     pub background: Inheritance,
     pub grid: Inheritance,
+    /// The candle contour width a fresh chart takes from its theme.
+    pub outline_width: Inheritance,
+    /// Whether the time grid is the theme's answer or the trader's.
+    pub time_grid: Inheritance,
 }
 impl ChartColorOwnership {
     pub const fn inherited() -> Self {
@@ -25,6 +29,8 @@ impl ChartColorOwnership {
             wick: Inheritance::Theme,
             background: Inheritance::Theme,
             grid: Inheritance::Theme,
+            outline_width: Inheritance::Theme,
+            time_grid: Inheritance::Theme,
         }
     }
 }
@@ -40,6 +46,7 @@ impl ChartStyle {
         self.ownership = ChartColorOwnership {
             background: self.ownership.background,
             grid: self.ownership.grid,
+            time_grid: self.ownership.time_grid,
             ..ChartColorOwnership::default()
         };
     }
@@ -51,6 +58,14 @@ impl ChartStyle {
             .ownership
             .fill_opacity
             .resolve(self.candles.fill_opacity, || theme.candle_fill_opacity);
+        self.candles.outline_width = self
+            .ownership
+            .outline_width
+            .resolve(self.candles.outline_width, || theme.candle_outline_width);
+        self.canvas.time_grid_enabled = self
+            .ownership
+            .time_grid
+            .resolve(self.canvas.time_grid_enabled, || theme.chart_time_grid);
         let rgb = |token| {
             let [r, g, b, _] = theme.color(token).to_array();
             [r, g, b]
@@ -78,7 +93,7 @@ impl ChartStyle {
         self.canvas.background = self
             .ownership
             .background
-            .resolve(self.canvas.background, || rgb(Token::Canvas));
+            .resolve(self.canvas.background, || rgb(Token::ChartCanvas));
         self.canvas.grid = self
             .ownership
             .grid
@@ -98,7 +113,7 @@ mod tests {
         style.canvas.grid_opacity = 0.37;
         style.canvas.grid_enabled = false;
         for (surface, grid, background) in [
-            (&light, [186, 187, 187], [255, 252, 247]),
+            (&light, [186, 187, 187], [255, 255, 255]),
             (light.bookmap(), [35, 41, 54], [37, 47, 55]),
             (&dark, [35, 41, 54], [19, 23, 34]),
         ] {
@@ -159,6 +174,43 @@ mod tests {
             ChartStyle::default().candles.bear_fill
         );
         assert!(!style.apply_theme(&light));
+    }
+    #[test]
+    fn fresh_charts_take_the_theme_time_grid_and_contour_until_the_trader_sets_them() {
+        let light = ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        let dark = ResolvedTheme::default();
+        let mut fresh = ChartStyle::default();
+        fresh.apply_theme(&light);
+        assert!(fresh.canvas.time_grid_enabled);
+        assert_eq!(fresh.candles.outline_width, 1.0);
+        fresh.apply_theme(&dark);
+        assert!(!fresh.canvas.time_grid_enabled);
+        assert_eq!(fresh.candles.outline_width, 1.25);
+        assert_eq!(
+            fresh,
+            ChartStyle::default(),
+            "Dark resolves to the code default"
+        );
+        // The slate plot keeps Dark's contour; the time grid is Light's.
+        fresh.apply_theme(light.bookmap());
+        assert!(fresh.canvas.time_grid_enabled);
+        assert_eq!(fresh.candles.outline_width, 1.25);
+        // Switched by hand, the answer survives every theme.
+        let mut chosen = ChartStyle::default();
+        chosen.canvas.time_grid_enabled = false;
+        chosen.ownership.time_grid = Inheritance::Explicit;
+        chosen.candles.outline_width = 2.0;
+        chosen.ownership.outline_width = Inheritance::Explicit;
+        for theme in [&light, &dark] {
+            chosen.apply_theme(theme);
+            assert!(!chosen.canvas.time_grid_enabled);
+            assert_eq!(chosen.candles.outline_width, 2.0);
+        }
+        // A preset owns the contour, never the canvas's time grid.
+        let mut preset = ChartStyle::default();
+        preset.apply_preset(CandlePreset::Classic);
+        assert_eq!(preset.ownership.outline_width, Inheritance::Explicit);
+        assert_eq!(preset.ownership.time_grid, Inheritance::Theme);
     }
     #[test]
     fn dark_is_exact_and_presets_capture_intended_fields() {
@@ -225,6 +277,9 @@ mod bookmap_tests {
         let mut expected_flow = ChartStyle::default();
         expected_flow.canvas.background = [0x25, 0x2F, 0x37];
         expected_flow.candles.wick = [0xB6, 0xC9, 0xD2];
+        // The slate plot follows Light's time grid, so the switch that reads
+        // it and the pane that paints it never disagree.
+        expected_flow.canvas.time_grid_enabled = true;
         assert_eq!(flow, expected_flow);
         for bullish in [false, true] {
             assert_eq!(

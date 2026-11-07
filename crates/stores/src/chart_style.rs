@@ -47,6 +47,10 @@ struct CanvasFile {
     background_enabled: bool,
     background: [u8; 3],
     grid_enabled: bool,
+    /// Absent from styles saved before the grid split in two: those keep the
+    /// one grid they had, the horizontal one, and open with no vertical grid.
+    #[serde(default)]
+    time_grid_enabled: bool,
     grid: [u8; 3],
     grid_opacity: f32,
 }
@@ -105,6 +109,7 @@ impl From<&ChartStyle> for StyleFile {
                 background_enabled: v.background_enabled,
                 background: v.background,
                 grid_enabled: v.grid_enabled,
+                time_grid_enabled: v.time_grid_enabled,
                 grid: v.grid,
                 grid_opacity: v.grid_opacity,
             },
@@ -150,6 +155,7 @@ impl From<StyleFile> for ChartStyle {
                 background_enabled: v.background_enabled,
                 background: v.background,
                 grid_enabled: v.grid_enabled,
+                time_grid_enabled: v.time_grid_enabled,
                 grid: v.grid,
                 grid_opacity: v.grid_opacity,
             },
@@ -168,6 +174,8 @@ struct OwnershipFile {
     wick: Inheritance,
     background: Inheritance,
     grid: Inheritance,
+    outline_width: Inheritance,
+    time_grid: Inheritance,
 }
 impl From<ChartColorOwnership> for OwnershipFile {
     fn from(value: ChartColorOwnership) -> Self {
@@ -180,6 +188,8 @@ impl From<ChartColorOwnership> for OwnershipFile {
             wick: value.wick,
             background: value.background,
             grid: value.grid,
+            outline_width: value.outline_width,
+            time_grid: value.time_grid,
         }
     }
 }
@@ -194,6 +204,8 @@ impl From<OwnershipFile> for ChartColorOwnership {
             wick: value.wick,
             background: value.background,
             grid: value.grid,
+            outline_width: value.outline_width,
+            time_grid: value.time_grid,
         }
     }
 }
@@ -237,6 +249,8 @@ mod tests {
     fn ownership_roundtrips_and_legacy_concrete_values_remain_explicit() {
         let mut style = ChartStyle::default();
         style.candles.outline_width = 3.0;
+        // An edited width is the trader's, as the appearance window marks it.
+        style.ownership.outline_width = Inheritance::Explicit;
         style.ownership.bull_fill = Inheritance::Explicit;
         let text = toml::to_string(&StyleFile::from(&style)).unwrap();
         let mut loaded: ChartStyle = toml::from_str::<StyleFile>(&text).unwrap().into();
@@ -253,5 +267,43 @@ mod tests {
         assert!(!loaded.apply_theme(
             &quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap()
         ));
+    }
+    /// A style saved before the grid split in two keeps its one grid as the
+    /// horizontal one and opens with no vertical grid, under any theme.
+    #[test]
+    fn a_style_saved_before_the_time_grid_keeps_its_grid_and_opens_without_one() {
+        let light = quantick_appearance::ResolvedTheme::parse(quantick_appearance::LIGHT).unwrap();
+        for grid_enabled in [true, false] {
+            let mut style = ChartStyle::default();
+            style.canvas.grid_enabled = grid_enabled;
+            let mut legacy: toml::Value =
+                toml::from_str(&toml::to_string(&StyleFile::from(&style)).unwrap()).unwrap();
+            legacy["canvas"]
+                .as_table_mut()
+                .unwrap()
+                .remove("time_grid_enabled");
+            for marker in ["outline_width", "time_grid"] {
+                legacy["ownership"].as_table_mut().unwrap().remove(marker);
+            }
+            let file: StyleFile = legacy.try_into().unwrap();
+            assert!(file.valid());
+            let mut loaded: ChartStyle = file.into();
+            loaded.apply_theme(&light);
+            assert_eq!(loaded.canvas.grid_enabled, grid_enabled);
+            assert!(!loaded.canvas.time_grid_enabled);
+            assert_eq!(loaded.ownership.time_grid, Inheritance::Explicit);
+            assert_eq!(loaded.ownership.outline_width, Inheritance::Explicit);
+            assert_eq!(loaded.candles.outline_width, style.candles.outline_width);
+        }
+    }
+    #[test]
+    fn the_time_grid_and_its_owner_roundtrip() {
+        let mut style = ChartStyle::default();
+        style.canvas.time_grid_enabled = true;
+        style.ownership.time_grid = Inheritance::Explicit;
+        let text = toml::to_string(&StyleFile::from(&style)).unwrap();
+        assert!(text.contains("time_grid_enabled = true"), "{text}");
+        let loaded: ChartStyle = toml::from_str::<StyleFile>(&text).unwrap().into();
+        assert_eq!(loaded, style);
     }
 }

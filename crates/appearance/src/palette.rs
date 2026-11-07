@@ -174,9 +174,19 @@ pub enum Token {
     TabIdleOutline,
     TabBand,
     HomeGlow,
+    /// Ink of a light theme's axis labels. Dark writes its axes in `text_muted`.
+    AxisInk,
+    /// A light theme's rule between the plot and the price axis; transparent
+    /// draws none. Dark rules its axes in the chart grid's own colour.
+    PriceAxisRule,
+    /// A light theme's rule along the top of the time axis.
+    TimeAxisRule,
+    /// The chart's plot and axes. A document that leaves it out uses its own
+    /// `canvas`, which every other surface keeps reading.
+    ChartCanvas,
 }
 impl Token {
-    pub const ALL: [Self; 107] = [
+    pub const ALL: [Self; 111] = [
         Self::FlowSurface,
         Self::FlowDivider,
         Self::FlowInk,
@@ -284,6 +294,10 @@ impl Token {
         Self::TabIdleOutline,
         Self::TabBand,
         Self::HomeGlow,
+        Self::AxisInk,
+        Self::PriceAxisRule,
+        Self::TimeAxisRule,
+        Self::ChartCanvas,
     ];
     pub const fn key(self) -> &'static str {
         match self {
@@ -301,6 +315,10 @@ impl Token {
             Self::TabIdleOutline => "tab_idle_outline",
             Self::TabBand => "tab_band",
             Self::HomeGlow => "home_glow",
+            Self::AxisInk => "axis_ink",
+            Self::PriceAxisRule => "price_axis_rule",
+            Self::TimeAxisRule => "time_axis_rule",
+            Self::ChartCanvas => "chart_canvas",
             Self::FlowSurface => "flow_surface",
             Self::FlowDivider => "flow_divider",
             Self::FlowInk => "flow_ink",

@@ -1,6 +1,6 @@
 //! Actual app paint preserves price coordinates while aligning inherited Light grids.
 use super::*;
-use quantick_appearance::Inheritance;
+use quantick_appearance::{Inheritance, Token};
 
 const SIDES: [PaneSide; 2] = [PaneSide::Time(0), PaneSide::Flow];
 
@@ -11,6 +11,8 @@ struct GridPaint {
     time_rule: Vec<[egui::Pos2; 2]>,
     labels: Vec<(String, egui::Pos2, egui::Color32)>,
     raw_y: Vec<f32>,
+    /// The time grid's lines, by x.
+    vertical: Vec<f32>,
 }
 
 fn fixture(ctx: &egui::Context, source: &str) -> QuantickApp {
@@ -60,7 +62,22 @@ fn capture(
         pane.orderflow.is_some(),
     );
     let expected_color = crate::pane::grid_color(&style);
-    let tick_ink = crate::theme::axes(ctx).text_muted();
+    let time_grid = style
+        .canvas
+        .time_grid_rgba()
+        .map(|[r, g, b, a]| egui::Color32::from_rgba_unmultiplied(r, g, b, a));
+    // Light rules and writes its axes in its own tokens; Dark in the grid's
+    // colour and its muted text.
+    let axes = crate::theme::axes(ctx);
+    let (price_rule, time_rule, tick_ink) = if axes.resolved.dark {
+        (expected_color, expected_color, axes.text_muted())
+    } else {
+        (
+            *axes.get(Token::PriceAxisRule),
+            *axes.get(Token::TimeAxisRule),
+            *axes.get(Token::AxisInk),
+        )
+    };
     let mut tick_labels = 0;
     let scale = pane
         .price_view
@@ -71,10 +88,14 @@ fn capture(
         divider: Vec::new(),
         time_rule: Vec::new(),
         labels: Vec::new(),
-        raw_y: crate::chart::nice_ticks(lo, hi, 8)
-            .into_iter()
-            .map(|tick| scale.y(tick))
-            .collect(),
+        raw_y: match axes.resolved.chart_axes.price_line_spacing {
+            Some(spacing) => quantick_chart::price_grid::ticks(lo, hi, rect.height(), spacing),
+            None => crate::chart::nice_ticks(lo, hi, 8),
+        }
+        .into_iter()
+        .map(|tick| scale.y(tick))
+        .collect(),
+        vertical: Vec::new(),
     };
     for shape in &output.shapes {
         match &shape.shape {
@@ -82,27 +103,50 @@ fn capture(
                 if points[0].x == rect.left()
                     && points[1].x == rect.right()
                     && points[0].y == points[1].y
+                    && points[0].y >= rect.bottom()
+                    && points[0].y <= rect.bottom() + 0.5001 =>
+            {
+                assert_eq!(stroke.color, egui::epaint::ColorMode::Solid(time_rule));
+                assert_eq!(stroke.width, 1.0);
+                paint.time_rule.push(*points);
+            }
+            egui::Shape::LineSegment { points, stroke }
+                if points[0].x == rect.left()
+                    && points[1].x == rect.right()
+                    && points[0].y == points[1].y
                     && points[0].y > rect.top()
-                    && points[0].y <= rect.bottom() =>
+                    && points[0].y < rect.bottom() =>
             {
                 let egui::epaint::ColorMode::Solid(color) = stroke.color else {
                     panic!("the grid uses a solid color");
                 };
                 assert_eq!(color, expected_color);
                 assert_eq!(stroke.width, 1.0);
-                if points[0].y == rect.bottom() {
-                    paint.time_rule.push(*points);
-                } else {
-                    paint.horizontal.push((*points, stroke.width, color));
-                }
+                paint.horizontal.push((*points, stroke.width, color));
             }
             egui::Shape::LineSegment { points, stroke }
-                if points[0] == egui::pos2(gutter.left(), rect.top())
-                    && points[1] == egui::pos2(gutter.left(), rect.bottom()) =>
+                if (points[0].x - gutter.left()).abs() <= 0.5001
+                    && points[1].x == points[0].x
+                    && points[0].y == rect.top()
+                    && points[1].y == rect.bottom() =>
             {
-                assert_eq!(stroke.color, egui::epaint::ColorMode::Solid(expected_color));
+                assert_eq!(stroke.color, egui::epaint::ColorMode::Solid(price_rule));
                 assert_eq!(stroke.width, 1.0);
                 paint.divider.push(*points);
+            }
+            // Other full-height marks (a seam, a day rule) wear their own
+            // colours; the time grid is the one in the grid's.
+            egui::Shape::LineSegment { points, stroke }
+                if points[1].x == points[0].x
+                    && points[0].x > rect.left()
+                    && points[0].x < gutter.left() - 0.5001
+                    && points[0].y == rect.top()
+                    && points[1].y == rect.bottom()
+                    && time_grid.is_some_and(|color| {
+                        stroke.color == egui::epaint::ColorMode::Solid(color)
+                    }) =>
+            {
+                paint.vertical.push(points[0].x);
             }
             egui::Shape::Text(text)
                 if text.pos.x == gutter.left() + crate::chart::AXIS_LABEL_GAP_PX
@@ -165,6 +209,16 @@ fn inherited_light_time_grid_aligns_at_each_dpi_without_moving_prices_or_exclude
             }
             let explicit_output = settled_frame(&mut app, &ctx);
             let explicit = SIDES.map(|side| capture(&app, &ctx, &explicit_output, side));
+            // Light opens with gridlines at its time labels as well; Dark,
+            // and a Light-mode theme written before them, with none.
+            let light_time_grid = source == quantick_appearance::LIGHT;
+            assert_eq!(
+                !inherited[0].vertical.is_empty(),
+                light_time_grid,
+                "{dpi}: {:?}",
+                inherited[0].vertical
+            );
+            assert_eq!(inherited[0].vertical.len(), explicit[0].vertical.len());
             assert_eq!(
                 inherited[1], explicit[1],
                 "Flow keeps every painted coordinate"

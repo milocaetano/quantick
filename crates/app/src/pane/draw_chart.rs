@@ -64,15 +64,13 @@ impl ChartPane {
         if flow_execution {
             start.candle_aggression = false;
         }
-        self.frame.axis_metrics = quantick_appearance::AxisMetrics::new(
-            &crate::theme::get(painter.ctx()).resolved.typography,
-        );
+        self.frame.axis_metrics = crate::theme::get(painter.ctx()).resolved.axis_metrics();
         let layout = self.lay_out(area, chrome);
         let axes = theme::axes(painter.ctx());
         let light_flow = self.orderflow.is_some() && !axes.resolved.dark;
         let fill = |rect, color| painter.rect_filled(rect, egui::Rounding::ZERO, color);
         let background = if light_flow {
-            axes.canvas()
+            *axes.get(quantick_appearance::Token::ChartCanvas)
         } else {
             start.canvas_background
         };
@@ -159,6 +157,12 @@ impl ChartPane {
         // Grid + price labels first, behind the candles. Labels anchor on the
         // gutter's edge, past the live strip when one is shown.
         let axis_x = layout.areas.price_gutter.left();
+        // The vertical grid stands where the time labels do; tape only has none.
+        let time_grid_xs = if layout.tape_only {
+            Vec::new()
+        } else {
+            self.time_grid_xs(&frame, chrome)
+        };
         renderers.grid(&mut GridPass {
             painter,
             chart_rect,
@@ -172,6 +176,7 @@ impl ChartPane {
             snap_horizontal: !axes.resolved.dark
                 && self.orderflow.is_none()
                 && chrome.style.ownership.grid == quantick_appearance::Inheritance::Theme,
+            time_grid_xs: &time_grid_xs,
         });
         // The day rule over the grid, under the candles; none in tape-only.
         let day_turns = self.day_turns(&frame, chrome);
@@ -206,6 +211,7 @@ impl ChartPane {
         if !layout.tape_only {
             let mut candle_pass =
                 history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
+            candle_pass.crisp = !axes.resolved.dark && self.orderflow.is_none();
             renderers.candle_clear(&mut candle_pass);
             // Only price-band background drawings may precede candle/indicator scales.
             self.carve_bands(&layout, &mut carved);

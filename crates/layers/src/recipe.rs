@@ -8,7 +8,10 @@ use std::collections::BTreeMap;
 /// Whether a workspace recipe speaks for `layer`.
 #[must_use]
 pub fn in_recipe(layer: ChartLayer) -> bool {
-    !matches!(layer.0.source, LayerSource::Grid | LayerSource::Drawings)
+    !matches!(
+        layer.0.source,
+        LayerSource::Grid | LayerSource::TimeGrid | LayerSource::Drawings
+    )
 }
 
 /// A pane's switches as a recipe keeps them.

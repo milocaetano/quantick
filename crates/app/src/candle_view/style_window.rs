@@ -42,7 +42,12 @@ pub fn draw_style_contents(
         &mut response.changed,
     );
     ui.separator();
-    draw_outline_settings(ui, &mut style.candles, &mut response.changed);
+    draw_outline_settings(
+        ui,
+        &mut style.candles,
+        &mut style.ownership.outline_width,
+        &mut response.changed,
+    );
     ui.separator();
     draw_wick_settings(
         ui,
@@ -173,7 +178,12 @@ pub fn draw_body_settings(
         .changed();
 }
 
-pub fn draw_outline_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &mut bool) {
+pub fn draw_outline_settings(
+    ui: &mut egui::Ui,
+    style: &mut CandleStyle,
+    width_owner: &mut quantick_appearance::Inheritance,
+    changed: &mut bool,
+) {
     ui.heading("Outline");
     *changed |= ui
         .add(
@@ -182,13 +192,17 @@ pub fn draw_outline_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed
                 .step_by(0.01),
         )
         .changed();
-    *changed |= ui
+    if ui
         .add(
             egui::Slider::new(&mut style.outline_width, 0.5..=4.0)
                 .text("outline thickness px")
                 .step_by(0.05),
         )
-        .changed();
+        .changed()
+    {
+        *width_owner = quantick_appearance::Inheritance::Explicit;
+        *changed = true;
+    }
 }
 
 pub fn draw_wick_settings(
@@ -268,9 +282,24 @@ pub fn draw_canvas_settings(ui: &mut egui::Ui, style: &mut ChartStyle, changed: 
     });
 
     *changed |= ui
-        .checkbox(&mut style.canvas.grid_enabled, "show price grid")
+        .checkbox(
+            &mut style.canvas.grid_enabled,
+            "show price grid (horizontal)",
+        )
         .changed();
-    ui.add_enabled_ui(style.canvas.grid_enabled, |ui| {
+    if ui
+        .checkbox(
+            &mut style.canvas.time_grid_enabled,
+            "show time grid (vertical)",
+        )
+        .on_hover_text("a line at each time label")
+        .changed()
+    {
+        style.ownership.time_grid = quantick_appearance::Inheritance::Explicit;
+        *changed = true;
+    }
+    let any_grid = style.canvas.grid_enabled || style.canvas.time_grid_enabled;
+    ui.add_enabled_ui(any_grid, |ui| {
         ui.horizontal(|ui| {
             ui.label("grid colour");
             *changed |= edit_color(ui, &mut style.canvas.grid, &mut style.ownership.grid);
@@ -304,6 +333,12 @@ pub fn draw_preview(ui: &mut egui::Ui, style: &ChartStyle, palette: &crate::them
                 [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
                 egui::Stroke::new(1.0_f32, color32(grid)),
             );
+        }
+    }
+    if let Some(grid) = style.canvas.time_grid_rgba() {
+        for fraction in [0.2_f32, 0.4, 0.6, 0.8] {
+            let x = egui::lerp(rect.x_range(), fraction);
+            painter.vline(x, rect.y_range(), egui::Stroke::new(1.0_f32, color32(grid)));
         }
     }
 

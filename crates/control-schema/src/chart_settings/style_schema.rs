@@ -6,15 +6,16 @@ use quantick_stores::chart_style::{
 use serde_json::{Value, json};
 
 pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    // No per-marker default: the ownership description states it once, which
+    // keeps the descriptor under its byte limit as markers are added.
     let inherited = json!({
         "type": "string",
-        "enum": ["theme", "explicit"],
-        "default": "explicit"
+        "enum": ["theme", "explicit"]
     });
     let ownership = json!({
         "type": "object",
         "additionalProperties": false,
-        "description": "Theme follows this chart surface; explicit preserves the value across themes. Omitted markers default to explicit; inspection returns all markers.",
+        "description": "Theme follows the chart's theme; explicit keeps the value across themes. Omitted markers are explicit; inspect returns all.",
         "properties": {
             "fill_opacity": inherited.clone(),
             "bull_fill": inherited.clone(),
@@ -23,7 +24,9 @@ pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemar
             "bear_outline": inherited.clone(),
             "wick": inherited.clone(),
             "background": inherited.clone(),
-            "grid": inherited
+            "grid": inherited.clone(),
+            "outline_width": inherited.clone(),
+            "time_grid": inherited
         }
     });
     let candles = json!({
@@ -65,6 +68,7 @@ pub(super) fn chart_style(_generator: &mut schemars::SchemaGenerator) -> schemar
             "background_enabled": {"type": "boolean"},
             "background": rgb(),
             "grid_enabled": {"type": "boolean"},
+            "time_grid_enabled": {"type": "boolean"},
             "grid": rgb(),
             "grid_opacity": range(0.0, 1.0)
         }

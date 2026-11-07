@@ -353,6 +353,7 @@ impl<'a> HealthSummary<'a> {
             candle_outline_width_px = self.style.candles.outline_width,
             chart_background_enabled = self.style.canvas.background_enabled,
             chart_grid_enabled = self.style.canvas.grid_enabled,
+            chart_time_grid_enabled = self.style.canvas.time_grid_enabled,
             replay_active = self.tab.replay.is_some(),
             replay_speed = self.tab.replay.as_ref().map(|r| r.status.speed()),
             replay_playing = self.tab.replay.as_ref().map(|r| r.status.is_playing()),
@@ -464,6 +465,7 @@ pub(super) fn emit_style_changed(
         wick_width_px = candles.wick_width,
         chart_background_enabled = style.canvas.background_enabled,
         chart_grid_enabled = style.canvas.grid_enabled,
+        chart_time_grid_enabled = style.canvas.time_grid_enabled,
         action = "redraw_only",
         "candle appearance changed"
     );

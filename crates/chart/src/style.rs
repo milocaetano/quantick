@@ -448,9 +448,11 @@ pub struct CanvasStyle {
     pub background: [u8; 3],
     /// Whether horizontal price grid lines are rendered.
     pub grid_enabled: bool,
-    /// Price grid RGB.
+    /// Whether vertical time grid lines are rendered, one at each time label.
+    pub time_grid_enabled: bool,
+    /// Grid RGB, shared by both directions.
     pub grid: [u8; 3],
-    /// Price grid opacity in `[0, 1]`.
+    /// Grid opacity in `[0, 1]`, shared by both directions.
     pub grid_opacity: f32,
 }
 
@@ -470,8 +472,17 @@ impl CanvasStyle {
     /// painting is disabled.
     #[must_use]
     pub fn grid_rgba(&self) -> Option<[u8; 4]> {
-        self.grid_enabled
-            .then(|| rgba(self.grid, unit_interval(self.grid_opacity, 0.65)))
+        self.grid_enabled.then(|| self.grid_paint())
+    }
+
+    /// Vertical grid RGBA, or `None` when the time grid is off.
+    #[must_use]
+    pub fn time_grid_rgba(&self) -> Option<[u8; 4]> {
+        self.time_grid_enabled.then(|| self.grid_paint())
+    }
+
+    fn grid_paint(&self) -> [u8; 4] {
+        rgba(self.grid, unit_interval(self.grid_opacity, 0.65))
     }
 }
 
@@ -481,6 +492,9 @@ impl Default for CanvasStyle {
             background_enabled: true,
             background: DEFAULT_BACKGROUND,
             grid_enabled: true,
+            // A fresh chart takes its theme's answer (`chart_time_grid`); off
+            // here is what a style saved before the switch existed loads as.
+            time_grid_enabled: false,
             grid: DEFAULT_GRID,
             grid_opacity: 0.65,
         }
@@ -876,11 +890,13 @@ mod tests {
             background_enabled: false,
             background: [1, 2, 3],
             grid_enabled: true,
+            time_grid_enabled: false,
             grid: [4, 5, 6],
             grid_opacity: 0.25,
         };
         assert_eq!(canvas.background_rgba(), [0, 0, 0, 0]);
         assert_eq!(canvas.grid_rgba(), Some([4, 5, 6, alpha(0.25)]));
+        assert_eq!(canvas.time_grid_rgba(), None);
 
         let hidden_grid = CanvasStyle {
             background_enabled: true,
@@ -889,6 +905,20 @@ mod tests {
         };
         assert_eq!(hidden_grid.background_rgba(), [1, 2, 3, 255]);
         assert_eq!(hidden_grid.grid_rgba(), None);
+    }
+
+    #[test]
+    fn the_two_grid_directions_switch_apart_and_share_one_paint() {
+        let price_only = CanvasStyle::default();
+        assert!(price_only.grid_rgba().is_some());
+        assert_eq!(price_only.time_grid_rgba(), None);
+        let time_only = CanvasStyle {
+            grid_enabled: false,
+            time_grid_enabled: true,
+            ..price_only
+        };
+        assert_eq!(time_only.grid_rgba(), None);
+        assert_eq!(time_only.time_grid_rgba(), price_only.grid_rgba());
     }
 
     #[test]
