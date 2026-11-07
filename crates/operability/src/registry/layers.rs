@@ -115,6 +115,16 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: LAYER_SWITCH,
     },
     UiBehaviour {
+        id: "layer.tape_bbo_lines.toggle",
+        title: "Draw the best bid and best ask as bold stepped lines on the tape",
+        reach: "pane right-click layer menu; Bubbles settings, Best bid/ask lines",
+        keys: &[(
+            Source::Authored,
+            "the per-pane order-flow menu and settings checkbox are not pane header LayerToggle entries",
+        )],
+        mapping: LAYER_SWITCH,
+    },
+    UiBehaviour {
         id: "orderflow.tape.fold.set",
         title: "Close the candles or the tape to a rail, or bring it back",
         reach: "drag the tape lane's divider to the left or right edge of the pane; click or drag the rail either single view keeps",

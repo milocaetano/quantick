@@ -14,8 +14,8 @@ use crate::orderflow_render::constants::{
 use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::config::crown::{
-    CROWN_BACKING_PX, CROWN_MIN_ARC_PX, CROWN_PIP_RADIUS_PX, CROWN_WHITE_MIX, crown_alpha,
-    crown_center_angle, crown_geometry,
+    CROWN_BACKING_PX, CROWN_MIN_ARC_PX, CROWN_PIP_RADIUS_PX, crown_alpha, crown_center_angle,
+    crown_geometry,
 };
 pub(super) use quantick_orderflow::config::dressing::{
     HOLLOW_FILL_ALPHA, RIM_ALPHA, SPHERE_LIGHT_OFFSET, front_half_length, halo_alpha,
@@ -32,68 +32,12 @@ use rust_decimal::prelude::ToPrimitive as _;
 use super::layout::RenderContext;
 use super::{Palette, add_gradient_rect, finite_unit, mix_rgb};
 
-/// Bubble colours after the panel's overrides are laid over the theme.
-///
-/// Resolved per draw call and never written back into [`Palette`]: the same
-/// theme colours keep driving the liquidity-response layer, which the bubble
-/// panel does not own.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct BubbleColors {
-    pub(super) buy: egui::Color32,
-    pub(super) sell: egui::Color32,
-    front: egui::Color32,
-    pub(super) trail: egui::Color32,
-    pub(super) text: egui::Color32,
-    /// The crown's colour per side. Derived from the side colour rather than
-    /// from [`front`](Self::front), so consumption reads as the same event
-    /// hotter instead of introducing a third hue — unless the panel explicitly
-    /// overrode the consumption colour, which stays the one door to change it.
-    crown_backing: egui::Color32,
-    pub(super) separator: egui::Color32,
-    crown_buy: egui::Color32,
-    crown_sell: egui::Color32,
-}
+/// The bubble colours ([`quantick_orderflow::config::BubbleColors`]) in egui's.
+pub(super) type BubbleColors = quantick_orderflow::config::BubbleColors<egui::Color32>;
 
-impl BubbleColors {
-    pub(super) fn resolve(palette: &Palette, bubbles: &BubbleStyle) -> Self {
-        let front = bubbles.front_color.map_or(palette.consumption, opaque_rgb);
-        let buy = bubbles.buy_color.map_or(palette.buy, opaque_rgb);
-        let sell = bubbles.sell_color.map_or(palette.sell, opaque_rgb);
-        let crown_of = |side: egui::Color32| match bubbles.front_color {
-            Some(rgb) => opaque_rgb(rgb),
-            None => opaque_rgb(mix_rgb(
-                [side.r(), side.g(), side.b()],
-                [255, 255, 255],
-                CROWN_WHITE_MIX,
-            )),
-        };
-        Self {
-            buy,
-            sell,
-            front,
-            // The trail is the front's own glow, so it follows it by default.
-            trail: bubbles.trail_color.map_or(front, opaque_rgb),
-            text: bubbles.label_color.map_or(palette.bubble_text, opaque_rgb),
-            crown_backing: palette.crown_backing,
-            separator: palette.separator,
-            crown_buy: crown_of(buy),
-            crown_sell: crown_of(sell),
-        }
-    }
-
-    const fn for_side(self, side: Side) -> egui::Color32 {
-        match side {
-            Side::Buy => self.buy,
-            Side::Sell => self.sell,
-        }
-    }
-
-    pub(super) const fn crown_for_side(self, side: Side) -> egui::Color32 {
-        match side {
-            Side::Buy => self.crown_buy,
-            Side::Sell => self.crown_sell,
-        }
-    }
+/// The panel's bubble overrides laid over `palette`.
+pub(super) fn bubble_colors(palette: &Palette, bubbles: &BubbleStyle) -> BubbleColors {
+    BubbleColors::resolve(palette, bubbles, opaque_rgb, |c| [c.r(), c.g(), c.b()])
 }
 
 fn opaque_rgb(rgb: [u8; 3]) -> egui::Color32 {
@@ -628,7 +572,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let bubbles = &style.bubbles;
     let appearance = crate::theme::get(painter.ctx());
     let palette = style.colors(super::premultiplied);
-    let colors = BubbleColors::resolve(&palette, bubbles);
+    let colors = bubble_colors(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
 
     // The side nudge generalizes to a bubble carrying both sides: it slides

@@ -75,6 +75,16 @@ pub const PREVIEW_SUMMARY_BUY_SHARE: f32 = 0.62;
 pub const PATH_WIDTH_PX: f32 = 0.8;
 pub const PATH_RGBA: [u8; 4] = [142, 166, 177, 95];
 
+/// The tape's best bid and best ask lines stand out over the book: bold,
+/// in the side's own colour at full opacity ([`crate::projection::BboPath`]),
+/// each laid on its own side of the spread
+/// ([`crate::projection::bbo_outward_offset_px`]).
+pub const BBO_LINE_WIDTH_PX: f32 = 3.0;
+/// The dark halo under each line, past the stroke on either side, so a line
+/// stays readable over the brightest heat rows. In the theme's label-shadow
+/// colour.
+pub const BBO_HALO_PX: f32 = 1.0;
+
 /// FLOW caption text size, in points.
 pub const FLOW_CAPTION_FONT_PX: f32 = 10.0;
 /// FLOW caption distance from the history pane's left edge, in pixels.

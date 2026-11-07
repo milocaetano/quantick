@@ -24,7 +24,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 use crate::chart::PriceScale;
 use crate::live_strip;
 use crate::orderflow_render::{
-    OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
+    OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles, draw_bbo_lines,
     draw_compact_legend_avoiding, draw_heatmap_background, draw_liquidity_events,
     draw_live_lane_marks,
 };
@@ -149,14 +149,15 @@ impl OrderflowView {
         let context = RenderContext::new(&frame.projection, layout, &style)
             .with_current_book_live(frame.current_book_live);
         draw_heatmap_background(&depth, &context);
+        let lines = super::layers::bbo_lines_drawn(&self.config);
         if let Some(heat) = self.held_heat(frame) {
             let mut tape = style.clone();
             tape.depth_layer = false;
-            draw_heatmap_background(
-                painter,
-                &RenderContext::new(&heat, layout.with_lane_only(), &tape),
-            );
+            let held = RenderContext::new(&heat, layout.with_lane_only(), &tape);
+            draw_heatmap_background(painter, &held);
+            draw_bbo_lines(painter, &held, lines);
         }
+        draw_bbo_lines(&depth, &context, lines);
         draw_live_lane_marks(painter, &context);
         draw_liquidity_events(&depth, &context);
     }

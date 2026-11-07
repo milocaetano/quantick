@@ -1,6 +1,8 @@
 //! The live half of a frame, continuing the last publication's sealed tape.
 use super::BookEngine;
-use crate::projection::{SealInputs, TapeReuse, native_grouping, project_live_folded, seal_tape};
+use crate::projection::{
+    SealInputs, TapeReuse, native_grouping, project_bbo_paths, project_live_folded, seal_tape,
+};
 use crate::{BarTimeline, HeatmapProjection, PriceWindow, SettledProjection, VolumeDots};
 use std::sync::Arc;
 
@@ -47,6 +49,10 @@ impl BookEngine {
             &mut self.view.lane_fold,
         );
         let mut projection = settled.with_live(live, &self.config);
+        // A held tape draws its own lines on its own clock (`PastHeat`).
+        if self.view.tape_end_ms.is_none() {
+            projection.bbo_lines = Arc::new(project_bbo_paths(&self.history, timeline, prices));
+        }
         if let (Some(facts), Some(dots)) =
             (projection.tape_facts.as_mut().and_then(Arc::get_mut), dots)
         {

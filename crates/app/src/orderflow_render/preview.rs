@@ -15,7 +15,8 @@ use quantick_engine::Side;
 use quantick_orderflow::{BubbleStyle, HeatmapConfig};
 
 use super::bubbles::{
-    BubbleColors, BubbleMark, bubble_radius, draw_bubble, front_half_length, trail_rect,
+    BubbleColors, BubbleMark, bubble_colors, bubble_radius, draw_bubble, front_half_length,
+    trail_rect,
 };
 use super::layout::EventBand;
 use super::{OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, rgba};
@@ -255,7 +256,7 @@ impl PreviewCanvas {
     /// opacity, rim, front, trail, side offset) shows its effect here.
     fn draw_sample_prints(&self, config: &HeatmapConfig) {
         let bubbles = &self.style.bubbles;
-        let colors = BubbleColors::resolve(&self.palette, bubbles);
+        let colors = bubble_colors(&self.palette, bubbles);
         draw_preview_bubble(
             &self.painter,
             PreviewBubble {

@@ -96,7 +96,7 @@ exact_fields! {
     LiveLaneStyle {
         width_share, window, cluster_ms, radius_scale, show_marks, enabled, show_depth,
         show_aggressions, native_tape, depth_time_averaging, forward_book_preview,
-        stable_size, tape_only, fold_market_closed, market_hold, old_tape_fold, drag_close,
+        bbo_lines, stable_size, tape_only, fold_market_closed, market_hold, old_tape_fold, drag_close,
     }
 }
 

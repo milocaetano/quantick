@@ -17,6 +17,7 @@ pub enum OrderflowSwitch {
     OverlapMerge,
     TapeOnly,
     NativeTape,
+    BboLines,
 }
 
 /// The authority that already owns a requested visibility value.
@@ -76,7 +77,7 @@ pub struct LayerDescriptor {
 pub struct ChartLayer(pub &'static LayerDescriptor);
 
 impl ChartLayer {
-    pub const ALL: [Self; 25] = builtins::ALL;
+    pub const ALL: [Self; 26] = builtins::ALL;
     pub const fn id(self) -> &'static str {
         self.0.id
     }

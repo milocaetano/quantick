@@ -30,6 +30,7 @@ fn luminance(rgb: [u8; 3]) -> f32 {
     0.2126 * f32::from(rgb[0]) + 0.7152 * f32::from(rgb[1]) + 0.0722 * f32::from(rgb[2])
 }
 
+mod bbo_lines_tests;
 mod dot_radii_tests;
 mod flow_chrome;
 mod tape_only_tests;
@@ -86,7 +87,7 @@ fn a_low_detail_radius_does_not_disarm_the_readability_floor() {
         "prints must still be foldable when the dressing radius is low"
     );
 
-    let colors = BubbleColors::resolve(
+    let colors = bubble_colors(
         &super::palette_for_theme(HeatmapTheme::Bookmap),
         &dense_tape_btc,
     );
@@ -268,7 +269,7 @@ fn a_cheap_dot_stays_a_single_circle() {
         hollow_small_buys: false,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = bubble_colors(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let shapes = painted(|painter| {
         draw_bubble(
             painter,
@@ -302,7 +303,7 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
         trail_length: 0.0,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = bubble_colors(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let at = egui::pos2(120.0, 80.0);
     let radius = bubble_radius(
         PREVIEW_LARGE_PRINT_SIZE,
@@ -351,12 +352,12 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
 #[test]
 fn bubble_colours_fall_back_to_the_theme_and_the_trail_follows_the_front() {
     let palette = super::palette_for_theme(HeatmapTheme::Bookmap);
-    let default = BubbleColors::resolve(&palette, &BubbleStyle::default());
+    let default = bubble_colors(&palette, &BubbleStyle::default());
     assert_eq!(default.buy, palette.buy);
     assert_eq!(default.sell, palette.sell);
     assert_eq!(default.trail, palette.consumption);
 
-    let overridden = BubbleColors::resolve(
+    let overridden = bubble_colors(
         &palette,
         &BubbleStyle {
             buy_color: Some([1, 2, 3]),
@@ -522,7 +523,7 @@ fn centered_flow_pies_preserve_half_and_quarter_areas_at_every_orientation() {
 fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
     let bubbles = BubbleStyle::default();
     assert_eq!(bubbles.consumption_mark, ConsumptionMark::Crown);
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = bubble_colors(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let mark = BubbleMark {
         center: egui::pos2(60.0, 60.0),
         radius: 10.0,
@@ -593,7 +594,7 @@ fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
 fn a_crown_follows_its_own_side_unless_the_panel_overrode_it() {
     let palette = super::palette_for_theme(HeatmapTheme::Bookmap);
     let bubbles = BubbleStyle::default();
-    let colors = BubbleColors::resolve(&palette, &bubbles);
+    let colors = bubble_colors(&palette, &bubbles);
     // Derived from the side colour, and brighter than it: consumption is
     // the same event, hotter — no third hue enters the canvas.
     for (side, base) in [(Side::Buy, colors.buy), (Side::Sell, colors.sell)] {
@@ -610,7 +611,7 @@ fn a_crown_follows_its_own_side_unless_the_panel_overrode_it() {
     );
 
     // The consumption colour override stays the one door to change it.
-    let overridden = BubbleColors::resolve(
+    let overridden = bubble_colors(
         &palette,
         &BubbleStyle {
             front_color: Some([10, 20, 30]),
@@ -646,7 +647,7 @@ fn sphere_mode_swaps_the_flat_fill_for_a_shaded_mesh() {
         render_mode: BubbleRenderMode::Sphere,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&palette, &flat_style);
+    let colors = bubble_colors(&palette, &flat_style);
 
     let flat = painted(|painter| draw_bubble(painter, mark, &flat_style, &colors));
     let sphere = painted(|painter| draw_bubble(painter, mark, &sphere_style, &colors));
@@ -676,7 +677,7 @@ fn the_preview_draws_a_sphere_bubble_exactly_the_way_the_chart_does() {
         trail_length: 0.0,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = bubble_colors(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let at = egui::pos2(120.0, 80.0);
     let radius = bubble_radius(
         PREVIEW_LARGE_PRINT_SIZE,
@@ -735,7 +736,7 @@ fn hollow_small_buys_opens_the_dot_and_leaves_dressed_bubbles_alone() {
         hollow_small_buys: false,
         ..hollow.clone()
     };
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &hollow);
+    let colors = bubble_colors(&super::palette_for_theme(HeatmapTheme::Bookmap), &hollow);
     let mark = |radius| BubbleMark {
         center: egui::pos2(40.0, 40.0),
         radius,
@@ -853,7 +854,7 @@ fn a_two_sided_bubble_draws_both_sides_and_a_small_one_falls_back() {
         render_mode: BubbleRenderMode::Flat,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = bubble_colors(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let mark = |radius: f32, buy_share: f32| BubbleMark {
         center: egui::pos2(60.0, 60.0),
         radius,
@@ -920,7 +921,7 @@ fn a_pie_needs_the_readability_floor_on_the_shipped_presets() {
         ..BubbleStyle::default()
     };
     assert!(dense_tape_btc.detail_min_radius < dense_tape_btc.min_radius);
-    let colors = BubbleColors::resolve(
+    let colors = bubble_colors(
         &super::palette_for_theme(HeatmapTheme::Bookmap),
         &dense_tape_btc,
     );
@@ -1617,7 +1618,7 @@ fn a_candle_panned_behind_the_tape_is_clipped_to_its_own_pane() {
 #[test]
 fn a_folded_bubble_wears_a_ring_a_print_does_not() {
     let bubbles = BubbleStyle::default();
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = bubble_colors(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let mark = BubbleMark {
         center: egui::pos2(40.0, 40.0),
         radius: 10.0,
