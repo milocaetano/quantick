@@ -16,15 +16,17 @@ use tracing::{info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_hyperliquid::{
-    Backoff, CANDLE_INTERVAL_1D, CANDLE_INTERVAL_1M, HYPERLIQUID_WS_URL, ONE_MINUTE_MS,
-    TradeMapper,
+    Backoff, HYPERLIQUID_WS_URL, TradeMapper,
     depth::{DepthEvent, HYPERLIQUID_LEVELS_PER_SIDE, run_depth_with_reconnect},
     fetch_candle_history, run_trades_with_reconnect,
 };
 
 use super::{FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice};
 use crate::config::ProviderKind;
-use crate::venue_loop::{CommandPlan, Slot, ohlcv_reply_frees_slot, plan_command, send_or_break};
+use crate::venue_loop::{
+    CommandPlan, Slot, answer_unsupported_interval, ohlcv_reply_frees_slot, plan_command,
+    send_or_break,
+};
 
 const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
 const FEED_EVENT_CHANNEL_CAPACITY: usize = 4_096;
@@ -220,7 +222,11 @@ impl HyperliquidLoop {
         let book = Slot::observe(self.book_capture.as_ref().map(|t| t.handle.is_finished()));
         let ohlcv = Slot::observe(self.ohlcv_task.as_ref().map(JoinHandle::is_finished));
         match plan_command(cmd, book, ohlcv) {
-            CommandPlan::RefuseOhlcv { span_ms, before_ms } => {
+            CommandPlan::RefuseOhlcv {
+                interval_ms,
+                span_ms,
+                before_ms,
+            } => {
                 // One fetch at a time; the in-flight one answers.
                 warn!(
                     target: "quantick::app",
@@ -239,7 +245,7 @@ impl HyperliquidLoop {
                 // `load_older` never returns silence either. `Refused` rather
                 // than a short answer: nothing was fetched because nobody
                 // looked, which is not a statement about the venue's record.
-                let refused = (ONE_MINUTE_MS, Vec::new(), crate::OhlcvSlice::Refused);
+                let refused = (interval_ms, Vec::new(), crate::OhlcvSlice::Refused);
                 send_or_break(&self.ohlcv_tx, refused).await?; // UI gone
             }
             CommandPlan::StartOhlcv {
@@ -377,12 +383,10 @@ fn spawn_ohlcv(
     before_ms: Option<i64>,
     reply: mpsc::Sender<OhlcvReply>,
 ) -> JoinHandle<()> {
-    // Both bases are native here, as on Binance: a `1d` candle opens at
-    // 00:00 UTC, the engine's own day.
-    let (candle_interval, interval_ms) = if interval_ms == crate::OHLCV_DAILY_INTERVAL_MS {
-        (CANDLE_INTERVAL_1D, quantick_engine::time_bucket::DAY_MS)
-    } else {
-        (CANDLE_INTERVAL_1M, ONE_MINUTE_MS)
+    // Every interval asked for is served by its own `candleSnapshot` name, as
+    // on Binance: a `1d` candle opens at 00:00 UTC, the engine's own day.
+    let Some(candle_interval) = quantick_feed_hyperliquid::candle_interval_for(interval_ms) else {
+        return answer_unsupported_interval("hyperliquid", symbol, interval_ms, reply);
     };
     tokio::spawn(async move {
         let symbol = symbol.as_str();
@@ -410,7 +414,8 @@ fn spawn_ohlcv(
                 symbol,
                 candle_interval,
                 interval_ms,
-                window.from_ms,
+                // A page of months or weeks reaches past 1970; no venue opens there.
+                window.from_ms.max(0),
                 window.to_ms,
             )
             .await

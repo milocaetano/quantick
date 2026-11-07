@@ -112,6 +112,39 @@ pub struct ChartCoverage {
     pub newest_close_time_unix_ms: Option<i64>,
     pub older_history_paging_supported: bool,
     pub venue_prefix_present: bool,
+    /// The venue candles the pane's prefix is built from, and whether more
+    /// are on their way; absent for a pane that reads none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venue_candles: Option<VenueCandleStatus>,
+}
+
+/// Where asking the venue for older candles stands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VenueCandleState {
+    /// Nothing out; scrolling near the oldest bar asks for more.
+    Idle,
+    /// A request is out.
+    Loading,
+    /// The venue's record starts at the oldest candle held.
+    Exhausted,
+}
+
+/// The venue candles one pane reads.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct VenueCandleStatus {
+    pub state: VenueCandleState,
+    /// The interval the candles were asked for at: the pane's own, or the
+    /// coarser one folded into it.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub interval_ms: i64,
+    pub candles_held: WireU64,
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub oldest_open_time_unix_ms: Option<i64>,
+    /// Whether the last answer was cut short (a failed or throttled fetch):
+    /// the candles held are real, and more are asked for after a backoff.
+    #[serde(default)]
+    pub last_reply_short: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

@@ -12,6 +12,7 @@
 //! second's network stack.
 
 pub mod candle_base;
+pub mod candle_series;
 pub mod candles;
 pub mod config;
 pub mod history_reach;
