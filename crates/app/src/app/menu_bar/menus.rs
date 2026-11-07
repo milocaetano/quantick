@@ -355,10 +355,10 @@ impl ViewMenu<'_> {
         if ui
             .checkbox(&mut progressive, "Progressive venue history")
             .on_hover_text(
-                "Build the venue's candle history from now backwards, a week at \
-                 a time, so the chart fills in while the rest arrives. Off asks \
-                 for the whole span in one request: fewer calls, nothing on \
-                 screen until all of it lands.",
+                "Feeds that fold minutes build candle history from now back, \
+                 a week at a time, so the chart fills in as it arrives; off asks \
+                 for the whole span at once. Feeds serving every interval ask \
+                 one page at the chart's own interval either way.",
             )
             .changed()
         {

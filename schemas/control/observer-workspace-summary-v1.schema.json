@@ -188,6 +188,7 @@
       "type": "boolean"
     },
     "progressive_venue_history": {
+      "description": "Whether a feed that folds minutes builds its candle history a week\nat a time. A feed serving every interval asks one page at the pane's\nown interval either way, so the setting does not reach it.",
       "type": "boolean"
     },
     "replay_day_before": {

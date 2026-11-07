@@ -140,7 +140,9 @@ pub struct CandleSeries {
 }
 
 impl CandleSeries {
-    /// The opening request at `interval_ms`: one page back from the live edge.
+    /// The opening request at `interval_ms`: one page back from the live edge,
+    /// unsliced whatever the progressive setting says — a page is one venue
+    /// call, so slicing it would only cut it into more replies.
     #[must_use]
     pub fn opening_ask(interval_ms: i64) -> CandleAsk {
         CandleAsk {
