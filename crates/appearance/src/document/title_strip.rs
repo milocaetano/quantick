@@ -32,9 +32,15 @@ impl TitleStripOverride {
 }
 
 impl ResolvedTheme {
-    /// The strip's palette; a theme without the section paints it in its own.
+    /// The strip's palette. A Light theme without the section paints it as
+    /// bundled Light does, because the tab tokens it inherits assume that
+    /// slate; a Dark one paints it in its own.
     pub fn title_strip(&self) -> &Self {
-        self.title_strip.as_deref().unwrap_or(self)
+        match self.title_strip.as_deref() {
+            Some(strip) => strip,
+            None if !self.dark => ResolvedTheme::bundled(false).title_strip(),
+            None => self,
+        }
     }
 }
 
@@ -68,6 +74,20 @@ mod tests {
         assert_ne!(
             light.color(Token::TextPrimary),
             dark.color(Token::TextPrimary)
+        );
+    }
+
+    #[test]
+    fn an_authored_light_file_without_the_table_paints_bundled_lights_strip() {
+        let light = ResolvedTheme::parse(LIGHT).unwrap();
+        let authored = "version=1\nname='Mine'\ndark=false\n[colors]\ncanvas='#FFFFFF'";
+        let authored = ResolvedTheme::parse(authored).unwrap();
+        assert_eq!(authored.title_strip(), light.title_strip());
+        let dark = "version=1\nname='Mine dark'\n[colors]\ncanvas='#000000'";
+        let dark = ResolvedTheme::parse(dark).unwrap();
+        assert!(
+            std::ptr::eq(dark.title_strip(), &dark),
+            "Dark keeps its own"
         );
     }
 

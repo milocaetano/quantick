@@ -199,3 +199,17 @@ fn historical_choice_loads_with_writes_refused_and_invalid_choice_stays_untouche
     assert!(AppearanceStore::open(path).load_failed());
     assert_eq!(std::fs::read_to_string(choice_path).unwrap(), invalid);
 }
+
+/// A Light choice saved before the title strip loads as today's Light, slate strip included.
+#[test]
+fn light_choice_before_the_title_strip_migrates_to_current_light() {
+    let old = include_str!("legacy-light-ee7ea6b5.toml");
+    assert!(!old.contains("[title_strip"));
+    let scratch = ScratchDir::new("legacy-light-title-strip");
+    let path = scratch.join("appearance.toml");
+    std::fs::write(scratch.join("appearance.toml.choice.toml"), old).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), Some(Builtin::Light));
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    assert_eq!(store.resolved().title_strip(), light.title_strip());
+}

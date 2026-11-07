@@ -70,16 +70,17 @@ inset = "#E6E3DF"
 control = "#DEDBD7"
 # Existing opacity renders the reference #F2F3F3 over the white canvas.
 chart_grid = "#BABBBB"
-# About 20 levels under chrome, so the strip reads apart from the toolbar.
+# The title strip and its wordmark paint [title_strip]'s values; these two
+# are Light's own, for surfaces outside the strip.
 tab_strip = "#D9D6D2"
-# The wordmark's "tick", the approved W6 green: a logotype, so no contrast floor.
 brand = "#12C68C"
-replay_ink = "#7F36B3"
-# The active tab flows into the toolbar row on the canvas white; the idle tabs
-# and the band sit on the title strip's slate (see [title_strip]).
+# Darker than draw_violet so a replaying idle tab keeps 4.5:1 on its warm grey.
+replay_ink = "#7832AA"
+# The active tab flows into the toolbar row on the canvas white; idle tabs are
+# warm grey blocks with no edge, on the title strip's slate (see [title_strip]).
 toolbar_sheet = "#FFFCF7"
-tab_idle_fill = "#303B47"
-tab_idle_outline = "#57667A"
+tab_idle_fill = "#CFCCC7"
+tab_idle_outline = "#CFCCC700"
 tab_band = "#12C68C"
 home_glow = "#12C68C59"
 border = "#B8B6B2"
@@ -262,23 +263,17 @@ buy = ["#0A2D2B", "#0D3B38", "#11554E", "#0D6A5F", "#009880", "#29D9AE"]
 sell = ["#510E16", "#6A111A", "#951520", "#BD1217", "#FE3800", "#FDAF89"]
 ink = ["#96A0AF", "#96A0AF", "#D2DAE2", "#D2DAE2", "#0E121A", "#0E121A"]
 
-# The title strip (logo, tabs, +, menu and window buttons) keeps the order-flow
-# slate with Dark's inks, so the logo renders exactly as it does in Dark. The
-# active tab's face is the toolbar's sheet and keeps this theme's own inks.
+# The title strip (logo, +, menu and window buttons) keeps the order-flow slate
+# with Dark's inks, so the logo renders exactly as it does in Dark. Market tabs
+# keep this theme's own colours and inks.
 [title_strip.colors]
 tab_strip = "#252F37"
 text_primary = "#D2DAE2"
-# Dark's muted and faint inks, lifted just enough to keep 4.5:1 and 3:1 on
-# the idle tab block, which is lighter than Dark's.
-text_muted = "#9EA8B6"
-text_faint = "#7E8897"
+text_muted = "#96A0AF"
+text_faint = "#6E7887"
 brand = "#3AF0B2"
-replay_ink = "#C58CFF"
-buy_ink = "#88CEC7"
 warn = "#FF6347"
 amber = "#F0B90B"
 accent = "#8AB4F8"
 control = "#232936"
-border = "#2E3648"
 bare_hover = { premultiplied = [15, 15, 15, 15] }
-seam_line = { premultiplied = [60, 60, 60, 60] }

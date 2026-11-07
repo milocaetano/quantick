@@ -337,7 +337,8 @@ fn the_strip_and_its_tabs_paint_each_themes_tokens() {
     assert_ne!(strips[0], strips[1], "Light has its own strip");
 }
 
-/// An idle market tab is a block on the strip, edged in the strip's outline;
+/// An idle market tab is a block in the theme's own colours, edged (Light: a
+/// transparent edge);
 /// no separator line is drawn between tabs.
 #[test]
 fn an_idle_market_tab_is_an_edged_block_with_no_separator() {
@@ -354,7 +355,7 @@ fn an_idle_market_tab_is_an_edged_block_with_no_separator() {
         let output = run_frame_sized(&mut app, &ctx, WINDOW, vec![event], egui::Modifiers::NONE);
         let theme = ResolvedTheme::parse(source).unwrap();
         let ink = |token: Token| {
-            let [r, g, b, a] = theme.title_strip().color(token).to_array();
+            let [r, g, b, a] = theme.color(token).to_array();
             egui::Color32::from_rgba_premultiplied(r, g, b, a)
         };
         assert_ne!(app.runtime.tabs.active_index(), 0, "chip 0 is idle");
@@ -454,11 +455,7 @@ fn the_home_tab_has_no_shape_and_glows_only_while_shown() {
     assert_eq!(glow_peak(&idle, home), None, "idle: no glow");
     let hovered = moved(&mut app, home.center());
     assert_eq!(surface_fill(&hovered, home), None, "hovered: no shape");
-    assert_eq!(
-        glow_peak(&hovered, home),
-        Some(glow.gamma_multiply(0.5)),
-        "hovered"
-    );
+    assert_eq!(glow_peak(&hovered, home), None, "hovered: no glow");
     click_sized(&mut app, &ctx, WINDOW, home.center());
     let active = moved(&mut app, far);
     assert!(on_home(&app));

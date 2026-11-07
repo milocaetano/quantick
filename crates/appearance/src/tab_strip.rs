@@ -73,10 +73,8 @@ pub fn glow_falloff(distance: f32) -> f32 {
     (gaussian(distance) - rim) / (1.0 - rim)
 }
 
-/// The Home glow's diameter in points, and its strength while the pointer is
-/// over an inactive Home: a hint, half the glow shown with Home.
+/// The Home glow's diameter in points.
 pub const HOME_GLOW_DIAMETER_PT: f32 = 28.0;
-pub const HOME_GLOW_HOVER: f32 = 0.5;
 
 /// The Home glow as triangles around its centre: each vertex's offset in
 /// points and its strength (0 to 1), and the triangles' vertex indices.
@@ -86,9 +84,15 @@ pub struct GlowMesh {
     pub indices: Vec<u32>,
 }
 
-/// A disc [`HOME_GLOW_DIAMETER_PT`] across in rings, shaded by [`glow_falloff`].
+/// A disc [`HOME_GLOW_DIAMETER_PT`] across in rings, shaded by [`glow_falloff`],
+/// built once.
 #[must_use]
-pub fn glow_mesh() -> GlowMesh {
+pub fn glow_mesh() -> &'static GlowMesh {
+    static MESH: std::sync::OnceLock<GlowMesh> = std::sync::OnceLock::new();
+    MESH.get_or_init(build_glow_mesh)
+}
+
+fn build_glow_mesh() -> GlowMesh {
     const RINGS: u32 = 14;
     const SEGMENTS: u32 = 48;
     let radius = HOME_GLOW_DIAMETER_PT / 2.0;
@@ -114,8 +118,10 @@ pub fn glow_mesh() -> GlowMesh {
     GlowMesh { vertices, indices }
 }
 
-/// The active tab's accent band along its top edge, in points.
+/// The active tab's accent band along its top edge, and a tab's top corner
+/// radius, in points.
 pub const TAB_BAND_PT: f32 = 2.0;
+pub const TAB_CORNER_PT: f32 = 6.0;
 
 /// One rounded-top layer of a market tab's shape, bottom to top.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -125,33 +131,36 @@ pub struct TabLayer {
     /// Its top corners' radius, less the inset so nested corners follow.
     pub corner_inset: f32,
     pub fill: Token,
-    /// The fill comes from the theme's own palette, not the strip's: the
-    /// active tab's face is the toolbar's sheet.
-    pub root: bool,
-    /// A 1 pt edge in the strip's palette.
+    /// A 1 pt edge.
     pub outline: Option<Token>,
+    /// How tall the layer is, or to the tab's floor when `None`.
+    pub height: Option<f32>,
 }
 
-/// A market tab's layers: the active one an accent band under the toolbar
-/// sheet, inset by [`TAB_BAND_PT`] so the band shows along its top; an idle
-/// one a block edged in the strip's outline, washed while hovered or focused.
+/// A market tab's layers, in the theme's own palette: the active one an accent
+/// band under the toolbar sheet, inset by [`TAB_BAND_PT`] so the band shows
+/// along its top; an idle one an edged block, washed while hovered or focused.
+/// Light's idle edge is transparent: its warm grey block needs none.
 #[must_use]
 pub fn tab_layers(selected: bool, lit: bool) -> Vec<TabLayer> {
-    let layer = |inset, fill, root, outline| TabLayer {
+    let layer = |inset, fill, outline| TabLayer {
         inset,
         corner_inset: inset,
         fill,
-        root,
         outline,
+        height: None,
     };
     if selected {
-        return vec![
-            layer(0.0, Token::TabBand, false, None),
-            layer(TAB_BAND_PT, tab_fill(true), true, None),
-        ];
+        // The band only reaches below the corners: the sheet's anti-aliased
+        // sides never sit over it.
+        let band = TabLayer {
+            height: Some(TAB_BAND_PT + TAB_CORNER_PT),
+            ..layer(0.0, Token::TabBand, None)
+        };
+        return vec![band, layer(TAB_BAND_PT, tab_fill(true), None)];
     }
-    let block = layer(0.0, tab_fill(false), false, Some(Token::TabIdleOutline));
-    let wash = layer(0.0, Token::BareHover, false, None);
+    let block = layer(0.0, tab_fill(false), Some(Token::TabIdleOutline));
+    let wash = layer(0.0, Token::BareHover, None);
     if lit { vec![block, wash] } else { vec![block] }
 }
 
@@ -212,21 +221,20 @@ mod tests {
         for (token, want) in [
             (Token::TabStrip, [[0x10, 0x14, 0x1D], [0x25, 0x2F, 0x37]]),
             (Token::TabBand, [[0x3A, 0xF0, 0xB2], [0x12, 0xC6, 0x8C]]),
-            (Token::TabIdleFill, [[0x1B, 0x20, 0x2D], [0x30, 0x3B, 0x47]]),
-            (
-                Token::TabIdleOutline,
-                [[0x42, 0x4B, 0x60], [0x57, 0x66, 0x7A]],
-            ),
+            (Token::TabIdleFill, [[0x1B, 0x20, 0x2D], [0xCF, 0xCC, 0xC7]]),
             (
                 Token::ToolbarSheet,
                 [[0x17, 0x1B, 0x26], [0xFF, 0xFC, 0xF7]],
             ),
         ] {
             for (theme, rgb) in [(&dark, want[0]), (&light, want[1])] {
-                let strip = theme.title_strip();
-                assert_eq!(strip.color(token).to_array()[..3], rgb, "{}", token.key());
+                let palette = [theme, theme.title_strip()][usize::from(token == Token::TabStrip)];
+                assert_eq!(palette.color(token).to_array()[..3], rgb, "{}", token.key());
             }
         }
+        let outline = |theme: &ResolvedTheme| theme.color(Token::TabIdleOutline).to_array();
+        assert_eq!(outline(&dark), [0x42, 0x4B, 0x60, 255]);
+        assert_eq!(outline(&light)[3], 0, "Light's idle tab has no edge");
         // Text at 4.5:1; the feed marks are graphics, 3:1. The wordmark is a
         // logotype, which has no contrast floor (WCAG 1.4.3, 1.4.11).
         let text = [(Token::TextMuted, 4.5), (Token::ReplayInk, 4.5)];
@@ -238,20 +246,17 @@ mod tests {
         ];
         let graphics = marks.map(|mark| (feed_token(mark), 3.0));
         for theme in [&dark, &light] {
-            let strip = theme.title_strip();
-            let idle = [strip.color(Token::TabStrip), strip.color(tab_fill(false))];
-            let unders = [
-                (strip, idle.to_vec()),
-                (theme, vec![theme.color(tab_fill(true))]),
-            ];
-            for (inks, under) in unders {
+            // Market tabs wear the theme's inks on both their faces.
+            for under in [tab_fill(false), tab_fill(true)].map(|fill| theme.color(fill)) {
                 for (ink, floor) in text.into_iter().chain(graphics) {
-                    for &under in &under {
-                        let ratio = contrast_ratio(inks.color(ink), under);
-                        assert!(ratio >= floor, "{} {}: {ratio}", theme.name, ink.key());
-                    }
+                    let ratio = contrast_ratio(theme.color(ink), under);
+                    assert!(ratio >= floor, "{} {}: {ratio}", theme.name, ink.key());
                 }
             }
+            // The strip's own inks (window buttons, menu) on the strip.
+            let strip = theme.title_strip();
+            let ratio = contrast_ratio(strip.color(Token::TextMuted), strip.color(Token::TabStrip));
+            assert!(ratio >= 4.5, "{} strip: {ratio}", theme.name);
         }
     }
 
@@ -262,8 +267,10 @@ mod tests {
             active.iter().map(|l| l.fill).collect::<Vec<_>>(),
             [Token::TabBand, Token::ToolbarSheet]
         );
-        assert_eq!((active[1].inset, active[1].root), (TAB_BAND_PT, true));
+        assert_eq!(active[1].inset, TAB_BAND_PT);
         assert!(active.iter().all(|layer| layer.outline.is_none()));
+        assert_eq!(active[0].height, Some(TAB_BAND_PT + TAB_CORNER_PT));
+        assert_eq!(active[1].height, None);
         assert_eq!(tab_layers(true, true), active, "hover does not change it");
         let idle = tab_layers(false, false);
         assert_eq!(idle.len(), 1);
