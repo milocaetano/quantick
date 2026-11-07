@@ -24,7 +24,7 @@ New tokens, three only: `tab_strip`, `brand`, `replay_ink`. Everything else reus
 | Separator | `seam_line`, hidden next to the active or hovered tab | | | Light `border` is too heavy for a divider |
 | Keyboard focus ring | `accent`, 2 px inset | | | The accent marks focus only, never the active tab |
 | Home tab | pinned: no close, no separator after it; "uan" `text_primary` in every state, never dimmed | | | The trader forbids logo changes: the wordmark keeps the previous build's ink |
-| Home wordmark "tick" | `brand` (new) | #3AF0B2 | #007A55 | See *Open for the trader* |
+| Home wordmark "tick" | `brand` (new) | #3AF0B2 | #12C68C | The trader's approved W6 green (2026-11-06); a logotype has no contrast floor |
 | Feed state on a tab | live: filled dot `buy_ink`; needs attention (connected while the venue reports a failure, e.g. an MT5 terminal closed behind an open socket): filled diamond `warn`; replay: filled triangle `replay_ink` (new, #C58CFF / #7F36B3) plus the word "Replay"; disconnected: hollow ring `warn`; stopped: hollow ring `text_faint` | | | Shape plus colour, so it survives colour blindness; replay stays labelled in words (data honesty); amber now means "unsaved" in tabs. A connected feed with a venue notice is neither live nor lost: its diamond shares the ring's ink and differs from both by shape; only a lost connection wears the warn ring. `quantick_workspace` decides the state (`TabFeed`), `quantick_appearance` owns the mark (`FeedMark`), the app's strip maps one to the other |
 | Per-market colour | none | | | The symbol text is the identity; hue already means buy, sell, unsaved and replay |
 | Menu bar | `chrome`, items `text_primary`, hover `bare_hover` | | | Mock |
@@ -33,5 +33,4 @@ New tokens, three only: `tab_strip`, `brand`, `replay_ink`. Everything else reus
 
 ## Open for the trader
 
-- **Light `brand`.** #3AF0B2 measures 1.2:1 on the Light strip, so "tick" disappears. Light uses the same hue darkened to #007A55. The logo files are untouched. To keep the original green, set `brand` in `light.toml` back to #3AF0B2.
 - **Light toolbar.** The TradingView-style Light mocks show a white toolbar; main's Light `chrome` is #ECECEC. This merge keeps main's value. Raising it is a one-line change in `light.toml`; `tab_strip` should then stay about 20 levels darker than `chrome`.

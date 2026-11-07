@@ -44,9 +44,9 @@ const SEMIBOLD_STRIKE_PX: f32 = 0.35;
 /// The plate-less Q, the wordmark's first letter: its 22 px box, the glyph inside.
 const HOME_Q: egui::Vec2 = egui::Vec2::splat(22.0);
 /// How far the Light theme's edged Q moves toward the wordmark (trader-approved
-/// option W6, 2026-11-06), leaving its glyph about 1 px from the "u". W6 is
-/// drawn at the Dark Q's size: its "+10%" scaled icon.svg's bare geometry,
-/// which sits at 3/4 of this raster's glyph scale.
+/// option W6, 2026-11-06), leaving its glyph about 1 px from the "u". Its size
+/// and raster are `quantick_appearance::mark`'s: W6's 28 pt square, whose
+/// glyph is about 0.95 of the Dark Q's.
 pub(crate) const LIGHT_Q_SHIFT_PT: f32 = 4.0;
 const HOME_TEXT_PX: f32 = 15.0;
 // Window edge to the Home tab, tab edge to the Q, Q to text, text to edge.

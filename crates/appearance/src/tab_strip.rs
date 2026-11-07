@@ -114,7 +114,7 @@ mod tests {
         let light = ResolvedTheme::parse(LIGHT).unwrap();
         for (token, want) in [
             (Token::TabStrip, [[0x10, 0x14, 0x1D], [0xD9, 0xD6, 0xD2]]),
-            (Token::Brand, [[0x3A, 0xF0, 0xB2], [0x00, 0x7A, 0x55]]),
+            (Token::Brand, [[0x3A, 0xF0, 0xB2], [0x12, 0xC6, 0x8C]]),
             (Token::ReplayInk, [[0xC5, 0x8C, 0xFF], [0x7F, 0x36, 0xB3]]),
         ] {
             for (theme, rgb) in [(&dark, want[0]), (&light, want[1])] {
@@ -125,7 +125,8 @@ mod tests {
         for theme in [&dark, &light] {
             let strip = theme.color(Token::TabStrip);
             assert_ne!(strip, theme.color(Token::Chrome), "the strip reads apart");
-            // Text at 4.5:1; the wordmark and the feed marks are graphics, 3:1.
+            // Text at 4.5:1; the feed marks are graphics, 3:1. The wordmark is a
+            // logotype, which has no contrast floor (WCAG 1.4.3, 1.4.11).
             let text = [(Token::TextMuted, 4.5), (Token::ReplayInk, 4.5)];
             let marks = [
                 FeedMark::Live,
@@ -134,11 +135,7 @@ mod tests {
                 FeedMark::Stopped,
             ];
             let graphics = marks.map(|mark| (feed_token(mark), 3.0));
-            for (ink, floor) in text
-                .into_iter()
-                .chain([(Token::Brand, 3.0)])
-                .chain(graphics)
-            {
+            for (ink, floor) in text.into_iter().chain(graphics) {
                 for under in [strip, theme.color(Token::Chrome)] {
                     let ratio = contrast_ratio(theme.color(ink), under);
                     assert!(ratio >= floor, "{} {}: {ratio}", theme.name, ink.key());

@@ -13,6 +13,7 @@ pub mod contrast;
 mod document;
 mod error;
 pub mod heat;
+pub mod mark;
 pub mod orderflow;
 pub mod palette;
 mod state;
