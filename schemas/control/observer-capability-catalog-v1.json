@@ -19811,6 +19811,17 @@
                 ],
                 "x-unit": "unix_milliseconds"
               },
+              "venue_candles": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/VenueCandleStatus"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The venue candles the pane's prefix is built from, and whether more\nare on their way; absent for a pane that reads none."
+              },
               "venue_prefix_present": {
                 "type": "boolean"
               }
@@ -20042,6 +20053,57 @@
               "follows_live",
               "window",
               "window_ms"
+            ],
+            "type": "object"
+          },
+          "VenueCandleState": {
+            "description": "Where asking the venue for older candles stands.",
+            "oneOf": [
+              {
+                "const": "idle",
+                "description": "Nothing out; scrolling near the oldest bar asks for more.",
+                "type": "string"
+              },
+              {
+                "const": "loading",
+                "description": "A request is out.",
+                "type": "string"
+              },
+              {
+                "const": "exhausted",
+                "description": "The venue's record starts at the oldest candle held.",
+                "type": "string"
+              }
+            ]
+          },
+          "VenueCandleStatus": {
+            "description": "The venue candles one pane reads.",
+            "properties": {
+              "candles_held": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "interval_ms": {
+                "description": "The interval the candles were asked for at: the pane's own, or the\ncoarser one folded into it.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "oldest_open_time_unix_ms": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "state": {
+                "$ref": "#/$defs/VenueCandleState"
+              }
+            },
+            "required": [
+              "state",
+              "interval_ms",
+              "candles_held"
             ],
             "type": "object"
           },

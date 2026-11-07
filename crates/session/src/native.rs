@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 use quantick_engine::Bar;
 use quantick_sources::candle_base::CandleAsk;
+use quantick_sources::candle_series::seam::{SeamMinutes, reads_seam_minutes, seam_stretch};
 use quantick_sources::candle_series::{CandleSeries, SeriesStatus, native_series_for};
 use quantick_sources::candles::{
     OlderCandles, fold, starts_inside_bucket, trim_borrowed_to_seam, trim_to_seam,
@@ -22,7 +23,8 @@ use quantick_sources::ohlcv::{OHLCV_BASE_INTERVAL_MS, OhlcvSlice};
 
 use crate::view::PaneView;
 use crate::{
-    CandlePurpose, Delivery, Effect, FeedRequest, Refusal, SessionEvent, Step, Wait, WaitChange,
+    CandlePurpose, Delivery, Effect, FeedRequest, Refusal, SeamTrace, SessionEvent, Step, Wait,
+    WaitChange,
 };
 
 /// Every series a tab holds, by the interval it was asked for at.
@@ -33,6 +35,10 @@ pub(crate) struct NativeCandles {
     /// feed serves one candle fetch at a time and refuses a second, so a
     /// second series asks once the first is answered.
     in_flight: Option<i64>,
+    /// The minutes the seam bars' leads read, and whether their request is
+    /// the one out.
+    seam: SeamMinutes,
+    seam_out: bool,
 }
 
 /// The series a pane reads: its interval's, or the venue's minutes for a
@@ -51,7 +57,7 @@ impl NativeCandles {
     ///
     /// Rate: **per-frame**; a walk over the panes and a map lookup each.
     pub(crate) fn poll(&mut self, step: &mut Step<'_>, tab_id: u64, lead_in: bool) {
-        if self.in_flight.is_some() || !step.tab.capabilities.ohlcv_history {
+        if self.pending() || !step.tab.capabilities.ohlcv_history {
             return;
         }
         if let Some((ask, purpose)) = self.next_request(step.tab.panes, lead_in) {
@@ -84,6 +90,12 @@ impl NativeCandles {
         if let Some((key, _)) = opening {
             return Some((CandleSeries::opening_ask(key), CandlePurpose::Opening));
         }
+        let seams = panes
+            .iter()
+            .filter_map(|pane| Some((pane.first_print_open_ms?, pane.interval_ms?)));
+        if let Some(ask) = self.seam.ask(seam_stretch(seams)) {
+            return Some((ask, CandlePurpose::SeamMinutes));
+        }
         wanted().find_map(|(key, first_visible)| {
             let series = self.series.get(&key)?;
             let ask = series.next_ask(key, first_visible)?;
@@ -103,6 +115,11 @@ impl NativeCandles {
     ) {
         let older = matches!(purpose, CandlePurpose::Older { .. });
         match delivery {
+            Delivery::Sent if purpose == CandlePurpose::SeamMinutes => {
+                self.seam.sent(ask);
+                self.seam_out = true;
+                step.wait(Wait::VenueCandles, WaitChange::Begin);
+            }
             Delivery::Sent => {
                 self.in_flight = Some(ask.interval_ms);
                 self.series.entry(ask.interval_ms).or_default().sent(ask);
@@ -155,8 +172,22 @@ impl NativeCandles {
             interval_ms,
             bars: bars.len(),
             slice,
-            discarded: self.in_flight.is_none(),
+            discarded: !self.pending(),
         });
+        if self.seam_out {
+            // The seam's minutes; any other interval is not minutes.
+            let minutes = if interval_ms == OHLCV_BASE_INTERVAL_MS {
+                bars
+            } else {
+                Vec::new()
+            };
+            if self.seam.take_reply(minutes, slice) {
+                self.seam_out = false;
+                step.wait(Wait::VenueCandles, WaitChange::End);
+                self.install(step, lead_in);
+            }
+            return;
+        }
         let Some(key) = self.in_flight else {
             tracing::debug!(
                 target: "quantick::app",
@@ -236,7 +267,7 @@ impl NativeCandles {
         slice: OhlcvSlice,
         lead_in: bool,
     ) {
-        if self.in_flight.is_none() {
+        if !self.pending() {
             self.in_flight = Some(interval_ms);
             self.series
                 .entry(interval_ms)
@@ -253,13 +284,37 @@ impl NativeCandles {
     pub(crate) fn install(&self, step: &mut Step<'_>, lead_in: bool) {
         for (index, pane) in step.tab.panes.iter().enumerate() {
             let bars = self.prefix_for(pane, lead_in);
-            step.effects.push(Effect::InstallPrefix {
-                pane: index,
-                bars,
-                lead: None,
-                covers_seam: false,
-                seam: None,
-            });
+            // The bucket of the first trade, before it: the seam's minutes.
+            let seam = pane
+                .interval_ms
+                .zip(pane.first_print_open_ms)
+                .filter(|&(interval_ms, _)| reads_seam_minutes(interval_ms));
+            let effect = match seam {
+                Some((interval_ms, first_print_ms)) => {
+                    let outcome = self.seam.lead(first_print_ms, interval_ms);
+                    let covers_seam = outcome.covers_seam();
+                    let token = outcome.token();
+                    Effect::InstallPrefix {
+                        pane: index,
+                        bars,
+                        lead: outcome.into_bar(),
+                        covers_seam,
+                        seam: Some(SeamTrace {
+                            first_print_ms,
+                            interval_ms,
+                            token,
+                        }),
+                    }
+                }
+                None => Effect::InstallPrefix {
+                    pane: index,
+                    bars,
+                    lead: None,
+                    covers_seam: false,
+                    seam: None,
+                },
+            };
+            step.effects.push(effect);
         }
     }
 
@@ -291,11 +346,16 @@ impl NativeCandles {
     pub(crate) fn attach(&mut self, step: &mut Step<'_>, keep_timeline: bool) {
         if keep_timeline {
             self.series.values_mut().for_each(CandleSeries::abandon);
+            self.seam.abandon();
         } else if !self.series.is_empty() {
             self.series.clear();
             step.clear_prefixes();
         }
+        if !keep_timeline {
+            self.seam = SeamMinutes::default();
+        }
         self.in_flight = None;
+        self.seam_out = false;
     }
 
     /// The series a pane cut at `interval_ms` reads, and where it stands.
@@ -323,7 +383,7 @@ impl NativeCandles {
             OlderCandles::FeedServesNone
         } else if key.is_none() {
             OlderCandles::NoChartCutByTime
-        } else if self.in_flight.is_some() {
+        } else if self.pending() {
             OlderCandles::Fetching
         } else if series.and_then(CandleSeries::oldest_ms).is_none() {
             OlderCandles::NotArrivedYet
@@ -374,7 +434,7 @@ impl NativeCandles {
     }
 
     pub(crate) const fn pending(&self) -> bool {
-        self.in_flight.is_some()
+        self.in_flight.is_some() || self.seam_out
     }
 
     /// Whether every series held has reached the venue's record start.

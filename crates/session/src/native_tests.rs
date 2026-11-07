@@ -40,6 +40,7 @@ fn page(end_ms: i64, count: usize, interval_ms: i64) -> Vec<Bar> {
 struct Pane {
     interval_ms: Option<i64>,
     first_visible_slot: Option<usize>,
+    first_print_open_ms: Option<i64>,
 }
 
 /// The window's half: a feed that takes every request, panes that keep the
@@ -50,6 +51,7 @@ struct Shell {
     capabilities: FeedCapabilities,
     sent: Vec<FeedRequest>,
     prefixes: Vec<Vec<Bar>>,
+    leads: Vec<(Option<Bar>, bool)>,
 }
 
 impl Shell {
@@ -64,11 +66,13 @@ impl Shell {
                 .map(|&interval_ms| Pane {
                     interval_ms,
                     first_visible_slot: None,
+                    first_print_open_ms: None,
                 })
                 .collect(),
             capabilities,
             sent: Vec::new(),
             prefixes: vec![Vec::new(); intervals.len()],
+            leads: vec![(None, false); intervals.len()],
         }
     }
 
@@ -79,7 +83,7 @@ impl Shell {
             .iter()
             .map(|pane| PaneView {
                 interval_ms: pane.interval_ms,
-                first_print_open_ms: None,
+                first_print_open_ms: pane.first_print_open_ms,
                 first_bar: None,
                 partial: None,
                 rebuild_pending: false,
@@ -110,7 +114,16 @@ impl Shell {
                     let delivery = Delivery::Sent;
                     self.dispatch(session, Act::FeedAck { request, delivery });
                 }
-                Effect::InstallPrefix { pane, bars, .. } => self.prefixes[pane] = bars,
+                Effect::InstallPrefix {
+                    pane,
+                    bars,
+                    lead,
+                    covers_seam,
+                    ..
+                } => {
+                    self.prefixes[pane] = bars;
+                    self.leads[pane] = (lead, covers_seam);
+                }
                 _ => {}
             }
         }
@@ -329,4 +342,28 @@ fn a_feed_without_the_capability_keeps_the_minute_base() {
         shell.asks()[0].0.interval_ms,
         quantick_sources::ohlcv::OHLCV_BASE_INTERVAL_MS
     );
+}
+
+#[test]
+fn the_seam_bar_reads_the_minutes_before_the_first_trade() {
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[Some(QUARTER)]);
+    let first_trade = EDGE + 7 * MINUTE;
+    shell.panes[0].first_print_open_ms = Some(first_trade);
+    shell.poll(&mut session);
+    shell.reply(&mut session, page(EDGE, CANDLE_PAGE_BARS, QUARTER));
+    shell.poll(&mut session);
+    shell.poll(&mut session);
+    assert_eq!(shell.asks().len(), 2, "one small request for the seam");
+    let (ask, purpose) = shell.asks()[1];
+    assert_eq!(purpose, CandlePurpose::SeamMinutes);
+    assert_eq!(ask.interval_ms, MINUTE);
+    assert_eq!(ask.before_ms, Some(first_trade - 1));
+    assert_eq!(ask.span_ms, 7 * MINUTE);
+    shell.reply(&mut session, page(first_trade, 7, MINUTE));
+    let (lead, covers_seam) = &shell.leads[0];
+    assert!(covers_seam, "seven minutes vouch for the stretch");
+    assert_eq!(lead.as_ref().map(|bar| bar.trade_count), Some(7));
+    shell.poll(&mut session);
+    assert_eq!(shell.asks().len(), 2, "asked once");
 }

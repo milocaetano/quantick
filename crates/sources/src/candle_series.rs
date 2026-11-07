@@ -18,6 +18,8 @@ use crate::candle_base::CandleAsk;
 use crate::candles::{is_foldable, merge_older_candles};
 use crate::ohlcv::OhlcvSlice;
 
+pub mod seam;
+
 /// How many candles one request asks the venue for: one Binance page.
 pub const CANDLE_PAGE_BARS: usize = 1_000;
 
