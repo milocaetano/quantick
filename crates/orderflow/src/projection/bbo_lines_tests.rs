@@ -366,3 +366,84 @@ fn the_lines_alone_keep_the_frame_projected() {
         "nothing left to draw, nothing projected"
     );
 }
+
+/// The `(top, bottom)` screen band a side's stroke covers at `true_y`.
+fn band(side: RestingSide, true_y: f32, stroke: f32, high_price_up: bool) -> (f32, f32) {
+    let centre = true_y + bbo_outward_offset_px(side, stroke, high_price_up);
+    (centre - stroke / 2.0, centre + stroke / 2.0)
+}
+
+#[test]
+fn the_two_sides_never_overlap_on_screen() {
+    let stroke = 3.0;
+    // Screen y grows downwards; the ask is the higher price, so its true y is
+    // at or above the bid's.
+    for (ask_y, bid_y) in [
+        (100.0, 100.0),
+        (100.0, 100.4),
+        (100.0, 101.0),
+        (100.0, 160.0),
+    ] {
+        let ask = band(RestingSide::Ask, ask_y, stroke, true);
+        let bid = band(RestingSide::Bid, bid_y, stroke, true);
+        assert!(ask.1 <= bid.0, "ask {ask:?} stays above bid {bid:?}");
+        assert_eq!(ask.1, ask_y, "the ask never crosses its price inward");
+        assert_eq!(bid.0, bid_y, "nor does the bid");
+        assert_eq!(
+            (ask.1 - ask.0, bid.1 - bid.0),
+            (stroke, stroke),
+            "both whole"
+        );
+    }
+    // A wide spread is unchanged but for the outward half stroke.
+    let (ask, bid) = (
+        band(RestingSide::Ask, 100.0, stroke, true),
+        band(RestingSide::Bid, 160.0, stroke, true),
+    );
+    assert_eq!((ask.0 + ask.1) / 2.0, 100.0 - stroke / 2.0);
+    assert_eq!((bid.0 + bid.1) / 2.0, 160.0 + stroke / 2.0);
+}
+
+#[test]
+fn an_inverted_axis_keeps_each_side_outward() {
+    let stroke = 3.0;
+    // Inverted, the ask is drawn below the bid.
+    let ask = band(RestingSide::Ask, 100.3, stroke, false);
+    let bid = band(RestingSide::Bid, 100.0, stroke, false);
+    assert!(bid.1 <= ask.0, "bid {bid:?} above ask {ask:?}, apart");
+    assert_eq!((bid.1, ask.0), (100.0, 100.3));
+}
+
+#[test]
+fn every_halo_is_laid_before_any_line_and_each_line_sits_outward() {
+    use crate::config::painting::{BBO_HALO_PX, BBO_LINE_WIDTH_PX};
+    let path = |side, y| BboPath {
+        side,
+        carried: false,
+        points: vec![[0.0, y], [1.0, y]],
+    };
+    let paths = [path(RestingSide::Ask, 0.5), path(RestingSide::Bid, 0.5)];
+    let strokes = bbo_strokes(&paths, |[x, y]| [x as f32 * 100.0, y as f32 * 100.0], true);
+    let sides: Vec<_> = strokes.iter().map(|stroke| stroke.side).collect();
+    assert_eq!(
+        sides,
+        vec![None, None, Some(RestingSide::Ask), Some(RestingSide::Bid)]
+    );
+    assert_eq!(strokes[0].width, BBO_LINE_WIDTH_PX + 2.0 * BBO_HALO_PX);
+    assert_eq!(strokes[2].width, BBO_LINE_WIDTH_PX);
+    let half = BBO_LINE_WIDTH_PX / 2.0;
+    assert_eq!(
+        strokes[2].points[0][1],
+        50.0 - half,
+        "the ask above its price"
+    );
+    assert_eq!(
+        strokes[3].points[0][1],
+        50.0 + half,
+        "the bid below its price"
+    );
+    assert!(
+        strokes.iter().all(|stroke| stroke.alpha == 1.0),
+        "full opacity"
+    );
+}

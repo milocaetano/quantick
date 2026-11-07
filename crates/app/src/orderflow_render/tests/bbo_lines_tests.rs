@@ -46,7 +46,11 @@ fn the_tape_draws_bold_bbo_lines_only_while_their_switch_is_on() {
             true,
         );
     });
-    assert_eq!(shown.matches("Path(").count(), 2, "{shown}");
+    assert_eq!(
+        shown.matches("Path(").count(),
+        4,
+        "a halo under each line: {shown}"
+    );
     assert!(
         shown.contains(&format!("width: {BBO_LINE_WIDTH_PX:?}")),
         "{shown}"

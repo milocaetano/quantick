@@ -215,6 +215,73 @@ pub fn past_bbo_lines(
     bbo_lines(history.bbo(), start_ms, until_ms.min(latest_ms), None)
 }
 
+/// How far, in screen pixels, a side's stroke centre sits from its true
+/// price: outward, away from the spread, by half the stroke. The ask's
+/// stroke then lies wholly on the far side of the ask and the bid's wholly on
+/// the far side of the bid, so the two strokes meet at most edge to edge —
+/// adjacent when the spread is under a pixel or zero, never overlapping, never
+/// crossing a true price inward — and a wide spread only gains the half
+/// stroke. `high_price_up` is the axis's orientation: the ask is above the
+/// bid unless the chart is inverted.
+#[must_use]
+pub fn bbo_outward_offset_px(side: RestingSide, stroke_px: f32, high_price_up: bool) -> f32 {
+    let away_is_up = (side == RestingSide::Ask) == high_price_up;
+    if away_is_up {
+        -stroke_px / 2.0
+    } else {
+        stroke_px / 2.0
+    }
+}
+
+/// One stroke the painter lays, in paint order: a halo (`side` `None`, the
+/// theme's shadow colour) or a side's line (its side colour).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BboStroke {
+    /// Whose colour: `None` is the halo.
+    pub side: Option<RestingSide>,
+    /// Stroke width, pixels.
+    pub width: f32,
+    /// Share of the colour: dimmed on the carried stretch only.
+    pub alpha: f32,
+    /// Screen vertices, decimated to the pixel column.
+    pub points: Vec<[f32; 2]>,
+}
+
+/// The strokes of `paths` on screen: each placed by `place`, moved outward
+/// off the spread ([`bbo_outward_offset_px`]) and decimated
+/// ([`decimate_columns`]); every halo first, so no halo covers the other
+/// side's colour, then every line at
+/// [`BBO_LINE_WIDTH_PX`](crate::config::painting::BBO_LINE_WIDTH_PX).
+#[must_use]
+pub fn bbo_strokes(
+    paths: &[BboPath],
+    place: impl Fn([f64; 2]) -> [f32; 2],
+    high_price_up: bool,
+) -> Vec<BboStroke> {
+    use crate::config::painting::{BBO_HALO_PX, BBO_LINE_WIDTH_PX};
+    let lines: Vec<(&BboPath, Vec<[f32; 2]>)> = paths
+        .iter()
+        .map(|path| {
+            let lift = bbo_outward_offset_px(path.side, BBO_LINE_WIDTH_PX, high_price_up);
+            let at = |&point: &[f64; 2]| {
+                let [x, y] = place(point);
+                [x, y + lift]
+            };
+            (path, decimate_columns(path.points.iter().map(at)))
+        })
+        .collect();
+    let stroke = |(path, points): &(&BboPath, Vec<[f32; 2]>), halo: bool| BboStroke {
+        side: (!halo).then_some(path.side),
+        width: BBO_LINE_WIDTH_PX + if halo { 2.0 * BBO_HALO_PX } else { 0.0 },
+        alpha: path.alpha(),
+        points: points.clone(),
+    };
+    let halos = lines.iter().map(|line| stroke(line, true));
+    halos
+        .chain(lines.iter().map(|line| stroke(line, false)))
+        .collect()
+}
+
 /// `points` — screen `[x, y]`, `x` non-decreasing — cut to what one pixel
 /// column can show: a column holding more than four vertices keeps its
 /// first, its lowest and highest `y` (in the order they came) and its last,

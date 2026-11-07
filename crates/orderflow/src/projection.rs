@@ -44,7 +44,8 @@ mod tape_seal;
 mod tiers;
 
 pub use bbo_lines::{
-    BboLine, BboPath, StepPoint, bbo_lines, decimate_columns, past_bbo_lines, project_bbo_paths,
+    BboLine, BboPath, BboStroke, StepPoint, bbo_lines, bbo_outward_offset_px, bbo_strokes,
+    decimate_columns, past_bbo_lines, project_bbo_paths,
 };
 pub use candle_dots::{
     CandleDot, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
