@@ -15,6 +15,7 @@ use crate::{
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_chart::bar_progress::BarProgressReading;
+use quantick_chart::time_marks::{BarAt, MarkWeight, TimeMark};
 use rust_decimal::prelude::ToPrimitive as _;
 pub(super) const PACKAGE: Package = Package {
     layers: &[
@@ -280,101 +281,107 @@ pub(in crate::pane) struct TimeStripPass<'a> {
     pub candles_right: Option<f32>,
     pub viewport: &'a crate::viewport::Viewport,
     pub series: quantick_drawings::gesture::PaneSeriesRead<'a>,
-    /// Spans the day separator wrote dates or ticks on; labels stand aside.
-    pub reserved: &'a [(f32, f32)],
-    /// Dates the day separator wrote; a label in one stays a clock.
-    pub named: &'a [quantick_chart::day_turn::WrittenDate],
-}
-/// How one frame's time labels are spaced: the strip they may use, the font
-/// and format they are written in, and every how many bars one stands.
-struct LabelWalk {
-    history_strip: egui::Rect,
-    font: egui::FontId,
-    format: crate::chart::TimeLabelFormat,
-    interval_ms: Option<i64>,
-    label_width: f32,
-    stride: usize,
 }
 impl TimeStripPass<'_> {
-    fn walk(&self, palette: &crate::theme::Palette) -> LabelWalk {
-        let painter = self.painter;
+    /// The strip's labels this frame, in the font they are written in.
+    ///
+    /// Intraday charts label round instants the way TradingView does
+    /// (`quantick_chart::time_marks`): `HH:MM`, the day number where a day
+    /// turns, the month and the year where those do. A chart cut at a day or
+    /// longer writes its UTC buckets' dates every few bars, as it always has.
+    fn marks(&self, palette: &crate::theme::Palette) -> (egui::FontId, Vec<TimeMark>) {
         let size = palette.resolved.chart_axes.time_label_size;
         let font = label_font(palette, crate::chart::TIME_LABEL_FONT_PX, size);
+        if self.end <= self.start {
+            return (font, Vec::new());
+        }
         let (history_strip, _) = split_time_strip(self.strip, self.candles_right);
-
-        // Measured, not counted. One layout per format per frame — monospace,
-        // so a format's sample answers for every label written in it — and the
-        // stride comes out of pixels rather than out of a fixed label count
-        // that a narrower strip could not honour.
-        let width_of = |format: crate::chart::TimeLabelFormat| {
-            painter
-                .layout_no_wrap(
-                    format.sample().to_owned(),
-                    font.clone(),
-                    palette.text_muted(),
-                )
+        let width_of = |text: &str| {
+            self.painter
+                .layout_no_wrap(text.to_owned(), font.clone(), palette.text_muted())
                 .size()
                 .x
         };
-        let format = crate::chart::time_label_format(history_strip.width(), width_of);
-        // A chart cut at a day or longer writes dates, not clock times.
+        let x_of = |slot| {
+            self.viewport
+                .x_center(slot, history_strip.right(), self.total)
+        };
+        let seed = self
+            .start
+            .checked_sub(1)
+            .and_then(|slot| self.series.slot_open_time(slot));
         let interval_ms = self.series.spec.spec().time_interval_ms();
-        let calendar = interval_ms.and_then(crate::plot_area::calendar_label_sample);
-        let label_width = calendar.map_or_else(
-            || width_of(format),
-            |sample| {
-                painter
-                    .layout_no_wrap(sample.to_owned(), font.clone(), palette.text_muted())
-                    .size()
-                    .x
-            },
-        );
-        // Per *bar*, not per slot: the walk below steps a bar at a time and
-        // labels the bar it lands on, so how far apart two labels end up is
-        // how far apart two bars are.
-        let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), label_width);
-        LabelWalk {
-            history_strip,
-            font,
-            format,
-            interval_ms,
-            label_width,
-            stride,
-        }
-    }
-
-    /// Where a label may stand: every `stride`-th closed bar from the first
-    /// in view whose whole label fits the strip — a label centred a few
-    /// pixels from the end drew its other half over the gutter.
-    fn slots<'w>(&'w self, walk: &'w LabelWalk) -> impl Iterator<Item = (usize, f32)> + 'w {
-        (self.start..self.end)
-            .step_by(walk.stride.max(1))
-            .filter(|&index| self.series.closed_bar(index).is_some())
-            .map(|index| {
-                let x = self
-                    .viewport
-                    .x_center(index, walk.history_strip.right(), self.total);
-                (index, x)
-            })
-            .filter(|&(_, x)| {
-                crate::chart::label_fits(
-                    x,
-                    walk.label_width,
-                    walk.history_strip.left(),
-                    walk.history_strip.right(),
+        let marks = match interval_ms
+            .filter(|interval| crate::plot_area::calendar_label_sample(*interval).is_some())
+        {
+            Some(interval) => self.calendar_marks(interval, seed, &width_of, &x_of),
+            None => {
+                let bars: Vec<BarAt> = (self.start..self.end)
+                    .filter_map(|slot| {
+                        let bar = self.series.closed_bar(slot)?;
+                        Some(BarAt {
+                            slot,
+                            x: x_of(slot),
+                            open_ms: bar.open_time,
+                        })
+                    })
+                    .collect();
+                quantick_chart::time_marks::time_marks(
+                    &bars,
+                    seed,
+                    self.tz,
+                    quantick_chart::time_marks::TIME_MARK_GAP_PX,
+                    width_of,
                 )
-            })
+            }
+        };
+        // The whole label, not just its centre: a label centred a few pixels
+        // from the end drew its other half over the gutter.
+        let fits = |mark: &TimeMark| {
+            crate::chart::label_fits(
+                mark.x,
+                width_of(&mark.text),
+                history_strip.left(),
+                history_strip.right(),
+            )
+        };
+        let marks = marks.into_iter().filter(fits).collect();
+        (font, marks)
     }
 
-    /// The vertical grid's places: one line per label slot. A line stays
-    /// where the pointer's chip or a written date hides its label, as a
-    /// price gridline stays under a chip.
+    /// A calendar chart's labels: every few bars, by the widest date's room.
+    fn calendar_marks(
+        &self,
+        interval_ms: i64,
+        mut previous: Option<i64>,
+        width_of: &dyn Fn(&str) -> f32,
+        x_of: &dyn Fn(usize) -> f32,
+    ) -> Vec<TimeMark> {
+        let sample = crate::plot_area::calendar_label_sample(interval_ms).unwrap_or("00 Mmm");
+        let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), width_of(sample));
+        (self.start..self.end)
+            .step_by(stride.max(1))
+            .filter_map(|slot| {
+                let bar = self.series.closed_bar(slot)?;
+                let before = previous.replace(bar.open_time);
+                let text =
+                    crate::plot_area::fmt_calendar_label(bar.open_time, interval_ms, before)?;
+                Some(TimeMark {
+                    slot,
+                    x: x_of(slot),
+                    text,
+                    weight: MarkWeight::Day,
+                })
+            })
+            .collect()
+    }
+
+    /// The vertical grid's places: one line per label. A line stays where
+    /// the pointer's chip hides its label, as a price gridline stays under a
+    /// chip.
     pub fn grid_xs(&self) -> Vec<f32> {
-        if self.end <= self.start {
-            return Vec::new();
-        }
-        let walk = self.walk(&theme::axes(self.painter.ctx()));
-        self.slots(&walk).map(|(_, x)| x).collect()
+        let (_, marks) = self.marks(&theme::axes(self.painter.ctx()));
+        marks.into_iter().map(|mark| mark.x).collect()
     }
 
     pub fn paint(&self) {
@@ -390,49 +397,16 @@ impl TimeStripPass<'_> {
             ],
             egui::Stroke::new(1.0_f32, rule),
         );
-        if self.end <= self.start {
-            return;
-        }
         let ink = axis_ink(&palette);
-        let walk = self.walk(&palette);
+        let (font, marks) = self.marks(&palette);
         let y = strip.center().y;
-        // Compared with the last label painted, never with a slot skipped:
-        // a turn is named on the first label painted in it (unless the day
-        // separator wrote its date), seeded by the bar before the view.
-        let mut last_painted = self
-            .start
-            .checked_sub(1)
-            .and_then(|slot| self.series.slot_open_time(slot));
-        let mut ticks = quantick_chart::day_turn::TickLabels::new(
-            self.tz,
-            walk.format,
-            last_painted,
-            self.named,
-        );
-        let half = walk.label_width / 2.0;
-        for (index, x) in self.slots(&walk) {
-            if pointer_compass::time_claimed(self.chip, x, walk.label_width)
-                || super::days::reserved_by(x - half, x + half, self.reserved)
-            {
+        for mark in marks {
+            let galley = painter.layout_no_wrap(mark.text, font.clone(), ink);
+            if pointer_compass::time_claimed(self.chip, mark.x, galley.size().x) {
                 continue;
             }
-            let Some(bar) = self.series.closed_bar(index) else {
-                continue;
-            };
-            let previous = last_painted.replace(bar.open_time);
-            let text = walk
-                .interval_ms
-                .and_then(|interval| {
-                    crate::plot_area::fmt_calendar_label(bar.open_time, interval, previous)
-                })
-                .unwrap_or_else(|| ticks.label_at(bar.open_time));
-            painter.text(
-                egui::pos2(x, y),
-                egui::Align2::CENTER_CENTER,
-                text,
-                walk.font.clone(),
-                ink,
-            );
+            let at = egui::pos2(mark.x, y) - galley.size() / 2.0;
+            painter.galley(at, galley, ink);
         }
     }
 }

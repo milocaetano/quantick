@@ -140,7 +140,7 @@ price_label_size = 11.5
 time_label_size = 11.5
 # Price lines at least this far apart, on the smallest 1-2-2.5-5 step that
 # keeps it: cells about twice as wide as tall, as TradingView's are.
-price_line_spacing = 40.0
+price_line_spacing = 50.0
 
 [footprint_heat]
 buy = ["#E8F5F2", "#D0EBE5", "#AFE0D5", "#75C8B5", "#227C6B", "#116454"]

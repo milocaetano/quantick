@@ -181,8 +181,6 @@ impl ChartPane {
             return Vec::new();
         }
         crate::pane::render_registry::TimeStripPass {
-            reserved: &[],
-            named: &[],
             painter: frame.painter,
             strip: frame.areas.time_strip,
             start: frame.start,
@@ -207,7 +205,6 @@ impl ChartPane {
         axis_x: f32,
         levels: &[PriceAxisLevel],
         time_chip: Option<pointer_compass::TimeChip>,
-        turns: Option<&[DayTurn]>,
         chrome: &PaneChrome<'_>,
     ) {
         let &DrawFrame {
@@ -295,34 +292,7 @@ impl ChartPane {
                     gaps: chrome.feed_gaps,
                 });
         }
-        // Before the time labels, which stand aside for the dates it writes.
-        let (mut reserved, mut named) = (Vec::new(), Vec::new());
-        if let Some(turns) = turns {
-            let series = self.series_read();
-            let mut day_pass = crate::pane::render_registry::DaySeparatorPass {
-                painter,
-                history: history_rect,
-                strip: areas.time_strip,
-                total,
-                candle_width: cw,
-                viewport: &frame.view,
-                turns,
-                tz: chrome.tz,
-                first_visible: (start < end)
-                    .then(|| series.slot_open_time(start))
-                    .flatten()
-                    .map(|ms| quantick_civil::CivilDate::from_ms(ms, chrome.tz)),
-                chip: time_chip,
-                reserved: Vec::new(),
-                named: Vec::new(),
-            };
-            self.layer_renderers.day_separator(&mut day_pass);
-            reserved = day_pass.reserved;
-            named = day_pass.named;
-        }
         crate::pane::render_registry::TimeStripPass {
-            reserved: &reserved,
-            named: &named,
             painter,
             strip: areas.time_strip,
             start,

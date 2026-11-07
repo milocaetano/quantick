@@ -43,6 +43,7 @@ pub mod side_label;
 pub mod state;
 pub mod style;
 pub mod tick_membership;
+pub mod time_marks;
 pub mod toolbar_collapse;
 pub mod venue_history;
 pub mod viewport;

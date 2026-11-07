@@ -261,8 +261,7 @@ impl ChartPane {
         self.frame.bands = carved;
         super::lane_rail::paint_lane_rail(self, painter, chart_rect);
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
-        let turns = day_turns.as_deref();
-        self.paint_axis_marks(&frame, axis_x, &levels, time_chip, turns, chrome);
+        self.paint_axis_marks(&frame, axis_x, &levels, time_chip, chrome);
         let clock = layout
             .native_tape
             .then(|| layout.live_lane.map(|lane| (lane.end_ms, chrome.tz)))
