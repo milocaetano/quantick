@@ -130,8 +130,7 @@ impl ChartPaneSource for PaneRead<'_> {
         provenance_context(self.tab, self.config)
     }
     fn venue_candles(&self) -> Option<quantick_session::SeriesStatus> {
-        let interval_ms = self.pane.state.spec().time_interval_ms();
-        self.tab.session.candle_status(interval_ms)
+        (self.tab.session).candle_status(self.pane.state.spec().time_interval_ms())
     }
 }
 
