@@ -29,7 +29,10 @@ use super::{
     initial_backfill_target,
 };
 use crate::config::ProviderKind;
-use crate::venue_loop::{CommandPlan, Slot, ohlcv_reply_frees_slot, plan_command, send_or_break};
+use crate::venue_loop::{
+    CommandPlan, Slot, answer_unsupported_interval, ohlcv_reply_frees_slot, plan_command,
+    send_or_break,
+};
 
 /// Default number of REST depth levels requested per side.
 const DEFAULT_BOOK_DEPTH: u16 = 1_000;
@@ -574,22 +577,7 @@ fn spawn_ohlcv(
     // 00:00 UTC, the engine's own day, `1w` on Monday and `1M` on the 1st, as
     // the engine's buckets do.
     let Some(kline_interval) = quantick_feed_binance::kline_interval_for(interval_ms) else {
-        // Answered, never silent: the caller's spinner keys on the closing
-        // reply. Empty and short — the venue was not asked, so nothing is
-        // claimed about its record.
-        return tokio::spawn(async move {
-            warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "BINANCE_OHLCV_UNSUPPORTED_INTERVAL",
-                symbol,
-                interval_ms,
-                action = "answer_empty",
-                "the venue serves no candles at this interval"
-            );
-            let unsupported = crate::OhlcvSlice::Last { complete: false };
-            let _ = reply.send((interval_ms, Vec::new(), unsupported)).await;
-        });
+        return answer_unsupported_interval("binance", symbol, interval_ms, reply);
     };
     tokio::spawn(async move {
         // The right-hand edge of everything this request covers: the live edge

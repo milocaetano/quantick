@@ -23,7 +23,10 @@ use quantick_feed_hyperliquid::{
 
 use super::{FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice};
 use crate::config::ProviderKind;
-use crate::venue_loop::{CommandPlan, Slot, ohlcv_reply_frees_slot, plan_command, send_or_break};
+use crate::venue_loop::{
+    CommandPlan, Slot, answer_unsupported_interval, ohlcv_reply_frees_slot, plan_command,
+    send_or_break,
+};
 
 const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
 const FEED_EVENT_CHANNEL_CAPACITY: usize = 4_096;
@@ -383,22 +386,7 @@ fn spawn_ohlcv(
     // Every interval asked for is served by its own `candleSnapshot` name, as
     // on Binance: a `1d` candle opens at 00:00 UTC, the engine's own day.
     let Some(candle_interval) = quantick_feed_hyperliquid::candle_interval_for(interval_ms) else {
-        // Answered, never silent: the caller's spinner keys on the closing
-        // reply. Empty and short — the venue was not asked, so nothing is
-        // claimed about its record.
-        return tokio::spawn(async move {
-            warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HYPERLIQUID_OHLCV_UNSUPPORTED_INTERVAL",
-                symbol,
-                interval_ms,
-                action = "answer_empty",
-                "the venue serves no candles at this interval"
-            );
-            let unsupported = crate::OhlcvSlice::Last { complete: false };
-            let _ = reply.send((interval_ms, Vec::new(), unsupported)).await;
-        });
+        return answer_unsupported_interval("hyperliquid", symbol, interval_ms, reply);
     };
     tokio::spawn(async move {
         let symbol = symbol.as_str();
