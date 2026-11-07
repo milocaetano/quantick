@@ -85,6 +85,7 @@ to their owners and records intentional renderer/authored-value exclusions.
 
 | Document | What it covers |
 | --- | --- |
+| [`ux/new-layout-light-audit/README.md`](ux/new-layout-light-audit/README.md) | Illustrated Light-theme contrast and layout audit, with four independent AI reviews and navigation coverage |
 | [`ux/ui-design-model.md`](ux/ui-design-model.md) | The shell: status bar, toolbar, icon set, right dock, tool rail (phases 1–5 implemented) |
 | [`ux/native-market-titlebar.md`](ux/native-market-titlebar.md) | Native market title strip, overflow, window presentation and desktop gesture authority |
 | [`ux/market-shelf-onboarding.md`](ux/market-shelf-onboarding.md) | First run and opening more charts: the pinned Home tab, the `+` "Open a market" palette, My markets; prototypes beside it |
