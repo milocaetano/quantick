@@ -342,3 +342,27 @@ fn a_held_tape_places_its_own_lines_on_its_clock() {
         );
     }
 }
+
+/// The lines are a layer of their own: with the tape's book and bubbles and
+/// the candles' both off, they alone still make a projected frame.
+#[test]
+fn the_lines_alone_keep_the_frame_projected() {
+    let mut history = bbo_fixture();
+    let mut config = history.config().clone();
+    config.show_depth = false;
+    config.show_aggressions = false;
+    config.live_lane.show_depth = false;
+    config.live_lane.show_aggressions = false;
+    history.update_config(config.clone()).unwrap();
+    assert!(config.any_layer_enabled(), "the lines ask for a projection");
+    let frame = project(&history, &timeline(1_800), prices());
+    assert!(frame.enabled);
+    assert!(!frame.bbo_lines.is_empty(), "the lines are drawn");
+    assert!(frame.cells.is_empty() && frame.aggressions.is_empty());
+
+    config.live_lane.bbo_lines = false;
+    assert!(
+        !config.any_layer_enabled(),
+        "nothing left to draw, nothing projected"
+    );
+}

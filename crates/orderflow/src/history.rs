@@ -295,7 +295,11 @@ pub struct LiquidityHistory {
     gaps: VecDeque<CoverageGap>,
     pending_gap: Option<usize>,
     counters: HistoryCounters,
-    /// The book's best bid and ask over time ([`BboTrail`]).
+    /// The book's best bid and ask over time ([`BboTrail`]). Its bytes
+    /// ([`BboTrail::approximate_bytes`]) are left out of
+    /// `approximate_history_bytes`, like `aggression_max_ms`, so the byte cap
+    /// evicts exactly as it did before the trail, switch on or off; retention
+    /// and the cap prune it beside the runs.
     bbo: BboTrail,
 }
 
@@ -526,7 +530,6 @@ impl LiquidityHistory {
             + self.aggressions.len() * size_of::<Aggression>()
             + self.scale.approximate_bytes()
             + self.summary_scale.approximate_bytes()
-            + self.bbo.approximate_bytes()
     }
 
     /// The book's best bid and ask over time, one step per change.

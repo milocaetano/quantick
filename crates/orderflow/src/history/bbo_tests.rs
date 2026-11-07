@@ -140,3 +140,46 @@ fn regrouping_the_capture_forgets_the_trail_with_the_book() {
     history.reset_price_grouping(Decimal::TEN).unwrap();
     assert_eq!(history.bbo().steps().count(), 0);
 }
+
+/// The byte cap reads the history without the trail: a history whose trail
+/// is fed evicts at exactly the same point as one whose trail stays empty.
+#[test]
+fn the_trail_never_moves_the_byte_cap() {
+    let config = crate::HeatmapConfig {
+        enabled: true,
+        price_grouping: Decimal::ONE,
+        max_history_bytes: 4 * 1_024,
+        ..crate::HeatmapConfig::default()
+    };
+    let (mut fed, mut bare) = (
+        LiquidityHistory::new(config.clone()),
+        LiquidityHistory::new(config),
+    );
+    let book = BookSnapshot::new(
+        1,
+        vec![level(99, 1), level(100, 1)],
+        vec![level(101, 1)],
+        BookCoverage::Full,
+    );
+    for history in [&mut fed, &mut bare] {
+        history.install_snapshot(1_000, 1, book.clone()).unwrap();
+    }
+    for id in 2..400_u64 {
+        // The best bid is pulled and restored: every delta moves the top.
+        let quantity = i64::try_from(id % 2).unwrap();
+        let delta = BookDelta::new(id, id, vec![level(100, quantity)], vec![]);
+        let time = 1_000 + i64::try_from(id).unwrap();
+        for history in [&mut fed, &mut bare] {
+            history.apply_delta(time, &delta).unwrap();
+        }
+        bare.bbo.clear();
+        assert_eq!(
+            fed.approximate_history_bytes(),
+            bare.approximate_history_bytes(),
+            "at delta {id}"
+        );
+        assert_eq!(fed.counters(), bare.counters(), "at delta {id}");
+    }
+    assert!(fed.counters().runs_evicted > 0, "the cap evicted");
+    assert!(fed.bbo().steps().count() > 1, "the trail was fed");
+}
