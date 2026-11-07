@@ -141,7 +141,7 @@ which evicts nothing and divides the memory by the pane count.
 
 ## Burst test
 
-`crates/app/src/live_envelope_tests/tests/burst.rs`, a plain `cargo test` (about 8
+`crates/app/src/tests/live_envelope/burst.rs`, a plain `cargo test` (about 8
 s), drives one pane's live path — `ChartState`, the lane cursor, the real
 `IndicatorWorker` hosting `native.cvd`, the real `BookWorker` recording
 aggressions and depth — frame by frame at 60 fps of wall time, exactly as the
@@ -229,5 +229,5 @@ env -u QUANTICK_BUBBLES cargo test -p quantick-app live_envelope -- --nocapture
 
 # The measurement harness (#[ignore]d; about 30 s once built):
 env -u QUANTICK_BUBBLES cargo test --release -p quantick-app \
-    live_envelope_tests::tests::measure -- --ignored --nocapture --test-threads=1
+    live_envelope_tests::measure -- --ignored --nocapture --test-threads=1
 ```

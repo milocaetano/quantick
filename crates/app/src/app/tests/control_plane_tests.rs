@@ -1360,10 +1360,14 @@ fn gateway_ui_budget_defers_work_beyond_one_frame() {
     );
     for client in [&mut first, &mut second] {
         for _ in 0..4 {
-            assert!(matches!(
-                client.read().unwrap().outcome,
-                quantick_control::wire::ResponseOutcome::Success { .. }
-            ));
+            let response = client.read().unwrap();
+            assert!(
+                matches!(
+                    response.outcome,
+                    quantick_control::wire::ResponseOutcome::Success { .. }
+                ),
+                "{response:?}"
+            );
         }
     }
 
@@ -1447,7 +1451,7 @@ fn observer_modules_project_headless_state_that_matches_their_schemas() {
         .descriptors()
         .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
         .collect::<Vec<_>>();
-    assert_eq!(descriptors.len(), 20, "every registered scope is projected");
+    assert_eq!(descriptors.len(), 21, "every registered scope is projected");
     let scopes = descriptors
         .iter()
         .map(|(scope_id, _)| scope_id.clone())
@@ -2101,9 +2105,15 @@ fn observer_per_scope_capture_cost() {
 }
 
 /// Heap work one coherent capture of every scope may do on the loaded
-/// fixture. Readings: 1285 allocations, 67368 bytes on Windows, 67358 on Linux.
+/// fixture. Readings: 1285 allocations, 67368 bytes on Windows, 67358 on Linux;
+/// 1287 allocations, 80979 bytes on Windows once the layout's scopes and
+/// `appearance.state` were merged together; 81179 on Windows with the tab
+/// strip's three tokens, each semantic color adding about 67 bytes to the
+/// capture. No Linux reading of that tree yet, and Linux has read a few bytes
+/// apart before, so the byte ceiling sits about 3.5% above the Windows reading:
+/// room for a few more tokens, not for a new scope.
 const CORE_CAPTURE_MAX_ALLOCS: u64 = 1480;
-const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 77500;
+const CORE_CAPTURE_MAX_ALLOC_BYTES: u64 = 84000;
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
@@ -2443,10 +2453,13 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
     drain_gateway_requests(&mut app, &ctx);
     let response = live.read().unwrap();
     assert_eq!(response.request_id, request_id);
-    assert!(matches!(
-        response.outcome,
-        quantick_control::wire::ResponseOutcome::Success { .. }
-    ));
+    assert!(
+        matches!(
+            response.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "{response:?}"
+    );
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -5012,14 +5025,14 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
     );
     let captured = access
         .invoke_local_read(
-            &app,
+            &mut app,
             "evidence.capture",
             serde_json::json!({ "scopes": ["system.info"] }),
         )
         .expect("the read is registered and granted");
     let page = access
         .invoke_local_read(
-            &app,
+            &mut app,
             "evidence.read",
             serde_json::json!({ "evidence_id": captured["evidence_id"] }),
         )
@@ -5523,7 +5536,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 92);
+    assert_eq!(documents.len(), 144);
     for file_name in [
         "session-journal-delete-input-v1.schema.json",
         "session-journal-input-v1.schema.json",
@@ -5534,6 +5547,8 @@ fn observer_schemas(update: bool) {
         "feed-history-cancel-result-v1.schema.json",
         "chart-price-axis-input-v1.schema.json",
         "chart-price-axis-result-v1.schema.json",
+        "chart-price-tag-progress-input-v1.schema.json",
+        "chart-price-tag-progress-result-v1.schema.json",
         "chart-settings-input-v1.schema.json",
         "chart-settings-result-v1.schema.json",
         "chart-tape-view-input-v1.schema.json",

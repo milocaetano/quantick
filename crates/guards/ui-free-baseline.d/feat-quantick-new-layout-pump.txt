@@ -1,0 +1,5 @@
+# Windows root-HWND timer/paint API, owned by the native viewport adapter.
+# Cannot live below app: headless crates cannot own OS window handles/event loops.
+crates/app +102
+!budget +102
+# Native timer minimum binding/dispatch headroom remains OS-window-only.

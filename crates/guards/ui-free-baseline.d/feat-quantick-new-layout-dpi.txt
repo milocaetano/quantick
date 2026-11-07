@@ -1,0 +1,4 @@
+# Windows 11 HWND/subclass integration must stay with the app's native viewports.
+# OS suggested rectangles are forwarded within native dispatch, not domain policy.
+crates/app +176
+!budget +176

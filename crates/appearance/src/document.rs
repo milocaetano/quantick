@@ -1,7 +1,9 @@
 //! The versioned authoring contract and all-or-nothing resolution.
 
 mod bookmap;
+mod title_strip;
 pub use bookmap::BookmapOverride;
+pub use title_strip::TitleStripOverride;
 
 use std::{collections::BTreeMap, sync::OnceLock};
 
@@ -69,6 +71,8 @@ pub struct ThemeDocument {
     pub orderflow: crate::orderflow::OrderflowOverride,
     #[serde(default)]
     pub bookmap: Option<crate::BookmapOverride>,
+    #[serde(default)]
+    pub title_strip: Option<TitleStripOverride>,
 }
 
 fn dark_mode() -> bool {
@@ -128,6 +132,20 @@ impl ThemeDocument {
                 {
                     colors[Token::Control as usize]
                 }
+                // Older themes predate the strip, brand and replay tokens: the
+                // strip is the document's own inset, the other two its own
+                // mode's bundled values, so an authored Light file stays Light.
+                None if token == Token::TabStrip
+                    && fallback.is_some()
+                    && self.colors.contains_key(Token::Inset.key()) =>
+                {
+                    colors[Token::Inset as usize]
+                }
+                None if MODE_TOKENS.contains(&token)
+                    && fallback.is_some_and(|theme| theme.dark != self.dark) =>
+                {
+                    ResolvedTheme::bundled(self.dark).color(token)
+                }
                 None => fallback
                     .map(|theme| theme.color(token))
                     .ok_or_else(|| ThemeError::new(field, "required in a complete theme"))?,
@@ -186,15 +204,35 @@ impl ThemeDocument {
                 .footprint_heat
                 .resolve(fallback.map(|theme| &theme.footprint_heat))?,
             bookmap: None,
+            title_strip: None,
         };
         resolved.bookmap = self
             .bookmap
             .as_ref()
             .map(|surface| surface.resolve(&resolved).map(Box::new))
             .transpose()?;
+        resolved.title_strip = self
+            .title_strip
+            .as_ref()
+            .map(|surface| surface.resolve(&resolved).map(Box::new))
+            .transpose()?;
         Ok(resolved)
     }
 }
+
+/// The tokens an older document takes from its own mode's bundled theme.
+/// Both bundled themes write every one, so resolving Light for
+/// [`ResolvedTheme::bundled`] never asks its own lock again.
+pub(crate) const MODE_TOKENS: [Token; 8] = [
+    Token::TabStrip,
+    Token::Brand,
+    Token::ReplayInk,
+    Token::ToolbarSheet,
+    Token::TabIdleFill,
+    Token::TabIdleOutline,
+    Token::TabBand,
+    Token::HomeGlow,
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedTheme {
@@ -206,6 +244,7 @@ pub struct ResolvedTheme {
     pub footprint_heat: crate::heat::HeatRamp,
     pub orderflow: crate::orderflow::OrderflowAppearance,
     pub(crate) bookmap: Option<Box<ResolvedTheme>>,
+    pub(crate) title_strip: Option<Box<ResolvedTheme>>,
 }
 
 impl ResolvedTheme {
@@ -217,6 +256,19 @@ impl ResolvedTheme {
             ThemeDocument::parse(crate::DARK)
                 .and_then(|document| document.resolve_complete())
                 .expect("bundled Dark theme must be complete and valid")
+        })
+    }
+
+    /// The bundled theme of one mode, for values an older document of that
+    /// mode never wrote.
+    pub fn bundled(dark: bool) -> &'static Self {
+        static LIGHT: OnceLock<ResolvedTheme> = OnceLock::new();
+        if dark {
+            return Self::bundled_dark();
+        }
+        LIGHT.get_or_init(|| {
+            // Light writes the three mode tokens, so this never asks itself.
+            ResolvedTheme::parse(crate::LIGHT).expect("bundled Light theme must be valid")
         })
     }
 

@@ -42,6 +42,9 @@ pub struct CanvasChrome<'a> {
     /// Whether the source infers the aggressor side (see
     /// [`PaneChrome::side_inferred`]). Resolved once, like `capabilities`.
     pub side_inferred: bool,
+    /// Whether the tab's market prints the forming bar's progress on its
+    /// last-price tag. Resolved once, like `capabilities`.
+    pub bar_progress: bool,
     /// The footprint layer's signal tunables (see [`PaneChrome::footprint`]).
     pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
@@ -134,6 +137,11 @@ impl Tab {
     ) {
         let monotonic_ms = (ui.input(|input| input.time).max(0.0) * 1_000.0) as u64;
         self.update_tape_clock_at(monotonic_ms);
+        // Undecorated Windows can report a small positive client area while
+        // minimized. It is not chart geometry and must not become a saved split.
+        if ui.input(|input| input.viewport().minimized.unwrap_or(false)) {
+            return;
+        }
         let frame = self.canvas_frame(area);
         let rects = self.draw_context_column(ui, &frame, chrome);
 
@@ -594,6 +602,7 @@ impl Tab {
         // Focus as an address, so the loop below compares like with like
         // however many panes it walks.
         let focused = self.focused_side().index();
+        let clock_ms = self.tape().market_now_ms();
         let Self {
             flow_pane,
             time_panes,
@@ -664,6 +673,10 @@ impl Tab {
             feed_gaps: &feed_gaps[..],
             capabilities: chrome.capabilities,
             side_inferred: chrome.side_inferred,
+            price_tag: quantick_chart::bar_progress::TagProgress {
+                on: chrome.bar_progress,
+                clock_ms,
+            },
             footprint: chrome.footprint,
             layers: chrome.layers,
         };
@@ -834,7 +847,7 @@ impl Tab {
             // order wins, which is stable frame to frame: a pick that
             // depended on iteration luck would move an object between charts
             // between frames.
-            for owner in (0..count).filter(|owner| *owner != viewer) {
+            for owner in self.mirror_owners(viewer) {
                 let Some(source) = self.pane_at(owner) else {
                     continue;
                 };
@@ -854,6 +867,23 @@ impl Tab {
             }
         }
         picks
+    }
+
+    /// The panes whose shared marks `viewer` shows. Two context charts on one
+    /// bar rule hold one set: a pane holding the viewer's own set adds nothing,
+    /// and of two holding another set only the first does, or a shared mark
+    /// would paint twice and its fill read darker than it is.
+    pub(crate) fn mirror_owners(&self, viewer: PaneIndex) -> impl Iterator<Item = PaneIndex> + '_ {
+        let key = move |pane: PaneIndex| {
+            self.pane_at(pane)
+                .and_then(|pane| pane.layout.drawings_key.as_ref())
+        };
+        (0..self.pane_count()).filter(move |&owner| {
+            let same_set = |other: PaneIndex| key(owner).is_some() && key(other) == key(owner);
+            owner != viewer
+                && !same_set(viewer)
+                && !(0..owner).any(|earlier| earlier != viewer && same_set(earlier))
+        })
     }
 
     /// Land what each pane did to the other's marks on the store that holds
@@ -923,7 +953,7 @@ impl Tab {
             let Some(pane) = self.pane_at(viewer) else {
                 continue;
             };
-            for owner in (0..count).filter(|owner| *owner != viewer) {
+            for owner in self.mirror_owners(viewer) {
                 if let Some(source) = self.pane_at(owner) {
                     pane.hit_test()
                         .paint_shared_from(painter, source.shared_source());

@@ -227,6 +227,23 @@ impl LayoutAdapter<'_> {
         }
     }
 
+    /// A recipe's set replaces what the pane shows, and its own entries with it.
+    /// Drawings stay: they are the market's.
+    pub(in crate::app) fn show_pane_indicators(
+        &mut self,
+        tab: u64,
+        side: PaneSide,
+        set: &[SavedIndicator],
+    ) {
+        self.remove_layout_indicators_at(tab, side);
+        let layout = self.pane_own_layout(tab, side);
+        if let Some(entries) = self.store.session_mut().indicators_mut(layout) {
+            *entries = set.to_vec();
+        }
+        self.materialize_indicators_at(tab, side, set);
+        self.mark_layouts_dirty();
+    }
+
     /// Bind one saved entry's inputs, hide flag and style onto a slot.
     fn apply_saved_entry(&mut self, owner: TabSlot, entry: &SavedIndicator) {
         let values: Vec<_> = entry
@@ -292,7 +309,7 @@ impl LayoutAdapter<'_> {
             return None;
         }
         let index = self.layout_index_of(origin)?;
-        Some((self.pane_layout(origin.tab, origin.side), index))
+        Some((self.pane_own_layout(origin.tab, origin.side), index))
     }
 
     /// A layout's entry at a layout index, for an edit to write.

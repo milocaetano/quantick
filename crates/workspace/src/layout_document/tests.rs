@@ -127,6 +127,25 @@ fn parse_names_why_a_layouts_file_is_refused() {
     );
 }
 
+/// A pane's own copy takes an id from the same counter, so a file whose copy
+/// sits past it would hand that id out twice; and it is never the active one.
+#[test]
+fn parse_checks_private_copies_against_the_counter_and_the_strip() {
+    let mut book = LayoutBook::starter(vec![ema()]);
+    let copy = book.make_private_copy(LayoutId(1)).unwrap();
+    assert_eq!(copy, LayoutId(2));
+    let good = toml::to_string_pretty(&book).unwrap();
+    assert!(parse(&good).is_ok());
+    assert_eq!(
+        parse(&good.replace("next_id = 3", "next_id = 2")).unwrap_err(),
+        ParseError::IdPastCounter
+    );
+    assert_eq!(
+        parse(&good.replace("active = 1", "active = 2")).unwrap_err(),
+        ParseError::MissingActive
+    );
+}
+
 /// An object's own OHLC magnet travels with it, and a document written
 /// before the flag existed loads with it off and saves back unchanged.
 #[test]

@@ -39,17 +39,10 @@
 //!
 //! ## Cost
 //!
-//! Nothing here runs unless a client asks, and the frame writes down nothing
-//! for its benefit but the rail's stage — one enum store per frame, which is
-//! what lets the rail be reported honestly instead of guessed at. The
-//! projection then reads state the frame already keeps: no rectangle is
-//! recorded beyond a pane header's painted controls, no hit test is run, no
-//! layout is measured. Note that a capture
-//! builds the list *twice* — once for the module revision and once for the
-//! scope — because module revisions are capture-derived across every module
-//! (PR 2's recorded deferral); this is the largest projection in the registry
-//! and the first that would benefit from the journal-driven change counters
-//! that replace it.
+//! Projection runs only when requested. The title strip and pane headers publish
+//! the painted control rectangles their drawing passes already compute; other
+//! regions read existing frame state. A capture builds the list twice, once for
+//! module revision and once for scope, as other capture-derived projections do.
 
 pub(crate) use quantick_control_schema::scene::*;
 
@@ -161,6 +154,9 @@ pub(crate) fn pane_canvas_control_id(pane_id: u64) -> String {
 }
 
 pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> SceneSnapshot {
+    if let Some(scene) = app.capture_scene() {
+        return scene.clone();
+    }
     let tabs = app.tab_reads().tabs();
     let active = &tabs[app.tab_reads().active_tab_index()];
     let focused_side = active.focused_side();
@@ -170,12 +166,26 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     // resolves to, and the cap below cuts from the end. A workspace large
     // enough to truncate must not be one where `interaction.cursor` answers
     // with a control ID this scope no longer contains.
-    let focused_pane_id = push_panes(&mut controls, tabs.active_id(), active, focused_side);
-    push_context_dividers(&mut controls, tabs.active_id(), active);
-    push_quick_range(&mut controls, app);
-    push_pane_headers(&mut controls, app, tabs.active_id(), active);
+    //
+    // While Home is up none of them is on screen, so none is listed.
+    let active_id = tabs.active_id();
+    let active_chip = app
+        .chrome_reads()
+        .title_bar()
+        .map_or(Some(active_id), |title| {
+            title.surface.active_chip(active_id)
+        });
+    let home = active_chip.is_none();
+    let mut focused_pane_id = None;
+    if !home {
+        focused_pane_id = push_panes(&mut controls, tabs.active_id(), active, focused_side);
+        push_context_dividers(&mut controls, tabs.active_id(), active);
+        push_quick_range(&mut controls, app);
+        push_pane_headers(&mut controls, app, tabs.active_id(), active);
+    }
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
+    push_settings(&mut controls, app);
     // With the other fixed-size regions, ahead of the strip. At most three
     // entries, and worth keeping if a workspace ever reaches the ceiling: the
     // word is the one control on screen with no capability behind it.
@@ -186,7 +196,13 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     // stop. Cutting a finished list would still have built it: an implausible
     // number of open charts must cost a truncated answer, not an unbounded
     // allocation on the application thread.
-    let strip_complete = push_tab_strip(&mut controls, tabs, tabs.active_id());
+    let strip_complete = push_tab_strip(
+        &mut controls,
+        tabs,
+        active_chip,
+        app.chrome_reads().title_bar(),
+    );
+    push_title_bar(&mut controls, app);
 
     let coverage = if !strip_complete || controls.len() > CONTROL_SCENE_MAX_CONTROLS {
         controls.truncate(CONTROL_SCENE_MAX_CONTROLS);
@@ -196,7 +212,8 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
         // not exhausted: a pane header contributes its view, layers and sizes with
         // bounds and its bars and indicators calls without, the toolbar its quick
         // range and not its SOURCE, HISTORY or TRADE groups, the rail its tools
-        // and not its trailing cluster, the strip its chips and not the `+`.
+        // and not its trailing cluster. The title strip contributes visible chips
+        // and window controls, but not an open overflow popup's entries.
         // Reporting completeness here would tell a client the controls this
         // walk does not reach are not on screen, which is the one lie the
         // module cannot tolerate.
@@ -204,7 +221,13 @@ pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> Scen
     };
 
     SceneSnapshot {
+        window_id: Some(WireU64::new(tabs.windows().presented().0)),
         active_tab_id: WireU64::new(tabs.active_id()),
+        active_surface: if home {
+            ActiveSurfaceDto::Home
+        } else {
+            ActiveSurfaceDto::Market
+        },
         // From the walk, not from `Tab::pane`. The two disagree for the frame
         // between a tab asking for the time layout and its time pane being
         // built: `focused_side` falls back to the flow pane while the layout
@@ -319,9 +342,23 @@ fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab_id: u64, 
 fn push_tab_strip(
     controls: &mut Vec<SceneControlSnapshot>,
     tabs: &crate::app::arrangement_host::ArrangementHost,
-    active_id: u64,
+    selected_id: Option<u64>,
+    title: Option<&crate::app::title_bar::TitleBarState>,
 ) -> bool {
-    for (tab_id, tab) in tabs.iter_with_ids() {
+    for index in tabs.window_indices(tabs.windows().presented()) {
+        let tab_id = tabs.id_at(index);
+        let tab = &tabs[index];
+        let rect = title.and_then(|title| {
+            title
+                .strip
+                .tab_ids
+                .iter()
+                .find(|(visible, _)| *visible == tab_id)
+                .map(|(_, rect)| *rect)
+        });
+        if title.is_some() && rect.is_none() {
+            continue;
+        }
         if controls.len() >= CONTROL_SCENE_MAX_CONTROLS {
             return false;
         }
@@ -336,14 +373,76 @@ fn push_tab_strip(
                 kind: SceneOwnerKindDto::TabStrip,
                 id: TAB_STRIP_OWNER_ID.to_owned(),
             },
-            selected: tab_id == active_id,
+            selected: selected_id == Some(tab_id),
             availability: available(),
-            bounds: None,
-            bounds_availability: bounds_not_recorded(),
+            bounds: rect.and_then(|rect| rect_bounds(rect).into_snapshot()),
+            bounds_availability: rect.map_or_else(bounds_not_recorded, |_| available()),
             capability_id: None,
         });
     }
     true
+}
+
+fn push_title_bar<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+    let Some(title) = app.chrome_reads().title_bar() else {
+        return;
+    };
+    for (id, label, rect, capability) in title
+        .controls
+        .iter()
+        .map(|(id, rect)| {
+            (
+                *id,
+                match *id {
+                    "drag" => "Move window (native OS gesture)",
+                    "minimize" => "Minimize window",
+                    "maximize" if title.maximized => "Restore window",
+                    "maximize" => "Maximize window",
+                    "close" => "Close window",
+                    quantick_control_schema::window_menu::KEBAB_CONTROL => "Window menu",
+                    quantick_control_schema::window_menu::AGENT_PILL_CONTROL => {
+                        "Local agent access"
+                    }
+                    _ => unreachable!("the title strip publishes registered controls"),
+                },
+                Some(*rect),
+                matches!(*id, "minimize" | "maximize")
+                    .then_some(quantick_control_schema::native_window::WINDOW_STATE_CAPABILITY_ID),
+            )
+        })
+        .chain([
+            (
+                "home",
+                "Home",
+                title.strip.home,
+                Some(quantick_control_schema::home_tab::HOME_SHOW_CAPABILITY_ID),
+            ),
+            ("new", "Open another market", title.strip.add, None),
+            ("overflow", "All markets", title.strip.overflow, None),
+        ])
+    {
+        let Some(rect) = rect else {
+            continue;
+        };
+        controls.push(SceneControlSnapshot {
+            control_id: format!("tab_strip.{id}"),
+            label: label.to_owned(),
+            role: SceneRoleDto::Action,
+            owner: SceneOwnerSnapshot {
+                kind: SceneOwnerKindDto::TabStrip,
+                id: TAB_STRIP_OWNER_ID.to_owned(),
+            },
+            selected: (id == "maximize" && title.maximized)
+                || (id == "minimize" && title.minimized)
+                || (id == "home" && title.surface.is_home())
+                || (id == quantick_control_schema::window_menu::KEBAB_CONTROL
+                    && title.kebab_pressed),
+            availability: available(),
+            bounds: rect_bounds(rect).into_snapshot(),
+            bounds_availability: available(),
+            capability_id: capability.map(str::to_owned),
+        });
+    }
 }
 
 /// Every pane's header line and capsules, as painted: a side too narrow for its
@@ -521,6 +620,33 @@ fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, a
             bounds: None,
             bounds_availability: bounds_not_recorded(),
             capability_id: None,
+        });
+    }
+}
+
+/// The Settings window's sections, while it is up; the one on screen is selected.
+/// `settings.open` operates all but Agent access, which only the trader opens.
+fn push_settings<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+    use quantick_control_schema::settings_sections::SettingsSection;
+    let Some(shown) = app.chrome_reads().settings_section() else {
+        return;
+    };
+    for section in SettingsSection::ALL {
+        controls.push(SceneControlSnapshot {
+            control_id: section.control_id().to_owned(),
+            label: section.title().to_owned(),
+            role: SceneRoleDto::Tab,
+            owner: SceneOwnerSnapshot {
+                // The published kinds are closed; Settings opens from the strip.
+                kind: SceneOwnerKindDto::TabStrip,
+                id: "settings".to_owned(),
+            },
+            selected: shown == section,
+            availability: available(),
+            bounds: None,
+            bounds_availability: bounds_not_recorded(),
+            capability_id: (section != SettingsSection::AgentAccess)
+                .then(|| quantick_control_schema::desk::SETTINGS_OPEN_CAPABILITY_ID.to_owned()),
         });
     }
 }

@@ -383,6 +383,11 @@ fn drawing_snapshot(drawing: &Drawing<DrawingTool>) -> DrawingSnapshot {
         hidden: drawing.hidden,
         foreign_market: drawing.foreign_market,
         off_series: drawing.off_series,
+        origin: drawing.origin.as_ref().map(|origin| DrawingOriginSnapshot {
+            layout: origin.layout.clone(),
+            symbol: origin.symbol.clone(),
+            pane: wire_usize(origin.pane),
+        }),
         anchor_count: wire_usize(drawing.points.len()),
         user_label_present: drawing.name.is_some(),
         author: drawing.author.as_ref().map(|author| DrawingAuthorSnapshot {

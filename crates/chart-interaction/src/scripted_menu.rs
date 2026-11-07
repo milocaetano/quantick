@@ -3,12 +3,20 @@
 pub struct ScriptedMenu(&'static [&'static str], u8);
 
 impl ScriptedMenu {
+    /// `window` is the `⋮` menu; the theme choice sits in Settings' Display
+    /// section, which the menu's Settings row opens.
     pub const ALL: [(&'static str, Self); 5] = [
-        ("workspace", Self(&["Workspace"], 2)),
+        ("window", Self(&["Window"], 2)),
         ("history", Self(&["History"], 2)),
-        ("theme", Self(&["Tools", "Theme"], 2)),
-        ("theme-dark", Self(&["Tools", "Theme", "Dark"], 2)),
-        ("theme-light", Self(&["Tools", "Theme", "Light"], 2)),
+        ("theme", Self(&["Window", "Settings", "Theme"], 2)),
+        (
+            "theme-dark",
+            Self(&["Window", "Settings", "Theme", "Dark"], 2),
+        ),
+        (
+            "theme-light",
+            Self(&["Window", "Settings", "Theme", "Light"], 2),
+        ),
     ];
 
     pub fn from_token(token: &str) -> Option<Self> {
@@ -50,15 +58,20 @@ mod tests {
                 steps.push(menu.target());
                 current = menu.next();
             }
-            assert!(steps.len() <= 3);
+            assert!(steps.len() <= 4);
         }
         assert_eq!(ScriptedMenu::from_token("theme-sepia"), None);
+        assert_eq!(ScriptedMenu::from_token("file"), None, "no such menu");
         let mut light = ScriptedMenu::from_token("theme-light").unwrap();
         assert_eq!(light.ready(), None);
         assert_eq!(light.ready(), None);
         assert!(light.ready().is_some());
-        assert_eq!(light.target(), "Tools");
-        assert_eq!(light.next().unwrap().target(), "Theme");
-        assert_eq!(light.next().unwrap().next().unwrap().target(), "Light");
+        let mut steps = Vec::new();
+        let mut current = Some(light);
+        while let Some(menu) = current {
+            steps.push(menu.target());
+            current = menu.next();
+        }
+        assert_eq!(steps, ["Window", "Settings", "Theme", "Light"]);
     }
 }

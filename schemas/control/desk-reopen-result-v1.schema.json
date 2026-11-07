@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The choice in force.",
+  "properties": {
+    "changed": {
+      "description": "Whether this call moved it; `false` for a repeat.",
+      "type": "boolean"
+    },
+    "reopen": {
+      "type": "boolean"
+    },
+    "written": {
+      "description": "Whether the file changed on disk.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "reopen",
+    "changed",
+    "written"
+  ],
+  "title": "DeskReopenResult",
+  "type": "object"
+}

@@ -347,6 +347,7 @@ impl<H: ?Sized + 'static> ProjectionRegistry<H> {
         }
 
         Ok(SnapshotCapture {
+            window_id: None,
             instance_id: instance_id.clone(),
             capture_revision,
             captured_at_unix_ms: context.captured_at_unix_ms,
@@ -367,6 +368,7 @@ struct OwnedScope {
 /// Owned result of the UI-thread projection pass. Moving this value to a
 /// worker and calling [`Self::into_serialized`] is the serialization boundary.
 pub struct SnapshotCapture {
+    pub window_id: Option<WireU64>,
     instance_id: InstanceId,
     capture_revision: WireU64,
     captured_at_unix_ms: i64,
@@ -390,6 +392,7 @@ impl SnapshotCapture {
             );
         }
         Ok(SerializedSnapshotCapture {
+            window_id: self.window_id,
             instance_id: self.instance_id,
             capture_revision: self.capture_revision,
             captured_at_unix_ms: self.captured_at_unix_ms,
@@ -407,6 +410,9 @@ impl SnapshotCapture {
 /// thread.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SerializedSnapshotCapture {
+    /// Pinned native window identity when the host supports window targeting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<WireU64>,
     pub instance_id: InstanceId,
     pub capture_revision: WireU64,
     #[schemars(extend("x-unit" = "unix_milliseconds"))]

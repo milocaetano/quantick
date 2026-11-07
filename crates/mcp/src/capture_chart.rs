@@ -34,7 +34,7 @@ pub(crate) fn tool(input_schema: Value) -> Tool {
     Tool {
         name: CAPTURE_CHART.to_owned(),
         title: "Capture the Quantick window as an image".to_owned(),
-        description: "Return a native PNG image of the entire Quantick window, including potentially sensitive text and paper-account information visible on screen. Requires the user's observe.evidence and observe.screenshot grants plus the scene's read scopes. Reuses evidence.capture/read and its visible capture notice. Metadata preserves capture revision, control regions and coverage gaps, including screenshot.state_skew: numerical state may be one feed drain newer than the pixels. Does not change charts or place orders. No disk output. If no frame is available, returns an error with coverage and no image.".to_owned(),
+        description: "Return a native PNG of the entire window_id; omission pins the focused live window at admission. May include visible sensitive text and paper-account data. Requires observe.evidence, observe.screenshot and scene read grants, and displays the capture notice. Uses evidence.capture/read in memory. Metadata names target/source windows, revision, geometry, control regions and gaps; screenshot.state_skew labels pixels preceding numerical state. Missing images return an error with coverage.".to_owned(),
         input_schema,
         output_schema: None,
         annotations,
@@ -54,6 +54,8 @@ struct Resource {
 
 #[derive(Deserialize)]
 struct Manifest {
+    #[serde(default)]
+    window_id: Option<WireU64>,
     #[serde(flatten)]
     resource: Resource,
     manifest_version: u32,
@@ -87,6 +89,8 @@ struct Chunk {
 
 #[derive(Deserialize)]
 struct Document {
+    #[serde(default)]
+    window_id: Option<WireU64>,
     evidence_id: EvidenceId,
     bundle_version: u32,
     instance_id: InstanceId,
@@ -105,6 +109,10 @@ struct Image {
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 struct ImageDescriptor {
+    #[serde(default)]
+    source_window_id: Option<WireU64>,
+    #[serde(default)]
+    window_id: Option<WireU64>,
     capture_revision: WireU64,
     width_px: u32,
     height_px: u32,
@@ -116,8 +124,19 @@ struct ImageDescriptor {
     controls_without_region: Vec<Value>,
 }
 
-pub(crate) fn call(link: &mut dyn ControlLink, instance: Option<&InstanceId>) -> ToolResult {
-    match capture(link, instance) {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CaptureInput {
+    #[serde(default)]
+    pub window_id: Option<WireU64>,
+}
+
+pub(crate) fn call(
+    link: &mut dyn ControlLink,
+    instance: Option<&InstanceId>,
+    window: Option<WireU64>,
+) -> ToolResult {
+    match capture(link, instance, window) {
         Ok(result) => result,
         Err(error) => ToolResult::control_error(&error),
     }
@@ -126,27 +145,39 @@ pub(crate) fn call(link: &mut dyn ControlLink, instance: Option<&InstanceId>) ->
 fn capture(
     link: &mut dyn ControlLink,
     instance: Option<&InstanceId>,
+    window: Option<WireU64>,
 ) -> Result<ToolResult, ControlError> {
-    let response = link.invoke(
-        instance,
-        EVIDENCE_CAPTURE_CAPABILITY,
-        1,
-        json!({
-            "scopes": ["scene.controls"], "event_limit": 1, "screenshot": true
-        }),
-    )?;
+    let mut input = json!({"scopes": ["scene.controls"], "event_limit": 1, "screenshot": true});
+    if let Some(window) = window {
+        input["window_id"] = json!(window);
+    }
+    let response = link.invoke(instance, EVIDENCE_CAPTURE_CAPABILITY, 1, input)?;
     let captured_by = response.instance_id.clone();
     let revision = response.capture_revision;
     let warnings = response.warnings.clone();
     let manifest: Manifest = parse(success(response, instance)?)?;
     manifest.validate(&captured_by, revision)?;
+    if window.is_some_and(|window| Some(window) != manifest.window_id) {
+        return Err(invalid("capture came from a different window"));
+    }
     // Pin subsequent calls to the exact instance that captured the frame.
     let bytes = read_bundle(link, &manifest)?;
     let document: Document = serde_json::from_slice(&bytes)
         .map_err(|_| invalid("evidence document is not valid JSON"))?;
     validate_document(&document, &manifest)?;
+    if document.window_id != manifest.window_id
+        || document.screenshot.as_ref().is_some_and(|image| {
+            image.descriptor.window_id != manifest.window_id
+                || image.descriptor.source_window_id != manifest.window_id
+        })
+    {
+        return Err(invalid(
+            "evidence image, scene and target window identities disagree",
+        ));
+    }
     let mut result = ToolResult::structured(json!({
         "instance_id": manifest.instance_id,
+        "window_id": manifest.window_id,
         "evidence_id": manifest.resource.evidence_id,
         "resource_id": manifest.resource.resource_id,
         "session_id": manifest.session_id,

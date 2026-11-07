@@ -15,12 +15,14 @@ use eframe::egui;
 #[cfg(test)]
 use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
-use crate::tabstrip::TabAction;
+use crate::{surfaces::MarketPaletteSurface, tabstrip::TabAction, timezone::TzOffset};
+use quantick_engine::bar_registry::BarConfiguration as Bars;
+use quantick_session::{close_queue::CloseScope, workspace_menu::WorkspaceCommand};
+use quantick_stores::symbol_catalog::SymbolCatalog as Catalog;
+use quantick_workspace::market_list as list;
 
-use super::menu_bar::{
-    CLOSE_TAB_SHORTCUT, NEW_TAB_SHORTCUT, NEXT_TAB_SHORTCUT, PREVIOUS_TAB_SHORTCUT,
-};
-use super::{QuantickApp, TabSlot};
+use super::title_bar::TitleBarState;
+use super::{ArrangementHost, QuantickApp, TabSlot, arrangement_adapter::StripAsk};
 
 pub(super) fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64> {
     quantick_stores::ui_state::saved_context_intervals(
@@ -46,6 +48,62 @@ impl QuantickApp {
         }
     }
 
+    /// Every tab takes in what its feed sent this frame, on screen or not.
+    ///
+    /// §11: switching tabs never tears a feed down, so a background tab has to
+    /// keep draining — its channels are bounded, and one left full backs its
+    /// feed thread up until the market it is showing is hours behind. The
+    /// indicator workers are fed on the same pass, so a tab brought forward is
+    /// already current rather than rebuilding on the frame it appears.
+    pub(super) fn drain_tabs(&mut self) {
+        // Before the drain: a reading that arrives this frame lands on a
+        // recorder built for the market it belongs to.
+        super::deal_recording_wiring::ensure(self);
+        let trades = self.runtime.drain_tabs(&self.config);
+        // What the window ingested, across every market it is holding.
+        self.health.trades_since_summary += trades;
+    }
+
+    /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle; none under the palette.
+    pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
+        self.read_view_keys(ctx);
+        let mut keys = super::home_wiring::read_tab_keys(ctx);
+        if !self.surfaces.market_palette.is_open() {
+            if std::mem::take(&mut keys.close_tab) && !self.chrome.title_bar.surface.is_home() {
+                self.apply_tab_action(TabAction::Close(self.runtime.tabs.active_index()));
+            }
+            let asked = self.arrangement_adapter().apply_tab_keys(keys);
+            settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
+        }
+    }
+
+    /// Carry out what the tab strip asked for; a close asks first while the
+    /// tab holds unsaved workspace edits.
+    pub(super) fn apply_tab_action(&mut self, action: TabAction) {
+        if let TabAction::Close(index) = action {
+            let tab = (index < self.runtime.tabs.len()).then(|| self.runtime.tabs.id_at(index));
+            let close = WorkspaceCommand::Close(CloseScope::Tabs, Vec::from_iter(tab));
+            return super::tab_workspaces::apply_workspace_command(self, close);
+        }
+        let asked = self.arrangement_adapter().apply_tab_action(action);
+        settle_strip(&mut self.surfaces.market_palette, self.runtime.tz, asked);
+    }
+}
+
+/// Close the tab at `index` without asking; answers whether it went. With
+/// `close` false it only answers whether it would.
+pub(super) fn close_now(app: &mut QuantickApp, index: usize, close: bool) -> bool {
+    if !close {
+        return app.runtime.tabs.plan_close(index).is_ok();
+    }
+    let asked = (app.arrangement_adapter()).apply_tab_action(TabAction::Close(index));
+    let closed = asked.1.is_some();
+    settle_strip(&mut app.surfaces.market_palette, app.runtime.tz, asked);
+    closed
+}
+
+#[cfg(test)]
+impl QuantickApp {
     /// Whether the toolbar's heatmap lamp is lit.
     ///
     /// The *switch*, not what capture lets through it — the same reading the
@@ -63,7 +121,6 @@ impl QuantickApp {
     /// reads it back without looking at the screen is the semantic scene,
     /// which takes the same reading this delegates to.
     #[must_use]
-    #[cfg(test)]
     pub(super) fn heatmap_lamp_on(&self) -> bool {
         // `#[cfg(test)]` because the header takes the pane's reading directly:
         // keeping a second production entry point to the same answer is how the
@@ -72,90 +129,111 @@ impl QuantickApp {
             .flow_pane
             .layer_switched_on(ChartLayer::Heatmap, &self.runtime.style)
     }
+}
 
-    /// Every tab takes in what its feed sent this frame, on screen or not.
-    ///
-    /// §11: switching tabs never tears a feed down, so a background tab has to
-    /// keep draining — its channels are bounded, and one left full backs its
-    /// feed thread up until the market it is showing is hours behind. The
-    /// indicator workers are fed on the same pass, so a tab brought forward is
-    /// already current rather than rebuilding on the frame it appears.
-    pub(super) fn drain_tabs(&mut self) {
-        // Before the drain: a reading that arrives this frame lands on a
-        // recorder built for the market it belongs to.
-        super::deal_recording_wiring::ensure(self);
-        let trades = self.runtime.drain_tabs(&self.config);
-        // What the window ingested, across every market it is holding.
-        self.health.trades_since_summary += trades;
+/// A live market a close took goes to Recent with its bar; `+` opens the palette.
+fn settle_strip(palette: &mut MarketPaletteSurface, tz: TzOffset, (open, closed): StripAsk) {
+    if let Some(tab) = closed.filter(|tab| tab.replay.is_none()) {
+        let now = crate::metrics::wall_clock_ms();
+        let stamp = quantick_civil::fmt_offset_minute(now, tz);
+        let closed = list::ClosedMarket {
+            feed_id: tab.feed_id.clone(),
+            symbol: tab.symbol.clone(),
+            at: stamp.get(11..).unwrap_or_default().to_owned(),
+            price: last_price(&tab),
+            bar: tab.flow_pane.state.spec().to_config_string(),
+            context_bars: super::arrangement_adapter::saved_tab_of(&tab).context_bars,
+        };
+        palette.recent.closed(closed);
     }
+    if open {
+        palette.open("", None);
+    }
+}
 
-    /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.
-    pub(super) fn handle_tab_keys(&mut self, ctx: &egui::Context) {
-        self.read_view_keys(ctx);
-        // Focus-gated like `handle_drawing_keys` (audit MINOR-13): typing in
-        // the source picker's field with Ctrl held must never close the tab
-        // under it — closing is instant and currently irreversible.
-        if ctx.memory(|memory| memory.focused().is_some()) {
-            return;
-        }
-        let (new_tab, close_tab, next, previous) = ctx.input_mut(|input| {
-            (
-                input.consume_shortcut(&NEW_TAB_SHORTCUT),
-                input.consume_shortcut(&CLOSE_TAB_SHORTCUT),
-                input.consume_shortcut(&NEXT_TAB_SHORTCUT),
-                input.consume_shortcut(&PREVIOUS_TAB_SHORTCUT),
-            )
-        });
-        if new_tab {
-            self.surfaces.source_picker.open(&self.config);
-        }
-        if close_tab {
-            let index = self.runtime.tabs.active_index();
-            self.arrangement_adapter().close_tab(index);
-        }
-        if next {
-            self.arrangement_adapter().cycle_tab(1);
-        }
-        if previous {
-            self.arrangement_adapter().cycle_tab(-1);
-        }
+/// What "Open a market" lists: the config's markets and this window's tabs.
+pub(super) fn market_snapshot(app: &QuantickApp) -> list::MarketSnapshot {
+    let (venues, markets) = app.config.market_catalog(&app.added_symbols);
+    let (tabs, book) = (&app.runtime.tabs, &app.runtime.workspace.book);
+    let open = (tabs.iter().enumerate())
+        .map(|(index, tab)| list::OpenMarket {
+            tab_id: tabs.id_at(index),
+            position: index + 1,
+            feed_id: tab.feed_id.clone(),
+            symbol: tab.symbol.clone(),
+            asset: app.config.market_asset(&tab.feed_id, &tab.symbol),
+            workspace: book.tab_row(tabs.id_at(index)).0,
+            bar: tab.flow_pane.state.spec().to_config_string(),
+            context_bars: super::arrangement_adapter::saved_tab_of(tab).context_bars,
+            replay: tab.replay.is_some(),
+            streaming: tab.latest_trade_ms.is_some(),
+            price: last_price(tab),
+            trades_per_s: None,
+        })
+        .collect();
+    let workspaces = book.book().list().into_iter().map(|row| row.name);
+    list::MarketSnapshot {
+        venues,
+        markets,
+        open,
+        recent: app.surfaces.market_palette.recent.clone(),
+        starter_feed: app.config.default_feed.clone(),
+        workspaces: workspaces.collect(),
+        inherited_bar: Some(app.active_tab().flow_pane.state.spec().to_config_string()),
     }
+}
 
-    /// Do what the "Open market" dialog settled on.
-    pub(super) fn apply_market_request(&mut self, request: crate::surfaces::MarketRequest) {
-        use crate::surfaces::MarketRequest;
-        match request {
-            MarketRequest::Open { feed_id, symbol } => {
-                self.arrangement_adapter().open_tab(feed_id, symbol, None)
-            }
-            MarketRequest::Add { feed_id, symbol } => {
-                match self.symbol_catalog().add(&feed_id, &symbol) {
-                    Ok(()) => {
-                        self.surfaces.source_picker.close();
-                        self.arrangement_adapter().open_tab(feed_id, symbol, None);
-                    }
-                    // The dialog stays open carrying the reason: the user is one
-                    // keystroke from a symbol that does fit, and closing would
-                    // make the refusal look like a crash.
-                    Err(reason) => self.surfaces.source_picker.refuse(reason),
-                }
-            }
-            MarketRequest::Remove { feed_id, symbol } => {
-                self.symbol_catalog().remove(&feed_id, &symbol);
-            }
-        }
-    }
+/// Bring the tab at `index` forward, off Home.
+pub(super) fn focus_tab(tabs: &mut ArrangementHost, bar: &mut TitleBarState, index: usize) {
+    tabs.select(index);
+    bar.surface.show_market();
+}
 
-    /// Carry out what the tab strip asked for.
-    pub(super) fn apply_tab_action(&mut self, action: TabAction) {
-        match action {
-            TabAction::Activate(index) => {
-                if index < self.runtime.tabs.len() {
-                    self.runtime.tabs.select(index);
-                }
-            }
-            TabAction::Close(index) => self.arrangement_adapter().close_tab(index),
-            TabAction::New => self.surfaces.source_picker.open(&self.config),
-        }
+/// Open `choice` on `bar` (none: `adopt_tab`'s), its workspace left as the tab's arrival.
+pub(super) fn open(app: &mut QuantickApp, choice: &list::OpenChoice, bar: Option<Bars>) -> u64 {
+    let shown = app.runtime.tabs.active_index();
+    (app.arrangement_adapter()).open_tab(choice.feed_id.clone(), choice.symbol.clone(), bar);
+    let timeframes = super::saved_context_intervals(&choice.context_bars, None);
+    app.active_tab_mut().open_context_on(&timeframes);
+    let tab = app.runtime.tabs.active_id();
+    let sync = app.runtime.workspace.book.sync_mut();
+    sync.join(tab, choice.arrival());
+    (choice.background).then(|| app.runtime.tabs.select(shown));
+    tab
+}
+
+/// Add a symbol to a feed's list, or take one out.
+pub(super) fn edit_catalog(mut catalog: Catalog, market: (&str, &str), add: bool) -> Refusable {
+    match add {
+        true => catalog.add(market.0, market.1),
+        false => catalog.remove(market.0, market.1),
     }
+}
+
+/// Show the palette; `switch` puts it in switch mode on the active tab.
+pub(super) fn open_palette(app: &mut QuantickApp, query: &str, switch: bool) -> Refusable {
+    let port = app as &dyn super::control_host::ControlPort;
+    let target = switch.then(|| quantick_control_handlers::market_switch::target(port));
+    app.surfaces.market_palette.open(query, target.transpose()?);
+    Ok(())
+}
+
+/// Do what the palette asked. A refusal stays under its field.
+pub(super) fn apply_palette_intent(app: &mut QuantickApp, intent: list::PaletteIntent) {
+    let port = app as &mut dyn super::control_host::ControlPort;
+    match quantick_control_handlers::market_palette::settle(port, intent) {
+        Ok(None) => {}
+        Ok(Some(note)) => {
+            app.surfaces.market_palette.close();
+            app.surfaces.toast.note(note, std::time::Instant::now());
+        }
+        Err(reason) => app.surfaces.market_palette.refuse(reason),
+    }
+}
+
+type Refusable = Result<(), String>;
+
+fn last_price(tab: &crate::tab::Tab) -> Option<String> {
+    let bar = tab.flow_pane.state.bars().last()?;
+    Some(bar.close.to_string())
 }

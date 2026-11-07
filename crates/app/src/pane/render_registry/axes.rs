@@ -13,6 +13,7 @@ use crate::{
     timezone::TzOffset,
 };
 use eframe::egui;
+use quantick_chart::bar_progress::BarProgressReading;
 use rust_decimal::prelude::ToPrimitive as _;
 pub(super) const PACKAGE: Package = Package {
     layers: &[
@@ -44,6 +45,8 @@ pub(in crate::pane) struct LastPricePass<'a> {
     pub axis_x: f32,
     pub scale: &'a PriceScale,
     pub bar: &'a quantick_engine::Bar,
+    /// The forming bar's progress, printed under the price; `None` while off.
+    pub progress: Option<BarProgressReading>,
     pub style: &'a ChartStyle,
 }
 pub(in crate::pane) struct CrosshairPass<'a> {
@@ -122,6 +125,7 @@ fn last_price(p: &mut LastPricePass<'_>) {
         axis_x,
         scale,
         bar,
+        progress,
         style,
     } = *p;
 
@@ -150,6 +154,12 @@ fn last_price(p: &mut LastPricePass<'_>) {
         LAST_PRICE_GAP_PX,
     ));
 
+    // A countdown changes with no print: ask for the frame its text turns on,
+    // at most a quarter second away so a fast replay's clock keeps up.
+    if let Some(ms) = progress.and_then(|reading| reading.repaint_after_ms()) {
+        let after = std::time::Duration::from_millis(ms.unsigned_abs());
+        painter.ctx().request_repaint_after(after);
+    }
     // Same geometry as the crosshair tag and the compass's, because it is
     // the same code: one owner for where a price sits on this axis.
     pointer_compass::paint_price_tag(
@@ -157,6 +167,7 @@ fn last_price(p: &mut LastPricePass<'_>) {
         axis_x,
         y,
         pointer_compass::price_text(price),
+        progress.map(|reading| reading.tag_text()),
         color,
         theme::get(painter.ctx()).chip_ink(),
     );
@@ -208,6 +219,7 @@ fn crosshair(p: &mut CrosshairPass<'_>) {
         axis_x,
         pos.y,
         pointer_compass::price_text(scale.price_at(pos.y)),
+        None,
         axis_palette.tag_bg(),
         axis_palette.crosshair_ink(),
     );
@@ -473,6 +485,7 @@ pub(in crate::pane) struct AxisMarksPass<'a> {
     pub levels: &'a [super::super::PriceAxisLevel],
     pub newest: Option<&'a quantick_engine::Bar>,
     pub last_price_visible: bool,
+    pub progress: Option<BarProgressReading>,
     pub style: &'a ChartStyle,
 }
 impl AxisMarksPass<'_> {
@@ -487,6 +500,7 @@ impl AxisMarksPass<'_> {
                 axis_x: self.axis_x,
                 scale: self.scale,
                 bar,
+                progress: self.progress,
                 style: self.style,
             });
         }
@@ -515,6 +529,7 @@ impl AxisMarksPass<'_> {
                 axis_x,
                 level.y,
                 pointer_compass::price_text(level.price),
+                None,
                 level.color,
                 palette.ink_on(level.color),
             );

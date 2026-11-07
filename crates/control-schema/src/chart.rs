@@ -79,8 +79,33 @@ pub struct ChartPaneSnapshot {
     pub venue_history_bar_count: WireU64,
     pub backfill_boundary_slot: Option<WireU64>,
     pub has_in_progress_bar: bool,
+    /// How far the forming bar is from closing, as the last-price tag prints
+    /// it: a time rule's on the tab's market clock (the replay's playhead
+    /// while replaying). Absent with no forming bar to read. Optional on the
+    /// wire, as `uncounted_prints` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar_progress: Option<BarProgressSnapshot>,
+    /// Whether the last-price tag prints that progress: the setting of the
+    /// pane's market (`chart.price_tag.progress.set`). Optional on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_tag_progress: Option<bool>,
     pub viewport: ViewportSnapshot,
     pub coverage: ChartCoverage,
+}
+
+/// The forming bar's progress in its rule's own unit.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BarProgressSnapshot {
+    /// What has accumulated: the count, the milliseconds a time bar has run,
+    /// or an imbalance rule's signed running total.
+    pub done: CanonicalDecimal,
+    /// Where the bar closes; absent for an imbalance rule, which has no
+    /// fixed target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<CanonicalDecimal>,
+    /// The unit both figures count in: `ms` for a time rule, else the rule's
+    /// own (`ticks`, a volume or notional unit, an imbalance measure).
+    pub unit: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

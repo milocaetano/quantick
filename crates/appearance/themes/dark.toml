@@ -68,6 +68,21 @@ chrome = "#171B26"
 inset = "#10141D"
 control = "#232936"
 chart_grid = "#232936"
+# The market tab strip and window title area, the wordmark's "tick" and a
+# replaying tab's mark (docs/ux/layout-appearance-2026-11-06).
+tab_strip = "#10141D"
+brand = "#3AF0B2"
+replay_ink = "#C58CFF"
+# The tabs: the active tab and the toolbar row
+# are one sheet; an idle tab is the strip lifted by #0B0C10 and edged by the
+# strip lifted by #323743; the active one wears the band on its top edge.
+toolbar_sheet = "#171B26"
+tab_idle_fill = "#1B202D"
+tab_idle_outline = "#424B60"
+tab_band = "#3AF0B2"
+# The glow behind the Q while Home is shown, in the band's green. egui blends
+# in linear light, so this opacity reads as the mock's ~25% rise at the peak.
+home_glow = "#3AF0B210"
 border = "#2E3648"
 text_primary = "#D2DAE2"
 text_muted = "#96A0AF"

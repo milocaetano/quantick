@@ -9,40 +9,120 @@ use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 /// The window and its market tabs.
 pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "layout.window.state.set",
+        title: "Set native window presentation",
+        reach: "title-strip minimize and maximize controls; double-click free title-strip space",
+        keys: &[(
+            Source::Authored,
+            "native title-strip minimize/maximize buttons and free-space double-click",
+        )],
+        mapping: capability!("layout.window.state.set"),
+    },
+    UiBehaviour {
+        id: "home.show",
+        title: "Show the Home tab",
+        reach: "first tab of the market title strip, Ctrl+1, Ctrl+Shift+H",
+        keys: &[
+            (Source::TabAction, "Home"),
+            (Source::Hotkey, "HOME_SHORTCUT"),
+            (Source::Hotkey, "HOME_ALT_SHORTCUT"),
+        ],
+        mapping: capability!("home.show"),
+    },
+    UiBehaviour {
+        id: "home.leave",
+        title: "Leave the Home tab",
+        reach: "the active market's chip, Ctrl+Tab and Ctrl+Shift+Tab while Home shows",
+        keys: &[(
+            Source::Authored,
+            "market chip click and tab cycling while Home shows",
+        )],
+        mapping: capability!("home.leave"),
+    },
+    UiBehaviour {
+        id: "window.move",
+        title: "Move or resize the native window",
+        reach: "free title-strip drag space and native window edges; scene tab_strip.drag names the drag surface",
+        keys: &[(
+            Source::Authored,
+            "native title-strip drag and window-edge resize gestures",
+        )],
+        mapping: capability!("layout.window.placement.set"),
+    },
+    UiBehaviour {
+        id: "window.snap",
+        title: "Snap the native window",
+        reach: "Windows+Left/Right and the operating system's native window snapping",
+        keys: &[(Source::Authored, "native Windows snapping")],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "Windows snapping remains an OS gesture; layout.window.placement.set requests an explicit bounded rectangle and does not invoke shell snapping"
+        ),
+    },
+    UiBehaviour {
         id: "app.exit",
         title: "Close the application",
-        reach: "File menu, and the window's own close button",
-        keys: &[(Source::MenuEntry, "Exit")],
+        reach: "the window's own close button",
+        keys: &[(Source::Authored, "native window close button")],
         mapping: excluded!(
             Authority,
             "`docs/control-plane/observer-threat-model.md` section 6 refuses starting or \
              stopping Quantick, a terminal, a broker or any other process. A capability that \
-             closes the window would end every other capability's session"
+             closes the final window would end every other capability's session; layout.window.close instead preserves tabs in a sibling and refuses final-window exit"
         ),
     },
     UiBehaviour {
         id: "tab.market.activate",
         title: "Switch to another market tab",
-        reach: "tab strip in the menu row; Ctrl+Tab and Ctrl+Shift+Tab",
+        reach: "market title strip and its overflow menu; Ctrl+Tab and Ctrl+Shift+Tab",
         keys: &[
             (Source::TabAction, "Activate"),
             (Source::Hotkey, "NEXT_TAB_SHORTCUT"),
             (Source::Hotkey, "PREVIOUS_TAB_SHORTCUT"),
         ],
-        mapping: excluded!(
-            PendingCapability,
-            "`layout.tab.switch` switches a layout tab, not a market tab; nothing reaches the \
-             strip that carries the open markets. Tracked in issue 401"
+        mapping: capability!("layout.market_tab.select"),
+    },
+    UiBehaviour {
+        id: "tab.market.transfer",
+        title: "Reorder, detach or attach a market tab",
+        reach: "drag a market chip within its strip, outside it, or onto another exposed window strip",
+        keys: &[(
+            Source::Authored,
+            "native market-tab drag and insertion marker",
+        )],
+        mapping: capability!(
+            "layout.market_tab.reorder",
+            "layout.market_tab.detach",
+            "layout.market_tab.attach"
         ),
+    },
+    UiBehaviour {
+        id: "tab.market.drag.cancel",
+        title: "Cancel a staged market-tab drag",
+        reach: "Escape while dragging a market chip",
+        keys: &[(
+            Source::Authored,
+            "native market-tab staged gesture and Escape",
+        )],
+        mapping: capability!(
+            "layout.market_tab.drag.begin",
+            "layout.market_tab.drag.cancel"
+        ),
+    },
+    UiBehaviour {
+        id: "window.close_preserving_tabs",
+        title: "Close one native window and retain every market in a sibling",
+        reach: "native window close while sibling windows exist",
+        keys: &[(Source::Authored, "native close-to-survivor lifecycle")],
+        mapping: capability!("layout.window.close"),
     },
     UiBehaviour {
         id: "tab.market.close",
         title: "Close the active market tab",
-        reach: "tab strip chip, File menu, Ctrl+W",
+        reach: "tab strip chip, Ctrl+W",
         keys: &[
             (Source::TabAction, "Close"),
             (Source::Hotkey, "CLOSE_TAB_SHORTCUT"),
-            (Source::MenuEntry, "Close Tab"),
         ],
         mapping: excluded!(
             PendingCapability,
@@ -53,29 +133,64 @@ pub(super) const WINDOW_AND_TABS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "tab.market.open",
-        title: "Open a new market tab",
-        reach: "tab strip +, File menu, Ctrl+T",
+        title: "Open the Open a market palette",
+        reach: "tab strip +, Ctrl+T, Home's Open a market",
         keys: &[
             (Source::TabAction, "New"),
             (Source::Hotkey, "NEW_TAB_SHORTCUT"),
-            (Source::MenuEntry, "New Tab…"),
         ],
+        mapping: capability!("market.palette.open"),
+    },
+    UiBehaviour {
+        id: "market.palette.choose",
+        title: "Open or focus the market chosen in the palette",
+        reach: "Enter or Ctrl+Enter on a palette row, with its Bars and Workspace selectors",
+        keys: &[(
+            Source::Authored,
+            "palette rows are drawn from the headless market list, not an action enum",
+        )],
+        mapping: capability!("market.open"),
+    },
+    UiBehaviour {
+        id: "market.palette.add",
+        title: "Add a symbol to a venue and open it",
+        reach: "Enter on a palette no-match row",
+        keys: &[(
+            Source::Authored,
+            "the no-match row is drawn from the headless market list",
+        )],
         mapping: excluded!(
             PendingCapability,
-            "no capability opens a second market tab. `feed.source.set` switches the feed and \
-             symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401"
+            "no capability adds a symbol to a venue's list yet; `market.open` opens what the \
+             config and the added-symbols file already offer. Tracked in issue 401"
         ),
+    },
+    UiBehaviour {
+        id: "market.palette.remove",
+        title: "Remove a market the trader added",
+        reach: "Delete on a palette row the trader added",
+        keys: &[(
+            Source::Authored,
+            "the row is drawn from the headless market list",
+        )],
+        mapping: capability!("catalog.remove"),
     },
     UiBehaviour {
         id: "tab.market.source.set",
         title: "Switch the active tab to another configured feed and symbol",
-        reach: "the toolbar's SOURCE feed and symbol combos",
+        reach: "the toolbar's market button, then Enter on a row of the palette in switch mode",
+        keys: &[(Source::ToolbarAction, "SwitchMarket")],
+        mapping: capability!("tab.market.set", "feed.source.set"),
+    },
+    UiBehaviour {
+        id: "tab.market.roll",
+        title: "Roll the active tab to its next configured contract",
+        reach: "the toolbar's market button, then the roll row of the palette in switch mode",
         keys: &[(
             Source::Authored,
-            "the SOURCE combos are toolbar widgets writing the tab's selection, not entries in \
-             its action enum",
+            "the roll row is drawn from the headless market list, not an action enum",
         )],
-        mapping: capability!("feed.source.set"),
+        mapping: capability!("feed.contract.roll"),
     },
 ];
 
@@ -84,7 +199,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.create",
         title: "Add a layout tab",
-        reach: "layout strip +, View → Layouts",
+        reach: "layout strip +, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "Create"),
             (Source::MenuEntry, "New layout"),
@@ -94,7 +209,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.delete",
         title: "Delete a layout tab",
-        reach: "layout strip context menu, View → Layouts",
+        reach: "layout strip context menu, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "Delete"),
             (Source::MenuEntry, "Delete layout"),
@@ -104,13 +219,13 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
             "`crate::control::layout` states it: `layout.tab.delete` is deliberately not \
              registered, because deleting a layout destroys its indicator set and every \
              drawing under it and no effect policy in the control contract allows a \
-             destructive capability yet. The trader deletes from the strip or the View menu"
+             destructive capability yet. The trader deletes from the strip or the window menu"
         ),
     },
     UiBehaviour {
         id: "layout.tab.rename",
         title: "Rename a layout tab",
-        reach: "layout strip double-click, View → Layouts",
+        reach: "layout strip double-click, window menu, Workspace, Layouts",
         keys: &[
             (Source::StripAction, "BeginRename"),
             (Source::StripAction, "CommitRename"),
@@ -133,7 +248,7 @@ pub(super) const LAYOUT_TABS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layout.tab.switch",
         title: "Show another layout on the focused chart",
-        reach: "layout strip, View → Layouts, Alt+1 … Alt+9",
+        reach: "layout strip, window menu, Workspace, Layouts, Alt+1 … Alt+9",
         keys: &[(Source::StripAction, "Switch")],
         mapping: capability!("layout.tab.switch"),
     },
@@ -174,13 +289,13 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
         id: "feed.deal_recording.set",
         title: "Record the venue's deal counter, stop, load a recorded day, or show the pane as \
                 trades bars",
-        reach: "the REC control beside the symbol and its popover; the Tools menu's \
-                `Record deals by default` checkbox",
-        // One registry key: the matrix counts a row carrying an `Authored` key
-        // as one no registry stands behind. The Tools menu checkbox is drawn by
-        // `app/deal_recording_wiring.rs`, not an entry in the menu registry;
-        // the call's `record_by_default` is the same choice.
-        keys: &[(Source::ToolbarAction, "DealRecording")],
+        reach: "the REC control beside the symbol and its popover; the Settings window's \
+                `Record deals by default` row",
+        // The call's `record_by_default` is the same choice as the Settings row.
+        keys: &[
+            (Source::ToolbarAction, "DealRecording"),
+            (Source::MenuEntry, "Record deals by default"),
+        ],
         // `ShowAsTrades` is the popover's shortcut to the `trades` rule, the
         // same recut `layout.pane.set_bar_spec` drives; `OpenFolder` reveals
         // the recording directory in the OS file browser, a hand-only
@@ -192,10 +307,60 @@ pub(super) const FEED_RECOVERY: &[UiBehaviour] = &[
 /// The rest of the chrome.
 pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
+        id: "window.menu.open",
+        title: "Open the window menu",
+        reach: "the kebab button on the title strip, F10",
+        keys: &[(Source::Hotkey, "WINDOW_MENU_SHORTCUT")],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "the menu holds rows, and every row names its own behaviour; an operator calls \
+             those directly, and a transient popup is not state worth driving"
+        ),
+    },
+    UiBehaviour {
+        id: "settings.open",
+        title: "Open the Settings window on a section",
+        reach: "window menu, Ctrl+Comma, the status-bar clock; the Agent on pill opens the \
+                section a call is refused",
+        keys: &[
+            (Source::Hotkey, "SETTINGS_SHORTCUT"),
+            (Source::MenuEntry, "Settings…"),
+        ],
+        mapping: Mapping::Capabilities(&["settings.open"]),
+    },
+    UiBehaviour {
+        id: "window.help.open",
+        title: "Read a help page: keyboard shortcuts, workspaces, the version",
+        reach: "window menu, Help",
+        keys: &[
+            (Source::MenuEntry, "Keyboard shortcuts…"),
+            (Source::MenuEntry, "About workspaces…"),
+            (Source::MenuEntry, "About quantick"),
+        ],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "reference text for a human; the shortcuts and the workspace rules are the \
+             contract an operator already reads"
+        ),
+    },
+    UiBehaviour {
+        id: "window.command_palette.open",
+        title: "Open the command palette",
+        reach: "window menu, disabled until the market palette ships",
+        keys: &[(Source::MenuEntry, "Command palette…")],
+        mapping: excluded!(
+            UiOnlyByDecision,
+            "not built: the row is greyed out and says so, and nothing runs behind it"
+        ),
+    },
+    UiBehaviour {
         id: "control.access.open",
         title: "Open the local agent access panel",
-        reach: "Tools menu, and the menu row access chip",
-        keys: &[(Source::MenuEntry, "Agent access: on")],
+        reach: "Settings, Agent access, Manage clients…",
+        keys: &[
+            (Source::MenuEntry, "Manage clients…"),
+            (Source::MenuEntry, "Local agent access"),
+        ],
         mapping: excluded!(
             Authority,
             "the panel is where the trader grants and revokes an operator's access. A \
@@ -206,7 +371,7 @@ pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "view.perf_readings.toggle",
         title: "Show fps, frame time and trade count on the status bar",
-        reach: "View menu",
+        reach: "Settings window",
         keys: &[(Source::MenuEntry, "Perf readings")],
         mapping: excluded!(
             PendingCapability,
@@ -218,7 +383,7 @@ pub(super) const CHROME: &[UiBehaviour] = &[
     UiBehaviour {
         id: "view.timezone.set",
         title: "Change the timezone the time axis is labelled in",
-        reach: "View menu, Timezone",
+        reach: "Settings window, Timezone",
         keys: &[(Source::MenuEntry, "Timezone")],
         mapping: excluded!(
             PendingCapability,

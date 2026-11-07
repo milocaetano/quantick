@@ -662,13 +662,13 @@ fn preview_and_selection_keep_exact_dark_and_complete_light_values() {
 }
 
 #[test]
-fn light_uses_neutral_surfaces_green_bulls_and_black_bears_without_typography_changes() {
+fn light_uses_beige_whisper_surfaces_green_bulls_and_black_bears_without_typography_changes() {
     let light = ResolvedTheme::parse(LIGHT).unwrap();
     let dark = ResolvedTheme::default();
     for (token, rgba) in [
-        (Token::Canvas, [255, 255, 255, 255]),
-        (Token::Chrome, [236, 236, 236, 255]),
-        (Token::Control, [222, 222, 222, 255]),
+        (Token::Canvas, [255, 252, 247, 255]),
+        (Token::Chrome, [236, 233, 228, 255]),
+        (Token::Control, [222, 219, 215, 255]),
         (Token::TextPrimary, [32, 32, 32, 255]),
         (Token::Buy, [76, 175, 80, 255]),
         (Token::Sell, [0, 0, 0, 255]),
@@ -677,4 +677,99 @@ fn light_uses_neutral_surfaces_green_bulls_and_black_bears_without_typography_ch
         assert_eq!(light.color(token).to_array(), rgba, "{}", token.key());
     }
     assert_eq!(light.typography, dark.typography);
+}
+
+/// Text on an amber fill (the REPLAY tag, the chosen speed, the replay
+/// actions) reads chip_ink, at 4.5:1 in both themes.
+#[test]
+fn chip_ink_reads_on_amber_in_both_themes() {
+    for theme in [
+        ResolvedTheme::default(),
+        ResolvedTheme::parse(LIGHT).unwrap(),
+    ] {
+        let ratio =
+            contrast::contrast_ratio(theme.color(Token::ChipInk), theme.color(Token::Amber));
+        assert!(ratio >= 4.5, "{}: {ratio}", theme.name);
+    }
+}
+
+/// `ResolvedTheme::bundled(false)` resolves Light inside its own lock: a mode
+/// token a bundled theme left out would re-enter that lock at runtime.
+#[test]
+fn bundled_themes_write_every_mode_token() {
+    for source in [DARK, LIGHT] {
+        let theme = ThemeDocument::parse(source).unwrap();
+        for token in document::MODE_TOKENS {
+            let key = token.key();
+            assert!(theme.colors.contains_key(key), "{}: {key}", theme.name);
+        }
+    }
+}
+
+#[test]
+fn a_drawing_colour_authored_on_dark_stays_on_dark_and_falls_back_on_light() {
+    let dark = ResolvedTheme::default();
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    let near_white = PremultipliedRgba::from_rgb(0xF3, 0xF7, 0xFF);
+    assert_eq!(dark.legible_drawing(near_white), near_white);
+    assert_eq!(dark.legible_readout(near_white), near_white);
+    assert_eq!(
+        light.legible_drawing(near_white),
+        light.color(Token::DrawingDefault)
+    );
+    assert_eq!(
+        light.legible_readout(near_white),
+        light.color(Token::DrawingDefault)
+    );
+    let faint = color::rgba_unmultiplied(0xF3, 0xF7, 0xFF, 128);
+    assert_eq!(dark.legible_drawing(faint), faint);
+    assert_eq!(
+        light.legible_drawing(faint).a(),
+        128,
+        "the fallback keeps the authored alpha"
+    );
+}
+
+#[test]
+fn every_bundled_drawing_colour_is_painted_as_authored_on_its_own_theme() {
+    for theme in [
+        ResolvedTheme::default(),
+        ResolvedTheme::parse(LIGHT).unwrap(),
+    ] {
+        let tokens = [
+            Token::DrawingDefault,
+            Token::DrawingBuy,
+            Token::DrawingSell,
+            Token::DrawingVwap,
+            Token::DrawingProfile,
+        ];
+        for color in tokens.map(|token| theme.color(token)) {
+            assert_eq!(theme.legible_drawing(color), color);
+        }
+    }
+    let dark = ResolvedTheme::default();
+    for swatch in palette::DRAWING_SWATCHES {
+        assert_eq!(dark.legible_drawing(swatch), swatch);
+        assert_eq!(dark.legible_readout(swatch), swatch);
+    }
+}
+
+#[test]
+fn legibility_falls_back_only_below_the_threshold_and_only_to_a_better_ink() {
+    let white = PremultipliedRgba::from_rgb(255, 255, 255);
+    let ink = PremultipliedRgba::from_rgb(0x20, 0x20, 0x20);
+    let invisible = PremultipliedRgba::from_rgb(0xF0, 0xF0, 0xF0);
+    assert!(contrast::contrast_ratio(invisible, white) < contrast::MIN_DRAWING_CONTRAST);
+    assert_eq!(contrast::legible(invisible, white, ink), ink);
+    let soft = PremultipliedRgba::from_rgb(0x4D, 0xD0, 0xE1);
+    assert!(contrast::contrast_ratio(soft, white) >= contrast::MIN_DRAWING_CONTRAST);
+    assert_eq!(
+        contrast::legible(soft, white, ink),
+        soft,
+        "a chosen soft hue is kept"
+    );
+    let worse = PremultipliedRgba::from_rgb(255, 255, 255);
+    assert_eq!(contrast::legible(invisible, white, worse), invisible);
+    let transparent = PremultipliedRgba::from_premultiplied([0, 0, 0, 0]);
+    assert_eq!(contrast::legible(transparent, white, ink), transparent);
 }

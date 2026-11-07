@@ -400,13 +400,16 @@ pub(super) fn handle_axis_gestures(
     price_gutter.context_menu(|ui| {
         #[cfg(test)]
         pane.context_menu.layer_menu_rects.clear();
-        let entry =
-            quantick_chart_interaction::pane_menu::inverted_entry(pane.price_view.is_inverted());
+        use quantick_chart_interaction::pane_menu::{bar_progress_entry, inverted_entry};
+        let entries = [
+            bar_progress_entry(chrome.price_tag.on),
+            inverted_entry(pane.price_view.is_inverted()),
+        ];
         let intents = super::menu_renderer::render(
             ui,
             &mut pane.context_menu,
             &mut pane.model,
-            &[entry],
+            &entries,
             None,
         );
         pane.apply_menu_intents(intents, chrome);

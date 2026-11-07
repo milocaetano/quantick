@@ -1,4 +1,4 @@
-//! Real Workspace menu frames before file-action ownership moves.
+//! Real frames of the window menu's Desk group.
 use super::*;
 
 fn open_bundle_menu(
@@ -7,9 +7,10 @@ fn open_bundle_menu(
     size: egui::Vec2,
 ) -> egui::FullOutput {
     run_sized_frame(app, ctx, size, vec![]);
-    let position = app.chrome.workspace_menu_rect.unwrap().center();
+    let position = app.chrome.title_bar.control_rect("kebab").unwrap().center();
     click_sized(app, ctx, size, position);
-    run_sized_frame(app, ctx, size, vec![])
+    let output = run_sized_frame(app, ctx, size, vec![]);
+    click_bundle_label(app, ctx, size, &output, "Desk")
 }
 
 fn click_bundle_label(
@@ -35,14 +36,12 @@ fn bundle_menu_baseline_preserves_literal_order_and_partial_scene() {
         let output = open_bundle_menu(&mut app, &ctx, size);
         let texts = painted_text(&output);
         let labels = [
-            "Save workspace",
-            "Reset startup layout",
-            "Save as…",
-            "Export to file…",
-            "Open from file…",
+            "Export desk to file…",
+            "Import desk from file…",
             "Open recent",
             "Show where it's saved",
-            "Save on exit",
+            "Reset startup desk",
+            "Reopen last tabs on launch",
         ];
         let positions: Vec<_> = labels
             .iter()
@@ -126,7 +125,7 @@ fn bundle_menu_baseline_duplicate_opens_preserve_original_channel_and_intent() {
         .workspace
         .picker_mut()
         .set_pending_for_test(crate::workspace_store::WorkspacePick::Export, receiver);
-    for label in ["Export to file…", "Open from file…"] {
+    for label in ["Export desk to file…", "Import desk from file…"] {
         let output = open_bundle_menu(&mut app, &ctx, TEST_WINDOW);
         click_bundle_label(&mut app, &ctx, TEST_WINDOW, &output, label);
         assert!(app.runtime.workspace.picker_open());

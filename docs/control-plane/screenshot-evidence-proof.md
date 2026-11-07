@@ -29,6 +29,28 @@ bounds, instance/revision association and the explicit
 fixtures include fully rehashed semantic corruptions, so checking only the outer
 digest cannot make them pass. This bounded verifier is not a general PNG library.
 
+## Native window targeting
+
+`snapshot.read`, `scene.read`, `evidence.capture` and MCP
+`quantick_capture_chart` accept optional `window_id` as a decimal string.
+Omission pins the focused live market window once when the request reaches the
+UI thread, before it can wait for paint. Changing focus cannot retarget a parked
+read; a missing or closed pinned window returns a structured refusal.
+Snapshots, scenes, evidence manifests and image descriptors identify their window.
+Image descriptors also identify the source window, checked against the scene.
+Scene tabs follow the target window's order and selection.
+
+Only pending reads request native paint observations. Root image delivery keeps
+the renderer's Screenshot event and validates its viewport ID. Eframe 0.29's
+immediate Glow child path does not service Screenshot commands, so child captures
+append a final paint callback using that same renderer's framebuffer readback.
+A bounded mailbox checks window and paint-ticket identity; replaced, revoked or
+closed captures invalidate queued tickets before readback. Framebuffer pixel and
+bundle byte limits apply. The callback does no work when no capture is pending.
+Headless tests exercise admission, interleaved events, matching scene geometry,
+original PNG pixels, revoked tickets and closed targets; real native child capture
+requires independent exact-build validation.
+
 ## Recorded validation condition
 
 The initial unfiltered `cargo test --workspace` run on 2026-09-08 failed the

@@ -1,0 +1,231 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "DragSnapshot": {
+      "properties": {
+        "cancelled": {
+          "description": "True after cancellation until another drag begins or completes.",
+          "type": "boolean"
+        },
+        "pending": {
+          "type": "boolean"
+        },
+        "source_window_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tab_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "pending",
+        "cancelled"
+      ],
+      "type": "object"
+    },
+    "MarketWindowSnapshot": {
+      "properties": {
+        "observed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "None until this native viewport has supplied an observation."
+        },
+        "omitted_tabs": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "ordered_tab_ids": {
+          "items": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "selected_tab_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "window_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "window_id",
+        "ordered_tab_ids",
+        "selected_tab_id",
+        "omitted_tabs"
+      ],
+      "type": "object"
+    },
+    "NativeObservation": {
+      "properties": {
+        "focused": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "inner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhysicalPlacement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "maximized": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "minimized": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "outer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhysicalPlacement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pixels_per_point": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "description": "Geometry is derived from the OS-fed native viewport, never from an accepted request.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "PhysicalPlacement": {
+      "additionalProperties": false,
+      "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+      "properties": {
+        "height_px": {
+          "format": "uint32",
+          "maximum": 32768,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "width_px": {
+          "format": "uint32",
+          "maximum": 32768,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "x_px": {
+          "format": "int32",
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "type": "integer"
+        },
+        "y_px": {
+          "format": "int32",
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x_px",
+        "y_px",
+        "width_px",
+        "height_px"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "drag": {
+      "$ref": "#/$defs/DragSnapshot"
+    },
+    "focused_window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "native_drop_targeting": {
+      "description": "Windows uses an exposed same-process native target. Other platforms preserve\nsame-window reorder/detach and cancel ambiguous cross-window pointer drops.",
+      "type": "string"
+    },
+    "omitted_windows": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "presented_window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "windows": {
+      "items": {
+        "$ref": "#/$defs/MarketWindowSnapshot"
+      },
+      "maxItems": 256,
+      "type": "array"
+    }
+  },
+  "required": [
+    "native_drop_targeting",
+    "windows",
+    "omitted_windows",
+    "drag"
+  ],
+  "title": "WindowsSnapshot",
+  "type": "object"
+}

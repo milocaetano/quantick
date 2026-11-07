@@ -63,4 +63,7 @@ pub struct LayerActions {
     pub toggle_settings: bool,
     /// A double click on the candles asked for the chart settings window.
     pub open_chart_settings: bool,
+    /// The axis menu switched the forming bar's progress on the price tag,
+    /// a setting of the tab's market.
+    pub bar_progress: Option<bool>,
 }

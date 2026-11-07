@@ -27,6 +27,7 @@ impl BookmapOverride {
             footprint_heat: self.footprint_heat.clone(),
             orderflow: Default::default(),
             bookmap: None,
+            title_strip: None,
         }
         .resolve_with(Some(parent))
         .map_err(|error| ThemeError::new(format!("bookmap.{}", error.field), error.message))
@@ -55,7 +56,7 @@ mod tests {
         );
         for token in Token::ALL {
             let expected = match token {
-                Token::Canvas | Token::CandlePreviewBackground => [67, 74, 82, 255],
+                Token::Canvas | Token::CandlePreviewBackground => [37, 47, 55, 255],
                 Token::DrawingDefault
                 | Token::DrawingBuy
                 | Token::DrawingSell
@@ -66,6 +67,12 @@ mod tests {
                 Token::TextFaint => [187, 198, 208, 255],
                 Token::CandleWick => [182, 201, 210, 255],
                 Token::FootprintProfile => [197, 204, 214, 255],
+                // The tab tokens belong to the title strip, never to a chart.
+                Token::ToolbarSheet
+                | Token::TabIdleFill
+                | Token::TabIdleOutline
+                | Token::TabBand
+                | Token::HomeGlow => light.color(token).to_array(),
                 _ => dark.color(token).to_array(),
             };
             assert_eq!(
@@ -75,7 +82,7 @@ mod tests {
                 token.key()
             );
         }
-        assert_eq!(light.color(Token::Canvas).to_array(), [255, 255, 255, 255]);
+        assert_eq!(light.color(Token::Canvas).to_array(), [255, 252, 247, 255]);
         assert_eq!(light.bookmap().orderflow, dark.orderflow);
         assert_eq!(light.bookmap().footprint_heat, dark.footprint_heat);
         assert_eq!(light.bookmap().typography, light.typography);

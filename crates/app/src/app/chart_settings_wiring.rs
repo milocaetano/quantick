@@ -128,13 +128,4 @@ impl LayerWiring<'_> {
     pub(crate) fn open_settings(&mut self, tab: ChartSettingsTab) {
         self.open_target_settings(tab, None);
     }
-    pub(crate) fn toggle_settings(&mut self, tab: ChartSettingsTab) {
-        if self.chart_settings.is_open_on(tab)
-            && self.chart_settings.editor.target == Some(self.focused_target())
-        {
-            self.chart_settings.close();
-        } else {
-            self.open_settings(tab);
-        }
-    }
 }

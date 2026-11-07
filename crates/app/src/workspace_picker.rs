@@ -24,37 +24,6 @@ pub(crate) struct WorkspacePickerHost {
 }
 
 impl WorkspacePickerHost {
-    /// Render the two controls that launch this owner's native chooser.
-    pub(crate) fn show_open_actions(
-        &mut self,
-        ui: &mut eframe::egui::Ui,
-        symbol: &str,
-        spec: &crate::state::BarConfiguration,
-    ) {
-        if ui
-            .button("Export to file…")
-            .on_hover_text(
-                "Save the whole cockpit — tabs, indicators, layers, drawing \
-             colours, footprint and added symbols — as one file in your \
-             documents",
-            )
-            .clicked()
-        {
-            self.open_export(symbol, spec);
-            ui.close_menu();
-        }
-        if ui
-            .button("Open from file…")
-            .on_hover_text(
-                "Open a workspace file. It replaces the cockpit on screen; a \
-             file that cannot be read changes nothing.",
-            )
-            .clicked()
-        {
-            self.open_import();
-            ui.close_menu();
-        }
-    }
     pub(crate) fn is_open(&self) -> bool {
         self.pending.is_some()
     }

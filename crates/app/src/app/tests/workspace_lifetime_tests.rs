@@ -15,7 +15,16 @@ fn native_frame(
     };
     input.viewports.entry(id).or_default();
     let now = frame_instant(ctx);
-    ctx.run(input, |ctx| app.draw_frame(ctx, now))
+    // This fixture deliberately binds one view to an arbitrary native ID;
+    // exercise the placement-aware stages without the root viewport scheduler.
+    ctx.run(input, |ctx| {
+        app.draw_frame_stage_test_order(
+            ctx,
+            now,
+            &mut quantick_feed::spawn_live,
+            super::super::frame::FramePlan::stages(),
+        )
+    })
 }
 
 #[test]

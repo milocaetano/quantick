@@ -137,6 +137,21 @@ pub const READBACKS: &[Readback] = &[journal(
     &[EVERY_OPTIONAL_TEST],
 )];
 
+/// Published schemas of the indicator picker.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "indicator-picker-input-v1.schema.json",
+            schema::<PickerInput>(),
+        ),
+        (
+            "indicator-picker-result-v1.schema.json",
+            schema::<PickerResult>(),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

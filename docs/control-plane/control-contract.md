@@ -583,6 +583,7 @@ control.auth_failed
 control.backpressure
 control.capability_unknown
 control.capability_unavailable
+control.capability_retired
 control.cursor_invalid
 control.idempotency_conflict
 control.instance_ambiguous

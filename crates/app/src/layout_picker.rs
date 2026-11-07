@@ -16,6 +16,19 @@ use crate::canvas_layout::{LAYOUT_PRESETS, LayoutPreset, PaneKind};
 use crate::theme;
 use crate::widgets::{CORNER_RADIUS, IconButton, TOOLBAR_ICON};
 
+/// The button's own miniature of the layout on screen, in pixels.
+const FACE_THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(38.0, 26.0);
+/// The button's hit target: the miniature in a ring of the hover fill.
+pub(crate) const FACE_HIT_SIZE: egui::Vec2 =
+    egui::vec2(quantick_chart::toolbar_collapse::W_PICKER, 32.0);
+const _: () = assert!(
+    FACE_THUMBNAIL_SIZE.x < FACE_HIT_SIZE.x
+        && FACE_THUMBNAIL_SIZE.y < FACE_HIT_SIZE.y
+        && TOOLBAR_ICON.hit <= FACE_HIT_SIZE.y,
+    "the miniature must sit inside the button's hit target"
+);
+/// How far the miniature's frame sits inside the hit target's left edge.
+pub(crate) const FACE_INSET_PX: f32 = (FACE_HIT_SIZE.x - FACE_THUMBNAIL_SIZE.x) / 2.0;
 /// Width of the popover, in pixels.
 const POPOVER_WIDTH_PX: f32 = 268.0;
 /// One preset cell: the thumbnail plus its label.
@@ -39,7 +52,7 @@ const THUMBNAIL_STROKE_PX: f32 = 1.0;
 const SELECTED_STROKE_PX: f32 = 1.5;
 /// Padding inside the popover frame.
 const POPOVER_PADDING_PX: f32 = 10.0;
-/// How many presets a number key reaches (`Ctrl+1` … `Ctrl+9`). Mirrors
+/// How many presets a number key reaches (`Ctrl+Shift+1` … `+9`). Mirrors
 /// `app::LAYOUT_PRESET_KEYS`, whose length is what a number row has; a preset
 /// past the ninth simply has no shortcut to name.
 const SHORTCUT_KEYS: usize = 9;
@@ -77,10 +90,24 @@ pub struct PickerModel<'a> {
 ///
 /// Returns the preset the trader picked this frame, if any.
 pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static LayoutPreset> {
-    let button = IconButton::new(icons::LAYOUT, TOOLBAR_ICON)
+    // The face is the layout on screen. A hand-arranged row matches no
+    // preset, so no miniature describes it and the generic icon stands in.
+    let glyph = if model.current.is_some() {
+        ""
+    } else {
+        icons::LAYOUT
+    };
+    let button = IconButton::new(glyph, TOOLBAR_ICON)
+        .hit_size(FACE_HIT_SIZE)
         .active(*model.open)
-        .hover_text("chart layout (Ctrl+1…)")
+        .hover_text("chart layout (Ctrl+Shift+1…)")
         .show(ui);
+    if let Some(preset) = model.current
+        && ui.is_rect_visible(button.rect)
+    {
+        let face = egui::Rect::from_center_size(button.rect.center(), FACE_THUMBNAIL_SIZE);
+        draw_panes(ui.painter(), face, preset);
+    }
 
     let popup_id = ui.make_persistent_id("layout_picker_popup");
     if model.request_open {
@@ -226,7 +253,13 @@ fn draw_cell(
 fn draw_thumbnail(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
     let palette = theme::get(painter.ctx());
     painter.rect_filled(rect, THUMBNAIL_RADIUS_PX, palette.inset());
+    draw_panes(painter, rect, preset);
+}
 
+/// The miniature's panes and frame without its backdrop, so the toolbar
+/// button's own hover and active tint stay visible behind its face.
+fn draw_panes(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
+    let palette = theme::get(painter.ctx());
     let count = preset.kinds.len().max(1);
     // The flow pane is drawn wider than the context panes for the same reason
     // it is wider on the canvas. An even miniature would promise a layout the

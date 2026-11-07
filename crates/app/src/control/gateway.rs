@@ -1,7 +1,7 @@
 //! Explicitly enabled authenticated loopback gateway and UI-thread dispatcher.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     net::TcpStream,
     path::PathBuf,
     sync::{
@@ -50,6 +50,7 @@ use quantick_control_host::idempotency;
 use quantick_control_host::rate::TokenBucket;
 mod local_action;
 mod panel;
+mod rendered_capture;
 mod screenshot;
 mod semantic;
 mod server;
@@ -414,6 +415,7 @@ impl RemoteActor {
 }
 
 struct UiRequest {
+    window_id: Option<WireU64>,
     prepared: PreparedRequest,
     /// Present when the request is an action: the connection's proved actor.
     actor: Option<Box<ActorContext>>,
@@ -483,16 +485,7 @@ pub(crate) struct ControlAccess {
     /// a worker paging a bundle and the window emptying the store are talking
     /// about one thing.
     evidence: EvidenceStore,
-    /// The pixels of the last frame the window was asked to rasterise, waiting
-    /// for the capture that asked for them.
-    screenshot: Option<RawScreenshot>,
-    /// Whether a rasterise has been asked for and not yet arrived. One at a
-    /// time: several captures in the same frame all wait for the same image.
-    screenshot_armed: bool,
-    /// Requests that asked for an image the frame had not delivered yet. They
-    /// hold their own deadline, so a window that never answers costs the
-    /// client its request timeout and nothing more.
-    awaiting_screenshot: VecDeque<UiRequest>,
+    captures: screenshot::CaptureService,
 }
 
 impl ControlAccess {
@@ -545,9 +538,7 @@ impl ControlAccess {
             next_trace_sequence: 1,
             trace_reinjection: BTreeMap::new(),
             evidence,
-            screenshot: None,
-            screenshot_armed: false,
-            awaiting_screenshot: VecDeque::new(),
+            captures: screenshot::CaptureService::default(),
         }
     }
 
@@ -662,20 +653,45 @@ impl ControlAccess {
             return Ok(Box::new(DeferredActionResult(result)) as UiReadExecution);
         }
 
+        let previous = if let Some(window) = request.window_id {
+            let previous = app.present_capture_window(window)?;
+            let scene = self
+                .captures
+                .frames
+                .scene(window)
+                .map(|painted| painted.scene.clone());
+            // Only an image uses its earlier painted scene. A plain read runs
+            // on the target's matching paint and reads that paint's own chrome.
+            if request.prepared.dispatch.needs_screenshot() {
+                app.set_capture_scene(Some(
+                    scene.unwrap_or_else(|| screenshot::unpainted_scene(app, window)),
+                ));
+                self.captures.screenshot = self.captures.frames.take_image(window);
+            }
+            Some(previous)
+        } else {
+            None
+        };
         let session = self
             .identity
             .as_ref()
             .expect("the instance identity was read above")
             .session();
-        request.prepared.dispatch.execute_ui(UiReadContext {
+        let result = request.prepared.dispatch.execute_ui(UiReadContext {
             projections: &mut self.projections,
             journal: &self.journal,
             app,
             instance_id: &instance_id,
             session: &session,
             evidence: &self.evidence,
-            screenshot: &mut self.screenshot,
-        })
+            screenshot: &mut self.captures.screenshot,
+            window_id: request.window_id,
+        });
+        app.set_capture_scene(None);
+        if let Some(previous) = previous {
+            app.present_capture_window(previous)?;
+        }
+        result
     }
 
     pub fn begin_frame(&mut self, app: &mut ControlWindow, ctx: &eframe::egui::Context) {
@@ -692,6 +708,8 @@ impl ControlAccess {
         ctx: &eframe::egui::Context,
         frame_started: Instant,
     ) {
+        self.captures.served = 0;
+        self.captures.service_us = 0;
         self.poll_lifecycle();
         let statuses_have_more = self.poll_statuses(frame_started);
         let (requests, generation) = match &self.state {
@@ -708,12 +726,8 @@ impl ControlAccess {
             return;
         };
 
+        self.harvest_rendered(app);
         self.emit_semantic_changes(app);
-        // Before the drain, and deliberately: an image that arrived this frame
-        // is of the frame just painted, and the projections about to be taken
-        // still describe that frame. Harvesting after the drain would pair a
-        // scene with a picture of the screen before it.
-        self.harvest_screenshot(app, ctx);
         // What the waiters spend, the drain does not get to spend again. They
         // are the same work against the same frame, so the ceiling has to be
         // one number: four captures served here plus four admitted below would
@@ -723,16 +737,51 @@ impl ControlAccess {
         // The drain owns `self` for the whole pass: an action runs through the
         // same `invoke_local_action` the hotkey uses, which needs the journal
         // and the trace mutably, so no field can stay borrowed across it.
-        let drain = drain_bounded_since(&requests, frame_started, already_served, |request| {
-            if self.defer_for_screenshot(&request, ctx) {
-                self.awaiting_screenshot.push_back(request);
-                return;
-            }
-            let result = self.execute_on_ui(app, generation, &request);
-            let _ = request.response.try_send(result);
-            #[cfg(test)]
-            self.observe_completion_for_test(&request.prepared.envelope.request_id);
-        });
+        // Existing paint waiters keep their frame slots. New arrivals cannot
+        // fill the drain on every frame and starve matching-viewport completion.
+        let reserved = quantick_control_host::window_capture::reserved_paint_slots(
+            self.captures
+                .awaiting
+                .iter()
+                .filter(|request| !request.prepared.dispatch.needs_screenshot())
+                .count(),
+            already_served,
+        );
+        let mut drain = drain_bounded_since(
+            &requests,
+            frame_started,
+            already_served.saturating_add(reserved),
+            |mut request| {
+                if let Some(target) = request.prepared.dispatch.window_target() {
+                    match app.pin_capture_window(target) {
+                        Ok(window) => request.window_id = Some(window),
+                        Err(error) => {
+                            let _ = request.response.try_send(Err(error));
+                            return;
+                        }
+                    }
+                }
+                if self.defer_for_screenshot(&request, ctx) {
+                    self.captures.awaiting.push_back(request);
+                    return;
+                }
+                if request.window_id.is_some() && request.prepared.dispatch.needs_paint() {
+                    let _ = request.response.try_send(Err(known_error(
+                        codes::BACKPRESSURE,
+                        "native capture queue is full",
+                        true,
+                    )));
+                    return;
+                }
+                let result = self.execute_on_ui(app, generation, &request);
+                let _ = request.response.try_send(result);
+                #[cfg(test)]
+                self.observe_completion_for_test(&request.prepared.envelope.request_id);
+            },
+        );
+        drain.processed = drain.processed.saturating_sub(reserved);
+        self.captures.served = drain.processed;
+        self.captures.service_us = server::elapsed_us_since(frame_started);
         self.last_drain = drain;
         // A rasterised frame is worth exactly one frame. Whatever is still
         // holding it here was not claimed by any capture this pass — the
@@ -741,10 +790,11 @@ impl ControlAccess {
         // one thing the capture revision promises it is not. Dropping it also
         // returns the framebuffer instead of parking tens of megabytes for the
         // rest of the session.
-        self.screenshot = None;
+        self.captures.screenshot = None;
+        self.prune_frames();
         if statuses_have_more
             || self.last_drain.queue_has_more
-            || !self.awaiting_screenshot.is_empty()
+            || !self.captures.awaiting.is_empty()
         {
             ctx.request_repaint();
         }
@@ -991,6 +1041,7 @@ impl ControlAccess {
             runtime.revoke(connection_id.clone());
         }
         self.connections.remove(&connection_id);
+        self.prune_frames();
     }
 
     fn poll_lifecycle(&mut self) {
@@ -1161,8 +1212,11 @@ impl ControlAccess {
             "gateway cleanup did not acknowledge before application exit"
         );
     }
+}
 
-    #[cfg(test)]
+/// Test-only handles on the gateway, apart from the shipped impl.
+#[cfg(test)]
+impl ControlAccess {
     pub(crate) fn enable_for_test(
         &mut self,
         ctx: &eframe::egui::Context,
@@ -1177,7 +1231,6 @@ impl ControlAccess {
         self.request_enable(ctx, options);
     }
 
-    #[cfg(test)]
     pub(crate) fn enable_for_test_with_limits(
         &mut self,
         ctx: &eframe::egui::Context,
@@ -1199,7 +1252,6 @@ impl ControlAccess {
     /// [`Self::enable_for_test`], with `written` called on the answering
     /// thread each time an answer that released a request ID has been
     /// written, before that thread moves on.
-    #[cfg(test)]
     pub(crate) fn enable_for_test_observing_answers(
         &mut self,
         ctx: &eframe::egui::Context,
@@ -1219,7 +1271,6 @@ impl ControlAccess {
     /// One frame whose request budget was spent before the frame service ran,
     /// as a loaded machine's frame prelude spends it. Everything the frame
     /// does after that is the production path, unchanged.
-    #[cfg(test)]
     pub(crate) fn begin_frame_over_budget_for_test(
         &mut self,
         app: &mut ControlWindow,
@@ -1232,20 +1283,25 @@ impl ControlAccess {
         self.begin_frame_since(app, ctx, started);
     }
 
-    #[cfg(test)]
     pub(crate) fn disable_for_test(&mut self) {
         self.request_disable();
     }
 
-    #[cfg(test)]
     pub(crate) fn queued_requests_for_test(&self) -> usize {
         match &self.state {
-            AccessState::Enabled(runtime) => runtime.requests.len(),
+            AccessState::Enabled(runtime) => {
+                runtime.requests.len()
+                    + self
+                        .captures
+                        .awaiting
+                        .iter()
+                        .filter(|request| !request.prepared.dispatch.needs_screenshot())
+                        .count()
+            }
             AccessState::Disabled | AccessState::Enabling | AccessState::Disabling(_) => 0,
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn descriptor_path_for_test(&self) -> Option<PathBuf> {
         match &self.state {
             AccessState::Enabled(runtime) => Some(runtime.public.descriptor_path.clone()),
@@ -1253,12 +1309,10 @@ impl ControlAccess {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn is_disabled_for_test(&self) -> bool {
         matches!(self.state, AccessState::Disabled)
     }
 
-    #[cfg(test)]
     pub(crate) fn connection_ids_for_test(&self) -> Vec<ConnectionId> {
         self.connections.keys().cloned().collect()
     }

@@ -1,39 +1,65 @@
-//! The workspace tab strip and the source picker behind its `+`
+//! The market tab strip and the source picker behind its `+`
 //! (`docs/ux/ui-design-model.md` §11).
 //!
-//! One chip per open market, `SYMBOL · venue`, sitting in zone 1 to the right
-//! of the menus — the row already had the horizontal room, so tabs cost no
-//! chrome budget. The picker reads the same config catalog the toolbar's
-//! SOURCE group does; there is one list of what quantick can open, and both
-//! surfaces show it.
+//! One chip per open market in the native title strip. The picker shares the
+//! toolbar's configured source catalog.
 
 use eframe::egui;
+use quantick_appearance::Token;
+use quantick_appearance::tab_strip::{
+    FeedMark, MarkShape, feed_shape, feed_token, glow_mesh, home_glow_strength, tab_ink, tab_layers,
+};
+use quantick_session::tab_chip::{
+    ChipMeasure, CloseSlot, broker_name, close_slot, fit_chip, shortened_name,
+};
+use quantick_workspace::arrangement::strip::{
+    StripSurface, TabFeed, chip_parts, home_label_fits, market_slots, visible_tabs,
+};
 
-use crate::config::AppConfig;
-use crate::symbols_file::AddedSymbols;
-use crate::theme;
+use crate::theme::{self, Palette};
 
-/// Radius of the amber dot marking a background tab whose feed is in trouble.
-const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
-/// Gap between a chip's label and its close affordance.
-const CHIP_GAP_PX: f32 = 6.0;
-/// How far below a chip's top edge the attention dot sits, so it clears the
-/// selection outline instead of riding it.
-const ATTENTION_DOT_INSET_PX: f32 = 1.0;
-/// Width of the add-symbol field: wide enough for the longest contract code a
-/// venue uses, narrow enough that the dialog stays a dialog.
-const SYMBOL_FIELD_WIDTH_PX: f32 = 120.0;
+const STRIP_CONTROLS_WIDTH_PX: f32 = 66.0;
+const CHIP_PREFERRED_WIDTH_PX: f32 = 180.0;
+const CHIP_MAX_WIDTH_PX: f32 = 220.0;
+const CHIP_MIN_WIDTH_PX: f32 = 44.0;
+/// A window so narrow the strip is in its compact form: the × and a sliver.
+const CHIP_COMPACT_MIN_WIDTH_PX: f32 = 38.0;
+pub(crate) const CLOSE_HIT_WIDTH_PX: f32 = 24.0;
+pub(crate) const CHIP_HEIGHT: f32 = 30.0;
+const CHIP_ROUNDING_PX: f32 = quantick_appearance::tab_strip::TAB_CORNER_PT;
+
+const SYMBOL_TEXT_PX: f32 = 13.0;
+const SUFFIX_TEXT_PX: f32 = 12.0;
+const CLOSE_GLYPH_PX: f32 = 14.0;
+const ADD_GLYPH_PX: f32 = 17.0;
+const ADD_WIDTH_PX: f32 = 30.0;
+const CHIP_PADDING_LEFT_PX: f32 = 10.0;
+const CHIP_DOT_RADIUS_PX: f32 = 3.0;
+const CHIP_DOT_GAP_PX: f32 = 7.0;
+/// The gap between the chip's trailing words.
+const NAME_MARK_GAP_PT: f32 = 3.0;
+/// How far a second strike of the symbol sits from the first. The bundled face
+/// has one weight, and this is what reads as 600 at 13 pt.
+const SEMIBOLD_STRIKE_PX: f32 = 0.35;
+
+/// The plate-less Q, the wordmark's first letter: its 22 px box, the glyph inside.
+const HOME_Q: egui::Vec2 = egui::Vec2::splat(22.0);
+const HOME_TEXT_PX: f32 = 15.0;
+// Window edge to the Home tab, tab edge to the Q, Q to text, text to edge.
+pub(crate) const STRIP_EDGE_PX: f32 = 10.0;
+pub(crate) const HOME_PADDING_LEFT_PX: f32 = 9.0;
+pub(crate) const HOME_LOGO_GAP_PX: f32 = 2.0;
+pub(crate) const HOME_PADDING_RIGHT_PX: f32 = 14.0;
+/// The Q alone, centred in its own height with the labelled form's margin.
+pub(crate) const HOME_MIN_WIDTH_PX: f32 = HOME_PADDING_LEFT_PX * 2.0 + HOME_Q.y;
 
 /// What one tab looks like on the strip this frame.
 pub struct TabChip<'a> {
+    pub id: u64,
     /// `SYMBOL · venue`, composed by the tab when its market last changed.
     pub label: &'a str,
-    /// Whether this tab is playing a recording rather than streaming.
-    pub replaying: bool,
-    /// Whether the feed wants attention — drawn as the amber dot §11 asks
-    /// for, and only while the tab is in the background: the active tab's
-    /// state is already spelled out on the status bar.
-    pub needs_attention: bool,
+    /// The feed's mark.
+    pub feed: TabFeed,
 }
 
 /// What the strip asked the window to do.
@@ -43,6 +69,8 @@ pub enum TabAction {
     Close(usize),
     /// The `+`: open the source picker.
     New,
+    /// The first tab: show Home over the canvas.
+    Home,
 }
 
 /// Draw the strip and report the one action it produced.
@@ -50,432 +78,386 @@ pub enum TabAction {
 /// `closable` is false for the last tab: closing it would leave the window
 /// with no market and nothing to draw, so the affordance is disabled and says
 /// why rather than vanishing.
-pub fn draw(ui: &mut egui::Ui, chips: &[TabChip<'_>], active: usize) -> Option<TabAction> {
+#[derive(Default)]
+pub(crate) struct StripDrawn {
+    pub(crate) bounds: Option<egui::Rect>,
+    pub(crate) drag_started: Option<u64>,
+    pub(crate) reveal: Option<usize>,
+    pub(crate) close: Vec<egui::Rect>,
+    pub(crate) allow_close_last: bool,
+    pub(crate) home: Option<egui::Rect>,
+    pub(crate) tabs: Vec<(usize, egui::Rect)>,
+    pub(crate) tab_ids: Vec<(u64, egui::Rect)>,
+    pub(crate) add: Option<egui::Rect>,
+    pub(crate) overflow: Option<egui::Rect>,
+}
+
+pub(crate) fn draw(
+    ui: &mut egui::Ui,
+    chips: &[TabChip<'_>],
+    active: usize,
+    surface: &StripSurface,
+    (drawn, root): (&mut StripDrawn, &Palette),
+) -> Option<TabAction> {
     let palette = theme::get(ui.ctx());
-    let mut action = None;
-    let closable = chips.len() > 1;
-    for (index, chip) in chips.iter().enumerate() {
-        let selected = index == active;
-        let mut text = egui::RichText::new(chip.label);
-        if chip.replaying {
-            text = text.color(palette.amber());
-        }
-        let response = ui.selectable_label(selected, text);
-        if response.clicked() && !selected {
-            action = Some(TabAction::Activate(index));
-        }
-        // The dot rides the chip's own rect so it moves with the layout.
-        if chip.needs_attention && !selected {
-            let center = egui::pos2(
-                response.rect.right() - ATTENTION_DOT_RADIUS_PX,
-                response.rect.top() + ATTENTION_DOT_RADIUS_PX + ATTENTION_DOT_INSET_PX,
+    drawn.bounds = Some(ui.max_rect().intersect(ui.clip_rect()));
+    drawn.drag_started = None;
+    drawn.close.clear();
+    drawn.tabs.clear();
+    drawn.tab_ids.clear();
+    drawn.add = None;
+    drawn.overflow = None;
+    let compact = ui.available_width() < 240.0;
+    ui.spacing_mut().item_spacing.x = if compact { 2.0 } else { 4.0 };
+    ui.spacing_mut().button_padding = egui::vec2(if compact { 2.0 } else { 8.0 }, 4.0);
+    ui.spacing_mut().interact_size.y = CHIP_HEIGHT;
+    let controls_width = [STRIP_CONTROLS_WIDTH_PX, 56.0][usize::from(compact)];
+    let close_reserve = CLOSE_HIT_WIDTH_PX;
+    let label = home_label(ui);
+    let after_q = label.iter().map(|galley| galley.size().x).sum::<f32>() + HOME_LOGO_GAP_PX;
+    let labelled = HOME_PADDING_LEFT_PX + HOME_Q.x + after_q + HOME_PADDING_RIGHT_PX;
+    let room = ui.available_width() - controls_width - ui.spacing().item_spacing.x;
+    let slots = market_slots(room, labelled, CHIP_PREFERRED_WIDTH_PX);
+    let visible = visible_tabs(chips.len(), drawn.reveal.unwrap_or(active), slots);
+    let fits = home_label_fits(chips.len(), slots, room, labelled, CHIP_PREFERRED_WIDTH_PX);
+    let shown = fits.then_some((label, labelled));
+    // A compact strip has no room for the margins: the Q alone in a square tab.
+    let bare = [HOME_MIN_WIDTH_PX, CHIP_HEIGHT][usize::from(compact)];
+    let mut action = draw_home_tab(ui, &palette, surface.is_home(), shown, bare, drawn)
+        .then_some(TabAction::Home);
+    let closable = chips.len() > 1 || drawn.allow_close_last;
+    let active_chip = surface.active_chip(active);
+    let floor = [CHIP_MIN_WIDTH_PX, CHIP_COMPACT_MIN_WIDTH_PX][usize::from(compact)];
+    let chip_width = ((ui.available_width() - controls_width) / visible.len().max(1) as f32)
+        .clamp(floor, CHIP_MAX_WIDTH_PX);
+    for index in visible.clone() {
+        let chip = &chips[index];
+        ui.push_id(("market_tab", chip.id), |ui| {
+            let selected = active_chip == Some(index);
+            let surface = ui.painter().add(egui::Shape::Noop);
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let (body, response) = ui.allocate_exact_size(
+                egui::vec2((chip_width - close_reserve).max(0.0), CHIP_HEIGHT),
+                egui::Sense::click_and_drag(),
             );
-            ui.painter()
-                .circle_filled(center, ATTENTION_DOT_RADIUS_PX, palette.amber());
-        }
-        // The close affordance shows on hover, and on the active chip so a
-        // keyboard-only path to it is never the only one.
-        let show_close = selected || response.hovered() || !closable;
-        if show_close {
-            ui.add_space(-CHIP_GAP_PX / 2.0);
-            let close = ui.add_enabled(closable, egui::Button::new("×").frame(false));
-            let close = if closable {
-                close.on_hover_text("Close tab (Ctrl+W)")
-            } else {
-                close.on_disabled_hover_text(
-                    "The last tab stays open — a window with no market has nothing to show",
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    selected,
+                    chip.label,
                 )
-            };
-            if close.clicked() {
-                action = Some(TabAction::Close(index));
+            });
+            let tag = (chip.feed == TabFeed::Replay).then_some(" (replay)");
+            let response = response.on_hover_text(format!("{}{}", chip.label, tag.unwrap_or("")));
+            if response.clicked() && !selected {
+                action = Some(TabAction::Activate(index));
             }
-        }
-        ui.add_space(CHIP_GAP_PX);
+            if response.drag_started() {
+                drawn.drag_started = Some(chip.id);
+            }
+            let bounds = response.rect.intersect(ui.clip_rect());
+            if bounds.is_positive() {
+                drawn.tabs.push((index, bounds));
+            }
+            // Reserve a stable close target so hover never shifts adjacent controls.
+            {
+                let close_target = egui::Rect::from_min_size(
+                    ui.next_widget_position(),
+                    egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT),
+                );
+                let close_hot = ui.rect_contains_pointer(close_target);
+                let slot = close_slot(selected, response.hovered() || close_hot);
+                let hot = close_hot && closable && slot == CloseSlot::Close;
+                if hot {
+                    let (center, radius) = (close_target.center(), CLOSE_HIT_WIDTH_PX / 2.0 - 2.0);
+                    ui.painter()
+                        .circle_filled(center, radius, root.bare_hover());
+                }
+                let glyph = egui::RichText::new("\u{00d7}").size(CLOSE_GLYPH_PX);
+                let close = ui
+                    .add_enabled_ui(closable, |ui| {
+                        ui.add_visible(
+                            slot == CloseSlot::Close,
+                            egui::Button::new(glyph.color(*root.get(tab_ink(hot))))
+                                .frame(false)
+                                .min_size(egui::vec2(CLOSE_HIT_WIDTH_PX, CHIP_HEIGHT)),
+                        )
+                    })
+                    .inner;
+                let close = if closable {
+                    close.on_hover_text("Close tab (Ctrl+W)")
+                } else {
+                    close.on_disabled_hover_text(
+                        "The last tab stays open — a window with no market has nothing to show",
+                    )
+                };
+                drawn.close.push(close.rect);
+                let sheet = response.rect.union(close.rect);
+                let chip_bounds = sheet.intersect(ui.clip_rect());
+                if chip_bounds.is_positive() {
+                    drawn.tab_ids.push((chip.id, chip_bounds));
+                }
+                let hovered = response.hovered() || close.hovered();
+                let pointer = (hovered, response.has_focus() || close.has_focus());
+                let lit = paint_tab_surface(ui, root, surface, sheet, selected, pointer);
+                // The face reads lit whenever its sheet is: body, × or focus.
+                paint_chip_face(ui, root, chip, body, lit);
+                if close.clicked() {
+                    action = Some(TabAction::Close(index));
+                }
+            }
+        });
     }
-    if ui
-        .button("+")
-        .on_hover_text("Open another market (Ctrl+T)")
-        .clicked()
-    {
+    if visible.len() < chips.len() {
+        let overflow = ui.push_id("market_overflow", |ui| {
+            let dots = egui::Button::new(egui::RichText::new("...").size(17.0)).frame(false);
+            egui::menu::menu_custom_button(ui, dots, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for (index, chip) in chips.iter().enumerate() {
+                            let mut text = egui::RichText::new(chip.label);
+                            if chip.feed == TabFeed::Replay {
+                                text = text.color(root.replay_ink());
+                            }
+                            if ui
+                                .push_id(chip.id, |ui| {
+                                    ui.selectable_label(active_chip == Some(index), text)
+                                })
+                                .inner
+                                .clicked()
+                            {
+                                action = Some(TabAction::Activate(index));
+                                ui.close_menu();
+                            }
+                        }
+                    });
+            })
+        });
+        let bounds = overflow.inner.response.rect.intersect(ui.clip_rect());
+        drawn.overflow = bounds.is_positive().then_some(bounds);
+    }
+    let add = ui
+        .push_id("market_new", |ui| {
+            ui.add_sized(
+                [if compact { 24.0 } else { ADD_WIDTH_PX }, CHIP_HEIGHT],
+                egui::Button::new(egui::RichText::new("+").size(ADD_GLYPH_PX)).frame(false),
+            )
+            .on_hover_text("Open another market (Ctrl+T)")
+        })
+        .inner;
+    let bounds = add.rect.intersect(ui.clip_rect());
+    drawn.add = bounds.is_positive().then_some(bounds);
+    if add.clicked() {
         action = Some(TabAction::New);
     }
     action
 }
 
-/// The `+` dialog: pick a feed and a symbol from the catalog, or add one the
-/// catalog does not have yet.
-///
-/// Held open across frames because the choice is a two-step one; the draft
-/// selection and the add field live here so a half-made pick never touches a
-/// tab or the catalog.
-pub struct SourcePicker {
-    pub feed_id: String,
-    pub symbol: String,
-    /// What the "Add symbol…" field currently holds.
-    draft_symbol: String,
-    /// Why the last addition was refused, until the next submit clears it.
-    refusal: Option<String>,
-    #[cfg(test)]
-    add_button: Option<egui::Rect>,
-}
+/// The feed's mark, the symbol in its heavier strike, "Replay" on a recording
+/// and the broker in muted ink: `• WINZ26 MetaTrader 5`. No workspace and no
+/// mark: the status bar's cell shows both.
+fn paint_chip_face(
+    ui: &egui::Ui,
+    palette: &Palette,
+    chip: &TabChip<'_>,
+    body: egui::Rect,
+    lit: bool,
+) {
+    let painter = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
+    let center_y = body.center().y;
+    let dot_x = body.left() + CHIP_PADDING_LEFT_PX + CHIP_DOT_RADIUS_PX;
+    let mark = feed_mark(chip.feed);
+    let feed_ink = *palette.get(feed_token(mark));
+    paint_feed_mark(&painter, egui::pos2(dot_x, center_y), mark, feed_ink);
+    let (symbol, venue) = chip_parts(chip.label);
+    let broker = broker_name(venue);
+    let ink = *palette.get(tab_ink(lit));
+    let text_x = dot_x + CHIP_DOT_RADIUS_PX + CHIP_DOT_GAP_PX;
+    let laid = |text: String, px: f32, color: egui::Color32| {
+        ui.fonts(|fonts| fonts.layout_no_wrap(text, egui::FontId::proportional(px), color))
+    };
+    let galley = laid(symbol.to_owned(), SYMBOL_TEXT_PX, ink);
+    let glyphs = galley.size().x;
+    let at = egui::pos2(text_x, center_y - galley.size().y / 2.0);
+    painter.galley(at, galley.clone(), ink);
+    painter.galley(at + egui::vec2(SEMIBOLD_STRIKE_PX, 0.0), galley, ink);
 
-/// What the picker asked for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PickerOutcome {
-    /// Still choosing.
-    Open,
-    Cancel,
-    /// Open this market in a new tab.
-    Chosen(String, String),
-    /// Add this symbol to the feed's catalog, remember it, and open it.
-    Added {
-        feed_id: String,
-        symbol: String,
-    },
-    /// Drop this user-added symbol from the catalog. Never closes a tab —
-    /// leaving the catalog is not leaving the market.
-    Removed {
-        feed_id: String,
-        symbol: String,
-    },
-}
-
-impl SourcePicker {
-    /// A picker starting on `config`'s first feed and its first symbol, or on
-    /// the defaults when the catalog is empty.
-    #[must_use]
-    pub fn new(config: &AppConfig) -> Self {
-        let feed_id = config
-            .feeds
-            .first()
-            .map_or_else(|| config.default_feed.clone(), |feed| feed.id.clone());
-        let symbol = config
-            .feed(&feed_id)
-            .and_then(|feed| feed.symbols.first().cloned())
-            .unwrap_or_else(|| config.default_symbol.clone());
-        Self {
-            feed_id,
-            symbol,
-            draft_symbol: String::new(),
-            refusal: None,
-            #[cfg(test)]
-            add_button: None,
-        }
-    }
-
-    /// Record why an addition was refused, to show under the field.
-    ///
-    /// The window owns the rule — a symbol has to fit the whole config, not
-    /// just its feed's list — so it owns the message too; this only carries it
-    /// back to where the user typed.
-    pub fn refuse(&mut self, reason: String) {
-        self.refusal = Some(reason);
-    }
-
-    /// Where the Add button landed, so a test can press the one a user would.
-    #[cfg(test)]
-    pub(crate) fn add_button_rect(&self) -> Option<egui::Rect> {
-        self.add_button
-    }
-
-    /// Whether the last addition was refused, and why.
-    #[cfg(test)]
-    pub(crate) fn refusal(&self) -> Option<&str> {
-        self.refusal.as_deref()
-    }
-
-    /// Put text in the add field, as typing does.
-    #[cfg(test)]
-    pub(crate) fn set_draft_symbol(&mut self, symbol: &str) {
-        self.draft_symbol = symbol.to_owned();
-    }
-
-    /// Keep `symbol` valid for the picked feed, by the same rule the toolbar's
-    /// SOURCE group follows ([`AppConfig::resolve_symbol`]) — the Open button
-    /// must not offer a market the feed does not have.
-    fn ensure_symbol_valid(&mut self, config: &AppConfig) {
-        if let Some(symbol) = config.resolve_symbol(&self.feed_id, &self.symbol) {
-            self.symbol = symbol;
-        }
-    }
-
-    /// What submitting the add field means.
-    ///
-    /// Whitespace is trimmed and an empty field submits nothing; anything else
-    /// is taken verbatim, because a venue's own name for an instrument is not
-    /// ours to normalise (`WDO$` is a real symbol). A symbol the feed already
-    /// offers adds nothing — it just becomes the selection, which is the
-    /// honest answer to "add this": it is already here.
-    fn take_draft_symbol(&mut self, symbols: &[String]) -> Option<PickerOutcome> {
-        let symbol = self.draft_symbol.trim().to_owned();
-        if symbol.is_empty() {
-            return None;
-        }
-        self.draft_symbol.clear();
-        self.refusal = None;
-        if symbols.iter().any(|existing| existing == &symbol) {
-            self.symbol = symbol;
-            return None;
-        }
-        self.symbol = symbol.clone();
-        Some(PickerOutcome::Added {
-            feed_id: self.feed_id.clone(),
-            symbol,
-        })
-    }
-
-    /// Draw the dialog and report what it asked for.
-    ///
-    /// `added` says which symbols the user put in the catalog: those are the
-    /// ones this dialog may take back out, and the only ones. `open_symbols`
-    /// are the markets tabs are currently showing — removing one of those
-    /// would leave a tab streaming an instrument the catalog no longer offers,
-    /// and the next SOURCE correction would silently retarget it, so the
-    /// affordance says so instead of doing it.
-    pub fn draw(
-        &mut self,
-        ctx: &egui::Context,
-        config: &AppConfig,
-        added: &AddedSymbols,
-        open_symbols: &[(String, String)],
-    ) -> PickerOutcome {
-        let palette = theme::get(ctx);
-        let mut outcome = PickerOutcome::Open;
-        let mut open = true;
-        egui::Window::new("Open market")
-            .id(egui::Id::new("source_picker"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                egui::ComboBox::from_label("Feed")
-                    .selected_text(
-                        config
-                            .feed(&self.feed_id)
-                            .map_or_else(|| self.feed_id.clone(), |feed| feed.name.clone()),
-                    )
-                    .show_ui(ui, |ui| {
-                        for feed in &config.feeds {
-                            // Providers that are not streaming yet are labelled
-                            // as such, exactly as the toolbar labels them.
-                            let label = if feed.provider.is_implemented() {
-                                feed.name.clone()
-                            } else {
-                                format!("{} (soon)", feed.name)
-                            };
-                            ui.selectable_value(&mut self.feed_id, feed.id.clone(), label);
-                        }
-                    });
-                self.ensure_symbol_valid(config);
-                let symbols = config
-                    .feed(&self.feed_id)
-                    .map(|feed| feed.symbols.clone())
-                    .unwrap_or_default();
-                egui::ComboBox::from_label("Symbol")
-                    .selected_text(self.symbol.clone())
-                    .show_ui(ui, |ui| {
-                        for symbol in &symbols {
-                            ui.selectable_value(&mut self.symbol, symbol.clone(), symbol);
-                        }
-                    });
-
-                // The symbols this session added, with the only remove
-                // affordance in the app. A shipped catalog entry is the
-                // config's, not the app's, and stays put.
-                let removable: Vec<&String> = symbols
-                    .iter()
-                    .filter(|symbol| added.contains(&self.feed_id, symbol))
-                    .collect();
-                if !removable.is_empty() {
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("added here")
-                            .small()
-                            .color(palette.text_faint()),
-                    );
-                    for symbol in removable {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(symbol).monospace());
-                            let open = open_symbols
-                                .iter()
-                                .any(|(feed, open)| feed == &self.feed_id && open == symbol);
-                            let remove = ui.add_enabled(!open, egui::Button::new("×").frame(false));
-                            let remove = if open {
-                                remove.on_disabled_hover_text(
-                                    "A tab is showing this market — close it first",
-                                )
-                            } else {
-                                remove.on_hover_text("Remove from this feed's symbol list")
-                            };
-                            if remove.clicked() {
-                                outcome = PickerOutcome::Removed {
-                                    feed_id: self.feed_id.clone(),
-                                    symbol: symbol.clone(),
-                                };
-                            }
-                        });
-                    }
-                }
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label("Add symbol…");
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut self.draft_symbol)
-                            .desired_width(SYMBOL_FIELD_WIDTH_PX)
-                            .hint_text("WINQ26"),
-                    );
-                    let submitted =
-                        field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    let add = ui.button("Add");
-                    #[cfg(test)]
-                    {
-                        self.add_button = Some(add.rect);
-                    }
-                    if (submitted || add.clicked())
-                        && let Some(added) = self.take_draft_symbol(&symbols)
-                    {
-                        outcome = added;
-                    }
-                });
-                // Why the last one was refused, under the field it was typed
-                // in — the user is one keystroke from a symbol that fits.
-                if let Some(reason) = &self.refusal {
-                    ui.label(egui::RichText::new(reason).small().color(palette.warn()));
-                }
-
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Open").clicked() {
-                        outcome = PickerOutcome::Chosen(self.feed_id.clone(), self.symbol.clone());
-                    }
-                    if ui.button("Cancel").clicked() {
-                        outcome = PickerOutcome::Cancel;
-                    }
-                });
-            });
-        if !open {
-            outcome = PickerOutcome::Cancel;
-        }
-        outcome
+    let gapped = |galley: &Option<std::sync::Arc<egui::Galley>>| {
+        galley
+            .as_ref()
+            .map_or(0.0, |galley| galley.size().x + NAME_MARK_GAP_PT)
+    };
+    // The word stays with the symbol, so the name gives way before it does.
+    let word = (chip.feed.word()).map(|word| laid(word.to_owned(), SUFFIX_TEXT_PX, feed_ink));
+    let symbol_width = glyphs + gapped(&word);
+    let name_ink = palette.text_muted();
+    let name_width = |letters: usize| {
+        let cut = shortened_name(broker, letters);
+        laid(cut, SUFFIX_TEXT_PX, name_ink).size().x
+    };
+    let fit = fit_chip(&ChipMeasure {
+        available: body.width(),
+        symbol: text_x - body.left() + symbol_width + CHIP_DOT_GAP_PX,
+        close: 0.0,
+        name_letters: broker.chars().count(),
+        name_width: &name_width,
+    });
+    let mut x = text_x + glyphs + CHIP_DOT_GAP_PX;
+    let name = (fit.name_letters > 0).then(|| {
+        laid(
+            shortened_name(broker, fit.name_letters),
+            SUFFIX_TEXT_PX,
+            name_ink,
+        )
+    });
+    let trail = [word, name];
+    for galley in trail.into_iter().flatten() {
+        let at = egui::pos2(x, center_y - galley.size().y / 2.0);
+        x += galley.size().x + NAME_MARK_GAP_PT;
+        painter.galley(at, galley, palette.text_muted());
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::{AppConfig, FeedConfig, MetaTraderSettings, ProviderKind};
+/// The workspace's feed state as the theme's mark.
+pub(crate) const fn feed_mark(feed: TabFeed) -> FeedMark {
+    match feed {
+        TabFeed::Live => FeedMark::Live,
+        TabFeed::Attention => FeedMark::Attention,
+        TabFeed::Replay => FeedMark::Replay,
+        TabFeed::Disconnected => FeedMark::Lost,
+        TabFeed::Stopped => FeedMark::Stopped,
+    }
+}
 
-    fn config() -> AppConfig {
-        AppConfig {
-            default_feed: "binance".to_string(),
-            default_symbol: "BTCUSDT".to_string(),
-            feeds: vec![FeedConfig {
-                id: "binance".to_string(),
-                name: "Binance".to_string(),
-                provider: ProviderKind::Binance,
-                symbols: vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()],
-                bubble_preset: None,
-                symbol_bubble_presets: Default::default(),
-                symbol_asset_modes: Default::default(),
-                default_layout: None,
-                default_bars: None,
-                record_deals: false,
-            }],
-            metatrader: MetaTraderSettings::default(),
-            paper: Default::default(),
-            deals: Default::default(),
-            history: Default::default(),
+/// A dot, a diamond, a play triangle or a hollow ring: the state survives without colour.
+fn paint_feed_mark(painter: &egui::Painter, at: egui::Pos2, mark: FeedMark, ink: egui::Color32) {
+    let r = CHIP_DOT_RADIUS_PX;
+    // Corners in radii; the diamond's 1.25 gives it about the dot's area.
+    let fill = |unit: &[(f32, f32)]| {
+        let points = unit.iter().map(|&(x, y)| at + r * egui::vec2(x, y));
+        egui::Shape::convex_polygon(points.collect(), ink, egui::Stroke::NONE)
+    };
+    painter.add(match feed_shape(mark) {
+        MarkShape::Dot => egui::Shape::circle_filled(at, r, ink),
+        MarkShape::Diamond => fill(&[(0.0, -1.25), (1.25, 0.0), (0.0, 1.25), (-1.25, 0.0)]),
+        MarkShape::Ring => egui::Shape::circle_stroke(at, r - 0.5, (1.0, ink)),
+        MarkShape::Triangle => fill(&[(-1.0, -1.0), (1.0, 0.0), (-1.0, 1.0)]),
+    });
+}
+
+type HomeLabel = [std::sync::Arc<egui::Galley>; 2];
+
+/// After the Q, in Hack at −0.02 em: "uan" in primary ink, "tick" in the brand.
+fn home_label(ui: &egui::Ui) -> HomeLabel {
+    let font = egui::FontId::monospace(HOME_TEXT_PX);
+    let mut format = egui::TextFormat::simple(font, egui::Color32::PLACEHOLDER);
+    format.extra_letter_spacing = -0.02 * HOME_TEXT_PX;
+    let job = |part: &str| egui::text::LayoutJob::single_section(part.into(), format.clone());
+    ui.fonts(|f| ["uan", "tick"].map(|part| f.layout_job(job(part))))
+}
+
+/// The first tab: the Q and "uantick" centred on one line, or the Q alone and
+/// centred in `bare` points when `label` is `None`. No tab shape: a soft glow
+/// sits behind the Q ([`home_glow_strength`]). Returns whether it was pressed.
+fn draw_home_tab(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    active: bool,
+    label: Option<(HomeLabel, f32)>,
+    bare: f32,
+    drawn: &mut StripDrawn,
+) -> bool {
+    let width = label.as_ref().map_or(bare, |(_, width)| *width);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), active, "Home")
+    });
+    let response = response.on_hover_text("Home · Ctrl+1");
+    let bounds = rect.intersect(ui.clip_rect());
+    drawn.home = bounds.is_positive().then_some(bounds);
+    if response.has_focus() {
+        let ring = (2.0_f32, palette.accent());
+        ui.painter()
+            .rect_stroke(rect.shrink(1.0), CHIP_ROUNDING_PX, ring);
+    }
+    let q_x = match label {
+        Some(_) => rect.left() + HOME_PADDING_LEFT_PX + HOME_Q.x / 2.0,
+        None => rect.center().x,
+    };
+    let q = egui::Rect::from_center_size(egui::pos2(q_x, rect.center().y), HOME_Q);
+    let q = ui.painter().round_rect_to_pixels(q); // One grid for the Q and its text.
+    if let Some(strength) = home_glow_strength(active, response.hovered()) {
+        let (color, glow) = (*palette.get(Token::HomeGlow), glow_mesh());
+        let vertex = |&([x, y], shade): &([f32; 2], f32)| egui::epaint::Vertex {
+            pos: q.center() + egui::vec2(x, y),
+            uv: egui::epaint::WHITE_UV,
+            color: color.gamma_multiply(shade * strength),
+        };
+        let vertices = glow.vertices.iter().map(vertex).collect();
+        let (indices, mesh) = (glow.indices.clone(), egui::Mesh::default());
+        // Under the Q, clipped from the window's corner: `with_clip_rect` only narrows.
+        let mut painter = ui.painter().clone();
+        painter.set_clip_rect(ui.clip_rect().with_min_x(0.0).with_min_y(0.0));
+        painter.add(egui::Mesh {
+            indices,
+            vertices,
+            ..mesh
+        });
+    }
+    crate::surfaces::home::paint_logo(ui, q, crate::surfaces::home::Logo::Q);
+    if let Some(([uan, tick], _)) = label {
+        let mut x = q.right() + HOME_LOGO_GAP_PX;
+        // The wordmark never dims: lit or not, "uan" stays in primary ink.
+        for (galley, color) in [(uan, palette.text_primary()), (tick, palette.brand())] {
+            // CSS centres the 15 px line box: the font's unrounded metrics.
+            let glyph = galley.rows[0].glyphs[0];
+            let y = q.center().y + glyph.font_ascent - glyph.font_height / 2.0 - glyph.pos.y;
+            let at = egui::pos2(x, y);
+            x += galley.size().x;
+            ui.painter().galley(at, galley, color);
         }
     }
+    response.clicked()
+}
 
-    /// The picker opens on something real, so its Open button always names a
-    /// market that exists.
-    #[test]
-    fn the_picker_opens_on_the_first_feed_and_its_first_symbol() {
-        let picker = SourcePicker::new(&config());
-        assert_eq!(picker.feed_id, "binance");
-        assert_eq!(picker.symbol, "BTCUSDT");
+/// A market tab's [`tab_layers`], its base past the strip's floor, where the
+/// clip opens it onto the toolbar. Returns whether the tab is lit.
+fn paint_tab_surface(
+    ui: &egui::Ui,
+    palette: &Palette,
+    slot: egui::layers::ShapeIdx,
+    bounds: egui::Rect,
+    selected: bool,
+    (hovered, focused): (bool, bool),
+) -> bool {
+    let rect = bounds.with_max_y(ui.max_rect().bottom());
+    let sheet = rect.with_max_y(rect.bottom() + 2.0);
+    let layer = |layer: quantick_appearance::tab_strip::TabLayer| {
+        let radius = CHIP_ROUNDING_PX - layer.corner_inset;
+        let rounding = egui::Rounding {
+            nw: radius,
+            ne: radius,
+            ..Default::default()
+        };
+        let fill = *palette.get(layer.fill);
+        let edge = layer
+            .outline
+            .map(|token| egui::Stroke::new(1.0_f32, *palette.get(token)));
+        let at = sheet.with_min_y(sheet.top() + layer.inset);
+        let at = layer
+            .height
+            .map_or(at, |height| at.with_max_y(at.top() + height));
+        egui::epaint::RectShape::new(at, rounding, fill, edge.unwrap_or_default()).into()
+    };
+    let shapes = tab_layers(selected).into_iter().map(layer);
+    ui.painter().set(slot, egui::Shape::Vec(shapes.collect()));
+    if focused {
+        let ring = (2.0_f32, palette.accent());
+        ui.painter()
+            .rect_stroke(rect.shrink(1.0), CHIP_ROUNDING_PX, ring);
     }
-
-    /// An empty catalog has no first feed to open on; the picker falls back to
-    /// the configured defaults rather than to an empty selection.
-    #[test]
-    fn an_empty_catalog_falls_back_to_the_configured_defaults() {
-        let mut empty = config();
-        empty.feeds.clear();
-        let picker = SourcePicker::new(&empty);
-        assert_eq!(picker.feed_id, empty.default_feed);
-        assert_eq!(picker.symbol, empty.default_symbol);
-    }
-
-    /// Submitting the add field: trimmed, empty rejected, verbatim otherwise,
-    /// and a symbol the feed already has adds nothing but the selection.
-    #[test]
-    fn the_add_field_trims_rejects_empty_and_takes_the_rest_verbatim() {
-        let config = config();
-        let symbols = config.feeds[0].symbols.clone();
-        let mut picker = SourcePicker::new(&config);
-
-        picker.draft_symbol = "   ".to_string();
-        assert_eq!(
-            picker.take_draft_symbol(&symbols),
-            None,
-            "empty submits nothing"
-        );
-
-        picker.draft_symbol = "  WINQ26 ".to_string();
-        assert_eq!(
-            picker.take_draft_symbol(&symbols),
-            Some(PickerOutcome::Added {
-                feed_id: "binance".to_string(),
-                symbol: "WINQ26".to_string(),
-            }),
-            "surrounding whitespace is not part of a symbol"
-        );
-        assert!(picker.draft_symbol.is_empty(), "the field clears on submit");
-        assert_eq!(picker.symbol, "WINQ26", "and the new symbol is selected");
-
-        // A venue's own name is not ours to normalise.
-        picker.draft_symbol = "WDO$".to_string();
-        assert_eq!(
-            picker.take_draft_symbol(&symbols),
-            Some(PickerOutcome::Added {
-                feed_id: "binance".to_string(),
-                symbol: "WDO$".to_string(),
-            })
-        );
-    }
-
-    #[test]
-    fn adding_a_symbol_the_feed_already_has_only_selects_it() {
-        let config = config();
-        let symbols = config.feeds[0].symbols.clone();
-        let mut picker = SourcePicker::new(&config);
-        picker.symbol = "BTCUSDT".to_string();
-
-        picker.draft_symbol = " ETHUSDT ".to_string();
-        assert_eq!(
-            picker.take_draft_symbol(&symbols),
-            None,
-            "nothing is added, because nothing is missing"
-        );
-        assert_eq!(picker.symbol, "ETHUSDT", "it just becomes the selection");
-    }
-
-    /// Changing the feed under a symbol it does not offer corrects the symbol,
-    /// by the same rule the toolbar's SOURCE group follows.
-    #[test]
-    fn picking_a_feed_corrects_a_symbol_it_does_not_offer() {
-        let config = config();
-        let mut picker = SourcePicker::new(&config);
-        picker.symbol = "NOT-A-SYMBOL".to_string();
-
-        picker.ensure_symbol_valid(&config);
-
-        assert_eq!(
-            picker.symbol, "BTCUSDT",
-            "the Open button must not offer a market the feed does not have"
-        );
-    }
+    selected || hovered || focused
 }

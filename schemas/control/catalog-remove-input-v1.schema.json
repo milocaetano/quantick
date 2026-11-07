@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Take a market the trader added out of its venue's list.",
+  "properties": {
+    "feed": {
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "feed",
+    "symbol"
+  ],
+  "title": "CatalogRemoveInput",
+  "type": "object"
+}

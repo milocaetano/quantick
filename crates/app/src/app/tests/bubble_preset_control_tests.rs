@@ -123,3 +123,116 @@ fn whole_presets_reapply_drift_and_are_authorized_retry_safe() {
     assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// The panel's "reset bubble visuals" without a hand: the pane wears its
+/// asset's factory look — the shipped preset, not the operator's copy saved
+/// over it — through the authorized gateway, and a retry replays the answer.
+#[test]
+fn bubble_reset_wears_the_factory_look_and_is_authorized_retry_safe() {
+    const RESET: &str = "orderflow.bubbles.reset";
+    const FACTORY: &str = "Binance BTC perpetual spheres";
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    let config: crate::config::AppConfig =
+        toml::from_str(quantick_stores::config::EMBEDDED_DEFAULT).unwrap();
+    let shipped = quantick_stores::bubble_presets::embedded();
+    let mut saved_over = shipped.clone();
+    for preset in &mut saved_over.presets {
+        preset.bubbles.max_radius += 7.0;
+    }
+    let (binding, settings) = quantick_stores::bubble_asset_store::AssetBinding::bind(
+        quantick_stores::bubble_asset_store::AssetBubblesStore::default().shared(),
+        &config,
+        ("binance-futures", "BTCUSDT.p"),
+        &saved_over,
+        false,
+    );
+    app.active_tab_mut()
+        .tape_mut()
+        .bind_asset(binding, &settings);
+    let factory = shipped.get(FACTORY).unwrap().bubbles.clone();
+    assert_ne!(app.active_tab().tape().cached_config().bubbles, factory);
+    let directory = gateway_test_directory("bubble-reset");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let payload = json!({"tab_id":app.runtime.tabs.active_id().to_string(),
+        "pane_id":app.active_tab().flow_pane.id.to_string()});
+    let before = app.active_tab().tape().cached_config().clone();
+    let (denied, _) = unkeyed_call(&mut app, &mut observer, RESET, payload.clone());
+    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
+    for (field, value) in [
+        ("pane_id", json!(u64::MAX.to_string())),
+        ("tab_id", json!(u64::MAX.to_string())),
+        ("preset", json!(FACTORY)),
+    ] {
+        let mut invalid = payload.clone();
+        invalid[field] = value;
+        let (refused, _) = unkeyed_call(&mut app, &mut cockpit, RESET, invalid);
+        assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
+        assert_eq!(*app.active_tab().tape().cached_config(), before);
+    }
+    let (first, _) = keyed_call(
+        &mut app,
+        &mut cockpit,
+        "reset-first",
+        RESET,
+        payload.clone(),
+        "reset-key",
+    );
+    assert_eq!(success_result(&first)["changed"], true);
+    assert_eq!(success_result(&first)["preset"], FACTORY);
+    assert_eq!(app.active_tab().tape().cached_config().bubbles, factory);
+    // Drift after the first result proves the keyed retry does not execute again.
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.bubbles.max_radius += 3.0);
+    let (retry, _) = keyed_call(
+        &mut app,
+        &mut cockpit,
+        "reset-retry",
+        RESET,
+        payload.clone(),
+        "reset-key",
+    );
+    assert_eq!(first.outcome, retry.outcome);
+    assert_ne!(app.active_tab().tape().cached_config().bubbles, factory);
+    let (again, _) = unkeyed_call(&mut app, &mut cockpit, RESET, payload.clone());
+    assert_eq!(success_result(&again)["changed"], true);
+    let (noop, _) = unkeyed_call(&mut app, &mut cockpit, RESET, payload.clone());
+    assert_eq!(success_result(&noop)["changed"], false);
+    let (read, _) = unkeyed_call(
+        &mut app,
+        &mut observer,
+        "snapshot.read",
+        json!({"scopes":["orderflow.bubbles"]}),
+    );
+    let panes = &success_result(&read)["scopes"]["orderflow.bubbles"]["value"]["tabs"][0]["panes"];
+    let pane = panes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["pane_id"] == payload["pane_id"])
+        .unwrap();
+    assert_eq!(pane["bubbles"]["preset"], FACTORY);
+    // A candle pane resets to the factory spheres too: they are the look's.
+    let spheres = shipped.get(FACTORY).unwrap().tick_bubbles;
+    assert!(spheres.is_some(), "the factory look wears spheres");
+    let volume = crate::state::BarSpec::Volume(rust_decimal::Decimal::from(5));
+    app.active_tab_mut().flow_pane.spec.set(volume);
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    assert!(app.active_tab().flow_pane.state.tick_membership().is_none());
+    app.active_tab_mut()
+        .tape_mut()
+        .edit_config(|config| config.volume_dots.tick_bubbles = None);
+    let (candles, _) = unkeyed_call(&mut app, &mut cockpit, RESET, payload.clone());
+    assert_eq!(success_result(&candles)["changed"], true);
+    let tape = app.active_tab().tape().cached_config();
+    assert_eq!(tape.volume_dots.tick_bubbles, spheres);
+    disable_test_gateway(&mut app, &ctx);
+}

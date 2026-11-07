@@ -88,10 +88,13 @@ fn authored_historical_sources_and_modified_choices_remain_exact() {
         let store = AppearanceStore::open(path.clone());
         assert_eq!(store.source(), Some(known));
         assert_eq!(store.builtin(), None);
-        assert_eq!(
-            store.resolved().color(Token::ChartGrid),
-            store.resolved().color(Token::Control)
-        );
+        // Sources older than the grid token keep their control as the grid.
+        if !known.contains("chart_grid") {
+            assert_eq!(
+                store.resolved().color(Token::ChartGrid),
+                store.resolved().color(Token::Control)
+            );
+        }
         assert_eq!(load(&path).unwrap().source(), Some(known));
         let choice_path = scratch.join("appearance.toml.choice.toml");
         for custom in [
@@ -110,6 +113,65 @@ fn authored_historical_sources_and_modified_choices_remain_exact() {
             assert_eq!(std::fs::read_to_string(&choice_path).unwrap(), custom);
         }
     }
+}
+
+/// An authored Light file older than the strip, brand and replay tokens keeps
+/// Light for all three: the strip from its own inset, the others from Light.
+#[test]
+fn authored_light_before_the_strip_tokens_resolves_light_values() {
+    let known = include_str!("legacy-light-d4a42dc1.toml");
+    assert!(!known.contains("tab_strip") && !known.contains("brand"));
+    let scratch = ScratchDir::new("legacy-light-strip-tokens");
+    let path = scratch.join("appearance.toml");
+    std::fs::write(&path, known).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), None);
+    let (resolved, light) = (store.resolved(), ResolvedTheme::parse(LIGHT).unwrap());
+    let dark = ResolvedTheme::default();
+    assert_eq!(
+        resolved.color(Token::TabStrip).to_array(),
+        [0xE6, 0xE6, 0xE6, 255],
+        "the file's own inset"
+    );
+    for token in [Token::Brand, Token::ReplayInk] {
+        assert_eq!(resolved.color(token), light.color(token), "{}", token.key());
+        assert_ne!(resolved.color(token), dark.color(token), "{}", token.key());
+    }
+}
+
+/// A Light choice saved before the beige canvas and Blue-ink order flow
+/// loads as today's Light, not as an authored white and slate theme.
+#[test]
+fn light_choice_before_beige_canvas_migrates_to_current_light() {
+    let old = include_str!("legacy-light-ab24b5e3.toml");
+    let (old_theme, light) = (
+        ResolvedTheme::parse(old).unwrap(),
+        ResolvedTheme::parse(LIGHT).unwrap(),
+    );
+    assert_eq!(old_theme.color(Token::Canvas).to_array(), [255; 4]);
+    assert_eq!(
+        old_theme.bookmap().color(Token::Canvas).to_array(),
+        [0x43, 0x4A, 0x52, 255]
+    );
+    let scratch = ScratchDir::new("legacy-light-beige");
+    let path = scratch.join("appearance.toml");
+    let choice_path = scratch.join("appearance.toml.choice.toml");
+    std::fs::write(&choice_path, old).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), Some(Builtin::Light));
+    assert_eq!(store.source(), Some(LIGHT));
+    for (resolved, expected, stale) in [
+        (store.resolved(), &light, &old_theme),
+        (
+            store.resolved().bookmap(),
+            light.bookmap(),
+            old_theme.bookmap(),
+        ),
+    ] {
+        assert_eq!(resolved.color(Token::Canvas), expected.color(Token::Canvas));
+        assert_ne!(resolved.color(Token::Canvas), stale.color(Token::Canvas));
+    }
+    assert_eq!(std::fs::read_to_string(&choice_path).unwrap(), old);
 }
 
 #[test]
@@ -136,4 +198,32 @@ fn historical_choice_loads_with_writes_refused_and_invalid_choice_stays_untouche
     std::fs::write(&choice_path, invalid).unwrap();
     assert!(AppearanceStore::open(path).load_failed());
     assert_eq!(std::fs::read_to_string(choice_path).unwrap(), invalid);
+}
+
+/// A Light choice saved before the title strip loads as today's Light, slate strip included.
+#[test]
+fn light_choice_before_the_title_strip_migrates_to_current_light() {
+    let old = include_str!("legacy-light-ee7ea6b5.toml");
+    assert!(!old.contains("[title_strip"));
+    let scratch = ScratchDir::new("legacy-light-title-strip");
+    let path = scratch.join("appearance.toml");
+    std::fs::write(scratch.join("appearance.toml.choice.toml"), old).unwrap();
+    let store = AppearanceStore::open(path);
+    assert_eq!(store.builtin(), Some(Builtin::Light));
+    let light = ResolvedTheme::parse(LIGHT).unwrap();
+    assert_eq!(store.resolved().title_strip(), light.title_strip());
+    for token in [Token::TabIdleFill, Token::ToolbarSheet, Token::TabBand] {
+        assert_eq!(
+            store.resolved().color(token),
+            light.color(token),
+            "{}",
+            token.key()
+        );
+    }
+    let stale = ResolvedTheme::parse(old).unwrap();
+    assert_ne!(
+        stale.title_strip(),
+        light.title_strip(),
+        "the old file has no table"
+    );
 }

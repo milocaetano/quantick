@@ -298,6 +298,13 @@
     },
     "FeedSourceChoice": {
       "properties": {
+        "contract_rolls": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Which contract follows which on this feed, for feed.contract.roll.",
+          "type": "object"
+        },
         "display_name": {
           "type": "string"
         },

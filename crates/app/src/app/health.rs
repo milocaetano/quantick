@@ -17,7 +17,7 @@ use crate::style::CandlePreset;
 use crate::window_scale;
 use quantick_orderflow::engine::OrderflowHealth;
 
-use super::{QuantickApp, fmt_progress};
+use super::QuantickApp;
 
 /// What the window measures about itself between perf summaries.
 ///
@@ -84,18 +84,16 @@ impl QuantickApp {
     /// Everything the status bar reports this frame.
     ///
     /// Provenance (venue, symbol, transport, side honesty) is the market's and
-    /// reads from the window; the content section — spec, bar counts, forming
-    /// bar, whether the view follows live — is the *focused pane's* (§11), so
-    /// the bar always describes the chart the user is working in.
+    /// reads from the window; the price-scale hint is the *focused pane's*
+    /// (§11), so it always describes the chart the user is working in.
     pub(super) fn status_model(&self) -> statusbar::StatusModel {
         let pane = self.focused_pane();
-        let bars = pane.state.bars();
-        let (backfilled, live) = match pane.state.backfill_boundary() {
-            Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
-            None => (0, bars.len()),
-        };
         let note = self.active_tab().side_note(&self.config);
+        let row = (self.runtime.workspace.book).tab_row(self.runtime.tabs.active_id());
         statusbar::StatusModel {
+            workspace: (!self.chrome.title_bar.surface.is_home()).then_some(row.0),
+            modified: row.1,
+            autosave: self.runtime.workspace.book.autosave(),
             venue: if self.active_tab().replay.is_some() {
                 "recording".to_owned()
             } else {
@@ -113,25 +111,15 @@ impl QuantickApp {
             feed_arrival_ms: self.active_tab().trade_arrival_ms(),
             feed_latency: self.active_tab().feed_latency(),
             tape_age_ms: self.active_tab().tape_age_at(metrics::wall_clock_ms()),
-            spec_summary: pane.state.spec().summary(),
-            bar_progress: pane
-                .state
-                .progress()
-                .map(|(progress, unit)| fmt_progress(&progress, unit)),
             deal_recording: self.active_tab().deal_status_cell(),
             deal_chip: self.active_tab().deal_chip(),
-            venue_bars: pane.history_prefix.len(),
-            backfilled_bars: backfilled,
-            live_bars: live,
             side_note: note.clone().map(|(label, _)| label),
             side_detail: note.and_then(|(_, detail)| detail),
             // Provenance follows the active tab (§11), and so does the
             // simulated P&L: the cell speaks for the market on screen, never
             // for a background tab's position.
             sim_pnl: self.active_tab().paper.status_cell(),
-            follows_live: pane.shown_viewport().follows_live(),
             price_auto: pane.price_view.is_auto(),
-            live_trades: self.active_tab().live_trades,
             fps: self.health.frames.fps(),
             frame_avg_ms: self.health.frames.avg_ms(),
             frame_cpu_ms: self.health.cpu_frames.avg_ms(),

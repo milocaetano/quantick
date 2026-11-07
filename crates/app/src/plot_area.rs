@@ -18,8 +18,9 @@ use eframe::egui;
 
 use crate::timezone::TzOffset;
 
-/// Space outside the plot, including the compact tape-only header.
-pub(crate) const PLOT_PADDING_PX: f32 = 16.0;
+/// Room right of the price gutter, for labels wider than it. The canvas meets
+/// its header, its rail and the pane bottom: a border there only eats room.
+const PLOT_RIGHT_PAD_PX: f32 = 16.0;
 
 /// Split the padded plot area into the candle chart, the indicator panes, the
 /// optional live strip, the right price gutter and the bottom time strip, so
@@ -47,7 +48,7 @@ pub fn plot_split_with_metrics(
     pane_sizing: &[crate::indicators::PaneSizing],
     metrics: quantick_appearance::AxisMetrics,
 ) -> PlotAreas {
-    let plot = area.shrink(PLOT_PADDING_PX);
+    let plot = area.with_max_x(area.right() - PLOT_RIGHT_PAD_PX);
     let strip_width = live_strip_width.max(0.0);
     let gutter_x = (plot.right() - metrics.gutter).max(plot.left() + 20.0);
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);

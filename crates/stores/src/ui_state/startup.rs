@@ -45,6 +45,8 @@ pub fn reconcile_startup(
                 context_layouts: Vec::new(),
                 flow_legend_collapsed: false,
                 time_legend_collapsed: false,
+                workspace: None,
+                workspace_copy: None,
                 orderflow_panel: Default::default(),
             }
         },

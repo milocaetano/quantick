@@ -24,9 +24,13 @@
 //! [`Act::FeedAck`].
 
 mod button;
+pub mod close_queue;
 mod paging;
+pub mod prompt;
+pub mod tab_chip;
 mod venue;
 mod view;
+pub mod workspace_menu;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

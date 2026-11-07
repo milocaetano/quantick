@@ -289,10 +289,13 @@ fn assert_footprint_layering(
     app.runtime.style.canvas.background = [13, 17, 23];
     app.runtime.style.ownership.background = quantick_appearance::Inheritance::Explicit;
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.presentation.footprint.config = Some(crate::footprint_config::FootprintConfig {
-        style: crate::footprint_config::FootprintStyle::Split,
-        ..Default::default()
-    });
+    pane.presentation
+        .footprint
+        .config
+        .set_own(Some(crate::footprint_config::FootprintConfig {
+            style: crate::footprint_config::FootprintStyle::Split,
+            ..Default::default()
+        }));
     pane.set_layer_visible(ChartLayer::Footprint, true, &mut Default::default());
     let footprint = settled_flow_frame(app, ctx);
     let isolated = regional_circles(app, &footprint);
@@ -571,8 +574,7 @@ fn theme_switches_keep_bookmap_candles_translucent_beneath_bubbles_and_time_cand
         let plot = if theme.dark {
             area
         } else {
-            area.shrink(crate::plot_area::PLOT_PADDING_PX)
-                .with_max_x(pane.frame.price_gutter.unwrap().left())
+            area.with_max_x(pane.frame.price_gutter.unwrap().left())
                 .with_max_y(pane.frame.time_strip.unwrap().top())
         };
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,

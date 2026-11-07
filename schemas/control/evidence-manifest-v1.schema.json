@@ -175,10 +175,30 @@
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "Physical pixels per logical point: the factor the scene's own\npoint-valued bounds were multiplied by to reach the regions below."
         },
+        "source_window_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "width_px": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "window_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -400,6 +420,16 @@
       },
       "type": "array",
       "uniqueItems": true
+    },
+    "window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

@@ -399,11 +399,18 @@ fn a_trend_line_dragged_by_its_body_passes_through_a_print() {
     let end = egui::pos2(bar_x(&app, 50.0), price_y(&app, PaneSide::Flow, 105.3));
     place_free(&mut app, &ctx, "trend-line", &[start, end]);
     let before = last_points(&app);
-    // Low on the line: the selection's context bar, pushed off the legend, sits
-    // over its upper half and would take the press.
+    let grab_bar = before[0].bar + (before[1].bar - before[0].bar) * 0.25;
     let grab = egui::pos2(
-        bar_x(&app, 34.0),
-        price_y(&app, PaneSide::Flow, trend_price_at(&before, 34.0)),
+        bar_x(&app, grab_bar),
+        price_y(&app, PaneSide::Flow, trend_price_at(&before, grab_bar)),
+    );
+    // The selected drawing's context bar can cover the stroke's midpoint.
+    assert!(
+        app.drawings
+            .chrome
+            .context_bar_rect()
+            .is_none_or(|rect| !rect.contains(grab)),
+        "the body grab must be outside the selected drawing toolbar"
     );
     let [_, high_c, _, _] = ohlc(70);
     // Off the bar's centre: the line must meet the print at the candle,

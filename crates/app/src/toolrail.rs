@@ -686,18 +686,19 @@ impl ToolRail {
             return;
         }
 
+        let panel_id = |name| egui::Id::new((ctx.viewport_id(), name));
         match self.dock {
-            ToolboxDock::Left => egui::SidePanel::left("drawing_toolbox_left")
+            ToolboxDock::Left => egui::SidePanel::left(panel_id("drawing_toolbox_left"))
                 .exact_width(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))
                 .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
-            ToolboxDock::Top => egui::TopBottomPanel::top("drawing_toolbox_top")
+            ToolboxDock::Top => egui::TopBottomPanel::top(panel_id("drawing_toolbox_top"))
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))
                 .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
-            ToolboxDock::Bottom => egui::TopBottomPanel::bottom("drawing_toolbox_bottom")
+            ToolboxDock::Bottom => egui::TopBottomPanel::bottom(panel_id("drawing_toolbox_bottom"))
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
                 .frame(rail_frame(&palette))

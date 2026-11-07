@@ -1,0 +1,33 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The tab, and whether unsaved edits were dropped by the switch.",
+  "properties": {
+    "changed": {
+      "description": "`false` for a repeat, which keeps any edits.",
+      "type": "boolean"
+    },
+    "dropped_edits": {
+      "type": "boolean"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "tab_id",
+    "workspace",
+    "changed",
+    "dropped_edits"
+  ],
+  "title": "TabWorkspaceSetResult",
+  "type": "object"
+}

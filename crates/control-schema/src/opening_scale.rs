@@ -80,3 +80,18 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
         crate::readback::EVERY_OPTIONAL_TEST,
     ],
 )];
+
+/// Published schemas of the opening scale.
+pub fn documents() -> Vec<(&'static str, serde_json::Value)> {
+    use quantick_control::schema::generated_schema as schema;
+    vec![
+        (
+            "orderflow-opening-scale-input-v1.schema.json",
+            schema::<OpeningScaleInput>(),
+        ),
+        (
+            "orderflow-opening-scale-result-v1.schema.json",
+            schema::<OpeningScaleResult>(),
+        ),
+    ]
+}

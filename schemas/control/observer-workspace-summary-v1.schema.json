@@ -38,12 +38,147 @@
       ],
       "type": "object"
     },
+    "MarketWindowSnapshot": {
+      "properties": {
+        "observed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "None until this native viewport has supplied an observation."
+        },
+        "omitted_tabs": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "ordered_tab_ids": {
+          "items": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "selected_tab_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "window_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "window_id",
+        "ordered_tab_ids",
+        "selected_tab_id",
+        "omitted_tabs"
+      ],
+      "type": "object"
+    },
+    "NativeObservation": {
+      "properties": {
+        "focused": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "inner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhysicalPlacement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "maximized": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "minimized": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "outer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhysicalPlacement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pixels_per_point": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "description": "Geometry is derived from the OS-fed native viewport, never from an accepted request.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
     "PaneSideDto": {
       "enum": [
         "flow",
         "time"
       ],
       "type": "string"
+    },
+    "PhysicalPlacement": {
+      "additionalProperties": false,
+      "description": "Physical desktop pixels, including negative coordinates on secondary monitors.",
+      "properties": {
+        "height_px": {
+          "format": "uint32",
+          "maximum": 32768,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "width_px": {
+          "format": "uint32",
+          "maximum": 32768,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "x_px": {
+          "format": "int32",
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "type": "integer"
+        },
+        "y_px": {
+          "format": "int32",
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x_px",
+        "y_px",
+        "width_px",
+        "height_px"
+      ],
+      "type": "object"
     },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
@@ -117,11 +252,20 @@
         "layout": {
           "$ref": "#/$defs/CanvasLayoutDto"
         },
+        "modified": {
+          "default": false,
+          "description": "Whether the tab holds edits it has not saved to that workspace.",
+          "type": "boolean"
+        },
         "panes": {
           "items": {
             "$ref": "#/$defs/WorkspacePane"
           },
           "type": "array"
+        },
+        "selected_in_window": {
+          "default": false,
+          "type": "boolean"
         },
         "split_fraction": {
           "$ref": "#/$defs/CanonicalDecimal"
@@ -131,6 +275,38 @@
         },
         "tab_id": {
           "$ref": "#/$defs/WireU64"
+        },
+        "venue": {
+          "default": "",
+          "description": "The tab's venue. Additive; empty from a build that predates it.",
+          "type": "string"
+        },
+        "window_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "window_index": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workspace": {
+          "default": "",
+          "description": "The workspace this tab uses. Additive; empty from a build that predates\nit.",
+          "type": "string"
         }
       },
       "required": [
@@ -155,6 +331,22 @@
     },
     "active_tab_index": {
       "$ref": "#/$defs/WireU64"
+    },
+    "auto_save": {
+      "default": true,
+      "description": "Whether layout edits are written into the tab's workspace as they are\nmade (`workspace.autosave.set`). Absent from an older answer: on.",
+      "type": "boolean"
+    },
+    "focused_window_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "history_reach": {
       "default": "",
@@ -215,6 +407,14 @@
       "default": false,
       "description": "Whether a chart cut by trades carries the venue's candles in front of\nits bars. Read with each pane's `venue_prefix_present`: this is what\nthe trader asked for, that is what the pane actually holds.",
       "type": "boolean"
+    },
+    "windows": {
+      "default": [],
+      "description": "Native presentation order, independent of the retained runtime storage indices below.",
+      "items": {
+        "$ref": "#/$defs/MarketWindowSnapshot"
+      },
+      "type": "array"
     }
   },
   "required": [

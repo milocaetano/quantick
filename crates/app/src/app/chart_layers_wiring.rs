@@ -62,10 +62,14 @@ impl LayerWiring<'_> {
     /// What a pane's layer menu could not switch itself.
     ///
     /// Drained right after the canvas, so the frame that clicked the entry is
-    /// the frame that applies it. Both wishes reach the real owner — the shared
-    /// style, the indicator state file — instead of a second copy on the pane.
+    /// the frame that applies it. Each wish reaches the real owner — the shared
+    /// style, the indicator state file, the market settings — instead of a
+    /// second copy on the pane.
     pub(crate) fn apply_actions(&mut self) {
         let actions = std::mem::take(&mut self.workspace.layers_mut().actions);
+        if let Some(on) = actions.bar_progress {
+            self.set_bar_progress(self.tabs.id_at(self.tabs.active_index()), on);
+        }
         if let Some(visible) = actions.grid {
             let tab = self.tabs.runtime_mut(self.tabs.active_index());
             let side = match actions.grid_pane {
@@ -127,22 +131,36 @@ impl LayerWiring<'_> {
     ///
     /// Whatever is edited also becomes the window default, which is what a
     /// trader configuring their first chart means; a second chart diverges
-    /// only when they configure it too.
+    /// only when they configure it too. A tab keeps its own style: see
+    /// `quantick_stores::chart_footprint`.
     pub(crate) fn apply_footprint_change(&mut self, change: FootprintChange) {
         let tab = self.tabs.runtime_mut(self.tabs.active_index());
         let side = tab.focused_side();
         match change {
             FootprintChange::Applied(edited) => {
-                tab.pane_mut(side).presentation.footprint.config = Some((*edited).clone());
+                tab.pane_mut(side)
+                    .presentation
+                    .footprint
+                    .config
+                    .set_own(Some((*edited).clone()));
                 *self.footprint_config = *edited;
+                for pane in self.tabs.iter_mut().flat_map(|tab| tab.panes_mut()) {
+                    pane.presentation
+                        .footprint
+                        .config
+                        .follow(self.footprint_config);
+                }
                 crate::footprint_config::save(
                     self.workspace.footprint_settings_path(),
                     self.footprint_config,
                 );
             }
-            FootprintChange::ResetToDefault => {
-                tab.pane_mut(side).presentation.footprint.config = None;
-            }
+            FootprintChange::ResetToDefault => tab
+                .pane_mut(side)
+                .presentation
+                .footprint
+                .config
+                .set_own(None),
         }
     }
 

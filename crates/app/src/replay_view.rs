@@ -203,7 +203,7 @@ impl ReplayView {
             day_before_stored: day_before,
             scrub: None,
             tab: BrowserTab::Sessions,
-            get_data: GetDataPanel::new(),
+            get_data: GetDataPanel::new(crate::paper_home::shelf_dir().as_deref()),
             folder_dirty: false,
         }
     }
@@ -704,7 +704,7 @@ impl ReplayView {
                     BrowserTab::GetData => {
                         let folder = self.folder.clone();
                         let offered = self.offered_symbols(market);
-                        self.get_data.draw(ui, &folder, &offered);
+                        crate::replay_get_data::draw(&mut self.get_data, ui, &folder, &offered);
                         // Drained apart from the action, so a tick and a
                         // landed tape in the same frame do not compete for the
                         // one slot an action has.
@@ -1006,7 +1006,7 @@ impl ReplayView {
                 }
                 let ready = self.selected_entry().is_some();
                 let button = egui::Button::new(
-                    egui::RichText::new("Play session").color(palette.action_ink()),
+                    egui::RichText::new("Play session").color(palette.chip_ink()),
                 )
                 .fill(palette.amber());
                 if ui
@@ -1044,7 +1044,7 @@ impl ReplayView {
         let mut action = None;
         let status = &link.status;
 
-        egui::TopBottomPanel::bottom("replay_transport")
+        egui::TopBottomPanel::bottom(egui::Id::new((ctx.viewport_id(), "replay_transport")))
             .exact_height(TRANSPORT_HEIGHT)
             .frame(
                 egui::Frame::none()
@@ -1165,7 +1165,7 @@ fn speed_chip(ui: &mut egui::Ui, speed: f32, selected: bool) -> egui::Response {
     };
     let mut rich = egui::RichText::new(text).monospace().small();
     if selected {
-        rich = rich.color(palette.action_ink()).strong();
+        rich = rich.color(palette.chip_ink()).strong();
     }
     let mut button = egui::Button::new(rich).min_size(egui::vec2(30.0, 18.0));
     if selected {
@@ -1184,7 +1184,7 @@ fn badge(ui: &mut egui::Ui, text: &str) {
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(text)
-                    .color(palette.action_ink())
+                    .color(palette.chip_ink())
                     .small()
                     .strong(),
             );

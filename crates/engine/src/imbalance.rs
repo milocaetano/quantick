@@ -494,6 +494,11 @@ impl BarBuilder for ImbalanceBarBuilder {
     fn partial(&self) -> Option<&Bar> {
         self.current.as_ref()
     }
+
+    /// `theta` itself: zero right after a close, since the close resets it.
+    fn running_imbalance(&self) -> Option<Decimal> {
+        Some(self.theta)
+    }
 }
 
 #[cfg(test)]
@@ -518,6 +523,31 @@ mod tests {
             .enumerate()
             .filter_map(|(i, side)| builder.push(&trade(i as u64, *side)))
             .collect()
+    }
+
+    #[test]
+    fn the_running_imbalance_is_signed_and_starts_over_at_a_close() {
+        let mut builder = ImbalanceBarBuilder::new(4);
+        assert_eq!(builder.running_imbalance(), Some(Decimal::ZERO));
+        let closed = run(&mut builder, &[Side::Buy, Side::Buy, Side::Sell]);
+        assert!(closed.is_empty(), "warm-up closes at the fourth trade");
+        assert_eq!(builder.running_imbalance(), Some(Decimal::ONE));
+        let _ = builder.push(&trade(3, Side::Sell));
+        assert!(
+            builder.partial().is_none(),
+            "the fourth trade closed the bar"
+        );
+        assert_eq!(builder.running_imbalance(), Some(Decimal::ZERO));
+        let _ = builder.push(&trade(4, Side::Sell));
+        assert_eq!(builder.running_imbalance(), Some(Decimal::NEGATIVE_ONE));
+    }
+
+    #[test]
+    fn an_adaptive_rule_still_reports_no_fixed_progress() {
+        let mut builder = ImbalanceBarBuilder::new(4);
+        let _ = run(&mut builder, &[Side::Buy]);
+        assert_eq!(builder.progress(), None);
+        assert_eq!(builder.closes_at_ms(), None);
     }
 
     /// A fixed-seed LCG. Not randomness the engine ever sees: it runs in the

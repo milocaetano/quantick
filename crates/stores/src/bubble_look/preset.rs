@@ -62,4 +62,52 @@ impl BubbleLook {
         self.note_edit();
         Ok(true)
     }
+
+    /// The panel's reset: put the bound asset's factory look
+    /// ([`AssetBinding::factory_look`]) on `config`, the look a fresh open
+    /// shows — its tick spheres and an inherited palette, which follows the
+    /// theme, included, and the native tape as the look sets it — and name
+    /// it. Only the look: tape only is the pane's view and stays. With no
+    /// asset bound the code
+    /// defaults are restored ([`BubbleLook::defaults_restored`]). The asset
+    /// on screen files the change at the next sync. Returns whether
+    /// anything changed: a screen already on that look is left alone, and
+    /// nothing is noted for the asset.
+    ///
+    /// [`AssetBinding::factory_look`]: crate::bubble_asset_store::AssetBinding::factory_look
+    pub fn restore_factory(&mut self, config: &mut HeatmapConfig) -> bool {
+        let Some(binding) = self.asset.as_ref() else {
+            let mut desired = config.clone();
+            desired.reset_bubble_visuals();
+            desired.sanitize();
+            if desired == *config && self.look_name.is_empty() {
+                self.status = Some("the bubble defaults are on screen already".to_owned());
+                return false;
+            }
+            *config = desired;
+            self.defaults_restored(config);
+            return true;
+        };
+        let look = binding.factory_look(&self.presets);
+        let key = binding.key().to_owned();
+        let mut desired = config.clone();
+        look.apply_to(&mut desired);
+        desired.live_lane.tape_only = config.live_lane.tape_only;
+        desired.sanitize();
+        let named = if look.name.is_empty() {
+            "the default look".to_owned()
+        } else {
+            format!("'{}'", look.name)
+        };
+        if desired == *config && self.look_name == look.name {
+            self.status = Some(format!("{key} is on its factory look {named} already"));
+            return false;
+        }
+        *config = desired;
+        self.look_name.clone_from(&look.name);
+        self.name_draft.clone_from(&look.name);
+        self.status = Some(format!("factory look {named} restored for {key}"));
+        self.note_lane_set(config);
+        true
+    }
 }

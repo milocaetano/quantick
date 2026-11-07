@@ -53,6 +53,8 @@ pub const SNAPSHOT_CAPABILITY: &str = "snapshot.read";
 pub const CHART_WINDOW_CAPABILITY: &str = "chart.window.read";
 pub const DIAGNOSTICS_CAPABILITY: &str = "health.diagnostics.read";
 pub const SCENE_CAPABILITY: &str = "scene.read";
+const SCENE_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/observer-scene-read-input-v1.schema.json");
 pub const EVENTS_READ_CAPABILITY: &str = "events.read";
 pub const EVENTS_WAIT_CAPABILITY: &str = "events.wait";
 pub const LABEL_CAPABILITY: &str = "annotate.label.create";
@@ -230,8 +232,8 @@ pub fn tools_with_recovery(profile_ceiling: &str, allow_recovery: bool) -> Vec<T
         Tool {
             name: GET_SCENE.to_owned(),
             title: "Read what is on screen, as named controls".to_owned(),
-            description: "The semantic scene: every control the trader can see — chart tabs, the toolbar's layer toggles, the drawing tool rail, the dock's tabs and each chart canvas — with an ID stable across frames, its owner, whether it is selected, and a coded reason when it cannot be operated. Chart canvases carry their rectangle in logical points, the same unit the cursor scope reports a pointer position in — not device pixels, so a client composing them with a screenshot must apply the display's scale factor itself. The chrome reports that its bounds are not recorded rather than guessing. The cursor scope answers with the same control IDs, so a pointer position and this list name the same button.".to_owned(),
-            input_schema: instance_only_schema(),
+            description: "Read the target window's semantic scene: visible tabs, toolbar controls, drawing rail, dock tabs and chart canvases, with stable IDs, owners, selection, geometry and coded availability. Optional window_id pins a live target at UI admission; omission pins the focused window. Missing or closed targets are refused. Bounds use logical points; apply the screenshot scale factor to obtain pixels. Coverage names unrecorded controls and bounds.".to_owned(),
+            input_schema: with_instance_routing(parse_schema(SCENE_INPUT_SCHEMA)),
             output_schema: Some(capability_output_schema(parse_schema(SNAPSHOT_CAPTURE_SCHEMA))),
             annotations: ToolAnnotations::observer_read("Scene"),
         },
@@ -301,7 +303,7 @@ fn private_read_tools() -> Vec<Tool> {
             output_schema: Some(capability_output_schema(parse_schema(EVIDENCE_MANIFEST_SCHEMA))),
             annotations: ToolAnnotations::observer_read("Capture evidence"),
         },
-        crate::capture_chart::tool(instance_only_schema()),
+        crate::capture_chart::tool(with_instance_routing(parse_schema(SCENE_INPUT_SCHEMA))),
     ]
 }
 
@@ -472,13 +474,14 @@ pub fn call(
             Value::Object(arguments),
         ),
         CAPTURE_CHART => {
-            if !arguments.is_empty() {
-                return Err(RpcError::new(
-                    INVALID_PARAMS,
-                    "capture_chart accepts only instance_id",
-                ));
-            }
-            Ok(crate::capture_chart::call(link, instance.as_ref()))
+            let input: crate::capture_chart::CaptureInput =
+                serde_json::from_value(Value::Object(arguments))
+                    .map_err(|error| RpcError::new(INVALID_PARAMS, error.to_string()))?;
+            Ok(crate::capture_chart::call(
+                link,
+                instance.as_ref(),
+                input.window_id,
+            ))
         }
         READ_EVENTS => forward(
             link,

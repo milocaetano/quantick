@@ -1,0 +1,33 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Close a market tab.",
+  "properties": {
+    "save": {
+      "description": "What to do with held edits: `true` saves them to the workspace first,\n`false` drops them. Left out on a tab holding edits, nothing closes.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab. Left out, the one on screen."
+    }
+  },
+  "title": "TabCloseInput",
+  "type": "object"
+}

@@ -42,16 +42,15 @@ pub(crate) fn layout_tabs<P: LayoutPort + ?Sized>(app: &P) -> Vec<LayoutTabSnaps
     layout_tabs_marking(app, app.layout_state().focused_pane_layout())
 }
 
-/// The same reading with `active` on a layout the caller names.
-///
-/// A call that addressed *another* pane answers about that pane: reporting
-/// the focused pane's layout to a client that just switched a background one
-/// tells it its call did not land, when it did.
+/// The same reading with `active` on a layout the caller names: a call that
+/// addressed another pane answers about it. Counts are what the focused pane
+/// shows, its tab's copy, as the chart does.
 fn layout_tabs_marking<P: LayoutPort + ?Sized>(
     app: &P,
     active: crate::layouts::LayoutId,
 ) -> Vec<LayoutTabSnapshot> {
-    app.layout_state()
+    let state = app.layout_state();
+    state
         .layouts()
         .layouts()
         .iter()
@@ -59,7 +58,7 @@ fn layout_tabs_marking<P: LayoutPort + ?Sized>(
             layout_id: WireU64::new(layout.id.0),
             name: layout.name.clone(),
             active: layout.id == active,
-            indicator_count: WireU64::new(layout.indicators.len() as u64),
+            indicator_count: WireU64::new(state.shown_count(layout.id) as u64),
         })
         .collect()
 }
@@ -79,12 +78,9 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     registry.register(tab_switch_descriptor(), tab_switch)?;
     registry.register(tab_create_descriptor(), tab_create)?;
     registry.register(tab_rename_descriptor(), tab_rename)?;
-    // `layout.tab.delete` is deliberately not registered. Deleting a layout
-    // destroys its indicator set and every drawing kept under it, and no
-    // effect policy in the control contract allows a destructive capability
-    // yet (`contract.rs`, `allows_destructive: false` on all three). The
-    // trader deletes from the strip or the View menu; the operator gets the
-    // call the day the contract grows a confirmed-destructive effect.
+    // `layout.tab.delete` is deliberately not registered: it destroys an
+    // indicator set, and no effect policy allows a destructive capability yet
+    // (`contract.rs`, `allows_destructive: false`); the strip and menu delete.
     v2::register(registry)
 }
 
@@ -125,7 +121,7 @@ fn resolve_layout_tab<P: LayoutPort + ?Sized>(
         .map(|id| {
             app.layout_state()
                 .layouts()
-                .get(id)
+                .on_strip(id)
                 .map(|layout| layout.id)
                 .ok_or_else(|| ControlError::invalid_request(format!("no layout has id {}", id.0)))
         })
@@ -237,13 +233,7 @@ pub(crate) fn tab_index<P: TabsPort + ?Sized>(
     app: &P,
     target: TabTarget,
 ) -> Result<usize, ControlError> {
-    let Some(id) = target.tab_id else {
-        return Ok(app.tab_reads().active_tab_index());
-    };
-    app.tab_reads()
-        .tabs()
-        .position(id.get())
-        .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
+    quantick_control_handlers::tab_index(&app.tab_reads(), target.tab_id)
 }
 
 fn result<P: TabsPort + ?Sized>(
@@ -315,7 +305,7 @@ fn move_pane<P: TabsPort + LayoutPort + ?Sized>(
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let tab_id = app.tab_reads().tabs().id_at(index);
-    // The one reposition path — the same call the View menu takes, which
+    // The one reposition path — the same call the window menu takes, which
     // moves the slot bookkeeping and the drawing keys with the pane.
     let changed = app.layout_adapter().move_context_pane_at(tab_id, from, to);
     result(app, index, changed)

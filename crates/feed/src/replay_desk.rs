@@ -1,0 +1,1661 @@
+//! The **Get data** tab's model: the symbol, the days picked, the download in
+//! flight and what it landed. `crates/app`'s `replay_get_data` paints it.
+//!
+//! The calendar's empty days are dead on arrival: the provider is asked what it
+//! holds before the trader clicks, so a holiday cannot be chosen and then fail.
+//! Several days download one at a time, oldest first, past the ones already on
+//! disk; [`quantick_replay::download_selection`] decides that, and nothing several
+//! days fetch is opened on the chart.
+
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use quantick_replay::Library;
+use quantick_replay::download_selection::{DayBeforeTarget, DownloadDays, parse_day};
+
+use crate::config::ProviderKind;
+use crate::replay_download::{
+    self, DEFAULT_CONTEXT_SESSIONS, DEFAULT_JOIN_DAY_BEFORE, DownloadError, DownloadEvent,
+    DownloadJob, DownloadRequest, Mt5SessionSource, SessionSource,
+};
+
+/// Context choices offered. A week is the default; the ends are there because
+/// "just yesterday" and "the whole fortnight" are both real ways to prepare.
+pub const CONTEXT_CHOICES: [u32; 5] = [1, 3, 5, 10, 20];
+
+/// Broker clocks a trader can state, when the provider cannot measure one.
+///
+/// Whole hours only, and only the ones a retail terminal is actually set to.
+/// B3 brokers run at −03:00; the MetaQuotes demo servers and most European
+/// brokers at +02:00/+03:00.
+pub const BROKER_CLOCKS: [(i32, &str); 7] = [
+    (-3 * 3600, "-03:00"),
+    (-5 * 3600, "-05:00"),
+    (0, "UTC"),
+    (3600, "+01:00"),
+    (2 * 3600, "+02:00"),
+    (3 * 3600, "+03:00"),
+    (8 * 3600, "+08:00"),
+];
+
+/// The month the calendar sits on before anything has been looked up.
+///
+/// It is never shown: the calendar only draws once a look-up has answered,
+/// and the answer moves it to the newest month that has data — which is where
+/// the trader wanted to be. A placeholder rather than "today" because this
+/// panel owns no clock, and reading one here would be the only wall-clock read
+/// on the path.
+pub const PLACEHOLDER_MONTH: (i64, u32) = (1970, 1);
+
+/// What the panel asks the browser to do.
+pub enum GetDataAction {
+    /// A download finished and wrote this tape; rescan and select it.
+    ///
+    /// Always the day the trader asked for, never the day before it: the
+    /// second tape is fetched for the chart, not to be selected in its place.
+    Downloaded(PathBuf),
+    /// One day of a several-day download landed: rescan, select nothing.
+    Fetched,
+}
+
+/// How the second half of a two-day download is going.
+///
+/// Kept apart from [`Phase`], which speaks for the day the trader asked for.
+/// That day is already on disk by the time any of this happens, and nothing
+/// here may take it away from them: a refusal is a note beside a finished
+/// download, never a failed one.
+pub enum DayBeforeStage {
+    /// Fetching this day's tape.
+    Running {
+        /// The day being fetched, `YYYY-MM-DD`.
+        day: String,
+        /// Prints written so far.
+        ticks: u64,
+    },
+    /// It landed.
+    Done {
+        /// The day that landed.
+        day: String,
+        /// How many prints it holds.
+        ticks: u64,
+    },
+    /// It did not, and the chosen day is untouched.
+    Failed {
+        /// The day that was refused.
+        day: String,
+        /// What the provider said, in the trader's terms.
+        headline: String,
+    },
+}
+
+/// How far along a request is.
+pub enum Phase {
+    /// Nothing asked yet.
+    Idle,
+    /// Asking the provider which days it holds.
+    Probing,
+    /// Downloading, with prints written so far.
+    Running { ticks: u64 },
+    /// Finished; the tape is on disk.
+    Finished {
+        ticks: u64,
+        sessions: u32,
+        complete: bool,
+    },
+    /// Refused or failed, with the one thing to do about it.
+    Failed {
+        headline: String,
+        fix: Option<String>,
+    },
+}
+
+/// State of the Get data tab.
+pub struct GetDataPanel {
+    pub symbol: String,
+    /// The month the calendar is showing, as `(year, month)`.
+    pub month: (i64, u32),
+    /// The days picked (exactly one is a single-day download), the days on
+    /// disk, and the several-day download asked for last.
+    pub days: DownloadDays,
+    pub context_sessions: u32,
+    /// Days the provider says it holds, or `None` before it was asked.
+    ///
+    /// A set, not a list: the calendar asks "is this day held?" once per cell
+    /// per frame, and a linear scan of four months of days would be ~3,700
+    /// string comparisons every frame to draw thirty-one numbers. Ordered
+    /// rather than hashed, following the repo's rule for anything whose
+    /// iteration can reach what is drawn.
+    pub available: Option<BTreeSet<String>>,
+    /// The symbol `available` was measured for, so a retyped symbol invalidates
+    /// the calendar instead of quietly showing another instrument's days.
+    pub available_for: String,
+    pub job: Option<DownloadJob>,
+    pub phase: Phase,
+    /// The broker clock the trader stated, once the provider said it could not
+    /// measure one. `None` means the provider is still doing the measuring.
+    pub declared_clock: Option<i32>,
+    /// Whether to show the clock control at all. Raised only after a request
+    /// failed for want of one — nobody should have to think about broker
+    /// timezones until the machine admits it cannot work one out.
+    pub clock_needed: bool,
+    /// Whether the day before the chosen one is fetched with it.
+    ///
+    /// A mirror of the browser's setting, refreshed on every draw: the
+    /// browser owns the choice — the session list draws the same one — and
+    /// this panel needs it in hand when a download finishes, which is frames
+    /// after the tick was drawn.
+    pub day_before: bool,
+    /// Which day a download would fetch behind the chosen one, resolved once
+    /// per frame in [`Self::pump`] while the library is in hand.
+    ///
+    /// Resolved there rather than at the moment it is needed because that
+    /// moment — folding a finished download — has neither the library nor the
+    /// folder, and re-deriving it from the broker's day list alone is how the
+    /// panel came to re-export a tape the trader already had.
+    pub day_before_target: Option<DayBeforeTarget>,
+    /// The second half of a two-day download, once the first has landed.
+    pub day_before_stage: Option<DayBeforeStage>,
+    /// The folder the request in flight is writing into.
+    ///
+    /// Captured when the request was made, never read again from the field:
+    /// the replay folder is a text box the trader can edit while a download
+    /// runs, and the two tapes of one join have to land in the same folder or
+    /// the join finds nothing beside the day it was made for.
+    pub request_out_dir: Option<PathBuf>,
+    /// A *day before* tick made on this tab, waiting for the browser that owns
+    /// the setting to pick it up.
+    ///
+    /// A field rather than a return value: a tick and a finished download can
+    /// land in the same frame, and only one action can be returned. The tape
+    /// wins that race, so the tick has to survive it somewhere.
+    pub day_before_change: Option<bool>,
+    /// The chosen day's tape, held while the day before it is fetched.
+    ///
+    /// The browser is handed one finished download, not two: it rescans and
+    /// selects the day the trader asked for, once everything that day needs is
+    /// on disk.
+    pub pending_tape: Option<PathBuf>,
+    /// The day to fetch as soon as the finished job has been cleared away.
+    ///
+    /// Set while folding a `Done` event and acted on by the drain: starting a
+    /// job mid-drain would have it thrown out as the finished one's remains.
+    pub chain_day: Option<String>,
+    /// Who serves downloads for this panel.
+    ///
+    /// Held rather than built per request, so the panel can answer *whose*
+    /// instruments it is able to fetch — the interface has to know that before
+    /// it offers a contract to click, not after the download refuses.
+    pub source: Box<dyn SessionSource>,
+}
+
+impl GetDataPanel {
+    /// An empty panel, opening on the current month. `shelf` is the folder the
+    /// bridge keeps its files on.
+    #[must_use]
+    pub fn new(shelf: Option<&Path>) -> Self {
+        Self {
+            symbol: String::new(),
+            month: PLACEHOLDER_MONTH,
+            days: DownloadDays::default(),
+            context_sessions: DEFAULT_CONTEXT_SESSIONS,
+            available: None,
+            available_for: String::new(),
+            job: None,
+            phase: Phase::Idle,
+            declared_clock: None,
+            clock_needed: false,
+            // Overwritten by the browser on every draw; this is only what the
+            // panel believes before it has been drawn once.
+            day_before: DEFAULT_JOIN_DAY_BEFORE,
+            day_before_target: None,
+            day_before_stage: None,
+            request_out_dir: None,
+            day_before_change: None,
+            pending_tape: None,
+            chain_day: None,
+            // The interpreter is the bridge's default, which already falls
+            // back from `python` to `py`. A machine that can stream
+            // MetaTrader can download from it.
+            source: Box::new(Mt5SessionSource::new("python", shelf)),
+        }
+    }
+
+    /// The provider whose instruments this panel can actually fetch.
+    #[must_use]
+    pub fn provider(&self) -> ProviderKind {
+        self.source.provider()
+    }
+
+    /// Type a symbol into the field, as the keyboard would.
+    pub fn set_symbol(&mut self, symbol: &str) {
+        self.symbol = symbol.to_string();
+    }
+
+    /// The trader just arrived on this tab: put the chart's own instrument in
+    /// the field and ask the terminal what it holds, unless something is
+    /// already showing or running.
+    ///
+    /// "Which days can I get?" is the only reason to open this tab, so asking
+    /// it is the tab's job, not a button the trader must find first. Repeat
+    /// arrivals are free: a calendar already answered for this symbol is left
+    /// alone, so switching between the two halves never re-runs the look-up.
+    pub fn arrive(&mut self, out_dir: &str, chart_symbol: Option<&str>) {
+        if self.on_arrival(chart_symbol) {
+            self.probe(out_dir);
+        }
+    }
+
+    /// What arriving means, decided without touching a process: adopt the
+    /// chart's instrument when the field is empty, and answer whether the
+    /// terminal is worth asking.
+    ///
+    /// Split from [`Self::arrive`] so every one of these refusals is reachable
+    /// from a test with no MetaTrader, no Python and no network — the same
+    /// reason [`Self::absorb`] is split from the channel drain.
+    pub fn on_arrival(&mut self, chart_symbol: Option<&str>) -> bool {
+        if self.symbol.trim().is_empty()
+            && let Some(symbol) = chart_symbol.map(str::trim).filter(|s| !s.is_empty())
+        {
+            self.symbol = symbol.to_string();
+        }
+        if self.is_busy() || self.symbol.trim().is_empty() {
+            return false;
+        }
+        // A calendar already measured for this symbol is the answer; switching
+        // between the two halves of the browser must not re-run the look-up.
+        // A stale one — measured for another symbol — is exactly the case
+        // worth re-asking, and the only one.
+        if self.available.is_some() && self.symbol.trim() == self.available_for {
+            return false;
+        }
+        // A refusal is not retried on arrival: the trader is reading the
+        // reason, and hammering the terminal would only replace it with itself.
+        !matches!(self.phase, Phase::Failed { .. })
+    }
+
+    /// Put `symbol` in the field and ask for its days at once — what clicking
+    /// one of the offered contracts means.
+    pub fn pick_symbol(&mut self, symbol: &str, out_dir: &str) {
+        self.adopt_pick(symbol);
+        self.probe(out_dir);
+    }
+
+    /// What a pick changes, decided without touching a process — split out for
+    /// the same reason [`Self::on_arrival`] is: the state a click produces has
+    /// to be reachable from a test with no MetaTrader behind it.
+    pub fn adopt_pick(&mut self, symbol: &str) {
+        self.symbol = symbol.to_string();
+        // Another contract's days are not this one's; the calendar answers
+        // again before anything can be downloaded.
+        self.days.selection.clear();
+        // A pick is an explicit ask, so it clears a previous refusal rather
+        // than being blocked by it.
+        self.phase = Phase::Idle;
+    }
+
+    /// Whether a download or probe is running.
+    ///
+    /// The second half of a two-day download counts: the tab's spinner and the
+    /// disabled Download button both mean "the provider is still working", and
+    /// the day before is the provider still working.
+    #[must_use]
+    pub fn is_busy(&self) -> bool {
+        matches!(self.phase, Phase::Probing | Phase::Running { .. })
+            || matches!(self.day_before_stage, Some(DayBeforeStage::Running { .. }))
+            || (self.days.batch().is_some() && self.job.is_some())
+    }
+
+    /// Which day sits behind the chosen one, and whether it is already here.
+    ///
+    /// `None` when the trader did not ask for it, when no day is picked, when
+    /// the look-up has not answered, or when the broker holds nothing earlier.
+    pub fn resolve_day_before(&self) -> Option<DayBeforeTarget> {
+        self.days
+            .day_before_target(self.day_before, self.available.as_ref())
+    }
+
+    /// The day to *download* after the chosen one: the target above, unless
+    /// the folder already holds it.
+    pub fn day_before_to_fetch(&self) -> Option<String> {
+        self.day_before_target
+            .as_ref()
+            .and_then(DayBeforeTarget::to_fetch)
+    }
+
+    /// Drain whatever the running job has said since the last frame.
+    ///
+    /// Non-blocking by construction: the download runs on its own thread and
+    /// this only ever reads what has already arrived, so a busy export cannot
+    /// cost a frame.
+    pub fn poll(&mut self) -> Option<GetDataAction> {
+        let job = self.job.as_ref()?;
+        let mut action = None;
+        let mut ended = false;
+        let mut absorbed = Vec::new();
+        loop {
+            match job.events.try_recv() {
+                Ok(event) => absorbed.push(event),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    ended = true;
+                    break;
+                }
+            }
+        }
+        let disconnected = ended;
+        for event in absorbed {
+            if let Some(finished) = self.absorb(event) {
+                action = Some(finished);
+                // A day of several waits for its worker to end: the next one
+                // starts only once nothing else talks to the terminal.
+                ended |= self.days.batch().is_none();
+            } else if !self.is_busy() {
+                ended = true;
+            }
+        }
+        // The worker is gone and never said why. Say so rather than leaving a
+        // spinner turning forever.
+        if disconnected && matches!(self.phase, Phase::Probing | Phase::Running { .. }) {
+            self.phase = Phase::Failed {
+                headline: "the download stopped without finishing".to_string(),
+                fix: Some(
+                    "Check the MetaTrader 5 terminal is still open, then try again.".to_string(),
+                ),
+            };
+        }
+        // The second half's worker is gone without a word — cancelled, killed,
+        // or dead. The day the trader actually asked for is already on disk,
+        // and it must reach the browser: stranding `pending_tape` here would
+        // leave them with a downloaded day the session list never scanned,
+        // which looks exactly like a download that did nothing.
+        if disconnected
+            && let Some(DayBeforeStage::Running { day, .. }) = self.day_before_stage.as_ref()
+        {
+            let day = day.clone();
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "REPLAY_DAY_BEFORE_STOPPED",
+                day = day.as_str(),
+                "the day before stopped before finishing; the chosen day is on disk"
+            );
+            self.day_before_stage = Some(DayBeforeStage::Failed {
+                day,
+                headline: "it stopped before finishing".to_string(),
+            });
+            action = action.or_else(|| self.pending_tape.take().map(GetDataAction::Downloaded));
+        }
+        if disconnected && self.days.running().is_some() {
+            let stopped = "it stopped before finishing".to_string();
+            self.days.refuse(stopped, None, false);
+        }
+        if ended {
+            self.job = None;
+        }
+        // Only now. `start_day_before` installs a job, and the drain above
+        // would otherwise throw it away as the finished one's remains.
+        if let Some(day) = self.chain_day.take() {
+            action = action.or_else(|| self.start_day_before(&day));
+        }
+        self.next_batch_day();
+        action
+    }
+
+    /// Fold one event into the panel's state.
+    ///
+    /// Split out from the channel drain so every state this interface can be
+    /// in is reachable from a test with no process, no MetaTrader and no
+    /// network — which is the only way the failure paths get exercised at all.
+    pub fn absorb(&mut self, event: DownloadEvent) -> Option<GetDataAction> {
+        if matches!(self.day_before_stage, Some(DayBeforeStage::Running { .. })) {
+            return self.absorb_day_before(event);
+        }
+        if self.days.batch().is_some() {
+            return self.absorb_batch(event);
+        }
+        match event {
+            DownloadEvent::DaysAvailable { symbol, days } => {
+                if let Some(newest) = days.last().and_then(|d| parse_day(d)) {
+                    self.month = (newest.0, newest.1);
+                }
+                self.available_for = symbol;
+                self.available = Some(days.into_iter().collect());
+                self.phase = Phase::Idle;
+                None
+            }
+            DownloadEvent::Progress { ticks } | DownloadEvent::TapeWritten { ticks, .. } => {
+                self.phase = Phase::Running { ticks };
+                None
+            }
+            DownloadEvent::ContextWritten { sessions, complete } => {
+                let ticks = match self.phase {
+                    Phase::Running { ticks } => ticks,
+                    _ => 0,
+                };
+                self.phase = Phase::Finished {
+                    ticks,
+                    sessions,
+                    complete,
+                };
+                None
+            }
+            DownloadEvent::Done { tape } => {
+                if let Phase::Running { ticks } = self.phase {
+                    self.phase = Phase::Finished {
+                        ticks,
+                        sessions: 0,
+                        complete: true,
+                    };
+                }
+                // The trader's day is on disk. When they asked for the day
+                // before it as well, that is fetched behind this one and the
+                // browser hears about the pair together — a rescan in the
+                // middle would land them on a chart missing half of what is
+                // still coming.
+                if let Some(day) = self.day_before_to_fetch() {
+                    self.pending_tape = Some(tape);
+                    self.chain_day = Some(day);
+                    return None;
+                }
+                Some(GetDataAction::Downloaded(tape))
+            }
+            DownloadEvent::Failed { headline, fix } => {
+                let fix = self.answer_clock(&headline, fix, "look up the days again");
+                self.phase = Phase::Failed { headline, fix };
+                None
+            }
+        }
+    }
+
+    /// Fold one event from the second half of a two-day download.
+    ///
+    /// Every ending hands the browser the *chosen* day's tape, because that is
+    /// the download that finished; whether the day before it came too is said
+    /// beside it rather than by succeeding or failing.
+    pub fn absorb_day_before(&mut self, event: DownloadEvent) -> Option<GetDataAction> {
+        let Some(DayBeforeStage::Running { day, ticks }) = self.day_before_stage.as_ref() else {
+            return None;
+        };
+        let (day, ticks) = (day.clone(), *ticks);
+        match event {
+            DownloadEvent::Progress { ticks } | DownloadEvent::TapeWritten { ticks, .. } => {
+                self.day_before_stage = Some(DayBeforeStage::Running { day, ticks });
+                None
+            }
+            DownloadEvent::Done { .. } => {
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "REPLAY_DAY_BEFORE_DOWNLOADED",
+                    symbol = self.symbol.trim(),
+                    day = day.as_str(),
+                    ticks,
+                    "the day before the chosen session is on disk"
+                );
+                self.day_before_stage = Some(DayBeforeStage::Done { day, ticks });
+                self.pending_tape.take().map(GetDataAction::Downloaded)
+            }
+            DownloadEvent::Failed { headline, .. } => {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "REPLAY_DAY_BEFORE_REFUSED",
+                    symbol = self.symbol.trim(),
+                    day = day.as_str(),
+                    detail = headline.as_str(),
+                    "the day before could not be fetched; the chosen day is unaffected"
+                );
+                self.day_before_stage = Some(DayBeforeStage::Failed { day, headline });
+                self.pending_tape.take().map(GetDataAction::Downloaded)
+            }
+            // The second half asks for neither a run-up nor a day list, so
+            // nothing it could say about them is about this download.
+            DownloadEvent::ContextWritten { .. } | DownloadEvent::DaysAvailable { .. } => None,
+        }
+    }
+
+    /// Fold one event of a several-day download into its running row. A
+    /// landed day only asks for a rescan: nothing several days fetch is
+    /// selected or opened, and a refusal leaves the next day to be asked for.
+    pub fn absorb_batch(&mut self, event: DownloadEvent) -> Option<GetDataAction> {
+        self.days.running()?;
+        let every_day = event.refuses_every_day();
+        match event {
+            DownloadEvent::Progress { ticks } | DownloadEvent::TapeWritten { ticks, .. } => {
+                self.days.progress(ticks);
+            }
+            DownloadEvent::Done { .. } => {
+                self.days.finish();
+                return Some(GetDataAction::Fetched);
+            }
+            DownloadEvent::Failed { headline, fix } => {
+                // A look-up clears the picks; Download asks again for them.
+                let fix = self.answer_clock(&headline, fix, "press Download again");
+                self.days.refuse(headline, fix, every_day);
+            }
+            DownloadEvent::ContextWritten { sessions, .. } => self.days.run_up(sessions),
+            DownloadEvent::DaysAvailable { .. } => {}
+        }
+        None
+    }
+
+    /// The one failure the trader can answer here rather than in a terminal:
+    /// an unknown broker clock raises the control, and the fix points at it
+    /// instead of at a command-line flag they have nowhere to type.
+    pub fn answer_clock(
+        &mut self,
+        headline: &str,
+        fix: Option<String>,
+        then: &str,
+    ) -> Option<String> {
+        if !headline.contains("clock offset") {
+            return fix;
+        }
+        self.clock_needed = true;
+        self.declared_clock = self.declared_clock.or(Some(BROKER_CLOCKS[0].0));
+        Some(format!("Pick the broker clock above, then {then}."))
+    }
+
+    /// Start the oldest waiting day of a several-day download, once no job
+    /// is in flight. A day the provider cannot even be launched for is
+    /// refused on the spot and the next one asked for.
+    pub fn next_batch_day(&mut self) {
+        if self.job.is_some() {
+            return;
+        }
+        while let Some((day, template)) = self.days.begin_next() {
+            let Err(e) = self.launch(&DownloadRequest::for_day(&template, day)) else {
+                return;
+            };
+            // No interpreter or no exporter: every later day would say so too.
+            self.days.refuse(e.to_string(), Some(e.advice()), true);
+        }
+    }
+
+    /// Start the second half of a two-day download.
+    ///
+    /// Deliberately not [`Self::start`]: that one owns [`Self::phase`], and
+    /// the chosen day's finished summary has to survive this. A provider that
+    /// cannot even be launched for the second day hands the first one over at
+    /// once, with the reason kept beside it.
+    pub fn start_day_before(&mut self, day: &str) -> Option<GetDataAction> {
+        // The folder the chosen day went into, not the one the field holds
+        // now. A trader who edits the path mid-download would otherwise get
+        // the two tapes of one join in two folders, and both reported as
+        // downloaded.
+        let Some(out_dir) = self.request_out_dir.clone() else {
+            return self.pending_tape.take().map(GetDataAction::Downloaded);
+        };
+        // No run-up of its own: the candles in front of the chosen day
+        // already reach back over this one, and a second copy would be the
+        // same minutes downloaded twice.
+        let request = self.request(Some(day.to_string()), 0, out_dir);
+        match replay_download::run(self.source.as_ref(), &request) {
+            Ok(job) => {
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "REPLAY_DAY_BEFORE_STARTED",
+                    source = self.source.label().as_str(),
+                    symbol = request.symbol.as_str(),
+                    day,
+                    "fetching the day before the chosen session"
+                );
+                self.job = Some(job);
+                self.day_before_stage = Some(DayBeforeStage::Running {
+                    day: day.to_string(),
+                    ticks: 0,
+                });
+                None
+            }
+            Err(e) => {
+                self.day_before_stage = Some(DayBeforeStage::Failed {
+                    day: day.to_string(),
+                    headline: e.to_string(),
+                });
+                self.pending_tape.take().map(GetDataAction::Downloaded)
+            }
+        }
+    }
+
+    /// Ask the provider which days it holds for the typed symbol.
+    pub fn probe(&mut self, out_dir: &str) {
+        if self.symbol.trim().is_empty() {
+            return;
+        }
+        self.available = None;
+        self.days.selection.clear();
+        self.start(
+            self.request(None, 0, PathBuf::from(out_dir)),
+            Phase::Probing,
+        );
+    }
+
+    /// A request for the typed symbol, in the broker clock the trader stated.
+    pub fn request(&self, day: Option<String>, context: u32, out_dir: PathBuf) -> DownloadRequest {
+        DownloadRequest {
+            symbol: self.symbol.trim().to_string(),
+            day,
+            context_sessions: context,
+            out_dir,
+            utc_offset_s: self.declared_clock,
+        }
+    }
+
+    /// Start the download the three inputs describe.
+    pub fn download(&mut self, out_dir: &str) {
+        if self.days.selection.len() > 1 {
+            // Planned against the folder as it stands now, and asked with the
+            // fields as they stand now, whatever they say later. A job still
+            // ending is waited for, never dropped.
+            self.phase = Phase::Idle;
+            self.day_before_stage = None;
+            let request = self.request(None, self.context_sessions, PathBuf::from(out_dir));
+            self.days.begin(request.template());
+            self.next_batch_day();
+            return;
+        }
+        let Some(day) = self.days.selection.only().map(str::to_owned) else {
+            return;
+        };
+        let request = self.request(Some(day), self.context_sessions, PathBuf::from(out_dir));
+        self.start(request, Phase::Running { ticks: 0 });
+    }
+
+    pub fn start(&mut self, request: DownloadRequest, phase: Phase) {
+        // Whatever the last request said about a day before is about that
+        // request. Cleared here rather than at the button, so a probe cannot
+        // leave the note from a download standing under it.
+        self.day_before_stage = None;
+        self.pending_tape = None;
+        self.chain_day = None;
+        self.days.forget_batch();
+        self.request_out_dir = Some(request.out_dir.clone());
+        self.phase = match self.launch(&request) {
+            Ok(()) => phase,
+            Err(e) => Phase::Failed {
+                headline: e.to_string(),
+                fix: Some(e.advice()),
+            },
+        };
+    }
+
+    /// Launch `request` and keep its job, logging every download the same way.
+    pub fn launch(&mut self, request: &DownloadRequest) -> Result<(), DownloadError> {
+        let job = replay_download::run(self.source.as_ref(), request)?;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "REPLAY_DOWNLOAD_STARTED",
+            source = self.source.label().as_str(),
+            symbol = request.symbol.as_str(),
+            day = if request.is_probe() {
+                "(probe)"
+            } else {
+                request.day.as_deref().unwrap_or_default()
+            },
+            context_sessions = request.context_sessions,
+            "downloading a replay session"
+        );
+        self.job = Some(job);
+        Ok(())
+    }
+
+    /// Move whatever is running on, every frame, drawn or not — a queue of
+    /// days must not stall behind a closed window — and say what landed.
+    pub fn pump(&mut self, library: Option<&Library>, day_before: bool) -> Option<GetDataAction> {
+        // Before the drain: a download finishing this frame has to read the
+        // setting as it stands, not as it stood when the tick was last drawn.
+        self.day_before = day_before;
+        self.days.held.refresh(library, self.symbol.trim());
+        self.day_before_target = self.resolve_day_before();
+        self.poll()
+    }
+
+    /// The replay folder was scanned again: what it holds is read afresh.
+    pub fn folder_rescanned(&mut self) {
+        self.days.held.rescanned();
+    }
+
+    /// A *day before* tick made on this tab, for the browser that owns the
+    /// setting. `None` when nothing was clicked.
+    ///
+    /// Drained separately from the drawn tab's action so a tick and a landed
+    /// tape in one frame do not compete: only one action can be returned, the
+    /// tape wins it, and a click that vanished with no trace would leave the
+    /// box visibly flipping back next frame.
+    pub fn take_day_before_change(&mut self) -> Option<bool> {
+        self.day_before_change.take()
+    }
+
+    /// The sentence under the tick, from [`DownloadDays::day_before_note`]:
+    /// split from the draw so a caption contradicting its box is a shape a
+    /// test can look at.
+    pub fn day_before_note(&self) -> String {
+        let target = self.day_before_target.as_ref();
+        self.days
+            .day_before_note(self.day_before, self.available.is_some(), target)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use quantick_replay::download_selection::DayStatus;
+    use quantick_replay::format::UtcOffset;
+
+    #[test]
+    fn an_unmeasurable_clock_raises_the_control_that_answers_it() {
+        // The provider's own advice names a command-line flag. Someone
+        // standing in a window cannot act on that, so the question is asked
+        // where they are — and the advice is rewritten to point at it.
+        let mut panel = GetDataPanel::new(None);
+        assert!(
+            !panel.clock_needed,
+            "nobody thinks about this until it fails"
+        );
+
+        panel.absorb(DownloadEvent::Failed {
+            headline: "quantick does not know this broker's clock offset yet".to_string(),
+            fix: Some("pass --utc-offset-s (B3 brokers use -10800)".to_string()),
+        });
+
+        assert!(panel.clock_needed, "the control comes up");
+        assert_eq!(
+            panel.declared_clock,
+            Some(-10_800),
+            "defaulting to B3, the market this was built for"
+        );
+        let Phase::Failed { fix, .. } = &panel.phase else {
+            panic!("the failure is still shown");
+        };
+        let fix = fix.as_deref().unwrap_or_default();
+        assert!(
+            !fix.contains("--utc-offset-s"),
+            "no command-line flags in a window: {fix}"
+        );
+        assert!(fix.contains("above"), "it points at the control: {fix}");
+    }
+
+    #[test]
+    fn retyping_the_symbol_invalidates_the_calendar() {
+        // Showing WINQ26's days under the name WINV26 is the fastest possible
+        // way to download the wrong contract.
+        let mut panel = GetDataPanel::new(None);
+        panel.symbol = "WINQ26".to_string();
+        panel.available_for = "WINQ26".to_string();
+        panel.available = Some(BTreeSet::from(["2026-08-12".to_string()]));
+        assert_eq!(panel.symbol.trim(), panel.available_for);
+
+        panel.symbol = "WINV26".to_string();
+        assert_ne!(
+            panel.symbol.trim(),
+            panel.available_for,
+            "the calendar is stale and must be looked up again"
+        );
+    }
+
+    #[test]
+    fn a_download_needs_a_day_that_was_offered() {
+        let mut panel = GetDataPanel::new(None);
+        panel.symbol = "WINQ26".to_string();
+        assert!(
+            panel.days.selection.is_empty(),
+            "nothing is picked before a look-up"
+        );
+        // `download` is a no-op without a day, so a stray click cannot start
+        // a request the calendar never authorised.
+        panel.download("/replay");
+        assert!(panel.job.is_none());
+        assert!(matches!(panel.phase, Phase::Idle));
+    }
+
+    #[test]
+    fn a_probe_reply_moves_the_calendar_to_where_the_data_is() {
+        // The panel owns no clock, so it opens on a placeholder month. The
+        // first answer has to land the trader on the month that has data,
+        // or every download starts with two clicks of month navigation.
+        let mut panel = GetDataPanel::new(None);
+        assert_ne!(panel.month, (2026, 8));
+        if let Some((year, month, _)) = parse_day("2026-08-12") {
+            panel.month = (year, month);
+        }
+        assert_eq!(panel.month, (2026, 8));
+    }
+
+    /// Opening the tab *is* the question "what can I download?". The chart's
+    /// own instrument answers "which one", so the trader types nothing.
+    #[test]
+    fn arriving_adopts_the_chart_s_instrument_and_asks() {
+        let mut panel = GetDataPanel::new(None);
+        assert!(panel.on_arrival(Some("WINV26")));
+        assert_eq!(panel.symbol, "WINV26");
+    }
+
+    /// A symbol already typed is the trader's, not the chart's.
+    #[test]
+    fn arriving_never_overwrites_a_typed_symbol() {
+        let mut panel = GetDataPanel::new(None);
+        panel.set_symbol("WINQ26");
+        assert!(panel.on_arrival(Some("WINV26")));
+        assert_eq!(panel.symbol, "WINQ26");
+    }
+
+    /// Switching between the two halves of the browser must not re-run the
+    /// look-up that already answered.
+    #[test]
+    fn arriving_on_an_answered_calendar_asks_nothing() {
+        let mut panel = GetDataPanel::new(None);
+        panel.absorb(DownloadEvent::DaysAvailable {
+            symbol: "WINV26".to_owned(),
+            days: vec!["2026-08-13".to_owned()],
+        });
+        assert!(!panel.on_arrival(Some("WINV26")));
+    }
+
+    /// A calendar measured for another contract is stale, and stale is the one
+    /// case worth asking again — showing another instrument's days under this
+    /// name is the fastest way to download the wrong contract.
+    #[test]
+    fn arriving_after_the_chart_changed_contract_asks_again() {
+        let mut panel = GetDataPanel::new(None);
+        panel.absorb(DownloadEvent::DaysAvailable {
+            symbol: "WINQ26".to_owned(),
+            days: vec!["2026-07-21".to_owned()],
+        });
+        panel.set_symbol("WINV26");
+        assert!(panel.on_arrival(Some("WINV26")));
+    }
+
+    /// The trader is reading why it failed; re-asking on arrival would replace
+    /// that explanation with itself.
+    #[test]
+    fn arriving_does_not_retry_a_refusal() {
+        let mut panel = GetDataPanel::new(None);
+        panel.set_symbol("WINV26");
+        panel.absorb(DownloadEvent::Failed {
+            headline: "the terminal does not serve WINV26".to_owned(),
+            fix: None,
+        });
+        assert!(!panel.on_arrival(Some("WINV26")));
+    }
+
+    /// Nothing on the chart and nothing typed: there is no question to ask.
+    #[test]
+    fn arriving_with_no_instrument_anywhere_asks_nothing() {
+        let mut panel = GetDataPanel::new(None);
+        assert!(!panel.on_arrival(None));
+        assert!(panel.symbol.is_empty());
+    }
+
+    /// Clicking an offered contract is the one explicit ask that clears a
+    /// refusal — the trader has answered "which instrument" themselves, so
+    /// leaving the old failure on screen would refuse a question nobody asked.
+    #[test]
+    fn picking_a_contract_clears_the_refusal_it_replaces() {
+        let mut panel = GetDataPanel::new(None);
+        panel.set_symbol("WINQ26");
+        let offered = BTreeSet::from(["2026-07-21".to_owned()]);
+        panel.days.selection.click("2026-07-21", &offered, false);
+        panel.absorb(DownloadEvent::Failed {
+            headline: "the terminal does not serve WINQ26".to_owned(),
+            fix: None,
+        });
+        assert!(matches!(panel.phase, Phase::Failed { .. }));
+
+        panel.adopt_pick("WINV26");
+
+        assert_eq!(panel.symbol, "WINV26");
+        assert!(
+            panel.days.selection.is_empty(),
+            "another contract's day means nothing here"
+        );
+        assert!(
+            !matches!(panel.phase, Phase::Failed { .. }),
+            "an explicit pick is not blocked by the last refusal"
+        );
+    }
+
+    /// The panel has to know whose instruments it can fetch *before* it offers
+    /// one to click: a contract the source cannot serve is a click that can
+    /// only end in a refusal.
+    #[test]
+    fn the_panel_answers_for_the_provider_its_source_serves() {
+        assert_eq!(GetDataPanel::new(None).provider(), ProviderKind::MetaTrader);
+    }
+
+    /// A panel that has been told which days the broker holds, and which one
+    /// the trader picked. A week with a weekend in it, so the day before
+    /// Monday has to be Friday and not Sunday.
+    fn panel_on(day: &str) -> GetDataPanel {
+        let mut panel = GetDataPanel::new(None);
+        panel.absorb(DownloadEvent::DaysAvailable {
+            symbol: "WINV26".to_string(),
+            days: [
+                "2026-08-25",
+                "2026-08-26",
+                "2026-08-27",
+                "2026-08-28",
+                "2026-08-31",
+            ]
+            .iter()
+            .map(|d| (*d).to_string())
+            .collect(),
+        });
+        panel.symbol = "WINV26".to_string();
+        let offered = panel.available.clone().unwrap_or_default();
+        panel.days.selection.click(day, &offered, false);
+        after_a_frame(&mut panel);
+        panel
+    }
+
+    /// Resolve the day before, as drawing the tab does once per frame.
+    ///
+    /// The panel reads the target rather than deriving it on demand, because
+    /// the moment it is needed — folding a finished download — has neither the
+    /// library nor the folder in hand. Tests that change what the answer
+    /// depends on have to stand a frame in for the same reason.
+    fn after_a_frame(panel: &mut GetDataPanel) {
+        panel.day_before_target = panel.resolve_day_before();
+    }
+
+    /// The broker's day before `day`, as the panel's calendar has it.
+    fn day_before_of<'a>(panel: &'a GetDataPanel, day: &str) -> Option<&'a str> {
+        let offered = panel.available.as_ref().expect("the look-up answered");
+        quantick_replay::download_selection::day_before(offered, day)
+    }
+
+    /// A frame over a folder freshly scanned to hold these days of WINV26.
+    fn holding(panel: &mut GetDataPanel, days: &[&str]) {
+        panel.folder_rescanned();
+        let day_before = panel.day_before;
+        panel.pump(Some(&library_holding(days)), day_before);
+    }
+
+    /// A scanned replay folder holding these days of WINV26 and nothing else.
+    fn library_holding(days: &[&str]) -> Library {
+        Library {
+            root: PathBuf::from("replay"),
+            problems: Vec::new(),
+            sessions: days
+                .iter()
+                .map(|day| quantick_replay::SessionEntry {
+                    path: PathBuf::from(format!("replay/WINV26/{day}.csv")),
+                    symbol: "WINV26".to_string(),
+                    date: quantick_replay::SessionDate::parse(day),
+                    size_bytes: 0,
+                    timezone: UtcOffset::UTC,
+                    timezone_declared: true,
+                    side_source: None,
+                    has_quotes: false,
+                    notes: Vec::new(),
+                    has_context: true,
+                })
+                .collect(),
+        }
+    }
+
+    /// [`library_holding`], with no run-up file beside any tape.
+    fn tapes_only(days: &[&str]) -> Library {
+        let mut library = library_holding(days);
+        for entry in &mut library.sessions {
+            entry.has_context = false;
+        }
+        library
+    }
+
+    #[test]
+    fn the_day_before_is_the_one_the_broker_holds_not_the_one_the_calendar_has() {
+        // Monday: the day before it at this broker is the Friday.
+        let monday = panel_on("2026-08-31");
+        assert_eq!(day_before_of(&monday, "2026-08-31"), Some("2026-08-28"));
+        assert_eq!(
+            monday.day_before_to_fetch().as_deref(),
+            Some("2026-08-28"),
+            "and that is the day a download would ask for"
+        );
+
+        // The oldest day it holds has nothing before it, which is not a
+        // failure — it is the honest end of the record.
+        let oldest = panel_on("2026-08-25");
+        assert_eq!(day_before_of(&oldest, "2026-08-25"), None);
+        assert_eq!(oldest.day_before_to_fetch(), None);
+    }
+
+    #[test]
+    fn with_the_tick_off_nothing_is_fetched_behind_the_chosen_day() {
+        let mut panel = panel_on("2026-08-31");
+        panel.day_before = false;
+        after_a_frame(&mut panel);
+        assert_eq!(
+            day_before_of(&panel, "2026-08-31"),
+            Some("2026-08-28"),
+            "the broker still holds it"
+        );
+        assert_eq!(
+            panel.day_before_to_fetch(),
+            None,
+            "the trader simply did not ask for it"
+        );
+    }
+
+    #[test]
+    fn a_finished_download_holds_the_tape_back_until_the_day_before_is_in() {
+        let mut panel = panel_on("2026-08-31");
+        panel.phase = Phase::Running { ticks: 1_200 };
+        let tape = PathBuf::from("replay/WINV26/20260831.csv");
+
+        let action = panel.absorb(DownloadEvent::Done { tape: tape.clone() });
+
+        assert!(
+            action.is_none(),
+            "the browser is told once, when both days are on disk"
+        );
+        assert_eq!(panel.pending_tape.as_ref(), Some(&tape));
+        assert_eq!(
+            panel.chain_day.as_deref(),
+            Some("2026-08-28"),
+            "and the day before is queued behind it"
+        );
+        assert!(
+            matches!(panel.phase, Phase::Finished { ticks: 1_200, .. }),
+            "the day the trader asked for is finished either way"
+        );
+    }
+
+    #[test]
+    fn with_nothing_to_fetch_behind_it_a_download_lands_at_once() {
+        let mut panel = panel_on("2026-08-25");
+        panel.phase = Phase::Running { ticks: 7 };
+        let tape = PathBuf::from("replay/WINV26/20260825.csv");
+
+        let action = panel.absorb(DownloadEvent::Done { tape: tape.clone() });
+
+        assert!(matches!(action, Some(GetDataAction::Downloaded(p)) if p == tape));
+        assert!(panel.chain_day.is_none());
+        assert!(panel.pending_tape.is_none());
+    }
+
+    /// The report this half exists to prevent: a trader who asked for two days
+    /// and lost the one they actually picked because the extra one failed.
+    #[test]
+    fn a_refused_day_before_still_hands_over_the_day_that_was_asked_for() {
+        let mut panel = panel_on("2026-08-31");
+        let tape = PathBuf::from("replay/WINV26/20260831.csv");
+        panel.pending_tape = Some(tape.clone());
+        panel.day_before_stage = Some(DayBeforeStage::Running {
+            day: "2026-08-28".to_string(),
+            ticks: 0,
+        });
+
+        let action = panel.absorb(DownloadEvent::Failed {
+            headline: "the terminal holds no ticks for that day".to_string(),
+            fix: None,
+        });
+
+        assert!(matches!(action, Some(GetDataAction::Downloaded(p)) if p == tape));
+        assert!(
+            matches!(panel.day_before_stage, Some(DayBeforeStage::Failed { .. })),
+            "and the interface can say the day before did not come"
+        );
+        assert!(
+            !matches!(panel.phase, Phase::Failed { .. }),
+            "the chosen day's download did not fail"
+        );
+    }
+
+    /// The chosen day's phase stays finished while its optional predecessor is
+    /// fetched. Progress from that second worker must not make `poll` mistake
+    /// the finished first phase for the end of the still-running second job.
+    #[test]
+    fn day_before_progress_keeps_its_job_connected() {
+        let mut panel = panel_on("2026-08-31");
+        panel.phase = Phase::Finished {
+            ticks: 1_200,
+            sessions: 5,
+            complete: true,
+        };
+        panel.day_before_stage = Some(DayBeforeStage::Running {
+            day: "2026-08-28".to_string(),
+            ticks: 0,
+        });
+        let (sender, events) = std::sync::mpsc::channel();
+        sender
+            .send(DownloadEvent::Progress { ticks: 250_000 })
+            .expect("the live worker still owns its receiver");
+        panel.job = Some(DownloadJob::stopped_for_test(events));
+
+        let action = panel.poll();
+
+        assert!(action.is_none());
+        assert!(panel.job.is_some(), "the second worker is still running");
+        assert!(matches!(
+            panel.day_before_stage,
+            Some(DayBeforeStage::Running { ticks: 250_000, .. })
+        ));
+        drop(sender);
+    }
+
+    /// The caption under the tick and the tick itself are one statement. They
+    /// disagreed once — the caption keyed off whether a day had been picked,
+    /// so a ticked box sat over "only the day you pick is downloaded" — and a
+    /// trader reading that has been told the feature is off while it is on.
+    #[test]
+    fn the_note_under_the_tick_never_contradicts_it() {
+        let mut panel = panel_on("2026-08-31");
+        assert!(
+            panel.day_before_note().contains("2026-08-28"),
+            "{}",
+            panel.day_before_note()
+        );
+
+        // No day picked yet: still coming, it just cannot be named yet.
+        panel.days.selection.clear();
+        after_a_frame(&mut panel);
+        assert!(
+            panel.day_before_note().contains("comes with it"),
+            "{}",
+            panel.day_before_note()
+        );
+
+        panel.day_before = false;
+        after_a_frame(&mut panel);
+        assert!(
+            panel.day_before_note().starts_with("Only the day you pick"),
+            "{}",
+            panel.day_before_note()
+        );
+
+        // The oldest day the broker holds has nothing behind it, and says so
+        // rather than promising a day that will never arrive.
+        let oldest = panel_on("2026-08-25");
+        assert!(
+            oldest.day_before_note().contains("no earlier day"),
+            "{}",
+            oldest.day_before_note()
+        );
+    }
+
+    /// Cancelling the second half, or losing it to a killed terminal, must
+    /// still hand over the day the trader asked for. It is already on disk;
+    /// a browser that is never told never rescans, and a downloaded day that
+    /// does not appear in the list is a download that did nothing.
+    #[test]
+    fn a_second_half_that_stops_without_a_word_still_hands_the_day_over() {
+        let mut panel = panel_on("2026-08-31");
+        let tape = PathBuf::from("replay/WINV26/20260831.csv");
+        panel.pending_tape = Some(tape.clone());
+        panel.day_before_stage = Some(DayBeforeStage::Running {
+            day: "2026-08-28".to_string(),
+            ticks: 400,
+        });
+        // A job whose sender is already gone: what cancel, a killed terminal
+        // and a crashed exporter all look like from here.
+        let (_, events) = std::sync::mpsc::channel::<DownloadEvent>();
+        panel.job = Some(DownloadJob::stopped_for_test(events));
+
+        let action = panel.poll();
+
+        assert!(matches!(action, Some(GetDataAction::Downloaded(p)) if p == tape));
+        assert!(
+            matches!(panel.day_before_stage, Some(DayBeforeStage::Failed { .. })),
+            "and the row says the day before did not come"
+        );
+        assert!(panel.pending_tape.is_none(), "handed over exactly once");
+        assert!(
+            !matches!(panel.phase, Phase::Failed { .. }),
+            "the chosen day's download did not fail"
+        );
+    }
+
+    /// A tape the trader already has is not downloaded again. Re-exporting a
+    /// day costs them tens of megabytes and minutes, and overwrites a
+    /// recording they may have imported or corrected by hand — while the day
+    /// still joins the chart, which is the whole point of the setting on a
+    /// folder that has been filling up for weeks.
+    #[test]
+    fn a_day_before_already_in_the_folder_is_joined_but_never_re_downloaded() {
+        let mut panel = panel_on("2026-08-31");
+        holding(&mut panel, &["2026-08-28"]);
+
+        assert!(
+            panel.day_before_target.as_ref().is_some_and(|t| t.on_disk),
+            "the folder holds it"
+        );
+        assert_eq!(
+            panel.day_before_to_fetch(),
+            None,
+            "so nothing is downloaded for it"
+        );
+        assert!(
+            panel.day_before_note().contains("already in this folder"),
+            "{}",
+            panel.day_before_note()
+        );
+
+        // And a folder that does not hold it downloads it as before.
+        holding(&mut panel, &[]);
+        assert_eq!(panel.day_before_to_fetch().as_deref(), Some("2026-08-28"));
+    }
+
+    /// Before the terminal has answered, "the broker holds no earlier day" is
+    /// a claim about a record this panel has not been shown.
+    #[test]
+    fn a_look_up_still_running_never_reports_what_the_broker_holds() {
+        let mut panel = panel_on("2026-08-31");
+        panel.available = None;
+        after_a_frame(&mut panel);
+
+        let note = panel.day_before_note();
+        assert!(note.contains("once the terminal has said"), "{note}");
+        assert!(
+            !note.contains("no earlier day"),
+            "a fact it has not been told: {note}"
+        );
+    }
+
+    #[test]
+    fn a_new_request_forgets_the_last_one_s_day_before() {
+        let mut panel = panel_on("2026-08-31");
+        panel.pending_tape = Some(PathBuf::from("replay/WINV26/20260831.csv"));
+        panel.day_before_stage = Some(DayBeforeStage::Done {
+            day: "2026-08-28".to_string(),
+            ticks: 9,
+        });
+
+        panel.probe("replay");
+
+        assert!(panel.day_before_stage.is_none());
+        assert!(panel.pending_tape.is_none());
+        assert!(panel.chain_day.is_none());
+    }
+
+    /// A source that remembers every request and launches nothing that
+    /// answers: the test hands each job its events itself. With `refuse`, it
+    /// cannot launch at all, as a machine with no Python cannot.
+    struct RecordingSource {
+        asked: Arc<Mutex<Vec<DownloadRequest>>>,
+        refuse: bool,
+    }
+
+    impl SessionSource for RecordingSource {
+        fn label(&self) -> String {
+            "Recording".to_string()
+        }
+
+        fn provider(&self) -> ProviderKind {
+            ProviderKind::MetaTrader
+        }
+
+        fn commands(
+            &self,
+            request: &DownloadRequest,
+        ) -> Result<Vec<std::process::Command>, DownloadError> {
+            self.asked
+                .lock()
+                .expect("one test thread")
+                .push(request.clone());
+            if self.refuse {
+                return Err(DownloadError::NoInterpreter {
+                    tried: "none".to_string(),
+                });
+            }
+            Ok(Vec::new())
+        }
+    }
+
+    type Asked = Arc<Mutex<Vec<DownloadRequest>>>;
+
+    /// [`panel_on`] with every one of `days` picked, served by a source that
+    /// records what it was asked for.
+    fn panel_picking(days: &[&str], refuse: bool) -> (GetDataPanel, Asked) {
+        let mut panel = panel_on(days[0]);
+        let offered = panel.available.clone().unwrap_or_default();
+        for day in &days[1..] {
+            panel.days.selection.click(day, &offered, false);
+        }
+        let asked = Asked::default();
+        panel.source = Box::new(RecordingSource {
+            asked: Arc::clone(&asked),
+            refuse,
+        });
+        (panel, asked)
+    }
+
+    /// The days asked for so far, in order.
+    fn asked(log: &Asked) -> Vec<String> {
+        let requests = log.lock().expect("one test thread");
+        requests.iter().filter_map(|r| r.day.clone()).collect()
+    }
+
+    /// The running job says `events` and ends; then a frame passes with the
+    /// tab never drawn.
+    fn land(panel: &mut GetDataPanel, events: Vec<DownloadEvent>) -> Option<GetDataAction> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        for event in events {
+            sender.send(event).expect("the receiver is held below");
+        }
+        drop(sender);
+        panel.job = Some(DownloadJob::stopped_for_test(receiver));
+        panel.pump(None, true)
+    }
+
+    fn done(day: &str) -> DownloadEvent {
+        DownloadEvent::Done {
+            tape: PathBuf::from(format!("replay/WINV26/{day}.csv")),
+        }
+    }
+
+    fn statuses(panel: &GetDataPanel) -> Vec<DayStatus> {
+        let rows = panel.days.batch().map(|b| b.rows().to_vec());
+        rows.unwrap_or_default()
+            .into_iter()
+            .map(|r| r.status)
+            .collect()
+    }
+
+    /// The whole queue, driven by frames that never draw the tab: a day is
+    /// refused, the next still comes, the held one is never asked for, and
+    /// nothing is ever handed over to open.
+    #[test]
+    fn several_days_move_on_frame_by_frame_with_the_tab_never_drawn() {
+        let (mut panel, log) = panel_picking(
+            &["2026-08-31", "2026-08-26", "2026-08-25", "2026-08-27"],
+            false,
+        );
+        panel.folder_rescanned();
+        panel.pump(Some(&library_holding(&["2026-08-26"])), true);
+
+        panel.download("replay");
+        assert_eq!(
+            asked(&log),
+            ["2026-08-25"],
+            "the oldest first, one at a time"
+        );
+
+        let refused = land(
+            &mut panel,
+            vec![DownloadEvent::Failed {
+                headline: "WINV26 has no trades on 2026-08-25".to_string(),
+                fix: Some("Pick another day.".to_string()),
+            }],
+        );
+        assert!(refused.is_none());
+        assert_eq!(
+            asked(&log),
+            ["2026-08-25", "2026-08-27"],
+            "a refusal does not stop it"
+        );
+
+        let landed = land(
+            &mut panel,
+            vec![DownloadEvent::Progress { ticks: 10 }, done("20260827")],
+        );
+        assert!(
+            matches!(landed, Some(GetDataAction::Fetched)),
+            "a rescan, never a tape to select and open"
+        );
+        assert_eq!(asked(&log), ["2026-08-25", "2026-08-27", "2026-08-31"]);
+        assert!(matches!(
+            land(&mut panel, vec![done("20260831")]),
+            Some(GetDataAction::Fetched)
+        ));
+
+        assert_eq!(
+            statuses(&panel),
+            [
+                DayStatus::Refused {
+                    headline: "WINV26 has no trades on 2026-08-25".to_string(),
+                    fix: Some("Pick another day.".to_string()),
+                },
+                DayStatus::AlreadyHere { run_up: true },
+                DayStatus::Fetched {
+                    ticks: 10,
+                    run_up: 0
+                },
+                DayStatus::Fetched {
+                    ticks: 0,
+                    run_up: 0
+                },
+            ],
+            "the fix stays beside its refusal"
+        );
+        assert!(!panel.is_busy());
+        assert!(panel.pending_tape.is_none() && panel.chain_day.is_none());
+        assert!(
+            matches!(panel.phase, Phase::Idle),
+            "no single-day result stands in"
+        );
+    }
+
+    /// One day lands too with the window closed, and is handed over to open.
+    #[test]
+    fn a_single_day_lands_with_the_tab_never_drawn() {
+        let (mut panel, log) = panel_picking(&["2026-08-25"], false);
+        panel.download("replay");
+        assert_eq!(asked(&log), ["2026-08-25"]);
+        let landed = land(&mut panel, vec![done("20260825")]);
+        assert!(matches!(landed, Some(GetDataAction::Downloaded(_))));
+        assert!(!panel.is_busy());
+    }
+
+    #[test]
+    fn a_refusal_every_day_would_repeat_stops_the_rest_untried() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28", "2026-08-31"], false);
+        panel.download("replay");
+        land(
+            &mut panel,
+            vec![DownloadEvent::Failed {
+                headline: "quantick could not reach the MetaTrader 5 terminal".to_string(),
+                fix: Some("Open the terminal and log in.".to_string()),
+            }],
+        );
+        assert_eq!(
+            asked(&log),
+            ["2026-08-27"],
+            "nothing more is asked of a closed terminal"
+        );
+        assert_eq!(
+            statuses(&panel)[1..],
+            [DayStatus::NotTried, DayStatus::NotTried]
+        );
+        assert!(!panel.is_busy());
+    }
+
+    #[test]
+    fn a_source_that_cannot_launch_stops_the_batch_with_its_advice() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28"], true);
+        panel.download("replay");
+        assert_eq!(asked(&log), ["2026-08-27"]);
+        let advice = DownloadError::NoInterpreter {
+            tried: "none".to_string(),
+        }
+        .advice();
+        assert!(
+            matches!(&statuses(&panel)[0], DayStatus::Refused { fix: Some(fix), .. } if *fix == advice),
+            "{:?}",
+            statuses(&panel)
+        );
+        assert_eq!(statuses(&panel)[1], DayStatus::NotTried);
+    }
+
+    #[test]
+    fn a_day_of_several_that_stops_without_a_word_does_not_stop_the_rest() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+        panel.download("replay");
+
+        assert!(land(&mut panel, Vec::new()).is_none());
+
+        assert!(
+            matches!(&statuses(&panel)[0], DayStatus::Refused { headline, .. } if headline.contains("stopped")),
+            "{:?}",
+            statuses(&panel)
+        );
+        assert_eq!(asked(&log), ["2026-08-27", "2026-08-28"]);
+    }
+
+    /// Every later day is asked with the fields as they stood at the click,
+    /// whatever the trader edits while the queue runs.
+    #[test]
+    fn retyping_the_symbol_mid_queue_never_reaches_a_later_day() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+        panel.download("replay");
+        panel.symbol = "WINQ26".to_string();
+        panel.context_sessions = 20;
+        panel.declared_clock = Some(0);
+
+        land(&mut panel, vec![done("20260827")]);
+
+        let requests = log.lock().expect("one test thread").clone();
+        assert_eq!(requests.len(), 2);
+        let frozen = requests[0].template();
+        assert_eq!(
+            requests[1],
+            DownloadRequest::for_day(&frozen, "2026-08-28".to_string())
+        );
+        assert_eq!(requests[1].symbol, "WINV26");
+    }
+
+    /// A cancel is only a request: the exporter may still be writing. Until
+    /// its worker has ended, the tab is busy and no new job replaces it.
+    #[test]
+    fn a_cancelled_queue_stays_busy_until_its_worker_has_ended() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+        panel.download("replay");
+        panel.days.cancel();
+        assert!(panel.is_busy(), "the cancelled worker has not ended yet");
+
+        panel.download("replay");
+        assert!(panel.job.is_some(), "the live job is never dropped");
+        assert_eq!(asked(&log), ["2026-08-27"], "and nothing starts beside it");
+
+        land(&mut panel, Vec::new());
+        assert_eq!(
+            asked(&log),
+            ["2026-08-27", "2026-08-27"],
+            "the queue asked for again starts once the worker is gone"
+        );
+    }
+
+    /// A tape is never downloaded over, run-up or not — a day before, a
+    /// broker that served none, a hand-corrected file. One without its run-up
+    /// is skipped all the same, and its row says so.
+    #[test]
+    fn a_tape_without_its_run_up_is_skipped_and_labelled() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28", "2026-08-31"], false);
+        panel.folder_rescanned();
+        let mut folder = tapes_only(&["2026-08-27"]);
+        folder
+            .sessions
+            .extend(library_holding(&["2026-08-28"]).sessions);
+        panel.pump(Some(&folder), true);
+        assert!(
+            panel.days.held.contains("2026-08-27"),
+            "a tape alone is held"
+        );
+        assert!(panel.days.held.contains("2026-08-28"));
+
+        panel.download("replay");
+        assert_eq!(asked(&log), ["2026-08-31"], "neither tape is fetched over");
+        assert_eq!(
+            statuses(&panel)[..2],
+            [
+                DayStatus::AlreadyHere { run_up: false },
+                DayStatus::AlreadyHere { run_up: true },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_short_run_up_is_said_on_its_row() {
+        let (mut panel, _) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+        panel.download("replay");
+        land(
+            &mut panel,
+            vec![
+                DownloadEvent::Progress { ticks: 40 },
+                DownloadEvent::ContextWritten {
+                    sessions: 2,
+                    complete: false,
+                },
+                done("20260827"),
+            ],
+        );
+        let batch = panel.days.batch().expect("a batch");
+        let asked = batch.template().context_sessions;
+        let line = batch.rows()[0].line(asked);
+        assert!(
+            line.contains(&format!("run-up short: 2 of {asked} sessions")),
+            "{line}"
+        );
+    }
+
+    /// An unknown clock in a queue gets the answer one day gets: the control,
+    /// a stated default, and a fix pointing at it — never a command-line flag.
+    #[test]
+    fn a_clock_refusal_in_a_queue_points_at_the_clock_control() {
+        let (mut panel, log) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+        panel.download("replay");
+        land(
+            &mut panel,
+            vec![DownloadEvent::Failed {
+                headline: "quantick does not know this broker's clock offset yet".to_string(),
+                fix: Some("pass --utc-offset-s (B3 brokers use -10800)".to_string()),
+            }],
+        );
+        assert!(panel.clock_needed);
+        assert_eq!(panel.declared_clock, Some(-10_800));
+        let DayStatus::Refused { fix: Some(fix), .. } = &statuses(&panel)[0] else {
+            panic!("refused with a fix: {:?}", statuses(&panel));
+        };
+        assert!(fix.contains("broker clock above"), "{fix}");
+        assert!(
+            fix.contains("press Download again"),
+            "a look-up would clear the picks: {fix}"
+        );
+        assert!(!fix.contains("--utc-offset-s"), "{fix}");
+        assert_eq!(statuses(&panel)[1], DayStatus::NotTried);
+        assert_eq!(asked(&log), ["2026-08-27"]);
+
+        // The clock picked, Download again asks for every day, not-tried ones
+        // included, in that clock.
+        panel.declared_clock = Some(0);
+        panel.download("replay");
+        assert_eq!(asked(&log), ["2026-08-27", "2026-08-27"]);
+        land(&mut panel, vec![done("20260827")]);
+        assert_eq!(asked(&log), ["2026-08-27", "2026-08-27", "2026-08-28"]);
+        let requests = log.lock().expect("one test thread").clone();
+        assert!(requests[1..].iter().all(|r| r.utc_offset_s == Some(0)));
+    }
+
+    #[test]
+    fn download_is_off_when_every_picked_day_is_here() {
+        let (mut panel, _) = panel_picking(&["2026-08-27", "2026-08-28"], false);
+        panel.folder_rescanned();
+        panel.pump(Some(&library_holding(&["2026-08-27", "2026-08-28"])), true);
+        assert!(panel.days.nothing_to_fetch());
+    }
+
+    #[test]
+    fn several_days_never_fetch_the_day_before_and_the_note_says_why() {
+        let (mut panel, _) = panel_picking(&["2026-08-28", "2026-08-31"], false);
+        after_a_frame(&mut panel);
+        assert_eq!(panel.day_before_to_fetch(), None);
+        assert!(
+            panel
+                .day_before_note()
+                .starts_with("Off while several days"),
+            "{}",
+            panel.day_before_note()
+        );
+    }
+
+    #[test]
+    fn a_new_look_up_clears_the_picked_days() {
+        let (mut panel, _) = panel_picking(&["2026-08-28", "2026-08-31"], false);
+        panel.probe("replay");
+        assert!(panel.days.selection.is_empty());
+    }
+}

@@ -24,7 +24,11 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) history: &'a mut super::tabs::HistorySettings,
     pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
+    pub(super) surface: &'a mut quantick_workspace::arrangement::strip::StripSurface,
 }
+
+/// What the strip asks of the window: the palette opens?, and the tab a close took.
+pub(super) type StripAsk = (bool, Option<Tab>);
 
 #[derive(Clone, Copy)]
 pub(crate) struct ArrangementRead<'a> {
@@ -37,6 +41,7 @@ pub(crate) struct ArrangementRead<'a> {
     pub(super) record_deals: Option<bool>,
     pub(super) history: &'a super::tabs::HistorySettings,
     pub(super) drawing_chrome: &'a crate::surfaces::DrawingChromeSurface,
+    pub(super) workspace_book: &'a quantick_stores::workspaces::WorkspaceBook,
 }
 
 impl ArrangementAdapter<'_> {
@@ -256,32 +261,70 @@ impl ArrangementAdapter<'_> {
             time_pane.price_view.set_inverted(time_inverted);
         }
     }
-    /// Close the tab at `index`, activating a neighbour.
-    ///
-    /// The last tab stays: a window with no market has nothing to draw. What
-    /// the closed tab owned goes with it — dropping its `FeedHandle` closes
-    /// the receivers its feed thread sends into, and dropping its panes drops
-    /// the indicator worker and book worker handles, whose run loops end when
-    /// their command channels disconnect. No joins, no shutdown protocol.
-    pub(super) fn close_tab(&mut self, index: usize) {
-        if let Ok(plan) = self.tabs.plan_close(index) {
-            self.close_planned(plan).expect("fresh closing plan");
-        }
+    /// Close the tab at `index`, activating a neighbour, and answer the tab
+    /// it took. The last tab stays: a window with no market has nothing to
+    /// draw. Dropping the closed tab's `FeedHandle` and panes ends its feed
+    /// thread and workers as their channels disconnect; no joins.
+    pub(super) fn close_tab(&mut self, index: usize) -> Option<Tab> {
+        let plan = self.tabs.plan_close(index).ok()?;
+        Some(self.close_planned(plan).expect("fresh closing plan"))
     }
     /// Land a closing plan; owners beside the host forget the tab before it drops.
     pub(super) fn close_planned(
         &mut self,
         plan: quantick_workspace::arrangement::Transition,
-    ) -> Result<(), quantick_workspace::arrangement::ArrangementError> {
+    ) -> Result<Tab, quantick_workspace::arrangement::ArrangementError> {
         let closed = self.tabs.close_planned(plan)?;
         let runtime = &closed.runtime;
         tracing::info!(target: "quantick::app", schema_version = 1_u8, event_code = "TAB_CLOSED", tab = closed.id, feed = %runtime.feed_id, symbol = %runtime.symbol, tabs = self.tabs.len(), action = "drop_feed_and_workers", "closing a market tab");
         self.indicators.registry.forget_tab(closed.id);
+        self.workspace.book.forget_tab(closed.id);
         let layouts = self.workspace.layouts_mut().session_mut();
         for (pane, _) in closed.runtime.panes() {
             layouts.remove_pane(pane.id);
         }
-        Ok(())
+        Ok(closed.runtime)
+    }
+    /// Carry out what the tab strip asked for; see [`StripAsk`].
+    pub(super) fn apply_tab_action(&mut self, action: crate::tabstrip::TabAction) -> StripAsk {
+        use crate::tabstrip::TabAction;
+        let mut closed = None;
+        match action {
+            TabAction::Activate(index) => {
+                if index < self.tabs.len() {
+                    self.tabs.select(index);
+                    self.surface.show_market();
+                }
+            }
+            // Closing a chip from Home stays on Home, whichever market went.
+            TabAction::Close(index) => {
+                let home = self.surface.is_home();
+                closed = self.close_tab(index);
+                if home {
+                    super::home_wiring::show_home(self.tabs, self.surface);
+                }
+            }
+            TabAction::New => return (true, None),
+            TabAction::Home => super::home_wiring::show_home(self.tabs, self.surface),
+        }
+        (false, closed)
+    }
+    /// Carry out the tab shortcuts. Answers as [`Self::apply_tab_action`] does.
+    pub(super) fn apply_tab_keys(
+        &mut self,
+        keys: quantick_workspace::arrangement::strip::TabKeys,
+    ) -> StripAsk {
+        if keys.home {
+            super::home_wiring::show_home(self.tabs, self.surface);
+        }
+        let keys = self.surface.settle_keys(keys);
+        if keys.next {
+            self.cycle_tab(1);
+        }
+        if keys.previous {
+            self.cycle_tab(-1);
+        }
+        (keys.new_tab, None)
     }
     /// Move tabs along the strip with the core's existing positional wrap.
     pub(super) fn cycle_tab(&mut self, delta: isize) {
@@ -333,75 +376,11 @@ impl ArrangementAdapter<'_> {
         self.drawing_chrome
             .restore_inspector_position(chrome.inspector_position);
     }
-    /// Put the window back the way the bookmark called `name` recorded it.
-    ///
-    /// The saved markets are opened as new tabs and the tabs that were on
-    /// screen are closed afterwards, rather than the reverse: `close_tab`
-    /// refuses to close the last tab — a window with no market has nothing to
-    /// draw — so growing before shrinking is what lets the whole strip be
-    /// replaced. Closing goes through the same path a `Ctrl+W` takes, so a
-    /// simulated position ends in the labeled, journaled flatten the
-    /// paper-trading contract promises instead of vanishing with its tab.
-    ///
-    /// The startup workspace is left alone. Opening a bookmark is a thing you
-    /// do to *this session*; making it the opening screen is `Save workspace`,
-    /// one entry above.
-    pub(super) fn open_named_workspace(&mut self, name: &str) {
-        let Some(entry) = self
-            .workspace
-            .session()
-            .bookmarks()
-            .iter()
-            .find(|held| held.name == name)
-            .cloned()
-        else {
-            self.note_workspace(format!("No workspace called \"{name}\""));
-            return;
-        };
-        if entry.tabs.is_empty() {
-            // `restore` drops empty bookmarks at load, so this is only
-            // reachable from a file edited under a running app.
-            self.note_workspace(format!("\"{name}\" has no market left to open"));
-            return;
-        }
-        let replaced = self.tabs.len();
-        self.run_restore(
-            quantick_workspace::arrangement::RestoreMode::Named,
-            &entry.tabs,
-            entry.active_tab,
-            entry.chrome.as_ref(),
-            None,
-        );
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_NAMED_OPENED",
-            name = %name,
-            tabs = self.tabs.len(),
-            closed = replaced,
-            active = self.tabs.active_index(),
-            action = "replace_tab_strip",
-            "named workspace opened"
-        );
-        self.note_workspace(format!(
-            "Opened \"{name}\" — {} {}",
-            self.tabs.len(),
-            if self.tabs.len() == 1 {
-                "chart tab"
-            } else {
-                "chart tabs"
-            }
-        ));
-    }
-
     fn active_tab(&self) -> &Tab {
         &self.tabs[self.tabs.active_index()]
     }
     pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
         self.tabs.runtime_mut(self.tabs.active_index())
-    }
-    pub(super) fn note_workspace(&mut self, message: String) {
-        self.toast.note(message, std::time::Instant::now());
     }
     pub(super) fn refresh_recent_workspaces(&mut self) {
         let existing = crate::workspace_bundle::existing_recent(self.workspace.session().recent());
@@ -415,46 +394,14 @@ impl ArrangementRead<'_> {
     pub(super) fn capture_arrangement(&self) -> (Vec<ui_state::SavedTab>, ui_state::SavedChrome) {
         let tabs = self
             .tabs
-            .iter()
-            .map(|tab| ui_state::SavedTab {
-                candle_styles: tab.candle_styles(),
-                feed: tab.feed_id.clone(),
-                symbol: tab.symbol.clone(),
-                layout: tab.layout.into(),
-                split_fraction: Some(tab.split_fraction),
-                context_collapsed: tab.context_collapsed,
-                flow_collapsed: tab.flow_collapsed,
-                context_heights: tab.context_height_shares(),
-                context_panes_collapsed: tab.context_collapsed_slots(),
-                focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
-                focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
-                flow_bars: tab.flow_pane.state.spec().to_config_string(),
-                // Only a pane that exists has an interval worth recording; a
-                // tab that never showed the split restores on the default,
-                // which is what it had.
-                time_bars: tab
-                    .time_pane()
-                    .map(|pane| pane.state.spec().to_config_string()),
-                context_bars: tab
-                    .time_panes
-                    .iter()
-                    .map(|pane| pane.state.spec().to_config_string())
-                    .collect(),
-                flow_layout: tab.flow_pane.layout_id().map(|layout| layout.0),
-                context_layouts: tab
-                    .time_panes
-                    .iter()
-                    .map(|pane| {
-                        pane.layout_id()
-                            .map_or(crate::ui_state::LAYOUT_UNRECORDED, |layout| layout.0)
-                    })
-                    .collect(),
-                flow_legend_collapsed: tab.flow_pane.legend_collapsed,
-                // A tab with no time pane has no second legend, and `false`
-                // is what it will restore into when one is opened: a pane
-                // that never existed cannot have been folded.
-                time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
-                orderflow_panel: tab.tape().settings_panel.clone(),
+            .iter_presented_ids()
+            .filter_map(|id| {
+                let (workspace, workspace_copy) = self.workspace_book.saved_fields(id);
+                Some(ui_state::SavedTab {
+                    workspace,
+                    workspace_copy,
+                    ..saved_tab_of(self.tabs.by_id(id)?)
+                })
             })
             .collect();
         let chrome = ui_state::SavedChrome {
@@ -485,5 +432,51 @@ impl ArrangementRead<'_> {
             orderflow_folds: self.tabs.panel_folds().clone(),
         };
         (tabs, chrome)
+    }
+}
+
+/// One tab as the desk records it, apart from the workspace book's two fields.
+pub(super) fn saved_tab_of(tab: &Tab) -> ui_state::SavedTab {
+    ui_state::SavedTab {
+        candle_styles: tab.candle_styles(),
+        feed: tab.feed_id.clone(),
+        symbol: tab.symbol.clone(),
+        layout: tab.layout.into(),
+        split_fraction: Some(tab.split_fraction),
+        context_collapsed: tab.context_collapsed,
+        flow_collapsed: tab.flow_collapsed,
+        context_heights: tab.context_height_shares(),
+        context_panes_collapsed: tab.context_collapsed_slots(),
+        focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
+        focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
+        flow_bars: tab.flow_pane.state.spec().to_config_string(),
+        // Only a pane that exists has an interval worth recording; a
+        // tab that never showed the split restores on the default,
+        // which is what it had.
+        time_bars: tab
+            .time_pane()
+            .map(|pane| pane.state.spec().to_config_string()),
+        context_bars: tab
+            .time_panes
+            .iter()
+            .map(|pane| pane.state.spec().to_config_string())
+            .collect(),
+        flow_layout: tab.flow_pane.layout_id().map(|layout| layout.0),
+        context_layouts: tab
+            .time_panes
+            .iter()
+            .map(|pane| {
+                pane.layout_id()
+                    .map_or(crate::ui_state::LAYOUT_UNRECORDED, |layout| layout.0)
+            })
+            .collect(),
+        flow_legend_collapsed: tab.flow_pane.legend_collapsed,
+        // A tab with no time pane has no second legend, and `false`
+        // is what it will restore into when one is opened: a pane
+        // that never existed cannot have been folded.
+        time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
+        workspace: None,
+        workspace_copy: None,
+        orderflow_panel: tab.tape().settings_panel.clone(),
     }
 }

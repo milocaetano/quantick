@@ -16,10 +16,7 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
         frame.time_strip.unwrap(),
     );
     let ui = crate::theme::axes(ctx);
-    let plot = area
-        .shrink(crate::plot_area::PLOT_PADDING_PX)
-        .with_max_x(gutter.left())
-        .with_max_y(strip.top());
+    let plot = area.with_max_x(gutter.left()).with_max_y(strip.top());
     assert!(
         has_fill(output, area, ui.canvas()),
         "the frame uses the shared Light canvas"
@@ -28,7 +25,7 @@ fn assert_boundaries(app: &QuantickApp, ctx: &egui::Context, output: &egui::Full
         has_fill(output, plot, crate::theme::bookmap(ctx).canvas()),
         "only data plots use Slate"
     );
-    assert_eq!(ui.canvas(), egui::Color32::WHITE);
+    assert_eq!(ui.canvas(), egui::Color32::from_rgb(255, 252, 247));
     let strip_fill = output.shapes.iter().rev().find_map(|shape| {
         if let egui::Shape::Rect(rect) = &shape.shape
             && rect
@@ -348,7 +345,7 @@ fn empty_light_loading_words_have_a_compact_backing_above_slate() {
                     .iter()
                     .rposition(|clipped| {
                         matches!(&clipped.shape,
-                    egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(67, 74, 82)
+                    egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(37, 47, 55)
                         && rect.rect.intersects(empty))
                     })
                     .unwrap();

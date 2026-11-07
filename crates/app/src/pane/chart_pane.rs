@@ -69,7 +69,7 @@ pub struct ChartPane {
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
     /// Headless pane binding; the workspace session owns authoritative membership.
-    pub(crate) layout: quantick_workspace::pane_layout::PaneLayout,
+    pub(crate) layout: quantick_workspace::pane_layout::PaneLayout<BarConfiguration>,
     /// Whether this pane's on-chart indicator legend is folded to its count puck. Per pane, not per
     /// window: a split is two readings of the same market, and the corner pressure that makes a
     /// trader fold the flow pane's legend (bubbles, book, the position HUD) is absent on the time
@@ -384,11 +384,7 @@ impl ChartPane {
         &'a self,
         window: &'a crate::footprint_config::FootprintConfig,
     ) -> &'a crate::footprint_config::FootprintConfig {
-        self.presentation
-            .footprint
-            .config
-            .as_ref()
-            .unwrap_or(window)
+        self.presentation.footprint.config.resolve(window)
     }
 
     /// Put this pane on `spec` outright, selectors included. Startup-scoped: the caller is a
@@ -433,7 +429,7 @@ impl ChartPane {
         &mut self,
         config: Option<crate::footprint_config::FootprintConfig>,
     ) {
-        self.presentation.footprint.config = config;
+        self.presentation.footprint.config.set_own(config);
     }
 
     /// An egui interaction id scoped to this pane.
@@ -958,6 +954,7 @@ impl ChartPane {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
             PaneMenuIntent::SetPriceInverted(inverted) => self.price_view.set_inverted(inverted),
+            PaneMenuIntent::SetBarProgress(on) => chrome.layers.bar_progress = Some(on),
             PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_ignore_flow_opening(ignore);

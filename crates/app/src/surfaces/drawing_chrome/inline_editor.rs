@@ -6,7 +6,6 @@
 //! context bar a selection raises carries the rest — colour, type size, lock,
 //! delete — so what was missing was never a panel, only a caret.
 
-use crate::drawings::StyleColor32;
 use eframe::egui;
 
 use super::{DrawingChromeAsk, DrawingChromeSurface, DrawingEdit, DrawingEnv};
@@ -159,7 +158,7 @@ fn draw_inner(
     let size_px = tool
         .glyph_size(drawing)
         .map_or(INLINE_TEXT_FALLBACK_PX, |size| size.px);
-    let color = drawing.style.color32();
+    let color = crate::drawings::to_color32(palette.resolved.legible_drawing(drawing.style.color));
     if drawing.locked {
         close(&mut ask, chrome);
         return ask;

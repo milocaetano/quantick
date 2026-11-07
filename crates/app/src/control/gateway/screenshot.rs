@@ -1,146 +1,163 @@
-//! The screenshot service: what a client may be shown of this window.
-//!
-//! A screenshot is the one read that cannot be answered from state alone -- it
-//! needs a painted frame -- so the request is parked, armed against the next
-//! repaint, harvested when the pixels arrive, and answered late. That whole
-//! arc lives here. The frame service it is armed against (`execute_on_ui`,
-//! `begin_frame`) stays with the host: those two run every request, not only
-//! the ones that want pixels.
-
+//! Native frame admission and delivery, pinned to one market window.
+use super::server::elapsed_us_since;
+use super::{
+    CONTROL_MAX_SCREENSHOT_WAITERS, CONTROL_SCREENSHOT_GRACE_MS, ControlAccess, RawScreenshot,
+    SCREENSHOT_NOTICE, UiRequest,
+};
+use crate::app::ControlWindow;
+use eframe::egui;
+use quantick_control::{
+    limits::{CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME},
+    wire::WireU64,
+};
+use quantick_control_schema::scene::SceneSnapshot;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use quantick_control::error::codes;
-use quantick_control::limits::{CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME};
+/// One UI-frame owner, docked on ControlAccess as a single field.
+pub(super) struct CaptureService {
+    pub screenshot: Option<RawScreenshot>,
+    pub frames: quantick_control_host::window_capture::WindowFrames<PaintedScene, RawScreenshot>,
+    pub rendered_tx: crossbeam_channel::Sender<super::rendered_capture::RenderedFrame>,
+    pub rendered_rx: crossbeam_channel::Receiver<super::rendered_capture::RenderedFrame>,
+    pub served: usize,
+    pub service_us: u64,
+    pub awaiting: std::collections::VecDeque<UiRequest>,
+    #[cfg(any(feature = "control-harness", test))]
+    pub local_window: Option<WireU64>,
+}
+impl Default for CaptureService {
+    fn default() -> Self {
+        let (rendered_tx, rendered_rx) = crossbeam_channel::bounded(CONTROL_MAX_SCREENSHOT_WAITERS);
+        Self {
+            screenshot: None,
+            frames: Default::default(),
+            rendered_tx,
+            rendered_rx,
+            served: 0,
+            service_us: 0,
+            awaiting: Default::default(),
+            #[cfg(any(feature = "control-harness", test))]
+            local_window: None,
+        }
+    }
+}
 
-use crate::app::ControlWindow;
+pub(super) struct PaintedScene {
+    pub scene: SceneSnapshot,
+    pixels_per_point: f32,
+}
 
-use super::{
-    CONTROL_MAX_SCREENSHOT_WAITERS, CONTROL_SCREENSHOT_GRACE_MS, ControlAccess, RawScreenshot,
-    SCREENSHOT_NOTICE, UiRequest, known_error,
-};
-// The one thing this file borrows from the other side of the seam: an
-// arithmetic helper, so both threads report a duration the same way.
-use super::server::elapsed_us_since;
-
+pub(super) fn unpainted_scene(app: &ControlWindow, window: WireU64) -> SceneSnapshot {
+    SceneSnapshot {
+        window_id: Some(window),
+        active_tab_id: WireU64::new(app.tab_reads().tabs().active_id()),
+        active_surface: Default::default(),
+        focused_pane_id: None,
+        focused_pane_side: crate::control::pane_side_dto(
+            app.tab_reads().tabs()[app.tab_reads().active_tab_index()].focused_side(),
+        ),
+        controls: Vec::new(),
+        covered_regions: Vec::new(),
+        coverage: quantick_control_host::wire::unavailable("window_frame_not_delivered"),
+    }
+}
 impl ControlAccess {
-    /// Hand the gateway a rasterised frame the way the window would.
-    ///
-    /// A headless `egui::Context` answers no `ViewportCommand::Screenshot`, so
-    /// the correlation between an image and the scene captured beside it can
-    /// only be proved by supplying the pixels here. Everything downstream —
-    /// the stamping, the point-to-pixel scaling, the encoding, the digest — is
-    /// the shipped path, unchanged.
     #[cfg(test)]
     pub(crate) fn publish_screenshot_for_test(
         &mut self,
         app: &mut ControlWindow,
-        raw: RawScreenshot,
+        mut raw: RawScreenshot,
     ) {
-        self.accept_screenshot(app, raw);
+        let window = raw
+            .window_id
+            .unwrap_or_else(|| WireU64::new(app.tab_reads().tabs().windows().presented().0));
+        let source = raw.source_window_id.unwrap_or(window);
+        raw.window_id = Some(window);
+        raw.source_window_id = Some(source);
+        self.captures.frames.arm(
+            window,
+            PaintedScene {
+                scene: super::super::scene::scene_snapshot(app),
+                pixels_per_point: raw.pixels_per_point,
+            },
+        );
+        self.accept_screenshot(app, window, source, raw);
     }
-
-    /// Whether a capture is still waiting for the window to be rasterised.
     #[cfg(test)]
     pub(crate) fn awaiting_screenshot_for_test(&self) -> usize {
-        self.awaiting_screenshot.len()
+        self.captures
+            .awaiting
+            .iter()
+            .filter(|request| request.prepared.dispatch.needs_screenshot())
+            .count()
     }
-
-    /// Whether the window has been asked for a rasterised frame it has not
-    /// delivered yet.
     #[cfg(test)]
     pub(crate) fn screenshot_armed_for_test(&self) -> bool {
-        self.screenshot_armed
+        self.captures.frames.any_armed()
     }
-
-    /// How many bundles this instance is holding.
     #[cfg(test)]
     pub(crate) fn retained_evidence_for_test(&self) -> usize {
         self.evidence.retained()
     }
-
-    /// Whether this window is holding a rasterised frame a read could use.
     #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn has_screenshot(&self) -> bool {
-        self.screenshot.is_some()
+        self.captures.frames.has_image(WireU64::new(0)) || self.captures.screenshot.is_some()
     }
-
-    /// The registered snapshot scopes the configured grant already reaches.
     #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn readable_scopes(&self) -> Vec<quantick_control::id::SnapshotScopeId> {
         self.contract.readable_scopes(&self.configured_scopes)
     }
-
-    /// Whether the configured grant permits rasterising the window.
-    ///
-    /// Asked *before* anything arms a rasterise, because taking the picture is
-    /// what raises the notice: a caller that will be refused the scope one
-    /// step later must not first tell the trader their window was captured.
-    /// The indicator only means something if it is never wrong.
     #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn grants_screenshot(&self) -> bool {
         self.configured_scopes
             .iter()
             .any(|permission| permission.as_str() == super::evidence::SCREENSHOT_PERMISSION_ID)
     }
-
-    /// Ask the window to rasterise itself for the next read that wants it,
-    /// and take the frame if one has already arrived.
-    ///
-    /// The same arming and the same harvest a deferred remote capture gets.
-    /// Both halves, because a local read runs whether or not the gateway is
-    /// enabled while the frame service that normally harvests runs only when
-    /// it is — so a hook that armed but could not harvest would wait out its
-    /// whole budget for a frame sitting in the input queue.
     #[cfg(any(feature = "control-harness", test))]
-    pub(crate) fn service_screenshot(
-        &mut self,
-        app: &mut ControlWindow,
-        ctx: &eframe::egui::Context,
-    ) {
+    pub(crate) fn service_screenshot(&mut self, app: &mut ControlWindow, ctx: &egui::Context) {
         self.harvest_screenshot(app, ctx);
-        if self.screenshot.is_none() {
-            self.arm_screenshot(ctx);
+        let window = *self
+            .captures
+            .local_window
+            .get_or_insert_with(|| WireU64::new(app.tab_reads().tabs().windows().presented().0));
+        if !self.captures.frames.has_image(window) {
+            self.arm_screenshot(app, ctx, window);
         }
     }
-
-    /// Take the rasterised frame the window was asked for, if it has arrived.
-    ///
-    /// Costs a frame nothing until something arms it: with no capture waiting
-    /// the input scan does not run at all. When one does arrive the trader is
-    /// told, because a picture of their window leaving the process is not
-    /// something that should happen quietly (threat model O-18).
-    pub(super) fn harvest_screenshot(
-        &mut self,
-        app: &mut ControlWindow,
-        ctx: &eframe::egui::Context,
-    ) {
-        if !self.screenshot_armed {
+    /// Cheap on an idle viewport: no tree, strings, or event scan without a waiter.
+    pub(crate) fn needs_window_frame(&self) -> bool {
+        !self.captures.awaiting.is_empty() || self.captures.frames.any_armed()
+    }
+    /// Called inside the matching native viewport before its new paint changes geometry.
+    pub(crate) fn harvest_screenshot(&mut self, app: &mut ControlWindow, ctx: &egui::Context) {
+        let window = WireU64::new(app.tab_reads().tabs().windows().presented().0);
+        if !self.captures.frames.armed(window) {
             return;
         }
-        // Inside the input lock: clone the image's handle and nothing else.
-        // The rows are converted by the closure below, on the response worker
-        // — a 4K framebuffer is eight million pixels, and paying for that here
-        // would blow a 250 microsecond frame budget by two orders of
-        // magnitude every time an agent asks for a picture.
+        let viewport = ctx.viewport_id();
+        let scale = self
+            .captures
+            .frames
+            .scene(window)
+            .map_or(ctx.pixels_per_point(), |painted| painted.pixels_per_point);
         let taken = ctx.input(|input| {
-            let pixels_per_point = input.pixels_per_point();
             input.events.iter().find_map(|event| match event {
-                eframe::egui::Event::Screenshot { image, .. } => {
+                egui::Event::Screenshot {
+                    viewport_id, image, ..
+                } if *viewport_id == viewport => {
                     let image = Arc::clone(image);
                     Some(RawScreenshot {
+                        window_id: Some(window),
+                        source_window_id: Some(window),
                         width_px: u32::try_from(image.size[0]).unwrap_or(0),
                         height_px: u32::try_from(image.size[1]).unwrap_or(0),
-                        pixels_per_point,
+                        pixels_per_point: scale,
                         rgba: super::evidence::ScreenshotPixels::new(move || {
                             image
                                 .pixels
                                 .iter()
-                                // Unmultiplied: the toolkit stores colours
-                                // premultiplied by alpha and a PNG's are not,
-                                // so a translucent surface would darken on the
-                                // way out if the raw bytes were copied across.
-                                .flat_map(eframe::egui::Color32::to_srgba_unmultiplied)
+                                .flat_map(egui::Color32::to_srgba_unmultiplied)
                                 .collect()
                         }),
                     })
@@ -149,155 +166,198 @@ impl ControlAccess {
             })
         });
         if let Some(raw) = taken {
-            self.accept_screenshot(app, raw);
+            self.accept_screenshot(app, window, window, raw);
         }
     }
-
-    /// Take one rasterised frame, and tell the person at the window.
-    ///
-    /// The single door for pixels entering the control plane, so the notice
-    /// cannot be bypassed by whatever hands them over — the window's own
-    /// screenshot event today, a test's fixture in the same breath.
-    pub(super) fn accept_screenshot(&mut self, app: &mut ControlWindow, raw: RawScreenshot) {
-        self.screenshot_armed = false;
-        self.screenshot = Some(raw);
-        app.alerts().show_toast(SCREENSHOT_NOTICE.to_owned());
+    pub(super) fn accept_screenshot(
+        &mut self,
+        app: &mut ControlWindow,
+        target: WireU64,
+        source: WireU64,
+        raw: RawScreenshot,
+    ) {
+        if self.captures.frames.accept(target, source, raw) {
+            app.alerts().show_toast(SCREENSHOT_NOTICE.to_owned());
+        }
     }
-
-    /// Run the captures that were waiting for an image, or give up on them,
-    /// and report how much of the frame's request budget they spent.
-    ///
-    /// Returns before touching anything when none is waiting, which is every
-    /// frame of every session where no client asked for a picture.
+    fn request_authorized(&self, request: &UiRequest, generation: u64) -> bool {
+        request.grant_generation == generation
+            && !self.revoked_connections.contains(&request.connection_id)
+            && request
+                .prepared
+                .required_permissions
+                .is_subset(&self.configured_scopes)
+    }
+    fn give_up_at(request: &UiRequest) -> Instant {
+        request
+            .deadline
+            .checked_sub(Duration::from_millis(CONTROL_SCREENSHOT_GRACE_MS))
+            .unwrap_or(request.deadline)
+    }
+    /// Deadline, authority and closed-target checks run even if that target cannot paint.
     pub(super) fn serve_awaiting_screenshot(
         &mut self,
         app: &mut ControlWindow,
         generation: u64,
-        ctx: &eframe::egui::Context,
+        _ctx: &egui::Context,
         frame_started: Instant,
     ) -> usize {
-        if self.awaiting_screenshot.is_empty() {
-            return 0;
-        }
-        let now = Instant::now();
-        let mut served = 0usize;
-        let mut waiting = std::mem::take(&mut self.awaiting_screenshot);
+        let mut served = 0;
+        let mut waiting = std::mem::take(&mut self.captures.awaiting);
         while let Some(request) = waiting.pop_front() {
-            // Revocation applies to work already in flight, and a parked
-            // capture is in flight. Answered here rather than left to park,
-            // because parking is what keeps asking the window to rasterise —
-            // and a revoked connection must not be able to make the trader's
-            // window flash a capture notice for a request that will be refused
-            // anyway.
-            if request.grant_generation != generation
-                || self.revoked_connections.contains(&request.connection_id)
+            let invalid = !self.request_authorized(&request, generation)
+                || request.deadline <= Instant::now()
+                || request
+                    .window_id
+                    .is_some_and(|window| app.pin_capture_window(Some(window)).is_err());
+            let image = request.prepared.dispatch.needs_screenshot()
+                && request
+                    .window_id
+                    .is_some_and(|window| self.captures.frames.has_image(window));
+            let due = request.prepared.dispatch.needs_screenshot()
+                && Instant::now() >= Self::give_up_at(&request);
+            if !(invalid || image || due)
+                || served >= CONTROL_UI_MAX_REQUESTS_PER_FRAME
+                || (!invalid && !image && elapsed_us_since(frame_started) > CONTROL_UI_BUDGET_US)
             {
-                let _ = request.response.try_send(Err(known_error(
-                    codes::PERMISSION_DENIED,
-                    "connection authority was revoked while the capture waited for a frame",
-                    false,
-                )));
-                continue;
-            }
-            // These captures spend the same frame budget the drain does, and
-            // they run before it. Left uncounted, four waiters plus the
-            // drain's own four would put eight projection passes in one frame
-            // against a documented ceiling of four, and the drain would find
-            // its budget already gone. A waiter this frame cannot serve stays
-            // queued and is served by the next one.
-            //
-            // Except while this frame holds an image. `begin_frame` drops the
-            // image when the frame ends, so a waiter held back on *time* here
-            // would lose the picture it parked for. A loaded machine can spend
-            // the whole budget before this point on every frame, and then no
-            // capture would ever get its picture: each would be answered by
-            // its deadline with a bare `control.timeout`. The count ceiling
-            // still applies, and the first waiter is always under it.
-            //
-            // A waiter that is held back still wants a picture, and the one
-            // this frame holds (if any) is gone by the next frame, so the
-            // window is asked for another. Asking only for a repaint would
-            // leave the captures parked behind the first one waiting on an
-            // image nothing requested.
-            let out_of_time =
-                elapsed_us_since(frame_started) > CONTROL_UI_BUDGET_US && self.screenshot.is_none();
-            if served >= CONTROL_UI_MAX_REQUESTS_PER_FRAME || out_of_time {
-                self.awaiting_screenshot.push_back(request);
-                self.awaiting_screenshot.extend(waiting);
-                self.arm_screenshot(ctx);
-                return served;
-            }
-            // Given up on *before* the deadline, not at it. `execute_on_ui`
-            // refuses an expired request with `control.timeout` as its very
-            // first act, so waiting to the last moment would answer a window
-            // that never presented with a bare timeout — no bundle, no
-            // `screenshot: frame_not_delivered`, and none of the text, events
-            // and configuration that were collectable all along. The grace is
-            // what buys the honest answer room to be built.
-            let give_up_at = request
-                .deadline
-                .checked_sub(Duration::from_millis(CONTROL_SCREENSHOT_GRACE_MS))
-                .unwrap_or(request.deadline);
-            if self.screenshot.is_none() && now < give_up_at {
-                self.arm_screenshot(ctx);
-                self.awaiting_screenshot.push_back(request);
+                self.captures.awaiting.push_back(request);
                 continue;
             }
             let result = self.execute_on_ui(app, generation, &request);
             let _ = request.response.try_send(result);
-            served = served.saturating_add(1);
+            served += 1;
         }
-        // Nothing is waiting any more, so nothing is owed a rasterise. Left
-        // set, the flag would suppress every future arming for the rest of the
-        // session (see `arm_screenshot`).
-        if self.awaiting_screenshot.is_empty() {
-            self.screenshot_armed = false;
+        // Keep a remaining root capture armed even when this frame has no
+        // projection budget. The matching paint refreshes its scene before rendering.
+        let root = WireU64::new(0);
+        if self.captures.awaiting.iter().any(|request| {
+            request.window_id == Some(root)
+                && request.prepared.dispatch.needs_screenshot()
+                && self.request_authorized(request, generation)
+        }) && !self.captures.frames.has_image(root)
+            && self.captures.frames.rearm(root)
+        {
+            _ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Screenshot);
         }
         served
     }
-
-    /// Whether this request has to wait a frame for the window to be
-    /// rasterised, arming the rasterise if so.
+    /// Admit only once. The target has already been pinned on the UI thread.
     pub(super) fn defer_for_screenshot(
         &mut self,
         request: &UiRequest,
-        ctx: &eframe::egui::Context,
+        _ctx: &egui::Context,
     ) -> bool {
-        if !request.prepared.dispatch.needs_screenshot() || self.screenshot.is_some() {
-            return false;
-        }
-        if self.awaiting_screenshot.len() >= CONTROL_MAX_SCREENSHOT_WAITERS {
-            return false;
-        }
-        self.arm_screenshot(ctx);
-        true
+        request.window_id.is_some()
+            && request.prepared.dispatch.needs_paint()
+            && self.captures.awaiting.len()
+                < quantick_control::limits::CONTROL_REQUEST_QUEUE_CAPACITY
+            && (!request.prepared.dispatch.needs_screenshot()
+                || self
+                    .captures
+                    .awaiting
+                    .iter()
+                    .filter(|pending| pending.prepared.dispatch.needs_screenshot())
+                    .count()
+                    < CONTROL_MAX_SCREENSHOT_WAITERS)
     }
-
-    /// Ask the window to rasterise itself, and keep asking while someone is
-    /// waiting.
-    ///
-    /// The command is sent every time rather than once per arming. A window
-    /// that is minimised, occluded, or between viewport states can swallow the
-    /// request and produce no event; an arming that latched would then park
-    /// every future capture behind a command nobody would ever send again, for
-    /// the rest of the session. Repeating it costs one viewport command per
-    /// frame, and only while a capture is actually waiting for a picture.
-    pub(super) fn arm_screenshot(&mut self, ctx: &eframe::egui::Context) {
-        self.screenshot_armed = true;
-        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Screenshot);
+    /// A single queue drain still owns admission. Viewport paints only complete
+    /// admitted reads against the same count and service-time budget.
+    pub(crate) fn finish_window_frame(&mut self, app: &mut ControlWindow, ctx: &egui::Context) {
+        let window = WireU64::new(app.tab_reads().tabs().windows().presented().0);
+        let generation = match &self.state {
+            super::AccessState::Enabled(runtime) => runtime.grant_generation,
+            _ => return,
+        };
+        let started = Instant::now();
+        let mut waiting = std::mem::take(&mut self.captures.awaiting);
+        while let Some(request) = waiting.pop_front() {
+            let matching = request.window_id == Some(window);
+            let image = self.captures.frames.has_image(window);
+            let ready = !request.prepared.dispatch.needs_screenshot()
+                || image
+                || Instant::now() >= Self::give_up_at(&request);
+            let budget = self.captures.served < CONTROL_UI_MAX_REQUESTS_PER_FRAME
+                && (image
+                    || self
+                        .captures
+                        .service_us
+                        .saturating_add(elapsed_us_since(started))
+                        <= CONTROL_UI_BUDGET_US);
+            if !matching || !ready || !budget {
+                self.captures.awaiting.push_back(request);
+                continue;
+            }
+            let result = self.execute_on_ui(app, generation, &request);
+            let _ = request.response.try_send(result);
+            self.captures.served += 1;
+            #[cfg(test)]
+            self.observe_completion_for_test(&request.prepared.envelope.request_id);
+        }
+        self.captures.service_us = self
+            .captures
+            .service_us
+            .saturating_add(elapsed_us_since(started));
+        let needs_image = self.captures.awaiting.iter().any(|request| {
+            request.window_id == Some(window)
+                && request.prepared.dispatch.needs_screenshot()
+                && self.request_authorized(request, generation)
+        });
+        if needs_image && !self.captures.frames.has_image(window) {
+            self.arm_screenshot(app, ctx, window);
+        }
+        self.prune_frames();
+    }
+    fn arm_screenshot(&mut self, app: &ControlWindow, ctx: &egui::Context, window: WireU64) {
+        let expected = crate::app::native_windows::viewport(
+            quantick_workspace::arrangement::windows::WindowId(window.get()),
+        );
+        // An embedded fallback is not a native framebuffer for this window.
+        if ctx.viewport_id() != expected {
+            return;
+        }
+        let ticket = self.captures.frames.arm(
+            window,
+            PaintedScene {
+                scene: super::super::scene::scene_snapshot(app),
+                pixels_per_point: ctx.pixels_per_point(),
+            },
+        );
+        if window.get() == 0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+        } else {
+            self.queue_rendered_capture(ctx, window, ticket);
+        }
         ctx.request_repaint();
     }
+    pub(super) fn prune_frames(&mut self) {
+        let waiting = &self.captures.awaiting;
+        let revoked = &self.revoked_connections;
+        let scopes = &self.configured_scopes;
+        let generation = self.grant_generation;
+        #[cfg(any(feature = "control-harness", test))]
+        let local = self.captures.local_window;
+        self.captures.frames.retain(|window| {
+            #[cfg(any(feature = "control-harness", test))]
+            if local == Some(window) {
+                return true;
+            }
+            waiting.iter().any(|request| {
+                request.window_id == Some(window)
+                    && request.grant_generation == generation
+                    && !revoked.contains(&request.connection_id)
+                    && request.prepared.required_permissions.is_subset(scopes)
+            })
+        });
+    }
 
-    /// Forget every retained bundle and everything staged around one.
-    ///
-    /// One function, called by both teardown paths, so the two cannot disagree
-    /// about what a withdrawal clears — which is exactly the kind of omission
-    /// nobody notices until a screenshot flag outlives the door it came
-    /// through.
     pub(super) fn forget_evidence(&mut self) {
         self.evidence.clear();
-        self.screenshot = None;
-        self.screenshot_armed = false;
-        self.awaiting_screenshot.clear();
+        self.captures.screenshot = None;
+        self.captures.frames.clear();
+        #[cfg(any(feature = "control-harness", test))]
+        {
+            self.captures.local_window = None;
+        }
+        self.captures.awaiting.clear();
     }
 }

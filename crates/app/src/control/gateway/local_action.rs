@@ -231,7 +231,7 @@ impl ControlAccess {
     #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn invoke_local_read(
         &mut self,
-        app: &ControlWindow,
+        app: &mut ControlWindow,
         capability_id: &str,
         input: Value,
     ) -> Result<Value, ControlError> {
@@ -274,6 +274,25 @@ impl ControlAccess {
                 )
                 .expect("a worker dispatch always answers on the worker path"),
             PreparedDispatch::Ui(_) => {
+                let window = prepared
+                    .dispatch
+                    .window_target()
+                    .map(|requested| app.pin_capture_window(requested))
+                    .transpose()?;
+                let previous = window
+                    .map(|window| app.present_capture_window(window))
+                    .transpose()?;
+                if let Some(window) = window {
+                    self.captures.screenshot = self.captures.frames.take_image(window);
+                    if self.captures.screenshot.is_some() {
+                        app.set_capture_scene(
+                            self.captures
+                                .frames
+                                .scene(window)
+                                .map(|painted| painted.scene.clone()),
+                        );
+                    }
+                }
                 let execution = prepared.dispatch.execute_ui(UiReadContext {
                     projections: &mut self.projections,
                     journal: &self.journal,
@@ -281,8 +300,15 @@ impl ControlAccess {
                     instance_id: &instance_id,
                     session: &session,
                     evidence: &self.evidence,
-                    screenshot: &mut self.screenshot,
-                })?;
+                    screenshot: &mut self.captures.screenshot,
+                    window_id: window,
+                });
+                app.set_capture_scene(None);
+                if let Some(previous) = previous {
+                    app.present_capture_window(previous)?;
+                }
+                self.captures.local_window = None;
+                let execution = execution?;
                 execution
                     .into_serialized()
                     .map(|serialized| serialized.result)

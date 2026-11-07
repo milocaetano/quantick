@@ -37,6 +37,7 @@ pub(crate) use control_host::{
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
+mod desk_wiring;
 pub(crate) mod drawing_controller;
 
 mod frame;
@@ -49,10 +50,15 @@ mod indicator_wiring;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
+mod home_wiring;
 mod menu_bar;
+pub(crate) use menu_bar::SAVE_TO_WORKSPACE_SHORTCUT;
+pub(crate) mod native_windows;
 pub(crate) mod paper_wiring;
 mod replay_and_history;
+mod tab_workspaces;
 mod tabs;
+pub(crate) mod title_bar;
 mod toolbar_wiring;
 mod workspace_bundle_adapter;
 mod workspace_restore;
@@ -139,18 +145,6 @@ const FIRST_TAB_ID: u64 = 0;
 /// every existing capture shows.
 #[cfg(any(feature = "scenario-harness", test))]
 const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
-
-/// Format the forming bar's countdown, e.g. `37/50 ticks`.
-///
-/// Trailing zeros are trimmed on both figures: a volume bar's accumulator
-/// carries the feed's own scale, and `1.20000000/5 vol` reads as noise.
-fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
-    format!(
-        "{}/{} {unit}",
-        quantick_engine::display::display_decimal(progress.done),
-        quantick_engine::display::display_decimal(progress.target)
-    )
-}
 
 /// Read a tape window off `QUANTICK_TAPE_WINDOW`.
 ///
@@ -263,6 +257,7 @@ macro_rules! arrangement_adapter {
             history: &mut $app.runtime.history,
             drawing_chrome: &mut $app.drawings.chrome,
             toast: &mut $app.surfaces.toast,
+            surface: &mut $app.chrome.title_bar.surface,
         }
     }};
 }
@@ -297,6 +292,7 @@ impl QuantickApp {
             record_deals: self.chrome.record_deals,
             history: &self.runtime.history,
             drawing_chrome: &self.drawings.chrome,
+            workspace_book: self.runtime.workspace.book.book(),
         }
     }
 
@@ -530,13 +526,14 @@ impl QuantickApp {
         }
         crate::paper_state::restore_money(tab.paper.account_mut(), &paper_state);
         let mut runtime =
-            workspace_runtime::WorkspaceRuntime::new(tab, trades_dir, reach_span_minutes);
+            workspace_runtime::WorkspaceRuntime::new(tab, trades_dir, reach_span_minutes, &config);
         let added_symbols = symbols_file::load(runtime.workspace.symbols_path());
         let presentation = workspace_runtime::WindowPresentation::new(&mut runtime);
         let mut app = Self {
             runtime,
             presentation,
             chrome: chrome::ChromeState {
+                title_bar: Default::default(),
                 #[cfg(any(feature = "scenario-harness", test))]
                 harness: Harness::capture(&launch.scenario),
                 #[cfg(any(feature = "scenario-harness", test))]
@@ -546,7 +543,7 @@ impl QuantickApp {
                 layout_rename: None,
                 layout_delete_confirm: None,
                 surface: None,
-                workspace_menu_rect: None,
+                window_menu: Default::default(),
                 history_menu_rect: None,
                 feed_chip_rect: None,
                 // The hook stands in for a click on the opening tab's chip, which
@@ -645,6 +642,7 @@ impl QuantickApp {
     /// to, which is also what every non-Windows target gets.
     pub fn attach_surface(&mut self, handle: &impl raw_window_handle::HasWindowHandle) {
         self.chrome.surface = window_scale::SurfaceProbe::new(handle);
+        self.presentation.native.pump.attach(handle);
     }
 }
 
@@ -657,6 +655,7 @@ impl eframe::App for QuantickApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.presentation.native.pump.set_active(false);
         if !self.runtime.lifetime.begin_shutdown() {
             return;
         }
@@ -690,12 +689,7 @@ impl eframe::App for QuantickApp {
         // it; the hook supplies the press, and every line after it is what a
         // trader's click runs. The rect is published by the draw, so the
         // first frame has none — wait for it rather than guess.
-        if self.chrome.harness.push_menu_input(
-            ctx,
-            raw_input,
-            self.chrome.workspace_menu_rect,
-            self.chrome.history_menu_rect,
-        ) {
+        if title_bar::push_scripted_menu(self, ctx, raw_input) {
             return;
         }
         // The parked pointer, re-delivered — before the menu branch and not

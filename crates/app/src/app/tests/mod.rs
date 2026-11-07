@@ -55,6 +55,7 @@ mod history_interaction_tests;
 mod history_publication_tests;
 mod history_reach_completion_tests;
 mod history_run_edges_tests;
+mod home_tab_tests;
 mod indicator_operations_tests;
 mod indicator_recut_tests;
 mod indicators_tests;
@@ -63,7 +64,10 @@ mod journal_payload_pin_tests;
 mod launch_phase_tests;
 mod layers_tests;
 mod live_trade_tests;
+mod market_switch_tests;
+mod market_windows_tests;
 mod menu_bar_tests;
+mod native_resize_tests;
 mod objects_menu_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
@@ -79,9 +83,11 @@ mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
 mod settled_frame;
+mod tab_workspace_tests;
 mod tape_only_scale_tests;
 mod theme_menu_tests;
 mod time_strip_cursor_tests;
+mod title_bar_tests;
 mod toolrail_launch_baselines;
 mod toolrail_tests;
 mod workspace_bundle_menu_baseline_tests;
@@ -275,7 +281,10 @@ fn test_config() -> AppConfig {
             symbols: vec!["TESTUSDT".to_string(), "ETHUSDT".to_string()],
             bubble_preset: None,
             symbol_bubble_presets: Default::default(),
+            asset_families: Vec::new(),
+            asset_aliases: Default::default(),
             symbol_asset_modes: Default::default(),
+            contract_rolls: Default::default(),
             default_layout: None,
             default_bars: None,
             record_deals: false,
@@ -560,6 +569,7 @@ fn with_flow_pane<R>(
         shared: pane::SharedInteraction::default(),
         capabilities,
         side_inferred,
+        price_tag: Default::default(),
         footprint: footprint_config,
         layers: &mut workspace.layers_mut().actions,
     };
@@ -1351,6 +1361,22 @@ pub(super) fn settle_indicators(app: &mut QuantickApp) {
     }
 }
 
+/// The set an edit on the active tab's pane on `side` writes to: the tab's own
+/// copy of the strip layout it shows. A strip layout takes no edit: it reaches
+/// every tab.
+pub(super) fn pane_set(
+    app: &QuantickApp,
+    side: PaneSide,
+) -> &[crate::indicators::state_file::SavedIndicator] {
+    let own = app
+        .active_tab()
+        .pane(side)
+        .layout_id()
+        .expect("a seeded pane");
+    let layouts = app.layout_state().layouts();
+    &layouts.get(own).expect("the tab's copy").indicators
+}
+
 /// A point inside the pane on `side`, for a click that focuses it.
 pub(super) fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
     app.active_tab()
@@ -1474,10 +1500,10 @@ struct TabEnds {
 fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> TabEnds {
     app.apply_tab_action(TabAction::New);
     assert!(
-        app.surfaces.source_picker.is_open(),
+        app.surfaces.market_palette.is_open(),
         "the + opens the picker"
     );
-    app.surfaces.source_picker.close();
+    app.surfaces.market_palette.close();
 
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
@@ -1787,7 +1813,10 @@ fn two_metatrader_feeds() -> AppConfig {
                 symbols: vec!["US500".to_string()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
@@ -1799,7 +1828,10 @@ fn two_metatrader_feeds() -> AppConfig {
                 symbols: vec!["WIN$N".to_string()],
                 bubble_preset: None,
                 symbol_bubble_presets: Default::default(),
+                asset_families: Vec::new(),
+                asset_aliases: Default::default(),
                 symbol_asset_modes: Default::default(),
+                contract_rolls: Default::default(),
                 default_layout: None,
                 default_bars: None,
                 record_deals: false,
@@ -2735,6 +2767,8 @@ fn incompressible_screenshot(width: u32, height: u32) -> crate::control::RawScre
         rgba.extend_from_slice(&[sample[0], sample[1], sample[2], 0xff]);
     }
     crate::control::RawScreenshot {
+        window_id: None,
+        source_window_id: None,
         width_px: width,
         height_px: height,
         pixels_per_point: 1.0,
@@ -2745,6 +2779,8 @@ fn incompressible_screenshot(width: u32, height: u32) -> crate::control::RawScre
 /// A window's worth of opaque pixels, the shape the platform hands over.
 fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
     crate::control::RawScreenshot {
+        window_id: None,
+        source_window_id: None,
         width_px: width,
         height_px: height,
         pixels_per_point: 1.0,
@@ -2825,3 +2861,5 @@ mod asset_bubbles_audit_tests;
 mod asset_bubbles_tests;
 mod feed_tape_scope_tests;
 mod native_split_pane_tests;
+
+mod window_capture_tests;

@@ -49,6 +49,15 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 
 /// The name every test client connects under, and so the author every object
 /// an interrupted call placed is attributed to.
+#[path = "home_tab_control_tests.rs"]
+mod home_tab_control;
+#[path = "market_window_control_tests.rs"]
+mod market_window_control;
+#[path = "native_window_control_tests.rs"]
+mod native_window_control;
+#[path = "settings_desk_control_tests.rs"]
+mod settings_desk_control;
+
 const CLIENT_NAME: &str = "quantick integration test";
 
 #[path = "appearance_control_tests.rs"]
@@ -637,6 +646,13 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("feed.history.cancel", 1, json!({}), Readback::Moves),
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
+        // On by default: the call turns the market's line off.
+        (
+            "chart.price_tag.progress.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
         ("chart.settings.set", 1, Value::Null, Readback::Moves),
         ("indicator.picker.set", 1, Value::Null, Readback::Moves),
         // A listing changes nothing, so no `session.journal.changed` is
@@ -706,6 +722,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Stays,
         ),
+        ("orderflow.bubbles.reset", 1, Value::Null, Readback::Moves),
         (
             "orderflow.bubbles.tick.set",
             1,
@@ -771,6 +788,34 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "fraction": "0.5" }),
             Readback::Moves,
         ),
+        // The market on screen, on its own bar and workspace: focused, so
+        // no tab is added.
+        ("market.open", 1, Value::Null, Readback::Stays),
+        (
+            "market.palette.open",
+            1,
+            json!({ "query": "btc" }),
+            Readback::Moves,
+        ),
+        ("catalog.remove", 1, Value::Null, Readback::Moves),
+        ("home.show", 1, json!({}), Readback::Moves),
+        (
+            "settings.open",
+            1,
+            json!({ "section": "data" }),
+            Readback::Moves,
+        ),
+        ("desk.save", 1, json!({}), Readback::Moves),
+        ("desk.export", 1, json!({}), Readback::Stays),
+        ("desk.import", 1, json!({}), Readback::Stays),
+        ("desk.forget", 1, json!({}), Readback::Moves),
+        (
+            "desk.reopen_on_launch.set",
+            1,
+            json!({ "reopen": false }),
+            Readback::Moves,
+        ),
+        ("home.leave", 1, json!({}), Readback::Moves),
         ("layout.tab.create", 1, json!({}), Readback::Moves),
         (
             "layout.tab.rename",
@@ -785,6 +830,9 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("feed.reconnect", 1, json!({}), Readback::Stays),
         ("feed.reload", 1, json!({}), Readback::Stays),
         ("feed.source.set", 1, Value::Null, Readback::Stays),
+        ("tab.market.set", 1, Value::Null, Readback::Stays),
+        // A tab already on the target: the retry a dropped answer sends.
+        ("feed.contract.roll", 1, Value::Null, Readback::Stays),
         // A tab whose feed declares no deal counter and has no recorded day:
         // stopping a recorder that is not running acts on nothing, and the
         // scope lists no recorder either side of the call.
@@ -813,6 +861,49 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        (
+            "workspace.new",
+            1,
+            json!({ "name": "Blank" }),
+            Readback::Moves,
+        ),
+        // Last: deleting a workspace lays its tab out as a new tab, and the rows
+        // above work on the charts the earlier rows opened.
+        (
+            "workspace.save_as",
+            1,
+            json!({ "name": "Retried" }),
+            Readback::Moves,
+        ),
+        ("workspace.save_to", 1, json!({}), Readback::Stays),
+        // Refused since revert left the menus: nothing moves.
+        ("workspace.revert", 1, json!({}), Readback::Stays),
+        (
+            "workspace.autosave.set",
+            1,
+            json!({ "on": false }),
+            Readback::Moves,
+        ),
+        (
+            "tab.workspace.set",
+            1,
+            json!({ "name": "Retried" }),
+            Readback::Stays,
+        ),
+        (
+            "workspace.rename",
+            1,
+            json!({ "name": "Retried", "to": "Renamed" }),
+            Readback::Moves,
+        ),
+        (
+            "workspace.delete",
+            1,
+            json!({ "name": "Renamed" }),
+            Readback::Moves,
+        ),
+        // Last of all: it closes the active tab, edits or not.
+        ("tab.close", 1, json!({ "save": false }), Readback::Moves),
     ]
 }
 
@@ -871,7 +962,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let directory = gateway_test_directory("retry-every-optional");
     grant_annotate_for_test(
         &mut app,
-        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete",
+        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete,cockpit.desk",
     );
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let cockpit = options(
@@ -882,6 +973,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "cockpit.layout",
             "cockpit.recover",
             "cockpit.journal.delete",
+            "cockpit.desk",
         ],
     );
     let reachable: BTreeSet<&str> = retry_matrix::READBACKS
@@ -899,6 +991,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         "the plan covers every reachable optional row, and nothing else"
     );
     let mut first_layout = Value::Null;
+    // A dialog already up, so the desk's dialog rows answer without raising a
+    // real one on whoever runs the tests.
+    let mut held_dialogs = Vec::new();
 
     for (index, (capability, version, payload, expected)) in plan.into_iter().enumerate() {
         // A connection per row: each call's records, rate and reservations
@@ -906,7 +1001,20 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
-            "orderflow.bubbles.tick.set" | "orderflow.bubbles.preset.apply" => {
+            "market.open" => json!({
+                "feed": app.active_tab().feed_id,
+                "symbol": app.active_tab().symbol,
+                "bar": app.active_tab().flow_pane.state.spec().to_config_string(),
+                "workspace": app.runtime.workspace.book.tab_row(app.runtime.tabs.active_id()).0,
+            }),
+            "catalog.remove" => {
+                let feed = app.active_tab().feed_id.clone();
+                app.symbol_catalog().add(&feed, "RETRYUSDT").unwrap();
+                json!({ "feed": feed, "symbol": "RETRYUSDT" })
+            }
+            "orderflow.bubbles.tick.set"
+            | "orderflow.bubbles.preset.apply"
+            | "orderflow.bubbles.reset" => {
                 let config: crate::config::AppConfig =
                     toml::from_str(quantick_stores::config::EMBEDDED_DEFAULT).unwrap();
                 let presets = quantick_stores::bubble_presets::embedded();
@@ -917,24 +1025,52 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     &presets,
                     false,
                 );
-                app.active_tab_mut()
-                    .tape_mut()
-                    .bind_asset(binding, &settings);
-                json!({
+                let tape = app.active_tab_mut().tape_mut();
+                tape.bind_asset(binding, &settings);
+                let ids = json!({
                     "tab_id": app.runtime.tabs.active_id().to_string(),
                     "pane_id": app.active_tab().flow_pane.id.to_string(),
-                    "preset": "Binance BTC Spot spheres",
-                })
+                });
+                if capability == "orderflow.bubbles.reset" {
+                    // Off the factory look, so the reset moves the readback.
+                    let tape = app.active_tab_mut().tape_mut();
+                    assert!(tape.apply_preset("dense tape", false));
+                    ids
+                } else {
+                    let mut payload = ids;
+                    payload["preset"] = json!("Binance BTC Spot spheres");
+                    payload
+                }
             }
             "feed.source.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "feed_id": app.active_tab().active.0,
                 "symbol": app.active_tab().active.1,
             }),
+            "tab.market.set" => json!({
+                "tab": app.runtime.tabs.active_id().to_string(),
+                "feed": app.active_tab().active.0,
+                "symbol": app.active_tab().active.1,
+            }),
+            "feed.contract.roll" => {
+                let symbol = app.active_tab().active.1.clone();
+                app.config.feeds[0]
+                    .contract_rolls
+                    .insert("ROLLED-FROM".to_owned(), symbol);
+                json!({
+                    "tab_id": app.runtime.tabs.active_id().to_string(),
+                    "from_symbol": "ROLLED-FROM",
+                })
+            }
             "chart.price_axis.set" => json!({
                 "tab_id": app.runtime.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "mode": { "kind": "manual", "low": "80", "high": "120" },
+            }),
+            "chart.price_tag.progress.set" => json!({
+                "tab_id": app.runtime.tabs.active_id().to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "on": false,
             }),
             "chart.tape_view.set" => {
                 // The call moves a native tape: give the flow pane one.
@@ -1022,6 +1158,15 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "layer_id": "grid", "visible": !app.runtime.style.canvas.grid_enabled,
             }),
             "layout.tab.switch" => json!({ "name": first_layout }),
+            "workspace.save_as" => payload,
+            "tab.close" => {
+                // A second tab, so the one closed is not the window's last.
+                let feed = app.active_tab().feed_id.clone();
+                app.arrangement_adapter()
+                    .open_tab(feed, "CLOSEUSDT".to_owned(), None);
+                run_frame(&mut app, &ctx);
+                payload
+            }
             "layout.pane.resize_pair" => json!({
                 "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
                 "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
@@ -1057,6 +1202,15 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "drawing_id": pane.drawings.items()[index].id.0.to_string(),
                     "enabled": true,
                 })
+            }
+            "desk.export" | "desk.import" => {
+                let (sender, receiver) = std::sync::mpsc::channel();
+                held_dialogs.push(sender);
+                app.runtime
+                    .workspace
+                    .picker_mut()
+                    .set_pending_for_test(crate::workspace_picker::WorkspacePick::Export, receiver);
+                payload
             }
             _ => payload,
         };
@@ -1135,6 +1289,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 );
             }
         }
+        // The palette is modal: left up, its scrim would take the clicks the
+        // drawing rows after it place on the chart.
+        app.surfaces.market_palette.close();
     }
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();

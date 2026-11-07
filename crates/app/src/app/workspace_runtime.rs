@@ -29,20 +29,13 @@ impl WorkspaceRuntime {
         tab: crate::tab::Tab,
         trades_dir: std::path::PathBuf,
         reach_span_minutes: u32,
+        config: &crate::config::AppConfig,
     ) -> Self {
         // Resolve each startup path once: the owned store writes where it loaded.
         let symbols_path = crate::symbols_file::default_path();
         let footprint_settings_path = crate::footprint_config::settings_path();
         let indicator_presets_path = crate::indicators::preset_file::default_path();
-        let loaded = super::layout_wiring::LayoutAdapter::load_layouts(
-            &crate::layouts::default_path(),
-            &crate::indicators::state_file::default_path(),
-        );
-        let layouts = crate::workspace_store::LayoutStore::new(
-            loaded.0,
-            crate::layouts::default_path(),
-            loaded.1,
-        );
+        let layouts = super::layout_wiring::open_layout_store(config);
         Self {
             chart_theme: Default::default(),
             appearance: crate::theme::store::load(),
@@ -157,6 +150,7 @@ impl WorkspaceRuntime {
 pub(super) struct WindowPresentation {
     pub(super) context: Option<egui::Context>,
     pub(super) binding: WorkspaceView,
+    pub(super) native: super::native_windows::NativeWindows,
 }
 impl WindowPresentation {
     pub(super) fn new(owner: &mut WorkspaceRuntime) -> Self {
@@ -166,6 +160,7 @@ impl WindowPresentation {
             .expect("initial workspace view");
         let mut presentation = Self {
             binding,
+            native: Default::default(),
             context: None,
         };
         presentation

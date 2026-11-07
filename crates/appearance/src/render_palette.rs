@@ -206,6 +206,15 @@ impl<T: Copy> RenderPalette<T> {
     pub fn inset(&self) -> T {
         *self.get(Token::Inset)
     }
+    pub fn tab_strip(&self) -> T {
+        *self.get(Token::TabStrip)
+    }
+    pub fn brand(&self) -> T {
+        *self.get(Token::Brand)
+    }
+    pub fn replay_ink(&self) -> T {
+        *self.get(Token::ReplayInk)
+    }
     pub fn control(&self) -> T {
         *self.get(Token::Control)
     }
