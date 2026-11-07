@@ -452,3 +452,16 @@ fn a_monthly_pane_closes_each_month_on_its_last_millisecond() {
         .collect();
     assert_eq!(stamps, [(JANUARY, FEBRUARY - 1), (FEBRUARY, MARCH - 1)]);
 }
+
+#[test]
+fn a_page_boundary_inside_a_folded_bucket_leaves_that_bucket_out() {
+    let mut session = TabSession::new();
+    let two_hours = 2 * 60 * MINUTE;
+    let mut shell = Shell::new(&[Some(3 * two_hours)]);
+    shell.poll(&mut session);
+    // A full page: the record goes on behind it. 1,000 = 3 x 333 + 1, so
+    // the oldest 6h bucket holds one 2h candle of its three.
+    shell.reply(&mut session, page(EDGE, CANDLE_PAGE_BARS, two_hours));
+    assert_eq!(shell.prefixes[0].len(), 333, "the partial bucket waits");
+    assert_eq!(shell.prefixes[0][0].open_time % (3 * two_hours), 0);
+}

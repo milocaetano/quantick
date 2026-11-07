@@ -342,7 +342,14 @@ impl NativeCandles {
             stamp_on_buckets(&mut bars, interval_ms);
             bars
         } else {
-            fold(series.bars(), key, interval_ms)
+            let mut folded = fold(series.bars(), key, interval_ms);
+            // A page that ends inside a bucket would draw that bucket short
+            // and unlabelled; it waits for the page behind. At the record's
+            // start it stays, labelled by `record_starts_inside`.
+            let cut =
+                !series.is_exhausted() && starts_inside_bucket(series.bars(), key, interval_ms);
+            folded.drain(..usize::from(cut).min(folded.len()));
+            folded
         };
         trim_to_seam(folded, pane.first_bar, pane.partial, interval_ms)
     }
