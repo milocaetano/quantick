@@ -10,6 +10,7 @@
 
 use quantick_engine::Bar;
 use quantick_sources::candle_base::{CandleAsk, CandleBaseInterval, SeamMinutesTaken};
+use quantick_sources::candle_series::{SeriesState, SeriesStatus};
 use quantick_sources::candles::{
     OlderCandles, fold, is_foldable, merge_older_candles, starts_inside_bucket,
     trim_borrowed_to_seam, trim_to_seam,
@@ -577,6 +578,27 @@ impl VenueCandles {
             step.wait(Wait::VenueCandles, WaitChange::Begin);
         }
         self.take_reply(step, tab_id, interval_ms, bars, slice);
+    }
+
+    /// The base a pane cut at `interval_ms` folds from, and where asking for
+    /// more stands; `None` for a pane that reads no candles.
+    pub(crate) fn status(&self, interval_ms: Option<i64>) -> Option<SeriesStatus> {
+        let wants = match interval_ms {
+            Some(interval_ms) => is_foldable(OHLCV_BASE_INTERVAL_MS, interval_ms),
+            None => self.lead_in,
+        };
+        wants.then(|| SeriesStatus {
+            state: if self.pending {
+                SeriesState::Loading
+            } else if self.older_exhausted {
+                SeriesState::Exhausted
+            } else {
+                SeriesState::Idle
+            },
+            interval_ms: self.interval.held_ms(),
+            candles_held: self.candles_held(),
+            oldest_open_ms: self.oldest(),
+        })
     }
 
     pub(crate) fn candles_held(&self) -> usize {

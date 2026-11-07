@@ -15,7 +15,7 @@ use quantick_engine::Bar;
 use quantick_engine::time_bucket::{CALENDAR_MONTH_MS, DAY_MS, WEEK_MS};
 
 use crate::candle_base::CandleAsk;
-use crate::candles::is_foldable;
+use crate::candles::{is_foldable, merge_older_candles};
 use crate::ohlcv::OhlcvSlice;
 
 /// How many candles one request asks the venue for: one Binance page.
@@ -126,8 +126,12 @@ impl CandleSeries {
     /// The opening request at `interval_ms`: one page back from the live edge.
     #[must_use]
     pub fn opening_ask(interval_ms: i64) -> CandleAsk {
-        let _ = interval_ms;
-        todo!("opening ask")
+        CandleAsk {
+            interval_ms,
+            span_ms: page_span(interval_ms),
+            slice_ms: None,
+            before_ms: None,
+        }
     }
 
     /// The next request this series wants, if any: the opening one until a
@@ -136,26 +140,67 @@ impl CandleSeries {
     /// second one while one is out, and never past the record's start.
     #[must_use]
     pub fn next_ask(&self, interval_ms: i64, first_visible: Option<usize>) -> Option<CandleAsk> {
-        let _ = (interval_ms, first_visible);
-        todo!("next ask")
+        if self.pending.is_some() {
+            return None;
+        }
+        if !self.answered {
+            return Some(Self::opening_ask(interval_ms));
+        }
+        if self.exhausted || first_visible.is_none_or(|slot| slot >= REACH_BACK_MARGIN_BARS) {
+            return None;
+        }
+        // One millisecond before the oldest candle: windows closed at both
+        // ends never overlap, so the merge has nothing to reconcile.
+        let oldest = self.oldest_ms()?;
+        Some(CandleAsk {
+            before_ms: Some(oldest.saturating_sub(1)),
+            ..Self::opening_ask(interval_ms)
+        })
     }
 
     /// The request went out.
     pub fn sent(&mut self, ask: CandleAsk) {
-        let _ = ask;
-        todo!("sent")
+        self.pending = Some(ask);
     }
 
     /// The channel the request went out on is gone: nothing will answer it.
     pub fn abandon(&mut self) {
-        todo!("abandon")
+        self.pending = None;
     }
 
     /// Take one reply to the request out. `None` while the run goes on, and
     /// for a refusal, which says nothing about the venue's record.
     pub fn take_reply(&mut self, bars: Vec<Bar>, slice: OhlcvSlice) -> Option<Settled> {
-        let _ = (bars, slice);
-        todo!("take reply")
+        let complete = match slice {
+            OhlcvSlice::Refused => {
+                self.pending = None;
+                return None;
+            }
+            OhlcvSlice::More => {
+                self.merge(bars);
+                return None;
+            }
+            OhlcvSlice::Last { complete } => complete,
+        };
+        let ask = self.pending.take();
+        let held_oldest = self.oldest_ms();
+        let exhausted =
+            ask.is_none_or(|ask| reaches_record_start(&ask, held_oldest, &bars, complete));
+        let added = self.merge(bars);
+        self.answered = true;
+        self.exhausted = exhausted;
+        Some(Settled { added, exhausted })
+    }
+
+    /// Put `bars` in front of what is held; how many it added.
+    fn merge(&mut self, bars: Vec<Bar>) -> usize {
+        let before = self.bars.len();
+        if self.bars.is_empty() {
+            self.bars = bars;
+        } else if !bars.is_empty() {
+            merge_older_candles(&mut self.bars, bars);
+        }
+        self.bars.len().saturating_sub(before)
     }
 
     /// The candles, ascending.
@@ -191,9 +236,54 @@ impl CandleSeries {
     /// Where the series stands, at `interval_ms`.
     #[must_use]
     pub fn status(&self, interval_ms: i64) -> SeriesStatus {
-        let _ = interval_ms;
-        todo!("status")
+        SeriesStatus {
+            state: if self.pending.is_some() {
+                SeriesState::Loading
+            } else if self.exhausted {
+                SeriesState::Exhausted
+            } else {
+                SeriesState::Idle
+            },
+            interval_ms,
+            candles_held: self.bars.len(),
+            oldest_open_ms: self.oldest_ms(),
+        }
     }
+}
+
+/// How far one page at `interval_ms` reaches: [`CANDLE_PAGE_BARS`] of them.
+fn page_span(interval_ms: i64) -> i64 {
+    interval_ms.saturating_mul(CANDLE_PAGE_BARS as i64)
+}
+
+/// Whether a closing reply to `ask` shows the venue's record starting at its
+/// oldest candle: it brought nothing, nothing older than `held_oldest`, or —
+/// complete and short of a page — a first candle a whole bucket inside the
+/// window asked for. A short page whose oldest candle sits at the window's
+/// start only has holes in it (a venue's maintenance, a bucket nobody traded)
+/// and says nothing about where the record begins; neither does an answer
+/// the venue cut short.
+fn reaches_record_start(
+    ask: &CandleAsk,
+    held_oldest: Option<i64>,
+    bars: &[Bar],
+    complete: bool,
+) -> bool {
+    let (Some(oldest), Some(newest)) = (bars.first(), bars.last()) else {
+        return true;
+    };
+    if held_oldest.is_some_and(|held| oldest.open_time >= held) {
+        return true;
+    }
+    if !complete || bars.len() >= CANDLE_PAGE_BARS {
+        return false;
+    }
+    let end = ask.before_ms.map_or_else(
+        || newest.open_time.saturating_add(ask.interval_ms),
+        |before| before.saturating_add(1),
+    );
+    let start = end.saturating_sub(ask.span_ms);
+    oldest.open_time >= start.saturating_add(ask.interval_ms)
 }
 
 #[cfg(test)]

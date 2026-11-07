@@ -477,7 +477,7 @@ pub(super) fn pane_views<'a>(
             partial: pane.state.partial(),
             rebuild_pending: pane.history_pending(),
             rebuild_failed: pane.history_failed(),
-            first_visible_slot: None,
+            first_visible_slot: pane.visible_slots().map(|(start, _)| start),
         })
         .collect()
 }

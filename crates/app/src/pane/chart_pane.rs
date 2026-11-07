@@ -159,6 +159,17 @@ impl ChartPane {
         view
     }
 
+    /// The `[start, end)` slots the last frame showed; `None` before it laid
+    /// the pane out.
+    pub(crate) fn visible_slots(&self) -> Option<(usize, usize)> {
+        let chart = self.frame.chart_area?;
+        let right = self.frame.candles_right.unwrap_or_else(|| chart.right());
+        Some(
+            self.shown_viewport()
+                .visible_range((right - chart.left()).max(0.0), self.slots()),
+        )
+    }
+
     /// The jump-to-live chip this pane offers on `strip`. On a tape-only pane
     /// the stored view waits unseen, so there is no way back to offer.
     pub(super) fn shown_live_chip(&self, strip: egui::Rect) -> Option<egui::Rect> {

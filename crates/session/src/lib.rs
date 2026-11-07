@@ -24,6 +24,7 @@
 //! [`Act::FeedAck`].
 
 mod button;
+mod native;
 mod paging;
 mod venue;
 mod view;
@@ -45,6 +46,7 @@ pub use button::{HistoryPagingOff, fmt_history_span};
 pub use paging::REBUILD_FAILED_NOTE;
 pub use view::{PaneView, TabView};
 
+use native::NativeCandles;
 use paging::TradePaging;
 use venue::VenueCandles;
 
@@ -519,6 +521,12 @@ pub struct SessionSnapshot {
 #[derive(Debug)]
 pub struct TabSession {
     venue: VenueCandles,
+    /// Venue candles on a feed serving every interval; `venue` folds one base
+    /// on every other feed.
+    native: NativeCandles,
+    /// Whether the last dispatch's feed serves every interval: what the reads
+    /// between dispatches answer from.
+    native_mode: bool,
     paging: TradePaging,
     events: VecDeque<SessionEvent>,
     /// Moves whenever the timeline is thrown away; a resuming attach keeps it.
@@ -584,6 +592,8 @@ impl TabSession {
     pub fn new() -> Self {
         Self {
             venue: VenueCandles::default(),
+            native: NativeCandles::default(),
+            native_mode: false,
             paging: TradePaging::default(),
             events: VecDeque::new(),
             timeline_generation: 0,
@@ -594,6 +604,7 @@ impl TabSession {
     /// do. A refusal changes nothing the shell has to carry out.
     pub fn dispatch(&mut self, msg: Msg<'_>, now: Instant) -> Result<Vec<Effect>, Refusal> {
         let Msg { act, tab } = msg;
+        self.native_mode = tab.capabilities.native_candle_intervals;
         let mut step = Step {
             tab,
             now,
@@ -630,10 +641,78 @@ impl TabSession {
                 // and the last target pressed belong to this tab.
                 self.venue.progressive = policy.progressive;
                 self.paging.frame = policy.frame;
-                self.venue.set_lead_in(step, policy.venue_lead_in);
+                if self.native_mode {
+                    let changed = self.venue.lead_in != policy.venue_lead_in;
+                    self.venue.lead_in = policy.venue_lead_in;
+                    if changed {
+                        self.native.install(step, policy.venue_lead_in);
+                    }
+                } else {
+                    self.venue.set_lead_in(step, policy.venue_lead_in);
+                }
                 self.paging.poll(step);
             }
+            Act::PaneAdded { tab_id } => {
+                self.paging.count_copies(step.tab.panes.len());
+                return self.apply_candles(Act::PaneAdded { tab_id }, step);
+            }
+            Act::PollCandles { .. }
+            | Act::CandleReply { .. }
+            | Act::DeliverCandles { .. }
+            | Act::LoadOlderCandles { .. }
+            | Act::Refold => return self.apply_candles(act, step),
+            Act::Attach { keep_timeline } => {
+                if !keep_timeline {
+                    self.timeline_reset();
+                }
+                self.venue.attach(step, keep_timeline);
+                self.native.attach(step, keep_timeline);
+                // The run belonged to the old session's tape; its reply is on
+                // a channel about to be dropped.
+                self.paging.abandon(step);
+                step.wait(Wait::VenueCandles, WaitChange::Clear);
+            }
+            Act::FeedAck { request, delivery } => {
+                step.delivered(request, delivery);
+                match request {
+                    FeedRequest::Candles {
+                        tab_id,
+                        ask,
+                        purpose,
+                    } if self.native_mode => {
+                        self.native
+                            .acknowledge(step, tab_id, ask, purpose, delivery);
+                    }
+                    FeedRequest::Candles {
+                        tab_id,
+                        ask,
+                        purpose,
+                    } => self.venue.acknowledge(step, tab_id, ask, purpose, delivery),
+                    FeedRequest::OlderTrades { .. } => self.paging.acknowledge(step, delivery),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The venue-candle acts, on whichever path the feed takes: one series
+    /// per interval where it serves every interval, one folded base
+    /// elsewhere.
+    fn apply_candles(&mut self, act: Act<'_>, step: &mut Step<'_>) -> Result<(), Refusal> {
+        let lead_in = self.venue.lead_in;
+        let native = self.native_mode;
+        match act {
+            Act::PollCandles { tab_id } if native => self.native.poll(step, tab_id, lead_in),
             Act::PollCandles { tab_id } => self.venue.poll(step, tab_id),
+            Act::CandleReply {
+                tab_id,
+                interval_ms,
+                bars,
+                slice,
+            } if native => {
+                let series = &mut self.native;
+                series.take_reply(step, tab_id, interval_ms, bars, slice, lead_in);
+            }
             Act::CandleReply {
                 tab_id,
                 interval_ms,
@@ -647,34 +726,25 @@ impl TabSession {
                 interval_ms,
                 bars,
                 slice,
+            } if native => {
+                let series = &mut self.native;
+                series.deliver(step, tab_id, interval_ms, bars, slice, lead_in);
+            }
+            Act::DeliverCandles {
+                tab_id,
+                interval_ms,
+                bars,
+                slice,
             } => self.venue.deliver(step, tab_id, interval_ms, bars, slice),
+            Act::LoadOlderCandles { tab_id } if native => {
+                return self.native.request_older(step, tab_id, lead_in);
+            }
             Act::LoadOlderCandles { tab_id } => return self.venue.request_older(step, tab_id),
+            Act::Refold if native => self.native.install(step, lead_in),
             Act::Refold => self.venue.refold(step),
-            Act::PaneAdded { tab_id } => {
-                self.paging.count_copies(step.tab.panes.len());
-                self.venue.pane_added(step, tab_id);
-            }
-            Act::Attach { keep_timeline } => {
-                if !keep_timeline {
-                    self.timeline_reset();
-                }
-                self.venue.attach(step, keep_timeline);
-                // The run belonged to the old session's tape; its reply is on
-                // a channel about to be dropped.
-                self.paging.abandon(step);
-                step.wait(Wait::VenueCandles, WaitChange::Clear);
-            }
-            Act::FeedAck { request, delivery } => {
-                step.delivered(request, delivery);
-                match request {
-                    FeedRequest::Candles {
-                        tab_id,
-                        ask,
-                        purpose,
-                    } => self.venue.acknowledge(step, tab_id, ask, purpose, delivery),
-                    FeedRequest::OlderTrades { .. } => self.paging.acknowledge(step, delivery),
-                }
-            }
+            Act::PaneAdded { tab_id } if native => self.native.pane_added(step, tab_id, lead_in),
+            Act::PaneAdded { tab_id } => self.venue.pane_added(step, tab_id),
+            _ => {}
         }
         Ok(())
     }
@@ -688,9 +758,17 @@ impl TabSession {
             last_press: self.paging.last_press,
             last_cancel: self.paging.last_cancel,
             note: self.paging.note().map(str::to_owned),
-            candles_held: self.venue.candles_held(),
-            candles_pending: self.venue.pending,
-            older_exhausted: self.venue.older_exhausted,
+            candles_held: self.venue_candles_held(),
+            candles_pending: if self.native_mode {
+                self.native.pending()
+            } else {
+                self.venue.pending
+            },
+            older_exhausted: if self.native_mode {
+                self.native.exhausted()
+            } else {
+                self.venue.older_exhausted
+            },
             venue_lead_in: self.venue.lead_in,
             progressive: self.venue.progressive,
         }
@@ -780,20 +858,32 @@ impl TabSession {
     /// feed that serves none, and before the first reply lands.
     #[must_use]
     pub fn venue_candles_held(&self) -> usize {
-        self.venue.candles_held()
+        if self.native_mode {
+            self.native.candles_held()
+        } else {
+            self.venue.candles_held()
+        }
     }
 
     /// Whether any venue candle base is held, even an empty answer.
     #[must_use]
-    pub const fn holds_venue_candles(&self) -> bool {
-        self.venue.holds_base()
+    pub fn holds_venue_candles(&self) -> bool {
+        if self.native_mode {
+            self.native.holds_any()
+        } else {
+            self.venue.holds_base()
+        }
     }
 
     /// Whether the venue's record starts inside the `interval_ms` bucket its
     /// oldest candle folds into: that bar holds only part of its bucket.
     #[must_use]
     pub fn venue_record_starts_inside(&self, interval_ms: i64) -> bool {
-        self.venue.record_starts_inside(interval_ms)
+        if self.native_mode {
+            self.native.record_starts_inside(interval_ms)
+        } else {
+            self.venue.record_starts_inside(interval_ms)
+        }
     }
 
     /// Whether asking for older candles could get the trader anything — and
@@ -804,15 +894,23 @@ impl TabSession {
         capabilities: FeedCapabilities,
         panes: &[PaneView<'_>],
     ) -> OlderCandles {
-        self.venue.older_candles(capabilities, panes)
+        if self.native_mode {
+            self.native
+                .older_candles(capabilities, panes, self.venue.lead_in)
+        } else {
+            self.venue.older_candles(capabilities, panes)
+        }
     }
 
     /// The venue candles a pane cut at `interval_ms` (`None`: by trades)
     /// reads, and where asking for more stands; `None` when it reads none.
     #[must_use]
     pub fn candle_status(&self, interval_ms: Option<i64>) -> Option<SeriesStatus> {
-        let _ = interval_ms;
-        todo!("candle status")
+        if self.native_mode {
+            self.native.status(interval_ms, self.venue.lead_in)
+        } else {
+            self.venue.status(interval_ms)
+        }
     }
 
     /// Whether the next candle request asks for slices.
