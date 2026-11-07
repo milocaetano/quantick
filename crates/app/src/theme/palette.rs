@@ -6,7 +6,6 @@ const fn rendered(color: quantick_appearance::PremultipliedRgba) -> Color32 {
 }
 pub const ACCENT: Color32 = rendered(quantick_appearance::palette::ACCENT);
 pub const AMBER: Color32 = rendered(quantick_appearance::palette::AMBER);
-pub const BARE_HOVER: Color32 = rendered(quantick_appearance::palette::BARE_HOVER);
 pub const BORDER: Color32 = rendered(quantick_appearance::palette::BORDER);
 pub const BUY: Color32 = rendered(quantick_appearance::palette::BUY);
 pub const CANVAS: Color32 = rendered(quantick_appearance::palette::CANVAS);

@@ -110,8 +110,12 @@ pub(crate) fn draw(
     tabs: &super::arrangement_host::ArrangementHost,
     title: &mut TitleBarState,
 ) -> Option<crate::tabstrip::TabAction> {
-    let palette = theme::get(ctx);
     resize::draw(ctx);
+    // The strip's own palette (Light: slate, Dark's inks) until this returns;
+    // the active tab's face keeps the theme's own, `root`.
+    let root = theme::get(ctx);
+    let _strip = theme::title_strip_scope(ctx);
+    let palette = theme::get(ctx);
     let active = tabs.presented_index();
     title.strip.allow_close_last = tabs.plan_close(tabs.active_index()).is_ok();
     let indices: Vec<_> = tabs.window_indices(tabs.windows().presented()).collect();
@@ -140,6 +144,7 @@ pub(crate) fn draw(
                 }),
         )
         .show(ctx, |ui| {
+            ui.visuals_mut().override_text_color = Some(palette.text_primary());
             // Tabs and the menu sit on the row's floor; the window's own buttons
             // fill it from the top edge, as the Windows Terminal's do.
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
@@ -167,8 +172,8 @@ pub(crate) fn draw(
                     |ui| {
                         ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
                         let surface = &title.surface;
-                        action =
-                            crate::tabstrip::draw(ui, &chips, active, surface, &mut title.strip);
+                        let strip = (&mut title.strip, &*root);
+                        action = crate::tabstrip::draw(ui, &chips, active, surface, strip);
                     },
                 );
                 ui.add_space(DRAG_GAP);

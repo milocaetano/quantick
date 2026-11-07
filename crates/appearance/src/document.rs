@@ -1,7 +1,9 @@
 //! The versioned authoring contract and all-or-nothing resolution.
 
 mod bookmap;
+mod title_strip;
 pub use bookmap::BookmapOverride;
+pub use title_strip::TitleStripOverride;
 
 use std::{collections::BTreeMap, sync::OnceLock};
 
@@ -69,6 +71,8 @@ pub struct ThemeDocument {
     pub orderflow: crate::orderflow::OrderflowOverride,
     #[serde(default)]
     pub bookmap: Option<crate::BookmapOverride>,
+    #[serde(default)]
+    pub title_strip: Option<TitleStripOverride>,
 }
 
 fn dark_mode() -> bool {
@@ -200,9 +204,15 @@ impl ThemeDocument {
                 .footprint_heat
                 .resolve(fallback.map(|theme| &theme.footprint_heat))?,
             bookmap: None,
+            title_strip: None,
         };
         resolved.bookmap = self
             .bookmap
+            .as_ref()
+            .map(|surface| surface.resolve(&resolved).map(Box::new))
+            .transpose()?;
+        resolved.title_strip = self
+            .title_strip
             .as_ref()
             .map(|surface| surface.resolve(&resolved).map(Box::new))
             .transpose()?;
@@ -213,7 +223,16 @@ impl ThemeDocument {
 /// The tokens an older document takes from its own mode's bundled theme.
 /// Both bundled themes write every one, so resolving Light for
 /// [`ResolvedTheme::bundled`] never asks its own lock again.
-pub(crate) const MODE_TOKENS: [Token; 3] = [Token::TabStrip, Token::Brand, Token::ReplayInk];
+pub(crate) const MODE_TOKENS: [Token; 8] = [
+    Token::TabStrip,
+    Token::Brand,
+    Token::ReplayInk,
+    Token::ToolbarSheet,
+    Token::TabIdleFill,
+    Token::TabIdleOutline,
+    Token::TabBand,
+    Token::HomeGlow,
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedTheme {
@@ -225,6 +244,7 @@ pub struct ResolvedTheme {
     pub footprint_heat: crate::heat::HeatRamp,
     pub orderflow: crate::orderflow::OrderflowAppearance,
     pub(crate) bookmap: Option<Box<ResolvedTheme>>,
+    pub(crate) title_strip: Option<Box<ResolvedTheme>>,
 }
 
 impl ResolvedTheme {
