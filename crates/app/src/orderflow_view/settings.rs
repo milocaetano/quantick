@@ -24,7 +24,6 @@ mod l2_sections;
 #[cfg(test)]
 #[path = "settings/tests/tape_only_controls.rs"]
 mod tape_only_controls;
-mod tick_bubbles;
 
 use bubble_sections::{
     BubbleHealthSection, ClusteringSection, ColoursSection, ConsumptionMarksSection, LabelsSection,
@@ -321,6 +320,44 @@ impl OrderflowView {
             self.commit_config_changes(before);
         }
         changed
+    }
+
+    pub(crate) fn apply_tick_preset(&mut self, name: Option<&str>) -> Result<bool, String> {
+        let style = self.look.tick_style(name)?;
+        Ok(self.edit_config(|config| config.volume_dots.tick_bubbles = style))
+    }
+
+    /// A chart-only preset picker, beside the whole-look preset controls.
+    fn draw_tick_bubbles(&mut self, ui: &mut egui::Ui, rule: TickSpherePane) {
+        let current = self.config.volume_dots.tick_bubbles;
+        let Some(choices) = rule.offered(self.look.tick_presets(), current.is_some()) else {
+            return;
+        };
+        let selected = self.look.tick_preset_worn(current);
+        let label = selected.as_deref().unwrap_or(if current.is_some() {
+            "Custom spheres"
+        } else {
+            "Regional FLOW"
+        });
+        egui::ComboBox::from_id_salt("tick_sphere_preset")
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(current.is_none(), "Regional FLOW")
+                    .clicked()
+                {
+                    let _ = self.apply_tick_preset(None);
+                }
+                for name in &choices {
+                    if ui
+                        .selectable_label(selected.as_ref() == Some(name), name)
+                        .clicked()
+                    {
+                        let _ = self.apply_tick_preset(Some(name));
+                    }
+                }
+            });
+        ui.small(self.look.tick_hint());
     }
 }
 
