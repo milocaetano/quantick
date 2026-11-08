@@ -392,3 +392,14 @@ fn collections_parameter_and_legacy_annotations() {
     let source = "//@version=6\nindicator(\"types\")\nf(array<int> a) => a.first()\nplot(f(array.from(1.5)))";
     assert!(compile(source, "types").is_err());
 }
+
+#[test]
+fn collections_statistics_golden() {
+    let expected: Vec<f64> = include_str!("golden/collections/statistics.csv")
+        .trim().split(',').map(|s| s.parse().unwrap()).collect();
+    let actual = run(include_str!("fixtures/collections/statistics.pine"));
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        assert!((actual - expected).abs() <= 1e-8 + 1e-8 * expected.abs(), "{actual} != {expected}");
+    }
+}
