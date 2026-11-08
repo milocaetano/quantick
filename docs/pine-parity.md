@@ -143,6 +143,49 @@ this is a fixed synthetic throughput scenario, not exchange latency. No timing
 assertion is placed in correctness tests. Results belong to the exact measured
 commit and machine, and must be compared using the same command and workload.
 
+### Child 4 paired measurements (2026-11-08)
+
+Baseline source: `403e6c2c` (child 0). Candidate production source:
+`9af1c365757f0308ee043377f18c1cf4f2d2ec56`. The candidate samples below used
+the identical production inputs before commit; the only subsequent source edit
+added a `cfg(test)` offset-growth regression. Benchmark inputs and command stayed
+unchanged. Both targets were built before sampling with
+`cargo bench -p quantick-pine --bench interp --no-run`, then each sample ran
+`cargo bench -p quantick-pine --bench interp` in its isolated worktree.
+
+Host: Intel Core i5-12400F (6 cores, 12 logical processors), Windows 11 Pro
+10.0.26200, Rust 1.98.0 (`88d9e12ae`, LLVM 22.1.8), x86_64-pc-windows-msvc,
+repository bench profile. Owned builds were paused. Unrelated app/feed Rust
+compilations remained active; none were stopped or reprioritized. Two interleaved
+ABBA groups reduce ordering bias under that changing load. A is baseline, B is
+candidate. Values are aggregate microseconds per trade update across all ten
+indicators; each sample contains 100,000 updates.
+
+| Group | A first | B first | B second | A second |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 23.9662 | 21.1831 | 21.0920 | 20.9512 |
+| 2 | 19.6575 | 18.9287 | 18.5158 | 20.1448 |
+
+Across all four samples per source, baseline mean is **21.179925 us**, candidate
+mean **19.929900 us** (5.90% lower); medians are **20.548000 us** and
+**20.010350 us** (2.62% lower). Both ABBA groups independently have approximately
+5.9% lower candidate means. This meets C42's no-regression budget for this
+same-host workload; it does not establish exchange latency or a universal speedup.
+
+Earlier candidates were not accepted. All earlier raw ten-indicator samples are
+retained here to distinguish implementation changes from selective reporting:
+
+| Candidate source | Baseline samples, us/update | Candidate samples, us/update | Assessment |
+| --- | --- | --- | --- |
+| `fc61e360` | 17.6389, 17.2857, 17.8791 | 57.0471, 69.1498, 64.7715 | Regression; optimize execution |
+| `102d73ce` | 20.1458, 22.1865, 27.1099, 21.4516 | 26.8209, 27.2239, 20.5844, 21.0944 | Changing load; no acceptance |
+| `4c73270a` | 23.5145, 19.4740, 19.5238, 19.0229 | 20.2606, 21.1115, 22.2414, 20.3956 | No demonstrated no-regression |
+
+The accepted production delta completes direct offset copies for global reads,
+stores and register moves. Offset caches are immutable within an evaluation;
+arena growth moves its allocation but never its offsets. The offset-growth test
+also reconstructs state from a word copy and checks those same addresses.
+
 Calendar acceptance uses independently calculated civil-date goldens in
 `tests/golden/calendar`, not PineTS oracle output. `calendar_from_bar_time`
 checks six fields and repeated preview/commit equality for negative epochs,
