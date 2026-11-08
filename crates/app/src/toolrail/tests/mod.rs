@@ -1394,3 +1394,64 @@ fn the_band_scrolls_along_the_long_axis_in_every_dock() {
         }
     }
 }
+
+#[test]
+fn top_rail_has_no_unpainted_gutter() {
+    for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+        for width in [1000.0, 1280.0] {
+            let ctx = egui::Context::default();
+            let mut appearance = quantick_appearance::Appearance::default();
+            appearance.apply(source).unwrap();
+            theme::sync(&ctx, &appearance);
+            let mut rail = ToolRail::new();
+            let mut drawings = Drawings::default();
+            for dock in [
+                ToolboxDock::Left,
+                ToolboxDock::Top,
+                ToolboxDock::Bottom,
+                ToolboxDock::Top,
+            ] {
+                rail.set_dock(dock);
+                for _ in 0..3 {
+                    let mut remaining = egui::Rect::NOTHING;
+                    let output = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 780.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            rail.draw(ctx, &mut drawings, &mut false);
+                            remaining = ctx.available_rect();
+                        },
+                    );
+                    if dock == ToolboxDock::Top {
+                        assert_eq!(
+                            remaining.top(),
+                            TOOLBOX_THICKNESS_PX,
+                            "the rail reserves only the painted band"
+                        );
+                        let at = egui::pos2(width / 2.0, remaining.top() - 2.0);
+                        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if shape.clip_rect.contains(at) && rect.rect.contains(at) && rect.fill == theme::get(&ctx).chrome())), "reserved rail is painted to its bottom edge");
+                        for control in [
+                            rail.objects_rect,
+                            rail.magnet_rect,
+                            rail.hide_all_rect,
+                            rail.lock_all_rect,
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            assert!(
+                                control.top() >= 0.0 && control.bottom() <= TOOLBOX_THICKNESS_PX,
+                                "trailing control is inside the painted band: {control:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

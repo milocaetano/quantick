@@ -102,7 +102,7 @@ impl ObjectNotes {
             // object: an assistant's mark never passes for their own.
             ui.label(
                 egui::RichText::new(format!("Placed by {author} - not by you."))
-                    .small()
+                    .text_style(egui::TextStyle::Body)
                     .color(palette.text_support()),
             );
         }
@@ -111,14 +111,14 @@ impl ObjectNotes {
                 egui::RichText::new(
                     "Locked - protected from accidental moves. Style stays editable.",
                 )
-                .small()
+                .text_style(egui::TextStyle::Body)
                 .color(palette.text_support()),
             );
         }
         if self.hidden {
             ui.label(
                 egui::RichText::new("Hidden - Show brings it back.")
-                    .small()
+                    .text_style(egui::TextStyle::Body)
                     .color(palette.text_support()),
             );
         }
@@ -271,7 +271,7 @@ impl StyleTab<'_, '_> {
         // the chart would be a bulk edit nobody asked for.
         ui.separator();
         ui.label(egui::RichText::new("Default for new drawings").small());
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let style = edited.style;
             if ui
                 .button("Save as default")
@@ -355,7 +355,7 @@ impl CoordinatesTab<'_> {
             }
         });
         if locked {
-            ui.label(egui::RichText::new("Unlock the drawing to edit its coordinates.").small());
+            theme::supporting_label(ui, "Unlock the drawing to edit its coordinates.");
         }
         changed
     }
