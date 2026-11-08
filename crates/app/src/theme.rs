@@ -5,6 +5,8 @@ mod ink;
 #[cfg(test)]
 mod palette;
 mod resolved;
+mod supporting;
+pub use supporting::{preset_input, supporting_label, supporting_text};
 pub mod store;
 
 pub use resolved::{

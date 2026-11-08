@@ -63,6 +63,7 @@ mod input_ui_tests;
 mod journal_payload_pin_tests;
 mod launch_phase_tests;
 mod layers_tests;
+mod layout_readability_tests;
 mod live_trade_tests;
 mod market_switch_tests;
 mod market_windows_tests;

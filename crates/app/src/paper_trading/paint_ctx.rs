@@ -185,10 +185,28 @@ impl PaintCtx<'_> {
         ghost: bool,
     ) {
         let palette = &self.palette;
-        let ink = if ghost { fill } else { palette.chip_ink() };
-        let galley =
+        let financial = !palette.resolved.dark
+            && text.split_whitespace().any(|word| {
+                word.starts_with(['+', '-']) && word.parse::<rust_decimal::Decimal>().is_ok()
+            });
+        let ink = if financial {
+            palette.text_primary()
+        } else if ghost {
+            fill
+        } else {
+            crate::paper_chrome::trade_action_ink(palette, fill)
+        };
+        let galley = if financial {
+            self.painter.layout_job(crate::paper_chrome::financial_text(
+                palette,
+                text,
+                palette.mono_font(11.0),
+                ink,
+            ))
+        } else {
             self.painter
-                .layout_no_wrap(text.to_owned(), self.palette.mono_font(11.0), ink);
+                .layout_no_wrap(text.to_owned(), palette.mono_font(11.0), ink)
+        };
         let half = TAG_HEIGHT_PX / 2.0;
         let center_y = clamp_tag_center(y, self.chart_rect.top(), self.chart_rect.bottom());
         let right = self.tag_right - TAG_GAP_PX;
@@ -198,7 +216,7 @@ impl PaintCtx<'_> {
             egui::pos2(right - content_w, center_y - half),
             egui::pos2(right, center_y + half),
         );
-        if ghost {
+        if ghost || financial {
             self.painter
                 .rect_filled(full, egui::Rounding::same(3.0), palette.inset());
             self.painter.rect_stroke(
@@ -250,12 +268,23 @@ impl PaintCtx<'_> {
     ) -> egui::Rect {
         let palette = &self.palette;
         let font = palette.mono_font(11.0);
-        let side_galley =
-            self.painter
-                .layout_no_wrap(side_text.to_owned(), font.clone(), side_color);
+        let side_galley = self.painter.layout_no_wrap(
+            side_text.to_owned(),
+            font.clone(),
+            if palette.resolved.dark {
+                side_color
+            } else {
+                palette.text_primary()
+            },
+        );
         let points_galley = points.map(|(text, color)| {
             (
-                self.painter.layout_no_wrap(text, font.clone(), color),
+                self.painter.layout_job(crate::paper_chrome::financial_text(
+                    palette,
+                    &text,
+                    font.clone(),
+                    color,
+                )),
                 color,
             )
         });

@@ -68,7 +68,8 @@ impl<'a> WorkspaceRows<'a> {
         let response = ui
             .add_enabled(
                 modified,
-                egui::Button::new(text::save_to_label(self.symbol, workspace)).shortcut_text(keys),
+                egui::Button::new(text::save_to_label(self.symbol, workspace))
+                    .shortcut_text(crate::theme::supporting_text(ui, keys)),
             )
             .on_hover_text(text::save_to_hover(&self.symbols(&followers)))
             .on_disabled_hover_text(row.disabled_hover.unwrap_or_default());
@@ -91,7 +92,7 @@ impl<'a> WorkspaceRows<'a> {
             let response = ui.add(
                 egui::Button::new(row.name.as_str())
                     .selected(row.name == current)
-                    .shortcut_text(beside),
+                    .shortcut_text(crate::theme::supporting_text(ui, beside)),
             );
             if response.clicked() {
                 Self::push(commands, WorkspaceCommand::Set(row.name));
@@ -199,7 +200,10 @@ impl<'a> WorkspaceRows<'a> {
                     ui.set_min_width(CHIP_MENU_MIN_WIDTH_PT);
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                         super::menus::flat_rows(ui);
-                        ui.weak(text::uses_caption(self.symbol));
+                        ui.label(crate::theme::supporting_text(
+                            ui,
+                            text::uses_caption(self.symbol),
+                        ));
                         self.list(ui, commands, true);
                         ui.separator();
                         self.action_row(ui, RowId::WorkspaceAutosave, menu, commands);

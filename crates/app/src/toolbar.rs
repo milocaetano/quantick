@@ -540,21 +540,39 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
     // fixed size in every state, the face truncating rather than growing,
     // so opening a position never slides SELL out from under the pointer.
     let entry = |ui: &mut egui::Ui, label: &str, fill: egui::Color32, enabled: bool| {
-        ui.add_enabled_ui(enabled, |ui| {
-            ui.add_sized(
-                egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0),
-                egui::Button::new(
-                    egui::RichText::new(label)
-                        .color(palette.chip_ink())
-                        .strong(),
+        let response = ui
+            .add_enabled_ui(enabled, |ui| {
+                ui.add_sized(
+                    egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0),
+                    egui::Button::new(
+                        egui::RichText::new(label)
+                            .color(if !enabled && !palette.resolved.dark {
+                                palette.text_primary()
+                            } else {
+                                crate::paper_chrome::trade_action_ink(&palette, fill)
+                            })
+                            .strong(),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Truncate)
+                    .fill(if !enabled && !palette.resolved.dark {
+                        palette.control()
+                    } else {
+                        fill
+                    })
+                    .stroke(egui::Stroke::NONE)
+                    .rounding(egui::Rounding::same(3.0)),
                 )
-                .wrap_mode(egui::TextWrapMode::Truncate)
-                .fill(fill)
-                .stroke(egui::Stroke::NONE)
-                .rounding(egui::Rounding::same(3.0)),
-            )
-        })
-        .inner
+            })
+            .inner;
+        if !enabled && !palette.resolved.dark {
+            crate::paper_chrome::disabled_action_label(
+                ui,
+                &response,
+                label,
+                egui::TextWrapMode::Truncate,
+            );
+        }
+        response
     };
     let enabled = paper.blocked.is_none();
     let locked = paper.blocked.as_deref().unwrap_or_default();
@@ -609,6 +627,8 @@ fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<Tool
         let buy = entry(ui, &paper.buy.face, palette.buy(), enabled)
             .on_hover_text(&paper.buy.hover)
             .on_disabled_hover_text(locked);
+        #[cfg(test)]
+        ui.data_mut(|data| data.insert_temp(egui::Id::new("toolbar_buy_response"), buy.id));
         if buy.clicked() {
             actions.push(ToolbarAction::PaperBuy);
         }
@@ -709,6 +729,97 @@ fn draw_overflow(
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn trade_actions_keep_readable_labels() {
+        let ctx = egui::Context::default();
+        let mut appearance = quantick_appearance::Appearance::default();
+        appearance.apply(quantick_appearance::LIGHT).unwrap();
+        theme::sync(&ctx, &appearance);
+        for ready in [false, true] {
+            for state in 0..3 {
+                let hovered = state == 1;
+                ctx.memory_mut(|memory| {
+                    if let Some(id) = memory.focused() {
+                        memory.surrender_focus(id);
+                    }
+                });
+                let mut actions = Vec::new();
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(500.0, 100.0),
+                        )),
+                        events: if hovered {
+                            vec![egui::Event::PointerMoved(egui::pos2(40.0, 20.0))]
+                        } else if state == 2 {
+                            vec![
+                                egui::Event::PointerGone,
+                                egui::Event::Key {
+                                    key: egui::Key::Tab,
+                                    physical_key: None,
+                                    pressed: true,
+                                    repeat: false,
+                                    modifiers: egui::Modifiers::NONE,
+                                },
+                            ]
+                        } else {
+                            vec![egui::Event::PointerGone]
+                        },
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default()
+                            .show(ctx, |ui| draw_trade(ui, &flat_trade(ready), &mut actions));
+                    },
+                );
+                assert!(actions.is_empty());
+                if state == 2 {
+                    let id = ctx
+                        .data(|data| {
+                            data.get_temp::<egui::Id>(egui::Id::new("toolbar_buy_response"))
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        ctx.memory(|memory| memory.has_focus(id)),
+                        ready,
+                        "BUY focus follows enabled state"
+                    );
+                }
+
+                let buy = output
+                    .shapes
+                    .iter()
+                    .rev()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == "BUY 1" => Some(text),
+                        _ => None,
+                    })
+                    .expect("BUY label");
+                let ink = buy
+                    .override_text_color
+                    .unwrap_or_else(|| buy.galley.rows[0].visuals.mesh.vertices[0].color);
+                let fill = output
+                    .shapes
+                    .iter()
+                    .rev()
+                    .find_map(|paint| match &paint.shape {
+                        egui::Shape::Rect(rect)
+                            if rect.rect.contains(buy.visual_bounding_rect().center())
+                                && rect.fill.a() == 255 =>
+                        {
+                            Some(rect.fill)
+                        }
+                        _ => None,
+                    })
+                    .expect("painted button surface");
+                let a = theme::relative_luminance(ink);
+                let b = theme::relative_luminance(fill);
+                assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
+            }
+        }
+    }
 
     /// The row's horizontal padding, which the plan never sees.
     const ROW_MARGINS: f32 = ROW_MARGIN.left + ROW_MARGIN.right;

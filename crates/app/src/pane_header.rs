@@ -1065,7 +1065,11 @@ fn caret_text(palette: &crate::theme::Palette, words: &str) -> egui::text::Layou
         3.0,
         egui::TextFormat::simple(
             palette.body_font(CARET_SIZE),
-            palette.text_faint().gamma_multiply(0.6),
+            if palette.resolved.dark {
+                palette.text_faint().gamma_multiply(0.6)
+            } else {
+                palette.text_support()
+            },
         ),
     );
     text

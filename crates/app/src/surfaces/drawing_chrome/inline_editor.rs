@@ -195,7 +195,10 @@ fn draw_inner(
             // The fill is opaque for the same reason — words typed over wicks
             // are words nobody can read back.
             egui::Frame::none()
-                .fill(palette.chrome())
+                .fill(
+                    crate::drawings::text_backing(&palette, color, palette.chrome())
+                        .unwrap_or(palette.chrome()),
+                )
                 .stroke(egui::Stroke::new(1.0_f32, palette.accent()))
                 .rounding(egui::Rounding::same(3.0))
                 .inner_margin(egui::Margin::symmetric(4.0, 2.0))

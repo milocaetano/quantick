@@ -934,11 +934,11 @@ impl ReplayView {
             "Show the file format"
         };
         if ui
-            .link(
-                egui::RichText::new(label)
-                    .color(palette.text_muted())
-                    .small(),
-            )
+            .link(egui::RichText::new(label).color(if palette.resolved.dark {
+                palette.text_muted()
+            } else {
+                palette.text_support()
+            }))
             .clicked()
         {
             self.show_format = !self.show_format;
@@ -955,12 +955,18 @@ impl ReplayView {
                     .max_height(220.0)
                     .id_salt("replay_format_help")
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(format::FORMAT_HELP)
+                        for paragraph in format::FORMAT_HELP.split("\n\n") {
+                            let rich = egui::RichText::new(paragraph)
                                 .monospace()
-                                .small()
-                                .color(palette.text_muted()),
-                        );
+                                .text_style(egui::TextStyle::Body)
+                                .color(if palette.resolved.dark {
+                                    palette.text_muted()
+                                } else {
+                                    palette.text_support()
+                                });
+                            ui.add(egui::Label::new(rich).selectable(true).wrap());
+                            ui.add_space(6.0);
+                        }
                     });
             });
     }
@@ -1253,6 +1259,174 @@ crate::hooks::declare_hooks!["QUANTICK_REPLAY_GET_DATA"];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame(
+        view: &mut ReplayView,
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 780.0),
+                )),
+                time: Some(ctx.input(|input| input.time) + 1.0 / 60.0),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                view.draw_browser(
+                    ctx,
+                    &MarketMenu {
+                        current: None,
+                        catalogue: vec![],
+                    },
+                )
+            },
+        )
+    }
+
+    #[test]
+    fn replay_format_paragraphs_and_csv_selection_survive_real_browser_scrolling() {
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            for width in [1000.0, 1280.0] {
+                let ctx = egui::Context::default();
+                let mut appearance = quantick_appearance::Appearance::default();
+                appearance.apply(source).unwrap();
+                theme::sync(&ctx, &appearance);
+                let mut view = ReplayView::new(
+                    Some("C:/recordings/a-very-long-session-folder/market/session-data"),
+                    None,
+                );
+                view.open_format_help();
+                let paragraphs: Vec<_> = format::FORMAT_HELP.split("\n\n").collect();
+                let mut visible = vec![false; paragraphs.len()];
+                let mut pointer = egui::Pos2::ZERO;
+                let mut copied = false;
+                for index in 0..220 {
+                    let events = if index > 5 && index % 8 == 0 {
+                        vec![
+                            egui::Event::PointerMoved(pointer),
+                            egui::Event::MouseWheel {
+                                unit: egui::MouseWheelUnit::Point,
+                                delta: egui::vec2(0.0, -70.0),
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ]
+                    } else {
+                        vec![]
+                    };
+                    let output = frame(&mut view, &ctx, width, events);
+                    let mut csv_point = None;
+                    for clipped in output.shapes {
+                        if let egui::Shape::Text(text) = clipped.shape
+                            && let Some(paragraph) = paragraphs
+                                .iter()
+                                .position(|value| *value == text.galley.job.text)
+                        {
+                            pointer = clipped.clip_rect.center();
+                            let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                            if clipped.clip_rect.contains_rect(bounds) {
+                                visible[paragraph] = true;
+                                if text.galley.job.text.contains("# quantick-replay 1") {
+                                    csv_point = Some(text.pos + egui::vec2(30.0, 7.0));
+                                }
+                            }
+                        }
+                    }
+                    if !copied && let Some(pos) = csv_point {
+                        for _ in 0..2 {
+                            for pressed in [true, false] {
+                                frame(
+                                    &mut view,
+                                    &ctx,
+                                    width,
+                                    vec![
+                                        egui::Event::PointerMoved(pos),
+                                        egui::Event::PointerButton {
+                                            pos,
+                                            button: egui::PointerButton::Primary,
+                                            pressed,
+                                            modifiers: egui::Modifiers::NONE,
+                                        },
+                                    ],
+                                );
+                            }
+                        }
+                        let copied_output = frame(&mut view, &ctx, width, vec![egui::Event::Copy]);
+                        let selected = copied_output.platform_output.copied_text;
+                        copied = !selected.is_empty() && format::FORMAT_HELP.contains(&selected);
+                    }
+                }
+                assert!(
+                    visible.iter().all(|seen| *seen),
+                    "every complete format block is reachable: {visible:?}"
+                );
+                assert!(
+                    copied,
+                    "CSV example permits actual pointer selection and copy"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn supporting_guidance_fits_narrow_surfaces() {
+        for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
+            for width in [320.0, 520.0] {
+                let ctx = egui::Context::default();
+                let mut appearance = quantick_appearance::Appearance::default();
+                appearance.apply(source).unwrap();
+                theme::sync(&ctx, &appearance);
+                let mut view = ReplayView::new(
+                    Some("C:/recordings/a-very-long-session-folder/market/session-data"),
+                    None,
+                );
+                view.show_format = true;
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 900.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            view.draw_folder_row(ui);
+                            view.draw_format_help(ui);
+                            crate::replay_get_data::draw(&mut view.get_data, ui, &view.folder, &[]);
+                        });
+                    },
+                );
+                let mut prose = 0;
+                for clipped in &output.shapes {
+                    if let egui::Shape::Text(text) = &clipped.shape {
+                        let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                        if text.galley.job.text.contains("Expected layout")
+                            || text.galley.job.text.contains("Type a symbol")
+                        {
+                            prose += 1;
+                            assert!(
+                                bounds.right() <= width + 0.5,
+                                "guidance extends past its surface: {bounds:?}"
+                            );
+                            if width < 400.0 {
+                                assert!(text.galley.rows.len() > 1, "narrow guidance wraps");
+                            }
+                            assert!(text.galley.job.sections[0].format.font_id.size >= 12.0);
+                        }
+                    }
+                }
+                assert_eq!(
+                    prose, 2,
+                    "expanded format and lookup prerequisites are rendered"
+                );
+            }
+        }
+    }
 
     #[test]
     fn counts_are_grouped_for_reading() {
