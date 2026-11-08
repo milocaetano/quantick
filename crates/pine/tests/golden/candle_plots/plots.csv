@@ -1,0 +1,4 @@
+candle_open,candle_high,candle_low,candle_close,color,wick,border,bar_open,bar_high,bar_low,bar_close,bar_color
+10,14,8,12,00ff00ff,112233ff,445566ff,10,14,8,12,abcdefff
+12,15,9,10,ff0000ff,112233ff,na,12,15,9,10,abcdefff
+11,16,7,13,00ff00ff,112233ff,445566ff,na,na,na,na,na

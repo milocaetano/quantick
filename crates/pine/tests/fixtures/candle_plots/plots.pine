@@ -1,0 +1,4 @@
+//@version=5
+indicator("Candle outputs")
+plotcandle(open, high, low, close, title="candles", color=close >= open ? #00ff00 : #ff0000, wickcolor=#112233, bordercolor=bar_index == 1 ? na : #445566)
+plotbar(open, high, low, bar_index == 2 ? na : close, title="bars", color=#abcdef)
