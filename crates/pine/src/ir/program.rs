@@ -25,6 +25,7 @@ pub(crate) enum Instruction {
     Enter(NodeId),
     Return(NodeId),
     Coerce(NodeId),
+    CollectionCoerce(NodeId),
     Constant(NodeId, Literal),
     Read(NodeId, Resolution),
     Copy(NodeId, NodeId),
@@ -89,7 +90,17 @@ impl Program {
                     .iter()
                     .any(|context| context[id.index()])
             {
-                program.instructions.push(Instruction::Coerce(id));
+                let instruction = if script
+                    .types
+                    .coercions
+                    .iter()
+                    .any(|context| context[id.index()] == 6)
+                {
+                    Instruction::CollectionCoerce(id)
+                } else {
+                    Instruction::Coerce(id)
+                };
+                program.instructions.push(instruction);
             }
             let start = program.entries[index];
             if program.instructions.len() == start + 1

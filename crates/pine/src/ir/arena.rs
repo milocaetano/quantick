@@ -184,6 +184,9 @@ impl Arena {
     #[inline(always)]
     pub fn get_at(&self, cell: usize) -> Value {
         let words = &*self.words;
+        if words[cell] == 1 {
+            return Value::Num(f64::from_bits(words[cell + 1]));
+        }
         match words[cell] {
             4 => {
                 let start = index(words[cell + 1]);
@@ -241,6 +244,13 @@ impl Arena {
     }
     #[inline(always)]
     pub fn set_at(&mut self, cell: usize, value: Value) {
+        if let Value::Num(number) = value
+            && self.words[cell] != 4
+        {
+            self.words[cell] = 1;
+            self.words[cell + 1] = number.to_bits();
+            return;
+        }
         if self.words[cell] == 4 {
             self.release(index(self.words[cell + 1]));
         }

@@ -9,6 +9,23 @@ use crate::{
 use std::rc::Rc;
 
 impl Eval<'_> {
+    #[inline(always)]
+    fn coerce_register<const COLLECTION: bool>(&mut self, id: NodeId) {
+        let coercion = self.script.types.coercions[self.type_context as usize][id.index()];
+        let value = self.register(id).coerce(coercion);
+        if COLLECTION && coercion == 6 {
+            crate::collections::truncate(self.state.arena, &value);
+        }
+        let value = if self.script.types.integer_divisions[self.type_context as usize][id.index()] {
+            match value {
+                Value::Num(n) => Value::Num(n.trunc()),
+                value => value,
+            }
+        } else {
+            value
+        };
+        self.set_register(id, value);
+    }
     pub(super) fn execute(&mut self, entry: NodeId) -> Result<Value, PineError> {
         let mut pc = self.script.program.entries[entry.index()];
         loop {
@@ -67,25 +84,8 @@ impl Eval<'_> {
                 }
                 Instruction::Advance(node) => self.advance_skipped(*node)?,
                 Instruction::Enter(_) => unreachable!("compiler flattens entry operations"),
-                Instruction::Coerce(id) => {
-                    let coercion =
-                        self.script.types.coercions[self.type_context as usize][id.index()];
-                    let value = self.register(*id).coerce(coercion);
-                    if coercion == 6 {
-                        crate::collections::truncate(self.state.arena, &value);
-                    }
-                    let value = if self.script.types.integer_divisions[self.type_context as usize]
-                        [id.index()]
-                    {
-                        match value {
-                            Value::Num(n) => Value::Num(n.trunc()),
-                            value => value,
-                        }
-                    } else {
-                        value
-                    };
-                    self.set_register(*id, value);
-                }
+                Instruction::Coerce(id) => self.coerce_register::<false>(*id),
+                Instruction::CollectionCoerce(id) => self.coerce_register::<true>(*id),
                 Instruction::Return(_) => return Ok(self.register(entry)),
                 Instruction::Initialized(id, slot, target) => {
                     if self.state.arena.get(FLAGS, *slot as usize) == Value::Bool(true) {
@@ -331,6 +331,7 @@ impl Eval<'_> {
             | I::Enter(_)
             | I::Return(_)
             | I::Coerce(_)
+            | I::CollectionCoerce(_)
             | I::Initialized(..) => {
                 unreachable!("control instruction")
             }
