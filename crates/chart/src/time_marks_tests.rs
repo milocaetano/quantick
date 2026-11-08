@@ -148,3 +148,14 @@ fn irregular_bars_and_degenerate_views_are_deterministic() {
     let frozen = [view[0], BarAt { x: 50.0, ..view[0] }];
     assert!(time_marks(&frozen, None, UTC, 12.0, width).is_empty());
 }
+
+#[test]
+fn calendar_charts_write_their_buckets_every_stride_bars() {
+    let view = bars(NOV_6, DAY_MS, 9, 30.0);
+    let marks = calendar_marks(&view, DAY_MS, Some(NOV_6 - DAY_MS), 4);
+    assert_eq!(texts(&marks), ["06 Nov", "10 Nov", "14 Nov"]);
+    assert_eq!(
+        marks.iter().map(|mark| mark.slot).collect::<Vec<_>>(),
+        [0, 4, 8]
+    );
+}

@@ -396,6 +396,9 @@
                   "description": "Decimal [0, 1], inclusive.",
                   "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
                   "type": "string"
+                },
+                "time_grid_enabled": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -409,10 +412,9 @@
             },
             "ownership": {
               "additionalProperties": false,
-              "description": "Theme follows this chart surface; explicit preserves the value across themes. Omitted markers default to explicit; inspection returns all markers.",
+              "description": "Theme follows the chart's theme; explicit keeps the value across themes. Omitted markers are explicit; inspect returns all.",
               "properties": {
                 "background": {
-                  "default": "explicit",
                   "enum": [
                     "theme",
                     "explicit"
@@ -420,7 +422,6 @@
                   "type": "string"
                 },
                 "bear_fill": {
-                  "default": "explicit",
                   "enum": [
                     "theme",
                     "explicit"
@@ -428,7 +429,6 @@
                   "type": "string"
                 },
                 "bear_outline": {
-                  "default": "explicit",
                   "enum": [
                     "theme",
                     "explicit"
@@ -436,7 +436,6 @@
                   "type": "string"
                 },
                 "bull_fill": {
-                  "default": "explicit",
                   "enum": [
                     "theme",
                     "explicit"
@@ -444,7 +443,6 @@
                   "type": "string"
                 },
                 "bull_outline": {
-                  "default": "explicit",
                   "enum": [
                     "theme",
                     "explicit"
@@ -452,7 +450,6 @@
                   "type": "string"
                 },
                 "fill_opacity": {
-                  "default": "explicit",
                   "enum": [
                     "theme",
                     "explicit"
@@ -460,7 +457,20 @@
                   "type": "string"
                 },
                 "grid": {
-                  "default": "explicit",
+                  "enum": [
+                    "theme",
+                    "explicit"
+                  ],
+                  "type": "string"
+                },
+                "outline_width": {
+                  "enum": [
+                    "theme",
+                    "explicit"
+                  ],
+                  "type": "string"
+                },
+                "time_grid": {
                   "enum": [
                     "theme",
                     "explicit"
@@ -468,7 +478,6 @@
                   "type": "string"
                 },
                 "wick": {
-                  "default": "explicit",
                   "enum": [
                     "theme",
                     "explicit"

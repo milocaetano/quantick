@@ -15,7 +15,7 @@ use crate::{
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_chart::bar_progress::BarProgressReading;
-use quantick_chart::time_marks::{BarAt, MarkWeight, TimeMark};
+use quantick_chart::time_marks::{self, BarAt, TimeMark};
 use rust_decimal::prelude::ToPrimitive as _;
 pub(super) const PACKAGE: Package = Package {
     layers: &[
@@ -302,38 +302,37 @@ impl TimeStripPass<'_> {
                 .size()
                 .x
         };
-        let x_of = |slot| {
-            self.viewport
-                .x_center(slot, history_strip.right(), self.total)
-        };
+        let bars: Vec<BarAt> = (self.start..self.end)
+            .filter_map(|slot| {
+                let bar = self.series.closed_bar(slot)?;
+                let x = self
+                    .viewport
+                    .x_center(slot, history_strip.right(), self.total);
+                Some(BarAt {
+                    slot,
+                    x,
+                    open_ms: bar.open_time,
+                })
+            })
+            .collect();
         let seed = self
             .start
             .checked_sub(1)
             .and_then(|slot| self.series.slot_open_time(slot));
         let interval_ms = self.series.spec.spec().time_interval_ms();
-        let marks = match interval_ms
-            .filter(|interval| crate::plot_area::calendar_label_sample(*interval).is_some())
-        {
-            Some(interval) => self.calendar_marks(interval, seed, &width_of, &x_of),
-            None => {
-                let bars: Vec<BarAt> = (self.start..self.end)
-                    .filter_map(|slot| {
-                        let bar = self.series.closed_bar(slot)?;
-                        Some(BarAt {
-                            slot,
-                            x: x_of(slot),
-                            open_ms: bar.open_time,
-                        })
-                    })
-                    .collect();
-                quantick_chart::time_marks::time_marks(
-                    &bars,
-                    seed,
-                    self.tz,
-                    quantick_chart::time_marks::TIME_MARK_GAP_PX,
-                    width_of,
-                )
+        let marks = match interval_ms.zip(interval_ms.and_then(time_marks::calendar_label_sample)) {
+            Some((interval, sample)) => {
+                let room = width_of(sample);
+                let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), room);
+                time_marks::calendar_marks(&bars, interval, seed, stride)
             }
+            None => time_marks::time_marks(
+                &bars,
+                seed,
+                self.tz,
+                time_marks::TIME_MARK_GAP_PX,
+                &width_of,
+            ),
         };
         // The whole label, not just its centre: a label centred a few pixels
         // from the end drew its other half over the gutter.
@@ -347,33 +346,6 @@ impl TimeStripPass<'_> {
         };
         let marks = marks.into_iter().filter(fits).collect();
         (font, marks)
-    }
-
-    /// A calendar chart's labels: every few bars, by the widest date's room.
-    fn calendar_marks(
-        &self,
-        interval_ms: i64,
-        mut previous: Option<i64>,
-        width_of: &dyn Fn(&str) -> f32,
-        x_of: &dyn Fn(usize) -> f32,
-    ) -> Vec<TimeMark> {
-        let sample = crate::plot_area::calendar_label_sample(interval_ms).unwrap_or("00 Mmm");
-        let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), width_of(sample));
-        (self.start..self.end)
-            .step_by(stride.max(1))
-            .filter_map(|slot| {
-                let bar = self.series.closed_bar(slot)?;
-                let before = previous.replace(bar.open_time);
-                let text =
-                    crate::plot_area::fmt_calendar_label(bar.open_time, interval_ms, before)?;
-                Some(TimeMark {
-                    slot,
-                    x: x_of(slot),
-                    text,
-                    weight: MarkWeight::Day,
-                })
-            })
-            .collect()
     }
 
     /// The vertical grid's places: one line per label. A line stays where
