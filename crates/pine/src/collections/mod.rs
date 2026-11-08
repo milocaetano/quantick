@@ -1,5 +1,7 @@
 //! Typed collections backed solely by the interpreter word arena.
 mod array;
+mod image;
+pub(crate) use image::Image;
 mod runtime;
 mod search;
 mod sorting;

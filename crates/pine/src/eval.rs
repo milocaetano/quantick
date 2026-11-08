@@ -54,7 +54,7 @@ pub use crate::types::{ObjKind, Value};
 #[derive(Default)]
 pub(crate) struct ScriptState {
     /// The sole authoritative mutable runtime image.
-    pub arena: Rc<Arena>,
+    pub arena: crate::collections::Image,
     /// Retained draw objects (lines/boxes/labels, §2.6 caps).
     pub objects: ObjectStore,
 }
@@ -65,15 +65,15 @@ impl ScriptState {
         arena.resize(GLOBALS, global_slots);
         arena.resize(FLAGS, global_slots);
         Self {
-            arena: Rc::new(arena),
+            arena: arena.into(),
             ..Self::default()
         }
     }
 
     /// One contiguous copy captures slots, payloads, kernels, histories and drawings.
-    pub(crate) fn snapshot(&self) -> StateSnapshot {
+    pub(crate) fn snapshot(&mut self) -> StateSnapshot {
         StateSnapshot {
-            arena: self.arena.clone(),
+            arena: self.arena.snapshot(),
         }
     }
 
@@ -81,7 +81,7 @@ impl ScriptState {
     /// that is the whole point of `varip` (§2.3).
     pub(crate) fn restore(&mut self, snapshot: StateSnapshot, slot_modes: &[VarMode]) {
         let StateSnapshot { arena: mut image } = snapshot;
-        let arena = Rc::make_mut(&mut image);
+        let arena = image.make_mut();
         crate::collections::restore_varip(&self.arena, arena, slot_modes);
         for (slot, mode) in slot_modes.iter().enumerate() {
             if *mode == VarMode::Varip {
@@ -99,7 +99,7 @@ impl ScriptState {
 
     /// Commit the forming bar: flush staged history values into their rings.
     pub(crate) fn commit_bar(&mut self) {
-        let arena = Rc::make_mut(&mut self.arena);
+        let arena = self.arena.make_mut();
         arena.commit_histories();
         crate::collections::collect(arena);
     }
@@ -112,7 +112,7 @@ impl ScriptState {
 
 /// What [`ScriptState::snapshot`] captures.
 pub(crate) struct StateSnapshot {
-    arena: Rc<Arena>,
+    arena: crate::collections::Image,
 }
 
 /// What one run stages for its caller: this bar's plot cells and the candle
@@ -178,7 +178,7 @@ impl<'a> Eval<'a> {
         is_commit: bool,
     ) -> Self {
         let state = RunState {
-            arena: Rc::make_mut(&mut state.arena),
+            arena: state.arena.make_mut(),
         };
         if state.arena.len(REGISTERS) != script.program.entries.len() {
             state.arena.resize(REGISTERS, script.program.entries.len());

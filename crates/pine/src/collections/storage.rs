@@ -137,24 +137,29 @@ mod tests {
         use std::rc::Rc;
         let mut state = crate::eval::ScriptState::new(1);
         let root = execute(
-            Rc::make_mut(&mut state.arena),
+            state.arena.make_mut(),
             Version::V6,
             Op::From,
             &[Value::Num(1.0)],
         )
         .unwrap();
-        Rc::make_mut(&mut state.arena).set(GLOBALS, 0, root.clone());
-        let committed = state.arena.clone();
+        state.arena.make_mut().set(GLOBALS, 0, root.clone());
         let snapshot = state.snapshot();
-        assert_eq!(Rc::strong_count(&state.arena), 3);
+        let super::super::Image::Shared(committed) = state.arena.clone() else {
+            panic!("shared collection image");
+        };
+        assert_eq!(Rc::strong_count(&committed), 3);
         execute(
-            Rc::make_mut(&mut state.arena),
+            state.arena.make_mut(),
             Version::V6,
             Op::Push,
             &[root.clone(), Value::Num(2.0)],
         )
         .unwrap();
-        assert!(!Rc::ptr_eq(&committed, &state.arena));
+        let super::super::Image::Shared(current) = &state.arena else {
+            panic!("shared collection image");
+        };
+        assert!(!Rc::ptr_eq(&committed, current));
         let Value::Collection(_, handle) = root else {
             panic!("array handle");
         };
@@ -162,6 +167,48 @@ mod tests {
         assert_eq!(state.arena.len(handle as usize), 2);
         state.restore(snapshot, &[VarMode::Var]);
         assert_eq!(state.arena.len(handle as usize), 1);
+    }
+    #[test]
+    fn first_varip_allocation_promotes_next_snapshot() {
+        use super::super::Image;
+        let mut state = crate::eval::ScriptState::new(1);
+        let snapshot = state.snapshot();
+        assert!(matches!(state.arena, Image::Owned(_)));
+        let root = execute(
+            state.arena.make_mut(),
+            Version::V6,
+            Op::From,
+            &[Value::Num(1.0)],
+        )
+        .unwrap();
+        state.arena.make_mut().set(GLOBALS, 0, root);
+        state.restore(snapshot, &[VarMode::Varip]);
+        assert!(matches!(state.arena, Image::Owned(_)));
+        let snapshot = state.snapshot();
+        assert!(matches!(state.arena, Image::Shared(_)));
+        let root = state.arena.get(GLOBALS, 0);
+        execute(
+            state.arena.make_mut(),
+            Version::V6,
+            Op::Push,
+            &[root, Value::Num(2.0)],
+        )
+        .unwrap();
+        state.restore(snapshot, &[VarMode::Varip]);
+        let root = state.arena.get(GLOBALS, 0);
+        assert_eq!(
+            execute(
+                state.arena.make_mut(),
+                Version::V6,
+                Op::Size(false),
+                &[root]
+            )
+            .unwrap(),
+            Value::Num(2.0)
+        );
+        state.arena.make_mut().set(GLOBALS, 0, Value::Na);
+        collect(state.arena.make_mut());
+        assert_eq!(state.arena.words[COLLECTIONS], 0);
     }
     #[test]
     fn collection_image_growth_reclamation_and_cow() {
