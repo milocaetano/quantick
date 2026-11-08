@@ -12,7 +12,7 @@ use quantick_chart::pane_header::{CapsuleSide, HeaderIntent, PaneHeader, PaneIde
 use quantick_engine::bar_selection::BarInputAvailability;
 use smallvec::SmallVec;
 
-use super::{FOCUS_RULE_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
+use super::{FOCUS_FRAME_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
 use crate::canvas_layout::{self, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::config::FeedCapabilities;
 use crate::pane::canvas_split::PaneAreas;
@@ -117,6 +117,9 @@ struct PaneRects {
     context_charts: SmallVec<[Option<(egui::Rect, egui::Rect)>; MAX_CONTEXT_PANES]>,
     context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
     flow_areas: Option<PaneAreas>,
+    /// Every drawn pane's whole band, header to layout strip: what the focus
+    /// frame goes around.
+    pane_bands: SmallVec<[(PaneSide, egui::Rect); MAX_CANVAS_PANES]>,
     /// The row of the flow pane's side headers, painted after its chart, and the
     /// bar inputs its bars control offers.
     flow_side_row: Option<(egui::Rect, BarInputAvailability)>,
@@ -217,7 +220,7 @@ impl Tab {
             self.split_fraction = clamp_pane_fraction(self.split_fraction.max(floor));
         }
         // One visible pane is handed the whole canvas and the rest of this
-        // reduces to nothing: no divider, no focus rule — though a lone time
+        // reduces to nothing: no divider, no focus frame — though a lone time
         // pane keeps its header.
         let (time_area, divider, flow_band) = if split {
             let width = if self.flow_collapsed {
@@ -287,6 +290,7 @@ impl Tab {
             context_charts: SmallVec::new(),
             context_dividers: SmallVec::new(),
             flow_areas: None,
+            pane_bands: SmallVec::new(),
             flow_side_row: None,
         };
         #[cfg(test)]
@@ -339,6 +343,7 @@ impl Tab {
                     rects.context_charts.push(None);
                     continue;
                 }
+                rects.pane_bands.push((PaneSide::Time(slot), *band));
                 let pane_areas = split_pane_layout_strip(*band);
                 let areas = split_pane_header(
                     pane_areas.body,
@@ -349,6 +354,9 @@ impl Tab {
                     .context_charts
                     .push(Some((areas.chart, pane_areas.layout_strip)));
             }
+        }
+        if frame.show_flow {
+            rects.pane_bands.push((PaneSide::Flow, frame.flow_band));
         }
         rects.flow_areas = frame.show_flow.then(|| {
             let pane_areas = split_pane_layout_strip(frame.flow_band);
@@ -761,7 +769,7 @@ impl Tab {
     }
 
     /// The canvas's own chrome, over the panes: the collapsed rail, the
-    /// dividers, and the focus rule.
+    /// dividers, and the focus frame.
     fn draw_canvas_chrome(
         &mut self,
         tab_id: u64,
@@ -780,31 +788,27 @@ impl Tab {
         if frame.time_area.is_some() {
             self.draw_context_dividers(tab_id, ui, &rects.context_dividers);
         }
-        let (Some(time_area), Some(divider)) = (frame.time_area, frame.divider) else {
+        let (Some(_), Some(divider)) = (frame.time_area, frame.divider) else {
             return;
         };
         let drawn_width = divider.center().x - area.left();
         if frame.flow_rail.is_none() {
             self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
         }
-        // §11: a 1 px accent under the focused time pane's header — no border
-        // boxes around market data. The flow pane's side headers keep their own
-        // faint rule, focused or not: its band and frame already name the pane.
-        let focused = match self.focused_side() {
-            PaneSide::Time(slot) => rects
-                .context_charts
-                .get(slot)
-                .and_then(|areas| areas.map(|(chart, _)| chart))
-                .unwrap_or(time_area),
-            PaneSide::Flow => return,
-        };
-        ui.painter().line_segment(
-            [
-                egui::pos2(focused.left(), focused.top() + FOCUS_RULE_PX / 2.0),
-                egui::pos2(focused.right(), focused.top() + FOCUS_RULE_PX / 2.0),
-            ],
-            egui::Stroke::new(FOCUS_RULE_PX, palette.accent()),
-        );
+        // An accent frame around the focused pane, flow or context, once there
+        // is another pane on screen to tell it from: the click that activates
+        // a pane has to show which one it activated.
+        if self.drawn_panes().count() < 2 {
+            return;
+        }
+        let focused = self.focused_side();
+        if let Some((_, band)) = rects.pane_bands.iter().find(|(side, _)| *side == focused) {
+            ui.painter().rect_stroke(
+                band.shrink(FOCUS_FRAME_PX / 2.0),
+                0.0,
+                egui::Stroke::new(FOCUS_FRAME_PX, palette.accent()),
+            );
+        }
     }
 
     /// What the pointer is over, on each pane, among the *other* pane's

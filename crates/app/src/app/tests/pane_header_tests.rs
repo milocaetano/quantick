@@ -2955,53 +2955,52 @@ fn the_window_list_closes_when_its_pane_or_its_tab_goes() {
     assert!(!ctx.memory(|memory| memory.any_popup_open()), "another tab");
 }
 
-/// The rule under the flow pane's side headers stays as faint as a time pane's,
-/// focused or not; a focused time pane keeps its accent under its header.
+/// Once two panes share the canvas the focused one, flow or time, wears an
+/// accent frame and no other pane does; a lone pane is focused by definition
+/// and wears none.
 #[test]
-fn only_a_focused_time_pane_wears_the_accent_rule() {
+fn only_the_focused_pane_of_a_split_wears_the_accent_frame() {
     let ctx = egui::Context::default();
     let (mut app, _ends) = flow_fixture(&ctx);
-    let accent = egui::epaint::ColorMode::Solid(crate::theme::ACCENT);
-    let rules_at = |output: &egui::FullOutput, y: f32| {
-        let rule = |shape: &egui::Shape| match shape {
-            egui::Shape::LineSegment { points, stroke } => {
-                stroke.color == accent
-                    && (points[0].y - y).abs() < 2.0
-                    && points[0].y == points[1].y
-            }
-            _ => false,
-        };
+    let accent = crate::theme::ACCENT;
+    let framed = |output: &egui::FullOutput, pane: egui::Rect| {
         output
             .shapes
             .iter()
-            .filter(|clipped| rule(&clipped.shape))
+            .filter(|clipped| match &clipped.shape {
+                egui::Shape::Rect(shape) => {
+                    shape.stroke.color == accent
+                        && shape.stroke.width >= 2.0
+                        && shape.rect.contains(pane.center())
+                }
+                _ => false,
+            })
             .count()
     };
+    let area = |app: &QuantickApp, side: PaneSide| {
+        app.active_tab()
+            .pane(side)
+            .frame
+            .chart_area
+            .expect("a drawn pane")
+    };
+    for focused in [PaneSide::Flow, PaneSide::Time(0)] {
+        app.active_tab_mut().focus = focused;
+        let output = run_frame(&mut app, &ctx);
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            assert_eq!(
+                framed(&output, area(&app, side)),
+                usize::from(side == focused),
+                "focus on {focused:?}: the frame around {side:?}"
+            );
+        }
+    }
+    app.active_tab_mut().set_layout(CanvasLayout::Single);
+    run_frame(&mut app, &ctx);
     let output = run_frame(&mut app, &ctx);
-    let flow_top = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .area
-        .expect("flow chart")
-        .top();
     assert_eq!(
-        rules_at(&output, flow_top),
+        framed(&output, area(&app, PaneSide::Flow)),
         0,
-        "the flow pane's rule stays faint"
-    );
-    app.active_tab_mut().focus = PaneSide::Time(0);
-    let output = run_frame(&mut app, &ctx);
-    let time_top = app
-        .active_tab()
-        .pane(PaneSide::Time(0))
-        .frame
-        .area
-        .expect("time chart")
-        .top();
-    assert_eq!(
-        rules_at(&output, time_top),
-        1,
-        "the time pane keeps its accent"
+        "a lone pane wears no frame"
     );
 }

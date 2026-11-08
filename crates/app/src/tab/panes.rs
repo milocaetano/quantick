@@ -9,6 +9,7 @@ use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::canvas_layout::PaneKind;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{ChartPane, PaneIndex, PaneSide};
+use quantick_chart_interaction::pane_focus::{DrawnPanes, resolve_focus};
 use quantick_feed::{FeedConnectionState, FeedNotice};
 use quantick_session::{PaneView, SeamTrace};
 
@@ -191,59 +192,33 @@ impl Tab {
     /// last split left `focus` set to. Time falls back to the flow pane for
     /// the frame between asking for the layout and the pane being built.
     pub fn focused_side(&self) -> PaneSide {
-        // Read from what the layout *holds*, never from which variant it is.
-        // Matching one variant is how the three-pane canvas shipped with dead
-        // focus: a click set `self.focus` and every reader threw it away,
-        // because `TimeTimeAndFlow` was not in the arm.
-        // A collapsed column is not on screen, and focus on a pane nobody can
-        // see is worse than useless: `paper_hud_here` goes false for the one
-        // pane that *is* drawn, so order entry, the ladder and the trade HUD
-        // all go dead on the heatmap until the trader expands again.
-        if !self.has_time_pane() || !self.layout.shows_time() {
-            return PaneSide::Flow;
-        }
-        if !self.layout.shows_flow() {
-            // A layout with no flow pane has nothing to fall back *to*: the
-            // context chart is the only pane drawn, and the collapse flag
-            // names a column this layout does not carve. Read before the flag,
-            // or `Ctrl+0` on the Timeframe layout sent focus to a pane nobody
-            // draws — order entry, the ladder and the trade HUD all dead on
-            // the one chart on screen, with no rail to click to undo it.
-            return PaneSide::Time(0);
-        }
-        if self.context_collapsed {
-            return PaneSide::Flow;
-        }
-        let visible_context = (0..self.context_panes_shown())
-            .find(|slot| {
-                !self
-                    .context_stack
-                    .heights
-                    .get(*slot)
-                    .is_some_and(|height| height.is_collapsed())
-            })
-            .map(PaneSide::Time);
-        if self.flow_collapsed {
-            return visible_context.unwrap_or(PaneSide::Flow);
-        }
-        // A slot the stack no longer shows — the focused pane was the bottom
-        // of a three-pane layout and the trader switched to two — falls back
-        // to the top context chart, never to a pane that is not drawn.
-        match self.focus {
-            PaneSide::Time(slot)
-                if self
-                    .context_stack
-                    .heights
-                    .get(slot)
-                    .is_some_and(|height| height.is_collapsed()) =>
-            {
-                visible_context.unwrap_or(PaneSide::Flow)
-            }
-            PaneSide::Time(slot) if slot >= self.context_panes_shown() => {
-                visible_context.unwrap_or(PaneSide::Flow)
-            }
-            focus => focus,
-        }
+        // Read from what is *drawn*, never from which variant or collapse flag
+        // it is. Deciding by flag is how a click on the second context chart
+        // did nothing once the flow pane was put away: focus fell to the top
+        // chart and the click was thrown away. A pane nobody can see never
+        // holds focus either, or order entry, the ladder and the trade HUD go
+        // dead on the one pane that is drawn.
+        // Nothing drawn yet is the frame between asking for a layout and its
+        // pane being built; a layout with no flow pane names its context chart.
+        let fallback = if self.has_time_pane() && !self.layout.shows_flow() {
+            PaneSide::Time(0)
+        } else {
+            PaneSide::Flow
+        };
+        resolve_focus(self.focus, self.drawn_panes()).unwrap_or(fallback)
+    }
+
+    /// The panes on screen. A layout with no flow pane has no context column
+    /// to put away, so its collapse flag names nothing there.
+    pub fn drawn_panes(&self) -> DrawnPanes {
+        let column = !(self.layout.shows_flow() && self.context_collapsed);
+        let heights = &self.context_stack.heights;
+        let slot_drawn =
+            |slot: usize| column && !heights.get(slot).is_some_and(|h| h.is_collapsed());
+        DrawnPanes::new(
+            self.layout.shows_flow() && !self.flow_collapsed,
+            (0..self.context_panes_shown()).map(slot_drawn),
+        )
     }
 
     /// How many context panes the layout draws — bounded by how many exist,
