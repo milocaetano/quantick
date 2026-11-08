@@ -24,7 +24,7 @@ impl Checker<'_> {
             Collection(op) => crate::collections::arguments(op),
             Calendar(_) => &["time", "timezone"],
             TaMacd => &["source", "fastlen", "slowlen", "siglen"],
-            TaVwma => &["source", "volume", "length"],
+            TaVwma => &["source", "length"],
             TaAtr => &["length"],
             TaCum => &["source"],
             TaTr => &["handle_na"],

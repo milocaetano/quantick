@@ -440,9 +440,69 @@ Those proxy observations are not acceptance goldens. Collection goldens are
 independently authored calculations and use the established 1e-8 absolute plus
 1e-8 relative tolerance for fractional statistics.
 
-Nested collection elements, drawing elements and UDT elements are not implemented
-in this scalar stage. Unsupported namespace operations fail at compile time;
+Direct nested collection elements and drawing elements are not implemented.
+User-object elements are supported as described below. Unsupported namespace operations fail at compile time;
 they never silently return a substitute. `array.from` requires positional arguments.
 The independent original fixtures follow the primary
 [array](https://www.tradingview.com/pine-script-docs/language/arrays/) and
 [map](https://www.tradingview.com/pine-script-docs/language/maps/) documentation.
+## Local libraries and user objects
+
+`varip` collection declarations validate the complete element field graph,
+including UDT fields containing collections. Drawing handles (`line`, `box`,
+`label`) cannot occur in those graphs or directly in a `varip` field. Ordinary
+UDT fields may retain drawing handles, including on a `varip` object reference.
+This follows the distinction in TradingView's
+[variable declarations](https://www.tradingview.com/pine-script-docs/language/variable-declarations/)
+between persistent references and permitted collection contents.
+Quantick retains its existing top-level `varip` drawing-handle behavior for
+compatibility. The new checks cover collection roots and object fields; they
+do not claim unrestricted TradingView validation for legacy declarations.
+
+`libraries::compile_with_libraries(source, title, resolver)` accepts a pure
+caller-supplied `Fn(&str) -> Option<String>` source resolver. Imports use exact
+`local/name/version` keys and explicit aliases. No filesystem or network lookup
+occurs in Pine. Missing keys, import cycles, remote keys and depth beyond 32 fail
+with deterministic diagnostics. The original two-argument `compile` remains
+available for scripts without imports.
+
+`type`, typed fields, literal and builtin-variable field defaults, `Type.new(...)`, field reads and
+`:=` writes, `method` definitions and receiver calls use checked object references.
+Assignment aliases references; `object.copy()` creates a shallow copy. Object
+history preserves references. In v6 `object.field[1]` is rejected: use
+`previous = object[1]` followed by `previous.field`, or a temporary field series.
+The v5 field-history form remains supported. User-object mutable fields live in
+the runtime word arena and participate in preview rollback. A `varip` object
+variable preserves the reference, not every field mutation. Fields declared
+`varip` persist intrabar even through an ordinary `var` object reference; other
+fields of existing objects roll back. Enums, remote libraries and computed field
+defaults are not implemented. Supported builtin defaults include `bar_index`,
+`close` and `volume`, evaluated when the constructor executes.
+
+Arrays and scalar-keyed maps can hold user objects. Object fields may hold arrays
+and maps, including shared slices. Copies are shallow; mixed aliases, cycles and
+history roots are traced together. Object-only snapshots also share the arena
+until the first write. Unreachable object and collection records are reclaimed.
+
+First-ever preview allocation has no prior object image. When a `varip` reference
+retains such a new object, Quantick preserves its constructed graph as the baseline
+for subsequent rollback. This boundary is an explicit Quantick policy, not a
+verified TradingView parity claim. Existing instances always obey field modes.
+The primary [object documentation](https://www.tradingview.com/pine-script-docs/language/objects/)
+distinguishes reference persistence from field persistence.
+
+Local library sources currently use the importing script's Pine version;
+version mismatches are rejected explicitly. Linking is bounded to 128 sources,
+32 nested imports and four million bytes of expanded source.
+
+Local library linking reserves identifiers beginning with `qlib` for generated
+names. Library globals and private methods are isolated from the importing
+script; only exported declarations are available through the import alias.
+Repeated imports of the same exact key share exported type identities, including
+through transitive dependencies. This follows our interpretation of import
+aliases as namespaces for the library's declarations in the primary
+[library documentation](https://www.tradingview.com/pine-script-docs/concepts/libraries/);
+the cross-alias case is authored coverage, not a TradingView oracle observation.
+Method receivers require explicit types. User-object field defaults are checked
+against their declared types even when the type is unused; an omitted v6 bool
+field defaults to false, while an explicit `na` bool default is rejected.

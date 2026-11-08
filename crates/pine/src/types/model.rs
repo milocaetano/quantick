@@ -1,6 +1,7 @@
 //! Scalar identities and the ordered Pine qualifier lattice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Base {
+    UserType(String),
     Int,
     Float,
     Bool,

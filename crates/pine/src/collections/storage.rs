@@ -6,16 +6,28 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 const COLLECTIONS: usize = 30;
+const OBJECTS: usize = 31;
 pub(super) fn allocate(arena: &mut Arena) -> usize {
-    let record = arena.allocate(9);
-    arena.words[record] = arena.words[COLLECTIONS];
-    arena.words[COLLECTIONS] = record as u64;
-    record + 3
+    allocate_record(arena, false)
 }
-fn mark(value: &Value, live: &mut BTreeSet<usize>) {
+fn allocate_record(arena: &mut Arena, object: bool) -> usize {
+    let (root, size, header) = if object {
+        (OBJECTS, 7, 1)
+    } else {
+        (COLLECTIONS, 9, 3)
+    };
+    let record = arena.allocate(size);
+    arena.words[record] = arena.words[root];
+    arena.words[root] = record as u64;
+    record + header
+}
+fn mark(value: &Value, live: &mut BTreeMap<usize, bool>) {
     match value {
         Value::Collection(_, offset) => {
-            live.insert(*offset as usize);
+            live.insert(*offset as usize, false);
+        }
+        Value::UserObject(offset) => {
+            live.insert(*offset as usize, true);
         }
         Value::Tuple(values) => {
             for value in values.iter() {
@@ -25,11 +37,25 @@ fn mark(value: &Value, live: &mut BTreeSet<usize>) {
         _ => {}
     }
 }
+fn children(arena: &Arena, handle: usize, object: bool) -> BTreeMap<usize, bool> {
+    let mut refs = BTreeMap::new();
+    for value in arena.values(handle) {
+        mark(&value, &mut refs);
+    }
+    if !object {
+        mark(&arena.get_at(handle - 2), &mut refs);
+        let parent = super::view::parent(arena, handle);
+        if parent != 0 {
+            refs.insert(parent, false);
+        }
+    }
+    refs
+}
 pub(crate) fn collect(arena: &mut Arena) {
-    if arena.words[COLLECTIONS] == 0 {
+    if arena.words[COLLECTIONS] == 0 && arena.words[OBJECTS] == 0 {
         return;
     }
-    let mut live = BTreeSet::new();
+    let mut live = BTreeMap::new();
     for list in [GLOBALS, LOCALS, REGISTERS] {
         for i in 0..arena.len(list) {
             mark(&arena.get(list, i), &mut live);
@@ -44,87 +70,135 @@ pub(crate) fn collect(arena: &mut Arena) {
         }
         history = arena.words[history] as usize;
     }
-    let mut pending: Vec<_> = live.iter().copied().collect();
-    while let Some(handle) = pending.pop() {
-        let parent = super::view::parent(arena, handle);
-        if parent != 0 && live.insert(parent) {
-            pending.push(parent);
+    let mut pending: Vec<_> = live.iter().map(|(h, o)| (*h, *o)).collect();
+    while let Some((handle, object)) = pending.pop() {
+        for (child, object) in children(arena, handle, object) {
+            if live.insert(child, object).is_none() {
+                pending.push((child, object));
+            }
         }
     }
-    let mut link = COLLECTIONS;
-    let mut record = arena.words[link] as usize;
-    while record != 0 {
-        let next = arena.words[record];
-        if live.contains(&(record + 3)) {
-            link = record;
-        } else {
-            arena.resize(record + 3, 0);
-            let payload = arena.offset(record + 3);
-            arena.release(payload);
-            arena.release(record);
-            arena.words[link] = next;
+    for (root, header) in [(COLLECTIONS, 3), (OBJECTS, 1)] {
+        let mut link = root;
+        let mut record = arena.words[link] as usize;
+        while record != 0 {
+            let next = arena.words[record];
+            if live.contains_key(&(record + header)) {
+                link = record;
+            } else {
+                arena.resize(record + header, 0);
+                let payload = arena.offset(record + header);
+                arena.release(payload);
+                if root == OBJECTS {
+                    let modes = arena.offset(record + 4);
+                    arena.release(modes);
+                }
+                arena.release(record);
+                arena.words[link] = next;
+            }
+            record = next as usize;
         }
-        record = next as usize;
     }
 }
 pub(crate) fn restore_varip(current: &Arena, snapshot: &mut Arena, modes: &[VarMode]) {
-    if current.words[COLLECTIONS] == 0 {
+    if current.words[COLLECTIONS] == 0 && current.words[OBJECTS] == 0 {
+        for (slot, mode) in modes.iter().enumerate() {
+            if *mode == VarMode::Varip {
+                snapshot.set(GLOBALS, slot, current.get(GLOBALS, slot));
+            }
+        }
         return;
     }
     let mut existing = BTreeSet::new();
-    let mut record = snapshot.words[COLLECTIONS] as usize;
+    for (root, header) in [(COLLECTIONS, 3), (OBJECTS, 1)] {
+        let mut record = snapshot.words[root] as usize;
+        while record != 0 {
+            existing.insert(record + header);
+            record = snapshot.words[record] as usize;
+        }
+    }
+    let mut reachable = BTreeMap::new();
+    for (slot, mode) in modes.iter().enumerate() {
+        if *mode == VarMode::Varip {
+            mark(&current.get(GLOBALS, slot), &mut reachable);
+        }
+    }
+    let mut record = snapshot.words[OBJECTS] as usize;
     while record != 0 {
-        existing.insert(record + 3);
+        let handle = record + 1;
+        if current.values(handle + 3).contains(&Value::Bool(true)) {
+            reachable.insert(handle, true);
+        }
         record = snapshot.words[record] as usize;
     }
+    let mut pending: Vec<_> = reachable.iter().map(|(h, o)| (*h, *o)).collect();
     let mut copied = BTreeMap::new();
-    for (slot, mode) in modes.iter().enumerate() {
-        if *mode != VarMode::Varip {
-            continue;
+    while let Some((source, object)) = pending.pop() {
+        let target = if existing.contains(&source) {
+            source
+        } else {
+            allocate_record(snapshot, object)
+        };
+        copied.insert(source, target);
+        let mut refs = BTreeMap::new();
+        if object && existing.contains(&source) {
+            for i in 0..current.len(source) {
+                if current.get(source + 3, i) == Value::Bool(true) {
+                    mark(&current.get(source, i), &mut refs);
+                }
+            }
+        } else {
+            refs = children(current, source, object);
         }
-        if let Value::Collection(map, offset) = current.get(GLOBALS, slot) {
-            let target = transplant(current, snapshot, offset as usize, &existing, &mut copied);
-            snapshot.set(
-                GLOBALS,
-                slot,
-                Value::Collection(map, u32::try_from(target).expect("collection offset")),
-            );
+        for (child, object) in refs {
+            if reachable.insert(child, object).is_none() {
+                pending.push((child, object));
+            }
+        }
+    }
+    // Allocate the whole graph before writing any edge, including back edges.
+    for (source, object) in reachable {
+        let target = copied[&source];
+        if object && existing.contains(&source) {
+            for i in 0..current.len(source) {
+                if current.get(source + 3, i) == Value::Bool(true) {
+                    snapshot.set(target, i, remap(current.get(source, i), &copied));
+                }
+            }
+        } else {
+            let values = current
+                .values(source)
+                .into_iter()
+                .map(|v| remap(v, &copied))
+                .collect();
+            snapshot.replace(target, values);
+        }
+        if object {
+            snapshot.replace(target + 3, current.values(source + 3));
+        }
+        if !object {
+            snapshot.set_at(target - 2, remap(current.get_at(source - 2), &copied));
+            let parent = super::view::parent(current, source);
+            snapshot.words[target + 3] = copied.get(&parent).copied().unwrap_or(0) as u64;
+            snapshot.words[target + 4] = current.words[source + 4];
+            snapshot.words[target + 5] = current.words[source + 5];
+        }
+    }
+    for (slot, mode) in modes.iter().enumerate() {
+        if *mode == VarMode::Varip {
+            snapshot.set(GLOBALS, slot, remap(current.get(GLOBALS, slot), &copied));
         }
     }
 }
-fn transplant(
-    current: &Arena,
-    snapshot: &mut Arena,
-    source: usize,
-    existing: &BTreeSet<usize>,
-    copied: &mut BTreeMap<usize, usize>,
-) -> usize {
-    let mut pending = Vec::new();
-    let mut cursor = source;
-    while cursor != 0 && !copied.contains_key(&cursor) {
-        let target = if existing.contains(&cursor) {
-            cursor
-        } else {
-            allocate(snapshot)
-        };
-        copied.insert(cursor, target);
-        pending.push(cursor);
-        cursor = super::view::parent(current, cursor);
+fn remap(value: Value, copied: &BTreeMap<usize, usize>) -> Value {
+    match value {
+        Value::Collection(map, source) => Value::Collection(map, copied[&(source as usize)] as u32),
+        Value::UserObject(source) => Value::UserObject(copied[&(source as usize)] as u32),
+        Value::Tuple(values) => Value::Tuple(std::rc::Rc::new(
+            values.iter().cloned().map(|v| remap(v, copied)).collect(),
+        )),
+        value => value,
     }
-    for source in pending.into_iter().rev() {
-        let target = copied[&source];
-        snapshot.replace(target, current.values(source));
-        snapshot.set_at(target - 2, current.get_at(source - 2));
-        let parent = super::view::parent(current, source);
-        snapshot.words[target + 3] = if parent == 0 {
-            0
-        } else {
-            copied[&parent] as u64
-        };
-        snapshot.words[target + 4] = current.words[source + 4];
-        snapshot.words[target + 5] = current.words[source + 5];
-    }
-    copied[&source]
 }
 
 #[cfg(test)]
@@ -258,3 +332,7 @@ mod tests {
         assert_eq!(arena.words.len(), size);
     }
 }
+
+#[cfg(test)]
+#[path = "../libraries/graph_tests.rs"]
+mod mixed_graph_tests;

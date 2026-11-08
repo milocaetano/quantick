@@ -65,7 +65,8 @@ pub use crate::ir::{CallSiteId, CompiledScript, FunctionInfo, Resolution};
 /// returns `Ok`.
 pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec<PineError>> {
     let lexed = lexer::lex(source)?;
-    let (ast, root) = parser::parse(&lexed.tokens)?;
+    let (mut ast, root) = parser::parse(&lexed.tokens)?;
+    crate::libraries::prepare(&mut ast, lexed.version.is_some_and(|(v, _)| v == 6))?;
 
     let mut compiler = Compiler::new(ast, root, fallback_title);
     compiler.checked_types.version =

@@ -34,7 +34,7 @@ impl Image {
     }
     pub fn snapshot(&mut self) -> Self {
         if let Self::Owned(arena) = self
-            && arena.words[30] != 0
+            && (arena.words[30] != 0 || arena.words[31] != 0)
         {
             let Self::Owned(arena) = std::mem::take(self) else {
                 unreachable!("owned image");

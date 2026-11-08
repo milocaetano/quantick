@@ -285,6 +285,7 @@ impl Arena {
 #[inline(always)]
 fn scalar_words(value: &Value) -> (u64, u64) {
     match value {
+        Value::UserObject(offset) => (15, u64::from(*offset)),
         Value::Na => (0, 0),
         Value::Num(n) => (1, n.to_bits()),
         Value::Bool(b) => (2, u64::from(*b)),
@@ -308,6 +309,7 @@ fn scalar_words(value: &Value) -> (u64, u64) {
 #[inline(always)]
 fn scalar(tag: u64, payload: u64) -> Value {
     match tag {
+        15 => Value::UserObject(u32::try_from(payload).expect("object offset")),
         0 => Value::Na,
         1 => Value::Num(f64::from_bits(payload)),
         2 => Value::Bool(payload != 0),

@@ -7,8 +7,9 @@ use crate::{
         model::{Base, Qualifier, Type},
     },
 };
-fn base(element: Element) -> Base {
+fn base(element: Element, ast: &crate::ast::Ast) -> Base {
     match element {
+        Element::User(index) => Base::UserType(ast.user_types[index as usize].name.clone()),
         Element::Int => Base::Int,
         Element::Float => Base::Float,
         Element::Bool => Base::Bool,
@@ -189,13 +190,16 @@ impl Checker<'_> {
                     require(0, &Base::Int)?;
                 }
                 if values.len() == 2 {
-                    require(1, &base(element))?;
+                    require(1, &base(element, self.ast))?;
                 }
-                Ok(Base::Array(Box::new(base(element))))
+                Ok(Base::Array(Box::new(base(element, self.ast))))
             }
             NewMap(key, value) => {
                 arity(0, 0)?;
-                Ok(Base::Map(Box::new(base(key)), Box::new(base(value))))
+                Ok(Base::Map(
+                    Box::new(base(key, self.ast)),
+                    Box::new(base(value, self.ast)),
+                ))
             }
             From => {
                 arity(1, usize::MAX)?;
@@ -214,9 +218,14 @@ impl Checker<'_> {
                 }
                 if !matches!(
                     element,
-                    Base::Int | Base::Float | Base::String | Base::Bool | Base::Color
+                    Base::Int
+                        | Base::Float
+                        | Base::String
+                        | Base::Bool
+                        | Base::Color
+                        | Base::UserType(_)
                 ) {
-                    return Err("array.from requires a scalar element type".into());
+                    return Err("array.from requires a scalar or user-object element type".into());
                 }
                 Ok(Base::Array(Box::new(element)))
             }

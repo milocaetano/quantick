@@ -1,0 +1,10 @@
+//@version=6
+library("Stats")
+export type Point
+    float value = 0.0
+    int count = 0
+export method add(Point self, float amount) =>
+    self.value := self.value + amount
+    self.count := self.count + 1
+    self.value
+export twice(float value) => value * 2

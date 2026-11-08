@@ -14,6 +14,9 @@ use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
 use crate::error::{ErrorCode, PineError, Span};
 use crate::lexer::{Tok, Token};
 
+#[path = "libraries/parse.rs"]
+mod library_parse;
+
 /// How deeply expressions may nest.
 ///
 /// Descent costs about five stack frames per `(`, and a stack overflow
@@ -206,6 +209,9 @@ impl Parser<'_> {
             return self.collection_declaration();
         }
         let start = self.span();
+        if let Some(result) = self.library_statement(start) {
+            return result;
+        }
         match self.peek().clone() {
             Tok::KwVar | Tok::KwVarip => {
                 let mode = if self.eat(&Tok::KwVar) {
@@ -433,6 +439,9 @@ impl Parser<'_> {
 
     fn expression_statement(&mut self, start: Span) -> Option<NodeId> {
         let (expr, block_form) = self.statement_value()?;
+        if !block_form && self.eat(&Tok::ColonEq) {
+            return self.field_assignment(expr, start);
+        }
         if !block_form {
             self.end_of_statement();
         }

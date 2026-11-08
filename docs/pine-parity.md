@@ -21,7 +21,7 @@ The second command regenerates all 24 oracle files. Run it twice and use
 Ordinary offline verification needs only Rust:
 
 ```sh
-cargo test -p quantick-pine --test parity
+cargo test -p quantick-pine
 ```
 
 `QUANTICK_UPDATE_PARITY=1 cargo test -p quantick-pine --test parity` deliberately
@@ -246,3 +246,101 @@ All nine app-script snapshots remain byte-identical after the two semantic fixes
 the list of changed app-script outputs is empty. App oracle verification remains
 0/9. The original corpus and oracle baseline measurements above describe child 0,
 not the current native MACD support.
+
+## Final retained-child acceptance
+
+C90-C93 are the offline combined acceptance entry points. Collection and mixed
+object fixtures now participate in combined acceptance. Final paired performance
+measurements appear below; the earlier measurements above remain historical.
+The baseline remains 1,344/1,920
+matching proxy cells; the current numerical oracle expects 1,920/1,920. The
+positive compiler corpus is 13/13 at baseline and final, invalid rejection is
+7/7 at baseline and final, mixed corpus loads are 13/20 at both, and its oracle
+coverage remains 0/21 plot columns. App snapshot coverage remains 9/9 and direct
+app oracle coverage remains 0/9. The child-1 semantic corrections are recorded
+in the preceding semantic policy section; these denominators are
+not a general real-world script success rate.
+
+Library fixtures are independently authored hand-calculated acceptance data,
+not PineTS verification. C61 covers exact local resolution, references, methods,
+preview rollback, missing/cyclic/remote diagnostics and v5/v6 field history.
+The mixed collection fixtures were committed before implementation and execute
+through public compile/preview/commit tests. C91 compares serialized preview
+outputs and committed plot/object snapshots across fresh runs of the mixed
+collection graphs, including history and field-level varip progression. A
+varip object reference does not make every field persistent. The initial
+preview of a newly constructed object uses the documented Quantick baseline.
+
+### Golden execution inventory
+
+Every committed file under `crates/pine/tests/golden` is classified below.
+C90 checks the closed path inventory and provenance statements, so newly added
+files require an explicit assignment. `cargo test -p quantick-pine` executes
+the combined and named child tests without Node.
+Numeric denominators describe separate evidence kinds and must not be added
+into a single oracle-parity claim.
+
+| Files | Pine test execution or evidence role |
+| --- | --- |
+| `oracle/*.csv` (24 files) | C90 `combined_offline_golden_parity`: 1,920 proxy cells, absolute plus relative tolerance; all compared |
+| `ir/native-kernels.csv` | C90: 3,072 native pre-IR cells through public Pine compilation, repeated preview and commit; exact finite bits and NaN identity |
+| `ir/rollback.csv` | `slot_ir_commit_preview_parity`: authored transaction/history sequence, including varip preview progression |
+| `types/scalars.csv`, `version/{v5,v6}.csv`, `libraries/main.csv`, `semantics/{conditional,loop}.csv` | C90 additionally compares 100 retained cells, independently of the 1,920-cell oracle denominator; original named child tests also execute these files |
+| `calendar/fields.csv` | `calendar_from_bar_time`: 42 authored date-field cells, timestamp and fixed-offset fixtures |
+| `candle_plots/plots.csv` | `candle_and_bar_plot_parity`: three authored OHLC/color rows for two output channels, preview/commit/reset comparisons |
+| `app-*.txt` (9 files) | C92 and `oracle_baseline_and_determinism`: exact structural snapshots; direct oracle coverage remains 0/9 |
+| `corpus-report.txt` | `corpus_measurement_baseline`: exact deterministic load/error/coverage report |
+| `oracle-report.txt` | Historical child-0 report, retained unchanged: 1,344/1,920 matches and 576 rejected cells; current behavior is explicitly different |
+| `semantics/conditional-proxy.csv` | Historical conditional proxy observation (1,0,4,0,9), intentionally different from the approved eager policy (1,0,6,0,15); not an equality golden for current semantics |
+| `libraries/mixed.csv` | `mixed_object_collection_golden`: shallow aliases across object fields, arrays and maps |
+| `libraries/eager.csv` | `object_eager_reads_preserve_conditional_mutations`: eager reads and conditional field writes |
+| `libraries/{varip_graph,history_graph}.csv` | `mixed_graph_history_and_first_preview_varip`: mixed cycles, first-preview persistent references and slice-backed object history |
+| `collections/{annotations,boundaries,defaults,eager,search,slices,sorting,statistics}.csv` | C90 and C91 execute authored collection rows through public preview/commit APIs |
+| `collections/rollback.csv` | `collections_copy_on_write_rollback`: authored commit/preview state transitions |
+| `collections/negative.csv` | C90 `negative_golden`: v5 runtime bounds error and v6 numeric outputs parsed from the golden |
+| `libraries/defaults.csv` | `builtin_field_defaults_evaluate_at_construction`: builtin defaults, repeated previews and commits |
+| `calendar/README.md`, `candle_plots/README.md`, `collections/README.md`, `libraries/README.md`, `version/provenance.md` | C90 asserts provenance statements; these documents are not executable numeric output data |
+
+The native fixture audit exposed and corrected the VWMA registration: public
+`ta.vwma(source, length)` obtains volume from the input bar, matching its evaluator
+and documented contract. No oracle implementation was copied or translated.
+The combined graph replay compares 136/136 authored numeric cells, separate
+from the 100/100 retained scalar cells, the 3,072/3,072 exact native cells and
+the 1,920/1,920 proxy cells. Preview repetitions do not inflate these counts.
+Other child transaction/calendar/candle fixtures retain their own denominators.
+The authored approximate comparisons share the proxy tolerance above; native
+bit fixtures and application snapshots remain exact. No authored value is
+represented as a new external oracle observation.
+
+### Final paired runtime measurement
+
+On 2026-11-08, `cargo bench -p quantick-pine --bench interp` compared pinned
+baseline `403e6c2c16fdde2ddc5a8c978c562e806327aaca` (A) with final source
+`7353314c3829ed54b8c6b2b370915cd4e75c5df8` (B), Pine source tree
+`91b5a9fca072968d040c49b387b3ddaae811c9e6`. Both release binaries were warmed
+before sampling. Environment: Windows x86_64 MSVC, Rust 1.98.0
+(`88d9e12ae`, LLVM 22.1.8), Intel Core i5-12400F, six cores/twelve threads.
+Each sample executed the fixed ten-indicator stack over 100,000 trade updates.
+No other Cargo, rustc or interpreter benchmark process was present at the
+pre/post checks for each sample. All eight samples are retained:
+
+| Order | Revision | ns/trade, ten indicators |
+| --- | --- | ---: |
+| 1 | A | 15416.7 |
+| 2 | B | 15267.7 |
+| 3 | B | 15423.5 |
+| 4 | A | 15671.9 |
+| 5 | A | 15909.0 |
+| 6 | B | 16283.7 |
+| 7 | B | 15372.2 |
+| 8 | A | 15503.1 |
+
+Baseline mean: 15,625.175 ns/trade; final mean: 15,586.775 ns/trade
+(1,558.678 ns per indicator/update), 0.246% below baseline. This is practically
+flat within the observed variation, with no observed mean regression; it is
+not evidence of a statistically established speedup. Baseline median is
+15,587.5 ns/trade (range 15,416.7-15,909.0); final median is 15,397.85
+(range 15,267.7-16,283.7). Individual final samples are not uniformly faster.
+The historical larger improvements above
+are not substituted for this final measurement. Compilation and setup are
+outside the timed region; preview rollback and retained state are included.

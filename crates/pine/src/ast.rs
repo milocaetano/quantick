@@ -261,9 +261,14 @@ pub struct Ast {
     nodes: Vec<Node>,
     annotations: Vec<(NodeId, Vec<Vec<String>>)>,
     default_zero: Option<NodeId>,
+    pub(crate) user_types: Vec<crate::libraries::UserType>,
+    pub(crate) methods: Vec<String>,
 }
 
 impl Ast {
+    pub(crate) fn replace(&mut self, id: NodeId, kind: NodeKind) {
+        self.nodes[id.index()].kind = kind;
+    }
     /// An empty arena.
     #[must_use]
     pub fn new() -> Self {

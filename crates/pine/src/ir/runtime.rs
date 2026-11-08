@@ -147,6 +147,7 @@ impl Eval<'_> {
     fn execute_operation(&mut self, instruction: &Instruction) -> Result<(), PineError> {
         use Instruction as I;
         let (id, value) = match instruction {
+            I::Object(id, op, object, args) => (*id, self.user_object(*id, *op, *object, args)?),
             I::Constant(id, literal) => (
                 *id,
                 match literal {
@@ -273,53 +274,7 @@ impl Eval<'_> {
             I::Builtin(id, builtin, args) => (*id, self.builtin_call(*id, *builtin, args)?),
             I::User(id, index, args) => (*id, self.user_call(*id, *index, args)?),
             I::Method(id, object, field, args) => {
-                let receiver = self.eval(*object)?;
-                if let Value::Collection(map, _) = receiver {
-                    let family = if map { "map" } else { "array" };
-                    let Some(op) = crate::collections::lookup(&format!("{family}.{field}")) else {
-                        return Err(self.err(
-                            *id,
-                            ErrorCode::PineType,
-                            "unknown collection method",
-                        ));
-                    };
-                    if self.semantic_run.skipped && crate::collections::mutates(op) {
-                        self.advance_arguments(args)?;
-                        self.set_register(*id, Value::Na);
-                        return Ok(());
-                    }
-                    let mut values = vec![receiver];
-                    for arg in args {
-                        values.push(self.eval(arg.value)?);
-                    }
-                    let value = crate::collections::execute(
-                        self.state.arena,
-                        self.script.version,
-                        op,
-                        &values,
-                    )
-                    .map_err(|message| self.err(*id, ErrorCode::PineType, message))?;
-                    self.set_register(*id, value);
-                    return Ok(());
-                }
-                if self.semantic_run.skipped {
-                    self.advance_arguments(args)?;
-                    (*id, Value::Na)
-                } else {
-                    let Value::Obj(kind, raw) = receiver else {
-                        return Err(self.type_err(*object, "an object handle", &receiver));
-                    };
-                    (
-                        *id,
-                        self.method_call(
-                            *id,
-                            kind,
-                            quantick_indicators::ObjectId(raw),
-                            field,
-                            args,
-                        )?,
-                    )
-                }
+                (*id, self.execute_method(*id, *object, field, args)?)
             }
             I::Invalid(id) => {
                 return Err(self.err(
@@ -341,6 +296,40 @@ impl Eval<'_> {
         };
         self.set_register(id, value);
         Ok(())
+    }
+
+    fn execute_method(
+        &mut self,
+        id: NodeId,
+        object: NodeId,
+        field: &str,
+        args: &[crate::ast::Arg],
+    ) -> Result<Value, PineError> {
+        let receiver = self.eval(object)?;
+        if let Value::Collection(map, _) = receiver {
+            let family = if map { "map" } else { "array" };
+            let Some(op) = crate::collections::lookup(&format!("{family}.{field}")) else {
+                return Err(self.err(id, ErrorCode::PineType, "unknown collection method"));
+            };
+            if self.semantic_run.skipped && crate::collections::mutates(op) {
+                self.advance_arguments(args)?;
+                return Ok(Value::Na);
+            }
+            let mut values = vec![receiver];
+            for arg in args {
+                values.push(self.eval(arg.value)?);
+            }
+            return crate::collections::execute(self.state.arena, self.script.version, op, &values)
+                .map_err(|message| self.err(id, ErrorCode::PineType, message));
+        }
+        if self.semantic_run.skipped {
+            self.advance_arguments(args)?;
+            return Ok(Value::Na);
+        }
+        let Value::Obj(kind, raw) = receiver else {
+            return Err(self.type_err(object, "an object handle", &receiver));
+        };
+        self.method_call(id, kind, quantick_indicators::ObjectId(raw), field, args)
     }
 
     #[inline(always)]

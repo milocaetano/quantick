@@ -22,6 +22,7 @@ pub(crate) enum Literal {
 /// addresses, never syntax nodes; node ids only identify registers and spans.
 #[derive(Clone)]
 pub(crate) enum Instruction {
+    Object(NodeId, crate::libraries::ObjectOp, Option<NodeId>, Vec<Arg>),
     Enter(NodeId),
     Return(NodeId),
     Coerce(NodeId),
@@ -273,6 +274,11 @@ impl Program {
             NodeKind::Str(value) => {
                 code.push(I::Constant(id, Literal::Str(Rc::new(value.clone()))))
             }
+            NodeKind::Member { object, .. } if matches!(resolution, Resolution::Object(_)) => {
+                if let Resolution::Object(op) = resolution {
+                    code.push(I::Object(id, op, Some(*object), Vec::new()));
+                }
+            }
             NodeKind::Name(_) | NodeKind::Member { .. } => code.push(I::Read(id, resolution)),
             NodeKind::Unary { op, operand } => {
                 code.push(I::Enter(*operand));
@@ -347,6 +353,16 @@ impl Program {
                     }
                 }
                 Resolution::Function(index) => code.push(I::User(id, index, args.clone())),
+                Resolution::Object(op) => {
+                    let object = if matches!(op, crate::libraries::ObjectOp::New(_)) {
+                        None
+                    } else if let NodeKind::Member { object, .. } = &script.ast.node(*callee).kind {
+                        Some(*object)
+                    } else {
+                        None
+                    };
+                    code.push(I::Object(id, op, object, args.clone()));
+                }
                 _ => match &script.ast.node(*callee).kind {
                     NodeKind::Member { object, field } => {
                         code.push(I::Method(id, *object, field.clone(), args.clone()))

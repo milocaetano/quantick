@@ -37,6 +37,8 @@ use arena::{Arena, FLAGS, GLOBALS, LOCALS, REGISTERS};
 #[path = "ir/kernel_state.rs"]
 mod kernel_state;
 mod kernels;
+#[path = "libraries/runtime.rs"]
+mod library_runtime;
 #[path = "ir/object_state.rs"]
 mod object_state;
 mod objects;
@@ -85,9 +87,6 @@ impl ScriptState {
         crate::collections::restore_varip(&self.arena, arena, slot_modes);
         for (slot, mode) in slot_modes.iter().enumerate() {
             if *mode == VarMode::Varip {
-                if !matches!(self.arena.get(GLOBALS, slot), Value::Collection(..)) {
-                    arena.set(GLOBALS, slot, self.arena.get(GLOBALS, slot));
-                }
                 arena.set(FLAGS, slot, self.arena.get(FLAGS, slot));
             }
         }
@@ -553,6 +552,7 @@ fn source_value(source: SourceId, bar: &IndicatorBar, ctx: &Ctx<'_>) -> f64 {
 /// else false.
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
+        (Value::UserObject(a), Value::UserObject(b)) => a == b,
         (Value::Num(a), Value::Num(b)) => a == b,
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Color(a), Value::Color(b)) => a == b,
@@ -563,6 +563,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 
 fn describe(value: &Value) -> &'static str {
     match value {
+        Value::UserObject(_) => "user object",
         Value::Obj(..) => "an object handle",
         Value::Collection(..) => "a collection handle",
         Value::Num(_) => "a number",
