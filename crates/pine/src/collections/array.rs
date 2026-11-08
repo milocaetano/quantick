@@ -128,7 +128,15 @@ pub(super) fn execute(
             let values: Vec<_> = (0..size)
                 .map(|i| match view::get(arena, record, i) {
                     Value::Str(s) => s.to_string(),
+                    Value::Num(n) if n.is_finite() => {
+                        let value = format!("{n:.8}");
+                        value
+                            .trim_end_matches('0')
+                            .trim_end_matches('.')
+                            .to_string()
+                    }
                     Value::Num(n) => n.to_string(),
+                    Value::Na => "NaN".into(),
                     Value::Bool(b) => b.to_string(),
                     other => format!("{other:?}"),
                 })

@@ -318,7 +318,8 @@ Collections and UDT field history are handled by their respective feature owners
 
 Arrays and maps use typed scalar elements (`int`, `float`, `bool`, `string`,
 `color`). Explicit `array<T>` and `map<K,V>` declarations and generic constructors
-are accepted. Assignment aliases the same collection; `copy` allocates an
+and typed function parameters are accepted, including legacy `T[]` annotations.
+Assignment aliases the same collection; `copy` allocates an
 independent collection. `map.keys` and `map.values` allocate independent arrays in
 insertion order. Overwriting a key retains its position; removing and reinserting
 it appends it. Iteration never uses sorted-key order.
@@ -337,7 +338,16 @@ receiver methods (constructors and `array.from` are namespace-only):
 | `array.concat` | second array; mutates and returns the first |
 | `array.fill` | value, optional index_from and exclusive index_to |
 | `array.includes`, `array.indexof`, `array.lastindexof` | value |
-| `array.sum`, `array.avg`, `array.min`, `array.max` | none; numeric arrays only |
+| `array.sum`, `array.avg`, `array.median`, `array.mode`, `array.range` | none; numeric arrays only |
+| `array.min`, `array.max` | optional zero-based nth rank |
+| `array.abs`, `array.standardize` | none; returns an independent numeric array |
+| `array.stdev`, `array.variance` | optional biased flag (default true) |
+| `array.covariance` | second numeric array, optional biased flag (default true) |
+| `array.percentile_linear_interpolation`, `array.percentile_nearest_rank` | percentage in 0..100 |
+| `array.percentrank` | nonnegative element index |
+| `array.sort`, `array.sort_indices` | optional order.ascending (default) or order.descending |
+| `array.slice` | index_from, exclusive index_to; shared parent view |
+| `array.binary_search`, `array.binary_search_leftmost`, `array.binary_search_rightmost` | numeric value; requires ascending order |
 | `array.join` | optional separator, default comma |
 | `array.from` | positional scalar values with a common element type |
 
@@ -394,14 +404,45 @@ collections, while `varip` mutations persist, including aliases held by ordinary
 unreachable collection records after commit; it does no tracing for scripts
 without collections.
 
-This is the documented scalar operation set, not the entire Pine collection API.
-Sorting, slices, binary search, percentile/statistical operations beyond the four
-reductions above, `min`/`max` rank arguments, legacy `T[]` annotations, nested
-collection elements, drawing elements and UDT elements are not implemented in
-this stage. Unsupported namespace operations fail at compile time; they never
-silently return a substitute. Generic annotations on function parameters are not
-yet accepted. `array.from` requires positional arguments. Collection `join`
-formatting is intended for scalar diagnostics, not full Pine format equivalence.
+Sorting accepts numeric and string arrays. Empty strings and missing values sort
+last ascending and first descending; equal elements retain their original order.
+`sort_indices` returns an independent index array. A slice keeps its parent alive,
+including through history and rollback. Updating, sorting, inserting or removing
+through a slice updates its parent. Parent resizing can shrink the visible slice,
+then restore it; only edits through the slice change its maximum range. Growing a
+slice while its start is beyond the parent's current size reports `PINE_TYPE`.
+
+Numeric reductions skip missing samples; covariance skips pairs containing a
+missing value and requires equal array lengths. Empty/all-missing reductions
+return `na`, while standardization returns an empty array. Standardization keeps
+missing positions when numeric samples exist and uses population deviation.
+The integer overloads of `avg`, `median`, `stdev`, `variance`, linear percentile,
+and `percentrank` truncate results toward zero; integer standardization truncates
+each result. The [function reference](https://www.tradingview.com/pine-script-reference/v5/)
+lists int/float overloads for each of these functions and int/float-array overloads
+for `standardize`; `covariance` always returns float. Numeric `join` uses eight
+optional fractional digits, matching the default `str.tostring` format, and accepts
+only numeric or string arrays. v6 rejects explicit `na` boolean elements.
+
+The following edge policies are explicit dialect decisions, not verified
+TradingView observations. The function reference's `array.mode` entry says to
+choose the smallest value for a frequency tie or all-unique input; we follow that
+specific rule despite the arrays overview saying no mode returns `na`. A rank
+beyond the available numeric samples returns `na`. A zero-deviation standardized
+sample returns `na` from the mathematical normalization formula. Binary left/right
+searches return the first/last equal index, or the preceding/following insertion
+neighbor when absent. Thus left below the minimum is -1, right above the maximum
+is size; an empty array returns -1/0 respectively. Ordinary binary search returns
+the first equal index or -1. Primary documentation does not settle every extreme
+boundary. Read-only PineTS 0.13.1 probes (not TradingView) returned 0 for left below
+the minimum and 1 for constant standardization, differing from these policies.
+Those proxy observations are not acceptance goldens. Collection goldens are
+independently authored calculations and use the established 1e-8 absolute plus
+1e-8 relative tolerance for fractional statistics.
+
+Nested collection elements, drawing elements and UDT elements are not implemented
+in this scalar stage. Unsupported namespace operations fail at compile time;
+they never silently return a substitute. `array.from` requires positional arguments.
 The independent original fixtures follow the primary
 [array](https://www.tradingview.com/pine-script-docs/language/arrays/) and
 [map](https://www.tradingview.com/pine-script-docs/language/maps/) documentation.

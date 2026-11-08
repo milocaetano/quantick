@@ -99,27 +99,34 @@ fn transplant(
     existing: &BTreeSet<usize>,
     copied: &mut BTreeMap<usize, usize>,
 ) -> usize {
-    if let Some(target) = copied.get(&source) {
-        return *target;
+    let mut pending = Vec::new();
+    let mut cursor = source;
+    while cursor != 0 && !copied.contains_key(&cursor) {
+        let target = if existing.contains(&cursor) {
+            cursor
+        } else {
+            allocate(snapshot)
+        };
+        copied.insert(cursor, target);
+        pending.push(cursor);
+        cursor = super::view::parent(current, cursor);
     }
-    let target = if existing.contains(&source) {
-        source
-    } else {
-        allocate(snapshot)
-    };
-    copied.insert(source, target);
-    snapshot.replace(target, current.values(source));
-    snapshot.set_at(target - 2, current.get_at(source - 2));
-    let parent = super::view::parent(current, source);
-    snapshot.words[target + 3] = if parent == 0 {
-        0
-    } else {
-        transplant(current, snapshot, parent, existing, copied) as u64
-    };
-    snapshot.words[target + 4] = current.words[source + 4];
-    snapshot.words[target + 5] = current.words[source + 5];
-    target
+    for source in pending.into_iter().rev() {
+        let target = copied[&source];
+        snapshot.replace(target, current.values(source));
+        snapshot.set_at(target - 2, current.get_at(source - 2));
+        let parent = super::view::parent(current, source);
+        snapshot.words[target + 3] = if parent == 0 {
+            0
+        } else {
+            copied[&parent] as u64
+        };
+        snapshot.words[target + 4] = current.words[source + 4];
+        snapshot.words[target + 5] = current.words[source + 5];
+    }
+    copied[&source]
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -434,7 +434,14 @@ fn collections_statistic_integer_overloads() {
 
 #[test]
 fn collections_documented_boundary_policy() {
-    assert_eq!(run(include_str!("fixtures/collections/boundaries.pine")), vec![1.0; 5]);
+    assert_eq!(
+        run(include_str!("fixtures/collections/boundaries.pine")),
+        include_str!("golden/collections/boundaries.csv")
+            .trim()
+            .split(',')
+            .map(|s| s.parse::<f64>().unwrap())
+            .collect::<Vec<_>>()
+    );
     for body in [
         "a = array.from(1, 2)\ns = a.slice(1, 2)\na.clear()\ns.push(3)",
         "a = array.new_int(100000)\ns = a.slice(0, 1)\ns.push(3)",
@@ -445,7 +452,18 @@ fn collections_documented_boundary_policy() {
     ] {
         let source = format!("//@version=6\nindicator(\"boundary\")\n{body}\nplot(1)");
         let mut script = ScriptIndicator::new(compile(&source, "boundary").unwrap(), &source);
-        assert!(script.on_close(&bar(), &mut Ctx {bar_index:0, cvd:&[]}).is_err(), "{source}");
+        assert!(
+            script
+                .on_close(
+                    &bar(),
+                    &mut Ctx {
+                        bar_index: 0,
+                        cvd: &[]
+                    }
+                )
+                .is_err(),
+            "{source}"
+        );
     }
     let source = "//@version=6\nindicator(\"bool na\")\na = array.from(true, na)\nplot(a.size())";
     assert!(compile(source, "bool na").is_err());

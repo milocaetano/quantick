@@ -22,7 +22,11 @@ pub(super) fn len(arena: &Arena, mut record: usize) -> usize {
 pub(super) fn grow(arena: &Arena, mut record: usize, by: usize) -> Result<(), String> {
     loop {
         super::runtime::grow(len(arena, record), by)?;
-        record = parent(arena, record);
+        let next = parent(arena, record);
+        if next != 0 && len(arena, next) < arena.words[record + 4] as usize {
+            return Err("cannot grow a slice whose starting index is outside its parent".into());
+        }
+        record = next;
         if record == 0 {
             return Ok(());
         }
@@ -67,19 +71,11 @@ pub(super) fn resize(arena: &mut Arena, record: usize, length: usize) {
         splice(arena, record, length, old - length, 0);
     }
 }
-fn splice(arena: &mut Arena, record: usize, at: usize, remove: usize, insert: usize) {
-    let parent = parent(arena, record);
-    if parent != 0 {
-        let start = arena.words[record + 4] as usize;
-        splice(
-            arena,
-            parent,
-            start.min(len(arena, parent)) + at,
-            remove,
-            insert,
-        );
+fn splice(arena: &mut Arena, mut record: usize, mut at: usize, remove: usize, insert: usize) {
+    while parent(arena, record) != 0 {
+        at += arena.words[record + 4] as usize;
         arena.words[record + 5] = (arena.words[record + 5] as usize + insert - remove) as u64;
-        return;
+        record = parent(arena, record);
     }
     let old = arena.len(record);
     let new = old + insert - remove;

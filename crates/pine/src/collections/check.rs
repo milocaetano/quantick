@@ -146,7 +146,11 @@ impl Checker<'_> {
                     if matches!((&element, &value.base), (Base::Int, Base::Float)) {
                         element = Base::Float;
                     }
-                    if !accepts(&element, &value.base) {
+                    if !accepts(&element, &value.base)
+                        || self.version.two_state_bool()
+                            && element == Base::Bool
+                            && value.base == Base::Na
+                    {
                         return Err("array.from requires compatible element types".into());
                     }
                 }
