@@ -2903,7 +2903,7 @@ fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
     run_frame(&mut app, &ctx);
     open_inspector(&mut app, &ctx);
 
-    // Automatic placement now sends the panel to a chart corner (§D3),
+    // Automatic placement opens the panel beside the object (§D3),
     // deliberately clear of the object — so park it over the stroke by
     // hand. What this proves is pointer routing over an opaque panel, not
     // where the panel opens.
@@ -4316,6 +4316,16 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
             .iter()
             .any(|text| text.contains("Rectangle settings")),
         "the settings window must be visible before the resize gesture"
+    );
+    // It opens beside the rectangle, never on it (§D3), even though its
+    // drawn width is not the one the first placement assumed.
+    let panel = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+        .expect("the inspector is open");
+    let drawn = egui::Rect::from_two_pos(first_anchor, second_anchor);
+    assert!(
+        !panel.intersects(drawn),
+        "the panel must not cover the drawing it configures: {panel:?} vs {drawn:?}"
     );
 
     drag_chart(&mut app, &ctx, first_anchor, egui::pos2(560.0, 240.0));
