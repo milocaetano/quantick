@@ -426,9 +426,8 @@ pub struct Tab {
     context_stack: context_resize::ContextStack,
     /// Pixel width and opening direction of the divider drag in flight.
     canvas_drag: Option<(f32, bool, bool)>,
-    /// The canvas width the last drawn frame used. See
-    /// [`Self::last_canvas_width`].
-    last_canvas_width: f32,
+    /// The canvas the last drawn frame used. See [`Self::last_canvas_width`].
+    last_canvas: eframe::egui::Rect,
     /// The pane the chrome speaks for while this tab is active: status bar,
     /// indicator targeting and the keyboard's drawing grammar (§11).
     /// Meaningless while the canvas is Single — read it through
@@ -515,7 +514,7 @@ impl Tab {
             flow_collapsed: false,
             context_stack: context_resize::ContextStack::default(),
             canvas_drag: None,
-            last_canvas_width: 0.0,
+            last_canvas: eframe::egui::Rect::ZERO,
             focus: PaneSide::Flow,
             symbol,
             #[cfg(test)]

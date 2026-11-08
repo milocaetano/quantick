@@ -101,6 +101,9 @@ pub(super) fn overlays(
         && let Some(rect) = tab.empty_panes_rect()
     {
         let clock = (now, answers.popup_tab);
+        let owns = tab.connection.overlay_owns_canvas();
+        let palette = owns.then(|| tab.lead_pane().palette(ui.ctx()));
+        let _palette = palette.map(|palette| crate::theme::scope(ui.ctx(), palette));
         let (_, pressed) = loading::draw_overlay(ui, rect, &tab.symbol, &words, clock);
         if pressed {
             answers.notice_action = feed_notice::NoticeAction::Reconnect;

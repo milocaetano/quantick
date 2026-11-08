@@ -780,23 +780,21 @@ impl Tab {
         }
     }
 
-    /// The one rect the connection overlay covers: every pane with no bars, and
-    /// only those, so a time pane standing on venue candles stays visible. When
-    /// the empty panes are not neighbours their union would cross a chart that
-    /// has bars, and the largest of them is what the overlay takes instead.
+    /// The one rect the connection overlay covers: the whole canvas while nothing
+    /// is charted, which then draws no panes; else every empty pane, so a time pane
+    /// on venue candles stays visible. Empty panes that are not neighbours would
+    /// cross a chart with bars as a union, so the overlay takes the largest of them.
     #[must_use]
     pub fn empty_panes_rect(&self) -> Option<egui::Rect> {
-        let mut union: Option<egui::Rect> = None;
-        let mut largest: Option<egui::Rect> = None;
-        for (pane, _) in self.panes() {
-            let Some(rect) = pane.frame.area.filter(|_| pane.slots() == 0) else {
-                continue;
-            };
-            union = Some(union.map_or(rect, |so_far| so_far.union(rect)));
-            if largest.is_none_or(|so_far| rect.area() > so_far.area()) {
-                largest = Some(rect);
-            }
+        if self.connection.overlay_owns_canvas() {
+            return Some(self.last_canvas);
         }
+        let empty = || {
+            self.panes()
+                .filter_map(|(p, _)| p.frame.area.filter(|_| p.slots() == 0))
+        };
+        let union = empty().reduce(egui::Rect::union);
+        let largest = empty().min_by(|a, b| b.area().total_cmp(&a.area()));
         let crosses_a_chart = union.is_some_and(|whole| {
             self.panes().any(|(pane, _)| {
                 pane.slots() > 0 && pane.frame.area.is_some_and(|rect| rect.intersects(whole))

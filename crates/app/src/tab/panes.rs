@@ -163,14 +163,14 @@ impl Tab {
     /// than as a canvas of no width.
     #[must_use]
     pub fn last_canvas_width(&self) -> f32 {
-        self.last_canvas_width
+        self.last_canvas.width()
     }
 
     /// Put the tab back in the state it opens in: never drawn, so no canvas
     /// width is known — how a background tab looks after a workspace restore.
     #[cfg(test)]
     pub fn forget_canvas_width_for_test(&mut self) {
-        self.last_canvas_width = 0.0;
+        self.last_canvas.max = self.last_canvas.min;
     }
 
     /// Whether any context chart is actually on screen.

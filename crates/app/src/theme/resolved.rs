@@ -187,7 +187,7 @@ pub fn title_strip_scope(ctx: &egui::Context) -> PaintScope {
     scope(ctx, palette)
 }
 
-fn scope(ctx: &egui::Context, palette: Arc<Palette>) -> PaintScope {
+pub fn scope(ctx: &egui::Context, palette: Arc<Palette>) -> PaintScope {
     let previous = ctx.data_mut(|data| {
         let previous = data.get_temp::<Arc<Palette>>(surface_key());
         data.insert_temp(surface_key(), palette);

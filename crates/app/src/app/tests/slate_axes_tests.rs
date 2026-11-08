@@ -264,7 +264,7 @@ fn authored_dark_axes_keep_their_surface_ink_and_timestamp_backing() {
 }
 
 #[test]
-fn empty_light_loading_words_have_a_compact_backing_above_slate() {
+fn empty_loading_words_stand_bare_on_the_chart() {
     for source in [quantick_appearance::LIGHT, quantick_appearance::DARK] {
         for layout in [CanvasLayout::Single, CanvasLayout::TimeAndFlow] {
             for reconnect in [false, true] {
@@ -319,51 +319,24 @@ fn empty_light_loading_words_have_a_compact_backing_above_slate() {
                     2 + usize::from(reconnect),
                     "one title, metadata and optional reconnect"
                 );
+                // Nothing charted: no plate stands behind the words in either
+                // theme, and they speak in the palette of the chart they stand in for.
                 let empty = tab.empty_panes_rect().unwrap();
-                let palette = crate::theme::get(&ctx);
-                let plates: Vec<_> = output
-                    .shapes
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, clipped)| {
-                        let egui::Shape::Rect(rect) = &clipped.shape else {
-                            return None;
-                        };
-                        (rect.fill == palette.canvas()
-                            && rect.rect.width() < empty.width()
-                            && rect.rect.height() < empty.height() / 2.0
-                            && text.iter().all(|(_, text)| {
-                                rect.rect.contains_rect(text.visual_bounding_rect())
-                            }))
-                        .then_some(index)
-                    })
-                    .collect();
-                if source == quantick_appearance::DARK {
-                    assert!(plates.is_empty(), "Dark adds no loading backing");
-                    continue;
-                }
-                assert_eq!(plates.len(), 1, "one compact Light loading backing");
-                let plate = plates[0];
-                let slate = output
-                    .shapes
-                    .iter()
-                    .rposition(|clipped| {
-                        matches!(&clipped.shape,
-                    egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(37, 47, 55)
-                        && rect.rect.intersects(empty))
-                    })
-                    .unwrap();
-                assert!(
-                    slate < plate && text.iter().all(|(index, _)| *index > plate),
-                    "backing covers Slate before glyphs paint"
-                );
+                let plates = output.shapes.iter().filter(|clipped| {
+                    matches!(&clipped.shape, egui::Shape::Rect(rect)
+                    if rect.fill.a() > 0 && rect.rect.width() < empty.width()
+                        && text.iter().any(|(_, text)| {
+                            rect.rect.contains_rect(text.visual_bounding_rect())
+                        }))
+                });
+                assert_eq!(plates.count(), 0, "no loading backing");
+                let palette = tab.lead_pane().palette(&ctx);
                 for (_, text) in text {
                     for section in &text.galley.job.sections {
                         let color = section.format.color;
                         if color.a() > 0 {
                             assert!(
-                                color == egui::Color32::from_rgb(48, 48, 48)
-                                    || color == egui::Color32::from_rgb(96, 96, 96)
+                                color == palette.loading_title() || color == palette.loading_meta()
                             );
                         }
                     }

@@ -669,6 +669,17 @@ impl ConnectionTracker {
             }
     }
 
+    /// Whether the overlay takes the whole canvas as of the last
+    /// [`Self::observe`]: it is up and not one pane holds a bar, so there is no
+    /// chart to keep in view and no pane's frame, header or band is drawn across
+    /// the logo. The first bar anywhere, or the overlay going down, hands the
+    /// canvas back to the panes. Read at the observed instant, so the canvas and
+    /// the overlay drawn on the same frame never disagree about it.
+    #[must_use]
+    pub fn overlay_owns_canvas(&self) -> bool {
+        !self.any_bars && self.observed_ms.is_some_and(|now| self.overlay_up(now))
+    }
+
     /// Whether what the transport is doing may be spoken yet.
     fn attempt_shown(&self, now_ms: i64) -> bool {
         self.pressed || now_ms.saturating_sub(self.attempting_since) >= BLIP_MS
@@ -1664,6 +1675,37 @@ mod tests {
         run.flow_bars = true;
         run.step(1);
         assert_eq!(run.overlay(), None, "gone on the flow's first bar");
+    }
+
+    /// The canvas is one surface only while nothing at all is charted: a time
+    /// pane standing on venue candles keeps the panes, and the first bar or the
+    /// overlay going down hands the canvas back on that frame.
+    #[test]
+    fn the_overlay_owns_the_canvas_only_while_no_pane_has_bars() {
+        let mut run = Run::new();
+        assert!(!run.tracker.overlay_owns_canvas(), "not yet stood");
+        run.offline();
+        assert!(run.overlay().is_some());
+        assert!(run.tracker.overlay_owns_canvas(), "nothing charted");
+
+        run.any_bars = true;
+        run.step(1);
+        assert!(run.overlay().is_some(), "the flow tape is still empty");
+        assert!(
+            !run.tracker.overlay_owns_canvas(),
+            "a pane with bars keeps the layout"
+        );
+
+        run.any_bars = false;
+        run.step(1);
+        assert!(run.tracker.overlay_owns_canvas());
+        run.empty_pane = false;
+        run.step(1);
+        assert_eq!(run.overlay(), None);
+        assert!(
+            !run.tracker.overlay_owns_canvas(),
+            "no overlay, no takeover"
+        );
     }
 
     /// While a job reads data in, "no trades" would be a claim nobody has
