@@ -828,7 +828,7 @@ impl Parser<'_> {
             };
             let value = self.expression()?;
             let span = self.spanned_from(arg_start);
-            if name.is_some() {
+            if matches!(name.as_deref(), Some("index_to" | "initial_value")) {
                 self.ast.reserve_default_zero(span);
             }
             args.push(Arg { name, value, span });
