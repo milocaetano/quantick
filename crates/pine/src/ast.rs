@@ -260,6 +260,7 @@ pub struct Node {
 pub struct Ast {
     nodes: Vec<Node>,
     annotations: Vec<(NodeId, Vec<Vec<String>>)>,
+    default_zero: Option<NodeId>,
 }
 
 impl Ast {
@@ -282,6 +283,19 @@ impl Ast {
         id
     }
 
+    pub(crate) fn reserve_default_zero(&mut self, span: Span) {
+        if self.default_zero.is_none() {
+            self.default_zero = Some(self.push(NodeKind::Int(0), span));
+        }
+    }
+    pub(crate) fn default_zero(&self) -> Option<NodeId> {
+        self.default_zero
+    }
+    pub(crate) fn replace_args(&mut self, id: NodeId, values: Vec<Arg>) {
+        if let NodeKind::Call { args, .. } = &mut self.nodes[id.index()].kind {
+            *args = values;
+        }
+    }
     pub(crate) fn order_args(&mut self, id: NodeId, order: &[usize]) {
         if let NodeKind::Call { args, .. } = &mut self.nodes[id.index()].kind {
             *args = order.iter().map(|i| args[*i].clone()).collect();

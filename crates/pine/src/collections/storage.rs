@@ -7,6 +7,7 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 const COLLECTIONS: usize = 30;
 pub(super) fn allocate(arena: &mut Arena) -> usize {
+    arena.words.share();
     let record = arena.allocate(9);
     arena.words[record] = arena.words[COLLECTIONS];
     arena.words[COLLECTIONS] = record as u64;

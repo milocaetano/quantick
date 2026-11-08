@@ -22,6 +22,53 @@ fn accepts(expected: &Base, actual: &Base) -> bool {
         || matches!((expected, actual), (Base::Float, Base::Int))
 }
 impl Checker<'_> {
+    pub(crate) fn collection_defaults(
+        &mut self,
+        id: NodeId,
+        op: Op,
+        mut args: Vec<Arg>,
+        method: bool,
+    ) -> Vec<Arg> {
+        let names = crate::collections::arguments(op);
+        let names = if method { &names[1..] } else { names };
+        let default = match op {
+            Op::NewArray(_) => 0,
+            Op::Fill => {
+                if method {
+                    1
+                } else {
+                    2
+                }
+            }
+            _ => return args,
+        };
+        let mut supplied = vec![false; names.len()];
+        let mut position = 0;
+        for arg in &args {
+            let index = if let Some(name) = &arg.name {
+                names.iter().position(|n| *n == name)
+            } else {
+                let i = position;
+                position += 1;
+                Some(i)
+            };
+            if let Some(i) = index.filter(|i| *i < supplied.len()) {
+                supplied[i] = true;
+            }
+        }
+        if !supplied[default]
+            && supplied[default + 1..].iter().any(|v| *v)
+            && let Some(value) = self.ast.default_zero()
+        {
+            args.push(Arg {
+                name: Some(names[default].into()),
+                value,
+                span: self.ast.node(id).span,
+            });
+            self.ast.replace_args(id, args.clone());
+        }
+        args
+    }
     pub(crate) fn collection_method(
         &mut self,
         id: NodeId,
@@ -33,6 +80,12 @@ impl Checker<'_> {
         if matches!(op, Op::NewArray(_) | Op::NewMap(..) | Op::From) {
             self.error(id, "collection constructors are namespace functions");
             return Type::unknown();
+        }
+        let original = args.len();
+        let args = self.collection_defaults(id, op, args.to_vec(), true);
+        let mut values = values.to_vec();
+        if args.len() > original {
+            values.push(Type::new(Base::Int, Qualifier::Const));
         }
         let names = crate::collections::arguments(op);
         let names = names.get(1..).unwrap_or(&[]);
@@ -65,7 +118,7 @@ impl Checker<'_> {
         self.ast.order_args(id, &ordered);
         let mut all = vec![receiver];
         all.extend(ordered.iter().map(|i| values[*i].clone()));
-        self.collection(id, op, args, &all)
+        self.collection(id, op, &args, &all)
     }
 
     pub(crate) fn collection(

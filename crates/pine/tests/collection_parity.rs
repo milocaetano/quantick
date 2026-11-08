@@ -471,6 +471,13 @@ fn collections_documented_boundary_policy() {
 
 #[test]
 fn collections_named_optional_defaults() {
-    let expected = include_str!("golden/collections/defaults.csv").trim().split(',').map(|s| s.parse::<f64>().unwrap()).collect::<Vec<_>>();
-    assert_eq!(run(include_str!("fixtures/collections/defaults.pine")), expected);
+    let expected = include_str!("golden/collections/defaults.csv")
+        .trim()
+        .split(',')
+        .map(|s| s.parse::<f64>().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        run(include_str!("fixtures/collections/defaults.pine")),
+        expected
+    );
 }

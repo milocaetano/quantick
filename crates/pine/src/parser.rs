@@ -828,6 +828,9 @@ impl Parser<'_> {
             };
             let value = self.expression()?;
             let span = self.spanned_from(arg_start);
+            if name.is_some() {
+                self.ast.reserve_default_zero(span);
+            }
             args.push(Arg { name, value, span });
             if !self.eat(&Tok::Comma) {
                 break;

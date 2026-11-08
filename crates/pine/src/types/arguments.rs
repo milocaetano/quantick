@@ -36,6 +36,11 @@ impl Checker<'_> {
             | TaHighestBars | TaLowestBars | TaChange | TaMom | MathSum => &["source", "length"],
             _ => return args,
         };
+        let args = if let Collection(op) = b {
+            self.collection_defaults(id, op, args, false)
+        } else {
+            args
+        };
         let mut slots = vec![None; names.len()];
         let mut position = 0;
         for (index, arg) in args.iter().enumerate() {

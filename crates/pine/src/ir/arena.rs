@@ -183,21 +183,23 @@ impl Arena {
     }
     #[inline(always)]
     pub fn get_at(&self, cell: usize) -> Value {
-        match self.words[cell] {
+        let words = &*self.words;
+        match words[cell] {
             4 => {
-                let start = index(self.words[cell + 1]);
+                let start = index(words[cell + 1]);
                 let mut cursor = start;
-                decode(&self.words, &mut cursor)
+                decode(words, &mut cursor)
             }
-            tag => scalar(tag, self.words[cell + 1]),
+            tag => scalar(tag, words[cell + 1]),
         }
     }
 
     #[inline]
     pub fn number_at(&self, cell: usize) -> Option<f64> {
-        match self.words[cell] {
+        let words = &*self.words;
+        match words[cell] {
             0 => Some(f64::NAN),
-            1 => Some(f64::from_bits(self.words[cell + 1])),
+            1 => Some(f64::from_bits(words[cell + 1])),
             _ => None,
         }
     }
@@ -213,6 +215,12 @@ impl Arena {
         if source == target_cell {
             return;
         }
+        let words = &mut *self.words;
+        if words[source] != 4 && words[target_cell] != 4 {
+            words[target_cell] = words[source];
+            words[target_cell + 1] = words[source + 1];
+            return;
+        }
         if self.words[source] == 4 {
             let mut cursor = index(self.words[source + 1]);
             let value = decode(&self.words, &mut cursor);
@@ -221,8 +229,9 @@ impl Arena {
             if self.words[target_cell] == 4 {
                 self.release(index(self.words[target_cell + 1]));
             }
-            self.words[target_cell] = self.words[source];
-            self.words[target_cell + 1] = self.words[source + 1];
+            let words = &mut *self.words;
+            words[target_cell] = words[source];
+            words[target_cell + 1] = words[source + 1];
         }
     }
 
@@ -245,8 +254,9 @@ impl Arena {
             }
             value => scalar_words(&value),
         };
-        self.words[cell] = tag;
-        self.words[cell + 1] = payload;
+        let words = &mut *self.words;
+        words[cell] = tag;
+        words[cell + 1] = payload;
     }
 
     pub fn values(&self, list: usize) -> Vec<Value> {
