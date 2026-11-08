@@ -546,3 +546,44 @@ fn missing_object_fields_fail_deterministically() {
         assert!(error.to_string().contains("missing user object"));
     }
 }
+
+#[test]
+fn exported_methods_keep_qualified_library_identity() {
+    let source = "//@version=6\nindicator(\"methods\")\nimport local/A/1 as a\nimport local/B/1 as b\nplot(a.read(1.0))\nplot(b.read(1.0))\n";
+    let run = |source: &str| {
+        compile_with_libraries(source, "methods", |key| {
+            Some(match key {
+            "local/A/1" => "//@version=6\nlibrary(\"A\")\nexport method read(float x) => x + 1\n",
+            "local/B/1" => "//@version=6\nlibrary(\"B\")\nexport method read(float x) => x + 2\n",
+            "local/Left/1" | "local/Right/1" => "//@version=6\nlibrary(\"Relay\")\nimport local/A/1 as a\nexport read(float x) => a.read(x)\n",
+            _ => return None,
+        }.into())
+        })
+    };
+    let compiled = run(source).unwrap_or_else(|e| panic!("{e:?}"));
+    let mut script = ScriptIndicator::new(compiled, source);
+    let bar = IndicatorBar {
+        open_time: 0,
+        close_time: 1,
+        open: 1.0,
+        high: 1.0,
+        low: 1.0,
+        close: 1.0,
+        buy_volume: 0.0,
+        sell_volume: 0.0,
+        trade_count: 0.0,
+    };
+    let mut ctx = Ctx {
+        bar_index: 0,
+        cvd: &[],
+    };
+    assert_eq!(
+        script.preview(&bar, &mut ctx).unwrap().values,
+        vec![2.0, 3.0]
+    );
+    let transitive = "//@version=6\nindicator(\"transitive\")\nimport local/Left/1 as left\nimport local/Right/1 as right\nplot(left.read(1.0))\nplot(right.read(1.0))\n";
+    assert!(run(transitive).is_ok());
+    let receiver =
+        "//@version=6\nindicator(\"receiver\")\nimport local/A/1 as a\nx = 1.0\nplot(x.read())\n";
+    assert!(run(receiver).is_ok());
+}
