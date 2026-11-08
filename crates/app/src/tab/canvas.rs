@@ -123,6 +123,14 @@ struct PaneRects {
 }
 
 impl Tab {
+    /// The canvas's leading pane — the top context chart, else the flow pane. A
+    /// takeover fills the canvas with its plot colour and speaks in its palette.
+    pub fn lead_pane(&self) -> &crate::pane::ChartPane {
+        let time = self.layout.kinds().contains(&PaneKind::Time);
+        let lead = self.time_panes.first().filter(|_| time);
+        lead.unwrap_or(&self.flow_pane)
+    }
+
     /// Lay the canvas out and run every visible pane through it (§11).
     ///
     /// Single is one pane over the whole area — the same code path the split
@@ -144,6 +152,9 @@ impl Tab {
         }
         let frame = self.canvas_frame(area);
         if self.connection.overlay_owns_canvas() {
+            let plot = self.lead_pane().plot_style(chrome.style, ui.ctx());
+            let fill = crate::pane::background_color(&plot);
+            ui.painter().rect_filled(area, 0.0, fill);
             return self.panes_mut().for_each(|p| p.frame.layout_strip = None);
         }
         let rects = self.draw_context_column(ui, &frame, chrome);
@@ -695,19 +706,7 @@ impl Tab {
         let pane_styles: SmallVec<[_; MAX_CANVAS_PANES]> = time_panes
             .iter()
             .chain(std::iter::once(&*flow_pane))
-            .map(|pane| {
-                let palette = if pane.orderflow.is_some() {
-                    theme::bookmap(ui.ctx())
-                } else {
-                    theme::get(ui.ctx())
-                };
-                (
-                    pane.id,
-                    pane.presentation
-                        .candles
-                        .resolve(chart_style, &palette.resolved),
-                )
-            })
+            .map(|pane| (pane.id, pane.plot_style(chart_style, ui.ctx())))
             .collect();
         let context = time_panes
             .iter_mut()

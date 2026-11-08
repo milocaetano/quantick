@@ -401,6 +401,30 @@ fn an_offline_empty_tab_gives_the_overlay_the_whole_canvas() {
         "the logo is centred in the canvas: {logo:?} in {canvas:?}"
     );
 
+    // Lit, the canvas is the plot colour of the chart it stands in for, as
+    // that pane resolves it, not the app's own canvas.
+    app.runtime
+        .appearance
+        .apply_candidate(quantick_appearance::LIGHT, false)
+        .unwrap();
+    let lit = run_frame(&mut app, &ctx);
+    let lead = app.active_tab().lead_pane();
+    let plot = crate::pane::background_color(&lead.plot_style(&app.runtime.style, &ctx));
+    assert_ne!(plot, crate::theme::get(&ctx).canvas(), "a plot of its own");
+    let fill = lit
+        .shapes
+        .iter()
+        .rev()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) if rect.rect.contains_rect(*canvas) => Some(rect.fill),
+            _ => None,
+        });
+    assert_eq!(
+        fill,
+        Some(plot),
+        "the takeover paints the chart's background"
+    );
+
     app.active_tab_mut().connection = Default::default();
     let back = run_frame(&mut app, &ctx);
     for chrome in CHROME {

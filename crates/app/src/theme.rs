@@ -8,7 +8,7 @@ mod resolved;
 pub mod store;
 
 pub use resolved::{
-    Palette, axes, bookmap, bookmap_scope, get, install_fonts, sync, title_strip_scope,
+    Palette, axes, bookmap, bookmap_scope, get, install_fonts, scope, sync, title_strip_scope,
 };
 
 pub use chrome::apply;
