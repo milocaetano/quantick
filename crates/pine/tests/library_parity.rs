@@ -586,3 +586,34 @@ fn exported_methods_keep_qualified_library_identity() {
         "//@version=6\nindicator(\"receiver\")\nimport local/A/1 as a\nx = 1.0\nplot(x.read())\n";
     assert!(run(receiver).is_ok());
 }
+
+#[test]
+fn repeated_imports_share_exported_type_identity() {
+    let source = "//@version=6\nindicator(\"identity\")\nimport local/Point/1 as a\nimport local/Point/1 as b\nimport local/Left/1 as left\nimport local/Right/1 as right\np = a.Point.new(12)\nplot(b.read(p))\nplot(right.read(left.make(12)))\n";
+    let compiled = compile_with_libraries(source, "identity", |key| Some(match key {
+        "local/Point/1" => "//@version=6\nlibrary(\"Point\")\nexport type Point\n    float value\nexport read(Point p) => p.value\nexport make(float value) => Point.new(value)\n",
+        "local/Left/1" => "//@version=6\nlibrary(\"Left\")\nimport local/Point/1 as p\nexport make(float value) => p.make(value)\n",
+        "local/Right/1" => "//@version=6\nlibrary(\"Right\")\nimport local/Point/1 as p\nexport read(p.Point point) => p.read(point)\n",
+        _ => return None,
+    }.into())).unwrap_or_else(|e| panic!("{e:?}"));
+    let mut script = ScriptIndicator::new(compiled, source);
+    let bar = IndicatorBar {
+        open_time: 0,
+        close_time: 1,
+        open: 1.0,
+        high: 1.0,
+        low: 1.0,
+        close: 1.0,
+        buy_volume: 0.0,
+        sell_volume: 0.0,
+        trade_count: 0.0,
+    };
+    let mut ctx = Ctx {
+        bar_index: 0,
+        cvd: &[],
+    };
+    assert_eq!(
+        script.preview(&bar, &mut ctx).unwrap().values,
+        vec![12.0, 12.0]
+    );
+}
