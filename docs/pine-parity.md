@@ -250,9 +250,9 @@ not the current native MACD support.
 ## Final retained-child acceptance
 
 C90-C93 are the offline combined acceptance entry points. Collection and mixed
-object fixtures now participate in combined acceptance. Final performance
-acceptance remains pending the exact final runtime source and paired benchmark
-samples; the earlier measurements above are historical, not a final measurement. The baseline remains 1,344/1,920
+object fixtures now participate in combined acceptance. Final paired performance
+measurements appear below; the earlier measurements above remain historical.
+The baseline remains 1,344/1,920
 matching proxy cells; the current numerical oracle expects 1,920/1,920. The
 positive compiler corpus is 13/13 at baseline and final, invalid rejection is
 7/7 at baseline and final, mixed corpus loads are 13/20 at both, and its oracle
@@ -311,3 +311,33 @@ Other child transaction/calendar/candle fixtures retain their own denominators.
 The authored approximate comparisons share the proxy tolerance above; native
 bit fixtures and application snapshots remain exact. No authored value is
 represented as a new external oracle observation.
+
+### Final paired runtime measurement
+
+On 2026-11-08, `cargo bench -p quantick-pine --bench interp` compared pinned
+baseline `403e6c2c16fdde2ddc5a8c978c562e806327aaca` (A) with final source
+`7353314c3829ed54b8c6b2b370915cd4e75c5df8` (B), Pine source tree
+`91b5a9fca072968d040c49b387b3ddaae811c9e6`. Both release binaries were warmed
+before sampling. Environment: Windows x86_64 MSVC, Rust 1.98.0
+(`88d9e12ae`, LLVM 22.1.8), Intel Core i5-12400F, six cores/twelve threads.
+Each sample executed the fixed ten-indicator stack over 100,000 trade updates.
+No other Cargo, rustc or interpreter benchmark process was present at the
+pre/post checks for each sample. All eight samples are retained:
+
+| Order | Revision | ns/trade, ten indicators |
+| --- | --- | ---: |
+| 1 | A | 15416.7 |
+| 2 | B | 15267.7 |
+| 3 | B | 15423.5 |
+| 4 | A | 15671.9 |
+| 5 | A | 15909.0 |
+| 6 | B | 16283.7 |
+| 7 | B | 15372.2 |
+| 8 | A | 15503.1 |
+
+Baseline mean: 15,625.175 ns/trade; final mean: 15,586.775 ns/trade
+(1,558.678 ns per indicator/update), 0.246% below baseline. This is practically
+flat within the observed variation, with no observed mean regression; it is
+not evidence of a material speedup. The historical larger improvements above
+are not substituted for this final measurement. Compilation and setup are
+outside the timed region; preview rollback and retained state are included.
