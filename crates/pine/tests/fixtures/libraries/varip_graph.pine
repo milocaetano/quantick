@@ -3,7 +3,7 @@ indicator("Persistent mixed cycle")
 type Node
     array<Node> links
     map<string, Node> names
-    float value = 0.0
+    varip float value = 0.0
 varip root = Node.new(array.new<Node>(), map.new<string, Node>())
 if root.links.size() == 0
     root.links.push(root)

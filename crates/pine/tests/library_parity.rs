@@ -294,25 +294,78 @@ fn mixed_graph_history_and_first_preview_varip() {
     let source = include_str!("fixtures/libraries/varip_graph.pine");
     let compiled = quantick_pine::compile(source, "graph").unwrap_or_else(|e| panic!("{e:?}"));
     let mut script = ScriptIndicator::new(compiled, source);
-    let bar = IndicatorBar { open_time: 0, close_time: 1, open: 1.0, high: 1.0, low: 1.0, close: 1.0, buy_volume: 0.0, sell_volume: 0.0, trade_count: 0.0 };
-    for (step, line) in include_str!("golden/libraries/varip_graph.csv").lines().enumerate() {
+    let bar = IndicatorBar {
+        open_time: 0,
+        close_time: 1,
+        open: 1.0,
+        high: 1.0,
+        low: 1.0,
+        close: 1.0,
+        buy_volume: 0.0,
+        sell_volume: 0.0,
+        trade_count: 0.0,
+    };
+    for (step, line) in include_str!("golden/libraries/varip_graph.csv")
+        .lines()
+        .enumerate()
+    {
         let expected: Vec<f64> = line.split(',').map(|s| s.parse().unwrap()).collect();
-        let mut ctx = Ctx { bar_index: step / 3, cvd: &[] };
-        if step % 3 < 2 { assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, expected); }
-        else {
+        let mut ctx = Ctx {
+            bar_index: step / 3,
+            cvd: &[],
+        };
+        if step % 3 < 2 {
+            assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, expected);
+        } else {
             script.on_close(&bar, &mut ctx).unwrap();
-            for (column, value) in expected.iter().enumerate() { assert_eq!(script.plots().column(PlotId::new(column))[step / 3], *value); }
+            for (column, value) in expected.iter().enumerate() {
+                assert_eq!(script.plots().column(PlotId::new(column))[step / 3], *value);
+            }
         }
     }
     let source = include_str!("fixtures/libraries/history_graph.pine");
     let compiled = quantick_pine::compile(source, "history").unwrap_or_else(|e| panic!("{e:?}"));
     let mut script = ScriptIndicator::new(compiled, source);
-    for (index, line) in include_str!("golden/libraries/history_graph.csv").lines().enumerate() {
+    for (index, line) in include_str!("golden/libraries/history_graph.csv")
+        .lines()
+        .enumerate()
+    {
         let expected: Vec<f64> = line.split(',').map(|s| s.parse().unwrap()).collect();
-        let bar = IndicatorBar { close: expected[0], ..bar };
-        let mut ctx = Ctx { bar_index: index, cvd: &[] };
-        for _ in 0..2 { assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, &expected[1..]); }
+        let bar = IndicatorBar {
+            close: expected[0],
+            ..bar
+        };
+        let mut ctx = Ctx {
+            bar_index: index,
+            cvd: &[],
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                script.preview(&bar, &mut ctx).unwrap().values,
+                &expected[1..]
+            );
+        }
         script.on_close(&bar, &mut ctx).unwrap();
-        for (column, value) in expected[1..].iter().enumerate() { assert_eq!(script.plots().column(PlotId::new(column))[index], *value); }
+        for (column, value) in expected[1..].iter().enumerate() {
+            assert_eq!(script.plots().column(PlotId::new(column))[index], *value);
+        }
+    }
+}
+
+#[test]
+fn object_varip_fields_are_independent_of_reference_mode() {
+    for mode in ["var", "varip"] {
+        let source = format!("//@version=6\nindicator(\"fields\")\ntype Counter\n    int bars = 0\n    varip int ticks = 0\n{mode} counter = Counter.new()\nalias = counter\ncounter.bars := counter.bars + 1\ncounter.ticks := counter.ticks + 1\nplot(alias.bars)\nplot(alias.ticks)\n");
+        let compiled = quantick_pine::compile(&source, "fields").unwrap_or_else(|e| panic!("{e:?}"));
+        let mut script = ScriptIndicator::new(compiled, &source);
+        let bar = IndicatorBar { open_time: 0, close_time: 1, open: 1.0, high: 1.0, low: 1.0, close: 1.0, buy_volume: 0.0, sell_volume: 0.0, trade_count: 0.0 };
+        let mut ctx = Ctx { bar_index: 0, cvd: &[] };
+        script.on_close(&bar, &mut ctx).unwrap();
+        ctx.bar_index = 1;
+        assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, vec![2.0, 2.0]);
+        assert_eq!(script.preview(&bar, &mut ctx).unwrap().values, vec![2.0, 3.0]);
+        script.on_close(&bar, &mut ctx).unwrap();
+        assert_eq!(script.plots().column(PlotId::new(0))[1], 2.0);
+        assert_eq!(script.plots().column(PlotId::new(1))[1], 4.0);
     }
 }
