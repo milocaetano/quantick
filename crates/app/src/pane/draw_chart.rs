@@ -209,12 +209,17 @@ impl ChartPane {
         let mut carved = std::mem::take(&mut self.frame.bands);
         let clear_depth = flow.projected() && depth_visible;
         if !layout.tape_only {
-            let mut candle_pass =
-                history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
+            // The footprint dresses only the bars it has a ladder for.
+            let ladders = self.presentation.footprint.ladder_slots(
+                frame.prefix.len(),
+                self.state.bar_footprints(),
+                frame.partial_visible.map(|_| frame.closed_total),
+            );
+            let base = &chrome.style.candles;
+            let mut candle_pass = history.candle_pass(&self.indicators, clear_depth, base, ladders);
             candle_pass.pixel = quantick_chart::candle_pixels::pixel_bodies(
                 self.orderflow.is_some(),
                 history.dress.faded.is_some() || history.dress.candle_lane > 0.0,
-                axes.resolved.dark,
             );
             renderers.candle_clear(&mut candle_pass);
             // Only price-band background drawings may precede candle/indicator scales.

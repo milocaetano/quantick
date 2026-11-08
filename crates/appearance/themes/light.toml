@@ -3,7 +3,9 @@ name = "Light"
 dark = false
 candle_fill_opacity = 1.0
 # The chart area follows TradingView's light chart, sampled from a capture of
-# it: one-pixel black contours and wicks, and gridlines on both axes.
+# it: black contours and wicks, and gridlines on both axes. The time chart
+# draws the contour on whole screen pixels: 1.0 is two at 150 % scaling, as
+# thick as TradingView's on the same screen; 0.5 is a single pixel.
 candle_outline_width = 1.0
 candle_outline_opacity = 1.0
 candle_wick_opacity = 1.0

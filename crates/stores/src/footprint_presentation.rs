@@ -9,6 +9,7 @@ use quantick_chart::footprint_lod::*;
 use quantick_chart::footprint_lod::{AXIS_CLEARANCE_PX, LevelMemory, detailed_entry_width};
 use quantick_chart::footprint_projection::heat::HeatScale;
 use quantick_chart::style::CandleStyle;
+use quantick_engine::BarFootprint;
 use rust_decimal::Decimal;
 
 /// Clearance between a number and the bar's central axis, per side.
@@ -116,6 +117,89 @@ pub fn candle_dressing(
             let mut sidebar = base;
             sidebar.fill_opacity = 1.0;
             (treatment.content_inset(), Some(sidebar))
+        }
+    }
+}
+
+/// The bar slots a footprint has a ladder to draw in: the only candles it
+/// may dress.
+///
+/// The layer fades a body so its numbers can be read inside it. A bar with
+/// no ladder — the venue's history prefix, which carries no tape, or a bar
+/// that traded nothing the layer saw — has nothing to read there, and
+/// fading it anyway washed a whole chart of venue history out to pastels as
+/// the trader zoomed in, under a layer that drew nothing on any of it.
+#[derive(Debug, Clone, Copy)]
+pub struct LadderSlots<'a> {
+    first_state_slot: usize,
+    closed: &'a [BarFootprint],
+    partial_slot: Option<usize>,
+}
+
+impl<'a> LadderSlots<'a> {
+    /// Closed ladders indexed from `first_state_slot` (the prefix length),
+    /// and the forming bar's ladder at its slot, when it is on screen.
+    #[must_use]
+    pub fn new(
+        first_state_slot: usize,
+        closed: &'a [BarFootprint],
+        partial: Option<(usize, &BarFootprint)>,
+    ) -> Self {
+        Self {
+            first_state_slot,
+            closed,
+            partial_slot: partial
+                .filter(|(_, ladder)| !ladder.levels().is_empty())
+                .map(|(slot, _)| slot),
+        }
+    }
+
+    /// Whether the bar at `slot` has a ladder with at least one level.
+    #[must_use]
+    pub fn carries(&self, slot: usize) -> bool {
+        self.partial_slot == Some(slot)
+            || slot
+                .checked_sub(self.first_state_slot)
+                .and_then(|index| self.closed.get(index))
+                .is_some_and(|ladder| !ladder.levels().is_empty())
+    }
+}
+
+/// The styles one frame's candles paint in: the chart's own, and the one a
+/// footprint dresses the bars it has a ladder for in.
+#[derive(Debug, Clone, Copy)]
+pub struct CandleStyles<'a> {
+    base: &'a CandleStyle,
+    dressed: Option<(&'a CandleStyle, LadderSlots<'a>)>,
+}
+
+impl<'a> CandleStyles<'a> {
+    /// `dressed` is the footprint's style this frame, if it dresses at all.
+    #[must_use]
+    pub fn new(
+        base: &'a CandleStyle,
+        dressed: Option<&'a CandleStyle>,
+        ladders: LadderSlots<'a>,
+    ) -> Self {
+        Self {
+            base,
+            dressed: dressed.map(|style| (style, ladders)),
+        }
+    }
+
+    /// The style the frame's candle layout follows: the dressed one while
+    /// the footprint dresses, so every bar keeps one width.
+    #[must_use]
+    pub fn frame(&self) -> &'a CandleStyle {
+        self.dressed.map_or(self.base, |(style, _)| style)
+    }
+
+    /// The style the bar at `slot` paints in.
+    #[must_use]
+    pub fn of(&self, slot: usize) -> &'a CandleStyle {
+        match self.dressed {
+            Some((style, ladders)) if ladders.carries(slot) => style,
+            _ => self.base,
         }
     }
 }
@@ -851,6 +935,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Venue history has no tape, so no ladder: the layer has nothing to
+    /// show in those bodies and leaves them in the chart's own colours. A
+    /// traded bar beside them is still dressed.
+    #[test]
+    fn only_bars_with_a_ladder_are_dressed() {
+        let group = Decimal::ONE;
+        let mut builder = quantick_engine::FootprintBuilder::new(group, 64);
+        builder.push(&quantick_engine::Trade {
+            agg_id: 1,
+            timestamp_ms: 1_000,
+            price: Decimal::from(100),
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        });
+        let traded = builder.close().expect("a traded bar has a ladder");
+        let empty = quantick_engine::FootprintBuilder::new(group, 64).close_or_empty();
+        assert!(empty.levels().is_empty());
+        let closed = [traded.clone(), empty];
+        // Slots 0..3 are the venue prefix; state bars start at slot 3.
+        let ladders = LadderSlots::new(3, &closed, None);
+        assert!(!ladders.carries(0), "venue history carries no ladder");
+        assert!(ladders.carries(3), "a traded bar does");
+        assert!(!ladders.carries(4), "an empty ladder draws nothing");
+        assert!(!ladders.carries(5), "past the closed bars");
+
+        let forming = LadderSlots::new(3, &closed, Some((5, &traded)));
+        assert!(forming.carries(5), "the forming bar's ladder counts");
+        let empty_forming = quantick_engine::FootprintBuilder::new(group, 64).close_or_empty();
+        assert!(!LadderSlots::new(3, &closed, Some((5, &empty_forming))).carries(5));
     }
 
     /// And the other half of the same law: with the layer painting, the

@@ -7,15 +7,26 @@
 //! (`optimalCandlestickWidth` and the candlestick renderer), which the
 //! trader's TradingView screenshots match row for row:
 //!
-//! - the body is the whole pitch up to 4 logical px and drifts toward 80 %
-//!   of it as the candles widen; between [`SPECIAL_PITCH_FROM`] and
-//!   [`SPECIAL_PITCH_TO`] it is a fixed 3 logical px;
-//! - contour and wick are `max(1, floor(scale))` device px, a whole multiple
-//!   of that when the style asks for a thicker line;
+//! - the body is the whole pitch up to 4 lines and drifts toward 80 % of
+//!   it as the candles widen; between [`SPECIAL_PITCH_FROM`] and
+//!   [`SPECIAL_PITCH_TO`] lines it is a fixed 3 lines. TradingView counts
+//!   these in logical px, one of which is its line; here they are counted
+//!   in lines, so the candles keep its proportions whatever the line
+//!   rounds to (below);
+//! - contour and wick are the style's line width in logical px, rounded to
+//!   whole device px and never under one. TradingView floors its one-px
+//!   line to `floor(scale)`, which at 1.5 px/pt is a single device px: half
+//!   the thickness its own chart has on the trader's screen, where it runs at
+//!   scale 2 and draws two. Rounding keeps a 1 px style at two device px
+//!   there, the same physical line, and a 0.5 px style is the thin single
+//!   pixel. Counting the layout in lines then draws, at 1.5 px/pt, the very
+//!   candles TradingView draws at scale 2 for the same pitch on screen;
 //! - the body's width and the wick's share a parity, so the wick sits
 //!   exactly in the middle;
-//! - a body with no room for a fill inside its contour is one solid bar in
-//!   the contour colour, never a blend of the two;
+//! - a body with no room for a fill inside its contour (no wider than two
+//!   contours) is one solid bar in the contour colour, never a ring around a
+//!   sliver of fill;
+//! - a body is never narrower than its wick;
 //! - a body never overlaps the one before it: its left edge is cut back to
 //!   the previous right edge. Touching is allowed.
 //!
@@ -28,22 +39,22 @@ use quantick_engine::Bar;
 use crate::geometry::{CandleGeometry, PixelRect, PriceScale, candle_geometry};
 use crate::style::{CandleStyle, ResolvedCandlePaint};
 
-/// Narrowest pitch, in logical px, of the fixed-width band.
+/// Narrowest pitch, in lines, of the fixed-width band.
 ///
 /// Lightweight Charts starts it at 2.5. The trader's captures put
 /// TradingView's own bound between 2.56 and 2.85, a pitch measured to a few
 /// per cent, so the published value stands.
 pub const SPECIAL_PITCH_FROM: f64 = 2.5;
-/// Widest pitch, in logical px, of the fixed-width band, and the pitch above
+/// Widest pitch, in lines, of the fixed-width band, and the pitch above
 /// which the body starts leaving a gap.
 pub const SPECIAL_PITCH_TO: f64 = 4.0;
-/// Body width, in logical px, inside the fixed-width band.
+/// Body width, in lines, inside the fixed-width band.
 const SPECIAL_BODY: f64 = 3.0;
 /// How far the body's share of the pitch falls as the candles widen: from
 /// the whole pitch toward `1 - WIDE_SHARE_DROP` of it.
 const WIDE_SHARE_DROP: f64 = 0.2;
-/// The thickest contour or wick a style can ask for, in lines.
-const MAX_LINES: i32 = 4;
+/// The thickest contour or wick drawn, in device px.
+const MAX_LINE_PX: i32 = 16;
 
 /// One zoom's candle widths, in whole device px.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,10 +73,11 @@ pub struct CandleWidths {
 /// Body, contour and wick widths for bars `pitch_pt` logical px apart on a
 /// display with `pixels_per_point` device px per logical px.
 ///
-/// `outline_pt` and `wick_pt` are the style's line widths: under 1.5 they
-/// give TradingView's one line of `max(1, floor(scale))` device px, 2 gives
-/// two such lines, and so on. An `outline_pt` of zero means no contour, and
-/// the fill takes the whole body.
+/// `outline_pt` and `wick_pt` are the style's line widths in logical px,
+/// each rounded to whole device px. An `outline_pt` of zero means no
+/// contour, and the fill takes the whole body. The body is laid out in
+/// lines of the contour (of the wick without one), TradingView's rule with
+/// its logical px replaced by that line.
 #[must_use]
 pub fn candle_widths(
     pitch_pt: f32,
@@ -74,22 +86,27 @@ pub fn candle_widths(
     wick_pt: f32,
 ) -> CandleWidths {
     let dpr = scale(pixels_per_point);
+    let line = if outline_pt == 0.0 {
+        line_px(wick_pt, dpr)
+    } else {
+        line_px(outline_pt, dpr)
+    };
+    let unit = f64::from(line);
     let pitch = if pitch_pt.is_finite() {
-        f64::from(pitch_pt).max(0.0)
+        f64::from(pitch_pt).max(0.0) * dpr / unit
     } else {
         0.0
     };
-    let unit = (dpr.floor() as i32).max(1);
     let body = if (SPECIAL_PITCH_FROM..=SPECIAL_PITCH_TO).contains(&pitch) {
-        (SPECIAL_BODY * dpr).floor() as i32
+        (SPECIAL_BODY * unit).floor() as i32
     } else {
         let share = 1.0
             - WIDE_SHARE_DROP * (pitch.max(SPECIAL_PITCH_TO) - SPECIAL_PITCH_TO).atan() / FRAC_PI_2;
-        let by_share = (pitch * share * dpr).floor() as i32;
-        let whole = (pitch * dpr).floor() as i32;
+        let by_share = (pitch * share * unit).floor() as i32;
+        let whole = (pitch * unit).floor() as i32;
         by_share.min(whole)
     };
-    lines_around(body.max(unit), unit, outline_pt, wick_pt)
+    lines_around(body.max(line), dpr, outline_pt, wick_pt)
 }
 
 /// The same lines around a body `body_pt` logical px wide that something
@@ -107,25 +124,22 @@ pub fn fitted_widths(
     } else {
         0
     };
-    let unit = (dpr.floor() as i32).max(1);
-    lines_around(body.max(unit), unit, outline_pt, wick_pt)
+    lines_around(body, dpr, outline_pt, wick_pt)
 }
 
-/// Wick and contour for a body `body` device px wide, `unit` px a line.
-fn lines_around(mut body: i32, unit: i32, outline_pt: f32, wick_pt: f32) -> CandleWidths {
-    let wick = unit * lines(wick_pt);
+/// Wick and contour for a body `body` device px wide.
+fn lines_around(body: i32, dpr: f64, outline_pt: f32, wick_pt: f32) -> CandleWidths {
+    let wick = line_px(wick_pt, dpr);
+    let mut body = body.max(wick);
     if body >= 2 && body % 2 != wick % 2 {
         body -= 1;
     }
     let wick = wick.min(body).max(1);
-    let mut border = if outline_pt == 0.0 {
+    let border = if outline_pt == 0.0 {
         0
     } else {
-        unit * lines(outline_pt)
+        line_px(outline_pt, dpr)
     };
-    if border > 0 && body <= 2 * border {
-        border = unit.max((body - 1) / 2);
-    }
     CandleWidths {
         body,
         border,
@@ -134,20 +148,23 @@ fn lines_around(mut body: i32, unit: i32, outline_pt: f32, wick_pt: f32) -> Cand
     }
 }
 
+/// A style line `width_pt` logical px wide, in whole device px: the nearest
+/// whole number, at least one. At 1.5 px/pt a 1 px line is two device px and
+/// a 0.5 px line one.
+fn line_px(width_pt: f32, pixels_per_point: f64) -> i32 {
+    let width = if width_pt.is_finite() {
+        f64::from(width_pt)
+    } else {
+        1.0
+    };
+    ((width * pixels_per_point).round() as i32).clamp(1, MAX_LINE_PX)
+}
+
 fn scale(pixels_per_point: f32) -> f64 {
     if pixels_per_point.is_finite() && pixels_per_point > 0.0 {
         f64::from(pixels_per_point)
     } else {
         1.0
-    }
-}
-
-/// A style line width as a whole number of TradingView lines.
-fn lines(width_pt: f32) -> i32 {
-    if width_pt.is_finite() {
-        (width_pt.round() as i32).clamp(1, MAX_LINES)
-    } else {
-        1
     }
 }
 
@@ -235,18 +252,17 @@ pub enum PixelBodies {
 }
 
 /// How a frame's candles draw. The time chart takes TradingView's widths in
-/// either theme. The flow pane's candles, which the heatmap, the bubbles and
-/// the tape are laid against, stay where their geometry falls, and so do
-/// Dark's while a footprint dresses them (fades their body for its ladder,
-/// or moves them into its lane); Light's keep the footprint's width on whole
-/// pixels. A footprint layer that is on but leaves the candle alone at this
-/// zoom does not count.
+/// either theme, and while a footprint dresses them (fades the bodies it has
+/// a ladder for, or moves them into its lane) the footprint's width, still on
+/// whole pixels. The flow pane's candles, which the heatmap, the bubbles and
+/// the tape are laid against, stay where their geometry falls. A footprint
+/// layer that is on but leaves the candle alone at this zoom does not count.
 #[must_use]
-pub fn pixel_bodies(flow_pane: bool, footprint_dresses: bool, dark: bool) -> Option<PixelBodies> {
-    match (flow_pane, footprint_dresses, dark) {
-        (true, ..) | (false, true, true) => None,
-        (false, false, _) => Some(PixelBodies::Zoom),
-        (false, true, false) => Some(PixelBodies::Fitted),
+pub fn pixel_bodies(flow_pane: bool, footprint_dresses: bool) -> Option<PixelBodies> {
+    match (flow_pane, footprint_dresses) {
+        (true, _) => None,
+        (false, false) => Some(PixelBodies::Zoom),
+        (false, true) => Some(PixelBodies::Fitted),
     }
 }
 

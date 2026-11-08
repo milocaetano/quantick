@@ -4,11 +4,11 @@ use crate::pane::constants::SIDEBAR_BODY_FRAC;
 use crate::{
     candle_view::{BarSlot, draw_candle, draw_pixel_candle, is_bullish},
     indicators::IndicatorViews,
-    style::CandleStyle,
     viewport::Viewport,
 };
 use eframe::egui;
 use quantick_chart::candle_pixels::{CandleRun, PixelBodies};
+use quantick_stores::footprint_presentation::CandleStyles;
 use rust_decimal::prelude::ToPrimitive as _;
 pub(super) const PACKAGE: Package = Package {
     layers: &[],
@@ -26,7 +26,8 @@ pub(in crate::pane) struct CandlePass<'a, 'b> {
     pub half: f32,
     pub candle_lane: f32,
     pub content_half: f32,
-    pub style: &'a CandleStyle,
+    /// Dressed by the footprint only where a bar has a ladder.
+    pub styles: CandleStyles<'a>,
     /// Candles on whole device pixels, and which width they take
     /// (`quantick_chart::candle_pixels::pixel_bodies`).
     pub pixel: Option<PixelBodies>,
@@ -53,8 +54,8 @@ impl CandlePass<'_, '_> {
     fn pixel_run(&self) -> Option<CandleRun> {
         let bodies = self.pixel.filter(|_| self.candle_lane <= 0.0)?;
         let ppp = self.painter.ctx().pixels_per_point();
-        let (pitch, body) = (self.frame.cw, 2.0 * self.half);
-        Some(CandleRun::for_frame(bodies, pitch, body, self.style, ppp))
+        let (pitch, body, style) = (self.frame.cw, 2.0 * self.half, self.styles.frame());
+        Some(CandleRun::for_frame(bodies, pitch, body, style, ppp))
     }
     fn bars(&self, mut visit: impl FnMut(usize, &quantick_engine::Bar, bool)) {
         for (offset, bar) in self
@@ -100,10 +101,11 @@ fn paint(pass: &mut CandlePass<'_, '_>) {
         let color = painted
             .then(|| pass.indicators.slot_paint(index..index + 1, forming))
             .flatten();
+        let style = pass.styles.of(index);
         if let Some(run) = run.as_mut() {
             let xc = pass.slot(index).xc;
             let rgba = color.map(|c| [c.r, c.g, c.b, c.a]);
-            let paint = pass.style.resolved_painted(is_bullish(bar), forming, rgba);
+            let paint = style.resolved_painted(is_bullish(bar), forming, rgba);
             draw_pixel_candle(pass.painter, run, xc, &pass.frame.scale, bar, &paint);
             return;
         }
@@ -113,7 +115,7 @@ fn paint(pass: &mut CandlePass<'_, '_>) {
             &pass.frame.scale,
             bar,
             forming,
-            pass.style,
+            style,
             color,
         );
     });

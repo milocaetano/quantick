@@ -218,3 +218,49 @@ fn effective_style_readback_resolves_dark_opening_look_on_light_surface_reset() 
         assert_eq!(expected.canvas, expected_defaults.canvas);
     }
 }
+
+/// The candle contour's thickness is the outline width the same call edits,
+/// drawn in whole device px: Light's default 1 px is two device px at the
+/// trader's 1.5 scale (TradingView's thickness on that screen), and 0.5 px
+/// is the thin single pixel. Both are reachable through `update_candles`.
+#[test]
+fn update_candles_reaches_both_the_default_and_the_thin_contour() {
+    use quantick_chart::candle_pixels::{CandleRun, PixelBodies};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let light =
+        quantick_stores::appearance::load(&root.join("../appearance/themes/light.toml")).unwrap();
+    let surface = StyleSurface::new(light.resolved(), false);
+    let contour = |style: &ChartStyle| {
+        let run = CandleRun::for_frame(PixelBodies::Zoom, 10.0, 0.0, &style.candles, 1.5);
+        (run.widths().border, run.widths().wick)
+    };
+    let current = surface.resolve(ChartStyle::default());
+    assert_eq!(contour(&current), (2, 2), "Light's default at 1.5 px/pt");
+
+    let (target, wire_target) = target();
+    let mut session = ChartSettingsSession::default();
+    let mut candles = settings();
+    for (width, device_px) in [(0.5, 1), (1.0, 2)] {
+        let mut supplied = current;
+        supplied.candles.outline_width = width;
+        // The trader's own value, not the theme's: what the settings
+        // window's thickness slider records when it moves.
+        let mut style = document(supplied);
+        style["ownership"]["outline_width"] = json!("explicit");
+        let updated = apply(
+            &mut session,
+            &mut candles,
+            ChartSettingsInput::UpdateCandles {
+                target: Some(wire_target),
+                style,
+            },
+            Some(target),
+            Some(current),
+            surface,
+        )
+        .unwrap();
+        let style = updated.style.expect("the call returns the applied style");
+        assert_eq!(style.candles.outline_width, width);
+        assert_eq!(contour(&style).0, device_px, "outline width {width}");
+    }
+}

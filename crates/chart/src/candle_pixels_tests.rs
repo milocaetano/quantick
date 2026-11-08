@@ -23,7 +23,30 @@ const AT_1_0: [Row; 14] = [
     (20.0, 15, 1, 1, false),
     (50.0, 39, 1, 1, false),
 ];
+/// At 1.5 px/pt a 1 px line rounds to two device px, the thickness the
+/// trader's TradingView (scale 2) shows on the same screen, and the layout
+/// counts in those lines: each row is TradingView's scale-2 row for the same
+/// pitch on screen (pitch x 1.5 / 2 logical px). A body no wider than two
+/// contours is a solid bar.
 const AT_1_5: [Row; 14] = [
+    (1.0, 2, 2, 2, true),
+    (1.5, 2, 2, 2, true),
+    (2.0, 2, 2, 2, true),
+    (2.5, 2, 2, 2, true),
+    (2.6, 2, 2, 2, true),
+    (2.75, 4, 2, 2, true),
+    (3.0, 4, 2, 2, true),
+    (4.0, 6, 2, 2, false),
+    (4.5, 6, 2, 2, false),
+    (6.0, 8, 2, 2, false),
+    (8.0, 10, 2, 2, false),
+    (10.0, 12, 2, 2, false),
+    (20.0, 24, 2, 2, false),
+    (50.0, 60, 2, 2, false),
+];
+/// The thin option at 1.5 px/pt: a 0.5 px line is one device px, and the
+/// rows are TradingView's scale-1 rows for the same pitch on screen.
+const THIN_AT_1_5: [Row; 14] = [
     (1.0, 1, 1, 1, true),
     (1.5, 1, 1, 1, true),
     (2.0, 3, 1, 1, false),
@@ -31,7 +54,7 @@ const AT_1_5: [Row; 14] = [
     (2.6, 3, 1, 1, false),
     (2.75, 3, 1, 1, false),
     (3.0, 3, 1, 1, false),
-    (4.0, 3, 1, 1, false),
+    (4.0, 5, 1, 1, false),
     (4.5, 5, 1, 1, false),
     (6.0, 7, 1, 1, false),
     (8.0, 9, 1, 1, false),
@@ -39,6 +62,7 @@ const AT_1_5: [Row; 14] = [
     (20.0, 23, 1, 1, false),
     (50.0, 59, 1, 1, false),
 ];
+
 const AT_2_0: [Row; 14] = [
     (1.0, 2, 2, 2, true),
     (1.5, 2, 2, 2, true),
@@ -55,6 +79,19 @@ const AT_2_0: [Row; 14] = [
     (20.0, 32, 2, 2, false),
     (50.0, 80, 2, 2, false),
 ];
+
+#[test]
+fn at_one_and_a_half_the_default_draws_tradingview_s_scale_two_candles() {
+    // The same pitch on screen, in device px: what TradingView lays out at
+    // scale 2 is what the default lays out at 1.5. Off the band edges by a
+    // hair, where the two divisions may round to either side.
+    for step in 1..400 {
+        let device = step as f32 * 0.25 + 0.01;
+        let ours = candle_widths(device / 1.5, 1.5, 1.0, 1.0);
+        let tradingview = candle_widths(device / 2.0, 2.0, 1.0, 1.0);
+        assert_eq!(ours, tradingview, "pitch {device} device px");
+    }
+}
 
 fn matrix() -> impl Iterator<Item = (f32, Row)> {
     let at = |dpr: f32, rows: [Row; 14]| rows.into_iter().map(move |row| (dpr, row));
@@ -73,6 +110,38 @@ fn widths_follow_the_tradingview_matrix_at_every_scale() {
         assert_eq!(got.solid, solid, "{cell}");
         if !solid {
             assert_eq!(got.border, border, "{cell}");
+        }
+    }
+    for (pitch, body, border, wick, solid) in THIN_AT_1_5 {
+        let got = candle_widths(pitch, 1.5, 0.5, 0.5);
+        let cell = format!("thin, pitch {pitch} at 1.5 px/pt: {got:?}");
+        assert_eq!(
+            (got.body, got.wick, got.solid),
+            (body, wick, solid),
+            "{cell}"
+        );
+        if !solid {
+            assert_eq!(got.border, border, "{cell}");
+        }
+    }
+}
+
+#[test]
+fn a_body_no_wider_than_two_contours_is_solid_at_every_line_width() {
+    // The rule that keeps a thick contour clean when zoomed out: never a
+    // ring of contour around a pixel or two of fill.
+    for dpr in [1.0_f32, 1.25, 1.5, 2.0] {
+        for line in [0.5_f32, 1.0, 1.5, 2.0] {
+            for step in 1..200 {
+                let pitch = step as f32 * 0.25;
+                let got = candle_widths(pitch, dpr, line, line);
+                let cell = format!("pitch {pitch}, line {line} at {dpr}: {got:?}");
+                assert_eq!(got.solid, got.body <= 2 * got.border, "{cell}");
+                if !got.solid {
+                    assert!(got.body - 2 * got.border >= 1, "{cell}");
+                }
+                assert!(got.body >= got.wick, "{cell}");
+            }
         }
     }
 }
@@ -256,9 +325,21 @@ fn a_doji_and_a_thin_body_are_solid_contour_bars() {
 }
 
 #[test]
-fn style_line_widths_scale_in_whole_lines_and_zero_drops_the_contour() {
-    assert_eq!(candle_widths(10.0, 1.5, 1.25, 1.0).border, 1);
-    assert_eq!(candle_widths(10.0, 1.5, 2.0, 1.0).border, 2);
+fn style_line_widths_round_to_whole_device_pixels_and_zero_drops_the_contour() {
+    // The default 1 px line at the trader's 1.5: two device px, as thick
+    // as TradingView's at scale 2 on the same screen. Half of it is the thin
+    // single pixel, the option the outline thickness setting reaches.
+    assert_eq!(candle_widths(10.0, 1.5, 1.0, 1.0).border, 2);
+    assert_eq!(candle_widths(10.0, 1.5, 0.5, 0.5).border, 1);
+    assert_eq!(candle_widths(10.0, 1.5, 0.5, 0.5).wick, 1);
+    assert_eq!(candle_widths(10.0, 1.5, 1.25, 1.0).border, 2);
+    assert_eq!(candle_widths(10.0, 1.5, 2.0, 1.0).border, 3);
+    assert_eq!(candle_widths(10.0, 1.0, 1.0, 1.0).border, 1);
+    assert_eq!(
+        candle_widths(10.0, 1.0, 0.5, 0.5).border,
+        1,
+        "never under one"
+    );
     assert_eq!(candle_widths(10.0, 2.0, 2.0, 2.0).wick, 4);
     let bare = candle_widths(10.0, 1.5, 0.0, 1.0);
     assert_eq!((bare.border, bare.solid), (0, false));
@@ -289,18 +370,17 @@ fn unusable_inputs_still_draw_a_one_pixel_candle() {
 }
 
 #[test]
-fn the_time_chart_takes_zoom_widths_in_both_themes_and_layers_keep_theirs() {
-    for dark in [false, true] {
-        assert_eq!(pixel_bodies(false, false, dark), Some(PixelBodies::Zoom));
-        assert_eq!(pixel_bodies(true, false, dark), None, "the flow pane");
-        assert_eq!(pixel_bodies(true, true, dark), None);
-    }
-    assert_eq!(pixel_bodies(false, true, false), Some(PixelBodies::Fitted));
-    assert_eq!(pixel_bodies(false, true, true), None, "Dark's footprint");
+fn the_time_chart_takes_zoom_widths_and_a_dressing_footprint_keeps_its_own() {
+    assert_eq!(pixel_bodies(false, false), Some(PixelBodies::Zoom));
+    assert_eq!(pixel_bodies(false, true), Some(PixelBodies::Fitted));
+    assert_eq!(pixel_bodies(true, false), None, "the flow pane");
+    assert_eq!(pixel_bodies(true, true), None);
     // A fitted body keeps the footprint's width, on whole pixels, with the
     // same lines and wick parity as the zoom rule.
     let fitted = fitted_widths(28.8, 1.5, 1.0, 1.0);
-    assert_eq!((fitted.body, fitted.border, fitted.wick), (43, 1, 1));
+    assert_eq!((fitted.body, fitted.border, fitted.wick), (42, 2, 2));
+    let thin = fitted_widths(28.8, 1.5, 0.5, 0.5);
+    assert_eq!((thin.body, thin.border, thin.wick), (43, 1, 1));
     assert_eq!(fitted_widths(28.8, 2.0, 1.0, 1.0).body, 56);
     assert_eq!(fitted_widths(f32::NAN, 2.0, 1.0, 1.0).body, 2);
 }
