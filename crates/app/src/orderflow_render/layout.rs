@@ -15,6 +15,9 @@ use crate::viewport::Viewport;
 
 use super::OrderflowRenderStyle;
 pub(super) use quantick_orderflow::projection::EventBand;
+use quantick_orderflow::projection::TapeHorizontalGeometry as TapeGeometry;
+/// A horizontal pixel span, where there is one.
+type Span = Option<(f32, f32)>;
 use quantick_orderflow::projection::finite_unit_f64;
 
 /// Screen x where the history pane ends and the live lane begins.
@@ -280,34 +283,26 @@ impl<'a> ProjectedLayout<'a> {
         )
     }
 
-    /// Screen rectangle one heat cell paints over, nothing for a current
-    /// row that only previews the book. The native tape's book spans its
-    /// whole lane on the dots' clock (`TapeHorizontalGeometry::book_span_px`).
-    ///
-    /// Kept on the renderer's projection object so the on-demand pointer
-    /// resolver and the paint path cannot grow two pixel mappings.
+    /// Screen rectangle one heat cell paints over, for the painter and the
+    /// pointer alike; nothing for a current row that only previews the book.
+    /// The native tape's book spans its whole lane (`book_span_px`).
     #[must_use]
-    pub(crate) fn heat_cell_rect(
-        self,
-        cell: &HeatmapCell,
-        min_height: f32,
-        live: bool,
-    ) -> egui::Rect {
-        let tape = self
-            .lane_left_x()
-            .zip(self.tape_geometry)
-            .and_then(|(left, tape)| {
-                let (x0, x1) = tape.book_span_px(cell, self.slot_count, live)?;
-                Some(egui::Rect::from_two_pos(
-                    egui::pos2(left + x0, self.y(cell.y0)),
-                    egui::pos2(left + x1, self.y(cell.y1)),
-                ))
-            });
-        match tape {
-            Some(rect) => readable_band(rect, min_height, self.lane_rect()),
+    pub(crate) fn heat_cell_rect(self, cell: &HeatmapCell, min: f32, live: bool) -> egui::Rect {
+        let (top, bottom) = (self.y(cell.y0), self.y(cell.y1));
+        match self.tape_x(|tape| tape.book_span_px(cell, self.slot_count, live)) {
+            Some((x0, x1)) => {
+                let rect = egui::Rect::from_two_pos(egui::pos2(x0, top), egui::pos2(x1, bottom));
+                readable_band(rect, min, self.lane_rect())
+            }
             None if cell.current_book && cell.x1 <= cell.x0 => egui::Rect::NOTHING,
-            None => self.band(cell.x0, cell.x1, cell.y0, cell.y1, min_height),
+            None => self.band(cell.x0, cell.x1, cell.y0, cell.y1, min),
         }
+    }
+
+    /// Screen x of a span the native tape places from its lane's left edge.
+    pub(super) fn tape_x(self, span: impl FnOnce(TapeGeometry) -> Span) -> Span {
+        let (left, tape) = self.lane_left_x().zip(self.tape_geometry)?;
+        span(tape).map(|(x0, x1)| (left + x0, left + x1))
     }
 
     /// Snapshot preview in the blank forward space, without stretching any

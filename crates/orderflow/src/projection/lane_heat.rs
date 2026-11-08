@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 
 use quantick_orderbook::OrderBook;
 
-use super::heat_cells::{DraftCell, PriceRows, finish_with_priority};
-use super::model::{BookSource, HeatmapCell, PriceWindow};
+use super::heat_cells::{DraftCell, PriceRows, book_gaps, finish_with_priority};
+use super::model::{BookSource, GapPrimitive, HeatmapCell, PriceWindow};
 use crate::grouping::{EffectiveGrouping, GroupingWindow, bucket_for_price, sweep_grouped_runs};
 use crate::history::{HistoryStatus, LiquidityHistory, RestingSide};
 use crate::timeline::BarTimeline;
@@ -200,6 +200,46 @@ pub(super) fn project_lane_heat(
     project_lane_heat_folded(history, timeline, prices, grouping, reference, &mut fold)
 }
 
+/// The coverage gaps inside the averaged native tape's lead, placed as its
+/// bands are ([`GapPrimitive::lead_span`]). The settled half draws them in
+/// the candles' slots, older than the lane's window; without them the
+/// tape's inset would read a hole in the record as an empty book. A gap
+/// still open at the opening is left to the settled half, whose band already
+/// runs across the divider and the inset.
+pub(super) fn lead_gaps(history: &LiquidityHistory, timeline: &BarTimeline) -> Vec<GapPrimitive> {
+    let config = history.config();
+    let lead_ms = timeline.lane_lead_ms();
+    let (Some((lane_start_ms, lane_end_ms)), Some(opening)) = (
+        timeline.lane_bounds_ms(),
+        timeline
+            .lane_start_ms()
+            .and_then(|start| timeline.locate_in_lane_clamped(start)),
+    ) else {
+        return Vec::new();
+    };
+    // With nothing captured the settled half marks the whole chart already.
+    if lead_ms <= 0
+        || !(config.live_lane.depth_time_averaging && config.depth_visible_anywhere())
+        || !config.show_gaps
+        || history.coverage_segments().next().is_none()
+    {
+        return Vec::new();
+    }
+    let window_ms = (lane_end_ms - lane_start_ms).max(1) as f64;
+    let fraction = |time_ms: i64| Some((time_ms - lane_start_ms) as f64 / window_ms);
+    let from_ms = lane_start_ms.saturating_sub(lead_ms);
+    book_gaps(history, from_ms, lane_start_ms, fraction)
+        .into_iter()
+        .filter(|gap| gap.x1 < 0.0)
+        .map(|gap| GapPrimitive {
+            x0: opening.normalized,
+            x1: opening.normalized,
+            lead_span: Some((gap.x0, gap.x1)),
+            ..gap
+        })
+        .collect()
+}
+
 /// [`project_lane_heat`] on a lane `fold` kept between requests: an averaged
 /// lane folds only the runs closed since the last one.
 pub(super) fn project_lane_heat_folded(
@@ -218,17 +258,9 @@ pub(super) fn project_lane_heat_folded(
         return (Vec::new(), 0, None);
     }
     let averaging = config.live_lane.depth_time_averaging;
-    // Only the averaged native book is drawn on the dots' inset clock, so
-    // only it reads the older depth under the inset left of the oldest dot.
-    let lead_ms = if averaging {
-        timeline.lane_lead_ms()
-    } else {
-        0
-    };
-    let lead_start_ms = lane_start_ms.saturating_sub(lead_ms);
     let start_ms = history
         .retention_start_ms()
-        .map_or(lead_start_ms, |retained| retained.max(lead_start_ms));
+        .map_or(lane_start_ms, |retained| retained.max(lane_start_ms));
     let carry = book_carry(history, lane_end_ms);
     let open_run_end_ms = carry.map_or_else(
         || history.latest_book_ms().unwrap_or(lane_end_ms),
@@ -241,8 +273,12 @@ pub(super) fn project_lane_heat_folded(
         price_low: prices.low,
         price_high: prices.high,
     };
-    let runs = if averaging {
-        fold.project(
+    let (runs, lead) = if averaging {
+        // Only the averaged native book is drawn on the dots' inset clock, so
+        // only it reads the older depth under the inset left of the oldest
+        // dot, on the bins and in the mode the window chose without it.
+        let lead_start_ms = lane_start_ms.saturating_sub(timeline.lane_lead_ms());
+        fold.project_with_lead(
             history,
             grouping,
             window,
@@ -251,6 +287,9 @@ pub(super) fn project_lane_heat_folded(
                 .unwrap_or(lane_end_ms)
                 .min(lane_end_ms),
             config.max_visible_cells,
+            history
+                .retention_start_ms()
+                .map_or(lead_start_ms, |retained| retained.max(lead_start_ms)),
         )
     } else {
         fold.clear();
@@ -265,30 +304,32 @@ pub(super) fn project_lane_heat_folded(
             )
             .runs
         };
-        runs.into_iter()
+        let runs = runs
+            .into_iter()
             .map(|run| DepthRun {
                 run,
                 time_averaged: false,
             })
-            .collect()
+            .collect();
+        (runs, Vec::new())
     };
     let x = |time_ms: i64| {
         timeline
             .locate_in_lane_clamped(time_ms)
             .map(|position| position.normalized)
     };
-    // A stretch reaching before the opening keeps its x clamped there and
-    // carries its span on the lane's own clock, which runs on below zero.
-    let window_ms = (lane_end_ms - lane_start_ms).max(1) as f64;
-    let lead_span = |from_ms: i64, to_ms: i64| {
-        let from_ms = from_ms.max(lead_start_ms);
-        let fraction = |time_ms: i64| (time_ms.min(lane_end_ms) - lane_start_ms) as f64 / window_ms;
-        (lead_ms > 0 && from_ms < lane_start_ms && to_ms > from_ms)
-            .then(|| (fraction(from_ms), fraction(to_ms)))
-    };
     let mut drafts = Vec::with_capacity(runs.len());
+    let mut lead_drafts = Vec::with_capacity(lead.len());
     let mut rows = PriceRows::new(grouping, prices);
-    for depth in &runs {
+    // The lead keeps its x clamped to the opening and carries its span on
+    // the lane's own clock, which runs on below zero there.
+    let window_ms = (lane_end_ms - lane_start_ms).max(1) as f64;
+    let fraction = |time_ms: i64| (time_ms - lane_start_ms) as f64 / window_ms;
+    for (depth, in_lead) in runs
+        .iter()
+        .map(|run| (run, false))
+        .chain(lead.iter().map(|run| (run, true)))
+    {
         let run = &depth.run;
         let Some((y0, y1)) = rows.get(run.price_bucket) else {
             continue;
@@ -303,11 +344,11 @@ pub(super) fn project_lane_heat_folded(
             if to_ms <= from_ms || (carried && averaging) {
                 continue;
             }
-            let lead_span = lead_span(from_ms, to_ms);
+            let lead_span = in_lead.then(|| (fraction(from_ms), fraction(to_ms)));
             if let (Some(x0), Some(x1)) = (x(from_ms), x(to_ms))
-                && (x1 > x0 || lead_span.is_some())
+                && (x1 > x0 || in_lead)
             {
-                drafts.push(DraftCell {
+                let draft = DraftCell {
                     generation: run.generation,
                     side: run.side,
                     price_bucket: run.price_bucket,
@@ -320,7 +361,12 @@ pub(super) fn project_lane_heat_folded(
                     time_averaged: depth.time_averaged,
                     current_book: false,
                     lead_span,
-                });
+                };
+                if in_lead {
+                    lead_drafts.push(draft)
+                } else {
+                    drafts.push(draft)
+                }
             }
         }
     }
@@ -365,7 +411,15 @@ pub(super) fn project_lane_heat_folded(
             }
         }
     }
-    let (cells, dropped) = finish_with_priority(drafts, reference, config, averaging);
+    let (mut cells, mut dropped) = finish_with_priority(drafts, reference, config, averaging);
+    // The lead only takes what the lane left of the cap, newest first: it
+    // never displaces a band of the lane's own window.
+    let lead_end = |draft: &DraftCell| draft.lead_span.map_or(f64::NEG_INFINITY, |span| span.1);
+    lead_drafts.sort_by(|a, b| lead_end(b).total_cmp(&lead_end(a)));
+    let room = config.max_visible_cells.saturating_sub(cells.len());
+    dropped += lead_drafts.len().saturating_sub(room);
+    lead_drafts.truncate(room);
+    cells.extend(finish_with_priority(lead_drafts, reference, config, false).0);
     (cells, dropped, source.map(|(_, source)| source))
 }
 

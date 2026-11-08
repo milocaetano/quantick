@@ -308,3 +308,65 @@ fn native_book_and_reductions_share_the_bubble_time_axis() {
         }
     }
 }
+
+/// The native tape's book spans the whole lane: a lead band from the lane's
+/// left edge, a live current row to its right edge, a stale one only to NOW.
+#[test]
+fn the_tape_book_reaches_both_lane_edges() {
+    let viewport = Viewport::new();
+    let rect = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(600.0, 400.0));
+    let mut config = HeatmapConfig::default();
+    config.volume_dots.enabled = true;
+    config.live_lane.enabled = true;
+    config.live_lane.tape_only = true;
+    config.live_lane.depth_time_averaging = true;
+    let mut style = OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+    style.bubbles.max_radius = 48.0;
+    let frame = HeatmapProjection::empty(
+        true,
+        quantick_orderflow::EffectiveGrouping::resolve(
+            quantick_orderflow::DisplayGrouping::Native,
+            Decimal::ONE,
+            Decimal::from(100),
+        ),
+    );
+    let layout = ProjectedLayout::new(rect, &viewport, 1, 0, 2, rect.width());
+    let layout = RenderContext::new(&frame, layout, &style).layout;
+    let geometry = layout.tape_geometry.expect("an averaged native tape");
+    assert!(geometry.inset_px > 0.0);
+    let cell = |x0: f64, lead_span: Option<(f64, f64)>, current_book: bool| {
+        quantick_orderflow::HeatmapCell {
+            generation: 1,
+            side: quantick_orderflow::RestingSide::Bid,
+            price_bucket: Decimal::from(99),
+            quantity: Decimal::from(5),
+            x0,
+            x1: if lead_span.is_some() { 0.5 } else { 1.0 },
+            y0: 0.2,
+            y1: 0.3,
+            intensity: 0.8,
+            alpha: 0.8,
+            carried: false,
+            time_averaged: false,
+            current_book,
+            lead_span,
+        }
+    };
+    let lead = layout.heat_cell_rect(&cell(0.5, Some((-1.0, -0.05)), false), 1.0, true);
+    assert!((lead.left() - rect.left()).abs() < 0.001, "{lead:?}");
+    let older = rect.left() + geometry.x(-0.05);
+    assert!(older > rect.left() && lead.right() > lead.left());
+    assert!((lead.right() - older).abs() < 0.001, "on the dots' clock");
+    let current = cell(0.75, None, true);
+    let live = layout.heat_cell_rect(&current, 1.0, true);
+    assert!((live.right() - rect.right()).abs() < 0.001, "{live:?}");
+    assert!((live.left() - (rect.left() + geometry.x(0.5))).abs() < 0.001);
+    let stale = layout.heat_cell_rect(&current, 1.0, false);
+    assert!((stale.right() - (rect.left() + geometry.x(1.0))).abs() < 0.001);
+    let observed = layout.heat_cell_rect(&cell(0.75, None, false), 1.0, true);
+    assert_eq!(
+        observed,
+        layout.band(0.75, 1.0, 0.2, 0.3, 1.0),
+        "the rest stays put"
+    );
+}

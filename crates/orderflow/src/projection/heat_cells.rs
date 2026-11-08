@@ -200,6 +200,7 @@ pub(super) fn book_gaps(
                 x0,
                 x1,
                 reason: gap.reason.clone(),
+                lead_span: None,
             })
         })
         .collect();
@@ -221,6 +222,7 @@ pub(super) fn book_gaps(
         x0,
         x1,
         reason: BEFORE_CAPTURE.to_owned(),
+        lead_span: None,
     }));
     gaps.sort_by(|a, b| a.x0.total_cmp(&b.x0).then_with(|| a.x1.total_cmp(&b.x1)));
     gaps

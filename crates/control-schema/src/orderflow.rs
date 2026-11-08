@@ -611,6 +611,7 @@ mod book_gap_tests {
             x0: 0.0,
             x1: 0.1,
             reason: reason.to_owned(),
+            lead_span: None,
         }
     }
 

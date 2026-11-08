@@ -275,16 +275,12 @@ impl DotRungMemory {
         self.candle_level_ticks = Some(candle_level_ticks);
         self.tape_px_per_ms = Some(px_per_ms);
         self.px_per_bar = Some(geometry.px_per_bar);
-        let tape_lead_share = if native_tape && config.live_lane.depth_time_averaging {
-            super::TapeHorizontalGeometry::resolve(
-                geometry.lane_width_px,
-                geometry.height_px,
-                &config.bubbles,
-            )
-            .lead_share()
-        } else {
-            0.0
-        };
+        let tape_lead_share = super::TapeHorizontalGeometry::from_config(
+            config,
+            geometry.lane_width_px,
+            geometry.height_px,
+        )
+        .map_or(0.0, super::TapeHorizontalGeometry::lead_share);
         DotZoom {
             native_tape,
             tape_window_ms,

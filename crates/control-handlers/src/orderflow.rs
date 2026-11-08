@@ -494,6 +494,7 @@ mod tests {
             x0: 0.0,
             x1: 0.1,
             reason: "sequence_gap".to_owned(),
+            lead_span: None,
         });
         let gapped = revision(&port);
         assert!(gapped != before, "a gap the heatmap scope reports");
