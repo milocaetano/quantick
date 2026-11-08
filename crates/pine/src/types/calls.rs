@@ -22,11 +22,11 @@ impl Checker<'_> {
         }
     }
     fn require(&mut self, id: NodeId, ty: &Type, base: Base, max: Qualifier) {
-        if !accepts(&base, &ty.base) || ty.qualifier > max {
+        if !self.accepts(&base, &ty.base) || ty.qualifier > max {
             self.error(id, format!("expected at most {max:?} {base:?}, got {ty:?}"));
         }
         if base == Base::Bool && ty.numeric() {
-            self.coercions[id.index()] = 1;
+            self.coercions[id.index()] = self.version.bool_coercion();
         }
     }
     fn arguments(&mut self, args: &[Arg], values: &[Type], expected: &[Base]) {
@@ -41,6 +41,12 @@ impl Checker<'_> {
             .fold(Qualifier::Const, |q, t| q.max(t.qualifier));
         let first = values.first().cloned().unwrap_or_else(Type::unknown);
         let n = args.len();
+        if self.version.two_state_bool()
+            && matches!(b, NaCall | Nz | Fixnan)
+            && first.base == Base::Bool
+        {
+            self.error(id, "v6 na/nz/fixnan do not accept bool");
+        }
         let base = match b {
             IntCast | FloatCast | BoolCast | StringCast | ColorCast => {
                 self.arity(id, n, 1, 1);
@@ -219,9 +225,15 @@ impl Checker<'_> {
                 }
                 Base::Handle("plot")
             }
-            PlotShape | PlotChar | AlertCondition => {
+            PlotShape | PlotChar => {
                 if !first.condition() {
-                    self.error(id, "marker or alert requires a condition");
+                    self.error(id, "marker requires a numeric or bool series");
+                }
+                Base::Na
+            }
+            AlertCondition => {
+                if !self.valid_condition(&first) {
+                    self.error(id, "alert requires a condition");
                 }
                 Base::Na
             }

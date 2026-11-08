@@ -5,6 +5,8 @@ mod arguments;
 mod calls;
 mod check;
 mod model;
+#[path = "../version/types.rs"]
+mod version_policy;
 pub(crate) use check::validate;
 
 pub(crate) use crate::ir::TypeProgram as Checked;
@@ -79,6 +81,7 @@ impl Value {
 
     pub(crate) fn coerce(self, kind: u8) -> Self {
         match kind {
+            4 => Value::Bool(self.as_cond().unwrap_or(false)),
             1 if self.is_na() => Value::NaBool,
             1 => Value::Bool(self.as_cond().unwrap_or(false)),
             2 if self.is_na() => Value::NaColor,

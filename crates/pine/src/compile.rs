@@ -39,6 +39,8 @@ mod fold;
 mod resolve;
 #[path = "semantics/compile.rs"]
 mod semantic_compile;
+#[path = "version/compile.rs"]
+mod version_compile;
 
 /// Reads deeper than this many bars yield `na` when the offset is dynamic
 /// (constant offsets size storage exactly; the cap bounds the dynamic case).
@@ -66,12 +68,14 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
     let (ast, root) = parser::parse(&lexed.tokens)?;
 
     let mut compiler = Compiler::new(ast, root, fallback_title);
-    crate::version::diagnose(lexed.version, &mut compiler.errors, &mut compiler.warnings);
+    compiler.checked_types.version =
+        crate::version::diagnose(lexed.version, &mut compiler.errors, &mut compiler.warnings);
 
     compiler.collect_reassigned_names();
     compiler.collect_declarations();
     compiler.resolve_and_scan();
     compiler.checked_types = crate::types::validate(
+        compiler.checked_types.version,
         &mut compiler.ast,
         compiler.root,
         &mut compiler.resolutions,
@@ -79,6 +83,7 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
         compiler.global_slots as usize,
         &mut compiler.errors,
     );
+    compiler.validate_version_arguments();
     compiler.register_pending_plots();
     compiler.resolve_fills();
     if compiler.errors.is_empty() {
@@ -185,6 +190,7 @@ impl Compiler {
 
     fn finish(self) -> CompiledScript {
         CompiledScript {
+            version: self.checked_types.version,
             ast: self.ast,
             root: self.root,
             title: self.title,
