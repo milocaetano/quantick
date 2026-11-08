@@ -238,7 +238,10 @@ impl Checker<'_> {
                     self.error(id, "a declaration initialized with na requires a type");
                 }
                 let mut ty = self.annotated(id, value, actual, &words);
-                if mode == crate::ast::VarMode::Varip && !self.varip_type(&ty.base) {
+                if mode == crate::ast::VarMode::Varip
+                    && matches!(ty.base, Base::Array(_) | Base::Map(_, _))
+                    && !self.varip_type(&ty.base)
+                {
                     self.error(
                         id,
                         "varip requires a supported value or collection field graph",

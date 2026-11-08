@@ -455,6 +455,9 @@ UDT fields may retain drawing handles, including on a `varip` object reference.
 This follows the distinction in TradingView's
 [variable declarations](https://www.tradingview.com/pine-script-docs/language/variable-declarations/)
 between persistent references and permitted collection contents.
+Quantick retains its existing top-level `varip` drawing-handle behavior for
+compatibility. The new checks cover collection roots and object fields; they
+do not claim unrestricted TradingView validation for legacy declarations.
 
 `libraries::compile_with_libraries(source, title, resolver)` accepts a pure
 caller-supplied `Fn(&str) -> Option<String>` source resolver. Imports use exact
