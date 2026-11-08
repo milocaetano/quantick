@@ -186,6 +186,31 @@ stores and register moves. Offset caches are immutable within an evaluation;
 arena growth moves its allocation but never its offsets. The offset-growth test
 also reconstructs state from a word copy and checks those same addresses.
 
+### Integrated v6 remeasurement
+
+After integrating the v6 base `93acda40`, the final runtime source
+`95bc85f8c84ec178f96b9148645e7aaef700124e` was remeasured against the same
+clean child-0 baseline `403e6c2c16fdde2ddc5a8c978c562e806327aaca`. The benchmark
+source, command, 100,000-update ten-indicator workload, host, toolchain and
+profile above were unchanged. Both binaries were built before sampling;
+owned builds were paused. Unrelated builds in three other worktrees remained
+active, with process inventories captured before each sample. No process was
+stopped or reprioritized. All eight samples are included below (us/update).
+
+| Group | A first | B first | B second | A second |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 25.4940 | 21.7342 | 23.1456 | 23.6919 |
+| 2 | 23.7147 | 21.0318 | 25.0673 | 22.7273 |
+
+Baseline mean **23.906975 us** compares with candidate **22.744725 us**
+(4.86% lower); medians are **23.703300 us** and **22.439900 us** (5.33% lower).
+Both interleaved groups favor the candidate mean (8.76% and 0.74% lower).
+The second group has a slower individual candidate sample, so these results
+support aggregate no-regression for this workload under the recorded load,
+not an improvement for every run or a universal speed claim. This fresh paired
+measurement satisfies C42 for the integrated runtime; prior measurements remain
+historical evidence rather than a substitute for measuring the version seams.
+
 Calendar acceptance uses independently calculated civil-date goldens in
 `tests/golden/calendar`, not PineTS oracle output. `calendar_from_bar_time`
 checks six fields and repeated preview/commit equality for negative epochs,
