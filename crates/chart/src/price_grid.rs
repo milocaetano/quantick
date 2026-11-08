@@ -3,12 +3,12 @@
 //! A fixed ask of eight lines spreads them over whatever height the chart
 //! has, so a tall chart gets tall cells. TradingView instead keeps its price
 //! lines a steady distance apart: the smallest round step whose lines stand
-//! at least a given number of pixels apart, from 1, 2, 2.5 and 5 times a
+//! at least a given number of pixels apart, from 1, 2, 2.5, 4 and 5 times a
 //! power of ten. Its cells come out about twice as wide as they are tall.
 
 /// Multipliers of a power of ten a step may take, smallest first. Each is at
 /// most twice the one before, so the spacing chosen stays under twice the floor.
-const STEP_MANTISSAS: [f64; 4] = [1.0, 2.0, 2.5, 5.0];
+const STEP_MANTISSAS: [f64; 5] = [1.0, 2.0, 2.5, 4.0, 5.0];
 
 /// Most lines one call returns, whatever the inputs: a guard, not a policy.
 const MAX_LINES: usize = 256;
@@ -57,11 +57,15 @@ mod tests {
         assert_eq!(step(75_400.0, 75_800.0, 800.0, 40.0), Some(20.0));
         // 45 px needs 22.5: 25 is the next round step.
         assert_eq!(step(75_400.0, 75_800.0, 800.0, 45.0), Some(25.0));
-        // 61 px needs 30.5: 50.
-        assert_eq!(step(75_400.0, 75_800.0, 800.0, 61.0), Some(50.0));
-        // Fractions round the same way.
+        // 61 px needs 30.5: 40, the step TradingView's light chart shows.
+        assert_eq!(step(75_400.0, 75_800.0, 800.0, 61.0), Some(40.0));
+        // 81 px needs 40.5: 50.
+        assert_eq!(step(75_400.0, 75_800.0, 800.0, 81.0), Some(50.0));
+        // Fractions round the same way: 40 px needs 0.004, itself round.
         let fine = step(1.0, 1.1, 1000.0, 40.0).unwrap();
-        assert!((fine - 0.005).abs() < 1e-12, "{fine}");
+        assert!((fine - 0.004).abs() < 1e-12, "{fine}");
+        let finer = step(1.0, 1.1, 1000.0, 41.0).unwrap();
+        assert!((finer - 0.005).abs() < 1e-12, "{finer}");
     }
 
     #[test]

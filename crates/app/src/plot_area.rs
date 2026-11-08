@@ -160,12 +160,13 @@ pub fn fmt_pointer_time(open_ms: i64, interval_ms: Option<i64>, tz: TzOffset) ->
     }
 }
 
-pub use quantick_chart::time_marks::{calendar_label_sample, fmt_calendar_label};
+pub use quantick_chart::time_marks::calendar_label_sample;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::timezone::TzOffset;
+    use quantick_chart::time_marks::fmt_calendar_label;
 
     /// The pointer's tag on a day, week or month chart names the bucket's
     /// date, not the display zone's clock at its UTC midnight.

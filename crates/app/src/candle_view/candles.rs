@@ -5,7 +5,7 @@ use quantick_engine::Bar;
 use quantick_indicators::Rgba8;
 
 use crate::chart::{PriceScale, VerticalSegment, candle_geometry};
-use crate::style::CandleStyle;
+use crate::style::{CandleStyle, ResolvedCandlePaint};
 
 /// Whether a bar reads as bullish, and so which of the two candle colours it
 /// wears.
@@ -103,6 +103,10 @@ pub fn draw_candle(
         .min(body_width / 2.0)
         .min(body_height / 2.0)
         .max(0.0);
+    if crisp {
+        paint_crisp_body(painter, body, &paint);
+        return;
+    }
     let rounding = egui::Rounding::same(radius);
     if let Some(fill) = paint.fill
         && fill[3] > 0
@@ -121,6 +125,41 @@ pub fn draw_candle(
             rounding,
             egui::Stroke::new(width, color32(paint.outline)),
         );
+    }
+}
+
+/// A body on pixel centres as whole pixels: the fill inside, and the contour
+/// as four filled bands a whole number of pixels thick on the body's edge
+/// pixels. A stroked rectangle feathers a one-pixel contour into two grey
+/// columns; filled bands on pixel boundaries do not. Square corners.
+fn paint_crisp_body(painter: &egui::Painter, body: egui::Rect, paint: &ResolvedCandlePaint) {
+    // The edges sit on pixel centres: half a pixel out is the boundary.
+    let outer = body.expand(0.5);
+    let width = paint.outline_width.round().clamp(
+        1.0,
+        (outer.width().min(outer.height()) / 2.0).floor().max(1.0),
+    );
+    let inner = outer.shrink(width);
+    if let Some(fill) = paint.fill
+        && fill[3] > 0
+        && inner.is_positive()
+    {
+        painter.rect_filled(inner, egui::Rounding::ZERO, color32(fill));
+    }
+    if paint.outline[3] == 0 {
+        return;
+    }
+    let color = color32(paint.outline);
+    let x = |left: f32, right: f32| outer.with_min_x(left).with_max_x(right);
+    for band in [
+        outer.with_max_y(outer.top() + width),
+        outer.with_min_y(outer.bottom() - width),
+        x(outer.left(), outer.left() + width).shrink2(egui::vec2(0.0, width)),
+        x(outer.right() - width, outer.right()).shrink2(egui::vec2(0.0, width)),
+    ] {
+        if band.is_positive() {
+            painter.rect_filled(band, egui::Rounding::ZERO, color);
+        }
     }
 }
 

@@ -326,13 +326,9 @@ impl TimeStripPass<'_> {
                 let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), room);
                 time_marks::calendar_marks(&bars, interval, seed, stride)
             }
-            None => time_marks::time_marks(
-                &bars,
-                seed,
-                self.tz,
-                time_marks::TIME_MARK_GAP_PX,
-                &width_of,
-            ),
+            None => {
+                time_marks::time_marks(&bars, seed, self.tz, time_marks::TIME_MARK_GAP_PX, width_of)
+            }
         };
         // The whole label, not just its centre: a label centred a few pixels
         // from the end drew its other half over the gutter.

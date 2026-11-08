@@ -138,7 +138,7 @@ price_gutter = 76.0
 time_strip = 30.0
 price_label_size = 11.5
 time_label_size = 11.5
-# Price lines at least this far apart, on the smallest 1-2-2.5-5 step that
+# Price lines at least this far apart, on the smallest 1-2-2.5-4-5 step that
 # keeps it: cells about twice as wide as tall, as TradingView's are.
 price_line_spacing = 50.0
 
