@@ -104,18 +104,9 @@ fn a_reassigned_length_no_longer_folds() {
 }
 
 #[test]
-fn stateful_kernels_inside_loops_are_refused() {
-    // Inline \n + real spaces: `\`-continued literals strip leading
-    // whitespace, which would erase the loop body's indentation.
-    let errors = compile_err(
-        "//@version=5\nindicator(\"t\")\ns = 0.0\nfor i = 0 to 4\n    s := s + ta.ema(close, 9)\nplot(s)\n",
-    );
-    assert!(
-        errors
-            .iter()
-            .any(|e| e.code == ErrorCode::PineStatefulInLoop),
-        "{errors:?}"
-    );
+fn invariant_stateful_kernels_inside_loops_compile() {
+    let source = "//@version=5\nindicator(\"t\")\ns = 0.0\nfor i = 0 to 4\n    s := s + ta.ema(close, 9)\nplot(s)\n";
+    assert!(compile(source, "loop").is_ok());
 }
 
 #[test]

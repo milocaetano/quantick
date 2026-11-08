@@ -482,16 +482,6 @@ impl Compiler {
     /// input extraction, kernel-length folding.
     fn builtin_call(&mut self, call: NodeId, builtin: Builtin, args: &[Arg], ctx: &mut WalkCtx) {
         if builtin.is_stateful_call() {
-            if ctx.in_loop {
-                let span = self.span(call);
-                self.errors.push(PineError::new(
-                    ErrorCode::PineStatefulInLoop,
-                    span,
-                    "stateful ta/math kernels cannot be called inside a loop body \
-                     (per-iteration call sites would silently diverge); \
-                     hoist the call out of the loop",
-                ));
-            }
             let site = CallSiteId(self.call_site_count);
             self.call_site_count += 1;
             self.call_sites[call.index()] = Some(site);
@@ -547,6 +537,10 @@ impl Compiler {
     }
 
     fn check_kernel_length(&mut self, call: NodeId, builtin: Builtin, args: &[Arg]) {
+        if builtin == Builtin::TaMacd {
+            self.check_macd_lengths(call, args);
+            return;
+        }
         let Some((position, name)) = Self::kernel_length_arg(builtin) else {
             return;
         };
