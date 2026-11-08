@@ -183,7 +183,7 @@ impl LayerWiring<'_> {
         let tab = self.tabs.runtime_mut(self.tabs.active_index());
         chart_layers::maintain(self.workspace, tab_id, &tab.flow_pane, self.style);
         if tab.tape_mut().settle_old_tape_fold() {
-            let states = tab.flow_pane.layer_states(self.style);
+            let states = tab.flow_pane.layer_read().states(self.style);
             chart_layers::save(self.workspace.chart_layers_path(), &states);
         }
         if !ctx.input(|input| input.pointer.any_down()) {

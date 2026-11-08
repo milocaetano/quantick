@@ -616,21 +616,3 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         }
     }
 }
-
-impl super::ChartPane {
-    pub(crate) fn opening_scale_snapshot(
-        &self,
-    ) -> quantick_control_schema::orderflow::OpeningScaleSnapshot {
-        quantick_control_schema::orderflow::OpeningScaleSnapshot {
-            tape: self.orderflow.as_ref().map(|view| {
-                view.cached_config()
-                    .volume_dots
-                    .ignore_opening_burst_in_scale
-            }),
-            candle: self
-                .orderflow
-                .as_ref()
-                .is_some_and(OrderflowView::ignore_flow_opening),
-        }
-    }
-}

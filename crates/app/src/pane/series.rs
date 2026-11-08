@@ -3,9 +3,9 @@
 //! indicator worker is told about every change.
 //!
 //! Two series compose one slot space — the venue prefix first, then the bars
-//! the engine cut from prints — and every lookup here is written once against
-//! that composition so the drawings, the indicators and the control plane read
-//! the same slot for the same instant. A pure move out of `pane.rs`.
+//! the engine cut from prints — and every lookup is written once against that
+//! composition, in `quantick_chart::pane_series`, so the drawings, the
+//! indicators and the control plane read the same slot for the same instant.
 
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, SlotId};
 use crate::price_view::PriceView;
@@ -16,115 +16,35 @@ use super::ChartPane;
 use quantick_chart_interaction::pane_history::PrefixChange;
 
 impl ChartPane {
-    /// How many bar slots the chart draws: the venue prefix, the closed bars
-    /// the engine cut from trades, and the forming one after them.
+    // The slot reads, each one line onto the composed series that owns its
+    // rule and its documentation: `quantick_chart::pane_series::PaneSeriesRead`.
     pub fn slots(&self) -> usize {
         self.series_read().slots()
     }
-
-    /// Slots holding a *closed* bar — everything before the forming one.
     pub fn closed_slots(&self) -> usize {
         self.series_read().closed_slots()
     }
-
-    /// The slot the trade-derived series starts at: the seam between venue
-    /// candles and bars this app built from prints.
     pub fn seam_slot(&self) -> usize {
         self.series_read().seam_slot()
     }
-
-    /// The slot of a bar that covers only *part* of the interval it occupies,
-    /// when there is one.
-    ///
-    /// The tape's first bar opens on its first print, which lands somewhere
-    /// inside the interval rather than on its edge — and the venue candle
-    /// that did cover the whole interval was dropped at the seam
-    /// (`trim_to_seam`) precisely because the two overlap. So that slot holds
-    /// a short bar wearing a full bar's clothes: a range folding it is missing
-    /// whatever traded before the app connected, measured on a live BTCUSDT
-    /// connect at 36% of a 1-minute bucket and 94% of an hourly one.
-    ///
-    /// No volume is invented to close the gap. The profile says the bar is
-    /// partly covered and lets the trader judge it — the same contract the
-    /// approximated-from-OHLC label keeps.
-    ///
-    /// `None` for a pane that does not cut by time (a tick or volume bar owns
-    /// no interval to fall short of), and for a first bar that opens exactly
-    /// on its boundary.
     pub fn partial_bucket_slot(&self) -> Option<usize> {
         self.series_read().partial_bucket_slot()
     }
-
-    /// The closed bar in `slot`, from whichever series owns it.
     pub fn closed_bar(&self, slot: usize) -> Option<&quantick_engine::Bar> {
         self.series_read().closed_bar(slot)
     }
-
-    /// When the bar in `slot` opened, across both series and the forming bar.
-    ///
-    /// Past the prefix this is the engine's own answer, shifted into the
-    /// composed slot space — there is one rule for what a slot means and the
-    /// prefix only moves where it starts.
     pub fn slot_open_time(&self, slot: usize) -> Option<i64> {
         self.series_read().slot_open_time(slot)
     }
-
-    /// The slot showing market time `ms`, across both series.
-    ///
-    /// The seam rule keeps `open_time` non-decreasing across the join, so the
-    /// question splits cleanly: anything from the first engine bar onward is
-    /// the engine's own answer shifted by the prefix, anything before it is a
-    /// search of the prefix.
     pub fn slot_at_time(&self, ms: i64) -> Option<usize> {
         self.series_read().slot_at_time(ms)
     }
-
-    /// The slot whose bar *covers* market time `ms`, or `None` when this
-    /// pane's tape does not reach that instant at all.
-    ///
-    /// [`Self::slot_at_time`] clamps at both ends — an instant older than the
-    /// series answers slot 0, a newer one the newest slot — which is what a
-    /// drawing anchor being re-hung on the closest bar wants. A mark standing
-    /// for a *fill* wants the opposite answer at those edges: outside the
-    /// window the pane holds, the tape on screen cannot prove the print
-    /// happened, and a mark on the wrong bar is worse than no mark. Without
-    /// it a replay seek — which wipes the bars and keeps the round trips,
-    /// because they happened — stacks every earlier trade on whichever bar
-    /// sits at the edge, and they pile up there as the replay runs on.
-    ///
-    /// The window is [`Self::covered_window`]'s. Between its two ends
-    /// `slot_at_time` is already exact, so only the edges are decided here.
-    ///
-    /// Third of three deliberately different answers to one lookup, and the
-    /// list is meant to stay at three. [`Self::slot_at_time`] clamps at both
-    /// ends; `slot_of_time` refuses the old end but lets the new one *run on*
-    /// past the newest bar, because a trend line pointing into the future
-    /// belongs there; this one refuses both, because a fill does not happen
-    /// in the future and did not happen before the tape began.
-    ///
-    /// One instant per call. A caller asking about many instants against one
-    /// cut of the series — the trade paint, twice per closed round trip per
-    /// frame — takes `covered_window` itself and tests against the two
-    /// numbers, rather than re-deriving them thousands of times a second on
-    /// the paint path.
     pub fn covering_slot_at_time(&self, ms: i64) -> Option<usize> {
         self.series_read().covering_slot_at_time(ms)
     }
-
-    /// The stretch of market time this pane's bars cover, both ends
-    /// inclusive: the oldest bar's open to the newest bar's last print.
-    ///
-    /// The oldest bar is the venue prefix's first candle when there is a
-    /// prefix, so the lower end is that candle's open rather than a print —
-    /// which is what "the chart reaches back this far" means to someone
-    /// reading the screen, candles or prints. `None` for a pane with no bars.
     pub(super) fn covered_window(&self) -> Option<(i64, i64)> {
         self.series_read().covered_window()
     }
-
-    /// The market time under the right edge of the candles' pane, or `None`
-    /// while the view follows live (the right edge is the newest bar by
-    /// definition, so there is nothing to remember) or when there are no bars.
     pub fn right_edge_time(&self) -> Option<i64> {
         self.series_read().right_edge_time(&self.model.viewport)
     }

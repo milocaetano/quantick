@@ -213,12 +213,13 @@ pub(super) mod probe {
         assert!(!pane.layer_visible(discovered, &style));
         pane.set_layer_visible(discovered, true, &mut LayerActions::default());
         assert!(pane.layer_visible(discovered, &style));
-        let text = quantick_layers::LayerDocument::encode(&pane.layer_states(&style)).unwrap();
+        let text =
+            quantick_layers::LayerDocument::encode(&pane.layer_read().states(&style)).unwrap();
         let restored = quantick_layers::LayerDocument::parse(&text)
             .unwrap()
             .resolve(pane.layers.registry());
         let mut second = installed();
-        second.apply_layer_states(&restored);
+        second.layer_write().apply_states(&restored);
         assert!(second.layer_visible(discovered, &style));
         second.set_layer_visible(discovered, false, &mut LayerActions::default());
         assert!(!second.layer_visible(discovered, &style));

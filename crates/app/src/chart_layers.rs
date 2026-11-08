@@ -7,7 +7,7 @@
 //!
 //! It is deliberately *not* a second copy of their state. Each entry resolves
 //! to the one field that already owns that layer (see
-//! [`crate::pane::ChartPane::layer_visible`]), so the menu and the toolbar/dock
+//! [`crate::pane::ChartPane::layer_read`]), so the menu and the toolbar/dock
 //! can never disagree about a pixel. This module only names the layers and
 //! stores the switches nothing else stores.
 //!

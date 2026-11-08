@@ -11,7 +11,7 @@ use quantick_chart::pane_header::{PaneHeader, PaneIdentity};
 use quantick_chart::side_label::SideLabel;
 use quantick_control_handlers::bubble_scale::{BubbleScalePane, sample_target as target};
 use quantick_engine::bar_selection::BarInputAvailability;
-use quantick_layers::{ChartLayer, LayerActions};
+use quantick_layers::{ChartLayer, LayerActions, LayerBlock, LayerFacts};
 
 use crate::bands;
 use crate::chart::PriceScale;
@@ -201,6 +201,44 @@ impl ChartPane {
             state: &self.state,
             spec: &self.spec,
         }
+    }
+    /// The layer answers — see [`layers::PaneLayerRead`].
+    pub(crate) fn layer_read(&self) -> layers::PaneLayerRead<'_> {
+        layers::PaneLayerRead {
+            layers: &self.layers,
+            orderflow: self.orderflow.as_ref(),
+            state: &self.state,
+            footprint: &self.presentation.footprint,
+            style: &self.presentation.candles,
+            drawings: &self.drawings,
+        }
+    }
+    /// The layer switches — see [`layers::PaneLayerWrite`].
+    pub(crate) fn layer_write(&mut self) -> layers::PaneLayerWrite<'_> {
+        layers::PaneLayerWrite {
+            pane: self.id,
+            layers: &mut self.layers,
+            orderflow: self.orderflow.as_mut(),
+            state: &self.state,
+            presentation: &mut self.presentation,
+            drawings: &mut self.drawings,
+        }
+    }
+    // The hot layer calls, each one line onto the view that owns its rule.
+    pub(crate) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
+        self.layer_read().facts(capabilities)
+    }
+    pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        self.layer_read().switched_on(layer, style)
+    }
+    pub fn layer_visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        self.layer_read().visible(layer, style)
+    }
+    pub fn layer_blocked(&self, layer: ChartLayer, feed: FeedCapabilities) -> Option<LayerBlock> {
+        self.layer_read().blocked(layer, feed)
+    }
+    pub fn set_layer_visible(&mut self, layer: ChartLayer, on: bool, out: &mut LayerActions) {
+        self.layer_write().set_visible(layer, on, out);
     }
     pub(crate) fn drawing_projection(&self) -> gesture::DrawingProjection<'_> {
         gesture::DrawingProjection {
@@ -568,7 +606,7 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         self.sync_price_axis_mode();
-        self.unhide_layer_for_armed_tool(chrome);
+        self.layer_write().unhide_for_tool(chrome);
         // The magnet applies to every anchor gesture, placement and re-drag
         // alike: a handle that snaps only while you first draw it would make
         // the second edit undo the precision of the first. An object's own

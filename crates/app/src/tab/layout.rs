@@ -142,7 +142,8 @@ impl Tab {
         // this pane exists at all.
         // Headless policy selects inheritable switches and marks their effects
         // as opening state, so feature owners do not create user undo entries.
-        pane.inherit_layer_states(&self.flow_pane.layer_states(style));
+        pane.layer_write()
+            .inherit_states(&self.flow_pane.layer_read().states(style));
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_panes.push(pane);

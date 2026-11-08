@@ -129,13 +129,15 @@ fn a_source_with_no_book_never_banks_the_heatmap_as_switched_off() {
         "with no book there is nothing to draw, which is the renderer's answer"
     );
     assert_eq!(
-        pane.layer_states(&app.runtime.style)
+        pane.layer_read()
+            .states(&app.runtime.style)
             .get(&ChartLayer::Heatmap),
         Some(&true),
         "but the file records the switch, which the shipped config left on"
     );
     assert_eq!(
-        pane.layer_states(&app.runtime.style)
+        pane.layer_read()
+            .states(&app.runtime.style)
             .get(&ChartLayer::TapeHeatmap),
         Some(&true),
         "the tape's depth layer answers to the same rule"
