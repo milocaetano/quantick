@@ -313,11 +313,9 @@ impl ChartLayer {
     pub const DaySeparator: Self = Self(&LayerDescriptor {
         id: "day_separator",
         label: "day separator",
-        hint: "a near-invisible rule across the candles and a tick on the time axis where \
-                 the display day turns over: the old day's last bar time left of the tick, the \
-                 new day's date and first bar time right of it, and the leftmost bar's date \
-                 pinned to the axis's left edge. A day with no bars is not drawn: the mark \
-                 lands on the first bar that exists",
+        hint: "a near-invisible rule across the candles where the display day turns over; \
+                 the time axis names the new day by its number whether this is on or off. A \
+                 day with no bars is not drawn: the rule lands on the first bar that exists",
         source: LayerSource::Local,
         scope: LayerScope::Pane,
         persistence: Persistence::Layers,

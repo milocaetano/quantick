@@ -78,6 +78,11 @@ fn capture(
             *axes.get(Token::AxisInk),
         )
     };
+    // Light rules its axes on whole device pixels, two of them at 1.5 as
+    // the candle contour; Dark keeps its one-point strokes.
+    let ppp = ctx.pixels_per_point();
+    let crisp = quantick_chart::candle_pixels::crisp_line(0.0, 1.0, ppp).1;
+    let rule_width = if axes.resolved.dark { 1.0 } else { crisp };
     let mut tick_labels = 0;
     let scale = pane
         .price_view
@@ -103,11 +108,10 @@ fn capture(
                 if points[0].x == rect.left()
                     && points[1].x == rect.right()
                     && points[0].y == points[1].y
-                    && points[0].y >= rect.bottom()
-                    && points[0].y <= rect.bottom() + 0.5001 =>
+                    && (points[0].y - rect.bottom()).abs() <= 0.5001 =>
             {
                 assert_eq!(stroke.color, egui::epaint::ColorMode::Solid(time_rule));
-                assert_eq!(stroke.width, 1.0);
+                assert_eq!(stroke.width, rule_width);
                 paint.time_rule.push(*points);
             }
             egui::Shape::LineSegment { points, stroke }
@@ -121,7 +125,7 @@ fn capture(
                     panic!("the grid uses a solid color");
                 };
                 assert_eq!(color, expected_color);
-                assert_eq!(stroke.width, 1.0);
+                assert!(stroke.width == 1.0 || stroke.width == crisp, "{stroke:?}");
                 paint.horizontal.push((*points, stroke.width, color));
             }
             egui::Shape::LineSegment { points, stroke }
@@ -131,7 +135,7 @@ fn capture(
                     && points[1].y == rect.bottom() =>
             {
                 assert_eq!(stroke.color, egui::epaint::ColorMode::Solid(price_rule));
-                assert_eq!(stroke.width, 1.0);
+                assert_eq!(stroke.width, rule_width);
                 paint.divider.push(*points);
             }
             // Other full-height marks (a seam, a day rule) wear their own
@@ -242,9 +246,13 @@ fn inherited_light_time_grid_aligns_at_each_dpi_without_moving_prices_or_exclude
             assert_eq!(inherited[0].raw_y, explicit[0].raw_y);
             let mut displaced = false;
             for (aligned, raw) in inherited[0].horizontal.iter().zip(&explicit[0].horizontal) {
-                assert_eq!((aligned.1, aligned.2), (raw.1, raw.2));
-                let physical_y = aligned.0[0].y * dpi;
-                assert!((physical_y.fract() - 0.5).abs() < 0.0001);
+                // On whole device pixels, as thick as the candle contour.
+                assert_eq!(raw.1, 1.0, "an explicit grid keeps its stroke");
+                assert_eq!(aligned.2, raw.2);
+                let width = quantick_chart::candle_pixels::crisp_line(0.0, 1.0, dpi).1;
+                assert_eq!(aligned.1, width);
+                let top_edge = (aligned.0[0].y - width / 2.0) * dpi;
+                assert!((top_edge - top_edge.round()).abs() < 0.001, "{top_edge}");
                 let shift = (aligned.0[0].y - raw.0[0].y).abs();
                 assert!(shift <= 0.5001 / dpi);
                 displaced |= shift > 0.0001;
@@ -252,4 +260,26 @@ fn inherited_light_time_grid_aligns_at_each_dpi_without_moving_prices_or_exclude
             assert!(displaced, "fixture must exercise fractional grid positions");
         }
     }
+}
+
+/// The vertical grid and the time strip read one layout of the labels: a
+/// Light frame lays them out once per pane, not once for each.
+#[test]
+fn the_time_labels_are_laid_out_once_per_pane_and_frame() {
+    let ctx = egui::Context::default();
+    ctx.set_pixels_per_point(1.5);
+    let mut app = fixture(&ctx, quantick_appearance::LIGHT);
+    let runs = || crate::pane::TIME_MARK_RUNS.with(std::cell::Cell::get);
+    let before = runs();
+    let output = run_frame(&mut app, &ctx);
+    let painted = SIDES
+        .into_iter()
+        .filter(|&side| app.active_tab().pane(side).frame.chart_rect.is_some())
+        .count();
+    let grids = SIDES
+        .into_iter()
+        .filter(|&side| !capture(&app, &ctx, &output, side).vertical.is_empty())
+        .count();
+    assert!(grids > 0, "Light draws its time grid");
+    assert_eq!(runs() - before, painted, "one layout per painted pane");
 }

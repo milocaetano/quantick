@@ -174,13 +174,14 @@ impl ChartPane {
         }
     }
 
-    /// Where the vertical grid stands this frame: at the time labels' places.
-    /// Empty while the time grid is off, so a Dark chart measures nothing.
-    pub(super) fn time_grid_xs(&self, frame: &DrawFrame<'_>, chrome: &PaneChrome<'_>) -> Vec<f32> {
-        if chrome.style.canvas.time_grid_rgba().is_none() {
-            return Vec::new();
-        }
-        self.time_strip(frame, chrome, None).grid_xs()
+    /// This frame's time labels, laid out once for the strip and the
+    /// vertical grid that stands at their places.
+    pub(super) fn time_marks(
+        &self,
+        frame: &DrawFrame<'_>,
+        chrome: &PaneChrome<'_>,
+    ) -> crate::pane::render_registry::StripMarks {
+        self.time_strip(frame, chrome, None).marks()
     }
 
     /// The time strip this frame, standing aside for the pointer's `chip`.
@@ -215,6 +216,7 @@ impl ChartPane {
         levels: &[PriceAxisLevel],
         time_chip: Option<pointer_compass::TimeChip>,
         chrome: &PaneChrome<'_>,
+        time_marks: &crate::pane::render_registry::StripMarks,
     ) {
         let &DrawFrame {
             painter,
@@ -298,7 +300,7 @@ impl ChartPane {
                     gaps: chrome.feed_gaps,
                 });
         }
-        self.time_strip(frame, chrome, time_chip).paint();
+        self.time_strip(frame, chrome, time_chip).paint(time_marks);
     }
 
     /// Where the display day turns in view, or `None` with the separator
@@ -327,13 +329,9 @@ impl ChartPane {
             slots.filter_map(|slot| Some((slot, series.slot_open_time(slot)?))),
             chrome.tz,
         );
-        let turns = starts.into_iter().map(|(slot, date)| {
-            let before = slot
-                .checked_sub(1)
-                .and_then(|before| series.closed_bar(before));
-            let before = before.map(|bar| (bar.open_time, bar.close_time));
-            DayTurn::new(slot, date, before, series.slot_open_time(slot), chrome.tz)
-        });
+        let turns = starts
+            .into_iter()
+            .map(|(slot, date)| DayTurn { slot, date });
         Some(turns.collect())
     }
 

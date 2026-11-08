@@ -345,3 +345,63 @@ fn price_and_time_grids_switch_apart_through_the_layer_door() {
     assert_eq!(success_result(&again)["layer"]["requested"], true);
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// A fresh Light chart paints its time grid from the theme; the control
+/// read, the set call, the menu bar and the pane's paint all agree on it.
+#[test]
+fn light_time_grid_reads_and_switches_as_the_theme_paints_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    app.runtime
+        .appearance
+        .apply_candidate(quantick_appearance::LIGHT, false)
+        .unwrap();
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("light-time-grid");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let pane = &app.active_tab().flow_pane;
+    let painted = pane
+        .plot_style(&app.runtime.style, &ctx)
+        .canvas
+        .time_grid_rgba()
+        .is_some();
+    assert!(painted, "Light paints its time grid on a fresh chart");
+    let time_grid = |snapshot: &Value| {
+        snapshot["panes"][0]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == "time_grid")
+            .map(|layer| layer["requested"].clone())
+            .unwrap()
+    };
+    assert_eq!(time_grid(&snapshot(&mut app, &mut observer)), json!(true));
+    let payload = layer_input(&app, "time_grid", true);
+    let (response, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+    assert_eq!(
+        success_result(&response)["changed"],
+        json!(false),
+        "switching on what the theme already paints changes nothing"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    app.apply_menu_command(crate::app::menu_bar::MenuCommand::ToggleLayer(
+        ChartLayer::TimeGrid,
+    ));
+    run_frame(&mut app, &ctx);
+    let pane = app.focused_pane();
+    assert!(
+        !pane
+            .plot_style(&app.runtime.style, &ctx)
+            .canvas
+            .time_grid_rgba()
+            .is_some(),
+        "the menu bar's first click hides the painted time grid"
+    );
+    assert!(!pane.layer_switched_on(ChartLayer::TimeGrid, &app.runtime.style));
+}

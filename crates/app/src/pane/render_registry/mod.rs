@@ -11,8 +11,11 @@ pub(super) use days::DayRulePass;
 pub(super) use dividers::DividerPass;
 mod axes;
 use axes::LastPricePass;
+#[cfg(test)]
+pub(crate) use axes::MARK_RUNS;
 pub(super) use axes::{
-    AxisMarksPass, CrosshairPass, GridPass, LaneTimeAxisPass, PointerPass, TimeStripPass,
+    AxisMarksPass, CrosshairPass, GridPass, LaneTimeAxisPass, PointerPass, StripMarks,
+    TimeStripPass,
 };
 mod drawings;
 pub(in crate::pane) use drawings::{TextFonts, paint_scene};

@@ -234,11 +234,10 @@ impl QuantickApp {
                 let capabilities = self.active_tab().capabilities(&self.config);
                 if pane.layer_blocked(layer, capabilities).is_none() {
                     let visible = !pane.layer_visible(layer, &self.runtime.style);
-                    self.focused_pane_mut().set_layer_visible(
-                        layer,
-                        visible,
-                        &mut Default::default(),
-                    );
+                    // The control plane's door, so a grid reaches the pane's style.
+                    let side = self.active_tab().focused_side();
+                    let tab = self.runtime.tabs.active_index();
+                    self.layer_wiring().set_visible(tab, side, layer, visible);
                 }
             }
             MenuCommand::ToggleContextCharts => {

@@ -112,8 +112,16 @@ pub fn draw_pixel_candle(
     bar: &Bar,
     paint: &ResolvedCandlePaint,
 ) {
+    paint_pixels(painter, &run.place_bar(scale, bar, xc, paint), paint);
+}
+
+/// Paints one candle's whole-pixel rectangles, as the time chart does.
+pub(super) fn paint_pixels(
+    painter: &egui::Painter,
+    pixels: &quantick_chart::candle_pixels::CandlePixels,
+    paint: &ResolvedCandlePaint,
+) {
     let ppp = painter.ctx().pixels_per_point();
-    let pixels = run.place_bar(scale, bar, xc, paint.min_body_height);
     for (rect, color) in pixels.paints(paint).into_iter().flatten() {
         let rect = rect.in_points(ppp);
         let rect = egui::Rect::from_x_y_ranges(rect.left..=rect.right, rect.top..=rect.bottom);

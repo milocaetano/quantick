@@ -304,6 +304,19 @@ impl CandleStyle {
         )
     }
 
+    /// Whether the trader sized these bodies: a body width or gap that no
+    /// built-in preset ships. The time chart's whole-pixel candles take
+    /// TradingView's width, and only a body the trader asked for narrows it
+    /// (`quantick_chart::candle_pixels::CandleRun::for_frame`).
+    #[must_use]
+    pub fn sizes_its_body(&self) -> bool {
+        let asked = (self.clamped_width_frac(), self.clamped_gap_px());
+        !CandlePreset::ALL.into_iter().any(|preset| {
+            let shipped = preset.style();
+            (shipped.clamped_width_frac(), shipped.clamped_gap_px()) == asked
+        })
+    }
+
     /// Half the width of a candle body drawn in a `slot_px`-wide bar slot.
     ///
     /// Two rules, the tighter one wins. The body takes

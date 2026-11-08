@@ -305,6 +305,36 @@ pub fn calendar_marks(
         .collect()
 }
 
+/// The time strip's labels for `bars` on a strip spanning `left..right`,
+/// each `width_of` its text wide: a chart cut at a day or longer
+/// (`interval_ms`) writes its UTC buckets' dates every few bars, as many as
+/// `px_per_bar` leaves room for; an intraday chart writes TradingView's
+/// round instants ([`time_marks`]). Only labels whose whole text fits are
+/// kept: one centred a few pixels from the end drew its other half over the
+/// gutter.
+#[must_use]
+pub fn strip_marks(
+    bars: &[BarAt],
+    seed_ms: Option<i64>,
+    interval_ms: Option<i64>,
+    tz: TzOffset,
+    px_per_bar: f32,
+    (left, right): (f32, f32),
+    width_of: impl Fn(&str) -> f32,
+) -> Vec<TimeMark> {
+    let marks = match interval_ms.zip(interval_ms.and_then(calendar_label_sample)) {
+        Some((interval, sample)) => {
+            let stride = crate::geometry::time_label_stride(px_per_bar, width_of(sample));
+            calendar_marks(bars, interval, seed_ms, stride)
+        }
+        None => time_marks(bars, seed_ms, tz, TIME_MARK_GAP_PX, &width_of),
+    };
+    marks
+        .into_iter()
+        .filter(|mark| crate::geometry::label_fits(mark.x, width_of(&mark.text), left, right))
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "time_marks_tests.rs"]
 mod tests;

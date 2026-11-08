@@ -15,6 +15,7 @@ use crate::{
 use eframe::egui;
 use quantick_appearance::Token;
 use quantick_chart::bar_progress::BarProgressReading;
+use quantick_chart::candle_pixels::crisp_or_point as crisp;
 use quantick_chart::time_marks::{self, BarAt, TimeMark};
 use rust_decimal::prelude::ToPrimitive as _;
 pub(super) const PACKAGE: Package = Package {
@@ -83,16 +84,15 @@ fn grid(p: &mut GridPass<'_, '_>) {
         time_grid_xs,
     } = *p;
 
-    let grid = egui::Stroke::new(1.0_f32, grid_color(style));
+    // Light draws each line on whole device pixels, as TradingView does.
+    let ppp = painter.ctx().pixels_per_point();
+    let line = |at: f32| crisp(snap_horizontal, at, ppp);
     if let Some(rgba) = style.canvas.time_grid_rgba() {
-        let vertical = egui::Stroke::new(1.0_f32, super::super::painting::color32(rgba));
+        let color = super::super::painting::color32(rgba);
         for &x in time_grid_xs {
-            let line_x = if snap_horizontal {
-                painter.round_to_pixel_center(x)
-            } else {
-                x
-            };
-            painter.vline(line_x, chart_rect.y_range(), vertical);
+            let (line_x, width) = line(x);
+            let stroke = egui::Stroke::new(width, color);
+            painter.vline(line_x, chart_rect.y_range(), stroke);
         }
     }
     let ink = axis_ink(&palette);
@@ -114,11 +114,8 @@ fn grid(p: &mut GridPass<'_, '_>) {
         // The *line* is drawn either way: a gridline under a chip is
         // still the grid, and hiding it would put a gap in the chart
         // wherever the pointer went.
-        let line_y = if snap_horizontal {
-            painter.round_to_pixel_center(y)
-        } else {
-            y
-        };
+        let (line_y, width) = line(y);
+        let grid = egui::Stroke::new(width, grid_color(style));
         painter.hline(chart_rect.x_range(), line_y, grid);
         // The chips on this axis are the same font and padding as the
         // labels, so one extent answers for both — unlike the time strip,
@@ -142,12 +139,8 @@ fn grid(p: &mut GridPass<'_, '_>) {
     }
     // The axis dividing line.
     let rule = axis_rule(&palette, style, Token::PriceAxisRule);
-    let rule_x = axis_pixel(painter, &palette, axis_x);
-    painter.vline(
-        rule_x,
-        chart_rect.y_range(),
-        egui::Stroke::new(1.0_f32, rule),
-    );
+    let (rule_x, width) = crisp(!palette.resolved.dark, axis_x, ppp);
+    painter.vline(rule_x, chart_rect.y_range(), egui::Stroke::new(width, rule));
 }
 fn last_price(p: &mut LastPricePass<'_>) {
     let LastPricePass {
@@ -272,6 +265,14 @@ fn pointer(p: &mut PointerPass<'_>) {
     }
 }
 
+/// One frame's time labels, in the font they are written in.
+pub(in crate::pane) type StripMarks = (egui::FontId, Vec<TimeMark>);
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread laid the time labels out.
+    pub(crate) static MARK_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(in crate::pane) struct TimeStripPass<'a> {
     pub painter: &'a egui::Painter,
     pub strip: egui::Rect,
@@ -293,7 +294,10 @@ impl TimeStripPass<'_> {
     /// (`quantick_chart::time_marks`): `HH:MM`, the day number where a day
     /// turns, the month and the year where those do. A chart cut at a day or
     /// longer writes its UTC buckets' dates every few bars, as it always has.
-    fn marks(&self, palette: &crate::theme::Palette) -> (egui::FontId, Vec<TimeMark>) {
+    pub fn marks(&self) -> StripMarks {
+        #[cfg(test)]
+        MARK_RUNS.with(|runs| runs.set(runs.get() + 1));
+        let palette = &theme::axes(self.painter.ctx());
         let size = palette.resolved.chart_axes.time_label_size;
         let font = label_font(palette, crate::chart::TIME_LABEL_FONT_PX, size);
         if self.end <= self.start {
@@ -323,57 +327,34 @@ impl TimeStripPass<'_> {
             .start
             .checked_sub(1)
             .and_then(|slot| self.series.slot_open_time(slot));
-        let interval_ms = self.series.spec.spec().time_interval_ms();
-        let marks = match interval_ms.zip(interval_ms.and_then(time_marks::calendar_label_sample)) {
-            Some((interval, sample)) => {
-                let room = width_of(sample);
-                let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), room);
-                time_marks::calendar_marks(&bars, interval, seed, stride)
-            }
-            None => {
-                time_marks::time_marks(&bars, seed, self.tz, time_marks::TIME_MARK_GAP_PX, width_of)
-            }
-        };
-        // The whole label, not just its centre: a label centred a few pixels
-        // from the end drew its other half over the gutter.
-        let fits = |mark: &TimeMark| {
-            crate::chart::label_fits(
-                mark.x,
-                width_of(&mark.text),
-                history_strip.left(),
-                history_strip.right(),
-            )
-        };
-        let marks = marks.into_iter().filter(fits).collect();
+        let interval = self.series.spec.spec().time_interval_ms();
+        let (span, zoom) = (
+            (history_strip.left(), history_strip.right()),
+            self.viewport.px_per_bar(),
+        );
+        let marks = time_marks::strip_marks(&bars, seed, interval, self.tz, zoom, span, width_of);
         (font, marks)
     }
 
-    /// The vertical grid's places: one line per label. A line stays where
-    /// the pointer's chip hides its label, as a price gridline stays under a
-    /// chip.
-    pub fn grid_xs(&self) -> Vec<f32> {
-        let (_, marks) = self.marks(&theme::axes(self.painter.ctx()));
-        marks.into_iter().map(|mark| mark.x).collect()
-    }
-
-    pub fn paint(&self) {
+    /// The rule and `marks`' labels, as [`Self::marks`] laid them out.
+    pub fn paint(&self, (font, marks): &StripMarks) {
         let palette = theme::axes(self.painter.ctx());
         let painter = self.painter;
         let strip = self.strip;
         let rule = axis_rule(&palette, self.style, Token::TimeAxisRule);
-        let rule_y = axis_pixel(painter, &palette, strip.top());
+        let ppp = painter.ctx().pixels_per_point();
+        let (rule_y, width) = crisp(!palette.resolved.dark, strip.top(), ppp);
         painter.line_segment(
             [
                 egui::pos2(strip.left(), rule_y),
                 egui::pos2(strip.right(), rule_y),
             ],
-            egui::Stroke::new(1.0_f32, rule),
+            egui::Stroke::new(width, rule),
         );
         let ink = axis_ink(&palette);
-        let (font, marks) = self.marks(&palette);
         let y = strip.center().y;
         for mark in marks {
-            let galley = painter.layout_no_wrap(mark.text, font.clone(), ink);
+            let galley = painter.layout_no_wrap(mark.text.clone(), font.clone(), ink);
             if pointer_compass::time_claimed(self.chip, mark.x, galley.size().x) {
                 continue;
             }
@@ -422,16 +403,6 @@ fn axis_rule(palette: &crate::theme::Palette, style: &ChartStyle, token: Token) 
         grid_color(style)
     } else {
         *palette.get(token)
-    }
-}
-
-/// A one-pixel rule's coordinate: on a pixel's centre in a light theme, so it
-/// is one crisp pixel as TradingView's is; Dark keeps the position it had.
-fn axis_pixel(painter: &egui::Painter, palette: &crate::theme::Palette, at: f32) -> f32 {
-    if palette.resolved.dark {
-        at
-    } else {
-        painter.round_to_pixel_center(at)
     }
 }
 
@@ -638,7 +609,7 @@ fn paint_tape_clock(
         |instant: i64| strip.left() + geometry.x((instant - start_ms) as f64 / window_ms as f64);
     // Fed only the labels painted: the first in a new day names it, seeded
     // by the window's start so the turn is named once the old day scrolls off.
-    let mut ticks = quantick_chart::day_turn::TickLabels::new(tz, format, Some(start_ms), &[]);
+    let mut ticks = quantick_chart::day_turn::TickLabels::new(tz, format, Some(start_ms));
     for instant in quantick_orderflow::lane_time_ticks(end_ms, window_ms, max_labels) {
         let x = x_of(instant);
         let rect = egui::Rect::from_center_size(

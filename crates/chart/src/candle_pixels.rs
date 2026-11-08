@@ -160,6 +160,37 @@ fn line_px(width_pt: f32, pixels_per_point: f64) -> i32 {
     ((width * pixels_per_point).round() as i32).clamp(1, MAX_LINE_PX)
 }
 
+/// A straight line `width_pt` logical px thick at `at_pt`, on whole device
+/// pixels: its centre and width in logical px. The width rounds as a candle
+/// contour's does ([`candle_widths`]: a 1 px line is two device px at
+/// 1.5 px/pt), and the centre moves to the nearest place where both edges
+/// fall on pixel boundaries, so nothing is antialiased: on a pixel's centre
+/// for an odd width, between two pixels for an even one.
+#[must_use]
+pub fn crisp_line(at_pt: f32, width_pt: f32, pixels_per_point: f32) -> (f32, f32) {
+    let dpr = scale(pixels_per_point);
+    let width = line_px(width_pt, dpr);
+    let at = if at_pt.is_finite() {
+        f64::from(at_pt) * dpr
+    } else {
+        0.0
+    };
+    let left = (at + 0.5 - f64::from(width) / 2.0).floor();
+    let centre = left + f64::from(width) / 2.0;
+    ((centre / dpr) as f32, (f64::from(width) / dpr) as f32)
+}
+
+/// [`crisp_line`] for a one-point line when `crisp`, else the one-point
+/// stroke where it falls: Light rules on whole pixels, Dark as it always has.
+#[must_use]
+pub fn crisp_or_point(crisp: bool, at_pt: f32, pixels_per_point: f32) -> (f32, f32) {
+    if crisp {
+        crisp_line(at_pt, 1.0, pixels_per_point)
+    } else {
+        (at_pt, 1.0)
+    }
+}
+
 fn scale(pixels_per_point: f32) -> f64 {
     if pixels_per_point.is_finite() && pixels_per_point > 0.0 {
         f64::from(pixels_per_point)
@@ -213,6 +244,17 @@ pub struct CandleYs {
 }
 
 impl CandleYs {
+    /// The extent from its four edges, top to bottom.
+    #[must_use]
+    pub const fn new(high: f32, body_top: f32, body_bottom: f32, low: f32) -> Self {
+        Self {
+            high,
+            body_top,
+            body_bottom,
+            low,
+        }
+    }
+
     /// The extent of a candle laid out in logical px.
     #[must_use]
     pub fn of(geometry: &CandleGeometry) -> Self {
@@ -295,6 +337,26 @@ impl CandlePixels {
     }
 }
 
+/// One candle `body_pt` logical px wide on its own, centred at `centre_pt`,
+/// in the lines `paint` draws: the time chart's whole-pixel candle, as a
+/// style preview shows it.
+#[must_use]
+pub fn lone_candle(
+    centre_pt: f32,
+    ys: CandleYs,
+    body_pt: f32,
+    pixels_per_point: f32,
+    paint: &ResolvedCandlePaint,
+) -> CandlePixels {
+    let outline = if paint.outline[3] > 0 {
+        paint.outline_width
+    } else {
+        0.0
+    };
+    let widths = fitted_widths(body_pt, pixels_per_point, outline, paint.wick_width);
+    CandleRun::new(widths, pixels_per_point).place_painted(centre_pt, ys, paint)
+}
+
 /// Lays one zoom's candles out left to right so none overlaps the one
 /// before it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -302,7 +364,6 @@ pub struct CandleRun {
     widths: CandleWidths,
     dpr: f64,
     body_right: Option<i32>,
-    wick_right: Option<i32>,
 }
 
 impl CandleRun {
@@ -314,13 +375,16 @@ impl CandleRun {
             widths,
             dpr: scale(pixels_per_point),
             body_right: None,
-            wick_right: None,
         }
     }
 
     /// The run one frame's candles are laid out in: bars `pitch_pt` apart,
     /// bodies `body_pt` wide when `bodies` is [`PixelBodies::Fitted`], and
-    /// the lines `style` asks for, without a contour it cannot see.
+    /// the lines `style` asks for, without a contour it cannot see. At
+    /// [`PixelBodies::Zoom`] the body is TradingView's width, narrowed to
+    /// `body_pt` only where the trader sized the body
+    /// ([`CandleStyle::sizes_its_body`]); it is never widened. The corner
+    /// radius has no place on whole pixels and is not drawn.
     #[must_use]
     pub fn for_frame(
         bodies: PixelBodies,
@@ -335,13 +399,14 @@ impl CandleRun {
         } else {
             0.0
         };
+        let fitted = || fitted_widths(body_pt, pixels_per_point, outline, paint.wick_width);
         let widths = match bodies {
             PixelBodies::Zoom => {
-                candle_widths(pitch_pt, pixels_per_point, outline, paint.wick_width)
+                let zoom = candle_widths(pitch_pt, pixels_per_point, outline, paint.wick_width);
+                let asked = style.sizes_its_body().then(fitted);
+                asked.filter(|asked| asked.body < zoom.body).unwrap_or(zoom)
             }
-            PixelBodies::Fitted => {
-                fitted_widths(body_pt, pixels_per_point, outline, paint.wick_width)
-            }
+            PixelBodies::Fitted => fitted(),
         };
         Self::new(widths, pixels_per_point)
     }
@@ -352,23 +417,47 @@ impl CandleRun {
         self.widths
     }
 
-    /// Place `bar`, centred at `centre_pt` logical px on `scale`, its body
-    /// at least `min_body_height` logical px tall. Bars must come in
-    /// left-to-right order.
+    /// Place `bar`, centred at `centre_pt` logical px on `scale`, in the
+    /// `paint` it is drawn with: its body at least that paint's minimum
+    /// height, and its contour that paint's, so a bar whose own style draws
+    /// no contour gets no ring of contour pixels. The width stays the run's.
+    /// Bars must come in left-to-right order.
     pub fn place_bar(
         &mut self,
         scale: &PriceScale,
         bar: &Bar,
         centre_pt: f32,
-        min_body_height: f32,
+        paint: &ResolvedCandlePaint,
     ) -> CandlePixels {
-        let geometry = candle_geometry(scale, bar, centre_pt, 1.0, min_body_height);
-        self.place(centre_pt, CandleYs::of(&geometry))
+        let geometry = candle_geometry(scale, bar, centre_pt, 1.0, paint.min_body_height);
+        self.place_painted(centre_pt, CandleYs::of(&geometry), paint)
     }
 
-    /// Place the next candle, centred at `centre_pt` logical px. Candles
-    /// must come in left-to-right order.
+    /// Place a candle laid out in logical px, with the contour `paint`
+    /// draws: none when its contour is invisible.
+    pub fn place_painted(
+        &mut self,
+        centre_pt: f32,
+        ys: CandleYs,
+        paint: &ResolvedCandlePaint,
+    ) -> CandlePixels {
+        let border = if paint.outline[3] > 0 {
+            line_px(paint.outline_width, self.dpr)
+        } else {
+            0
+        };
+        self.place_with(centre_pt, ys, border)
+    }
+
+    /// Place the next candle, centred at `centre_pt` logical px, with the
+    /// run's own contour. Candles must come in left-to-right order.
     pub fn place(&mut self, centre_pt: f32, ys: CandleYs) -> CandlePixels {
+        self.place_with(centre_pt, ys, self.widths.border)
+    }
+
+    /// Lays out one candle with a contour `border` device px thick; the
+    /// body is solid when no fill fits inside it, in either direction.
+    fn place_with(&mut self, centre_pt: f32, ys: CandleYs, border: i32) -> CandlePixels {
         let (widths, dpr) = (self.widths, self.dpr);
         let px = |pt: f32| {
             let pt = if pt.is_finite() { f64::from(pt) } else { 0.0 };
@@ -382,17 +471,18 @@ impl CandleRun {
             .body_right
             .map_or(wanted_left, |prev| wanted_left.max(prev))
             .min(right - 1);
+        // The wick keeps to the columns its body was left: never into the
+        // body before it. Cut off them entirely, it moves onto them.
         let wick_width = widths.wick.max(1);
         let wanted_wick = centre - wick_width / 2;
-        let wick_right = wanted_wick + wick_width;
-        let wick_left = self
-            .wick_right
-            .map_or(wanted_wick, |prev| wanted_wick.max(prev))
-            .min(wick_right - 1);
+        let (wick_left, wick_right) = if wanted_wick + wick_width > left {
+            (wanted_wick.max(left), wanted_wick + wick_width)
+        } else {
+            (left, (left + wick_width).min(right))
+        };
         self.body_right = Some(right);
-        self.wick_right = Some(wick_right);
 
-        let border = widths.border.max(0);
+        let border = border.max(0);
         let top = px(ys.body_top);
         let bottom = px(ys.body_bottom).max(top + border.max(1));
         let body = DeviceRect {
@@ -401,7 +491,8 @@ impl CandleRun {
             right,
             bottom,
         };
-        let solid = widths.solid || (border > 0 && bottom - top <= 2 * border);
+        // No fill fits inside the contour across the body as cut, or down it.
+        let solid = border > 0 && (right - left <= 2 * border || bottom - top <= 2 * border);
         let (fill, bands) = if solid {
             (None, [None; 4])
         } else {

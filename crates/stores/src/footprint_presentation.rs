@@ -197,10 +197,27 @@ impl<'a> CandleStyles<'a> {
     /// The style the bar at `slot` paints in.
     #[must_use]
     pub fn of(&self, slot: usize) -> &'a CandleStyle {
-        match self.dressed {
-            Some((style, ladders)) if ladders.carries(slot) => style,
-            _ => self.base,
+        if self.dresses(slot) {
+            self.frame()
+        } else {
+            self.base
         }
+    }
+
+    /// Whether the footprint dresses the bar at `slot`: it has a ladder
+    /// there.
+    #[must_use]
+    pub fn dresses(&self, slot: usize) -> bool {
+        self.dressed
+            .is_some_and(|(_, ladders)| ladders.carries(slot))
+    }
+
+    /// The candle lane, `lane` px, that the bar at `slot` moves into: only a
+    /// dressed bar's. A bar with no ladder keeps the chart's own candle in
+    /// its own slot, not a sliver beside a box that is not drawn.
+    #[must_use]
+    pub fn lane(&self, slot: usize, lane: f32) -> f32 {
+        if self.dresses(slot) { lane } else { 0.0 }
     }
 }
 
@@ -966,6 +983,23 @@ mod tests {
         assert!(forming.carries(5), "the forming bar's ladder counts");
         let empty_forming = quantick_engine::FootprintBuilder::new(group, 64).close_or_empty();
         assert!(!LadderSlots::new(3, &closed, Some((5, &empty_forming))).carries(5));
+
+        // Under the sidebar treatment only the dressed bars move into the
+        // lane; venue history keeps its own slot in the base style.
+        let base = quantick_chart::style::ChartStyle::default().candles;
+        let (lane, sidebar) =
+            candle_dressing(true, CandleTreatment::Sidebar, 80.0, DETAILED_FROM_PX, base);
+        let sidebar = sidebar.expect("a sidebar candle is restyled");
+        assert!(lane > 0.0);
+        let styles = CandleStyles::new(&base, Some(&sidebar), ladders);
+        for (slot, dressed) in [(0, false), (2, false), (3, true), (4, false)] {
+            assert_eq!(styles.dresses(slot), dressed, "{slot}");
+            let expected = if dressed { lane } else { 0.0 };
+            assert_eq!(styles.lane(slot, lane), expected, "{slot}");
+            assert_eq!(*styles.of(slot) == sidebar, dressed, "{slot}");
+        }
+        let plain = CandleStyles::new(&base, None, ladders);
+        assert_eq!(plain.lane(3, lane), 0.0, "nothing dresses without a style");
     }
 
     /// And the other half of the same law: with the layer painting, the

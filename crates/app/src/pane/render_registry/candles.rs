@@ -37,8 +37,9 @@ impl CandlePass<'_, '_> {
         let xc = self
             .viewport
             .x_center(index, self.frame.right, self.frame.total);
-        if self.candle_lane > 0.0 {
-            let sliver = (self.candle_lane * SIDEBAR_BODY_FRAC).max(1.0);
+        let lane = self.styles.lane(index, self.candle_lane);
+        if lane > 0.0 {
+            let sliver = (lane * SIDEBAR_BODY_FRAC).max(1.0);
             BarSlot {
                 xc: xc - self.content_half + sliver + 1.0,
                 half_width: sliver,

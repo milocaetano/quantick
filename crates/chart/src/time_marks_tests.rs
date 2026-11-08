@@ -159,3 +159,31 @@ fn calendar_charts_write_their_buckets_every_stride_bars() {
         [0, 4, 8]
     );
 }
+
+#[test]
+fn the_strip_keeps_only_whole_labels_and_strides_calendar_dates() {
+    let hourly = bars(NOV_6, 15 * 60_000, 40, 10.0);
+    let all = strip_marks(&hourly, None, None, UTC, 10.0, (-100.0, 1000.0), width);
+    assert_eq!(all, time_marks(&hourly, None, UTC, TIME_MARK_GAP_PX, width));
+    let first = all.first().expect("labels").clone();
+    let left = first.x - width(&first.text) / 2.0 + 0.5;
+    let cut = strip_marks(&hourly, None, None, UTC, 10.0, (left, 1000.0), width);
+    assert!(
+        !cut.contains(&first),
+        "a label half off the strip is dropped"
+    );
+    assert_eq!(cut.len(), all.len() - 1);
+    let daily = bars(NOV_6, DAY_MS, 40, 4.0);
+    let dates = strip_marks(
+        &daily,
+        None,
+        Some(DAY_MS),
+        UTC,
+        4.0,
+        (-100.0, 1000.0),
+        width,
+    );
+    let sample = calendar_label_sample(DAY_MS).unwrap();
+    let stride = crate::geometry::time_label_stride(4.0, width(sample));
+    assert_eq!(dates, calendar_marks(&daily, DAY_MS, None, stride));
+}

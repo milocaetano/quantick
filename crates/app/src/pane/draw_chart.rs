@@ -158,10 +158,10 @@ impl ChartPane {
         // gutter's edge, past the live strip when one is shown.
         let axis_x = layout.areas.price_gutter.left();
         // The vertical grid stands where the time labels do; tape only has none.
-        let time_grid_xs = if layout.tape_only {
-            Vec::new()
-        } else {
-            self.time_grid_xs(&frame, chrome)
+        let time_marks = self.time_marks(&frame, chrome);
+        let time_grid_xs = match chrome.style.canvas.time_grid_rgba() {
+            Some(_) if !layout.tape_only => time_marks.1.iter().map(|mark| mark.x).collect(),
+            _ => Vec::new(),
         };
         renderers.grid(&mut GridPass {
             painter,
@@ -270,7 +270,7 @@ impl ChartPane {
         self.frame.bands = carved;
         super::lane_rail::paint_lane_rail(self, painter, chart_rect);
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
-        self.paint_axis_marks(&frame, axis_x, &levels, time_chip, chrome);
+        self.paint_axis_marks(&frame, axis_x, &levels, time_chip, chrome, &time_marks);
         let clock = layout
             .native_tape
             .then(|| layout.live_lane.map(|lane| (lane.end_ms, chrome.tz)))
