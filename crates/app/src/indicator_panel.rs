@@ -140,10 +140,9 @@ pub(crate) fn draw(
     if dialog.tab == SettingsTab::Style && !has_style {
         dialog.tab = SettingsTab::Inputs;
     }
-    egui::Window::new(format!("Settings — {}", dialog.title))
-        .id(egui::Id::new(("indicator-settings", slot_id)))
-        .default_pos(crate::popup::position(ctx))
-        .pivot(crate::popup::anchor())
+    let window = egui::Window::new(format!("Settings — {}", dialog.title))
+        .id(egui::Id::new(("indicator-settings", slot_id)));
+    crate::popup::centred(window, ctx)
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -840,16 +839,15 @@ mod tests {
         );
     }
 
-    /// The dialog opens clear of the chart it is about.
+    /// The dialog opens in the centre, fully on screen.
     ///
-    /// It previews live, so the one thing it must not do is cover the drawing,
-    /// profile or curve you opened it to judge. It lands in the bottom-left —
-    /// the corner the legend, the HUD, the order-flow key, the book badge and
-    /// the price axis all leave alone — placed by its own bottom-left corner so
-    /// it grows upward instead of pushing its buttons off the window. Computed
-    /// from the live window, because a fixed `y` is the bottom of one size only.
+    /// It used to land in the bottom-left corner to keep clear of the chart,
+    /// which read as a window opening somewhere unrelated to the click; the
+    /// trader asked for the centre (2026-11-08). A trader who wants the
+    /// preview uncovered drags it once and it reopens there. Computed from
+    /// the live window, because a fixed point is the centre of one size only.
     #[test]
-    fn the_dialog_opens_in_the_corner_that_hides_the_least_chart() {
+    fn the_dialog_opens_centred_and_on_screen() {
         for size in [egui::vec2(1700.0, 950.0), egui::vec2(900.0, 560.0)] {
             let ctx = egui::Context::default();
             let mut dialog = open_dialog();
@@ -872,19 +870,15 @@ mod tests {
                 .memory(|memory| memory.area_rect(id))
                 .expect("the dialog was laid out");
 
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
             assert!(
-                rect.bottom() <= size.y,
-                "{size:?}: the buttons must be on screen, not below it ({rect:?})"
+                screen.contains_rect(rect),
+                "{size:?}: the buttons must be on screen ({rect:?})"
             );
             assert!(
-                rect.bottom() > size.y / 2.0,
-                "{size:?}: it opens in the bottom half ({rect:?})"
+                rect.center().distance(screen.center()) < 2.0,
+                "{size:?}: it opens centred, not in a corner ({rect:?})"
             );
-            assert!(
-                rect.left() < size.x / 2.0,
-                "{size:?}: and on the left ({rect:?})"
-            );
-            assert!(rect.top() >= 0.0, "{size:?}: and not above it ({rect:?})");
         }
     }
 

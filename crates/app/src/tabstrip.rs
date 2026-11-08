@@ -242,7 +242,7 @@ impl SourcePicker {
         let palette = theme::get(ctx);
         let mut outcome = PickerOutcome::Open;
         let mut open = true;
-        egui::Window::new("Open market")
+        crate::popup::centred(egui::Window::new("Open market"), ctx)
             .id(egui::Id::new("source_picker"))
             .open(&mut open)
             .collapsible(false)

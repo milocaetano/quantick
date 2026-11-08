@@ -141,35 +141,32 @@ The width slider keeps its full `0.5 … 6.0` range: this changes the
 *default*, not the ceiling. Existing drawings keep whatever width they
 were saved with.
 
-### D3 — The inspector goes to a corner
+### D3 — The inspector opens beside its drawing
 
-New rule, replacing least-bbox-overlap:
+Revised 2026-11-08 at the trader's request: a corner far from the click read
+as a panel opening somewhere unrelated to the drawing. The rule:
 
-1. Candidates are the **chart corners**, inset by the standard gap, and the
-   two **top** corners are tried first.
-2. Of those, the one that clears the bbox entirely and whose centre is
-   **farthest** from the object wins; an exact tie (a centred object) takes
-   the left one.
-3. Only if neither top corner is free, the bottom two on the same rule.
-4. Only if all four are fouled — a large object covering the chart — fall
-   back to the beside-the-object candidates, least overlap first.
-5. Manual position still wins forever, unchanged. The auto-pin rule for
-   narrow charts is unchanged.
+1. Inflate the drawing's box by a neighbourhood margin (32 px), so neither
+   the drawing nor the price action right beside it is covered.
+2. Try the **horizontal** sides first — right, then left — top-aligned with
+   the drawing. Of those that hold the whole panel clear of the
+   neighbourhood, the one with more room wins; a tie takes the right.
+3. Then below and above, centred on the drawing, on the same rule; a tie
+   takes below.
+4. Only if no side fits, the chart corners (top first, farthest clear one),
+   then the gutter beside a large object narrowed to fit, then least overlap.
+5. Manual position still wins forever, and the workspace remembers it. The
+   auto-pin rule for narrow charts is unchanged.
 
-Top before bottom is **structural, not taste**. A floating panel is
-positioned by its top-left corner and grows downwards, and the placement
-runs before the panel's real height is known (the Fib level editor is twice
-the height of the Style tab). A top corner always has the whole pane to
-grow into; a bottom-anchored panel that turns out taller than assumed runs
-off the window and silently loses its last rows. Rows a trader cannot reach
-read as rows that do not exist — the same failure the old rule had, one axis
-over.
+A panel taller than the placement assumed (the Fib level editor) is
+re-clamped into the chart every frame from its drawn size, so a side
+placement near the bottom slides up instead of losing its last rows.
 
 > **Duda:** "If it always opens in the same place I learn where to look. It
 > jumping around 'intelligently' is what makes it feel random."
 
-Consistency is a feature here, which is why the corner preference is
-ordered and deterministic rather than merely "the emptiest area".
+Consistency is kept by the order: same drawing, same chart, same place; the
+tie-breaks are fixed, and once the trader drags the panel it stays put.
 
 ### D4 — The channel is a corridor, not a box
 

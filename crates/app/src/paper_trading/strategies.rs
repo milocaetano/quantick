@@ -116,14 +116,9 @@ pub(super) fn draw_strategy_editor(
     );
     let mut changed = false;
     let mut open = true;
-    egui::Window::new("Exit strategies")
+    crate::popup::centred(egui::Window::new("Exit strategies"), ctx)
         .open(&mut open)
         .resizable(true)
-        // Clear of the plot's top-left corner, where the indicator
-        // legend lives: a window that opens under the legend reads as a
-        // broken one, and the legend is an overlay the trader cannot
-        // move out of the way.
-        .default_pos(egui::pos2(360.0, 140.0))
         .default_width(520.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {

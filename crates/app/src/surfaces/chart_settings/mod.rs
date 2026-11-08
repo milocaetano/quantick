@@ -244,7 +244,7 @@ impl Surface for ChartSettingsSurface {
         let target_label = self.target_label.clone();
         let available = !self.editor.stale;
         let mut tabs = self.tabs();
-        egui::Window::new("chart settings")
+        crate::popup::centred(egui::Window::new("chart settings"), ctx)
             .id(id)
             .open(&mut window_open)
             .default_width(WINDOW_WIDTH)

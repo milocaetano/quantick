@@ -91,7 +91,7 @@ impl ControlAccess {
         // what is left is a fraction of the wrong rectangle — it made the
         // panel a third of its own content tall.
         let max_height = ctx.screen_rect().height() * CONTROL_PANEL_MAX_SCREEN_FRACTION;
-        eframe::egui::Window::new("Local agent access")
+        crate::popup::centred(eframe::egui::Window::new("Local agent access"), ctx)
             .id(eframe::egui::Id::new("control_access_panel"))
             .open(&mut open)
             .default_width(CONTROL_PANEL_DEFAULT_WIDTH_PX)
