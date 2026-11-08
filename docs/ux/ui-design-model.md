@@ -585,8 +585,9 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   mark; what still does not fit is clipped by the strip, and nothing overlaps.
 - **Focus**: clicking a pane focuses it; the focused pane drives the status
   bar's content section, `Insert → Indicator` targeting and the Indicators
-  dock tab. A 1 px accent under the pane's top edge marks focus — no
-  border boxes around market data.
+  dock tab. Every drawn pane takes focus, whatever else is collapsed. While
+  two or more panes are on screen the focused one, flow or time, wears a
+  2 px accent frame around its whole band; a lone pane wears none.
 - **The drawing chrome stays singular and follows focus.** One rail, one
   properties inspector, one object manager per window — zone 3 is singular
   by §5 — and each reads and writes the *focused* pane's objects. The

@@ -136,6 +136,25 @@ fn chart_centre(app: &QuantickApp, side: PaneSide, name: &str) -> egui::Pos2 {
         .center()
 }
 
+/// Accent frames around the centre of `side`'s chart in `output`.
+fn frames_around(output: &egui::FullOutput, app: &QuantickApp, side: PaneSide) -> usize {
+    let Some(chart) = app.active_tab().pane(side).frame.chart_area else {
+        return 0;
+    };
+    output
+        .shapes
+        .iter()
+        .filter(|clipped| match &clipped.shape {
+            egui::Shape::Rect(shape) => {
+                shape.stroke.color == crate::theme::ACCENT
+                    && shape.stroke.width >= 2.0
+                    && shape.rect.contains(chart.center())
+            }
+            _ => false,
+        })
+        .count()
+}
+
 #[test]
 fn a_click_activates_every_drawn_pane_in_every_arrangement() {
     let ctx = egui::Context::default();
@@ -144,24 +163,38 @@ fn a_click_activates_every_drawn_pane_in_every_arrangement() {
     for arrangement in ARRANGEMENTS {
         let name = arrangement.name;
         arrange(&mut app, &ctx, arrangement);
+        let drawn = arrangement.drawn;
         assert_eq!(
             app.active_tab().drawn_panes().count(),
-            arrangement.drawn.len(),
+            drawn.len(),
             "{name}: panes on screen"
         );
-        // Forward then back, so every pane takes focus from every other.
-        let order = arrangement
-            .drawn
-            .iter()
-            .chain(arrangement.drawn.iter().rev());
-        for side in order.copied() {
-            let at = chart_centre(&app, side, name);
-            click_chart(&mut app, &ctx, at);
-            assert_eq!(
-                app.active_tab().focused_side(),
-                side,
-                "{name}: the click at {at:?} activates {side:?}"
-            );
+        // Every ordered pair: the click must *move* focus, never land on the
+        // pane that already held it, and the frame must follow.
+        for &to in drawn {
+            for &from in drawn.iter().filter(|other| **other != to).chain(
+                // A lone pane: one click, focused by definition.
+                (drawn.len() == 1).then_some(&to),
+            ) {
+                for side in [from, to] {
+                    let at = chart_centre(&app, side, name);
+                    click_chart(&mut app, &ctx, at);
+                    assert_eq!(
+                        app.active_tab().focused_side(),
+                        side,
+                        "{name}: the click at {at:?} activates {side:?}"
+                    );
+                }
+                let output = run_frame(&mut app, &ctx);
+                for &side in drawn {
+                    let framed = drawn.len() > 1 && side == to;
+                    assert_eq!(
+                        frames_around(&output, &app, side),
+                        usize::from(framed),
+                        "{name}: focus on {to:?}, the frame around {side:?}"
+                    );
+                }
+            }
         }
     }
 }
@@ -182,8 +215,10 @@ fn the_bottom_chart_takes_focus_with_the_flow_pane_put_away() {
     let at = chart_centre(&app, BOTTOM, arrangement.name);
     click_chart(&mut app, &ctx, at);
     assert_eq!(app.active_tab().focused_side(), BOTTOM);
-    // And it stays there across frames: nothing resets it to the top chart.
+    // And it stays there across frames, framed: nothing resets it to the top.
     run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().focused_side(), BOTTOM);
+    assert_eq!(frames_around(&output, &app, BOTTOM), 1);
+    assert_eq!(frames_around(&output, &app, TOP), 0);
 }

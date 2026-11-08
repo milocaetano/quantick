@@ -2064,3 +2064,46 @@ fn no_production_grant_reaches_a_trade_capability_keyed_or_not() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
+
+/// Focus on a pane that is not on screen is refused, never reported as a
+/// change `focused_side` would then answer with another pane; a drawn pane,
+/// the bottom chart with the flow pane put away included, takes it.
+#[test]
+fn layout_focus_refuses_a_hidden_pane_and_takes_a_drawn_one() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().set_flow_collapsed(true);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("layout-focus-hidden");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let (hidden, _) = unkeyed_call_at(
+        &mut app,
+        &mut client,
+        "layout.focus.set",
+        LAYOUT_V2,
+        json!({ "pane": "0" }),
+    );
+    assert_eq!(error_code(&hidden), Some(codes::INVALID_REQUEST));
+    let (bottom, _) = unkeyed_call_at(
+        &mut app,
+        &mut client,
+        "layout.focus.set",
+        LAYOUT_V2,
+        json!({ "pane": "2" }),
+    );
+    success_result(&bottom);
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().focused_side(), PaneSide::Time(1));
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}

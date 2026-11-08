@@ -446,6 +446,13 @@ fn focus<P: TabsPort + TabsMutPort + ?Sized>(
         )));
     }
     let wanted = crate::pane::PaneSide::from_index(pane);
+    // A hidden pane cannot hold focus (`focused_side` would answer another),
+    // so saying yes to it would report a change that never happened.
+    if !tab.drawn_panes().shows(wanted) {
+        return Err(ControlError::invalid_request(format!(
+            "the pane at address {pane} is not on screen: expand it before focusing it"
+        )));
+    }
     let changed = tab.focus != wanted;
     tab.focus = wanted;
     result(app, index, changed)

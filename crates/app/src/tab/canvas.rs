@@ -220,7 +220,7 @@ impl Tab {
             self.split_fraction = clamp_pane_fraction(self.split_fraction.max(floor));
         }
         // One visible pane is handed the whole canvas and the rest of this
-        // reduces to nothing: no divider, no focus rule — though a lone time
+        // reduces to nothing: no divider, no focus frame — though a lone time
         // pane keeps its header.
         let (time_area, divider, flow_band) = if split {
             let width = if self.flow_collapsed {
@@ -769,7 +769,7 @@ impl Tab {
     }
 
     /// The canvas's own chrome, over the panes: the collapsed rail, the
-    /// dividers, and the focus rule.
+    /// dividers, and the focus frame.
     fn draw_canvas_chrome(
         &mut self,
         tab_id: u64,
