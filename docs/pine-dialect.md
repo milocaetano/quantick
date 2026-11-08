@@ -30,8 +30,8 @@ by golden tests.
 
 ## Language
 
-- `//@version=5` (missing → assumed 5 with a warning; other versions are
-  errors).
+- `//@version=5` and `//@version=6` are supported (missing → assumed 5 with
+  a warning; other versions are errors).
 - Declarations `=`, reassignment `:=`, `var`, `varip`, tuple destructuring
   `[a, b] = f()`. Scalar types are `int`, `float`, `bool`, `string`, and
   `color`. Annotations (`var float x = na`) are enforced at load, including
@@ -217,7 +217,6 @@ Every rejection is a load-time error naming its reason:
 | `timeframe.*` | `PINE_NO_TIMEFRAME` |
 | `strategy.*` | `PINE_NO_STRATEGY` — backtesting consumes plots through the host |
 | unsupported `array.*`/`map.*`, all `matrix.* table.*` | `PINE_NO_COLLECTIONS` |
-| calendar builtins (`year`, `month`, `dayofweek`, …) | `PINE_NO_CALENDAR` |
 | `xloc.bar_time`, `max_bars_back()` | `PINE_UNSUPPORTED` |
 
 ## Error codes
