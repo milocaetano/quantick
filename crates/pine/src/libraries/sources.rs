@@ -140,19 +140,15 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
             }
             let exported = line.strip_prefix("export ");
             let declaration = exported.unwrap_or(line);
-            if exported.is_some()
-                && let Some(method) = declaration.strip_prefix("method ")
-                && let Some((name, _)) = method.split_once('(')
-            {
-                exports.insert(name.trim().to_owned(), name.trim().to_owned());
-            }
             if let Some(prefix) = &prefix {
-                if exported.is_none()
-                    && let Some(method) = declaration.strip_prefix("method ")
+                if let Some(method) = declaration.strip_prefix("method ")
                     && let Some((name, _)) = method.split_once('(')
                 {
                     private_methods.push(name.trim().to_owned());
                     names.insert(name.trim().to_owned(), format!("{prefix}{}", name.trim()));
+                    if exported.is_some() {
+                        exports.insert(name.trim().to_owned(), format!("{prefix}{}", name.trim()));
+                    }
                 }
                 let name = declaration
                     .strip_prefix("type ")
@@ -192,6 +188,7 @@ impl<F: Fn(&str) -> Option<String>> Linker<F> {
             ));
         }
         rewrite(&mut body, &aliases, &names, &private_methods)?;
+        body.push_str(&super::source_methods::receiver_aliases(&body, &exports));
         // Keep the root's version directive first, before dependency definitions.
         let version = source
             .lines()

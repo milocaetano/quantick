@@ -1,5 +1,6 @@
 //! Caller-supplied local libraries and user-defined objects.
 mod prepare;
+mod source_methods;
 mod source_scopes;
 mod sources;
 
