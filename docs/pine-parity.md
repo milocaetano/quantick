@@ -33,7 +33,7 @@ CSV format 1 has provenance on line one, plot titles in declaration order on lin
 two, then one row per input bar. `na` is canonical; finite values have nine decimal
 places. Comparison uses `abs(actual-expected) <= 1e-8 + 1e-8*abs(expected)` and
 requires `na` on both sides. Application snapshots encode finite values as exact
-IEEE-754 bits and normalize NaNs. Plot descriptors and bar paints are captured.
+IEEE-754 bits and normalize NaNs. Plot descriptors, bar paints and retained draw objects are captured.
 Two previews and two fresh replays exercise rollback and repeatability.
 
 ## Inputs and denominators

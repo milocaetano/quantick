@@ -78,6 +78,9 @@ pub fn snapshot(script: &ScriptIndicator) -> String {
     for row in 0..script.plots().len() {
         writeln!(out, "paint {row} {:?}", script.plots().bar_paint(row)).unwrap();
     }
+    if let Some(objects) = script.objects() {
+        writeln!(out, "objects {:?}", objects.snapshot()).unwrap();
+    }
     out
 }
 pub fn golden(name: &str, actual: &str) {

@@ -62,3 +62,4 @@ paint 60 None
 paint 61 None
 paint 62 None
 paint 63 None
+objects ObjectSnapshot { lines: [], boxes: [BoxObj { left: 44, top: 119.0, right: 63, bottom: 92.0, border_color: Rgba8 { r: 0, g: 188, b: 212, a: 255 }, bg_color: Rgba8 { r: 0, g: 188, b: 212, a: 31 }, border_width: 1.0 }], labels: [] }
