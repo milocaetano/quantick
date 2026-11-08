@@ -298,3 +298,24 @@ plot(m.get("missing") ? 1 : 0)
 "#);
     assert_eq!(values, vec![9.0, 1.0, 0.0]);
 }
+
+#[test]
+fn collections_sorting_golden() {
+    let expected: Vec<f64> = include_str!("golden/collections/sorting.csv")
+        .trim().split(',').map(|s| s.parse().unwrap()).collect();
+    assert_eq!(run(include_str!("fixtures/collections/sorting.pine")), expected);
+}
+#[test]
+fn collections_reject_invalid_scalar_methods() {
+    for body in [
+        "a = array.new_bool()\narray.join(a)",
+        "a = array.new_color()\narray.join(a)",
+        "a = array.new_bool(1, na)",
+        "a = array.new_bool()\na.push(na)",
+        "a = array.new_int()\na.new_int()",
+        "a = array.new_bool()\na.sort()",
+    ] {
+        let source = format!("//@version=6\nindicator(\"reject\")\n{body}\nplot(1)");
+        assert!(compile(&source, "reject").is_err(), "{source}");
+    }
+}
