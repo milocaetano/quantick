@@ -37,7 +37,12 @@ impl DerefMut for Words {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             Self::Owned(words) => words,
-            Self::Shared(words) => Rc::make_mut(words),
+            Self::Shared(words) => shared_mut(words),
         }
     }
+}
+// Keep the collection-only detach path out of every scalar word-write site.
+#[inline(never)]
+fn shared_mut(words: &mut Rc<Vec<u64>>) -> &mut Vec<u64> {
+    Rc::make_mut(words)
 }
