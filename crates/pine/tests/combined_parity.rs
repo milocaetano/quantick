@@ -1,4 +1,6 @@
 //! C90-C93: retained-child acceptance, runnable offline without Node.
+#[path = "parity_support/inventory.rs"]
+mod inventory;
 #[path = "parity_support/native.rs"]
 mod native;
 mod parity_support;
@@ -8,7 +10,11 @@ use parity_support::{bars, golden, root, run, snapshot};
 
 #[test]
 fn combined_offline_golden_parity() {
+    inventory::assert_inventory();
+    retained::negative_golden();
     assert_eq!(retained::scalar_goldens(), 100);
+    let (cells, _) = retained::graph_goldens();
+    assert_eq!(cells, 136);
     assert_eq!(native::kernel_goldens(), 3072);
     let report = parity_support::oracle_report();
     assert!(report.contains("matching_cells=1920/1920"), "{report}");
@@ -17,6 +23,10 @@ fn combined_offline_golden_parity() {
 
 #[test]
 fn combined_byte_identical_runs() {
+    let first = retained::graph_goldens();
+    let second = retained::graph_goldens();
+    assert_eq!(first.0, second.0);
+    assert_eq!(first.1.as_bytes(), second.1.as_bytes());
     let source = include_str!("fixtures/oracle/macd.pine");
     for tape in parity_support::TAPES {
         let data = bars(tape);
@@ -68,7 +78,17 @@ fn combined_report_and_dialect_contract() {
     let actual = current.plots().column(quantick_indicators::PlotId::new(0));
     assert_eq!(actual, &[1.0, 0.0, 6.0, 0.0, 15.0]);
     assert_ne!(actual, proxy);
+    let baseline = include_str!("golden/corpus-report.txt");
+    for denominator in [
+        "mixed_corpus_loads=13/20",
+        "positive_load_rate=13/13",
+        "negative_rejections=7/7",
+        "corpus_oracle_verified_columns=0/21",
+    ] {
+        assert!(baseline.contains(denominator), "{baseline}");
+    }
     let report = parity_support::corpus_report();
+    assert!(report.contains("mixed_corpus_loads=13/20"));
     assert!(report.contains("positive_load_rate=13/13"), "{report}");
     assert!(report.contains("negative_rejections=7/7"), "{report}");
     assert!(

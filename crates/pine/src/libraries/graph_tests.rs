@@ -54,3 +54,22 @@ fn object_only_snapshot_shares_and_varip_updates_existing_alias() {
     assert_eq!(state.arena.get(GLOBALS, 0), state.arena.get(GLOBALS, 1));
     assert_eq!(state.arena.get(handle(&root), 0), Value::Num(9.0));
 }
+
+#[test]
+fn unreachable_mixed_cycles_reuse_the_arena_over_many_boundaries() {
+    let mut state = crate::eval::ScriptState::new(1);
+    let mut capacity = 0;
+    for iteration in 0..2_000 {
+        let arena = state.arena.make_mut();
+        let array = allocate(arena);
+        let root = object(arena, &[Value::Collection(false, array as u32)]);
+        arena.replace(array, vec![root]);
+        collect(arena);
+        assert_eq!(arena.words[30], 0);
+        assert_eq!(arena.words[31], 0);
+        if iteration == 0 {
+            capacity = arena.words.len();
+        }
+        assert_eq!(arena.words.len(), capacity);
+    }
+}

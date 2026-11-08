@@ -21,7 +21,7 @@ The second command regenerates all 24 oracle files. Run it twice and use
 Ordinary offline verification needs only Rust:
 
 ```sh
-cargo test -p quantick-pine --test parity
+cargo test -p quantick-pine
 ```
 
 `QUANTICK_UPDATE_PARITY=1 cargo test -p quantick-pine --test parity` deliberately
@@ -249,11 +249,13 @@ not the current native MACD support.
 
 ## Final retained-child acceptance
 
-C90-C93 are the offline combined acceptance entry points. Final acceptance is
-pending collection integration and the final benchmark; intermediate passing
-checks do not establish completed parity. The baseline remains 1,344/1,920
+C90-C93 are the offline combined acceptance entry points. Collection and mixed
+object fixtures now participate in combined acceptance. Final performance
+acceptance remains pending the exact final runtime source and paired benchmark
+samples; the earlier measurements above are historical, not a final measurement. The baseline remains 1,344/1,920
 matching proxy cells; the current numerical oracle expects 1,920/1,920. The
-positive compiler corpus remains 13/13, invalid rejection 7/7, and its oracle
+positive compiler corpus is 13/13 at baseline and final, invalid rejection is
+7/7 at baseline and final, mixed corpus loads are 13/20 at both, and its oracle
 coverage remains 0/21 plot columns. App snapshot coverage remains 9/9 and direct
 app oracle coverage remains 0/9. The child-1 semantic corrections are recorded
 in the preceding semantic policy section; these denominators are
@@ -263,11 +265,18 @@ Library fixtures are independently authored hand-calculated acceptance data,
 not PineTS verification. C61 covers exact local resolution, references, methods,
 preview rollback, missing/cyclic/remote diagnostics and v5/v6 field history.
 The mixed collection fixtures were committed before implementation and execute
-through public compile/preview/commit tests. Final integration acceptance remains pending.
+through public compile/preview/commit tests. C91 compares serialized preview
+outputs and committed plot/object snapshots across fresh runs of the mixed
+collection graphs, including history and field-level varip progression. A
+varip object reference does not make every field persistent. The initial
+preview of a newly constructed object uses the documented Quantick baseline.
 
-### Golden execution inventory (integration in progress)
+### Golden execution inventory
 
 Every committed file under `crates/pine/tests/golden` is classified below.
+C90 checks the closed path inventory and provenance statements, so newly added
+files require an explicit assignment. `cargo test -p quantick-pine` executes
+the combined and named child tests without Node.
 Numeric denominators describe separate evidence kinds and must not be added
 into a single oracle-parity claim.
 
@@ -286,10 +295,19 @@ into a single oracle-parity claim.
 | `libraries/mixed.csv` | `mixed_object_collection_golden`: shallow aliases across object fields, arrays and maps |
 | `libraries/eager.csv` | `object_eager_reads_preserve_conditional_mutations`: eager reads and conditional field writes |
 | `libraries/{varip_graph,history_graph}.csv` | `mixed_graph_history_and_first_preview_varip`: mixed cycles, first-preview persistent references and slice-backed object history |
+| `collections/{annotations,boundaries,defaults,eager,search,slices,sorting,statistics}.csv` | C90 and C91 execute authored collection rows through public preview/commit APIs |
+| `collections/rollback.csv` | `collections_copy_on_write_rollback`: authored commit/preview state transitions |
+| `collections/negative.csv` | C90 `negative_golden`: v5 runtime bounds error and v6 numeric outputs parsed from the golden |
 | `libraries/defaults.csv` | `builtin_field_defaults_evaluate_at_construction`: builtin defaults, repeated previews and commits |
-| `calendar/README.md`, `candle_plots/README.md`, `libraries/README.md`, `version/provenance.md` | Provenance and fixture interpretation, not executable output data |
+| `calendar/README.md`, `candle_plots/README.md`, `collections/README.md`, `libraries/README.md`, `version/provenance.md` | C90 asserts provenance statements; these documents are not executable numeric output data |
 
 The native fixture audit exposed and corrected the VWMA registration: public
 `ta.vwma(source, length)` obtains volume from the input bar, matching its evaluator
 and documented contract. No oracle implementation was copied or translated.
-The collection child's additional goldens must join this inventory after integration.
+The combined graph replay compares 136/136 authored numeric cells, separate
+from the 100/100 retained scalar cells, the 3,072/3,072 exact native cells and
+the 1,920/1,920 proxy cells. Preview repetitions do not inflate these counts.
+Other child transaction/calendar/candle fixtures retain their own denominators.
+The authored approximate comparisons share the proxy tolerance above; native
+bit fixtures and application snapshots remain exact. No authored value is
+represented as a new external oracle observation.

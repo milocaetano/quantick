@@ -146,12 +146,7 @@ pub fn oracle_report() -> String {
                         cell.parse::<f64>().unwrap()
                     };
                     total += 1;
-                    let agrees = if expected.is_nan() {
-                        actual.is_nan()
-                    } else {
-                        actual.is_finite()
-                            && (actual - expected).abs() <= 1e-8 + 1e-8 * expected.abs()
-                    };
+                    let agrees = agrees(actual, expected);
                     if agrees {
                         matched += 1;
                     } else {
@@ -237,4 +232,13 @@ pub fn corpus_report() -> String {
         writeln!(report, "error {code}={count}").unwrap();
     }
     report
+}
+
+/// Single numerical tolerance for proxy and approximate authored comparisons.
+pub fn agrees(actual: f64, expected: f64) -> bool {
+    if expected.is_nan() {
+        actual.is_nan()
+    } else {
+        (actual - expected).abs() <= 1e-8 + 1e-8 * expected.abs()
+    }
 }

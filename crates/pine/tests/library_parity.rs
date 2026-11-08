@@ -483,3 +483,66 @@ fn library_generic_and_varip_field_labels_keep_their_names() {
         .is_ok()
     );
 }
+
+#[test]
+fn mixed_shallow_copies_and_varip_collection_fields_preserve_aliases() {
+    let source = "//@version=6\nindicator(\"aliases\")\ntype Item\n    varip array<float> values\nvar item = Item.new(array.new<float>())\nvar lookup = map.new<string, Item>()\nlookup.put(\"item\", item)\ncopied = lookup.copy()\nitems = copied.values()\nfound = items.get(0)\nfound.values.push(1)\nplot(item.values.size())\nplot(found == item ? 1 : 0)\n";
+    let compiled = quantick_pine::compile(source, "aliases").unwrap_or_else(|e| panic!("{e:?}"));
+    let mut script = ScriptIndicator::new(compiled, source);
+    let bar = IndicatorBar {
+        open_time: 0,
+        close_time: 1,
+        open: 1.0,
+        high: 1.0,
+        low: 1.0,
+        close: 1.0,
+        buy_volume: 0.0,
+        sell_volume: 0.0,
+        trade_count: 0.0,
+    };
+    let mut ctx = Ctx {
+        bar_index: 0,
+        cvd: &[],
+    };
+    script.on_close(&bar, &mut ctx).unwrap();
+    ctx.bar_index = 1;
+    assert_eq!(
+        script.preview(&bar, &mut ctx).unwrap().values,
+        vec![2.0, 1.0]
+    );
+    assert_eq!(
+        script.preview(&bar, &mut ctx).unwrap().values,
+        vec![3.0, 1.0]
+    );
+    script.on_close(&bar, &mut ctx).unwrap();
+    assert_eq!(script.plots().column(PlotId::new(0))[1], 4.0);
+}
+
+#[test]
+fn missing_object_fields_fail_deterministically() {
+    let source = "//@version=6\nindicator(\"missing\")\ntype Item\n    float value\nItem item = na\nplot(item.value)\n";
+    let compiled = quantick_pine::compile(source, "missing").unwrap_or_else(|e| panic!("{e:?}"));
+    let mut script = ScriptIndicator::new(compiled, source);
+    let bar = IndicatorBar {
+        open_time: 0,
+        close_time: 1,
+        open: 1.0,
+        high: 1.0,
+        low: 1.0,
+        close: 1.0,
+        buy_volume: 0.0,
+        sell_volume: 0.0,
+        trade_count: 0.0,
+    };
+    let mut ctx = Ctx {
+        bar_index: 0,
+        cvd: &[],
+    };
+    for _ in 0..2 {
+        let error = script
+            .preview(&bar, &mut ctx)
+            .err()
+            .expect("missing object error");
+        assert!(error.to_string().contains("missing user object"));
+    }
+}
