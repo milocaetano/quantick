@@ -1,0 +1,129 @@
+plot 0 PlotSpec { id: PlotId(0), title: "vwap", style: Line, base_color: Rgba8 { r: 156, g: 39, b: 176, a: 255 }, width: 2.0, offset: 0, marker: None }
+4058eaaaaaaaaaab
+4059f00000000000
+405b000000000000
+405a74aaaaaaaaab
+405a9c9e2dc9e2de
+405ae7f179a5384a
+405ac31a6031a603
+405ae6ba6ba6ba6c
+405b2d4bfb52fed5
+405afeb701073261
+405b071c71c71c72
+405aca57eb502960
+405abfcc7a5d6236
+405ad7303b5cc0ed
+405aac30c30c30c3
+405aac1978feb9f4
+405abf3cf3cf3cf4
+405aacd42e2049ce
+405aa8a42f870568
+405a6e0e0e0e0e0f
+405a64d0b3719d81
+405a69f69f69f6a0
+405a4bd6e5a3f711
+405a43100d84a599
+405a4fabe14389e9
+405a4242d9db090c
+405a416c16c16c17
+405a63dbb01d0cb6
+405a641511e8d2b3
+405a760cd11e04b9
+405a6d20d20d20d3
+405a7154107ee3c5
+405a7fc4a33f128e
+405a7909e175ab92
+405a82049cd42e21
+405a93ee08fb823f
+405a8e2d24e2d24f
+405a921cfb2b78c3
+405a7f597ef597f0
+405a7a1a1a1a1a1b
+405a7e8414c6dd21
+405a75364d9364da
+405a74f2ffc37c94
+405a81e4791e4793
+405a79c8e7239c90
+405a788ee23b88ef
+405a800dd37f3e71
+405a760b60b60b62
+405a771052a5b536
+405a6620ae4c415e
+405a6208bb56208d
+405a6625b5bf13a3
+405a5d2d89600c3f
+405a5ae9ae9ae9af
+405a6be71889b48f
+405a6acd3b68c6c1
+405a6f999999999b
+405a69395aedd071
+405a6a89c45e961c
+405a769696969698
+405a73fcafa335db
+405a766fd0eb66fe
+405a8115b1e5f753
+405a7a22a31c064d
+paint 0 None
+paint 1 None
+paint 2 None
+paint 3 None
+paint 4 None
+paint 5 None
+paint 6 None
+paint 7 None
+paint 8 None
+paint 9 None
+paint 10 None
+paint 11 None
+paint 12 None
+paint 13 None
+paint 14 None
+paint 15 None
+paint 16 None
+paint 17 None
+paint 18 None
+paint 19 None
+paint 20 None
+paint 21 None
+paint 22 None
+paint 23 None
+paint 24 None
+paint 25 None
+paint 26 None
+paint 27 None
+paint 28 None
+paint 29 None
+paint 30 None
+paint 31 None
+paint 32 None
+paint 33 None
+paint 34 None
+paint 35 None
+paint 36 None
+paint 37 None
+paint 38 None
+paint 39 None
+paint 40 None
+paint 41 None
+paint 42 None
+paint 43 None
+paint 44 None
+paint 45 None
+paint 46 None
+paint 47 None
+paint 48 None
+paint 49 None
+paint 50 None
+paint 51 None
+paint 52 None
+paint 53 None
+paint 54 None
+paint 55 None
+paint 56 None
+paint 57 None
+paint 58 None
+paint 59 None
+paint 60 None
+paint 61 None
+paint 62 None
+paint 63 None

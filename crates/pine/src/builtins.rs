@@ -375,18 +375,12 @@ pub fn rejection_of(name: &str) -> Option<(crate::error::ErrorCode, &'static str
             "strategy.* is not supported: this dialect scripts indicators; backtesting \
              consumes their plots through the host instead",
         ),
-        "array" | "matrix" | "map" | "table" => (
-            ErrorCode::PineNoCollections,
-            "collection namespaces (array/matrix/map/table) are not in the v1 dialect",
-        ),
+        "array" | "matrix" | "map" | "table" => crate::collections::rejection(),
         "year" | "month" | "dayofmonth" | "dayofweek" | "hour" | "minute" | "second" => (
             ErrorCode::PineNoCalendar,
             "calendar builtins are not supported: activity-sampled bars are not on a clock",
         ),
-        "plotcandle" | "plotbar" => (
-            ErrorCode::PineUnsupported,
-            "plotcandle/plotbar are not supported: the chart already draws the bars",
-        ),
+        "plotcandle" | "plotbar" => crate::candle_plots::rejection(),
         "max_bars_back" => (
             ErrorCode::PineUnsupported,
             "max_bars_back() is capped by configuration; deeper history reads yield na",

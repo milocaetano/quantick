@@ -28,8 +28,7 @@ use std::collections::BTreeSet;
 use quantick_indicators::{FillSpec, InputSpec, PlotSpec};
 
 use crate::ast::{Arg, Ast, NodeId, NodeKind, VarMode};
-use crate::builtins::Builtin;
-use crate::error::{ErrorCode, PineError, Span};
+use crate::error::{PineError, Span};
 use crate::lexer;
 use crate::parser;
 
@@ -50,97 +49,7 @@ pub const MAX_BARS_BACK_CAP: usize = 500;
 /// broken by a typo. Far above any window a chart uses.
 pub const MAX_KERNEL_LENGTH: usize = 100_000;
 
-/// Identity of one stateful kernel call site (§2.5 locked decision).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CallSiteId(pub u32);
-
-/// What a resolved name/member/callee means at eval time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Resolution {
-    /// Not a reference (literals, operators, …).
-    #[default]
-    None,
-    /// A builtin variable or function.
-    Builtin(Builtin),
-    /// A global (script-level) variable slot.
-    Global(u32),
-    /// A function-local slot (param or body declaration), frame-indexed.
-    Local(u32),
-    /// A user function, by index into [`CompiledScript::functions`].
-    Function(u32),
-    /// An enum-like member constant (`plot.style_line`, `shape.circle`, …),
-    /// resolved to its tag for the interpreter.
-    EnumConst(&'static str),
-    /// A color constant (`color.red`, …), resolved to its packed RGBA so the
-    /// per-bar path never re-derives it from names.
-    ColorConst(u32),
-}
-
-/// One user function, resolved.
-#[derive(Debug, Clone)]
-pub struct FunctionInfo {
-    /// The function's name (diagnostics only; calls are index-resolved).
-    pub name: String,
-    /// Number of parameters (the first locals of the frame).
-    pub param_count: usize,
-    /// Total frame slots (params + body declarations).
-    pub local_slots: usize,
-    /// The body node.
-    pub body: NodeId,
-}
-
-/// A compiled script: the AST plus every dense eval-time table.
-///
-/// `Clone` so that rebinding inputs (the settings dialog's Apply) can build a
-/// second instance from the same compile instead of parsing the source again
-/// — a click-rate path either way, but re-parsing would also mean a script
-/// edited on disk since load would silently change under Apply.
-#[derive(Clone)]
-pub struct CompiledScript {
-    /// The arena.
-    pub ast: Ast,
-    /// The `Script` root.
-    pub root: NodeId,
-    /// Display title from `indicator(...)` (file stem when absent).
-    pub title: String,
-    /// Optional short title.
-    pub short_title: Option<String>,
-    /// Overlay flag from `indicator(overlay=…)`.
-    pub overlay: bool,
-    /// Declared inputs, in extraction order.
-    pub inputs: Vec<InputSpec>,
-    /// The fixed plot registry, in top-level declaration order.
-    pub plots: Vec<PlotSpec>,
-    /// Fills between plot pairs, resolved at load time.
-    pub fills: Vec<FillSpec>,
-    /// Load-time warnings (ignored args, inert `alertcondition`, missing
-    /// version directive) — surfaced in the UI, never fatal.
-    pub warnings: Vec<PineError>,
-    /// Per-node resolution (dense, indexed by `NodeId`).
-    pub resolutions: Vec<Resolution>,
-    /// Per-node call-site id for stateful kernel calls.
-    pub call_sites: Vec<Option<CallSiteId>>,
-    /// Per-node plot index for top-level `plot`/`plotshape`/`plotchar`
-    /// calls.
-    pub plot_of_call: Vec<Option<usize>>,
-    /// Per-node input index for `input.*` calls.
-    pub input_of_call: Vec<Option<usize>>,
-    /// Per-node implicit series id for `History` nodes (expression history).
-    pub history_series: Vec<Option<u32>>,
-    /// User functions.
-    pub functions: Vec<FunctionInfo>,
-    /// Number of global slots.
-    pub global_slots: usize,
-    /// Declaration mode per global slot (preview rollback exempts `varip`).
-    pub slot_modes: Vec<VarMode>,
-    /// Total stateful call sites.
-    pub call_site_count: usize,
-    /// Total implicit history series.
-    pub history_series_count: usize,
-    /// Deepest history the script needs (constant offsets measured, dynamic
-    /// capped).
-    pub max_bars_back: usize,
-}
+pub use crate::ir::{CallSiteId, CompiledScript, FunctionInfo, Resolution};
 
 /// Compile source text end to end (lex → parse → passes).
 ///
@@ -153,21 +62,7 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
     let (ast, root) = parser::parse(&lexed.tokens)?;
 
     let mut compiler = Compiler::new(ast, root, fallback_title);
-    if let Some((version, span)) = lexed.version {
-        if version != 5 {
-            compiler.errors.push(PineError::new(
-                ErrorCode::PineVersion,
-                span,
-                format!("only Pine v5 scripts are supported, found version {version}"),
-            ));
-        }
-    } else {
-        compiler.warnings.push(PineError::new(
-            ErrorCode::PineVersion,
-            Span::at(0),
-            "no //@version directive; assuming version 5",
-        ));
-    }
+    crate::version::diagnose(lexed.version, &mut compiler.errors, &mut compiler.warnings);
 
     compiler.collect_reassigned_names();
     compiler.collect_declarations();
