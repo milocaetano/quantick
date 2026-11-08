@@ -89,7 +89,12 @@ impl Eval<'_> {
                 Instruction::Return(_) => return Ok(self.register(entry)),
                 Instruction::Initialized(id, slot, target) => {
                     if self.state.arena.get(FLAGS, *slot as usize) == Value::Bool(true) {
-                        self.set_register(*id, self.state.arena.get(GLOBALS, *slot as usize));
+                        self.set_register(
+                            *id,
+                            self.state
+                                .arena
+                                .get_at(self.global_base + *slot as usize * 2),
+                        );
                         pc = *target;
                     }
                 }
@@ -100,16 +105,21 @@ impl Eval<'_> {
 
     #[inline]
     pub(super) fn register(&self, id: NodeId) -> Value {
-        self.state.arena.get(REGISTERS, id.index())
+        self.state.arena.get_at(self.register_base + id.index() * 2)
     }
     #[inline]
     fn set_register(&mut self, id: NodeId, value: Value) {
-        self.state.arena.set(REGISTERS, id.index(), value);
+        self.state
+            .arena
+            .set_at(self.register_base + id.index() * 2, value);
     }
     #[inline]
     fn read_slot(&mut self, id: NodeId, resolution: Resolution) -> Result<Value, PineError> {
         match resolution {
-            Resolution::Global(slot) => Ok(self.state.arena.get(GLOBALS, slot as usize)),
+            Resolution::Global(slot) => Ok(self
+                .state
+                .arena
+                .get_at(self.global_base + slot as usize * 2)),
             Resolution::Local(slot) => Ok(self
                 .state
                 .arena
@@ -308,8 +318,12 @@ impl Eval<'_> {
     #[inline(always)]
     fn register_binary(&self, op: BinOp, lhs: NodeId, rhs: NodeId) -> Result<Value, PineError> {
         if let (Some(l), Some(r)) = (
-            self.state.arena.number(REGISTERS, lhs.index()),
-            self.state.arena.number(REGISTERS, rhs.index()),
+            self.state
+                .arena
+                .number_at(self.register_base + lhs.index() * 2),
+            self.state
+                .arena
+                .number_at(self.register_base + rhs.index() * 2),
         ) {
             return Ok(match op {
                 BinOp::Eq => Value::Bool(l == r),

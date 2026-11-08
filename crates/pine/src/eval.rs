@@ -150,6 +150,8 @@ pub(crate) struct Eval<'a> {
     frame_base: usize,
     type_context: u32,
     prepared_arguments: bool,
+    register_base: usize,
+    global_base: usize,
     semantic_run: crate::semantics::Run<Vec<u64>>,
 }
 
@@ -177,7 +179,11 @@ impl<'a> Eval<'a> {
                 state.arena.set(REGISTERS, id.index(), value);
             }
         }
+        let register_base = state.arena.offset(REGISTERS);
+        let global_base = state.arena.offset(GLOBALS);
         Self {
+            register_base,
+            global_base,
             script,
             inputs,
             bar,

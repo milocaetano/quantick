@@ -173,9 +173,16 @@ impl Arena {
         self.words[list + 1] = length as u64;
     }
 
+    pub fn offset(&self, list: usize) -> usize {
+        index(self.words[list])
+    }
+
     #[inline(always)]
     pub fn get(&self, list: usize, slot: usize) -> Value {
-        let cell = self.cell(list, slot);
+        self.get_at(self.cell(list, slot))
+    }
+    #[inline(always)]
+    pub fn get_at(&self, cell: usize) -> Value {
         match self.words[cell] {
             4 => {
                 let start = index(self.words[cell + 1]);
@@ -187,8 +194,7 @@ impl Arena {
     }
 
     #[inline]
-    pub fn number(&self, list: usize, slot: usize) -> Option<f64> {
-        let cell = self.cell(list, slot);
+    pub fn number_at(&self, cell: usize) -> Option<f64> {
         match self.words[cell] {
             0 => Some(f64::NAN),
             1 => Some(f64::from_bits(self.words[cell + 1])),
@@ -200,13 +206,17 @@ impl Arena {
     pub fn copy_value(&mut self, from: usize, source: usize, to: usize, target: usize) {
         let source = self.cell(from, source);
         let target_cell = self.cell(to, target);
+        self.copy_at(source, target_cell);
+    }
+    #[inline]
+    pub fn copy_at(&mut self, source: usize, target_cell: usize) {
         if source == target_cell {
             return;
         }
         if self.words[source] == 4 {
             let mut cursor = index(self.words[source + 1]);
             let value = decode(&self.words, &mut cursor);
-            self.set(to, target, value);
+            self.set_at(target_cell, value);
         } else {
             if self.words[target_cell] == 4 {
                 self.release(index(self.words[target_cell + 1]));
@@ -218,7 +228,10 @@ impl Arena {
 
     #[inline(always)]
     pub fn set(&mut self, list: usize, slot: usize, value: Value) {
-        let cell = self.cell(list, slot);
+        self.set_at(self.cell(list, slot), value);
+    }
+    #[inline(always)]
+    pub fn set_at(&mut self, cell: usize, value: Value) {
         if self.words[cell] == 4 {
             self.release(index(self.words[cell + 1]));
         }
